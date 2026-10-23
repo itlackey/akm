@@ -145,10 +145,13 @@ const updateCommand = defineJsonCommand({
       description: "Exit successfully when index/state database contention shows another akm operation is active",
       default: false,
     },
+    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
+    // fail with UNKNOWN_FLAG. Installing a bundle is the trust decision: an
+    // update no longer scans env files for process-hijacking keys.
     "allow-dangerous-env-keys": {
       type: "boolean",
       description:
-        "Allow an update containing dangerous env keys (e.g. LD_PRELOAD, PATH). Use only after explicitly reviewing the staged bundle.",
+        "Deprecated, no effect: update no longer scans env files for process-hijacking keys. Accepted through 0.10 for existing scripts.",
       default: false,
     },
     // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
@@ -169,7 +172,6 @@ const updateCommand = defineJsonCommand({
         target: args.target,
         all: args.all,
         force: args.force,
-        allowDangerousEnvKeys: args["allow-dangerous-env-keys"],
       });
     } catch (error) {
       const skippable = isSkippableBundleUpdateLock(error);
@@ -184,7 +186,6 @@ const updateCommand = defineJsonCommand({
         target: args.target ?? null,
         all: args.all === true,
         force: args.force === true,
-        allowDangerousEnvKeys: args["allow-dangerous-env-keys"] === true,
         processed: Array.isArray((result as { processed?: unknown[] }).processed)
           ? (result as { processed: unknown[] }).processed.length
           : 0,

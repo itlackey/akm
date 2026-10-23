@@ -21,9 +21,10 @@
  *     that reclassification, so it would misreport the exit code here. See
  *     tests/integration/cli-errors.test.ts's "R-032" describe block for the
  *     same real-subprocess-required pattern applied to other removed surfaces.
- *   - `secret run` validation failures (LD_PRELOAD rejection, invalid var
- *     name, missing command) run in-process — they fail before any child
- *     spawn.
+ *   - `secret run` validation failures (invalid var name, missing command)
+ *     run in-process — they fail before any child spawn. Dangerous-key
+ *     injection (no block, #1237) also runs in-process; the child writes the
+ *     value it saw to a file instead of inheriting stdio.
  *   - The happy-path `secret run` injection test lives in
  *     tests/integration/secret-run.test.ts: it needs a real process boundary
  *     to observe the CHILD's env.
@@ -125,31 +126,52 @@ describe("secret run", () => {
   // The happy-path injection test (secret value visible in the CHILD's env)
   // lives in tests/integration/secret-run.test.ts — it requires a real
   // subprocess. The cases below fail validation before any child spawn.
-  test("warns and still runs for a dangerous target variable name on a first-party (primary) stash", async () => {
+  test("injects a dangerous target variable name from the primary stash with no block or warning (#1237)", async () => {
     const stashDir = makeStash();
     setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
-    const { status, stdout, stderr } = await runCli(["secret", "run", "secrets/demo", "LD_PRELOAD", "--", "true"], {
-      AKM_BUNDLE_DIR: stashDir,
-    });
-    expect(stderr).toContain("LD_PRELOAD");
-    expect(stderr).toContain("Injecting anyway");
-    expect(stdout).not.toContain("LD_PRELOAD is a known");
+    const out = path.join(stashDir, "out.txt");
+    const { status, stderr } = await runCli(
+      [
+        "secret",
+        "run",
+        "secrets/demo",
+        "GIT_SSH_COMMAND",
+        "--",
+        "/bin/sh",
+        "-c",
+        `printf %s "$GIT_SSH_COMMAND" > ${out}`,
+      ],
+      { AKM_BUNDLE_DIR: stashDir },
+    );
     expect(status).toBe(0);
+    expect(stderr).not.toContain("Injecting anyway");
+    expect(fs.readFileSync(out, "utf8")).toBe("v");
   });
 
-  test("blocks a dangerous target variable name for a third-party (named, non-primary) stash", async () => {
+  test("injects a dangerous target variable name from a non-primary (installed) bundle with no block (#1237)", async () => {
     const primaryStashDir = makeStash();
     const vendorStashDir = makeStash();
     setSecret(path.join(vendorStashDir, "secrets", "demo"), Buffer.from("v"));
     writeSandboxConfig({ bundles: { vendor: { path: vendorStashDir } } });
+    const out = path.join(primaryStashDir, "out.txt");
 
-    const { status, stderr } = await runCli(["secret", "run", "vendor//secrets/demo", "LD_PRELOAD", "--", "true"], {
-      AKM_BUNDLE_DIR: primaryStashDir,
-    });
+    const { status, stderr } = await runCli(
+      [
+        "secret",
+        "run",
+        "vendor//secrets/demo",
+        "GIT_SSH_COMMAND",
+        "--",
+        "/bin/sh",
+        "-c",
+        `printf %s "$GIT_SSH_COMMAND" > ${out}`,
+      ],
+      { AKM_BUNDLE_DIR: primaryStashDir },
+    );
 
-    expect(status).toBe(2);
-    expect(JSON.parse(stderr.trim()).error).toContain("Refusing to inject a secret from a third-party stash");
-    expect(JSON.parse(stderr.trim()).error).toContain("LD_PRELOAD");
+    expect(status).toBe(0);
+    expect(stderr).not.toContain("Refusing to inject");
+    expect(fs.readFileSync(out, "utf8")).toBe("v");
   });
 
   test("rejects an invalid env var name", async () => {

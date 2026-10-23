@@ -14,6 +14,7 @@ import type { PreparedCommandInvocation } from "../../commands/command/command-e
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { COMPOSITION_INVALID_MULTI_JOB_HINT, ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
+import { warn } from "../../core/warn";
 import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
 import { buildExecution } from "../../integrations/agent/execution";
 import { resolveAssetPath } from "../../sources/resolve";
@@ -35,9 +36,8 @@ export function environmentSnapshot(environment: TaskV3Environment | undefined):
     if (raw === undefined) continue;
     const value = String(raw);
     if (isInferredSecretName(key) || detectSecretShapedParams({ [key]: value }).length > 0) {
-      throw new UsageError(
-        `Task env.${key} is a secret-shaped literal env value. Store credentials in a secret/env binding rather than durable task source.`,
-        "TASK_SOURCE_INVALID",
+      warn(
+        `Task env.${key} looks like a credential. Task source is durable and readable; move it to an env binding (an \`env:\` ref) so the value is resolved only at dispatch. (Heuristic warning; the value is used as written.)`,
       );
     }
     Object.defineProperty(out, key, { value, enumerable: true, configurable: false, writable: false });

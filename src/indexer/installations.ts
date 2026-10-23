@@ -20,12 +20,6 @@
  *                  spec §1.3). Slugs are made unique WITHIN a derivation batch
  *                  by appending a short path-hash suffix on collision, so two
  *                  sources sharing a basename never mint the same bundle id.
- *   - `trusted`  = `source.writable === true`. 0.9.0 ships no first-class trust
- *                  record (spec §1.3 — "no new trust machinery"); the writable
- *                  primary/config stashes are the user's own and count as
- *                  trusted, read-only registry caches do not. Nothing consumes
- *                  `trusted` in the live path yet (installation grants nothing,
- *                  History D8) — this is the Tier-A placeholder mapping.
  *   - components = ONE component for the current single-root akm layout
  *                  (spec §1.2 rule 5): `{ id, root: source.path, adapter }`. The
  *                  akm layout's type dirs (`knowledge/`, `skills/`, …) are NOT
@@ -58,11 +52,11 @@
  * root behavior. Explicit configured ownership always wins over probing.
  */
 
-import { isSourceWriteActivated } from "../core/activation-policy";
 import { detectAdapterId } from "../core/adapter/detect-adapter";
 import type { BundleInstallation } from "../core/adapter/types";
 import { stashDirFor } from "../core/asset/asset-placement";
 import { deriveBundleId, deriveBundleIds, slugForPath } from "../core/bundle-id";
+import { isSourceWriteActivated } from "../core/write-source";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
 import type { SearchSource } from "./search/search-source";
 
@@ -110,7 +104,6 @@ export function deriveInstallations(sources: SearchSource[]): BundleInstallation
 
     installations.push({
       id,
-      trusted: writable,
       components: [
         {
           // Single-component akm layout: the component id == the bundle id so

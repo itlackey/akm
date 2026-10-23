@@ -1198,7 +1198,7 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
 | `--allow-insecure-transport` | Allow a plain-HTTP source URL after explicitly accepting transport substitution risk |
-| `--allow-dangerous-env-keys` | Allow reviewed process-hijacking env keys in the installed bundle; does not permit plain HTTP |
+| `--allow-dangerous-env-keys` | Deprecated, no effect. `bundle add` no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
 
@@ -1214,16 +1214,18 @@ akm bundle update <name>
 `root` is relative to the detected stash root of the checkout, not always the
 repo root, and takes effect on the next `bundle update` or `akm index`.
 
-#### Dangerous env key audit
+#### Env files and process-hijacking keys
 
-When `akm bundle add` installs a bundle that contains env files, it recursively scans
-every `.env`-suffixed file under `env/` (the same "real env file" test used
-everywhere else — a bare `.env` or any name ending `.env`, at any depth) for
-environment variable names that can be used for process-execution hijacking. A
-non-`.env` file under `env/` (e.g. `env/notes.txt`) is never scanned — such a
-file is never sourced as environment variables by any akm codepath, so a
-dangerous key sitting in its contents cannot hijack anything. The flagged key
-set is 41 literal names plus 2 regex pattern families (`src/commands/lint/env-key-rules.ts`):
+Installing a bundle is the trust decision. `akm bundle add` and `akm bundle
+update` do not scan a bundle's `env/` files, never prompt, and never roll an
+install back over the keys an env file sets, so a bundle whose `env/*.env` sets
+`PATH` installs and refreshes unattended with no flag. `akm env run`, `akm
+secret run` and workflow `env:` bindings inject what the bundle defines.
+
+`akm lint` still reports env keys that can hijack a process
+(`dangerous-env-key`, non-blocking), for bundle authors who want to review their
+own files. The flagged key set is 41 literal names plus 2 regex pattern families
+(`src/commands/lint/env-key-rules.ts`):
 `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, `LD_DEBUG`, `LD_BIND_NOW`,
 `LD_PROFILE`, `LD_ASSUME_KERNEL`, `LD_TRACE_LOADED_OBJECTS`,
 `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`, `DYLD_FRAMEWORK_PATH`, `PATH`,
@@ -1233,21 +1235,7 @@ set is 41 literal names plus 2 regex pattern families (`src/commands/lint/env-ke
 `RUBYOPT`, `PERL5LIB`, `PERL5OPT`, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`,
 `_JAVA_OPTIONS`, `GIT_SSH_COMMAND`, `GIT_EXTERNAL_DIFF`, `GIT_PAGER`,
 `GIT_EDITOR`, `EDITOR`, `VISUAL`, and `PAGER` (41 literals), plus any key
-matching `^BASH_FUNC_` (Shellshock-class injection) or `^GIT_CONFIG_` (git
-config override injection).
-
-When dangerous keys are found, `akm bundle add` pauses and prompts for
-confirmation (default: No). In non-interactive mode (CI, scripts) the
-install fails with **exit 1** unless `--allow-dangerous-env-keys` is passed, and the
-freshly-installed bundle is rolled back before the process exits.
-
-```sh
-# Interactive: prompts before continuing
-akm bundle add github:owner/repo-with-sensitive-env
-
-# Non-interactive: fails unless bypassed
-akm bundle add github:owner/repo-with-sensitive-env --allow-dangerous-env-keys
-```
+matching `^BASH_FUNC_` or `^GIT_CONFIG_`.
 
 Bundle publishers: see the [Author Bundles guide](https://github.com/itlackey/akm/blob/main/docs/guides/author-bundles.md#env-security)
 for guidance on env files that legitimately need these keys.
@@ -1314,7 +1302,7 @@ akm bundle remove my-provider --yes        # Skip the confirmation prompt
 ### bundle update
 
 Update one bundle, or refresh every configured bundle with `--all`. Git, npm,
-and website candidates are staged and audited before they replace the active
+and website candidates are staged before they replace the active
 generation. Filesystem bundles require no hydration; update reconciles their
 current files into the index immediately.
 
@@ -1322,19 +1310,16 @@ current files into the index immediately.
 akm bundle update npm:@scope/pkg
 akm bundle update --all
 akm bundle update --all --force   # Force fresh download even if version is unchanged
-akm bundle update npm:@scope/pkg --allow-dangerous-env-keys  # Explicitly approve reviewed dangerous env keys
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--all` | Update all managed sources |
 | `--force` | Delete cached extraction before re-downloading |
-| `--allow-dangerous-env-keys` | Permit a staged update containing dangerous environment keys after warning. Without it, an interactive terminal prompts with a default of No; non-interactive use fails closed. |
+| `--allow-dangerous-env-keys` | Deprecated, no effect. An update no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
 | `-y`, `--yes` | Deprecated, no effect. An update no longer asks before deleting the previous install directory of a read-only bundle whose content moved; that directory is a re-fetchable cache. Accepted through 0.10 so existing scripts keep working. |
 
-The audit examines key names in `.env`-suffixed files under the staged
-component root. Publisher lint suppressions do not bypass it. Rejection or an
-audit/publication/index failure preserves the prior active bytes, lock/config
+A publication or index failure preserves the prior active bytes, lock/config
 generation, and searchable index for that bundle.
 
 Writable Git updates resolve configured roots to their physical checkout,
@@ -1371,9 +1356,9 @@ durable usage state.
 
 Reports per-entry change flags: `changed.version`, `changed.revision`, and
 `changed.any`. With `--all`, each bundle is isolated: successful entries appear
-in `processed`/`plainSynced`; rejected entries report `status: "blocked"` and a
-security code; provider or transaction errors report `status: "failed"`. The
-command continues with later bundles without half-publishing a blocked one.
+in `processed`/`plainSynced`; provider or transaction errors report
+`status: "failed"` and a code. The command continues with later bundles without
+half-publishing a failed one.
 
 ### bundle rename
 
@@ -2322,7 +2307,7 @@ akm env run env/prod --only A,B -- cmd  # inject only A and B
 akm env run env/prod --except DEBUG -- cmd
 akm env run env/prod --clean -- cmd
 akm env run env/prod --clean --inherit SSH_AUTH_SOCK -- cmd
-akm env run third-party//env/prod --allow-dangerous-env-keys -- cmd
+akm env run team//env/prod -- cmd       # an env in an installed bundle
 ```
 
 Runs the command with the env file's values injected **directly into the child
@@ -2333,10 +2318,10 @@ environment, those values will appear in your terminal or agent transcript.
 which env-file keys are injected. `--clean` starts from a minimal inherited
 environment (PATH/HOME/locale/terminal basics) instead of inheriting the full
 parent environment; use `--inherit KEY1,KEY2` to pass specific parent vars
-through in clean mode. Before spawning, the injected key names are scanned for
-known process-hijacking variables (`LD_PRELOAD`, `PATH`, `GIT_CONFIG_*`, ...):
-a first-party bundle warns and proceeds; a third-party-sourced bundle is refused
-unless the reviewed run explicitly passes `--allow-dangerous-env-keys`.
+through in clean mode. Installing a bundle is the trust decision, so `env run`
+injects what the env file defines whichever bundle it comes from, including keys
+such as `PATH` or `LD_PRELOAD`; it does not warn or block. `--allow-dangerous-env-keys`
+is a deprecated no-op, accepted through 0.10 so existing scripts keep working.
 
 > The single-key `run <ref>/KEY` form was removed. To inject one value, store it
 > as a [secret](#secret) and use `akm secret run secrets/<name> <VAR> -- …`, or
@@ -2496,8 +2481,9 @@ akm secret run secrets/deploy-token GITHUB_TOKEN --clean -- gh auth status
 
 Runs one subprocess with the secret's value set as `$VAR` in the child's
 environment. **The value never appears in akm's structured output** — it is
-passed directly to the child process. The target variable name is validated and
-known process-hijacking names (`LD_PRELOAD`, `PATH`, etc.) are rejected.
+passed directly to the child process. The target variable name is validated as
+an environment variable name; process-hijacking names such as `LD_PRELOAD` or
+`PATH` are injected like any other.
 `--clean` starts from a minimal inherited environment instead of inheriting the
 full parent environment; use `--inherit KEY1,KEY2` to pass specific parent vars
 through in clean mode.
@@ -2713,9 +2699,9 @@ stale paths, and broken refs — in body text and in
 `refs`/`xrefs`/`supersededBy`/`contradictedBy` frontmatter. A belief edge
 pointing at a memory that `akm improve` pruned resolves through the archive
 tombstone under `.akm/memory-cleanup/archive/` and is not reported (#884). Also reports
-`dangerous-env-key` findings for env files (the same key set `akm bundle add`
-enforces — see [Dangerous env key audit](#dangerous-env-key-audit) — but
-non-blocking here; `lint` only warns). `--type workflows` structurally parses
+`dangerous-env-key` findings for env files (the key set described under
+[Env files and process-hijacking keys](#env-files-and-process-hijacking-keys);
+`lint` only warns). `--type workflows` structurally parses
 and compiles Markdown workflows; errors surface as
 `invalid-workflow-structure` findings (0.9.0: this is the only
 structural-validation surface now that `akm workflow validate` is gone).

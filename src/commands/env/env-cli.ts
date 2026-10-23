@@ -204,12 +204,11 @@ const envExportCommand = defineJsonCommand({
 
 /**
  * Shared implementation for `env run`. Injects an entire env file's values into
- * the child process env — never via a shell — after scanning the injected keys
- * for process-hijacking variables.
+ * the child process env — never via a shell.
  */
 async function runEnvInjected(
   target: string,
-  opts: { only?: string[]; except?: string[]; clean?: boolean; inherit?: string[]; allowDangerousEnvKeys?: boolean },
+  opts: { only?: string[]; except?: string[]; clean?: boolean; inherit?: string[] },
 ): Promise<void> {
   const command = getParsedInvocation().passthroughArgs();
   if (command.length === 0) {
@@ -241,14 +240,13 @@ async function runEnvInjected(
     throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
   }
 
-  // Load → filter → secret-substitute → dangerous-key policy → keys-only
+  // Load → filter → secret-substitute → keys-only
   // audit event. Shared with the workflow engine's per-unit env bindings —
   // see env-binding.ts for the extracted core and its safety invariants.
   const { resolveEnvBinding } = await import("./env-binding.js");
   const { values: envValues } = resolveEnvBinding(target, {
     only: opts.only,
     except: opts.except,
-    allowDangerousEnvKeys: opts.allowDangerousEnvKeys,
   });
 
   const mergedEnv = buildChildEnv(process.env, {
@@ -330,10 +328,13 @@ const envRunCommand = defineJsonCommand({
       description:
         "When used with --clean, also inherit these parent env vars (comma-separated). Ignored without --clean.",
     },
+    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
+    // fail with UNKNOWN_FLAG. Installing a bundle is the trust decision: env
+    // run no longer blocks process-hijacking keys.
     "allow-dangerous-env-keys": {
       type: "boolean",
       description:
-        "Allow injecting a process-hijacking variable (e.g. LD_PRELOAD, GIT_SSH_COMMAND) from a third-party stash, which otherwise blocks. Use only after explicitly reviewing the env file.",
+        "Deprecated, no effect: env run no longer blocks process-hijacking variables. Accepted through 0.10 for existing scripts.",
       default: false,
     },
   },
@@ -343,7 +344,6 @@ const envRunCommand = defineJsonCommand({
       except: parseKeyListFlag(args.except),
       clean: args.clean === true,
       inherit: parseKeyListFlag(args.inherit) ?? [],
-      allowDangerousEnvKeys: args["allow-dangerous-env-keys"] === true,
     });
   },
 });

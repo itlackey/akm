@@ -110,7 +110,7 @@ renaming the file to match the query.
 
 Run `akm lint` before you publish. It catches structural problems (missing
 `name`/`type` on commands and agents, broken refs, malformed workflow
-structure, invalid task YAML) as well as the dangerous-env-key scan described
+structure, invalid task YAML) as well as the dangerous-env-key findings described
 in [Env Security](#env-security) below.
 
 ```sh
@@ -242,24 +242,21 @@ when a push happens.
 > [0.8 → 0.9 migration guide](../migration/v0.8-to-v0.9.md).
 
 If your bundle includes env files under `env/`, be aware of how `akm` handles
-them during install.
+them.
 
-**Dangerous key detection.** `akm bundle add` and `akm lint` scan env files for
-environment variable names that can be used to hijack process execution when
-the file is loaded via `akm env run`. The flagged names include `LD_PRELOAD`,
+**Dangerous key findings.** `akm lint` reports env files that set environment
+variable names which can be used to hijack process execution when the file is
+loaded via `akm env run`. The flagged names include `LD_PRELOAD`,
 `PATH`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, and 37 others (41 literal
 keys total), plus two pattern-based families (`BASH_FUNC_*`, Shellshock-class
-injection; `GIT_CONFIG_*`, git config override injection). When these keys
-are found, `akm bundle add` pauses in interactive mode and asks the user to confirm
-before continuing. In non-interactive (CI) mode the install fails unless the
-user passes `--allow-dangerous-env-keys`. `akm env run` applies the same scan at
-run time: a third-party-sourced bundle is refused unless that reviewed run
-explicitly passes `--allow-dangerous-env-keys`; a first-party bundle warns and
-proceeds.
+injection; `GIT_CONFIG_*`, git config override injection). The finding is
+advice for you as the author, not a gate: installing a bundle is the user's
+trust decision, so `akm bundle add`, `akm bundle update`, `akm env run`,
+`akm secret run` and workflow `env:` bindings never scan, prompt for or block
+these keys, whichever bundle the file comes from.
 
-This is not a ban — it is a speed bump. If your bundle legitimately needs one
-of these keys (for example, a `PATH` override for a hermetic toolchain), do
-the following before publishing:
+If your bundle legitimately needs one of these keys (for example, a `PATH`
+override for a hermetic toolchain), do the following before publishing:
 
 1. Document the reason clearly in your `README.md`. Explain which key is set,
    why it is needed, and what the value does.
@@ -273,7 +270,7 @@ the following before publishing:
 
 3. Consider whether the value can be set by the user after install rather than
    shipped in the env file. Env files that ship without values — just key names
-   and comments — do not trigger the audit.
+   and comments — produce no findings.
 
 **Key names are metadata, not secrets.** Env key names appear in `akm env list`
 and search results by design. Only values are protected. The `--sensitive` flag

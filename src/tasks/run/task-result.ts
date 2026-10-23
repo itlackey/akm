@@ -38,8 +38,7 @@
  * build — and the `"disabled"` `TaskRunStatus` member it was the sole
  * producer of are DELETED. Its only caller, run-task.ts's
  * `shouldSkipUnactivatedTask`, was deleted in the same family: task source
- * v4 has no document-level `enabled` to skip at fire time (see
- * src/core/activation-policy.ts's header for where that enforcement moved).
+ * v4 has no document-level `enabled` to skip at fire time.
  * `exitCodeForStatus`'s `"disabled"` case,
  * src/commands/tasks/tasks.ts's `result.status === "disabled"` disjunct, and
  * `preparedResultTarget` (the `PreparedTaskV3Execution` -> `TaskRunResult["target"]`

@@ -88,6 +88,16 @@ export function resolveWritable(entry: Pick<SourceConfigEntry, "type" | "writabl
   return entry.type === "filesystem";
 }
 
+/**
+ * Whether a resolved source is write-activated. Only the primary stash and
+ * sources explicitly marked `writable: true` are writable; registry-cached
+ * (installed, read-only) sources are never written in place because
+ * `akm update` overwrites them.
+ */
+export function isSourceWriteActivated(source: { writable?: boolean }): boolean {
+  return source.writable === true;
+}
+
 /** The two kinds writes are defined for; scheduler state binds only to these. */
 export function isWriteCapableSourceKind(kind: string): kind is "filesystem" | "git" {
   return kind === "filesystem" || kind === "git";

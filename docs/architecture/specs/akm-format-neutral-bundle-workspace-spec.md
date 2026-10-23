@@ -1118,8 +1118,8 @@ Secret-bearing content MUST preserve current protections:
 - no values in output or telemetry;
 - no shell sourcing of untrusted dotenv content;
 - process injection without command substitution;
-- path containment;
-- dangerous environment-key policy;
+- write-side path containment;
+- the non-blocking `dangerous-env-key` lint rule (#1237 removed the install and injection gates);
 - redaction in logs and errors.
 
 ---
@@ -1677,7 +1677,7 @@ grant or silently reduce it.
 
 *(Two v0.2 clauses — untrusted presentation clamping and a catch-all sensitive-content refusal — were withdrawn in v0.3, deviation §4.3c. Catch-all adapters remain explicit-configuration-only and never auto-selected (§9.4): a user who mounts a root with `generic-files` indexes what they pointed it at, deliberately.)*
 
-The dangerous-environment-key policy keeps its origin asymmetry across the config migration **as a port of the existing rule** (today: `registryId`-bearing source → hard block; first-party → warn): an env export from a registry-installed source containing process-hijacking keys MUST still hard-error after `installed[]` is replaced, covered by a port-preservation conformance test. This is existing behavior surviving the migration, not new machinery.
+*(Amended 2026-10-22, #1237: the dangerous-environment-key policy and its origin asymmetry were removed. Installing a bundle is the trust decision, so env export and injection from any bundle neither block nor warn on process-hijacking keys. The `dangerous-env-key` lint rule remains, non-blocking.)*
 
 ### 28.3 Path safety
 

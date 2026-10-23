@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { openLogsDatabase, queryTaskLogs } from "../src/core/logs-db";
 import type { SpawnFn } from "../src/core/subprocess";
+import { _setWarnSinkForTests } from "../src/core/warn";
 import { runTask } from "../src/tasks/run/run-task";
 import { readTaskHistory } from "../src/tasks/run/task-history";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
@@ -96,11 +97,6 @@ describe("task runner mutation boundary", () => {
       "with is legal only with",
     ],
     [
-      "secret-shaped literal env",
-      'version: 4\nrun: printf no\nenv:\n  API_TOKEN: github_pat_012345678901234567890123456789\nschedule: "@daily"\n',
-      "secret-shaped literal env",
-    ],
-    [
       "unresolved engine",
       'version: 4\nuses: akm/command\nwith:\n  content: Review\nengine: missing\nschedule: "@daily"\n',
       "missing",
@@ -137,6 +133,29 @@ describe("task runner mutation boundary", () => {
     expect(result).toMatchObject({ status: "failed", target: { kind: "shell" }, detail: { exitCode: 7 } });
     expect(readTaskHistory({ id: "fails" })).toHaveLength(1);
     expect(logFiles().some((file) => file.endsWith(".log"))).toBe(true);
+  });
+
+  test("a secret-shaped literal task env: value warns and the task still runs (#1237)", async () => {
+    writeTask(
+      "secret-env",
+      'version: 4\nrun: exit 0\nshell: sh\nenv:\n  API_TOKEN: github_pat_012345678901234567890123456789\nschedule: "@daily"\n',
+    );
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      const result = await runTask("secret-env", {
+        bundleDir: storage.stashDir,
+        bundleName: "fixture",
+        scheduled: true,
+      });
+      expect(result).toMatchObject({ status: "completed" });
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(warnings.some((message) => message.includes("env.API_TOKEN looks like a credential"))).toBe(true);
+    expect(warnings.join("\n")).not.toContain("github_pat_");
   });
 
   test("workflow task env: is dropped (with a warning) and the workflow still dispatches", async () => {

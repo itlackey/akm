@@ -12,21 +12,17 @@
  *
  *   - `${secret:NAME}` tokens resolve against the env's own stash; a missing
  *     secret is a hard error and NOTHING is injected (no partial injection).
- *   - Known process-hijacking keys (LD_PRELOAD, PATH, …) are blocked for
- *     third-party-sourced stashes and warned about for first-party ones.
  *   - An `env_access` audit event records key NAMES only, never values.
  *   - Resolved values must never be written to stdout or logs by callers.
  */
 
 import fs from "node:fs";
 import path from "node:path";
-import { decideDangerousEnvInjection } from "../../core/activation-policy";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { isWithin } from "../../core/common";
 import { makeEnvRef, makeSecretRef, resolveEnvPath } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { isDangerousEnvKey } from "../lint/env-key-rules";
 import { loadEnv, resolveSecretTokens } from "./env";
 import { readValue } from "./secret";
 
@@ -46,13 +42,12 @@ export interface ResolveEnvBindingOptions {
   except?: string[];
   /** Callback for non-fatal warnings (defaults to stderr). */
   warn?: (message: string) => void;
-  allowDangerousEnvKeys?: boolean;
 }
 
 /**
  * Resolve an env ref to its injectable values: load the file, apply key
  * filtering, substitute `${secret:NAME}` tokens from the sibling secrets
- * directory, enforce the dangerous-key policy, and append the keys-only
+ * directory, and append the keys-only
  * `env_access` audit event.
  */
 export function resolveEnvBinding(target: string, options: ResolveEnvBindingOptions = {}): ResolvedEnvBinding {
@@ -105,34 +100,6 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
   }
   envValues = substituted;
   const keys = Object.keys(envValues);
-
-  // Scan injected keys for known process-hijacking variables. The workspace
-  // activation policy decides block (third-party, registryId set) vs. warn
-  // (first-party stash, where the operator owns the file).
-  const dangerous = keys.filter(isDangerousEnvKey);
-  if (dangerous.length > 0) {
-    const detail = `Env "${envRef}" injects process-hijacking variable(s): ${dangerous.join(", ")}.`;
-    const decision = decideDangerousEnvInjection({
-      dangerousKeys: dangerous,
-      thirdParty: Boolean(source.registryId),
-      allowDangerousEnvKeys: options.allowDangerousEnvKeys,
-    });
-    if (decision === "block") {
-      throw new UsageError(
-        `Refusing to inject env from a third-party stash. ${detail}\n` +
-          `       Review the file, then copy the values into a first-party env if you trust them, ` +
-          `or pass --allow-dangerous-env-keys once you have.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    if (decision === "warn") {
-      warn(
-        options.allowDangerousEnvKeys && source.registryId
-          ? `${detail} Injecting anyway (--allow-dangerous-env-keys).`
-          : `${detail} Injecting anyway (first-party stash).`,
-      );
-    }
-  }
 
   // Audit trail: keys only, never values.
   appendEvent({ eventType: "env_access", ref: envRef, metadata: { keys } });

@@ -108,10 +108,11 @@ subprocess the child spawns.
 - Avoid running commands that print the environment (`env`, `printenv`,
   shell tracing, verbose diagnostics) in agent contexts unless you
   explicitly intend to expose the child environment.
-- Before spawning, injected key names are scanned for known
-  process-hijacking variables (`LD_PRELOAD`, `PATH`, `GIT_CONFIG_*`, ...): a
-  first-party bundle warns and proceeds, a third-party-sourced bundle is
-  refused.
+- Installing a bundle is the trust decision: `env run`, `secret run` and
+  workflow `env:` bindings inject what the bundle's files define, including
+  keys such as `PATH` or `LD_PRELOAD`, from any bundle, with no warning, block
+  or flag. `akm lint` still reports such keys (`dangerous-env-key`,
+  non-blocking) so an author can review their own files.
 
 ## Stability
 

@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Installing a bundle is now the trust decision (#1237). A bundle whose `env/`
+  files set a key such as `PATH` installs, updates unattended, and works in
+  `akm env run`, `akm secret run` and workflow `env:` bindings with no flag, no
+  prompt and no block, whichever bundle it comes from. `akm lint` still reports
+  `dangerous-env-key` findings, non-blocking.
+- An agent's own `tools` list is now honoured for an agent in any bundle, not
+  only the primary stash. `execution.allowedTools` still caps what a run grants.
+- A task `env:` value that looks like a credential is now a warning, in the same
+  style workflow params give, instead of an error that stopped the task.
+- `--allow-dangerous-env-keys` on `bundle add`, `bundle update` and `env run` is
+  now a deprecated no-op, accepted through 0.10 so existing scripts keep working.
+  It is an unknown flag from 0.11.
+
+### Removed
+
+- The dangerous-key audit on `bundle add` and `bundle update`, its prompt, its
+  rollback of a freshly installed bundle, and the `blocked` per-bundle status in
+  `bundle update --all`. The `DANGEROUS_ENV_KEY` and `DANGEROUS_ENV_AUDIT_FAILED`
+  error codes are gone with them.
+- The first-party and third-party distinction for env and secret injection
+  (`src/core/activation-policy.ts`) and the unused `trusted` field on a derived
+  bundle installation.
+
 ## [0.10.261012] - 2026-10-22
 
 ### Changed

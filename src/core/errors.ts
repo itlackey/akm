@@ -43,7 +43,6 @@ export type ConfigErrorCode =
   | "LLM_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
   | "UNKNOWN_IMPROVE_STRATEGY"
-  | "DANGEROUS_ENV_AUDIT_FAILED"
   | "EXECUTION_NOT_AUTHORIZED"
   // Refused stashDir that would clobber a sensitive system path or the user's
   // home directory (#473). Triggered by `akm bundle create`/`akm setup` when the
@@ -199,7 +198,6 @@ export type NotFoundErrorCode =
   | "SOURCE_NOT_FOUND"
   | "WORKFLOW_NOT_FOUND"
   | "PROPOSAL_NOT_FOUND"
-  | "DANGEROUS_ENV_KEY"
   | "FILE_NOT_FOUND"
   | "IMPROVE_RUN_NOT_FOUND"
   // The registry answered, but not with the thing asked for: HTTP 404/410, or

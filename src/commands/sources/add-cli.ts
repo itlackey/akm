@@ -8,8 +8,7 @@ import { VALID_ADAPTER_IDS } from "../../core/adapter/adapter-ids";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
-import { auditStashForDangerousKeys, type DangerousKeyAuditDecision } from "./dangerous-env-audit";
-import { akmRemove, akmUpdate } from "./installed-stashes";
+import { akmUpdate } from "./installed-stashes";
 import { akmAdd } from "./source-add";
 import { addStash, removeStash } from "./source-manage";
 
@@ -40,39 +39,6 @@ export function shouldWarnOnPlainHttp(ref: string): boolean {
   } catch {
     return true;
   }
-}
-
-/**
- * Audit a freshly-installed stash for dangerous env keys and decide whether the
- * install must be blocked. The scanner and decision policy are shared with
- * `bundle update` in dangerous-env-audit.ts.
- */
-export async function auditInstalledStashForDangerousKeys(opts: {
-  installedStashRoot: string;
-  ref: string;
-  allowDangerousKeys: boolean;
-  rollbackTarget: string;
-  isTTY: boolean;
-}): Promise<DangerousKeyAuditDecision> {
-  const { installedStashRoot, ref, allowDangerousKeys, rollbackTarget, isTTY } = opts;
-  return auditStashForDangerousKeys({
-    stashRoot: installedStashRoot,
-    ref,
-    allowDangerousKeys,
-    isTTY,
-    operation: "install",
-    rollback: async () => {
-      try {
-        await akmRemove({ target: rollbackTarget });
-        return undefined;
-      } catch {
-        return (
-          `Rollback failed — stash may still be installed at ${installedStashRoot}. ` +
-          `Remove it manually with: akm bundle remove ${rollbackTarget}`
-        );
-      }
-    },
-  });
 }
 
 // ── Command definition ────────────────────────────────────────────────────────
@@ -115,16 +81,19 @@ export const addCommand = defineJsonCommand({
       description: "Allow a plain HTTP source URL after explicitly accepting transport substitution risk.",
       default: false,
     },
+    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
+    // fail with UNKNOWN_FLAG. Installing a bundle is the trust decision: its
+    // env files are no longer scanned for process-hijacking keys.
     "allow-dangerous-env-keys": {
       type: "boolean",
-      description: "Allow reviewed process-hijacking env keys (e.g. LD_PRELOAD, PATH) in the installed bundle.",
+      description:
+        "Deprecated, no effect: add no longer scans env files for process-hijacking keys. Accepted through 0.10 for existing scripts.",
       default: false,
     },
   },
   async run({ args }) {
     const ref = args.ref.trim();
     const allowInsecureTransport = args["allow-insecure-transport"];
-    const allowDangerousKeys = args["allow-dangerous-env-keys"];
     if (args.before && args.after) throw new UsageError("Only one of --before or --after may be used.");
 
     // --provider → declarative bundle source (URL for git/website; bare
@@ -173,7 +142,7 @@ export const addCommand = defineJsonCommand({
       if (args.provider === "git" && result.added && result.entry?.name) {
         let updated: Awaited<ReturnType<typeof akmUpdate>>;
         try {
-          updated = await akmUpdate({ target: result.entry.name, allowDangerousEnvKeys: allowDangerousKeys });
+          updated = await akmUpdate({ target: result.entry.name });
         } catch (error) {
           removeStash(result.entry.name);
           throw error;
@@ -231,40 +200,6 @@ export const addCommand = defineJsonCommand({
         writable: args.writable === true,
       },
     });
-
-    // ── Post-install env key audit ──────────────────────────────────────────
-    // Resolve the stash root from the install result and scan any env files
-    // for dangerous env var keys.  When findings are present the install is
-    // gated: TTY → interactive confirmation prompt; non-TTY without
-    // --allow-dangerous-env-keys → hard failure (exit 1). Pass the dedicated
-    // flag to skip the prompt non-interactively.
-    const installedStashRoot =
-      result.installed?.stashRoot ??
-      (result.sourceAdded && "stashRoot" in result.sourceAdded ? result.sourceAdded.stashRoot : undefined);
-    if (installedStashRoot) {
-      // Use the canonical installed id (most reliably resolved by akmRemove) rather
-      // than the raw user-supplied ref which may not match after URL normalisation.
-      const rollbackTarget = result.installed?.id ?? result.sourceAdded?.stashRoot ?? ref;
-      // The audit RETURNS its decision; we decide the exit outcome here,
-      // OUTSIDE any catch, so the abort cannot be lost to a swallowed
-      // exception (C3). F4: `process.exitCode = …; return;` instead of
-      // `process.exit(...)` — the DANGEROUS_ENV_KEY error envelope has
-      // already been written to stderr by the audit itself (or is about to
-      // be), so an explicit `return` here (skipping the success `output("add",
-      // …)` below) is load-bearing, not merely cosmetic: it is what stops a
-      // blocked install from ALSO printing a success envelope.
-      const decision = await auditInstalledStashForDangerousKeys({
-        installedStashRoot,
-        ref,
-        allowDangerousKeys,
-        rollbackTarget,
-        isTTY: process.stdin.isTTY === true,
-      });
-      if (decision.blocked) {
-        process.exitCode = decision.exitCode;
-        return;
-      }
-    }
 
     output("add", result);
   },

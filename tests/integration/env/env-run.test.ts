@@ -17,7 +17,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { makeStashDir, type SandboxedDir } from "../../_helpers/sandbox";
+import { makeStashDir, type SandboxedDir, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -105,22 +105,50 @@ describe("env run", () => {
     expect(stdout.trim()).toBe("AAA:BBB|${HOME}");
   });
 
-  test("warns but injects when a first-party env file contains a hijack var", () => {
+  test("injects a hijack var from the primary stash with no block or warning (#1237)", () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
-    // EDITOR is on the dangerous-key list (RCE vector when sourced from an
-    // untrusted stash) but, unlike PATH, does not break command resolution —
-    // so this exercises the warn-and-inject path for a first-party stash.
-    fs.writeFileSync(path.join(stashDir, "env", "danger.env"), "EDITOR=/evil\nFOO=ok\n", "utf8");
+    fs.writeFileSync(path.join(stashDir, "env", "danger.env"), "GIT_SSH_COMMAND=/evil\nFOO=ok\n", "utf8");
 
     const { stdout, stderr, status } = spawnCli(
-      ["env", "run", "env/danger", "--", "bash", "-lc", "printf '%s' \"$FOO\""],
+      ["env", "run", "env/danger", "--", "bash", "-lc", 'printf \'%s|%s\' "$FOO" "$GIT_SSH_COMMAND"'],
       { AKM_BUNDLE_DIR: stashDir },
     );
 
     expect(status).toBe(0);
-    expect(stdout.trim()).toBe("ok");
-    expect(stderr).toContain("EDITOR");
+    expect(stdout.trim()).toBe("ok|/evil");
+    expect(stderr).not.toContain("process-hijacking");
+  });
+
+  test("injects a hijack var from a non-primary (installed) bundle with no block and no flag (#1237)", () => {
+    const primaryDir = makeStash();
+    const vendorDir = makeStash();
+    fs.mkdirSync(path.join(vendorDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(vendorDir, "env", "danger.env"), "GIT_SSH_COMMAND=/vendor\n", "utf8");
+    writeSandboxConfig({ bundles: { vendor: { path: vendorDir } } });
+
+    const { stdout, stderr, status } = spawnCli(
+      ["env", "run", "vendor//env/danger", "--", "bash", "-lc", 'printf "%s" "$GIT_SSH_COMMAND"'],
+      { AKM_BUNDLE_DIR: primaryDir },
+    );
+
+    expect(status).toBe(0);
+    expect(stdout.trim()).toBe("/vendor");
+    expect(stderr).not.toContain("Refusing to inject");
+  });
+
+  test("--allow-dangerous-env-keys is accepted as a deprecated no-op (#1237)", () => {
+    const stashDir = makeStash();
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "danger.env"), "GIT_SSH_COMMAND=/evil\n", "utf8");
+
+    const { stdout, status } = spawnCli(
+      ["env", "run", "env/danger", "--allow-dangerous-env-keys", "--", "bash", "-lc", 'printf "%s" "$GIT_SSH_COMMAND"'],
+      { AKM_BUNDLE_DIR: stashDir },
+    );
+
+    expect(status).toBe(0);
+    expect(stdout.trim()).toBe("/evil");
   });
 
   test("--only injects just the named keys", () => {

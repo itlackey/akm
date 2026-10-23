@@ -396,8 +396,8 @@ export interface UpdateSkippedItem {
   id: string;
   kind: SourceKind;
   /** Machine-readable per-bundle outcome for update --all. */
-  status?: "blocked" | "failed" | "skipped";
-  /** Stable AkmError code when the bundle was blocked or failed. */
+  status?: "failed" | "skipped";
+  /** Stable AkmError code when the bundle failed. */
   code?: string;
   reason: string;
 }

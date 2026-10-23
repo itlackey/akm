@@ -75,8 +75,8 @@ The built-in YouTube snapshot fetcher (`src/sources/snapshot-fetchers/youtube.ts
 and `<stash>/secrets/`. They are protected against other local users by
 filesystem permissions but are not encrypted at rest. Do not commit these
 files to source control. Normal `akm env` and `akm secret` output never echoes
-values; materialize values only at the command boundary with `akm env run`,
-`akm secret run`, or `akm secret path`.
+values; materialize values only at the command boundary with `akm env run`
+or `akm secret run`.
 
 The knowledge graph extracted from your assets (entities/relations) lives
 only in `$DATA/index.db` and is surfaced as aggregate counts via `akm health`

@@ -25,7 +25,6 @@ import { AkmError, ConfigError, NotFoundError, UsageError } from "../../core/err
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath, getRegistryCacheDir } from "../../core/paths";
 import { warn } from "../../core/warn";
-import { resolveGitContentRoot } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { akmIndex } from "../../indexer/indexer";
 import type { LockfileEntry } from "../../integrations/lockfile";
@@ -55,7 +54,6 @@ import type {
 import type { Database } from "../../storage/database";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
-import { auditStashForDangerousKeys } from "./dangerous-env-audit";
 import { removeInstalledRegistryEntry } from "./source-add";
 import { removeStash } from "./source-manage";
 
@@ -443,14 +441,11 @@ function incompleteFilesystemOutcome(id: string): UpdateSkippedItem {
 
 /**
  * A fetched update that is not live yet. Every remote update fetches into a
- * staging directory beside its cache, is audited there for dangerous env keys,
- * and only then is published: one rename for a read-only cache, a fast-forward
- * for a writable checkout. A blocked or failed update never touches the live
- * content, the lock, or the index.
+ * staging directory beside its cache and only then is published: one rename
+ * for a read-only cache, a fast-forward for a writable checkout. A failed
+ * update never touches the live content, the lock, or the index.
  */
 interface StagedUpdate {
-  /** The component root inside the staged candidate that the audit scans. */
-  auditRoot: string;
   publish(): void;
   cleanup(): void;
 }
@@ -467,18 +462,6 @@ function bundleComponent(config: AkmConfig, id: string): { root: string; writabl
   return { root: component?.root ?? ".", writable: component?.writable ?? bundle?.writable === true };
 }
 
-async function auditStagedUpdate(auditRoot: string, ref: string, allowDangerousEnvKeys: boolean): Promise<void> {
-  const decision = await auditStashForDangerousKeys({
-    stashRoot: auditRoot,
-    ref,
-    allowDangerousKeys: allowDangerousEnvKeys,
-    isTTY: process.stdin.isTTY === true,
-    operation: "update",
-    renderBlockedError: false,
-  });
-  if (decision.blocked) throw new NotFoundError(decision.error, decision.code);
-}
-
 function gitOrThrow(repoDir: string, args: string[]): string {
   const result = runGit(["-C", repoDir, ...args], { timeout: 120_000 });
   if (result.status !== 0) {
@@ -490,7 +473,7 @@ function gitOrThrow(repoDir: string, args: string[]): string {
 }
 
 /**
- * Publish an audited writable checkout: fast-forward the live checkout to
+ * Publish a staged writable checkout: fast-forward the live checkout to
  * exactly the staged commit. Git refuses a non-fast-forward or a merge that
  * would overwrite local work, and changes nothing in that case.
  */
@@ -528,8 +511,8 @@ async function stageManagedUpdate(
 
   if (managed.writable && managed.localRoot) {
     // A writable install is a checkout that may carry local commits: the
-    // provider fast-forwards a copy, the copy is audited, and the live
-    // checkout is then fast-forwarded to exactly the audited commit.
+    // provider fast-forwards a copy, and the live checkout is then
+    // fast-forwarded to exactly that fetched commit.
     const topLevel = runGit(["-C", managed.localRoot, "rev-parse", "--show-toplevel"]);
     if (topLevel.status !== 0 || !topLevel.stdout.trim()) {
       throw new UsageError(`Writable Git install at ${managed.localRoot} is not a checkout; refusing to update it.`);
@@ -552,7 +535,6 @@ async function stageManagedUpdate(
       return {
         synced: { ...fetched, contentDir: managed.localRoot, cacheDir: liveRepo, extractedDir: liveRepo },
         staged: {
-          auditRoot: path.resolve(fetched.contentDir, managed.componentRoot),
           publish: () => fastForwardCheckout(liveRepo, stagedRepo),
           cleanup: () => cleanupDirectoryBestEffort(stagingParent, "bundle update"),
         },
@@ -568,7 +550,7 @@ async function stageManagedUpdate(
     const synced = await syncFromRef(managed.ref, { force, writable: managed.writable });
     return {
       synced,
-      staged: { auditRoot: path.resolve(synced.contentDir, managed.componentRoot), publish() {}, cleanup() {} },
+      staged: { publish() {}, cleanup() {} },
     };
   }
 
@@ -591,7 +573,6 @@ async function stageManagedUpdate(
         extractedDir: toLive(fetched.extractedDir),
       },
       staged: {
-        auditRoot: path.resolve(fetched.contentDir, managed.componentRoot),
         publish: () => replaceDirectory(fetched.cacheDir, liveCacheDir),
         cleanup: () => cleanupDirectoryBestEffort(stagingParent, "bundle update"),
       },
@@ -602,12 +583,11 @@ async function stageManagedUpdate(
   }
 }
 
-/** Fetch a plain git source into staging, audit it, publish it, and reindex. */
+/** Fetch a plain git source into staging, publish it, and reindex. */
 async function syncGitPlainSource(
   config: AkmConfig,
   gitSource: ConfiguredSource,
   stashDir: string,
-  allowDangerousEnvKeys: boolean,
 ): Promise<{ item: UpdatePlainSyncedItem; index: IndexResult }> {
   const id = gitSource.name ?? gitSource.url ?? "";
   const ref = gitSource.url ?? "";
@@ -619,7 +599,7 @@ async function syncGitPlainSource(
   try {
     const stagedPaths = getCachePaths(canonicalUrl, stagingParent);
     // A writable mirror may carry local commits: pull into a copy, then
-    // fast-forward the live checkout once the copy passes the audit.
+    // fast-forward the live checkout to it.
     const liveCheckout = component.writable && fs.existsSync(livePaths.repoDir);
     if (liveCheckout) fs.cpSync(livePaths.rootDir, stagedPaths.rootDir, { recursive: true, preserveTimestamps: true });
     await syncMirroredRepo(gitSource, {
@@ -630,11 +610,6 @@ async function syncGitPlainSource(
         ? { credential: resolveSecret(gitSource.credential, storeSecretResolver.resolveSecret) }
         : {}),
     });
-    await auditStagedUpdate(
-      path.resolve(resolveGitContentRoot(stagedPaths.repoDir), component.root),
-      ref,
-      allowDangerousEnvKeys,
-    );
     const index = await publishAndIndex(stashDir, () => {
       if (liveCheckout) fastForwardCheckout(livePaths.repoDir, stagedPaths.repoDir);
       else replaceDirectory(stagedPaths.rootDir, livePaths.rootDir);
@@ -649,7 +624,7 @@ async function syncGitPlainSource(
  * Re-crawl a website source and reindex. The website provider already builds
  * its snapshot in a staging directory and swaps it in, so a killed refresh
  * keeps the previous mirror; a snapshot holds only knowledge pages, so there
- * is no env file to audit.
+ * is no env file in it.
  */
 async function syncWebsitePlainSource(
   websiteSource: ConfiguredSource,
@@ -672,9 +647,8 @@ async function updateGitSource(
   target: string,
   all: boolean,
   gitSource: ConfiguredSource,
-  allowDangerousEnvKeys: boolean,
 ): Promise<UpdateResponse> {
-  const synced = await syncGitPlainSource(config, gitSource, stashDir, allowDangerousEnvKeys);
+  const synced = await syncGitPlainSource(config, gitSource, stashDir);
   return buildUpdateResponse(stashDir, target, all, [], { plainSynced: [synced.item], index: synced.index });
 }
 
@@ -740,7 +714,7 @@ function managedInstallViewOfPlainNpm(config: AkmConfig, npmSource: ConfiguredSo
 
 /**
  * Sync a single registry-managed install and return the processed record:
- * fetch into staging, audit, publish, write its lock entry, reindex.
+ * fetch into staging, publish, write its lock entry, reindex.
  *
  * Read-only installs are keyed by resolved revision, so every upstream change
  * resolves a new content directory, and the previous one is deleted once the
@@ -752,12 +726,9 @@ async function updateManagedInstall(
   managed: ManagedInstall,
   force: boolean,
   stashDir: string,
-  allowDangerousEnvKeys: boolean,
 ): Promise<{ item: UpdateResultItem; index: IndexResult }> {
   const { synced, staged } = await stageManagedUpdate(managed, force);
   try {
-    await auditStagedUpdate(staged.auditRoot, managed.ref, allowDangerousEnvKeys);
-
     const installedEntry: InstalledBundle = {
       id: managed.installId,
       // Preserve the original source classification. syncFromRef() re-derives the
@@ -859,14 +830,11 @@ export async function akmUpdate(input?: {
   all?: boolean;
   force?: boolean;
   stashDir?: string;
-  /** Explicitly permit staged dangerous environment keys after warning. */
-  allowDangerousEnvKeys?: boolean;
 }): Promise<UpdateResponse> {
   const stashDir = input?.stashDir ?? resolveStashDir();
   const target = input?.target?.trim();
   const all = input?.all === true;
   const force = input?.force === true;
-  const allowDangerousEnvKeys = input?.allowDangerousEnvKeys === true;
   const config = loadConfig();
   const managedInstalls = listManagedInstalls(config);
 
@@ -874,7 +842,7 @@ export async function akmUpdate(input?: {
     // Registry-managed install (lock-backed) — re-download from its locator.
     const managed = resolveManagedTarget(config, target);
     if (managed) {
-      const updated = await updateManagedInstall(managed, force, stashDir, allowDangerousEnvKeys);
+      const updated = await updateManagedInstall(managed, force, stashDir);
       return buildUpdateResponse(stashDir, target, all, [updated.item], { index: updated.index });
     }
 
@@ -897,7 +865,7 @@ export async function akmUpdate(input?: {
       }
       return false;
     });
-    if (gitMatch) return updateGitSource(config, stashDir, target, all, gitMatch, allowDangerousEnvKeys);
+    if (gitMatch) return updateGitSource(config, stashDir, target, all, gitMatch);
 
     const websiteMatch = stashes.find((s) => {
       if (s.type !== "website") return false;
@@ -919,12 +887,7 @@ export async function akmUpdate(input?: {
       return false;
     });
     if (npmMatch) {
-      const updated = await updateManagedInstall(
-        managedInstallViewOfPlainNpm(config, npmMatch),
-        force,
-        stashDir,
-        allowDangerousEnvKeys,
-      );
+      const updated = await updateManagedInstall(managedInstallViewOfPlainNpm(config, npmMatch), force, stashDir);
       return buildUpdateResponse(stashDir, target, all, [updated.item], { index: updated.index });
     }
 
@@ -946,7 +909,7 @@ export async function akmUpdate(input?: {
   let latestIndex: IndexResult | undefined;
   for (const managed of selected) {
     try {
-      const updated = await updateManagedInstall(managed, force, stashDir, allowDangerousEnvKeys);
+      const updated = await updateManagedInstall(managed, force, stashDir);
       processed.push(updated.item);
       latestIndex = updated.index;
     } catch (error) {
@@ -972,16 +935,11 @@ export async function akmUpdate(input?: {
       const id = plain.name ?? plain.path ?? plain.url ?? "";
       try {
         if (plain.type === "git") {
-          const updated = await syncGitPlainSource(config, plain, stashDir, allowDangerousEnvKeys);
+          const updated = await syncGitPlainSource(config, plain, stashDir);
           plainSynced.push(updated.item);
           latestIndex = updated.index;
         } else if (plain.type === "npm") {
-          const updated = await updateManagedInstall(
-            managedInstallViewOfPlainNpm(config, plain),
-            force,
-            stashDir,
-            allowDangerousEnvKeys,
-          );
+          const updated = await updateManagedInstall(managedInstallViewOfPlainNpm(config, plain), force, stashDir);
           processed.push(updated.item);
           latestIndex = updated.index;
         } else if (plain.type === "website") {
@@ -1039,14 +997,13 @@ function sourceKindForInstall(source: InstallKind): SourceKind {
 
 function updateFailureOutcome(id: string, kind: SourceKind, error: unknown): UpdateSkippedItem {
   const code = error instanceof AkmError ? error.code : undefined;
-  const status = code === "DANGEROUS_ENV_KEY" || code === "DANGEROUS_ENV_AUDIT_FAILED" ? "blocked" : "failed";
   const message = error instanceof Error ? error.message : String(error);
   return {
     id,
     kind,
-    status,
+    status: "failed",
     ...(code ? { code } : {}),
-    reason: `${status}: ${message}`,
+    reason: `failed: ${message}`,
   };
 }
 
