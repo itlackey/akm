@@ -189,7 +189,7 @@ akm workflow run workflows/ship-release --version=1.2.3  # Start and execute wit
 akm workflow run <run-id> --max-retries 2 --timeout 10m  # Resume with invocation-wide controls
 akm workflow status <run-id>                 # Show the exact run by id
 akm workflow resume <run-id>                 # Resume a blocked or failed run
-akm workflow list                            # List workflow runs in the current scope
+akm workflow list                            # List workflow runs on this host
 ```
 
 ## Clone

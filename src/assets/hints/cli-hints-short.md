@@ -15,9 +15,8 @@ For workflow tasks:
 2. `akm workflow run workflows/<name> --param_name=value` — execute every step and verification gate
 3. `akm workflow status <run-id> --units` — inspect a stopped or failed run
 
-Workflow runs are scoped to your current project/worktree/directory. Ref-based
-commands like `workflow run workflows/<name>`, `workflow status workflows/<name>`,
-and `workflow list` operate within the current scope only.
+A workflow ref (`workflows/<name>`) starts a new run; a run id drives that exact
+run. `workflow list` and `workflow status` see every run on this host.
 
 ## Quick Reference
 
