@@ -86,12 +86,14 @@ Where the token may appear decides what it may name:
   naming any other kind of asset is rejected when the config loads.
 
 The ref is resolved with the one ref walk, so it may name any bundle and any
-asset its owner holds: a bundle-qualified body such as `${docs//tables/customers}`
-is a ref whatever adapter owns it, while an unqualified body is a ref only when
-it leads with a native type directory (`${secrets/x}`, `${scripts/run.sh}`). `akm env
+asset its owner holds. A `${...}` body is a ref when it leads with a native type
+directory, qualified or not (`${secrets/x}`, `${scripts/run.sh}`,
+`${team//secrets/x}`), or when it is bundle-qualified and that bundle is
+installed (`${docs//tables/customers}`, whatever adapter owns it). `akm env
 run` and a workflow unit's `env:` binding replace the tokens in an env file's
 values; `env export` writes them verbatim. A `${...}` body that is not an akm
-ref (`${HOME}`, `${PATH//:/ }`) is plain text: it is left untouched in an env
+ref (`${HOME}`, `${PATH//:/ }`, and shell substitution such as `${v//-/_}`
+unless a bundle named `v` is installed) is plain text: it is left untouched in an env
 value, and in a config credential a `${NAME}` that is a valid variable name is
 expanded from the process environment. A ref no bundle owns is an error and
 nothing is injected. Each read records an `env_access` event. See

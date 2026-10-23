@@ -19,8 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   walk as every other ref (#1238). `${docs//tables/customers}` (an OKF bundle)
   or `${team//release}` (a workflow bundle) used to be left as literal text with
   nothing reported missing, because only refs led by a native type directory
-  were recognised. They now resolve, and an unresolved one is an error. An
-  unqualified body that is not led by a native type (`${HOME}`) is still text.
+  were recognised. They now resolve, and an unresolved one is an error. A
+  qualified body is a ref when its bundle is installed or it leads with a native
+  type; anything else, such as `${HOME}` or shell substitution like
+  `${v//-/_}`, stays text.
 - `akm env list` and `akm secret list` now show an env or secret file that is a
   symlink to a file (#1237). They could be read and searched but were missing
   from their own list. Symlinks to directories are still not followed.
