@@ -22,9 +22,8 @@
  * document fails closed with `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming
  * `akm migrate apply`, which converts it). That parser owns the closed key sets,
  * the executable-selector XOR, hostile YAML policy, the `akm/command`
- * builtin, bounds, and physical `working-directory` containment. The
- * adapter only translates a parser failure into the format-family
- * diagnostic shape.
+ * builtin, and bounds. The adapter only translates a parser failure into
+ * the format-family diagnostic shape.
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/akm-task/` + goldens
