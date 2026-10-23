@@ -38,7 +38,7 @@ function deriveName(ctx: RenderContext): string {
 }
 
 function loadPlan(ctx: RenderContext): WorkflowPlan {
-  const result = compileWorkflowSource(ctx.content(), { path: ctx.relPath, workspaceRoot: ctx.stashRoot });
+  const result = compileWorkflowSource(ctx.content(), { path: ctx.relPath });
   if (result.ok) return result.plan;
   const summary = result.errors.map((e) => `${e.path}:${e.line} — ${e.message}`).join("\n");
   throw new UsageError(`Workflow has errors:\n${summary}`);

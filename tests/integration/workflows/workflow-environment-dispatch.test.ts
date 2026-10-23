@@ -44,22 +44,9 @@ function write(root: string, relative: string, bytes: string): string {
   return file;
 }
 
-/** What freeze writes today. Dispatch reads only `ref`; the rest is left stale on purpose. */
+/** What freeze writes: the bundle-qualified ref and its precedence. */
 function envRef(ref: string, precedence = 0): FrozenWorkflowEnvironmentBinding {
-  return {
-    kind: "env-ref",
-    ref,
-    owner: {
-      bundle: "gone",
-      adapter: "akm",
-      requestedRoot: "/gone",
-      requestedPath: "/gone/env/x.env",
-      relativePath: "env/x.env",
-    },
-    keys: ["FROZEN_ONLY"],
-    secretNames: ["frozen-only"],
-    precedence,
-  };
+  return { kind: "env-ref", ref, precedence };
 }
 
 describe("materializing a frozen environment at dispatch", () => {

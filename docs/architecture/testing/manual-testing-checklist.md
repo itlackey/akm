@@ -1770,8 +1770,8 @@ Failure taxonomy — each reason, and whether `retry.on` may name it:
 - [ ] **LOCAL** Wall-clock expiry is `timeout`; run cancellation is `aborted`; a
       missing binary or unusable working directory is `spawn_failed`. All three
       are retryable via `retry.on`.
-- [ ] **LOCAL** `exec_output_limit`, `exec_context_too_large`, `exec_cwd_escape`
-      and `exec_capture_incomplete` are **rejected** in a `retry.on` list —
+- [ ] **LOCAL** `exec_output_limit`, `exec_context_too_large` and
+      `exec_capture_incomplete` are **rejected** in a `retry.on` list —
       each is deterministic, an authoring problem, or work that already ran.
 - [ ] **LOCAL** On timeout or cancellation the child's whole **process group**
       takes the SIGTERM→SIGKILL ladder; no orphaned grandchildren survive.
@@ -1812,12 +1812,12 @@ Environment scope and context:
 
 `cwd`:
 
-- [ ] **LOCAL** `cwd` is relative and contained: absolute paths, drive letters,
-      `~`, and `..` **segments** are rejected by the parser *and* the
-      frozen-plan decoder, and containment is re-checked against the resolved
-      base (symlinks included) immediately before the spawn.
-- [ ] **LOCAL** A directory whose *name* merely begins with dots (`..data`) is a
-      legal contained `cwd` and must **not** fail `exec_cwd_escape`.
+- [ ] **LOCAL** `cwd` joins the root of the bundle that owns the workflow
+      exactly once (`cwd: sub` runs in `<bundle>/sub`) and may be absolute or
+      carry a `${ref}` token; the only static check is a non-empty string.
+- [ ] **LOCAL** After `akm bundle update` moves the workflow's bundle to a new
+      revision directory between two steps of a running workflow, the next step
+      runs from the new directory and the run completes.
 
 Gates, retry, and reuse:
 

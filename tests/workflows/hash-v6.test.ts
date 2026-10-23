@@ -210,16 +210,6 @@ function buildOrdinaryShellTarget(options: { inputBindings?: readonly TaskInputB
     kind: "shell",
     contentHash: "s".repeat(64),
     exec: { command: ["/bin/sh", "-c", "echo hi"], timeoutMs: 60_000 },
-    cwdIdentity: {
-      requestedRoot: "/stash",
-      realRoot: "/stash",
-      rootDevice: "1",
-      rootInode: "1",
-      requestedCwd: "/stash",
-      realCwd: "/stash",
-      cwdDevice: "1",
-      cwdInode: "1",
-    },
     ...(options.inputBindings ? { inputBindings: options.inputBindings } : {}),
   };
 }

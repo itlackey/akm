@@ -1123,7 +1123,7 @@ content (`request.command.content`, `request.persona`, `request.conversation`,
 `request.runtime.environment`), a script's `bytesBase64`, or any credential —
 only binding *shapes* (`inputBindings[].name`/`.kind`, a literal's `.value`,
 a reference's `.from`), environment binding *names* (`environment[].kind`/
-`.name`, an `env-ref`'s `.ref`/`.keys`/`.secretNames`), and engine *names*
+`.name`, an `env-ref`'s `.ref`), and engine *names*
 (`gate.judgeEngine`).
 
 #### workflow resume

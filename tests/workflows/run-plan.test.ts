@@ -26,6 +26,58 @@ steps:
 Do the work.
 `);
 
+const execPlan = freezeWorkflow(`---
+type: workflow
+steps:
+  - id: build
+    unit:
+      exec:
+        command: [bun, run, build]
+---
+
+## build
+
+Build.
+`);
+
+interface ExecPlanJson {
+  irVersion: number;
+  steps: Array<{ root: { frozenTarget: Record<string, unknown>; environment: unknown[] } }>;
+}
+
+/** What 0.10 pre-releases froze for an exec step: physical locations beside the identities. */
+function irVersion6ExecPlan(): ExecPlanJson {
+  const raw = JSON.parse(canonicalPlanJson(execPlan)) as ExecPlanJson;
+  const unit = raw.steps[0]!.root;
+  unit.frozenTarget.cwdIdentity = {
+    requestedRoot: "/gone/rev1",
+    realRoot: "/gone/rev1",
+    rootDevice: "7",
+    rootInode: "100",
+    requestedCwd: "/gone/rev1",
+    realCwd: "/gone/rev1",
+    cwdDevice: "7",
+    cwdInode: "100",
+  };
+  unit.environment = [
+    {
+      kind: "env-ref",
+      ref: "team//env/prod",
+      owner: {
+        bundle: "team",
+        adapter: "dotenv",
+        requestedRoot: "/gone/rev1",
+        requestedPath: "/gone/rev1/env/prod.env",
+        relativePath: "env/prod.env",
+      },
+      keys: ["TOKEN"],
+      secretNames: ["secrets/token"],
+      precedence: 0,
+    },
+  ];
+  return { ...raw, irVersion: 6 };
+}
+
 describe("readRunPlan — an older plan runs", () => {
   test("a decodable plan is read whatever irVersion the row and the plan itself record", () => {
     for (const version of [null, 3, 4, 5, 111]) {
@@ -86,6 +138,27 @@ describe("readRunPlan — an older plan runs", () => {
   });
 });
 
+describe("readRunPlan — frozen identities, never locations", () => {
+  test("an irVersion 6 plan decodes and its frozen locations are ignored", () => {
+    const read = readRunPlan({ id: "v6-run", plan_json: JSON.stringify(irVersion6ExecPlan()), plan_ir_version: 6 });
+    if (!read.ok) throw new Error(read.problem);
+    const unit = read.plan.steps[0]?.root;
+    if (!unit || unit.kind !== "unit") throw new Error("expected a unit");
+    expect(Object.hasOwn(unit.frozenTarget, "cwdIdentity")).toBe(false);
+    expect(unit.environment).toEqual([{ kind: "env-ref", ref: "team//env/prod", precedence: 0 }]);
+  });
+
+  test("a plan that never recorded a location decodes", () => {
+    const raw = irVersion6ExecPlan();
+    const unit = raw.steps[0]!.root;
+    delete unit.frozenTarget.cwdIdentity;
+    unit.environment = [{ kind: "env-ref", ref: "team//env/prod", precedence: 0 }];
+    const read = readRunPlan({ id: "v7-run", plan_json: JSON.stringify({ ...raw, irVersion: 7 }), plan_ir_version: 7 });
+    if (!read.ok) throw new Error(read.problem);
+    expect(read.plan.irVersion).toBe(7);
+  });
+});
+
 describe("readRunPlan — an undecodable plan is a problem, not an exception", () => {
   test("invalid JSON names the run", () => {
     const read = readRunPlan({ id: "corrupt-run", plan_json: "{not json", plan_ir_version: 5 });
@@ -108,11 +181,11 @@ describe("readRunPlan — an undecodable plan is a problem, not an exception", (
   });
 
   test("a newer akm's plan that does not decode names upgrading akm as the remedy", () => {
-    const read = readRunPlan({ id: "future-run", plan_json: '{"irVersion":7,"novel":true}', plan_ir_version: 7 });
+    const read = readRunPlan({ id: "future-run", plan_json: '{"irVersion":8,"novel":true}', plan_ir_version: 8 });
     expect(read.ok).toBe(false);
     if (read.ok) return;
     expect(read.newer).toBe(true);
-    expect(read.problem).toContain("frozen by a newer akm (plan irVersion 7)");
+    expect(read.problem).toContain("frozen by a newer akm (plan irVersion 8)");
     expect(read.problem).toContain("Upgrade akm");
   });
 });

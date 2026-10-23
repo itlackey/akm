@@ -515,7 +515,7 @@ steps:
     unit:
       exec:
         command: ["bun", "run", "test:unit"]
-        cwd: packages/core        # optional, relative
+        cwd: packages/core        # optional: relative to the workflow's bundle root, or absolute
       timeout: "10m"
       retry: { max: 1, on: [timeout] }
 ```
@@ -554,11 +554,42 @@ Bounds: 1–64 argv entries, each a non-empty string of at most 4096 bytes.
 
 ### `cwd`
 
-Optional and **relative**. It resolves inside the unit's working directory —
-the engine invocation's working directory. Absolute paths, Windows drive
-letters, `~`, and `..` segments are rejected by the parser *and* by the
-frozen-plan decoder, and containment is re-checked against the *resolved* base
-(symlinks included) immediately before the command is spawned.
+Optional: a non-empty string, **relative or absolute**. That is the only static
+check; there is no containment.
+
+An exec unit's working directory is the **root of the bundle that owns the
+workflow**. akm finds that bundle again for each step, by the run's workflow
+ref, so a `bundle update` that moves the bundle to a new revision directory
+between two steps of a running workflow is harmless: the next step runs from
+the new directory. `cwd` is joined onto that root **once**: `cwd: sub` runs in
+`<bundle>/sub`, and an absolute `cwd` replaces the root. Agent and SDK units
+get the same directory as their workspace. If the workflow's bundle no longer
+resolves, the step fails with a message naming the ref; akm never falls back to
+its own working directory.
+
+### The exec contract
+
+What a command can rely on, in one place. The sections below give each point in
+full.
+
+| | |
+| --- | --- |
+| **Working directory** | The owner root of the run's workflow, found at each step's dispatch. `cwd` joins it once and may be absolute. |
+| **Argv** | Spawned directly, never shell-interpreted. |
+| **Environment** | Starts empty: the [default allowlist](#the-childs-environment-is-an-allowlist) plus `pass_env`, then the unit's `env:` bindings, then the engine's `AKM_*` [context](#context-reaching-the-command). |
+| **Redaction** | Only values substituted from `secrets/` refs, engine credentials and unsafe passthrough values are scrubbed from stdout, stderr, diagnostics and the journal. Configuration, such as a URL bound through an env asset, is not. |
+
+#### What is frozen, and what is found at dispatch
+
+The frozen plan records the identities the engine itself dereferences: the
+workflow ref, each unit's `env:` refs qualified with their bundle
+(`team//env/prod`), and child workflow refs, plus the argv, `cwd` and
+`pass_env` names as authored. It records no directory or file location. The
+bundle root, the env files, the secrets and the paths behind `${ref}` tokens are
+all looked up when the unit dispatches, through the same ref lookup `akm show`
+uses. Plans frozen by earlier releases (`irVersion` 5 and 6) also carry a frozen
+`cwdIdentity` and the env asset's owner paths; they decode, those fields are
+ignored, and such a run dispatches by ref like any other.
 
 ### The output rule
 
@@ -623,13 +654,12 @@ failure reason.
 | non-zero exit | `non_zero_exit` | yes |
 | exceeded `timeout` | `timeout` | yes |
 | run cancelled (`Ctrl-C`, `--timeout`, budget) | `aborted` | yes |
-| binary missing / working directory unusable | `spawn_failed` | yes |
+| binary missing / working directory missing | `spawn_failed` | yes |
 | **stdout** capture never completed | `exec_capture_incomplete` | **no** (the command already ran) |
 | **stderr** capture never completed | — (unit succeeds; a warning says the stderr tail may be missing) | — |
 | stdout past the retention limit, **and** the unit declares `output:` | `exec_output_limit` | **no** (deterministic) |
 | stdout past the retention limit, no `output:` schema | — (unit succeeds; artifact marked truncated) | — |
 | `AKM_*` context too large for **this platform** to spawn | `exec_context_too_large` | **no** (an authoring/data problem) |
-| `cwd` resolved outside its base | `exec_cwd_escape` | **no** (tampering, never transient) |
 
 `non_zero_exit` in `retry.on` re-runs a command that already ran, and a
 command's exit is usually deterministic, so the retry mostly repeats the
@@ -874,10 +904,11 @@ env asset:
 #### Durable v4 (`irVersion: 5`) forbids `inherit_env`
 
 Every new workflow start freezes the durable plan v4 family's current
-executable format, `irVersion: 5`. It rejects `inherit_env: true` and any other
-request for whole-process inheritance; use exact named environment bindings
-and `pass_env:` instead. Both mechanisms are dispatch-significant, keep the
-visible environment surface bounded, and form part of the unit's input hash.
+executable format (`irVersion: 7`; 5 and 6 still decode). It rejects
+`inherit_env: true` and any other request for whole-process inheritance; use
+exact named environment bindings and `pass_env:` instead. Both mechanisms are
+dispatch-significant, keep the visible environment surface bounded, and form
+part of the unit's input hash.
 
 The historical `inherit_env` spelling is unsupported.
 

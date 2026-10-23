@@ -176,7 +176,7 @@ describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", 
     const fields = childWorkflowFields(target);
     expect(fields.ref).toMatch(/\/\/workflows\/child$/);
     expect(fields.planHash).toBe(expectedChildPlanHash);
-    expect(fields.frozenPlanIrVersion).toBe(6);
+    expect(fields.frozenPlanIrVersion).toBe(7);
   });
 
   test("B-08: with: on the direct step naming a declared child param freezes as an inputBindings entry", async () => {

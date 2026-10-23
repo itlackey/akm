@@ -14,7 +14,6 @@ import path from "node:path";
 import { parseWorkflow } from "./parser";
 import type { WorkflowError, WorkflowPlan, WorkflowPlanStep } from "./plan";
 import { formatReference, parseReference } from "./program/expressions";
-import { canonicalizeWorkflowWorkingDirectory, WorkflowSourceSemanticError } from "./source-semantics";
 
 export interface WorkflowSourceError {
   code: string;
@@ -28,8 +27,6 @@ export type WorkflowCompileResult = { ok: true; plan: WorkflowPlan } | { ok: fal
 
 export interface CompileWorkflowSourceOptions {
   path: string;
-  /** Verifies `cwd:`/`working-directory:` physically stay inside this root when given. */
-  workspaceRoot?: string;
   /** Plan title; defaults to the file's basename. */
   title?: string;
 }
@@ -51,19 +48,7 @@ export function compileWorkflowSource(source: string, options: CompileWorkflowSo
       ],
     };
   }
-  const parsed = parseWorkflow(source, {
-    path: options.path,
-    title,
-    validateExecCwd: (value) => {
-      try {
-        return { ok: true, value: canonicalizeWorkflowWorkingDirectory(value, options.workspaceRoot) };
-      } catch (cause) {
-        if (cause instanceof WorkflowSourceSemanticError)
-          return { ok: false, code: cause.code, message: cause.message };
-        return { ok: false, code: "working-directory-unverifiable", message: "cwd cannot be physically verified." };
-      }
-    },
-  });
+  const parsed = parseWorkflow(source, { path: options.path, title });
   if (parsed.ok) return parsed;
   return {
     ok: false,

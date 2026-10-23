@@ -30,6 +30,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The warning for a credential-shaped task `env:` value no longer tells you to
   use an `env:` binding, which tasks do not have. It now points to
   `akm secret run` or `akm env run` in the task's `run:` (#1237).
+- A `bundle update` while a workflow is running no longer fails the run (#1238,
+  #1235). A running workflow used to remember the directory it was started in, so
+  once the update moved the bundle to a new revision directory, the next step
+  failed with `PATH_ESCAPE_VIOLATION` and the only remedy was `abandon`. The
+  run now finds its bundle again at each step and carries on from the new
+  directory.
+- `exec.cwd` is applied once (#1238). `cwd: sub` used to run in `<bundle>/sub/sub`.
+  It now runs in `<bundle>/sub`.
 
 ### Changed
 
@@ -121,6 +129,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm workflow create` no longer indexes the new workflow, and a new run no longer
   records an index entry id (#1239).
 
+- A workflow plan records the refs it uses and no locations (#1238). New runs
+  freeze plan `irVersion` 7, which holds no bundle directory, no directory
+  identity and, for each `env:` ref, only its bundle-qualified ref: the env
+  file, its keys and the secrets it names are read at each step. Runs frozen
+  by earlier releases (`irVersion` 5 and 6) carry those fields, which are now
+  ignored, and continue the same way. `akm workflow plan` lists an env ref
+  without its `keys` and `secretNames`.
+- A workflow's exec units and agents work in the root of the bundle that holds
+  the workflow, found at each step, and `exec.cwd` is joined onto it (#1238).
+  `exec.cwd` may now be absolute, and it is no longer required to stay inside the
+  bundle: a command can reach any directory anyway. A step whose workflow no
+  longer resolves to a bundle fails naming the workflow instead of running in
+  akm's own working directory.
+
 ### Deprecated
 
 - `secret://name` in config is retired in favour of `${secrets/name}` (#1238). A
@@ -141,6 +163,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bundle installation (#1237).
 - `akm show` no longer reports an `activeRun` field. Run state is under
   `akm workflow` (#1239).
+- The `exec_cwd_escape` failure reason and the checks behind it: the parser, the
+  compiler and the exec runner no longer reject an `exec.cwd` that leaves the
+  workflow's bundle (#1238).
 
 ## [0.10.261012] - 2026-10-22
 

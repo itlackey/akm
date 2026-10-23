@@ -382,24 +382,6 @@ export function isChmodUnsupported(error: unknown): boolean {
   return hasErrnoCode(error, "EPERM") || hasErrnoCode(error, "ENOTSUP") || hasErrnoCode(error, "EINVAL");
 }
 
-/**
- * True when `value` is a RELATIVE path that cannot leave its base directory:
- * no absolute form (POSIX `/`, Windows `\` or a `C:` drive prefix), no `~`
- * home expansion, and no `..` segment under either separator.
- *
- * This is the SYNTACTIC half of containment — cheap, string-only, usable at
- * authoring time before any directory exists. It is deliberately paired with
- * (never a substitute for) {@link isWithin}, which resolves symlinks against a
- * real base at use time. Workflow `exec` units run both: the parser and the
- * frozen-plan decoder reject uncontained spellings, and the executor re-checks
- * the resolved path before spawning.
- */
-export function isContainedRelativePath(value: string): boolean {
-  if (value === "" || value.startsWith("/") || value.startsWith("\\") || value.startsWith("~")) return false;
-  if (/^[A-Za-z]:/.test(value)) return false;
-  return !value.split(/[/\\]+/).includes("..");
-}
-
 export function isWithin(candidate: string, root: string): boolean {
   return isContainedResolvedPath(safeRealpath(candidate), safeRealpath(root));
 }
@@ -426,17 +408,7 @@ export function isAkmRegistryCachePath(filePath: string): boolean {
 }
 
 /**
- * {@link isWithin} for callers that must not block the event loop (e.g. the
- * workflow exec dispatch path, which runs once per fan-out unit). Same
- * comparison, same normalization, same nearest-existing-ancestor fallback —
- * only the realpath syscalls are awaited.
- */
-export async function isWithinAsync(candidate: string, root: string): Promise<boolean> {
-  return isContainedResolvedPath(await safeRealpathAsync(candidate), await safeRealpathAsync(root));
-}
-
-/**
- * The containment comparison shared by {@link isWithin} and {@link isWithinAsync}.
+ * The containment comparison behind {@link isWithin}.
  * Called directly with `path.resolve`d arguments it is a lexical check: it
  * refuses `..` and absolute names without following symlinks.
  */
@@ -481,28 +453,6 @@ export function safeRealpath(p: string): string {
       try {
         const realParent = fs.realpathSync(current);
         return path.join(realParent, ...suffix);
-      } catch {
-        // parent also doesn't exist; keep walking up
-      }
-    }
-  }
-}
-
-/** {@link safeRealpath}'s async twin — awaited syscalls, identical walk-up. */
-export async function safeRealpathAsync(p: string): Promise<string> {
-  const resolved = path.resolve(p);
-  try {
-    return await fs.promises.realpath(resolved);
-  } catch {
-    const suffix: string[] = [];
-    let current = resolved;
-    for (;;) {
-      const parent = path.dirname(current);
-      if (parent === current) return resolved;
-      suffix.unshift(path.basename(current));
-      current = parent;
-      try {
-        return path.join(await fs.promises.realpath(current), ...suffix);
       } catch {
         // parent also doesn't exist; keep walking up
       }

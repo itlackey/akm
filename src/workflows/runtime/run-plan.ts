@@ -8,9 +8,10 @@
  *
  * {@link decodeWorkflowPlan} accepts every plan shape a release at or above
  * the 0.9.15 floor has stored — irVersion 5 (with its `sourceReadSet` and
- * host-identity fields, which 0.9.15 and 0.9.16 wrote) as well as the current
- * one — and keeps keys it does not know rather than
- * refusing them. It rejects only a plan it cannot run: no steps, a unit with
+ * host-identity fields, which 0.9.15 and 0.9.16 wrote) and irVersion 6 (with
+ * its frozen `cwdIdentity` and env owner paths, which are read and dropped:
+ * dispatch finds the bundle and the env asset by ref) as well as the current
+ * one — and keeps keys it does not know rather than refusing them. It rejects only a plan it cannot run: no steps, a unit with
  * no frozen target, a request that does not decode. `plan_ir_version` and
  * `plan_hash` are informational columns: neither gates execution. A plan that
  * cannot be decoded comes back from {@link readRunPlan} as a `problem`
@@ -27,9 +28,7 @@ import { decodeFrozenRunnerSpec, type RunnerSpec } from "../../integrations/agen
 import type { WorkflowRunRow } from "../../storage/repositories/workflow-runs-repository";
 import {
   type FrozenWorkflowCommandTarget,
-  type FrozenWorkflowDirectoryIdentity,
   type FrozenWorkflowEnvironmentBinding,
-  type FrozenWorkflowEnvironmentOwner,
   type FrozenWorkflowTarget,
   WORKFLOW_PLAN_VERSION,
   type WorkflowExecNode,
@@ -209,7 +208,6 @@ function decodeTarget(value: unknown, label: string): FrozenWorkflowTarget {
         kind: "shell",
         contentHash: string(target.contentHash, `${label} contentHash`),
         exec: decodeExec(target.exec, label),
-        cwdIdentity: record(target.cwdIdentity, `${label} cwdIdentity`) as unknown as FrozenWorkflowDirectoryIdentity,
         ...optional,
       };
     case "child-workflow":
@@ -246,9 +244,6 @@ function decodeCommandTarget(target: Record<string, unknown>, label: string): Fr
     request,
     runner,
     ...(concurrency !== undefined ? { concurrency } : {}),
-    ...(target.cwdIdentity && typeof target.cwdIdentity === "object"
-      ? { cwdIdentity: target.cwdIdentity as FrozenWorkflowDirectoryIdentity }
-      : {}),
     ...(inputBindings ? { inputBindings } : {}),
   };
 }
@@ -288,14 +283,11 @@ function decodeEnvironmentBinding(value: unknown, label: string): FrozenWorkflow
   }
   if (binding.kind === "pass-through") return { kind: "pass-through", name: string(binding.name, label) };
   if (binding.kind !== "env-ref") fail(`${label} has an unsupported kind`);
-  const strings = (items: unknown): string[] =>
-    Array.isArray(items) ? items.filter((item): item is string => typeof item === "string") : [];
+  // Plans before irVersion 7 also carry the env file's owner, key names and secret names. Dispatch
+  // reads the env asset by ref, so they are not decoded.
   return {
     kind: "env-ref",
     ref: string(binding.ref, `${label} ref`),
-    owner: record(binding.owner, `${label} owner`) as unknown as FrozenWorkflowEnvironmentOwner,
-    keys: strings(binding.keys),
-    secretNames: strings(binding.secretNames),
     precedence: typeof binding.precedence === "number" ? binding.precedence : 0,
   };
 }

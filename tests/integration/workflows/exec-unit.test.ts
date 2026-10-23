@@ -96,7 +96,7 @@ function run(plan: WorkflowPlan, ctx: Partial<StepExecutionContext> = {}): Promi
     workflowRef: "workflows/exec-demo",
     params: {},
     evidence: {},
-    workDir,
+    bundleRootOverride: workDir,
     ...ctx,
   });
 }
@@ -1136,7 +1136,7 @@ describe("exec unit — the AKM_* context environment is bounded by THIS PLATFOR
       workflowRef: "workflows/exec-demo",
       params: {},
       evidence: { produce: { output: produced } },
-      workDir,
+      bundleRootOverride: workDir,
     });
   }
 
@@ -1267,7 +1267,7 @@ describe("exec unit — the AKM_* context environment is bounded by THIS PLATFOR
       workflowRef: "workflows/exec-demo",
       params: {},
       evidence: { produce: { output: [HUGE] } },
-      workDir,
+      bundleRootOverride: workDir,
     });
     expect(result.units[0]!.failureReason).toBe("exec_context_too_large");
     expect(result.units[0]!.error).toContain("AKM_ITEM");

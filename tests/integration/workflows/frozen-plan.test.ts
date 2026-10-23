@@ -86,8 +86,8 @@ describe("plan freezing at workflow start (migration 006)", () => {
 
     const plan = JSON.parse(row?.plan_json ?? "") as WorkflowPlan;
     expect(plan.steps.map((s) => s.stepId)).toEqual(["only-step"]);
-    expect(plan.irVersion).toBe(6);
-    expect(row?.plan_ir_version).toBe(6);
+    expect(plan.irVersion).toBe(7);
+    expect(row?.plan_ir_version).toBe(7);
     expect(plan.steps[0]!.root?.kind).toBe("unit");
     expect(plan.execution).toEqual({ maxConcurrency: expect.any(Number) });
     const root = plan.steps[0]!.root;

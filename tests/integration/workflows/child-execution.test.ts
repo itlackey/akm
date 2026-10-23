@@ -388,7 +388,7 @@ describe("A-07, A-08, A-09 — first publication of a child run", () => {
     expect(child?.parent_run_id).toBe(parent.runId);
     expect(child?.parent_unit_id).toBe(parentUnitId(parent.stepId));
     expect(child?.scope_key).toBeNull();
-    expect(child?.plan_ir_version).toBe(6);
+    expect(child?.plan_ir_version).toBe(7);
     // B-N14: a child run's workflow_entry_id is NULL — the index lookup
     // publishChildWorkflowRun has no access to.
     expect(child?.workflow_entry_id).toBeNull();

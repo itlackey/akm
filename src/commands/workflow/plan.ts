@@ -12,8 +12,8 @@
  * SECRET-FREE, by construction (§4.6's closed print list): a resolved
  * reference VALUE is never printed (references resolve at pre-attempt, not
  * here); a `literal` **environment** binding's value is never printed (only
- * `environment[].kind`/`.name`, and an `env-ref`'s `.ref`/`.keys`/
- * `.secretNames` — all NAMES); `request.command.content`,
+ * `environment[].kind`/`.name`, and an `env-ref`'s `.ref` — all NAMES);
+ * `request.command.content`,
  * `request.persona`, `request.conversation`, `request.runtime.environment`,
  * and a script target's `bytesBase64` are never read at all.
  */
@@ -44,7 +44,7 @@ function stepUnit(step: WorkflowPlanStep): WorkflowUnitNode | undefined {
 
 function projectEnvironmentBinding(binding: FrozenWorkflowEnvironmentBinding): Record<string, unknown> {
   if (binding.kind === "env-ref") {
-    return { kind: binding.kind, ref: binding.ref, keys: binding.keys, secretNames: binding.secretNames };
+    return { kind: binding.kind, ref: binding.ref };
   }
   // literal / pass-through: kind + name only — a literal's VALUE is never printed.
   return { kind: binding.kind, name: binding.name };

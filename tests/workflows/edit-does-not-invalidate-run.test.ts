@@ -78,7 +78,7 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
     expect(started.run.status).toBe("active");
 
     const before = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    expect(before?.plan_ir_version).toBe(6);
+    expect(before?.plan_ir_version).toBe(7);
 
     // "edit ~/akm/workflows/repro-919.md — extend a step body"
     writeWorkflow("repro-919", "Do the EDITED second thing, now with more detail.");
@@ -111,6 +111,6 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
     expect(prompts[0]).not.toContain("EDITED");
 
     const after = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    expect(after?.plan_ir_version).toBe(6);
+    expect(after?.plan_ir_version).toBe(7);
   });
 });

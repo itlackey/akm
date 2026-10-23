@@ -233,7 +233,7 @@ unit](../reference/workflow-schema.md#binding-a-secret-to-a-unit)). `pass_env:`
 values are not redacted.
 
 Workflow starts freeze the durable plan v4 family's current executable format
-(`irVersion: 5`), which rejects `inherit_env` instead of persisting an
+(`irVersion: 7`), which rejects `inherit_env` instead of persisting an
 unbounded ambient environment. Pre-`irVersion`-5 stored plans do not execute;
 start a new run after updating the source.
 
@@ -263,7 +263,7 @@ Full list of allowlisted names:
 - **Don't assume your shell's environment.** The child gets an allowlist, not
   an inheritance. If a command fails with "not found" or reads a missing
   toolchain variable, name it in `pass_env:`; use a named `env:` binding for a
-  fixed or secret value. The durable v4 family (`irVersion: 5`) deliberately
+  fixed or secret value. The durable v4 family (`irVersion: 7`) deliberately
   has no whole-process fallback.
 - **A very chatty command still passes; its artifact just says so.** akm retains
   8 MiB of stdout and 8 MiB of stderr. Past that it keeps draining and discards,

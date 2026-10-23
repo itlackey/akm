@@ -30,14 +30,6 @@ import type {
 import { DEFAULT_EXEC_TIMEOUT_MS } from "../resource-limits";
 import type { WorkflowAsset } from "../runtime/workflow-asset-loader";
 
-export interface OwnedAsset {
-  readonly ref: string;
-  readonly bundle: string;
-  readonly adapter: string;
-  readonly root: string;
-  readonly file: string;
-}
-
 /** One authored step as freeze sees it: its spec plus its id. */
 export type FreezeStep = WorkflowStepSpec & { readonly id: string };
 
@@ -123,7 +115,6 @@ export function durableRequest(request: ResolvedExecutionRequestV1): ResolvedExe
 
 export function executionUnitValues(
   unit: WorkflowUnitSettings | WorkflowPlan["defaults"],
-  workspace: string,
 ): UnresolvedExecutionDefaults {
   return Object.freeze({
     ...(unit && Object.hasOwn(unit, "engine") ? { engine: unit.engine } : {}),
@@ -131,7 +122,6 @@ export function executionUnitValues(
     ...(unit && Object.hasOwn(unit, "llm") ? { inference: unit.llm } : {}),
     ...(unit && Object.hasOwn(unit, "timeoutMs") ? { timeout: unit.timeoutMs } : {}),
     ...(unit && "output" in unit && Object.hasOwn(unit, "output") ? { outputSchema: unit.output } : {}),
-    workspace,
   }) as UnresolvedExecutionDefaults;
 }
 

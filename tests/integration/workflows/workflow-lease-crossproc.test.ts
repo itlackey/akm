@@ -83,7 +83,7 @@ describe.skipIf(!BUN)("multi-process run lock (single driver + crash reclaim)", 
     writeProgram(storage.stashDir, "lease-xproc", FANOUT_WF);
     const params = { files: ["a.ts", "b.ts", "c.ts", "d.ts"] };
     const started = await startWorkflowRun("workflows/lease-xproc", params);
-    expect(started.run.planIrVersion).toBe(6);
+    expect(started.run.planIrVersion).toBe(7);
     const runId = started.run.id;
     const [ua, ub, uc, ud] = await unitIds(runId, params);
 

@@ -174,7 +174,7 @@ export function validateWorkflowRuntimeSource(
   readFile: (file: string, bundleRoot?: string) => Uint8Array,
 ): void {
   const source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(readFile(file, workspaceRoot));
-  const compiled = compileWorkflowSource(source, { path: file, workspaceRoot });
+  const compiled = compileWorkflowSource(source, { path: file });
   if (!compiled.ok) {
     // P4-N2's mapping (docs/plans/specs/p4-deletions-closeout.md §3.3.4): a
     // task-wrapped workflow target's own multi-job source is a composition

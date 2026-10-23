@@ -18,7 +18,6 @@ import type { WorkflowPlan } from "../plan";
 export type WorkflowAsset = {
   ref: string;
   path: string;
-  sourcePath: string;
   adapterId?: string;
   /** Run-level display title: the asset's canonical name (a step is its id; there are no authored titles). */
   title: string;
@@ -100,16 +99,20 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   return { assetPath: owner.path, sourcePath: source.path, adapterId, canonicalName, fullRef };
 }
 
+/** The root of the bundle that owns a workflow ref right now: where the run's exec units and agents work. */
+export function resolveWorkflowBundleRoot(ref: string): string {
+  return resolveWorkflowAsset(ref).sourcePath;
+}
+
 /**
  * Resolve a workflow ref and compile its authored bytes into a plan.
  */
 export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
-  const { assetPath, sourcePath, adapterId, canonicalName, fullRef } = resolveWorkflowAsset(ref);
+  const { assetPath, adapterId, canonicalName, fullRef } = resolveWorkflowAsset(ref);
   const title = canonicalName.split("/").pop() || canonicalName;
   const bytes = fs.readFileSync(assetPath);
   const result = compileWorkflowSource(bytes.toString("utf8"), {
     path: assetPath,
-    workspaceRoot: sourcePath,
     title,
   });
   if (!result.ok) {
@@ -124,7 +127,6 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   return {
     ref: fullRef,
     path: assetPath,
-    sourcePath,
     adapterId,
     title,
     plan: result.plan,

@@ -4,7 +4,6 @@
 
 import { createHash } from "node:crypto";
 import { type PreparedCommandInvocation, prepareCommandInvocation } from "../../../commands/command/command-execution";
-import { captureFrozenDirectoryIdentity } from "../../../execution/directory-identity";
 import {
   canonicalResolvedExecutionRequest,
   type ResolvedExecutionRequestV1,
@@ -33,11 +32,9 @@ export async function commandDispatch(
   const prepared = await prepareCommandInvocation({
     action,
     config: context.config,
-    ...(context.plan.defaults
-      ? { invocationDefaults: executionUnitValues(context.plan.defaults, context.asset.sourcePath) }
-      : {}),
+    ...(context.plan.defaults ? { invocationDefaults: executionUnitValues(context.plan.defaults) } : {}),
     inlineContentMode: "literal" as const,
-    current: executionUnitValues(source.unit, context.asset.sourcePath),
+    current: executionUnitValues(source.unit),
   });
   return commandResult(source, baseUnit, prepared, context);
 }
@@ -51,7 +48,6 @@ export function commandResult(
 ): ResolvedDispatch {
   const request = durableRequest(prepared.request);
   const lowered = buildExecution(request, prepared.runner);
-  const cwdIdentity = captureFrozenDirectoryIdentity(context.asset.sourcePath);
   const runner: RunnerSpec = lowered.runner;
   const unit: BaseUnit = {
     ...baseUnit,
@@ -69,7 +65,6 @@ export function commandResult(
     request: JSON.parse(canonicalResolvedExecutionRequest(request)) as ResolvedExecutionRequestV1,
     runner,
     ...(targetConcurrency(runner, context.config) ? { concurrency: targetConcurrency(runner, context.config) } : {}),
-    cwdIdentity,
   });
   const engineAnnouncement = fallbackAnnouncement(prepared.fallbackEngineName, request.engine.name);
   return {

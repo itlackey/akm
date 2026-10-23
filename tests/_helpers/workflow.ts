@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 import type { AkmConfig } from "../../src/core/config/config";
-import { captureFrozenDirectoryIdentity } from "../../src/execution/directory-identity";
 import type { ExecutionJsonObject } from "../../src/execution/json";
 import {
   canonicalResolvedExecutionRequest,
@@ -74,7 +73,7 @@ export function freezeWorkflow(
   sourcePath = "workflows/demo.md",
   config: AkmConfig = WORKFLOW_TEST_CONFIG,
 ): WorkflowPlanFixture {
-  const compiled = compileWorkflowSource(markdown, { path: sourcePath, workspaceRoot: "/tmp" });
+  const compiled = compileWorkflowSource(markdown, { path: sourcePath });
   if (!compiled.ok) {
     throw new Error(compiled.errors.map((error) => `${error.line}: ${error.message}`).join(" | "));
   }
@@ -111,14 +110,13 @@ export function freezeWorkflow(
 
 type ExecutionUnitLike = Partial<Pick<WorkflowUnitSettings, "engine" | "model" | "llm" | "timeoutMs" | "output">>;
 
-function executionValues(unit: ExecutionUnitLike | undefined, workspace = "/tmp"): UnresolvedExecutionDefaults {
+function executionValues(unit: ExecutionUnitLike | undefined): UnresolvedExecutionDefaults {
   return {
     ...(unit && Object.hasOwn(unit, "engine") ? { engine: unit.engine } : {}),
     ...(unit && Object.hasOwn(unit, "model") ? { model: unit.model } : {}),
     ...(unit && Object.hasOwn(unit, "llm") ? { inference: unit.llm as ExecutionJsonObject } : {}),
     ...(unit && Object.hasOwn(unit, "timeoutMs") ? { timeout: unit.timeoutMs } : {}),
     ...(unit && Object.hasOwn(unit, "output") ? { outputSchema: unit.output as ExecutionJsonObject | null } : {}),
-    workspace,
   };
 }
 
@@ -144,7 +142,6 @@ function freezeCommandTarget(
     current,
   });
   const resolved = durableRequest(prepared.request);
-  const cwdIdentity = captureFrozenDirectoryIdentity("/tmp");
   const runner = buildExecution(resolved, prepared.runner).runner;
   const request = JSON.parse(canonicalResolvedExecutionRequest(resolved)) as ResolvedExecutionRequestV1;
   return Object.freeze({
@@ -154,7 +151,6 @@ function freezeCommandTarget(
     request,
     runner,
     ...(targetConcurrency(runner, config) ? { concurrency: targetConcurrency(runner, config) } : {}),
-    cwdIdentity,
   });
 }
 
@@ -205,15 +201,13 @@ function freezeRoot(step: WorkflowPlanStep, config: AkmConfig, defaults: Workflo
       command: spec.exec.command as [string, ...string[]],
       timeoutMs: declaredTimeout ?? null,
     };
-    const cwdIdentity = captureFrozenDirectoryIdentity("/tmp", spec.exec.cwd);
     frozenTarget = {
       kind: "shell",
       contentHash: createHash("sha256")
         .update("akm.workflow.shell.v1\0")
-        .update(canonicalPlanJson({ exec, environment, cwdIdentity }))
+        .update(canonicalPlanJson({ exec, environment }))
         .digest("hex"),
       exec,
-      cwdIdentity,
     };
   } else {
     frozenTarget = freezeCommandTarget(instructions, executionValues(unit), config, executionValues(defaults));

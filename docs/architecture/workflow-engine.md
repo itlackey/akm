@@ -15,35 +15,43 @@ commands that drive a run, see [Running Workflows](../guides/run-workflows.md).
 
 ## Frozen plans
 
-The first `akm workflow run <ref>` compiles either peer source format
-(Markdown or GitHub-Actions-style YAML) straight to the one plan type and
-stores it as durable plan **`irVersion` 6** on the run row (`plan_json` +
-`plan_hash`); a new start never emits an older version. `plan_ir_version` and
-`plan_hash` are recorded provenance, not gates: a stored plan is decoded as it
-is — irVersion 4 and 5 plans included — and one frozen by an older or newer
-akm that still decodes simply runs (with one warning). A newer akm's plan that
-does not decode is refused with a message naming "Upgrade akm".
+The first `akm workflow run <ref>` compiles the Markdown source straight to
+the one plan type and stores it as durable plan **`irVersion` 7** on the run row
+(`plan_json` + `plan_hash`); a new start never emits an older version.
+`plan_ir_version` and `plan_hash` are recorded provenance, not gates: a stored
+plan is decoded as it is — irVersion 4, 5 and 6 plans included — and one frozen
+by an older or newer akm that still decodes simply runs (with one warning). A
+newer akm's plan that does not decode is refused with a message naming "Upgrade
+akm".
 
 The durable plan records `sourceHash`, the sha256 of the workflow source file
 at freeze. It is used only for the resume warning below, never to refuse a
 run.
 
-Dispatch-significant material is immutable. The resolved request is frozen,
-the resolved target is frozen, and runner selection is frozen.
-Working directory (`cwd`) identity is frozen.
-Git identity and its commit OID are frozen. The executable a unit runs is
-resolved at dispatch, so upgrading a CLI (say, `claude`) never strands a run.
-Exact models, inference, tools and authorization,
+**Freeze records identities, never locations.** The resolved request is frozen,
+the resolved target is frozen, and runner selection is frozen. So are the refs
+the engine itself dereferences, qualified with their bundle: the run's
+`workflow_ref`, each unit's `env:` refs (`{ kind: "env-ref", ref, precedence }`)
+and each child workflow's ref. Exact models, inference, tools and authorization,
 execution limits, parameter snapshots, command/script bytes, and verifier
 selection therefore cannot drift under an in-flight run.
 
-Workflow environment asset values are the narrow live-value exception within
-authored workflow inputs.
-The environment owner key set and secret-token topology are frozen.
-Literal values remain frozen. Pass-through bindings
-materialize at dispatch from the current process, and env/secret references
-materialize their current values only after owner/topology checks. Durable
-plans never store secret values or enable whole-process `inheritEnv`.
+Everything else is live, found again at dispatch through the one ref lookup
+`akm show` uses (no database is opened):
+
+| Frozen | Live at dispatch |
+| --- | --- |
+| argv, `exec.cwd` and `pass_env` names as authored | the owner root of the run's workflow, which every exec unit and agent works in (`exec.cwd` joins it once) |
+| `env:` refs, bundle-qualified | the env file, its keys and every `${ref}` in it, and the secrets they name |
+| literal env bindings | pass-through bindings, read from the current process |
+
+The executable a unit runs is resolved at dispatch too, so upgrading a CLI (say,
+`claude`) never strands a run, and a `bundle update` that moves a bundle to a
+new revision directory in the middle of a run is harmless: the next step runs
+from the new directory. Plans
+frozen as irVersion 5 or 6 also carry a `cwdIdentity` and env owner paths; the
+decoder drops them and such a run dispatches by ref. Durable plans never store
+secret values or enable whole-process `inheritEnv`.
 
 **A run executes the plan compiled at creation; edits to source need a new
 run.** Resuming a run re-reads its workflow source only to warn, once, when

@@ -4,18 +4,12 @@
 
 /**
  * The target-ref classifier seam (`src/execution/target-ref.ts`): the
- * `classifyTargetRef` accept/reject matrix, plus an import boundary pinning that
- * the workflow semantics module imports nothing from `tasks/source-v3`.
+ * `classifyTargetRef` accept/reject matrix.
  */
 
 import { describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import path from "node:path";
-import ts from "typescript";
 import { UsageError } from "../../src/core/errors";
 import type { TargetRefKind } from "../../src/execution/target-ref";
-
-const ROOT = path.resolve(import.meta.dir, "../..");
 
 /** Capture a synchronous throw once, so a message/code pin never re-invokes the function under test. */
 function thrown(fn: () => unknown): unknown {
@@ -104,34 +98,5 @@ describe("classifyTargetRef — canonical asset-ref classification (P1a §4.1, s
         `Target ref ${JSON.stringify(value)} must be a canonical commands/, scripts/, tasks/, or workflows/ asset ref.`,
       );
     }
-  });
-});
-
-// ── Import boundary: the workflow uses-classification seam owns zero ───────
-// ── import from src/tasks/source-v3.ts (§4.2/§4.3, §9 assertion 2) ─────────
-
-/** Top-level `import ... from "..."` module specifiers in a TypeScript source file. */
-function importedModuleSpecifiers(filePath: string): string[] {
-  const source = ts.createSourceFile(filePath, fs.readFileSync(filePath, "utf8"), ts.ScriptTarget.Latest, true);
-  const specifiers: string[] = [];
-  source.forEachChild((node) => {
-    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-      specifiers.push(node.moduleSpecifier.text);
-    }
-  });
-  return specifiers;
-}
-
-/** True when a module specifier resolves to src/tasks/source-v3(.ts), in any relative spelling. */
-function isSourceV3Specifier(specifier: string): boolean {
-  return /(?:^|\/)tasks\/source-v3(?:\.ts)?$/.test(specifier);
-}
-
-describe("import boundary — the workflow uses-classification seam imports nothing from tasks/source-v3 (P1a §4.2/§4.3)", () => {
-  // GREEN since P1a's implement step re-pointed uses.ts at
-  // classifyTargetRef — see the file docstring for the RED-phase history.
-  test("src/workflows/source-semantics.ts imports nothing from tasks/source-v3", () => {
-    const specifiers = importedModuleSpecifiers(path.join(ROOT, "src/workflows/source-semantics.ts"));
-    expect(specifiers.filter(isSourceV3Specifier)).toEqual([]);
   });
 });

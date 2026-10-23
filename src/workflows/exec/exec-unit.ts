@@ -5,15 +5,14 @@
 /**
  * The `exec` unit runner — the one place a frozen workflow spawns a command:
  * argv-only, detached with a SIGTERM→SIGKILL ladder against the process group,
- * cwd-contained by a resolved-path recheck, bounded (timeout, output bytes,
- * context size), with an allowlisted environment ({@link childEnv}). The
+ * bounded (timeout, output bytes, context size), with an allowlisted
+ * environment ({@link childEnv}). The
  * caller redacts the outcome before anything is journaled.
  * See docs/architecture/decisions/0003-child-env-allowlist-and-provenance.md.
  */
 
 import fs from "node:fs";
 import path from "node:path";
-import { isWithinAsync } from "../../core/common";
 import { COMMON_SPAWN_ENV_PASSTHROUGH, collectAllowlistedEnv, WIN32_SPAWN_ENV_FLOOR } from "../../core/spawn-env";
 import {
   type ManagedSubprocessResult,
@@ -71,8 +70,8 @@ export interface RunExecUnitInput {
   unitId: string;
   exec: WorkflowExecSpec;
   /**
-   * Base working directory the unit's `cwd` resolves inside: the engine's work
-   * dir (`ctx.workDir`, default `process.cwd()`).
+   * The directory `exec.cwd` joins onto: the owner root of the run's workflow.
+   * An absolute `exec.cwd` replaces it.
    */
   baseDir: string;
   /** Resolved `env:` binding values, merged on top of the allowlisted base environment. */
@@ -105,7 +104,7 @@ export interface RunExecUnitInput {
 /**
  * Run one exec unit and map its outcome onto the dispatch vocabulary
  * (`non_zero_exit`, `timeout`, `aborted`, `spawn_failed` — retryable). The
- * `exec_*` reasons (cwd escape, output limit, context too large, incomplete
+ * `exec_*` reasons (output limit, context too large, incomplete
  * capture) are deliberately outside `retry.on`. Output overflow fails only a
  * unit that declared an `output:` schema.
  */
@@ -313,22 +312,11 @@ function contextTooLarge(
 type ResolvedCwd = { ok: true; path: string } | { ok: false; failureReason: string; error: string };
 
 /**
- * Resolve `exec.cwd` inside `baseDir` and prove containment against the
- * resolved base (a symlinked `reports` could point at `/etc`). Async: it runs
- * per unit on the dispatch path.
+ * Join `exec.cwd` onto `baseDir` once. `exec.cwd` may be relative or absolute and is not contained:
+ * the command is arbitrary code in its own right. Async: it runs per unit on the dispatch path.
  */
 async function resolveExecCwd(input: RunExecUnitInput): Promise<ResolvedCwd> {
-  const base = path.resolve(input.baseDir);
-  const target = input.exec.cwd ? path.resolve(base, input.exec.cwd) : base;
-  if (!(await isWithinAsync(target, base))) {
-    return {
-      ok: false,
-      failureReason: "exec_cwd_escape",
-      error:
-        `exec unit "${input.unitId}" declares cwd ${JSON.stringify(input.exec.cwd ?? ".")}, which resolves to ` +
-        `${target} — outside its working directory ${base}. Refusing to run outside the unit's tree.`,
-    };
-  }
+  const target = path.resolve(input.baseDir, input.exec.cwd ?? ".");
   if (!(await isExistingDirectory(target))) {
     return {
       ok: false,
