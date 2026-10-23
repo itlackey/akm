@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A secret substituted into an exec unit's command or `cwd` (`${secrets/...}`) is
+  now redacted after the unit's JSON output is parsed, like a secret bound through
+  an env asset (#1238). It used to be replaced in the raw text only, so a secret
+  containing a quote, backslash or newline reached the unit journal and the
+  promoted artifact once the child echoed it as JSON, and a numeric secret echoed
+  as a JSON number turned valid output into a `parse_error`. A number that is
+  exactly a secret is now redacted too.
 - A task's `uses:` script or workflow in an npm, website or read-only bundle now
   resolves (#1238). It used to fail with "unsupported kind for writes", because
   the lookup went through the write-target resolver. An unknown bundle in such a

@@ -175,6 +175,15 @@ describe("redactSensitiveText", () => {
       "[REDACTED]": [{ echoed: "[REDACTED]" }],
     });
   });
+
+  test("redacts a number leaf that is exactly a sensitive value, and no other number", () => {
+    const redacted: unknown = redactSensitiveValue({ n: 4242, other: 42, nested: [4242] }, ["4242"]);
+    expect(redacted).toEqual({
+      n: "[REDACTED]",
+      other: 42,
+      nested: ["[REDACTED]"],
+    });
+  });
 });
 
 describe("environment passthrough redaction policy", () => {

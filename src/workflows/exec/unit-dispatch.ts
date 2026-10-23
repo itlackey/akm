@@ -60,6 +60,12 @@ export interface UnitDispatchResult {
   usage?: AgentTokenUsage;
   /** Safe, structured diagnostics emitted by the common execution lowerer. */
   notices?: readonly Readonly<LoweringNotice>[];
+  /**
+   * Secret values the dispatch itself resolved (an exec unit's `${secrets/…}` argv/cwd tokens). They join
+   * the request's {@link UnitDispatchRequest.sensitiveValues} in the executor's post-parse scrub, so the
+   * dispatcher leaves its output untouched and a structured parse sees exactly what the child wrote.
+   */
+  sensitiveValues?: readonly string[];
 }
 
 /** The one dispatch seam. `feedback` carries a structured-output retry prompt. */

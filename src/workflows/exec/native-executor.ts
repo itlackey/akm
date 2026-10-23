@@ -752,6 +752,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
 
   // A child-workflow unit goes to the child executor instead of the
   // dispatcher, after its attempt row is reserved, so it journals like any unit.
+  const resolvedSecrets = new Set<string>();
   const dispatched =
     request.frozenTarget.kind === "child-workflow"
       ? await driveChildWorkflowUnit({
@@ -762,16 +763,17 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
           inputHash: input.inputHash,
           dispatcher,
         })
-      : await dispatchUnit(request, dispatcher);
+      : await dispatchUnit(request, dispatcher, resolvedSecrets);
   // Credential and passthrough values are intentionally sampled only AFTER
   // the default dispatcher has authorized/lowered the frozen request and
   // materialized credentials at its terminal dispatch boundary. Custom test
   // dispatchers receive the same post-dispatch journal scrub. Secret-shaped
   // run params join the set: they must reach the prompt in clear (the unit
-  // needs them), but nothing about them needs to reach the journal.
+  // needs them), but nothing about them needs to reach the journal. So do the
+  // secrets the dispatcher resolved itself (an exec unit's argv/cwd tokens).
   const sensitiveValues = collectWorkflowDispatchSensitiveValues({
     ...(request.frozenTarget.kind === "command" ? { runner: request.frozenTarget.runner } : {}),
-    sensitiveValues: [...(request.sensitiveValues ?? []), ...secretShapedParamValues(ctx.params)],
+    sensitiveValues: [...(request.sensitiveValues ?? []), ...resolvedSecrets, ...secretShapedParamValues(ctx.params)],
   });
   const outcome = redactUnitOutcome(dispatched, sensitiveValues);
 
@@ -846,7 +848,12 @@ class UnitTransportError extends Error {
   }
 }
 
-async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispatcher): Promise<UnitOutcome> {
+async function dispatchUnit(
+  request: UnitDispatchRequest,
+  dispatcher: UnitDispatcher,
+  /** Receives the secret values the dispatcher resolved, for the caller's journal scrub. */
+  resolvedSecrets: Set<string>,
+): Promise<UnitOutcome> {
   let tokens = 0;
   let sawUsage = false;
   let loweringNotices: UnitDispatchResult["notices"];
@@ -857,6 +864,7 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
   let sessionId: string | undefined;
   const dispatchOnce = async (feedback?: string): Promise<string> => {
     const result = await dispatcher(request, feedback);
+    for (const value of result.sensitiveValues ?? []) resolvedSecrets.add(value);
     if (result.usage) {
       sawUsage = true;
       tokens +=
@@ -973,8 +981,9 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
       ...(request.signal ? { signal: request.signal } : {}),
       ...(request.eventSource !== undefined ? { eventSource: request.eventSource } : {}),
     });
-    // A secret substituted into argv joins the redaction set, like one bound through an env asset.
-    return redactUnitOutcome(outcome, secretValues);
+    // A secret substituted into argv joins the redaction set, like one bound through an env asset: the
+    // executor scrubs after the structured parse, so a quoted or numeric secret is not missed or corrupted.
+    return { ...outcome, sensitiveValues: secretValues };
   }
   return dispatchWorkflowExecution(request, feedback);
 };

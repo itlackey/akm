@@ -21,7 +21,7 @@ import { openStateDatabase } from "../../../src/core/state-db";
 import { resolveStorageLocations } from "../../../src/storage/locations";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
-import { startWorkflowRun } from "../../../src/workflows/runtime/runs";
+import { getWorkflowStatus, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import {
   type IsolatedAkmStorage,
   withIsolatedAkmStorage,
@@ -61,7 +61,11 @@ function configureBundles(paths: Record<string, string>): void {
 }
 
 /** An exec unit's frontmatter: `unit.exec.command` and any extra `exec`/`unit` lines. */
-function execStep(id: string, command: string[], opts: { cwd?: string; env?: string[] } = {}): string[] {
+function execStep(
+  id: string,
+  command: string[],
+  opts: { cwd?: string; env?: string[]; output?: string } = {},
+): string[] {
   return [
     `  - id: ${id}`,
     "    unit:",
@@ -69,6 +73,7 @@ function execStep(id: string, command: string[], opts: { cwd?: string; env?: str
     "      exec:",
     `        command: ${JSON.stringify(command)}`,
     ...(opts.cwd !== undefined ? [`        cwd: ${JSON.stringify(opts.cwd)}`] : []),
+    ...(opts.output !== undefined ? [`      output: ${opts.output}`] : []),
   ];
 }
 
@@ -344,6 +349,71 @@ describe("${ref} in an exec unit", () => {
     expect(journaled).toContain("out:");
     expect(journaled).not.toContain(secret);
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  test("a quoted, multi-line argv secret echoed as JSON is redacted in the journal and the promoted artifact", async () => {
+    const a = bundle("a");
+    const secret = 'sk-"quoted"\\back\nsecond-line';
+    write(a, "secrets/t", secret);
+    write(
+      a,
+      "workflows/json-leak.md",
+      workflowSource([
+        execStep(
+          "run",
+          [
+            BUN,
+            "-e",
+            "process.stdout.write(JSON.stringify({ token: process.argv[process.argv.length - 1] }))",
+            "${a//secrets/t}",
+          ],
+          { output: "{ type: object, properties: { token: { type: string } }, required: [token] }" },
+        ),
+      ]),
+    );
+    configureBundles({ a });
+
+    const { runId, result } = await drive("a//workflows/json-leak");
+
+    expect(result.done).toBe(true);
+    const units = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "run"));
+    expect(units.map((unit) => unit.result_json)).toEqual([JSON.stringify({ token: "[REDACTED]" })]);
+    const status = await getWorkflowStatus(runId);
+    expect(status.workflow.steps.find((step) => step.id === "run")?.evidence?.output).toEqual({
+      token: "[REDACTED]",
+    });
+  });
+
+  test("a numeric argv secret echoed as a JSON number still parses, and is redacted after parsing", async () => {
+    const a = bundle("a");
+    const secret = "4242424242";
+    write(a, "secrets/t", secret);
+    write(
+      a,
+      "workflows/number-leak.md",
+      workflowSource([
+        execStep(
+          "run",
+          [
+            BUN,
+            "-e",
+            "process.stdout.write(JSON.stringify({ n: Number(process.argv[process.argv.length - 1]) }))",
+            "${a//secrets/t}",
+          ],
+          { output: "{ type: object, properties: { n: { type: number } }, required: [n] }" },
+        ),
+      ]),
+    );
+    configureBundles({ a });
+
+    const { runId, result } = await drive("a//workflows/number-leak");
+
+    expect(result.done).toBe(true);
+    const units = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "run"));
+    expect(JSON.stringify(units)).not.toContain(secret);
+    expect(JSON.stringify(result)).not.toContain(secret);
+    const status = await getWorkflowStatus(runId);
+    expect(JSON.stringify(status)).not.toContain(secret);
   });
 
   test("a token in exec.cwd resolves to the asset's path", async () => {
