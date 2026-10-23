@@ -545,15 +545,11 @@ export function redactSensitiveText(text: string, sensitiveValues: Iterable<stri
   return found ? redacted + text.slice(offset) : text;
 }
 
-/**
- * Recursively redact string leaves before a structured value crosses a durable/output boundary. A number
- * leaf is redacted only when it is exactly a sensitive value (a numeric secret echoed as a JSON number).
- */
+/** Recursively redact string leaves before a structured value crosses a durable/output boundary. */
 export function redactSensitiveValue<T>(value: T, sensitiveValues: Iterable<string>): T {
   const values = [...sensitiveValues];
   const redact = (entry: unknown): unknown => {
     if (typeof entry === "string") return redactSensitiveText(entry, values);
-    if (typeof entry === "number" && values.includes(String(entry))) return redactSensitiveText(String(entry), values);
     if (Array.isArray(entry)) return entry.map(redact);
     if (entry && typeof entry === "object") {
       const out: Record<string, unknown> = {};

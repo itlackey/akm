@@ -79,6 +79,22 @@ export function collectWorkflowDispatchSensitiveValues(dispatch: DispatchSecretS
 }
 
 /**
+ * Turn a number leaf that is exactly a sensitive value into its text, so the string scrub redacts it (a
+ * numeric secret echoed as a JSON number). Only the unit's parsed `result` takes this path: a number
+ * elsewhere in an outcome (`tokens`) stays a number.
+ */
+function stringifySensitiveNumbers(value: unknown, sensitiveValues: readonly string[]): unknown {
+  if (typeof value === "number") return sensitiveValues.includes(String(value)) ? String(value) : value;
+  if (Array.isArray(value)) return value.map((entry) => stringifySensitiveNumbers(entry, sensitiveValues));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, stringifySensitiveNumbers(child, sensitiveValues)]),
+    );
+  }
+  return value;
+}
+
+/**
  * Scrub a dispatch outcome before anything about it is journaled. A
  * `failureReason` the scrub altered carried a secret, so it is downgraded.
  */
@@ -86,7 +102,9 @@ export function redactUnitOutcome<T extends { failureReason?: string }>(
   outcome: T,
   sensitiveValues: readonly string[],
 ): T {
-  const redacted = redactSensitiveValue(outcome, sensitiveValues);
+  const prepared =
+    "result" in outcome ? { ...outcome, result: stringifySensitiveNumbers(outcome.result, sensitiveValues) } : outcome;
+  const redacted = redactSensitiveValue(prepared, sensitiveValues);
   if (outcome.failureReason !== undefined && redacted.failureReason !== outcome.failureReason) {
     redacted.failureReason = "reported_failure";
   }
