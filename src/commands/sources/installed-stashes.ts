@@ -29,11 +29,12 @@ import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { akmIndex } from "../../indexer/indexer";
 import type { LockfileEntry } from "../../integrations/lockfile";
 import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
-import { parseRegistryRef } from "../../registry/resolve";
+import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
 import type { InstalledBundle, InstallKind } from "../../registry/types";
 import { getCachePaths, parseGitRepoUrl, runGit, syncMirroredRepo } from "../../sources/providers/git";
 import { replaceDirectory } from "../../sources/providers/git-install";
 import type { SourceLockData } from "../../sources/providers/install-types";
+import { installRevisionDir, isDirectory } from "../../sources/providers/provider-utils";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
 import { createWebsiteProvider } from "../../sources/providers/website";
 import { storeSecretResolver } from "../../sources/snapshot-fetchers/secret-seam";
@@ -69,6 +70,7 @@ interface ManagedInstall {
   source: InstallKind;
   ref: string;
   localRoot: string;
+  installedAt: string;
   resolvedVersion?: string;
   resolvedRevision?: string;
   writable: boolean;
@@ -93,6 +95,7 @@ function listManagedInstalls(config: AkmConfig): ManagedInstall[] {
       source: lock.source,
       ref: lock.ref,
       localRoot: lock.localRoot ?? "",
+      installedAt: lock.installedAt ?? "",
       resolvedVersion: lock.resolvedVersion,
       resolvedRevision: lock.resolvedRevision,
       writable: componentWritable ?? bundle.writable === true,
@@ -500,14 +503,58 @@ function publishAndIndex(stashDir: string, publish: () => Promise<void> | void):
   });
 }
 
+function managedCredential(managed: ManagedInstall): string | undefined {
+  return managed.credential ? resolveSecret(managed.credential, storeSecretResolver.resolveSecret) : undefined;
+}
+
+/**
+ * The unchanged result for a read-only git or npm install whose upstream still
+ * resolves to the locked revision while its `<rev>` directory is in place, so
+ * there is nothing to fetch, publish or replace. Undefined when the install
+ * must be updated: `--force`, a writable or lockless install, a missing
+ * directory, or a new upstream revision.
+ */
+async function unchangedManagedItem(managed: ManagedInstall, force: boolean): Promise<UpdateResultItem | undefined> {
+  if (force || managed.writable || !managed.resolvedRevision || !managed.localRoot) return undefined;
+  if (managed.source !== "git" && managed.source !== "github" && managed.source !== "npm") return undefined;
+  const revisionDir = installRevisionDir(getRegistryCacheDir(), managed.localRoot);
+  if (!revisionDir || !isDirectory(managed.localRoot)) return undefined;
+  const resolved = await resolveRegistryArtifact(parseRegistryRef(managed.ref), {
+    gitCredential: managedCredential(managed),
+  });
+  if (resolved.resolvedRevision !== managed.resolvedRevision) return undefined;
+  return {
+    id: managed.installId,
+    source: managed.source,
+    ref: managed.ref,
+    previous: {
+      resolvedVersion: managed.resolvedVersion,
+      resolvedRevision: managed.resolvedRevision,
+      cacheDir: managed.localRoot,
+    },
+    installed: {
+      id: managed.installId,
+      source: managed.source,
+      ref: managed.ref,
+      artifactUrl: resolved.artifactUrl,
+      resolvedVersion: managed.resolvedVersion,
+      resolvedRevision: managed.resolvedRevision,
+      stashRoot: managed.localRoot,
+      cacheDir: revisionDir,
+      installedAt: managed.installedAt,
+      writable: false,
+      extractedDir: path.join(revisionDir, "extracted"),
+    },
+    changed: { version: false, revision: false, any: false },
+  };
+}
+
 /** Fetch a registry-managed install into staging without touching its live content. */
 async function stageManagedUpdate(
   managed: ManagedInstall,
   force: boolean,
 ): Promise<{ synced: SourceLockData; staged: StagedUpdate }> {
-  const credential = managed.credential
-    ? resolveSecret(managed.credential, storeSecretResolver.resolveSecret)
-    : undefined;
+  const credential = managedCredential(managed);
 
   if (managed.writable && managed.localRoot) {
     // A writable install is a checkout that may carry local commits: the
@@ -706,6 +753,7 @@ function managedInstallViewOfPlainNpm(config: AkmConfig, npmSource: ConfiguredSo
     source: "npm",
     ref: spec.startsWith("npm:") ? spec : `npm:${spec}`,
     localRoot: "",
+    installedAt: "",
     writable: false,
     componentRoot: bundleComponent(config, id).root,
     requiredRoots: [],
@@ -726,7 +774,10 @@ async function updateManagedInstall(
   managed: ManagedInstall,
   force: boolean,
   stashDir: string,
-): Promise<{ item: UpdateResultItem; index: IndexResult }> {
+): Promise<{ item: UpdateResultItem; index?: IndexResult }> {
+  const unchanged = await unchangedManagedItem(managed, force);
+  if (unchanged) return { item: unchanged };
+
   const { synced, staged } = await stageManagedUpdate(managed, force);
   try {
     const installedEntry: InstalledBundle = {
@@ -766,15 +817,7 @@ async function updateManagedInstall(
       });
     });
 
-    if (movedRoot) {
-      if (referencesRoot(managed.localRoot, loadConfig(), readLockfile())) {
-        warn(
-          `[akm bundle update] kept previous install directory at ${managed.localRoot} because another configured or locked bundle still references it.`,
-        );
-      } else {
-        cleanupDirectoryBestEffort(managed.localRoot, "update");
-      }
-    }
+    if (movedRoot) pruneOlderRevisions(managed.localRoot, synced.cacheDir);
 
     const versionChanged = (managed.resolvedVersion ?? "") !== (synced.resolvedVersion ?? "");
     const revisionChanged = (managed.resolvedRevision ?? "") !== (synced.resolvedRevision ?? "");
@@ -799,6 +842,31 @@ async function updateManagedInstall(
     };
   } finally {
     staged.cleanup();
+  }
+}
+
+/**
+ * After a real revision change, keep the previous `<rev>` directory (a process
+ * may still be running from it) and remove every older sibling in the install's
+ * directory, unless another configured or locked bundle still uses it.
+ */
+function pruneOlderRevisions(previousRoot: string, currentCacheDir: string): void {
+  const previousDir = installRevisionDir(getRegistryCacheDir(), previousRoot);
+  const installDir = path.dirname(path.resolve(currentCacheDir));
+  if (!previousDir || path.dirname(previousDir) !== installDir) return;
+  const keep = new Set([previousDir, path.resolve(currentCacheDir)]);
+  const config = loadConfig();
+  const locks = readLockfile();
+  for (const entry of fs.readdirSync(installDir, { withFileTypes: true })) {
+    const dir = path.join(installDir, entry.name);
+    if (!entry.isDirectory() || keep.has(dir)) continue;
+    if (referencesRoot(dir, config, locks)) {
+      warn(
+        `[akm bundle update] kept older install directory at ${dir} because another configured or locked bundle still references it.`,
+      );
+    } else {
+      cleanupDirectoryBestEffort(dir, "update");
+    }
   }
 }
 
@@ -843,7 +911,9 @@ export async function akmUpdate(input?: {
     const managed = resolveManagedTarget(config, target);
     if (managed) {
       const updated = await updateManagedInstall(managed, force, stashDir);
-      return buildUpdateResponse(stashDir, target, all, [updated.item], { index: updated.index });
+      return buildUpdateResponse(stashDir, target, all, [updated.item], {
+        index: updated.index ?? readCurrentIndexSummary(),
+      });
     }
 
     // Plain git / website source (bundles without a lock) — provider re-sync.
@@ -888,7 +958,9 @@ export async function akmUpdate(input?: {
     });
     if (npmMatch) {
       const updated = await updateManagedInstall(managedInstallViewOfPlainNpm(config, npmMatch), force, stashDir);
-      return buildUpdateResponse(stashDir, target, all, [updated.item], { index: updated.index });
+      return buildUpdateResponse(stashDir, target, all, [updated.item], {
+        index: updated.index ?? readCurrentIndexSummary(),
+      });
     }
 
     const filesystemMatch = stashes.find((source) => {
@@ -911,7 +983,7 @@ export async function akmUpdate(input?: {
     try {
       const updated = await updateManagedInstall(managed, force, stashDir);
       processed.push(updated.item);
-      latestIndex = updated.index;
+      latestIndex = updated.index ?? latestIndex;
     } catch (error) {
       if (!all) throw error;
       skipped.push(updateFailureOutcome(managed.installId, sourceKindForInstall(managed.source), error));
@@ -941,7 +1013,7 @@ export async function akmUpdate(input?: {
         } else if (plain.type === "npm") {
           const updated = await updateManagedInstall(managedInstallViewOfPlainNpm(config, plain), force, stashDir);
           processed.push(updated.item);
-          latestIndex = updated.index;
+          latestIndex = updated.index ?? latestIndex;
         } else if (plain.type === "website") {
           const updated = await syncWebsitePlainSource(plain, stashDir);
           plainSynced.push(updated.item);

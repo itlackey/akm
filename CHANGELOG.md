@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `akm bundle update` no longer re-clones a git or npm bundle whose upstream
+  revision has not changed. Re-cloning replaced the bundle's directory under any
+  running task or workflow, and left an empty revision directory behind after
+  each real change. An unchanged bundle is now reported as unchanged and left
+  alone (`--force` still fetches it again). After a real change, the previous
+  revision is kept and older revision directories are removed (#1235).
 - Scheduled tasks in the `AKM_BUNDLE_DIR` working stash were silently dropped by
   an unscoped `akm task sync` (and `--rebind`) once any other bundle was
   configured (#1236). Task sync now uses the same set of active bundles as

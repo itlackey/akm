@@ -1307,9 +1307,16 @@ akm bundle update --all --force   # Force fresh download even if version is unch
 | Flag | Description |
 | --- | --- |
 | `--all` | Update all managed sources |
-| `--force` | Delete cached extraction before re-downloading |
+| `--force` | Fetch again even when the upstream revision is unchanged |
 | `--allow-dangerous-env-keys` | Deprecated, no effect. An update no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
-| `-y`, `--yes` | Deprecated, no effect. An update no longer asks before deleting the previous install directory of a read-only bundle whose content moved; that directory is a re-fetchable cache. Accepted through 0.10 so existing scripts keep working. |
+| `-y`, `--yes` | Deprecated, no effect. An update never asks before pruning old install directories of a read-only bundle; they are a re-fetchable cache. Accepted through 0.10 so existing scripts keep working. |
+
+A read-only git or npm bundle whose upstream revision still matches its lock
+is left exactly as it is: nothing is fetched or replaced, and the update
+reports it as unchanged. A real revision change installs the new revision
+beside the old one, keeps the immediately previous revision directory (a task
+or workflow may still be running from it) and removes older ones. A revision
+directory another bundle still references is kept.
 
 A publication or index failure preserves the prior active bytes, lock/config
 generation, and searchable index for that bundle.

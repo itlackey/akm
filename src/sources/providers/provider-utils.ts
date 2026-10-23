@@ -98,6 +98,18 @@ export function buildInstallCacheDir(
 }
 
 /**
+ * The `<rev>` directory of a registry install that holds `contentDir`: the two
+ * path segments under `cacheRootDir` that {@link buildInstallCacheDir} lays out
+ * (`<source>-<id>/<version>`). Undefined for a directory outside that layout.
+ */
+export function installRevisionDir(cacheRootDir: string, contentDir: string): string | undefined {
+  const relative = path.relative(path.resolve(cacheRootDir), path.resolve(contentDir));
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return undefined;
+  const [slug, rev] = relative.split(path.sep);
+  return slug && rev ? path.join(path.resolve(cacheRootDir), slug, rev) : undefined;
+}
+
+/**
  * Apply an `akm.include` config (a `package.json` `akm.include` array — NOT
  * a `.akm-include` dotfile) if any, by copying the selected paths into a
  * sibling `selected/` directory and returning that path. Returns undefined

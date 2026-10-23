@@ -162,6 +162,11 @@ akm bundle remove ~/.claude/skills      # By path
 akm bundle remove my-provider           # By name
 ```
 
+A read-only git or npm bundle whose upstream revision is unchanged is not
+fetched or replaced again (`--force` fetches it anyway), so a task or workflow
+running from it keeps its directory. When the revision does change, the
+previous revision directory is kept and older ones are removed.
+
 `--allow-dangerous-env-keys` and `--yes` are deprecated no-ops on update,
 accepted through 0.10 so existing scripts keep working.
 For `--all`, failed bundles are reported separately and later bundles continue.
