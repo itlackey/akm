@@ -101,6 +101,7 @@ import {
 } from "../../asset/asset-placement";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import type { FileChange } from "../../file-change";
+import { sensitiveMarkerPath } from "../../sensitive-marker-path";
 import type { BundleAdapter } from "../bundle-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import { recognizeMatch } from "../recognize-match";
@@ -160,7 +161,7 @@ function akmStashAbstains(root: string, absPath: string): boolean {
 
   // Skip env `.env` files that have a sibling `.sensitive` marker file.
   if (segments[0] === "env" && (absPath.endsWith(".env") || path.basename(absPath) === ".env")) {
-    if (fs.existsSync(absPath.replace(/\.env$/, ".sensitive"))) return true;
+    if (fs.existsSync(sensitiveMarkerPath(absPath, "env"))) return true;
   }
 
   // Skip secret files that are themselves a `.sensitive` marker, or that have a
@@ -168,7 +169,7 @@ function akmStashAbstains(root: string, absPath: string): boolean {
   // only (their bytes are never read for classification here).
   if (segments[0] === "secrets") {
     if (absPath.endsWith(".sensitive") || absPath.endsWith(".lock")) return true;
-    if (fs.existsSync(`${absPath}.sensitive`)) return true;
+    if (fs.existsSync(sensitiveMarkerPath(absPath, "secret"))) return true;
   }
 
   // Inside a `wikis/<name>/` directory, the root-level infrastructure files
