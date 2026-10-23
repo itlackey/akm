@@ -21,8 +21,12 @@ import { makeEnvRef, resolveEnvPath, resolveRefOwner } from "../../core/env-secr
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { substituteRefTokens } from "../../core/ref-token";
+import { warnOnce } from "../../core/warn";
 import { loadEnv } from "./env";
 import { readValue } from "./secret";
+
+/** The retired `${secret:NAME}` env-value token (see `resolveEnvBinding`). */
+const LEGACY_SECRET_TOKEN_RE = /\$\{secret:([^}\s]+)\}/g;
 
 export interface ResolvedEnvBinding {
   /** Canonical env ref (with origin when the source has one). */
@@ -33,21 +37,6 @@ export interface ResolvedEnvBinding {
   keys: string[];
   /** Every value substituted from a `secrets/` ref, for redaction. Configuration values are not listed. */
   secretValues: string[];
-}
-
-/**
- * What a `${ref}` token stands for: a `secrets/` ref yields the secret's
- * trimmed value, any other asset ref its absolute path, a ref no bundle owns
- * `undefined`. The one resolver behind env values and exec argv.
- */
-export function resolveRefToken(
-  ref: string,
-): { kind: "secret"; value: string } | { kind: "path"; path: string } | undefined {
-  const owner = resolveRefOwner(ref);
-  if (owner === undefined) return undefined;
-  return owner.type === "secret"
-    ? { kind: "secret", value: readValue(owner.absPath) }
-    : { kind: "path", path: owner.absPath };
 }
 
 export interface ResolveEnvBindingOptions {
@@ -66,7 +55,7 @@ export interface ResolveEnvBindingOptions {
  */
 export function resolveEnvBinding(target: string, options: ResolveEnvBindingOptions = {}): ResolvedEnvBinding {
   const warn = options.warn ?? ((message: string) => process.stderr.write(`warning: ${message}\n`));
-  const { name, absPath, source } = resolveEnvPath(target);
+  const { name, absPath, source, bundleId } = resolveEnvPath(target);
   const envRef = makeEnvRef(name, source);
 
   const allValues = loadEnv(absPath);
@@ -88,8 +77,38 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
     envValues = Object.fromEntries(Object.entries(allValues).filter(([k]) => !excluded.has(k)));
   }
 
-  // Substitute `${ref}` tokens. A missing ref is a hard error — inject NOTHING.
-  const { values: substituted, missing, secretValues } = substituteRefTokens(envValues, resolveRefToken);
+  // Read-compat: env files written for 0.9 / early 0.10 spell a secret
+  // `${secret:NAME}`, meaning `secrets/NAME` in this env asset's own bundle.
+  // Read it as the `${ref}` it stands for; the file is bundle content and is
+  // never rewritten.
+  let firstLegacy: string | undefined;
+  envValues = Object.fromEntries(
+    Object.entries(envValues).map(([key, value]) => [
+      key,
+      value.replace(LEGACY_SECRET_TOKEN_RE, (_token, secretName: string) => {
+        const spelling = `\${${bundleId}//secrets/${secretName}}`;
+        firstLegacy ??= spelling;
+        return spelling;
+      }),
+    ]),
+  );
+  if (firstLegacy !== undefined) {
+    warnOnce(
+      `legacy-secret-token:${envRef}`,
+      `Env "${envRef}" uses the retired \${secret:NAME} spelling; reading it as ${firstLegacy}. Write the full ref in the env file.`,
+    );
+  }
+
+  // Substitute `${ref}` tokens: a `secrets/` ref yields the secret's value, any
+  // other asset ref its absolute path. A missing ref is a hard error — inject NOTHING.
+  const resolveRef = (ref: string) => {
+    const owner = resolveRefOwner(ref);
+    if (owner === undefined) return undefined;
+    return owner.type === "secret"
+      ? { kind: "secret" as const, value: readValue(owner.absPath) }
+      : { kind: "path" as const, path: owner.absPath };
+  };
+  const { values: substituted, missing, secretValues } = substituteRefTokens(envValues, resolveRef);
   if (missing.length > 0) {
     throw new NotFoundError(
       `Env "${envRef}" references asset(s) that no bundle owns: ${missing.join(", ")}. Nothing was injected.`,

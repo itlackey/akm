@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- An env file written for 0.9 or early 0.10 that spells a secret `${secret:NAME}`
+  works again (#1238). The token meant the secret `NAME` in the env file's own
+  bundle, but it was passed to the process as literal text, so a bot token became
+  the string `${secret:NAME}` and the call failed with a 401. akm now reads it as
+  `${<bundle>//secrets/NAME}` and warns once, naming the env ref and the new
+  spelling. The env file is not rewritten.
 - A task's `uses:` script or workflow in an npm, website or read-only bundle now
   resolves (#1238). It used to fail with "unsupported kind for writes", because
   the lookup went through the write-target resolver. An unknown bundle in such a

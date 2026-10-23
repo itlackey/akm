@@ -92,6 +92,11 @@ one read is used by `akm secret run`, env tokens, config credentials and the
 website fetchers, so a hand-written file's trailing newline never lands in an
 HTTP header.
 
+`${secret:NAME}` was the old env-value spelling, meaning the secret `NAME` in the
+env file's own bundle. akm still reads it that way, as `${<bundle>//secrets/NAME}`
+with the bundle that owns the env file, and warns once naming the env ref. The
+env file is bundle content and is not rewritten; write the full ref.
+
 `secret://name` was the config spelling of the same thing. It is retired:
 config still reads it as `${secrets/name}` and names the key once, and `akm
 migrate apply` rewrites the file.

@@ -154,6 +154,8 @@ export function resolveEnvPath(ref: string): {
   name: string;
   absPath: string;
   source: IndexSearchSource;
+  /** The bundle that owns the env file. */
+  bundleId: string;
   parsedRef: AssetRef;
   dir: "env";
 } {
@@ -161,7 +163,14 @@ export function resolveEnvPath(ref: string): {
   const conceptId = conceptIdFromTypeName("env", parsed.name);
   const match = findEnvSecretOwner(parsed.origin, conceptId);
   if (!match) throw new NotFoundError(`Env not found: ${makeBundleRef(parsed.origin, conceptId)}`);
-  return { name: parsed.name, absPath: match.owner.path, source: match.source, parsedRef: parsed, dir: "env" };
+  return {
+    name: parsed.name,
+    absPath: match.owner.path,
+    source: match.source,
+    bundleId: match.bundleId,
+    parsedRef: parsed,
+    dir: "env",
+  };
 }
 
 export function parseSecretRef(ref: string): AssetRef {
