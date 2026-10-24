@@ -45,6 +45,11 @@ export class ClaudeHarness extends BaseHarness {
   readonly agentBuilder = claudeBuilder;
   readonly profile = { bin: "claude", args: [], envPassthrough: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG"] };
   readonly resultExtractor = claudeResultExtractor;
+  readonly models = {
+    fast: "claude-haiku-4-5-20251001",
+    balanced: "claude-sonnet-4-6",
+    reasoning: { model: "claude-opus-4-7", effort: "high" },
+  } as const;
   readonly configImporter = claudeCodeImporter;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Session-id env marker: presence of a concrete session id (not the bare

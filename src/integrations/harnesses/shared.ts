@@ -89,6 +89,14 @@ export function caps(c: Partial<HarnessCapabilityFlags> & { sessionLogs?: boolea
   } as HarnessCapabilities;
 }
 
+/**
+ * Alias to model for a harness: the model's name, or an object holding it with
+ * the portable inference (`effort`, `temperature`, ...) the alias also sets.
+ */
+export type HarnessModelMap = Readonly<
+  Record<string, string | { readonly model: string; readonly [field: string]: unknown }>
+>;
+
 /** Home directory used for filesystem-only harness config detection. */
 export function homeDir(): string {
   return process.env.HOME ?? process.env.USERPROFILE ?? "";

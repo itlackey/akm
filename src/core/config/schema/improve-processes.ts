@@ -16,7 +16,7 @@ import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt }
 // consolidate, memoryInference, extract, validation, triage,
 // proactiveMaintenance — graphExtraction had one too, until the LLM
 // entity-graph it ran was retired in 0.9.17-alpha.9) gets its OWN schema
-// below — a shared base (engine, model, llm, enabled, timeoutMs) extended
+// below — a shared base (connection, harness, model, llm, enabled, timeoutMs) extended
 // with only the fields meaningful on that process — replacing the prior
 // single ImproveProcessConfigSchema reused via `.optional()` for all of them
 // (which accepted, and silently ignored, any field on any process). Field→process assignment is derived from each
@@ -38,7 +38,8 @@ import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt }
 // process there is now rejected (the intended §4.2 improvement).
 
 const IMPROVE_PROCESS_BASE_FIELDS = {
-  engine: engineName.optional(),
+  connection: engineName.optional(),
+  harness: engineName.optional(),
   model: nonEmptyString.optional(),
   llm: LlmInvocationOverridesSchema.optional(),
   enabled: z.boolean().optional(),
@@ -68,14 +69,15 @@ const processLimitField = positiveInt.optional();
  * The distill and reflect LLM-as-judge quality gates. Default ON; set
  * `enabled: false` on the process to opt out. A judge error, timeout or
  * unparsable reply never passes: distill and reflect both send the content
- * to a person. `engine`, `model`, `timeoutMs` and `llm` give the
+ * to a person. `connection`, `harness`, `model`, `timeoutMs` and `llm` give the
  * gate a judge of its own (#1011), resolved over the process's own settings;
  * with none set, the gate judges with the generator's runner.
  */
 const qualityGateField = z
   .object({
     enabled: z.boolean().optional(),
-    engine: engineName.optional(),
+    connection: engineName.optional(),
+    harness: engineName.optional(),
     model: nonEmptyString.optional(),
     timeoutMs: z.union([positiveInt, z.null()]).optional(),
     llm: LlmInvocationOverridesSchema.passthrough().optional(),
@@ -139,7 +141,8 @@ const triageJudgmentLlmOverridesField = LlmInvocationOverridesSchema.passthrough
 const triageJudgmentObjectField = z
   .object({
     enabled: z.boolean().optional(),
-    engine: engineName.optional(),
+    connection: engineName.optional(),
+    harness: engineName.optional(),
     model: nonEmptyString.optional(),
     timeoutMs: z.union([positiveInt, z.null()]).optional(),
     llm: triageJudgmentLlmOverridesField.optional(),
@@ -335,10 +338,6 @@ const ImproveProfileProcessesSchema = z
 
 export const ImproveProfileConfigSchema = z
   .object({
-    engine: engineName.optional(),
-    model: nonEmptyString.optional(),
-    timeoutMs: z.union([positiveInt, z.null()]).optional(),
-    llm: LlmInvocationOverridesSchema.optional(),
     description: z.string().min(1).optional(),
     processes: ImproveProfileProcessesSchema.optional(),
     limit: positiveInt.optional(),

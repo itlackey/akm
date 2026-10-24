@@ -33,14 +33,15 @@ import {
 import type {
   AkmConfig,
   BundleConfigEntry,
+  ConnectionConfig,
+  HarnessConfig,
   ImproveProcessConfig,
   ImproveProfileConfig,
   RegistryConfigEntry,
   SourceConfigEntry,
 } from "./config-types";
-import { resolveSchemaAt } from "./config-walker";
+import { isOpaqueSchema, resolveSchemaAt } from "./config-walker";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
-import { isApiKeyReference } from "./schema/primitives";
 
 export { stripJsonComments } from "./config-io";
 
@@ -53,16 +54,15 @@ export type {
   AkmConfig,
   BundleConfigEntry,
   ConfiguredSource,
+  ConnectionConfig,
   EmbeddingConnectionConfig,
-  EngineConfig,
+  HarnessConfig,
   HarnessId,
   ImproveConfig,
   ImproveProcessConfig,
   ImproveProfileConfig,
   IndexConfig,
   IndexPassConfig,
-  LlmConnectionConfig,
-  LlmProfileConfig,
   OutputConfig,
   RegistryConfigEntry,
   SchedulerConfig,
@@ -295,10 +295,13 @@ export function unknownConfigKeyPaths(
   const found: string[][] = [];
   for (const key of Object.keys(node).sort()) {
     const keyPath = [...prefix, key];
-    if (RETIRED_CATCHALL_KEY_PATHS.has(keyPath.join(".")) || resolveSchemaAt(keyPath, root) === undefined) {
+    const schema = resolveSchemaAt(keyPath, root);
+    if (RETIRED_CATCHALL_KEY_PATHS.has(keyPath.join(".")) || schema === undefined) {
       found.push(keyPath);
       continue;
     }
+    // A request field on a connection (`chat_template_kwargs`, ...) is the endpoint's, not akm's: its contents are not keys akm knows.
+    if (isOpaqueSchema(schema)) continue;
     const value = node[key];
     if (isPlainConfigObject(value)) found.push(...unknownConfigKeyPaths(root, value, keyPath));
   }
@@ -468,29 +471,31 @@ function sanitizeInheritedConfig(raw: Record<string, unknown>, label: string): R
     );
   }
 
-  if (isPlainObject(inherited.engines)) {
-    const engines: Record<string, unknown> = {};
-    let strippedAuthority = false;
-    for (const [name, engine] of Object.entries(inherited.engines)) {
-      if (!isPlainObject(engine)) {
-        engines[name] = engine;
+  let strippedAuthority = false;
+  for (const section of ["connections", "harnesses"] as const) {
+    const entries = inherited[section];
+    if (!isPlainObject(entries)) continue;
+    const portableEntries: Record<string, unknown> = {};
+    for (const [name, entry] of Object.entries(entries)) {
+      if (!isPlainObject(entry)) {
+        portableEntries[name] = entry;
         continue;
       }
-      const portable = { ...engine };
-      for (const key of ["apiKey", "apiKeyFile", "bin", "args", "workspace"] as const) {
+      const portable = { ...entry };
+      for (const key of ["apiKey", "bin", "args", "workspace"] as const) {
         if (!Object.hasOwn(portable, key)) continue;
         delete portable[key];
         strippedAuthority = true;
       }
-      engines[name] = portable;
+      portableEntries[name] = portable;
     }
-    inherited.engines = engines;
-    if (strippedAuthority) {
-      warnOnce(
-        `config:inherited-host-local:${label}:engines-authority`,
-        `Ignoring inherited engine credentials, executable arguments, or workspace from ${label}; those fields are host-local.`,
-      );
-    }
+    inherited[section] = portableEntries;
+  }
+  if (strippedAuthority) {
+    warnOnce(
+      `config:inherited-host-local:${label}:connections-authority`,
+      `Ignoring inherited connection credentials, harness executable arguments, or workspace from ${label}; those fields are host-local.`,
+    );
   }
 
   if (isPlainObject(inherited.search) && Object.hasOwn(inherited.search, "curateRerank")) {
@@ -525,7 +530,7 @@ function sanitizeInheritedConfig(raw: Record<string, unknown>, label: string): R
   return inherited;
 }
 
-/** `~` expands to the home directory, mirroring `apiKeyFile`'s resolution (engine-resolution.ts). */
+/** `~` expands to the home directory. */
 function expandExtendsHomePath(p: string): string {
   return p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p;
 }
@@ -743,6 +748,26 @@ export function getImproveProcessConfig(
   return selected?.processes?.[processName];
 }
 
+/** The entry named `default`, else the lone entry, else none. */
+function defaultEntry<T>(entries: Record<string, T> | undefined): { name: string; entry: T } | undefined {
+  if (!entries) return undefined;
+  const names = Object.keys(entries);
+  const name = Object.hasOwn(entries, "default") ? "default" : names.length === 1 ? names[0] : undefined;
+  return name === undefined ? undefined : { name, entry: entries[name] as T };
+}
+
+/** The default connection: the one named `default`, else the only one. */
+export function defaultConnection(config: AkmConfig): { name: string; connection: ConnectionConfig } | undefined {
+  const found = defaultEntry(config.connections);
+  return found ? { name: found.name, connection: found.entry } : undefined;
+}
+
+/** The default harness: the one named `default`, else the only one. */
+export function defaultHarness(config: AkmConfig): { name: string; harness: HarnessConfig } | undefined {
+  const found = defaultEntry(config.harnesses);
+  return found ? { name: found.name, harness: found.entry } : undefined;
+}
+
 export function loadConfig(): AkmConfig {
   return loadUserConfig();
 }
@@ -782,8 +807,8 @@ export interface ConfigMutationResult {
    * The full EFFECTIVE config after the mutation — `next` (or `current`
    * when the mutate callback was a no-op) — the same shape `loadConfig()`
    * returns, `extends` chain already merged in, every field intact
-   * including secrets/credentials (`embedding.apiKey`, `engines.<name>.apiKey`,
-   * ...). #953 field gap: this is NOT the pruned write body — pruning
+   * including credential references (`embedding.apiKey`,
+   * `connections.<name>.apiKey`, ...). #953 field gap: this is NOT the pruned write body — pruning
    * (`configWriteBody`/`pruneUnchangedInheritedFields`, #945) only decides
    * what gets written to the local config FILE when it uses `extends`; a
    * caller that keeps using this returned `config` for the rest of its run
@@ -798,7 +823,7 @@ export interface ConfigMutationResult {
 /**
  * #945 review finding: `mutateConfig` used to write the entire extends-merged
  * *effective* config (`next`) back to the local file on every `config
- * set`/`unset`, duplicating every inherited `engines`/`improve.strategies`
+ * set`/`unset`, duplicating every inherited `connections`/`improve.strategies`
  * field into the local file on the very first ordinary write after adopting
  * `extends` — defeating the feature (shared config, ≤20-line local files)
  * and silently freezing the local copy against future upstream changes.
@@ -1005,58 +1030,15 @@ export function schedulerSourceIdFor(config: AkmConfig, bundleId: string): strin
 }
 
 /**
- * Strip literal apiKey fields before writing config to disk.
- * API keys are expected to come from environment variables
- * (AKM_EMBED_API_KEY, AKM_LLM_API_KEY, AKM_ENGINE_<NAME>_API_KEY).
+ * Drop what must not reach `config.json` before it is written.
  *
- * `${VAR}` / `$VAR` references are preserved — they are not secrets, they
- * are deferred lookups resolved at consumption by `resolveSecret`. Dropping
- * them would break the documented config-on-disk pattern.
- *
- * When a non-reference literal value is stripped, emit a `warn()` so the
- * user knows their key was dropped and how to provide it at runtime (#474).
- * Previously the strip was silent — a user invoking `akm setup --from <file>
- * --yes` with an `apiKey` field expected persistence and got a wiped config
- * with no feedback. `quiet` skips the warnings for a caller that only asks
- * whether a write would drop anything and writes nothing itself.
+ * A literal `apiKey` never gets here: the schema reads it as absent (see
+ * `envReferenceApiKey`), so only registry URLs carrying credentials remain.
+ * `quiet` skips the warnings for a caller that only asks whether a write would
+ * drop anything and writes nothing itself.
  */
 export function sanitizeConfigForWrite(config: AkmConfig, options?: { quiet?: boolean }): Record<string, unknown> {
   const sanitized: Record<string, unknown> = { ...config };
-  const stripped: string[] = [];
-
-  if (config.embedding?.apiKey !== undefined) {
-    const apiKey = config.embedding.apiKey;
-    if (isApiKeyReference(apiKey)) {
-      // Preserve reference verbatim — not a secret.
-      sanitized.embedding = { ...config.embedding };
-    } else {
-      const { apiKey: _drop, ...rest } = config.embedding;
-      sanitized.embedding = rest;
-      if (apiKey) stripped.push("embedding.apiKey (set AKM_EMBED_API_KEY to provide at runtime)");
-    }
-  } else if (config.embedding) {
-    sanitized.embedding = { ...config.embedding };
-  }
-
-  if (config.engines) {
-    const engines: Record<string, unknown> = {};
-    for (const [name, engine] of Object.entries(config.engines)) {
-      if (engine.kind !== "llm" || engine.apiKey === undefined || isApiKeyReference(engine.apiKey)) {
-        engines[name] = { ...engine };
-        continue;
-      }
-      const { apiKey: _drop, ...rest } = engine;
-      engines[name] = rest;
-      if (engine.apiKey) stripped.push(`engines.${name}.apiKey`);
-    }
-    sanitized.engines = engines;
-  }
-
-  if (stripped.length > 0 && !options?.quiet) {
-    warn(
-      `Config sanitizer dropped API key(s) before writing to disk:\n  - ${stripped.join("\n  - ")}\n\nakm does not persist API keys to config.json. Set the listed environment variables to provide them at runtime, or use \`\${VAR}\` references in your config to defer lookup. See docs/reference/data-and-telemetry.md.`,
-    );
-  }
 
   if (config.registries) {
     const droppedRegistries: string[] = [];

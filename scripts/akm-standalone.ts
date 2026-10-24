@@ -19,16 +19,10 @@ import { pathToFileURL } from "node:url";
  *   - `AKM_MIGRATE_ENTRY=1` (set by `runMigrationTool` when it re-execs this
  *     same binary): run the migrator's `main` over our args, exactly like the
  *     `scripts/akm-migrate.ts` subprocess would.
- *   - otherwise: register the compiled model-map authority, then run the CLI.
- *     `AKM_STANDALONE_ENTRY=1` opts into cli.ts's startup block, the same
- *     pattern `dist/cli-node.mjs` uses with `AKM_NODE_ENTRY` — cli.ts is
- *     imported, so its `import.meta.main` is false.
- *
- * The authoritative models.json import is structured build input. Bun embeds
- * that object into the executable; its canonical serialized bytes outrank any
- * mutable adjacent asset once registered by the normal CLI branch.
+ *   - otherwise: run the CLI. `AKM_STANDALONE_ENTRY=1` opts into cli.ts's
+ *     startup block, the same pattern `dist/cli-node.mjs` uses with
+ *     `AKM_NODE_ENTRY` — cli.ts is imported, so its `import.meta.main` is false.
  */
-import embeddedDefaultModelMap from "../src/assets/models.json" with { type: "json" };
 import { STANDALONE_FROZEN_SCRIPT_ARG } from "../src/tasks/standalone-script-entry";
 
 if (process.argv[2] === STANDALONE_FROZEN_SCRIPT_ARG) {
@@ -65,8 +59,6 @@ if (process.argv[2] === STANDALONE_FROZEN_SCRIPT_ARG) {
   const { main } = await import("./akm-migrate/main");
   await runWithJsonErrors(() => main(process.argv.slice(2)));
 } else {
-  const { registerStandaloneModelMapFallback } = await import("../src/integrations/agent/model-map");
-  registerStandaloneModelMapFallback(`${JSON.stringify(embeddedDefaultModelMap, null, 2)}\n`);
   process.env.AKM_STANDALONE_ENTRY = "1";
   await import("../src/cli");
 }

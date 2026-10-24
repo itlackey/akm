@@ -14,10 +14,10 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   AkmConfigSchema,
   CURRENT_CONFIG_VERSION,
+  ConnectionSchema,
   EmbeddingConnectionConfigSchema,
   ImproveProcessConfigSchema,
   ImproveProfileConfigSchema,
-  LlmProfileConfigSchema,
   RegistryConfigEntrySchema,
 } from "../src/core/config/config-schema";
 import { HARNESS_REGISTRY } from "../src/integrations/harnesses";
@@ -37,7 +37,7 @@ function generate(): JsonSchema {
   // them into a single $defs map.
   const targets = {
     AkmConfig: AkmConfigSchema,
-    LlmProfileConfig: LlmProfileConfigSchema,
+    ConnectionConfig: ConnectionSchema,
     EmbeddingConnectionConfig: EmbeddingConnectionConfigSchema,
     ImproveProcessConfig: ImproveProcessConfigSchema,
     ImproveProfileConfig: ImproveProfileConfigSchema,

@@ -85,9 +85,16 @@ const idsWith = (flag: (h: AkmHarness) => boolean): ReadonlySet<string> =>
 
 /** Harness ids whose `capabilities.agentDispatch` is `true`. */
 export const HARNESS_AGENT_DISPATCH_IDS = idsWith((h) => h.capabilities.agentDispatch);
-/** Harness ids that confine the model-work tool policy, so unattended model work may run on them. */
-export const HARNESS_MODEL_WORK_IDS = idsWith((h) => h.capabilities.modelWork);
-/** Harness ids that can run a named native agent, so an engine may name a default `agent`. */
+/**
+ * The embedded OpenCode that runs agent work over a connection. It is akm's own
+ * runtime, not a program the user enables, so it has no name in config.
+ */
+export const INTERNAL_RUNTIME_ID = "opencode-sdk";
+/** The platforms a `harnesses` entry may name: every dispatchable harness except the internal runtime. */
+export const HARNESS_CONFIG_PLATFORMS = Object.freeze(
+  VALID_HARNESS_IDS.filter((id) => HARNESS_AGENT_DISPATCH_IDS.has(id) && id !== INTERNAL_RUNTIME_ID),
+) as unknown as readonly [(typeof VALID_HARNESS_IDS)[number], ...(typeof VALID_HARNESS_IDS)[number][]];
+/** Harness ids that can run a named native agent, so a harness may name a default `agent`. */
 export const HARNESS_NATIVE_AGENT_IDS = idsWith((h) => h.capabilities.nativeAgent);
 
 /**

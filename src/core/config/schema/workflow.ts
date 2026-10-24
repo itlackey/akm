@@ -3,13 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `workflow` engine settings. Extracted verbatim from the former
- * `config-schema.ts` monolith — no behavior change.
+ * `workflow` settings (fan-out limits).
  */
 import { z } from "zod";
-import { engineName, positiveInt } from "./primitives";
-
-// ── Workflow engine ─────────────────────────────────────────────────────────
+import { positiveInt } from "./primitives";
 
 /**
  * Workflow-engine settings (`workflow`).
@@ -37,7 +34,5 @@ export const WorkflowConfigSchema = z
   .object({
     maxConcurrency: positiveInt.optional(),
     defaultMapConcurrency: positiveInt.optional(),
-    /** Named LLM or agent engine frozen into every criteria-bearing gate. */
-    judgeEngine: engineName.optional(),
   })
   .passthrough();

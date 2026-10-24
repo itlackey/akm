@@ -17,7 +17,7 @@
 
 import type { AgentCommandBuilder, AgentRequestLowerer, AgentResultExtractor } from "../agent/builder-shared";
 import type { SessionLogHarness } from "../session-logs/types";
-import type { HarnessCapabilities, HarnessConfigImporter } from "./shared";
+import type { HarnessCapabilities, HarnessConfigImporter, HarnessModelMap } from "./shared";
 
 // `HarnessCapabilities` lives in `./shared` (a cycle-free dependency sink —
 // see that module's doc comment) and is re-exported here so this file stays
@@ -80,6 +80,13 @@ interface AkmHarnessCommon {
    * (opencode-sdk).
    */
   readonly profile?: HarnessProfileDefaults;
+
+  /**
+   * The aliases (`fast`, `balanced`, `reasoning`) this harness's models answer
+   * to, which a `harnesses.<name>.models` entry overrides. Absent: no model is
+   * passed for an alias and the harness picks its own.
+   */
+  readonly models?: HarnessModelMap;
 
   /**
    * LLM-config importer for `akm setup` (requires `capabilities.configImport`).
@@ -214,6 +221,7 @@ export abstract class BaseHarness implements AkmHarnessCommon {
   readonly setupDetectionDir?: string;
   readonly agentBuilder?: AgentCommandBuilder;
   readonly profile?: HarnessProfileDefaults;
+  readonly models?: HarnessModelMap;
   readonly configImporter?: HarnessConfigImporter;
   readonly executionLowerer?: AgentRequestLowerer;
   readonly identityEnv?: readonly string[];

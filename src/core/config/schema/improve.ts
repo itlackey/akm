@@ -34,6 +34,11 @@ const ImproveStateGcSchema = z
 
 export const ImproveConfigSchema = z
   .object({
+    /** The strategy `akm improve` runs when `--strategy` names none. */
+    strategy: engineName.optional(),
+    /** Where improve's model work runs: a connection, or a harness, over the default. */
+    connection: engineName.optional(),
+    harness: engineName.optional(),
     strategies: z.record(engineName, ImproveProfileConfigSchema).optional(),
     eventRetentionDays: nonNegativeNumber.optional(),
     salience: ImproveSalienceSchema.optional(),
