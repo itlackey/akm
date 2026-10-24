@@ -121,9 +121,6 @@ function explainOverride(
   if (fm.type === "workflow" && resolvedType === "workflow") {
     return { winner: "smart-md:workflow-frontmatter", knownGoodOverride: true };
   }
-  if ("tools" in fm && resolvedType === "agent") {
-    return { winner: "smart-md:tools-frontmatter", knownGoodOverride: true };
-  }
   if ("agent" in fm && resolvedType === "command") {
     return { winner: "smart-md:agent-frontmatter", knownGoodOverride: true };
   }

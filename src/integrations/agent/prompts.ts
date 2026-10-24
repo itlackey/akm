@@ -71,7 +71,7 @@ const TYPE_HINTS: Record<string, string> = {
   command:
     "command assets are markdown with optional frontmatter (`name`, `description`). The body is the prompt template the user invokes.",
   agent:
-    "agent assets are markdown with frontmatter describing the agent role (`name`, `description`, optional `tools`, `model`).",
+    "agent assets are markdown with frontmatter describing the agent role (`name`, `description`, optional `model`).",
   knowledge: "knowledge assets are reference markdown documents. Include a top-level `# Title` and concise sections.",
   memory:
     "memory assets are short factual notes the user wants persisted across sessions. Frontmatter usually includes `description`.",

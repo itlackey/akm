@@ -143,7 +143,6 @@ const ARGUMENTS_PLACEHOLDER_RE = /\$ARGUMENTS/;
 const NUMERIC_PLACEHOLDER_RE = /\$[123](?!\d|[.,]\d)/;
 const SMART_MD_FACTS = {
   workflow: { type: "workflow", specificity: 19 },
-  toolsAgent: { type: "agent", specificity: 20 },
   command: { type: "command", specificity: 18 },
   modelAgent: { type: "agent", specificity: 8 },
   knowledge: { type: "knowledge", specificity: 5 },
@@ -260,16 +259,8 @@ function classifyBySmartMd(ctx: FileContext): MatchFact | null {
     return SMART_MD_FACTS.workflow;
   }
 
-  if (fm) {
-    // `tools` is the one authoring key for an agent's tool grant. Recognition
-    // covers only the key the renderer honors.
-    if ("tools" in fm) {
-      return SMART_MD_FACTS.toolsAgent;
-    }
-
-    if ("agent" in fm) {
-      return SMART_MD_FACTS.command;
-    }
+  if (fm && "agent" in fm) {
+    return SMART_MD_FACTS.command;
   }
 
   // `$ARGUMENTS` is unambiguous, so it keeps its long-standing precedence: a

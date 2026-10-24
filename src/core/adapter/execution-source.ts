@@ -16,7 +16,6 @@ import {
   type AdapterRenderedCommandSource,
   type AdapterRenderedExecutionSource,
   type AdapterRenderedPersonaSource,
-  cloneToolSelection,
   createAdapterRenderedExecutionSource,
   type ExecutionSourceIdentity,
   type UnresolvedExecutionDefaults,
@@ -170,7 +169,6 @@ export function executionDefaultsFromFrontmatter(
   options: {
     readonly kind: "command" | "persona";
     readonly allowTopLevelEngine?: boolean;
-    readonly toolsKeys?: readonly string[];
   },
 ): UnresolvedExecutionDefaults {
   const frontmatter = snapshotStrictRecord(data, "frontmatter");
@@ -181,12 +179,6 @@ export function executionDefaultsFromFrontmatter(
   const allowTopLevelEngine = Object.hasOwn(options, "allowTopLevelEngine") ? options.allowTopLevelEngine : false;
   if (typeof allowTopLevelEngine !== "boolean") {
     throw new TypeError("execution frontmatter projection options.allowTopLevelEngine must be a boolean");
-  }
-  const configuredToolsKeys = Object.hasOwn(options, "toolsKeys")
-    ? cloneExecutionJson(options.toolsKeys, "execution frontmatter projection options.toolsKeys")
-    : ["tools"];
-  if (!Array.isArray(configuredToolsKeys) || configuredToolsKeys.some((key) => typeof key !== "string" || !key)) {
-    throw new TypeError("execution frontmatter projection options.toolsKeys must be an array of non-empty strings");
   }
 
   const namespace = own(frontmatter, "akm")
@@ -220,16 +212,6 @@ export function executionDefaultsFromFrontmatter(
   if (own(frontmatter, "model")) {
     out.model = nullableString(frontmatter.model, "frontmatter.model");
   }
-  let toolsSelected = false;
-  for (const key of configuredToolsKeys) {
-    if (!own(frontmatter, key)) continue;
-    const selection = cloneToolSelection(frontmatter[key], `frontmatter.${key}`);
-    if (!toolsSelected) {
-      out.tools = selection;
-      toolsSelected = true;
-    }
-  }
-
   let inferenceEntries: Map<string, ExecutionJsonValue> | null | undefined;
   if (own(namespace, "inference")) {
     if (namespace.inference === null) inferenceEntries = null;

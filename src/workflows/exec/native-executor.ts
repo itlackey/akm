@@ -766,7 +766,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
         })
       : await dispatchUnit(request, dispatcher, resolvedSecrets);
   // Credential and passthrough values are intentionally sampled only AFTER
-  // the default dispatcher has authorized/lowered the frozen request and
+  // the default dispatcher has lowered the frozen request and
   // materialized credentials at its terminal dispatch boundary. Custom test
   // dispatchers receive the same post-dispatch journal scrub. Secret-shaped
   // run params join the set: they must reach the prompt in clear (the unit

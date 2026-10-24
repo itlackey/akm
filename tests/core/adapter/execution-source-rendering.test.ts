@@ -90,30 +90,26 @@ describe("adapter-rendered execution sources", () => {
     const opencodePersona = renderCase("opencode", "persona");
 
     expect(akmCommand.defaults).toEqual({ agent: "agents/contract-reviewer", model: "fixture-balanced" });
-    expect(akmPersona.defaults).toEqual({ model: "fixture-balanced", tools: ["read", "grep"] });
+    expect(akmPersona.defaults).toEqual({ model: "fixture-balanced" });
     expect(claudeCommand.defaults).toEqual({
       engine: "fixture-agent",
       model: "fixture-balanced",
-      tools: "Read, Grep",
       timeout: "45s",
     });
     expect(claudeCommand.extensions).toEqual({ claude: { argumentHint: "<target>" } });
     expect(claudePersona.defaults).toEqual({
       engine: "fixture-agent",
       model: "fixture-balanced",
-      tools: "Read, Grep",
       timeout: "45s",
     });
     expect(opencodeCommand.defaults).toEqual({
       agent: "contract-reviewer",
       model: "fixture-balanced",
-      tools: { read: true, grep: true },
     });
     expect(opencodePersona.defaults).toEqual({
       engine: "fixture-agent",
       model: "fixture-balanced",
       inference: { temperature: 0 },
-      tools: { read: true, grep: true, write: false },
       timeout: "45s",
     });
     expect(opencodePersona.extensions).toEqual({ opencode: { mode: "subagent" } });
@@ -291,9 +287,6 @@ describe("adapter-rendered execution sources", () => {
     expect(() => renderNative(claudeAdapter, "claude", "---\nargument-hint: false\n---\nDo work.\n")).toThrow(
       /argument-hint.*string/i,
     );
-    expect(() =>
-      renderNative(claudeAdapter, "claude", "---\nallowed-tools: Read\ntools: false\n---\nDo work.\n"),
-    ).toThrow(/frontmatter\.tools|tools/i);
     expect(() => renderNative(opencodeAdapter, "opencode", "---\nmode: false\n---\nDo work.\n")).toThrow(
       /mode.*string/i,
     );

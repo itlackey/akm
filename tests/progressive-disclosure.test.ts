@@ -267,7 +267,7 @@ describe("summary show for different asset types", () => {
   test("agent summary omits prompt", async () => {
     writeFile(
       path.join(stashDir, "agents", "architect.md"),
-      "---\ndescription: Architecture advisor\ntools:\n  read: allow\n---\nYou are an architecture advisor. Provide detailed guidance.",
+      "---\ndescription: Architecture advisor\n---\nYou are an architecture advisor. Provide detailed guidance.",
     );
     saveConfig({ semanticSearchMode: "off" });
 

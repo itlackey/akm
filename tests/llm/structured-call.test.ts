@@ -475,15 +475,12 @@ describe("callStructured contract", () => {
     ]);
   });
 
-  test("(13) a structured call runs under the model-work tool policy, whatever tools the caller selects", async () => {
-    // The caller's own selection would be denied (no execution.allowedTools on a
-    // runner-only resolution); it is replaced, so the LLM call goes ahead.
+  test("(13) a structured call runs under the model-work tool policy", async () => {
     let chatRan = false;
     const value = await callStructured<string>({
       feature: "memory_inference",
       akmConfig: GATED,
       runner: runner(),
-      current: { tools: ["shell"] },
       messages: [{ role: "user", content: "judge this" }],
       request: {
         chat: async () => {

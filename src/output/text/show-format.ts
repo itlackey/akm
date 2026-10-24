@@ -46,7 +46,6 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
     }
   }
   if (r.modelHint != null) lines.push(`modelHint: ${String(r.modelHint)}`);
-  if (r.toolPolicy != null) lines.push(`toolPolicy: ${JSON.stringify(r.toolPolicy)}`);
   if (r.run) lines.push(`run: ${String(r.run)}`);
   if (r.setup) lines.push(`setup: ${String(r.setup)}`);
   if (r.cwd) lines.push(`cwd: ${String(r.cwd)}`);

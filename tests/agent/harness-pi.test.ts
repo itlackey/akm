@@ -79,11 +79,6 @@ describe("piBuilder — plain prompt", () => {
     expect(argv[argv.length - 2]).toBe("--");
     expect(argv[argv.length - 1]).toBe("--not-a-flag actually prose");
   });
-
-  test("tool policy is deliberately dropped (no allowlist flags invented)", () => {
-    const cmd = piBuilder.build(makePiProfile(), { prompt: "go", tools: ["read", "shell"] });
-    expect(cmd.argv).toEqual(["pi", "-p", "--", "go"]);
-  });
 });
 
 // ── Builder — exact model selection ─────────────────────────────────────────

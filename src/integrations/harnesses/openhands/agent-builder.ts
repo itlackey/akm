@@ -103,7 +103,6 @@ export const openhandsBuilder: AgentCommandBuilder = {
   lower: createAgentRequestLowerer({
     adapter: OPENHANDS_PLATFORM,
     personaChannel: "prompt",
-    tools: "none",
   }),
   build(profile, req) {
     const args: string[] = [...profile.args];

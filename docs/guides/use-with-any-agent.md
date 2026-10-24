@@ -101,9 +101,7 @@ than replacing either.
 - **Dispatching a bundle agent asset.** `akm agent agents/<name> --engine
   <engine> --prompt "..."` runs a bundle `agents/<name>` persona and model
   defaults through a named engine — including built-in model aliases like
-  `sonnet` and `opus` that resolve per platform. The current CLI rejects a
-  nonempty tool request at its separate authorization boundary; asset metadata
-  is never authorization by itself. See
+  `sonnet` and `opus` that resolve per platform. See
   [Configuration](../reference/configuration.md#engines) for the alias table
   and [Architecture](../architecture/architecture.md) for how dispatch is
   built into platform-specific CLI argv per backend.

@@ -74,7 +74,6 @@ export interface TaskV3AkmOptions {
   readonly model?: string | null;
   readonly inference?: ExecutionJsonObject | null;
   readonly outputSchema?: ExecutionJsonObject | null;
-  readonly tools?: string | readonly string[] | ExecutionJsonObject | null;
   readonly timeout?: string | number | null;
   readonly redact?: readonly string[];
   readonly maxSteps?: number;

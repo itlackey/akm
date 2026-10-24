@@ -64,10 +64,14 @@ describe("proposal drain lowering notice aggregation", () => {
   test("resolution and dispatch notices retain stable order and exact duplicates collapse", () => {
     const notices = mergeProposalDrainNotices(
       [RESOLUTION_NOTICE, DISPATCH_NOTICE],
-      [DISPATCH_NOTICE, { ...DISPATCH_NOTICE, field: "tools" }],
+      [DISPATCH_NOTICE, { ...DISPATCH_NOTICE, field: "inference.vendorKnob" }],
     );
 
-    expect(notices).toEqual([RESOLUTION_NOTICE, DISPATCH_NOTICE, { ...DISPATCH_NOTICE, field: "tools" }]);
+    expect(notices).toEqual([
+      RESOLUTION_NOTICE,
+      DISPATCH_NOTICE,
+      { ...DISPATCH_NOTICE, field: "inference.vendorKnob" },
+    ]);
     expect(Object.isFrozen(notices)).toBe(true);
     expect(mergeProposalDrainNotices([], [])).toBeUndefined();
   });

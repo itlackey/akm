@@ -30,12 +30,7 @@
  * The builder's `platform` stays `'claude'` (the canonical harness id).
  */
 
-import {
-  type AgentCommandBuilder,
-  modelFromArgs,
-  normalizeTools,
-  resolveDispatchModel,
-} from "../../agent/builder-shared";
+import { type AgentCommandBuilder, modelFromArgs, resolveDispatchModel } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 
 /** The model-work tool policy on Claude Code: read, edit in the working directory, `akm search`, `akm show`. */
@@ -53,13 +48,13 @@ export const MODEL_WORK_CLAUDE_FLAGS: readonly string[] = Object.freeze([
 /**
  * Claude Code builder.
  * Command shape:
- *   claude [--agent <name>] [--system-prompt "..."] [--model <m>] [--allowedTools <t>]
+ *   claude [--agent <name>] [--system-prompt "..."] [--model <m>]
  *          [--output-format json] --print -- "<prompt>"
  *
  * --print switches Claude Code to non-interactive captured output mode.
  *
  * The model-work tool policy lowers to {@link MODEL_WORK_CLAUDE_FLAGS} in place
- * of the engine's `args` and `--allowedTools`, verified against Claude Code
+ * of the engine's `args`, verified against Claude Code
  * 2.1.283 and a local stub:
  *   - `--restricted` ignores the user, project and local settings files (whose
  *     allow rules would otherwise pre-approve any command or path) and confines
@@ -78,7 +73,6 @@ export const claudeBuilder: AgentCommandBuilder = {
   lower: createAgentRequestLowerer({
     adapter: "claude",
     personaChannel: "native",
-    tools: "all",
   }),
   build(profile, req) {
     const modelWork = req.modelWork === true;
@@ -95,9 +89,6 @@ export const claudeBuilder: AgentCommandBuilder = {
     } else if (modelWork) {
       const model = modelFromArgs(profile.args);
       if (model) args.push("--model", model);
-    }
-    if (req.tools) {
-      args.push("--allowedTools", normalizeTools(req.tools));
     }
     if (req.schema) {
       // Structured unit: request the documented JSON result envelope so

@@ -149,7 +149,7 @@ describe("akm adapter â€” recognizeMatch classifies content/extension winners (Â
     const cases: Array<[rel: string, content: string, type: string]> = [
       ["note.md", "# Just knowledge\n\nplain body\n", "knowledge"], // smartMd knowledge @5
       ["cmd.md", "# Command\n\nUse $ARGUMENTS to pass input\n", "command"], // smartMd command @18 (body probe)
-      ["agent.md", "---\ntools:\n  - read\n---\n\n# Agent\n", "agent"], // smartMd agent @20 (frontmatter probe)
+      ["agent.md", "---\nmodel: local\n---\n\n# Agent\n", "agent"], // smartMd agent @8 (frontmatter probe)
       ["run.sh", "#!/bin/sh\necho hi\n", "script"], // extension script @3
     ];
     for (const [rel, content, type] of cases) {

@@ -9,7 +9,6 @@ import {
   type AdapterRenderedPersonaSource,
   decodeExecutionSourceIdentity,
   type ExecutionSourceIdentity,
-  type ToolSelection,
 } from "./source";
 
 export const RESOLVED_EXECUTION_SCHEMA_VERSION = 1 as const;
@@ -52,8 +51,8 @@ export interface ResolvedModelSelection {
 }
 
 export interface ToolAuthorizationResult {
-  /** `not-required` means no tool grant was selected; it is not an unknown authorization state. */
-  readonly status: "allowed" | "denied" | "not-required";
+  /** `allowed` with the model-work policy for model work; `not-required` otherwise. */
+  readonly status: "allowed" | "not-required";
   readonly reason?: string | null;
   readonly policy?: ExecutionJsonObject | null;
 }
@@ -94,8 +93,6 @@ export interface ResolvedExecutionRequestV1 {
   readonly model?: Readonly<ResolvedModelSelection> | null;
   readonly inference?: ExecutionJsonObject | null;
   readonly outputSchema?: ExecutionJsonObject | null;
-  /** Selected tools. Authorization is deliberately a separate policy result. */
-  readonly tools?: ToolSelection;
   readonly authorization: Readonly<ToolAuthorizationResult>;
   readonly runtime: Readonly<ResolvedRuntimeSettings>;
   readonly notices: readonly Readonly<LoweringNotice>[];
@@ -119,7 +116,6 @@ const OPTIONAL_REQUEST_KEYS = [
   "model",
   "inference",
   "outputSchema",
-  "tools",
   "extensions",
 ] as const;
 
@@ -254,7 +250,7 @@ export function decodeResolvedExecutionRequest(value: unknown): ResolvedExecutio
   if (Object.hasOwn(input, "model") && input.model !== undefined) {
     request.model = input.model === null ? null : Object.freeze(pick(requireRecord(input.model, "model"), MODEL_KEYS));
   }
-  for (const key of ["inference", "outputSchema", "tools", "extensions"] as const) {
+  for (const key of ["inference", "outputSchema", "extensions"] as const) {
     if (Object.hasOwn(input, key) && input[key] !== undefined) request[key] = input[key];
   }
   return createResolvedExecutionRequest(request as unknown as ResolvedExecutionRequestInput);
@@ -286,7 +282,7 @@ export function canonicalResolvedExecutionRequest(request: ResolvedExecutionRequ
   if (Object.hasOwn(request, "model") && request.model !== undefined) {
     wire.model = request.model === null ? null : pick(request.model, MODEL_KEYS);
   }
-  for (const key of ["inference", "outputSchema", "tools", "extensions"] as const) {
+  for (const key of ["inference", "outputSchema", "extensions"] as const) {
     if (Object.hasOwn(request, key) && request[key] !== undefined) wire[key] = request[key];
   }
   return `${JSON.stringify(sortExecutionJson(wire as unknown as ExecutionJsonValue))}\n`;

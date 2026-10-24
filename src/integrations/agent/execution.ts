@@ -38,10 +38,8 @@ import {
   type ToolAuthorizationResult,
 } from "../../execution/resolved-request";
 import {
-  cloneToolSelection,
   isPortableExecutionAgentSelector,
   MODEL_WORK_POLICY_ID,
-  type ToolSelection,
   type UnresolvedExecutionDefaults,
 } from "../../execution/source";
 import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
@@ -50,7 +48,7 @@ import { DEFAULT_LLM_TIMEOUT_MS } from "./config";
 import { FALLBACK_ENGINE_NAME, fallbackEngineConfig } from "./engine-fallback";
 import { configuredEngine, resolveEngine } from "./engine-resolution";
 import { engineModelAndInference, loadModelMap, type ResolvedModelMapV1, resolveModelMapAlias } from "./model-map";
-import { extensionFields, hasToolSelection, untranslated } from "./request-lowering";
+import { extensionFields, untranslated } from "./request-lowering";
 import { decodeFrozenRunnerSpec, type RunnerSpec } from "./runner";
 import type { RunAgentOptions } from "./spawn";
 
@@ -86,7 +84,7 @@ export interface ResolveExecutionInput {
   readonly invocationDefaults?: UnresolvedExecutionDefaults;
   readonly current?: UnresolvedExecutionDefaults;
   readonly modelMap?: ResolvedModelMapV1;
-  /** Run under the model-work tool policy: akm's own, so no `execution.allowedTools`, and it replaces any `tools`. */
+  /** Run under the model-work tool policy. */
   readonly modelWork?: boolean;
 }
 
@@ -296,61 +294,6 @@ function parseTimeout(value: unknown): number | null {
   return milliseconds;
 }
 
-/** Tool names a selection asks for; `undefined` when a structured policy cannot be reduced to names. */
-function requestedToolNames(tools: Exclude<ToolSelection, null>): readonly string[] | undefined {
-  if (typeof tools === "string") {
-    return tools
-      .split(",")
-      .map((tool) => tool.trim())
-      .filter(Boolean);
-  }
-  if (Array.isArray(tools)) return tools.map((tool) => tool.trim()).filter(Boolean);
-  const policy = tools as ExecutionJsonObject;
-  if (Object.values(policy).some((value) => typeof value !== "boolean")) return undefined;
-  return Object.keys(policy).filter((tool) => policy[tool] === true);
-}
-
-/**
- * Assets may only narrow the host's `execution.allowedTools`; without a config
- * nothing is allowed. The model-work policy is akm's own and always allowed:
- * it confines an engine more tightly than leaving tools unset does.
- */
-function authorizeTools(
-  tools: ToolSelection | undefined,
-  config: AkmConfig | undefined,
-  modelWork: boolean,
-): ToolAuthorizationResult {
-  if (modelWork) {
-    return {
-      status: "allowed",
-      reason: "The model-work tool policy is akm's own.",
-      policy: { id: MODEL_WORK_POLICY_ID },
-    };
-  }
-  if (!hasToolSelection(tools)) return { status: "not-required" };
-  if (!config) {
-    return {
-      status: "denied",
-      reason: "Selected tools require an explicit machine/user authorization policy.",
-      policy: { id: "unconfigured" },
-    };
-  }
-  const allowed = new Set(config.execution?.allowedTools ?? []);
-  const names = requestedToolNames(tools);
-  const permitted = allowed.has("*") || names?.every((tool) => allowed.has(tool)) === true;
-  return permitted
-    ? {
-        status: "allowed",
-        reason: "Selected tools were authorized by operator policy.",
-        policy: { id: "config-execution-allowed-tools" },
-      }
-    : {
-        status: "denied",
-        reason: "Selected tools are not authorized by operator policy.",
-        policy: { id: "config-execution-allowed-tools" },
-      };
-}
-
 function withInference(connection: Record<string, unknown>, inference: ExecutionJsonObject | null | undefined) {
   const out: Record<string, unknown> = { ...connection };
   for (const key of LLM_INFERENCE_FIELDS) delete out[key];
@@ -433,7 +376,7 @@ function mergeInference(
 
 /**
  * Resolve one execution: select the engine, merge its defaults with the
- * caller's layers (nearest wins), expand a model alias, authorize tools, and
+ * caller's layers (nearest wins), expand a model alias, and
  * apply the result to the engine's runner.
  */
 export function resolveExecution(input: ResolveExecutionInput): ResolvedExecution {
@@ -530,15 +473,15 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
   };
   const schemaLayer = select("outputSchema", "outputSchema");
   const modelWork = input.modelWork === true;
-  const toolsLayer = modelWork ? undefined : select("tools", "tools");
   const timeoutLayer = select("timeout", "runtime.timeoutMs");
   const workspaceLayer = select("workspace", "runtime.workspace");
   const environmentLayer = select("environment", "runtime.environment");
   const settingsLayer = select("runtime", "runtime.settings");
-  const tools = toolsLayer ? cloneToolSelection(toolsLayer.values.tools ?? null, "tools") : undefined;
-  const authorization = authorizeTools(tools, input.runner ? undefined : input.config, modelWork);
+  const authorization: ToolAuthorizationResult = modelWork
+    ? { status: "allowed", reason: "The model-work tool policy is akm's own.", policy: { id: MODEL_WORK_POLICY_ID } }
+    : { status: "not-required" };
   provenance.authorization = {
-    layer: typeof authorization.policy?.id === "string" ? authorization.policy.id : "not-required",
+    layer: modelWork ? MODEL_WORK_POLICY_ID : "not-required",
     kind: "authorization",
     via: "policy",
   };
@@ -552,7 +495,6 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
     ...(modelLayer ? { model: model ?? null } : {}),
     ...(inference !== undefined ? { inference } : {}),
     ...(schemaLayer ? { outputSchema: schemaLayer.values.outputSchema ?? null } : {}),
-    ...(toolsLayer ? { tools } : {}),
     authorization,
     runtime: {
       ...(timeoutLayer ? { timeoutMs: parseTimeout(timeoutLayer.values.timeout ?? null) } : {}),
@@ -586,9 +528,6 @@ function buildLlm(
       "INVALID_CONFIG_FILE",
     );
   }
-  if (hasToolSelection(request.tools)) {
-    throw new ConfigError("The direct LLM transport cannot enforce the resolved tool policy.", "INVALID_CONFIG_FILE");
-  }
   const notices: Readonly<LoweringNotice>[] = [...request.notices];
   const skip = (field: string): void => {
     notices.push(untranslated("llm", field));
@@ -616,16 +555,9 @@ function buildLlm(
 
 /**
  * Build a request for its runner's transport: the harness's own builder for
- * agent/SDK engines, chat messages for a direct LLM. A request whose tools
- * were denied by `execution.allowedTools` stops here.
+ * agent/SDK engines, chat messages for a direct LLM.
  */
 export function buildExecution(request: ResolvedExecutionRequestV1, runner: RunnerSpec): BuiltExecution {
-  if (request.authorization.status === "denied") {
-    throw new ConfigError(
-      request.authorization.reason ?? "Resolved execution is not authorized by operator policy.",
-      "EXECUTION_NOT_AUTHORIZED",
-    );
-  }
   const applied = applyRequest(runner, request);
   const environment = request.runtime.environment;
   const options: RunAgentOptions = {

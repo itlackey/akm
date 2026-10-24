@@ -32,7 +32,7 @@
  *   silently dropping them would mask user data loss.
  * - UNKNOWN-KEY POLICY: portable descriptive sections generally use
  *   passthrough so version skew round-trips newer settings. Small finite
- *   authority/toggle sections (`scheduler`, `execution`, `experimental`, and
+ *   authority/toggle sections (`scheduler`, `experimental`, and
  *   reranker policy) are strict: a misspelling there must not silently turn a
  *   safety decision off. The top level remains passthrough and warns on
  *   unknown keys.
@@ -48,7 +48,6 @@ import {
 } from "./engine-semantics";
 import { EmbeddingConnectionConfigSchema } from "./schema/embedding";
 import { EnginesSchema } from "./schema/engines";
-import { ExecutionPolicyConfigSchema } from "./schema/execution";
 import { ExperimentalConfigSchema } from "./schema/experimental";
 import { FeedbackConfigSchema } from "./schema/feedback";
 import { ImproveConfigSchema } from "./schema/improve";
@@ -135,8 +134,6 @@ export const AkmConfigShape = {
   defaults: DefaultsSchema.optional(),
   semanticSearchMode: z.enum(["off", "auto"]).default("off"),
   embedding: EmbeddingConnectionConfigSchema.optional(),
-  // Host-local execution authority. Inherited layers are stripped.
-  execution: ExecutionPolicyConfigSchema.optional(),
   index: IndexConfigSchema.optional(),
   registries: z.array(RegistryConfigEntrySchema).optional(),
   // `bundles` + `defaultBundle` are the only source configuration shape. The

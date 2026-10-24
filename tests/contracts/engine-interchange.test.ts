@@ -35,13 +35,12 @@ import path from "node:path";
 import { callStage } from "../../src/commands/improve/stage";
 import type { AkmConfig } from "../../src/core/config/config";
 import type { UnresolvedExecutionDefaults } from "../../src/execution/source";
-import { MODEL_WORK_CAPABILITIES } from "../../src/integrations/agent/capabilities";
 import { buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../src/integrations/agent/spawn";
 import { HARNESS_REGISTRY } from "../../src/integrations/harnesses";
-import { capabilityPermissions, closeOpencodeSdk } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { closeOpencodeSdk } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink, withLlmStage } from "../../src/llm/usage-telemetry";
 import { serveLlmStub } from "../_helpers/engine-stubs";
 import { type FakeOpencodeCall, type FakeOpencodeReply, installFakeOpencodeHost } from "../_helpers/fake-opencode-host";
@@ -373,12 +372,15 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
     expect(outcome).toEqual({ ok: true, raw: REPLY });
   });
 
-  test("opencode-sdk: the session denies every tool but read and akm's, in a scratch working directory", async () => {
+  test("opencode-sdk: the session denies the tools that change things, in a scratch working directory", async () => {
     const result = await dispatch(OPENCODE_SDK, "valid", modelWork);
 
     expect(result.ok).toBe(true);
     const call = sdkCalls.at(-1) as FakeOpencodeCall;
-    expect(call.permissions).toEqual(capabilityPermissions(MODEL_WORK_CAPABILITIES));
+    // Read-only: OpenCode's tools that change things are denied, nothing else.
+    expect(call.permissions).toEqual(
+      ["edit", "write", "shell", "execute", "subagent"].map((action) => ({ action, resource: "*", effect: "deny" })),
+    );
     expect(call.agent).toBeUndefined();
     expect(call.metadata).toEqual({ akm: "model-work" });
     expect(path.basename(call.directory ?? "")).toStartWith("akm-model-work-");

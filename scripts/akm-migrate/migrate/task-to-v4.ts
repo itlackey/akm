@@ -122,7 +122,7 @@ const V3_AKM_KEYS = new Set([
 ]);
 /** The closed v3 `on.*` key set, vendored from `src/tasks/source-v3.ts`. */
 const V3_ON_KEYS = new Set(["schedule", "workflow_dispatch"]);
-/** `akm.*` keys hoisted verbatim to the identical top-level v4 key (schedule/enabled handled separately). */
+/** `akm.*` keys hoisted verbatim to the identical top-level v4 key (schedule/enabled handled separately; `tools` is retired and dropped). */
 const AKM_HOIST_KEYS = [
   "description",
   "when_to_use",
@@ -131,7 +131,6 @@ const AKM_HOIST_KEYS = [
   "engine",
   "model",
   "inference",
-  "tools",
   "timeout",
   "redact",
   "maxSteps",

@@ -123,7 +123,6 @@ export const codexBuilder: AgentCommandBuilder = {
   lower: createAgentRequestLowerer({
     adapter: "codex",
     personaChannel: "prompt",
-    tools: "none",
   }),
   build(profile, req) {
     // Built-in codex profiles ship `args: []`; headless dispatch is the `exec`

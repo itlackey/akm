@@ -98,7 +98,6 @@ export function currentExecutionValues(
     ...(own(akm, "model") ? { model: akm?.model } : {}),
     ...(own(akm, "inference") ? { inference: akm?.inference } : {}),
     ...(own(akm, "outputSchema") ? { outputSchema: akm?.outputSchema } : {}),
-    ...(own(akm, "tools") ? { tools: akm?.tools } : {}),
     ...(own(akm, "timeout") ? { timeout: akm?.timeout } : {}),
     workspace: context.bundleRoot,
     environment,

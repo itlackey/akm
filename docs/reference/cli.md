@@ -2601,18 +2601,18 @@ akm command run <command-ref> [--arguments <exact-text>] [--agent <selector>] [-
 | `--model <id-or-alias>` | Current-invocation exact model or operator model-map alias |
 | `--timeout-ms <ms>` | Current-invocation timeout override |
 | `--cwd <path>` | Current-invocation workspace override |
-| `--dry-run` | Resolve, authorize, and lower the command without dispatching or materializing credentials |
+| `--dry-run` | Resolve and lower the command without dispatching or materializing credentials |
 
 Commands and portable personas are rendered by their bundle adapter. Native
 frontmatter is never sent as prompt text and native files are never rewritten.
 The only portable template token is literal `$ARGUMENTS`. Positional, named,
 expression, legacy `{{...}}`, and other native-only constructs fail before
-authorization or dispatch; invoke those templates through their native tool.
+dispatch; invoke those templates through their native tool.
 Omitting `--arguments` and passing an explicit empty string both substitute
 empty text, but remain distinct in the resolved request.
 
 `akm command run ... --dry-run` performs the real adapter read, cascade/model
-resolution, operator authorization or policy check, and engine lowering. It
+resolution, and engine lowering. It
 returns a successful JSON result with `schemaVersion: 1`,
 `shape: "command-dry-run"`, `ok: true`, `dryRun: true`, the selected engine
 name, safe `provenance`, and safe lowering `notices`. It has no fake exit code,
@@ -2638,8 +2638,7 @@ that consume stdout.
 ### agent
 
 Dispatch a configured agent engine, optionally selecting a bundle agent persona
-and model defaults. A nonempty tool request from that asset is not
-authorization: the current CLI rejects it at the execution boundary.
+and model defaults.
 Stored command assets execute only through `akm command run`; `akm agent` has
 no command compatibility alias.
 
@@ -2649,24 +2648,20 @@ akm agent [<agent-ref>] [--engine <name>] [--prompt <text>] [--model <model>] [-
 
 | Argument / Flag | Description |
 | --- | --- |
-| `<agent-ref>` | Optional agent asset ref (e.g. `agents/code-reviewer`). Resolves persona and model defaults; a nonempty tool request still requires separate operator authorization. |
+| `<agent-ref>` | Optional agent asset ref (e.g. `agents/code-reviewer`). Resolves persona and model defaults. |
 | `--engine <name>` | Agent engine to use; defaults to `defaults.engine` |
 | `--prompt <text>` | Task prompt to pass to the agent |
 | `--model <model>` | Model override. Accepts aliases (`opus`, `sonnet`, `haiku`) or exact platform model IDs. Overrides the model in the agent asset. Resolved per platform: `opencode/claude-opus-4-7` for opencode, `claude-opus-4-7` for claude. |
 | `--timeout-ms <ms>` | Override the agent CLI timeout in milliseconds |
 | `--cwd <path>` | Working directory for the spawned agent (defaults to the current directory) |
 
-When `<agent-ref>` is provided, akm resolves the bundle agent's persona,
-`modelHint`, and requested `toolPolicy`. The `--model` flag wins over any model
+When `<agent-ref>` is provided, akm resolves the bundle agent's persona and
+`modelHint`. The `--model` flag wins over any model
 specified in the asset. An alias resolves per the selected `--engine`'s
 model-map column (see [Model-map files](configuration.md#model-map-files)),
 which — as of 0.9.15 — may itself be an `engine`-backed indirection, so
 `--engine local-fast --model fast` can resolve to `local-fast`'s own
-`engines.local-fast.model` instead of a hardcoded per-platform literal. The
-requested tool policy never grants access by itself: authorization runs before
-lowering, credentials, or provider dispatch.
-The current CLI has no built-in allow-all authorizer, so a nonempty request is
-rejected rather than silently weakened.
+`engines.local-fast.model` instead of a hardcoded per-platform literal.
 Selecting a persona or model without `--prompt` or `--prompt-stdin` is also
 rejected; akm never fabricates an empty command. The
 prompt-free interactive exemption applies only when no persona/model/tool/schema

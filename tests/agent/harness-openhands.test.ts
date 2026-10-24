@@ -90,11 +90,6 @@ describe("openhandsBuilder — plain prompt", () => {
     expect(argv.includes("--not-a-flag actually prose")).toBe(false);
   });
 
-  test("tool policy is deliberately dropped (no allowlist flags invented)", () => {
-    const cmd = openhandsBuilder.build(makeOpenhandsProfile(), { prompt: "go", tools: ["read", "shell"] });
-    expect(cmd.argv).toEqual(["openhands", "--headless", "--json", "--task=go"]);
-  });
-
   test("no model → no env override on the built command", () => {
     const cmd = openhandsBuilder.build(makeOpenhandsProfile(), { prompt: "go" });
     expect(cmd.env).toBeUndefined();

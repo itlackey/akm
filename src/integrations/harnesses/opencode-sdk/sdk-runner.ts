@@ -10,8 +10,8 @@
  * - Agent and workflow runs use the user's default OpenCode config (providers,
  *   plugins, MCP servers, agents), with akm's model on top when akm names one.
  * - Model work runs on an empty akm-owned config directory: none of the user's
- *   plugins, MCP servers or agents load. Its tools are the `read` and `akm`
- *   capabilities; akm's read tools run in-process. Credentials stay where
+ *   plugins, MCP servers or agents load. Its tools are OpenCode's read-only
+ *   ones and akm's read tools, which run in-process. Credentials stay where
  *   OpenCode keeps them (its data directory); nothing is copied.
  * - Every session is stored in akm's own OpenCode database
  *   (`<akm data dir>/opencode.db`). `OPENCODE_DB=<that path> opencode` opens it.
@@ -30,7 +30,6 @@ import { getCacheDir, getDataDir } from "../../../core/paths";
 import { warnOnce } from "../../../core/warn";
 import type { ExecutionJsonObject } from "../../../execution/json";
 import { AKM_READ_TOOLS } from "../../agent/akm-read-tools";
-import { type Capability, MODEL_WORK_CAPABILITIES } from "../../agent/capabilities";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
 import type { AgentProfile } from "../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, AgentTokenUsage, RunAgentOptions } from "../../agent/spawn";
@@ -44,16 +43,6 @@ type SdkPlugin = NonNullable<CreateOptions["plugins"]>[number];
 /** The message the model gets when akm declines something only a person could answer. */
 const NOBODY_TO_ASK =
   "This is an unattended run: nobody can answer questions or approve requests. Continue without it.";
-
-/** OpenCode 2 tools behind each capability. Everything not granted is denied. */
-const CAPABILITY_TOOLS: Record<Capability, readonly string[]> = {
-  read: ["read", "grep", "glob"],
-  edit: ["edit", "write"],
-  shell: ["shell"],
-  web: ["webfetch", "websearch"],
-  subagents: ["subagent"],
-  akm: ["akm_search", "akm_show", "akm_curate"],
-};
 
 /** OpenCode 2 error types and the akm failure reason each means. Anything else is `non_zero_exit`. */
 const FAILURE_REASONS: Record<string, AgentFailureReason> = {
@@ -72,15 +61,12 @@ export function akmOpencodeDatabasePath(): string {
   return path.join(directory, "opencode.db");
 }
 
-/** Session permission rules for a capability list: deny everything, then allow what is granted. */
-export function capabilityPermissions(capabilities: readonly Capability[]) {
-  return [
-    { action: "*", resource: "*", effect: "deny" as const },
-    ...capabilities.flatMap((capability) =>
-      CAPABILITY_TOOLS[capability].map((action) => ({ action, resource: "*", effect: "allow" as const })),
-    ),
-  ];
-}
+/** Model work reads but changes nothing: OpenCode's tools that write, run commands or start subagents are denied. */
+const MODEL_WORK_PERMISSIONS = ["edit", "write", "shell", "execute", "subagent"].map((action) => ({
+  action,
+  resource: "*",
+  effect: "deny",
+}));
 
 // ── Model ──────────────────────────────────────────────────────────────────
 
@@ -554,7 +540,6 @@ export async function runOpencodeSdk(
   const modelWork = dispatch?.modelWork === true;
   let content = modelConfig(dispatch?.model ?? profile.model, llm, dispatch?.inference);
   if (modelWork && !content.model) content = { ...userOpencodeModel(), ...content };
-  const capabilities = modelWork ? MODEL_WORK_CAPABILITIES : dispatch?.permissions;
 
   const run = new AbortController();
   const forwardAbort = (): void => run.abort();
@@ -577,7 +562,7 @@ export async function runOpencodeSdk(
       metadata: { akm: modelWork ? "model-work" : "agent" },
       ...(opts.cwd ? { location: { directory: opts.cwd } } : {}),
       ...(!modelWork && dispatch?.agent ? { agent: dispatch.agent } : {}),
-      ...(capabilities ? { permissions: capabilityPermissions(capabilities) } : {}),
+      ...(modelWork ? { permissions: MODEL_WORK_PERMISSIONS } : {}),
     } as never)) as { id: string };
     sessionId = session.id;
     if (dispatch?.systemPrompt) {

@@ -134,17 +134,6 @@ describe("opencodeBuilder — basic dispatch", () => {
     const cmd = builder.build(profile, { prompt: "do work", model: "opus" });
     expect(cmd.argv).toEqual(["opencode", "run", "--model", "opus"]);
   });
-
-  test("tool policy is NOT emitted (opencode ignores toolPolicy)", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const builder = getCommandBuilder("opencode");
-    const profile = makeOpencodeProfile();
-    const req: AgentDispatchRequest = { prompt: "do work", tools: "read,write" };
-    const cmd = builder.build(profile, req);
-    const argv = cmd.argv as string[];
-    expect(argv.includes("--allowedTools")).toBe(false);
-    expect(argv.join(" ")).not.toContain("read,write");
-  });
 });
 
 // ── builders.ts — opencodeBuilder: inference ──────────────────────────────────
@@ -226,39 +215,6 @@ describe("claudeBuilder — basic dispatch", () => {
     const idx = argv.indexOf("--model");
     expect(idx).toBeGreaterThan(-1);
     expect(argv[idx + 1]).toBe("opus");
-  });
-
-  test("with tools string: --allowedTools flag present with value", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const builder = getCommandBuilder("claude");
-    const profile = makeClaudeProfile();
-    const req: AgentDispatchRequest = { prompt: "do work", tools: "read,edit" };
-    const cmd = builder.build(profile, req);
-    const argv = cmd.argv as string[];
-    const idx = argv.indexOf("--allowedTools");
-    expect(idx).toBeGreaterThan(-1);
-    expect(argv[idx + 1]).toBe("read,edit");
-  });
-
-  test("with tools array: --allowedTools joined with comma", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const builder = getCommandBuilder("claude");
-    const profile = makeClaudeProfile();
-    const req: AgentDispatchRequest = { prompt: "do work", tools: ["read", "edit"] };
-    const cmd = builder.build(profile, req);
-    const argv = cmd.argv as string[];
-    const idx = argv.indexOf("--allowedTools");
-    expect(idx).toBeGreaterThan(-1);
-    expect(argv[idx + 1]).toBe("read,edit");
-  });
-
-  test("without tools: no --allowedTools flag emitted", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const builder = getCommandBuilder("claude");
-    const profile = makeClaudeProfile();
-    const req: AgentDispatchRequest = { prompt: "do work" };
-    const cmd = builder.build(profile, req);
-    expect((cmd.argv as string[]).includes("--allowedTools")).toBe(false);
   });
 });
 

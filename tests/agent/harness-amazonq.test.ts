@@ -88,44 +88,6 @@ describe("amazonqBuilder — plain prompt", () => {
   });
 });
 
-// ── Builder — tool policy (--trust-tools / --trust-all-tools) ────────────────
-
-describe("amazonqBuilder — tool policy", () => {
-  test("no tools → --trust-all-tools (headless autonomy per the matrix)", () => {
-    const cmd = amazonqBuilder.build(makeQProfile(), { prompt: "go" });
-    expect((cmd.argv as string[]).includes("--trust-all-tools")).toBe(true);
-  });
-
-  test("array policy maps to equals-joined --trust-tools and suppresses --trust-all-tools", () => {
-    const cmd = amazonqBuilder.build(makeQProfile(), { prompt: "go", tools: ["fs_read", "fs_write"] });
-    const argv = cmd.argv as string[];
-    expect(argv.includes("--trust-tools=fs_read,fs_write")).toBe(true);
-    expect(argv.includes("--trust-all-tools")).toBe(false);
-  });
-
-  test("comma-separated string policy is normalized (whitespace trimmed, empties dropped)", () => {
-    const cmd = amazonqBuilder.build(makeQProfile(), { prompt: "go", tools: "fs_read, execute_bash ," });
-    expect((cmd.argv as string[]).includes("--trust-tools=fs_read,execute_bash")).toBe(true);
-  });
-
-  test("structured policy object is dropped WITHOUT widening to --trust-all-tools", () => {
-    const cmd = amazonqBuilder.build(makeQProfile(), {
-      prompt: "go",
-      tools: { allowed: ["fs_read"] } as unknown as string[],
-    });
-    const argv = cmd.argv as string[];
-    expect(argv.includes("--trust-all-tools")).toBe(false);
-    expect(argv.some((a) => a.startsWith("--trust-tools"))).toBe(false);
-  });
-
-  test("empty array trusts no tools (--trust-tools= with empty value, still no trust-all)", () => {
-    const cmd = amazonqBuilder.build(makeQProfile(), { prompt: "go", tools: [] });
-    const argv = cmd.argv as string[];
-    expect(argv.includes("--trust-tools=")).toBe(true);
-    expect(argv.includes("--trust-all-tools")).toBe(false);
-  });
-});
-
 // ── Builder — exact model selection ─────────────────────────────────────────
 
 describe("amazonqBuilder — exact model selection", () => {
@@ -181,14 +143,13 @@ describe("amazonqBuilder — schema passthrough (prompt+validate tier)", () => {
 
 // ── Builder — injection guards ────────────────────────────────────────────────
 
-describe("amazonqBuilder — model/systemPrompt/tools values", () => {
-  test("a leading '--' in model/systemPrompt/tools is passed through, not rejected", () => {
+describe("amazonqBuilder — model/systemPrompt values", () => {
+  test("a leading '--' in model/systemPrompt is passed through, not rejected", () => {
     expect(() =>
       amazonqBuilder.build(makeQProfile(), {
         prompt: "go",
         model: "--evil",
         systemPrompt: "--inject",
-        tools: ["--trust-all-tools"],
       }),
     ).not.toThrow();
   });

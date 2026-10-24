@@ -63,7 +63,6 @@ function projectAkm(document: TaskSourceV4Document): Readonly<TaskV3AkmOptions> 
   if (execution.engine !== undefined) out.engine = execution.engine;
   if (execution.model !== undefined) out.model = execution.model;
   if (execution.inference !== undefined) out.inference = execution.inference;
-  if (execution.tools !== undefined) out.tools = execution.tools;
   if (execution.timeout !== undefined) out.timeout = execution.timeout;
   if (execution.redact !== undefined) out.redact = execution.redact;
   if (execution.maxSteps !== undefined) out.maxSteps = execution.maxSteps;

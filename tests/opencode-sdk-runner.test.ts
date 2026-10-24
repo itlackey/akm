@@ -114,22 +114,21 @@ describe("runOpencodeSdk", () => {
     expect(result.reason).toBe("parse_error");
   });
 
-  test("permissions deny every tool the granted capabilities do not cover", async () => {
-    const before = model.requests.length;
-    const result = await run("MODE:shell go", { dispatch: { prompt: "", permissions: ["read"] } });
-    expect(result.ok).toBe(true);
-    const offered = model.requests.slice(before).find((r) => r.mode === "shell")?.tools ?? [];
-    expect([...offered].sort()).toEqual(["glob", "grep", "read"]);
-  });
-
-  test("model work gets only read and akm's tools, and akm's tools run in-process", async () => {
-    fs.mkdirSync(path.join(process.env.HOME ?? "", "akm"), { recursive: true });
-    const result = await run("MODE:akm go", { dispatch: { prompt: "", modelWork: true } });
-    expect(result.ok).toBe(true);
-    const offered = requestsFor("akm")[0]?.tools ?? [];
-    expect([...offered].sort()).toEqual(["akm_curate", "akm_search", "akm_show", "glob", "grep", "read"]);
-    // akm search's own JSON came back as the tool result.
-    expect(requestsFor("akm").find((r) => r.toolResult)?.toolResult).toContain('"hits"');
+  test("model work gets OpenCode's read-only tools and akm's, and akm's tools run in-process", async () => {
+    // akm search needs a bundle; this test's own, removed after so no other test sees it.
+    const bundle = path.join(process.env.HOME ?? "", "akm");
+    fs.mkdirSync(bundle, { recursive: true });
+    try {
+      const result = await run("MODE:akm go", { dispatch: { prompt: "", modelWork: true } });
+      expect(result.ok).toBe(true);
+      const offered = requestsFor("akm")[0]?.tools ?? [];
+      expect(offered).toEqual(expect.arrayContaining(["read", "grep", "glob", "akm_search", "akm_show", "akm_curate"]));
+      for (const tool of ["edit", "write", "shell", "execute", "subagent"]) expect(offered).not.toContain(tool);
+      // akm search's own JSON came back as the tool result.
+      expect(requestsFor("akm").find((r) => r.toolResult)?.toolResult).toContain('"hits"');
+    } finally {
+      fs.rmSync(bundle, { recursive: true, force: true });
+    }
   });
 
   test("model work cannot write", async () => {

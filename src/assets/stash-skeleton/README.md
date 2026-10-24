@@ -13,7 +13,7 @@ consistency and reducing repeated context-setting.
 | `knowledge/` | Knowledge | Reference documents, guides, architecture notes |
 | `memories/` | Memories | Persistent facts and preferences learned over time |
 | `commands/` | Commands | Parameterised prompt templates for common workflows |
-| `agents/` | Agents | Agent definitions with system prompts and tool policies |
+| `agents/` | Agents | Agent definitions with system prompts |
 | `workflows/` | Workflows | Multi-step orchestration sequences |
 | `tasks/` | Tasks | Scheduled or on-demand automation tasks |
 | `lessons/` | Lessons | Durable lessons extracted from past sessions |

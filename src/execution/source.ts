@@ -24,17 +24,12 @@ export interface ExecutionSourceIdentity {
 /** Extensions are keyed by their owning adapter, not merged into common fields. */
 export type AdapterOwnedExtensions = Readonly<Record<string, ExecutionJsonObject>>;
 
-/** Portable selected-tool spellings; policy objects may contain nested JSON values. */
-export type ToolSelection = string | readonly string[] | ExecutionJsonObject | null;
-
 /**
  * The model-work tool policy: unattended model work (improve, the judges, index
- * passes, remember) may read, edit only inside the dispatch's own scratch
- * working directory, and run `akm search` and `akm show`; the stash stays
- * read-only to it. A transport grants what it can confine and refuses the policy
- * at build when it can confine nothing; an LLM has no tools. A request carries it
- * as `authorization.policy.id`, set only when its caller asks (`modelWork`): no
- * `tools` value names it, so an asset's own `tools:` cannot.
+ * passes, remember) changes nothing directly; the stash stays read-only to it.
+ * Each transport that can run model work confines it its own way (an LLM has
+ * no tools); any other refuses it at build. A request carries it as
+ * `authorization.policy.id`, set only when its caller asks (`modelWork`).
  */
 export const MODEL_WORK_POLICY_ID = "model-work";
 
@@ -45,7 +40,6 @@ export interface UnresolvedExecutionDefaults {
   readonly model?: string | null;
   readonly inference?: ExecutionJsonObject | null;
   readonly outputSchema?: ExecutionJsonObject | null;
-  readonly tools?: ToolSelection;
   /** Native duration spelling or already-normalized milliseconds. */
   readonly timeout?: string | number | null;
   readonly workspace?: string | null;
@@ -183,18 +177,7 @@ export function cloneUnresolvedExecutionDefaults(
     }
     out.environment = environment;
   }
-  if (present("tools")) out.tools = cloneToolSelection(record.tools, `${path}.tools`);
   return Object.freeze(out) as UnresolvedExecutionDefaults;
-}
-
-export function cloneToolSelection(value: unknown, path = "tools"): ToolSelection {
-  if (value === null || typeof value === "string") return value;
-  const cloned = cloneExecutionJson(value, path);
-  if (Array.isArray(cloned)) {
-    if (cloned.some((tool) => typeof tool !== "string")) throw new TypeError(`${path} array values must be strings`);
-    return cloned as readonly string[];
-  }
-  return cloneExecutionJsonObject(cloned, path);
 }
 
 export interface CreateAdapterRenderedExecutionSourceInput {

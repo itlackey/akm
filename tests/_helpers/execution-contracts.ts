@@ -76,9 +76,8 @@ export interface TestResolvedRequestInput {
   effort?: string | null;
   schema?: Readonly<Record<string, unknown>> | null;
   inference?: Readonly<Record<string, unknown>>;
-  tools?: unknown;
   authorization?: {
-    status: "allowed" | "denied" | "not-observed" | "not-required";
+    status: "allowed" | "not-observed" | "not-required";
     reason?: string | null;
   };
   timeoutMs: number | null;
@@ -108,9 +107,8 @@ export interface TestNormalizedResolvedRequest {
   effort: string | null;
   schema: Record<string, unknown> | null;
   inference: Record<string, unknown>;
-  tools: unknown | null;
   authorization: {
-    status: "allowed" | "denied" | "not-observed" | "not-required";
+    status: "allowed" | "not-observed" | "not-required";
     reason: string | null;
   };
   timeoutMs: number | null;
@@ -157,7 +155,6 @@ export function normalizeResolvedRequestForTest(input: TestResolvedRequestInput)
     effort: input.effort ?? null,
     schema: input.schema ? (sortJson(input.schema) as Record<string, unknown>) : null,
     inference: sortJson(input.inference ?? {}) as Record<string, unknown>,
-    tools: input.tools === undefined ? null : sortJson(input.tools),
     authorization: {
       status: input.authorization?.status ?? "not-observed",
       reason: input.authorization?.reason ?? null,
@@ -194,7 +191,6 @@ export function projectResolvedExecutionRequestForTest(request: ResolvedExecutio
     effort: typeof effort === "string" ? effort : null,
     schema: request.outputSchema as Readonly<Record<string, unknown>> | null | undefined,
     inference: request.inference as Readonly<Record<string, unknown>> | undefined,
-    ...(Object.hasOwn(request, "tools") ? { tools: request.tools } : {}),
     authorization: request.authorization,
     timeoutMs: request.runtime.timeoutMs ?? null,
     workspace: request.runtime.workspace,

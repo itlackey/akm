@@ -29,14 +29,8 @@
  *   to the prompt, and `--output-format json` is emitted so stdout is the
  *   documented JSON envelope the copilot result extractor normalizes. The
  *   engine's shared retry-until-valid loop performs the actual validation.
- * - **tools** — a string/array tool policy maps to repeated
- *   `--allow-tool <t>` flags (Copilot's per-tool approval flag). With no
- *   policy at all, headless runs need autonomy, so `--allow-all-tools` is
- *   emitted per the matrix. A *structured* policy object is NOT expressible
- *   as Copilot flags; it is deliberately dropped without falling back to
- *   `--allow-all-tools` (never silently widen a restriction) — in
- *   programmatic mode Copilot then denies unapproved tool calls, which is the
- *   conservative failure mode.
+ * - **tools** — headless runs need autonomy, so `--allow-all-tools` is always
+ *   emitted, per the matrix.
  *
  * Registered: `copilotBuilder` is `CopilotHarness.agentBuilder`
  * (`./index.ts`), one of the ten harnesses `HARNESS_REGISTRY` constructs
@@ -51,25 +45,6 @@ import { createAgentRequestLowerer } from "../../agent/request-lowering";
 /** Canonical harness/platform id used for model-alias resolution. */
 export const COPILOT_PLATFORM = "copilot";
 
-/**
- * Split a tool policy into individual tool names for `--allow-tool`.
- * Strings are comma-separated lists; arrays are taken as-is. Structured
- * policy objects return `undefined` (not expressible as Copilot flags — see
- * module doc).
- */
-function toolPolicyEntries(tools: NonNullable<AgentDispatchRequest["tools"]>): string[] | undefined {
-  if (typeof tools === "string") {
-    return tools
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-  }
-  if (Array.isArray(tools)) {
-    return tools.map((t) => t.trim()).filter(Boolean);
-  }
-  return undefined;
-}
-
 /** Assemble the `-p` payload: optional system prompt, then the task prompt. */
 function buildPromptPayload(req: AgentDispatchRequest): string {
   const sections: string[] = [];
@@ -81,7 +56,7 @@ function buildPromptPayload(req: AgentDispatchRequest): string {
 /**
  * GitHub Copilot CLI builder.
  * Command shape:
- *   copilot [--model <m>] (--allow-all-tools | --allow-tool <t> ...)
+ *   copilot [--model <m>] --allow-all-tools
  *           [--output-format json] -p "<systemPrompt?\n\nprompt>"
  */
 export const copilotBuilder: AgentCommandBuilder = {
@@ -90,7 +65,6 @@ export const copilotBuilder: AgentCommandBuilder = {
   lower: createAgentRequestLowerer({
     adapter: COPILOT_PLATFORM,
     personaChannel: "prompt",
-    tools: "flat",
   }),
   build(profile, req) {
     const args: string[] = [...profile.args];
@@ -98,18 +72,8 @@ export const copilotBuilder: AgentCommandBuilder = {
       const resolved = resolveDispatchModel(req, profile, COPILOT_PLATFORM) as string;
       args.push("--model", resolved);
     }
-    if (req.tools) {
-      const entries = toolPolicyEntries(req.tools);
-      // Structured policy objects (entries === undefined) emit NO allow flags:
-      // dropping a restriction must never widen to --allow-all-tools.
-      for (const tool of entries ?? []) {
-        args.push("--allow-tool", tool);
-      }
-    } else {
-      // Headless default per the capability matrix: units must run without
-      // interactive tool-approval prompts.
-      args.push("--allow-all-tools");
-    }
+    // Headless: units must run without interactive tool-approval prompts.
+    args.push("--allow-all-tools");
     if (req.schema) {
       // Structured unit: ask for the documented JSON envelope so the result
       // extractor can pull the final message + session id deterministically.

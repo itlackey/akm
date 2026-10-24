@@ -353,9 +353,7 @@ describe("Phase 4 parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
     const pagePath = path.join(root, "pages", "http-caching.md");
     fs.writeFileSync(
       pagePath,
-      fs
-        .readFileSync(pagePath, "utf8")
-        .replace("pageKind: concept", "pageKind: agent\nmodel: attacker/model\ntools: [write]"),
+      fs.readFileSync(pagePath, "utf8").replace("pageKind: concept", "pageKind: agent\nmodel: attacker/model"),
       "utf8",
     );
     await indexAdapterBundle("wiki-fixture", root, "llm-wiki", false);
@@ -366,7 +364,6 @@ describe("Phase 4 parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
     expect(shown.content).toContain("# HTTP caching");
     expect(shown.prompt).toBeUndefined();
     expect(shown.modelHint).toBeUndefined();
-    expect(shown.toolPolicy).toBeUndefined();
   });
 
   test("standalone workflow actions use the adapter-owned canonical ref", async () => {

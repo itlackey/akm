@@ -193,11 +193,10 @@ describe("common command invocation preparation", () => {
     expect(encoded).not.toContain("claude-reasoning-exact");
   });
 
-  test("loads command/persona through adapters, applies exact arguments, then resolves models and tools", async () => {
+  test("loads command/persona through adapters, applies exact arguments, then resolves models", async () => {
     const command = rendered("command", "fixture//commands/review", "Review [$ARGUMENTS].", {
       agent: "agents/reviewer",
       model: "balanced",
-      tools: ["read"],
     });
     const persona = rendered("persona", "fixture//agents/reviewer", "You are a reviewer.", {
       model: "balanced",
@@ -206,7 +205,7 @@ describe("common command invocation preparation", () => {
 
     const prepared = await prepareCommandInvocation({
       action: { ref: "fixture//commands/review", arguments: "  exact\ninput  " },
-      config: { ...config, execution: { allowedTools: ["read"] } },
+      config,
       modelMap,
       sourceLoader: loader,
       current: { model: "reasoning" },
@@ -232,28 +231,7 @@ describe("common command invocation preparation", () => {
       resolved: "claude-reasoning-exact",
     });
     expect(prepared.request.inference).toEqual({ reasoningEffort: "high" });
-    expect(prepared.request.authorization).toMatchObject({
-      status: "allowed",
-      policy: { id: "config-execution-allowed-tools" },
-    });
-  });
-
-  test("uses the host-local execution allowlist", async () => {
-    const allowlisted = { ...config, execution: { allowedTools: ["read"] } };
-    const status = async (ref: string, tools: unknown) =>
-      (
-        await prepareCommandInvocation({
-          action: { ref },
-          config: allowlisted,
-          modelMap,
-          sourceLoader: loaderFor(rendered("command", ref, "Do it.", { tools })).loader,
-        })
-      ).request.authorization.status;
-
-    expect(await status("fixture//commands/allowed", ["read"])).toBe("allowed");
-    expect(await status("fixture//commands/denied", ["shell"])).toBe("denied");
-    expect(await status("fixture//commands/boolean-map", { read: true, shell: false })).toBe("allowed");
-    expect(await status("fixture//commands/opaque-policy", { allow: ["read"] })).toBe("denied");
+    expect(prepared.request.authorization).toEqual({ status: "not-required" });
   });
 
   test("stored and inline actions converge when effective inputs match apart from intentional source identity", async () => {
@@ -285,7 +263,7 @@ describe("common command invocation preparation", () => {
     const prepare = (current: Record<string, unknown>) =>
       prepareCommandInvocation({
         action: { content: "Review exactly." },
-        config: { ...valueStateConfig, execution: { allowedTools: ["read"] } },
+        config: valueStateConfig,
         modelMap,
         current,
       });
@@ -296,7 +274,7 @@ describe("common command invocation preparation", () => {
     };
 
     const omitted = await wire({});
-    for (const field of ["agent", "persona", "model", "inference", "outputSchema", "tools"]) {
+    for (const field of ["agent", "persona", "model", "inference", "outputSchema"]) {
       expect(Object.hasOwn(omitted, field)).toBe(false);
     }
     expect(await wire({ model: null, inference: null, outputSchema: null })).toMatchObject({
@@ -305,16 +283,13 @@ describe("common command invocation preparation", () => {
       outputSchema: null,
     });
     expect(await wire({ inference: {} })).toMatchObject({ inference: {} });
-    expect(await wire({ model: "reasoning", tools: ["read"] })).toMatchObject({
+    expect(await wire({ model: "reasoning" })).toMatchObject({
       model: { input: "reasoning", interpretation: "alias", resolved: "claude-reasoning-exact" },
       inference: { reasoningEffort: "high" },
-      tools: ["read"],
-      authorization: { status: "allowed" },
     });
     const explicit = {
       inference: { enabled: false, temperature: 0, extraParams: {} },
       outputSchema: {},
-      tools: [],
       timeout: 0,
       workspace: "",
       environment: {},
@@ -323,7 +298,6 @@ describe("common command invocation preparation", () => {
     expect(await wire(explicit)).toMatchObject({
       inference: { enabled: false, temperature: 0, extraParams: {} },
       outputSchema: {},
-      tools: [],
       runtime: { timeoutMs: 0, workspace: "", environment: {}, settings: {} },
     });
     const prepared = await prepare(explicit);
@@ -344,7 +318,7 @@ describe("common command invocation preparation", () => {
     expect(prepared.request.persona).toBeNull();
   });
 
-  test("prose resembling a native construct runs; denied tools fail before any dispatch", async () => {
+  test("prose resembling a native construct runs", async () => {
     const prose = rendered("command", "fixture//commands/prose", "Review $1.");
     const prepared = await prepareCommandInvocation({
       action: { ref: "fixture//commands/prose" },
@@ -353,25 +327,6 @@ describe("common command invocation preparation", () => {
       sourceLoader: loaderFor(prose).loader,
     });
     expect(prepared.request.command.content).toBe("Review $1.");
-
-    let dispatchCalls = 0;
-    const denied = await prepareCommandInvocation({
-      action: { ref: "fixture//commands/denied" },
-      config,
-      modelMap,
-      sourceLoader: loaderFor(rendered("command", "fixture//commands/denied", "Review this.", { tools: ["shell"] }))
-        .loader,
-    });
-    expect(() => inspectPreparedCommandInvocation(denied)).toThrow(/not authorized/i);
-    await expect(
-      dispatchPreparedCommandInvocation(denied, {
-        runAgent: async () => {
-          dispatchCalls += 1;
-          return OK;
-        },
-      }),
-    ).rejects.toThrow(/not authorized/i);
-    expect(dispatchCalls).toBe(0);
   });
 
   test("dispatches direct LLM commands with final content and persona messages", async () => {

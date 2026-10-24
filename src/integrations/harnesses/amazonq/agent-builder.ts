@@ -43,14 +43,8 @@
  *   the rest. No schema temp file is written — that seam is codex-only
  *   (`--output-schema`); inventing a flag here would produce a silently
  *   broken command.
- * - **tools** — a string/array tool policy maps to Q's documented
- *   `--trust-tools=<t1,t2>` allowlist flag (equals-joined, per `q chat
- *   --help`). With no policy at all, headless runs need autonomy, so
- *   `--trust-all-tools` is emitted per the matrix. A *structured* policy
- *   object is NOT expressible as Q flags; it is deliberately dropped without
- *   falling back to `--trust-all-tools` (never silently widen a restriction)
- *   — Q then refuses untrusted tool actions in non-interactive mode, which is
- *   the conservative failure mode.
+ * - **tools** — headless runs need autonomy, so `--trust-all-tools` is
+ *   always emitted, per the matrix.
  * - **inference** — not translated: the shared lowering reports each field of
  *   the request's inference as untranslated.
  *
@@ -67,25 +61,6 @@ import { createAgentRequestLowerer } from "../../agent/request-lowering";
 /** Canonical harness/platform id used for model-alias resolution. */
 export const AMAZONQ_PLATFORM = "amazonq";
 
-/**
- * Split a tool policy into individual tool names for `--trust-tools`.
- * Strings are comma-separated lists; arrays are taken as-is. Structured
- * policy objects return `undefined` (not expressible as Q flags — see
- * module doc).
- */
-function toolPolicyEntries(tools: NonNullable<AgentDispatchRequest["tools"]>): string[] | undefined {
-  if (typeof tools === "string") {
-    return tools
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-  }
-  if (Array.isArray(tools)) {
-    return tools.map((t) => t.trim()).filter(Boolean);
-  }
-  return undefined;
-}
-
 /** Assemble the positional prompt payload: optional system prompt, then the task prompt. */
 function buildPromptPayload(req: AgentDispatchRequest): string {
   const sections: string[] = [];
@@ -97,7 +72,7 @@ function buildPromptPayload(req: AgentDispatchRequest): string {
 /**
  * Amazon Q Developer CLI builder.
  * Command shape:
- *   q chat --no-interactive (--trust-all-tools | --trust-tools=<t1,t2>)
+ *   q chat --no-interactive --trust-all-tools
  *          [--model <m>] -- "<systemPrompt?\n\nprompt>"
  */
 export const amazonqBuilder: AgentCommandBuilder = {
@@ -106,7 +81,6 @@ export const amazonqBuilder: AgentCommandBuilder = {
   lower: createAgentRequestLowerer({
     adapter: AMAZONQ_PLATFORM,
     personaChannel: "prompt",
-    tools: "flat",
   }),
   build(profile, req) {
     // Built-in q profiles would ship `args: []`; headless dispatch is the
@@ -115,20 +89,8 @@ export const amazonqBuilder: AgentCommandBuilder = {
     const args: string[] = ["chat", ...extra];
     // Print the response and exit — required for captured dispatch.
     args.push("--no-interactive");
-    if (req.tools) {
-      // Structured policy objects (entries === undefined) emit NO trust
-      // flags: dropping a restriction must never widen to --trust-all-tools.
-      const entries = toolPolicyEntries(req.tools);
-      if (entries !== undefined) {
-        // Q's documented allowlist form is equals-joined and comma-separated
-        // (`--trust-tools=fs_read,fs_write`); an empty list trusts no tools.
-        args.push(`--trust-tools=${entries.join(",")}`);
-      }
-    } else {
-      // Headless default per the capability matrix: units must run without
-      // interactive tool-approval prompts.
-      args.push("--trust-all-tools");
-    }
+    // Headless: units must run without interactive tool-approval prompts.
+    args.push("--trust-all-tools");
     if (req.model) {
       const resolved = resolveDispatchModel(req, profile, AMAZONQ_PLATFORM) as string;
       args.push("--model", resolved);

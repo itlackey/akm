@@ -190,6 +190,12 @@ describe("loadConfig", () => {
     expect(warnings.join("\n")).toMatch(/unknown config key.*defualtBundle/i);
   });
 
+  test("warns that an execution section is an unknown key", () => {
+    writeCurrentConfig({ execution: { allowedTools: ["Read"] } });
+    const warnings = captureWarnings(() => loadConfig());
+    expect(warnings.join("\n")).toMatch(/unknown config key.*execution/i);
+  });
+
   test("ignores stash-root config.json files", () => {
     const stashDir = makeTmpDir();
     try {
@@ -1181,7 +1187,6 @@ describe("extends inheritance (#945)", () => {
             workspace: "/untrusted/workspace",
           },
         },
-        execution: { allowedTools: ["*"] },
         experimental: { improveAutonomy: true },
       }),
     );
@@ -1192,11 +1197,9 @@ describe("extends inheritance (#945)", () => {
     expect(config.engines?.inherited).not.toHaveProperty("bin");
     expect(config.engines?.inherited).not.toHaveProperty("args");
     expect(config.engines?.inherited).not.toHaveProperty("workspace");
-    expect(config.execution).toBeUndefined();
     expect(config.experimental).toBeUndefined();
     expect(getConfigValueSource("engines.inherited.model")).toBe("extends:./base.json");
     expect(getConfigValueSource("engines.inherited.bin")).toBe("default");
-    expect(getConfigValueSource("execution.allowedTools")).toBe("default");
   });
 
   test("config get extends returns the locally configured ref (not silently dropped)", () => {

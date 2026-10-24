@@ -68,7 +68,7 @@ akm show knowledge/my-doc                     # Show materialized local content
 | script | `run`, `setup`, `cwd` |
 | skill | `content` (full SKILL.md) |
 | command | `template`, `description`, `parameters` |
-| agent | `prompt`, `description`, `modelHint`, `toolPolicy` |
+| agent | `prompt`, `description`, `modelHint` |
 | knowledge | `content` (whole document, or one section via `#fragment`) |
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` (recalled context) |
@@ -393,7 +393,7 @@ conversion with `akm migrate apply --dry-run`.
 
 ```sh
 akm agent --prompt "summarize open proposals"   # Dispatch the configured agent CLI
-akm agent agents/architect --prompt "..."       # Embody a bundle agent asset (system prompt, model, tool policy)
+akm agent agents/architect --prompt "..."       # Embody a bundle agent asset (system prompt, model)
 akm command run commands/release                # Canonical reusable-command dispatch
 akm agent --model sonnet --prompt "..."         # Model override (aliases or exact IDs)
 ```

@@ -27,17 +27,17 @@
  * counts type-only imports as real graph edges), and `source-v3.ts` now
  * imports from this file, so a reverse edge here would close a cycle. Where
  * a moved helper's signature referenced a v3-only type
- * (`TaskV3AkmOptions["tools"]`, `TaskV3Environment`) the return type is
+ * (`TaskV3Environment`) the return type is
  * inlined structurally instead — invisible at runtime, and TypeScript's
  * structural typing makes the inlined shape and the named alias
  * interchangeable at every call site.
  *
- * `parseTimeout` and `parseTools` stay v3-only in the sense that they
- * hardcode the `["akm", …]` field path (byte-identical to v3's existing
+ * `parseTimeout` stays v3-only in the sense that it
+ * hardcodes the `["akm", …]` field path (byte-identical to v3's existing
  * behavior — that hardcoding is exactly what D2-N4's binding resolution asks
- * to preserve). Task source v4's top-level `timeout:`/`tools:` fields have
- * their own siblings in `src/tasks/source/task-source-v4.ts`
- * (`parseTimeoutTopLevel`/`parseToolsTopLevel`) with the same accept/reject
+ * to preserve). Task source v4's top-level `timeout:` field has
+ * its own sibling in `src/tasks/source/task-source-v4.ts`
+ * (`parseTimeoutTopLevel`) with the same accept/reject
  * semantics at a different, un-prefixed field path — v3 imports the two
  * below rather than declaring them itself, purely because D2-N4 homes every
  * one of these named helpers here. `nullableSelector` is the same kind of
@@ -315,26 +315,6 @@ export function parseTimeout(value: unknown, ctx: BoundedDocumentContext): strin
     );
   }
   return value as string | number;
-}
-
-/**
- * `akm.tools` — v3-only (hardcodes the `["akm", "tools"]` field path, see
- * this module's header). Body-intact from `source-v3.ts`; the return type is
- * inlined (was `TaskV3AkmOptions["tools"]`) so this module imports nothing
- * from `../source-v3` (see header — the import-cycle ratchet is absolute).
- */
-export function parseTools(
-  value: ExecutionJsonValue,
-  ctx: BoundedDocumentContext,
-): string | readonly string[] | ExecutionJsonObject | null {
-  if (value === null || typeof value === "string") return value;
-  if (Array.isArray(value)) {
-    if (value.some((entry) => typeof entry !== "string"))
-      sourceError(ctx, ["akm", "tools"], "array values must be strings.");
-    return value as readonly string[];
-  }
-  if (typeof value === "object") return value as ExecutionJsonObject;
-  sourceError(ctx, ["akm", "tools"], "must be a string, string array, mapping, or null.");
 }
 
 export function yamlProblem(message: string): string {

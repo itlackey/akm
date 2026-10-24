@@ -265,20 +265,6 @@
       },
       "additionalProperties": true
     },
-    "execution": {
-      "type": "object",
-      "properties": {
-        "allowedTools": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          },
-          "default": []
-        }
-      },
-      "additionalProperties": true
-    },
     "index": {
       "type": "object",
       "properties": {
@@ -1867,20 +1853,6 @@
               "type": "integer",
               "exclusiveMinimum": 0,
               "maximum": 16
-            }
-          },
-          "additionalProperties": true
-        },
-        "execution": {
-          "type": "object",
-          "properties": {
-            "allowedTools": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              },
-              "default": []
             }
           },
           "additionalProperties": true

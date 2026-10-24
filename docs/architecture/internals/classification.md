@@ -93,7 +93,6 @@ ties broken by registration order (later wins). The signals:
 | Specificity | Signal | Result |
 | --- | --- | --- |
 | 25 | `SKILL.md` (skill directory) | `skill` |
-| 20 | `tools` frontmatter | `agent` |
 | 19 | workflow markdown structure | `workflow` |
 | 18 | command frontmatter / `$ARGUMENTS` body placeholders | `command` |
 | 15 | immediate parent dir hint | directory-specific type |
@@ -120,7 +119,6 @@ ties broken by registration order (later wins). The signals:
 
 | Signal | Type | Specificity |
 | --- | --- | --- |
-| `tools` in frontmatter | `agent` | 20 |
 | workflow heading/step structure | `workflow` | 19 |
 | `agent` in frontmatter | `command` | 18 |
 | `$ARGUMENTS` or `$1`-`$3` in body | `command` | 18 |
@@ -147,7 +145,7 @@ Unknown string values warn once at runtime and remain searchable.
 | `scripts/deploy.sh` | parent dir (15) → `script` | `scripts/deploy.sh` |
 | `skills/review/SKILL.md` | `SKILL.md` (25) → `skill` | `skills/review` |
 | `commands/release.md` with `agent: coder` | command frontmatter (18) | `commands/release` |
-| `agents/reviewer.md` with `tools:` | frontmatter (20) → `agent` | `agents/reviewer` |
+| `agents/reviewer.md` | parent dir (15) → `agent` | `agents/reviewer` |
 | `workflows/release.md` with workflow structure | structure (19) → `workflow` | `workflows/release` |
 | `env/prod.env` | parent dir (15) → `env` | `env/prod` |
 | `secrets/deploy-token` | parent dir (15) → `secret` | `secrets/deploy-token` |

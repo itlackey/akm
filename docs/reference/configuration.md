@@ -48,9 +48,6 @@ migrate` / `akm upgrade`; ordinary runtime code reads only the current shape.
     "maxConcurrency": 8,
     "judgeEngine": "reviewer"
   },
-  "execution": {
-    "allowedTools": ["read_file", "search"]
-  },
   "improve": {
     "strategies": {
       "nightly": {
@@ -188,11 +185,9 @@ reply to its own contract the same way on every engine kind: a reply that is not
 the JSON object of reflect's schema gets one repair turn, and one still invalid
 fails with `parse_error`.
 
-Executable assets may request tools, but the request is not authority. Configure
-the host-local `execution.allowedTools` list to define the ceiling; `"*"` is an
-explicit allow-all. The default is an empty list. Asset frontmatter cannot set
-`workspace`, `environment`, or opaque `runtime` values; those belong to local
-engine configuration or workflow environment bindings.
+Asset frontmatter cannot set `workspace`, `environment`, or opaque `runtime`
+values; those belong to local engine configuration or workflow environment
+bindings.
 
 ### Inference on an agent engine
 
@@ -240,7 +235,7 @@ cannot enforce:
 |---|---|
 | LLM | No tools. |
 | `claude` | Read and Edit inside the working directory, and Bash for `akm search` and `akm show` only. akm runs it with `--restricted`, so your user, project and local settings cannot widen that. |
-| `opencode-sdk` | Read, grep and glob, and akm's own `akm_search`, `akm_show` and `akm_curate`, which run inside akm. Every other tool is denied, so nothing is written. The session loads none of your OpenCode plugins, MCP servers or agents; its model is akm's when akm names one, else the one your OpenCode config selects. |
+| `opencode-sdk` | OpenCode's tools except those that change things (edit, write, shell, execute and subagents), plus akm's own `akm_search`, `akm_show` and `akm_curate`, which run inside akm. Nothing is written. The session loads none of your OpenCode plugins, MCP servers or agents; its model is akm's when akm names one, else the one your OpenCode config selects. |
 | Every other `agent` harness | Cannot run model work: akm refuses the request before it starts. |
 
 **The one rule.** Every key model work reads its engine from must name an
@@ -988,7 +983,7 @@ one file, and have each host's local config extend it.
 
 Shared layers carry portable policy, not host authority. `bundles`, source and
 write defaults, registries, embedding connections, scheduler activation,
-`execution`, `experimental`, and setup state are ignored when inherited.
+`experimental`, and setup state are ignored when inherited.
 Engine definitions may be shared, but credentials and executable authority
 (`apiKey`, `apiKeyFile`, `bin`, `args`, and `workspace`) must be supplied by
 the local file. Improve publication (`strategies.*.sync`) and reranker network

@@ -17,7 +17,6 @@
 
 import type { ExecutionJsonObject } from "../../execution/json";
 import type { LoweringNotice, ResolvedExecutionRequestV1 } from "../../execution/resolved-request";
-import type { ShowResponse } from "../../sources/types";
 import type { AgentProfile } from "./profiles";
 
 /**
@@ -34,11 +33,7 @@ export interface AgentDispatchRequest {
   systemPrompt?: string;
   /** Exact model ID resolved before harness lowering. */
   model?: string;
-  /** Tool policy — from agent asset frontmatter `tools:`. */
-  tools?: ShowResponse["toolPolicy"];
-  /** Capabilities the run is granted (`permissions:`); undefined runs with the harness defaults. */
-  permissions?: readonly import("./capabilities").Capability[];
-  /** Run under the model-work tool policy: the builder confines the run itself and `tools` is unset. */
+  /** Run under the model-work tool policy: the builder confines the run itself. */
   modelWork?: boolean;
   /** Exact resolved inference object. Builders consume only fields their lowerer records as translated. */
   inference?: ExecutionJsonObject | null;
@@ -160,12 +155,3 @@ export function modelFromArgs(args: readonly string[]): string | undefined {
   return model;
 }
 
-/**
- * Normalize a toolPolicy value to a comma-separated string suitable for a
- * CLI flag. Structured policy objects are JSON-serialized.
- */
-export function normalizeTools(tools: ShowResponse["toolPolicy"]): string {
-  if (typeof tools === "string") return tools;
-  if (Array.isArray(tools)) return tools.join(",");
-  return JSON.stringify(tools);
-}

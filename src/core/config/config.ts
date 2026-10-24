@@ -444,7 +444,6 @@ const HOST_LOCAL_CONFIG_KEYS = new Set([
   "defaultBundle",
   "defaultWriteTarget",
   "embedding",
-  "execution",
   "experimental",
   "registries",
   "scheduler",

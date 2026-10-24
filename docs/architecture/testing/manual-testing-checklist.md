@@ -2049,7 +2049,7 @@ test "$agent_failure_status" -eq 1
 jq -e '.ok == false and .exitCode == 7' "$AKM_SANDBOX/agent-failure.json"
 ```
 
-- [ ] **AI** Agent asset contributes system prompt/model/tool policy; CLI model override wins.
+- [ ] **AI** Agent asset contributes system prompt/model; CLI model override wins.
 - [ ] **AI** Prompt, prompt-stdin, cwd, and interactive no-prompt paths are each covered; stored commands and workflows use their canonical commands.
 - [ ] **AI** Capture proves exact argv/prompt/cwd and credential-presence boolean without logging credential value.
 - [ ] **AI** Nonzero child returns `agent-result` on stdout, CLI exit `1`, child code/reason/stderr retained and redacted.

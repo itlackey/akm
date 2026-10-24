@@ -42,7 +42,7 @@ export interface AkmAgentDispatchOptions {
    */
   cwd?: string;
   /** Current invocation-layer selections consumed by the execution cascade. */
-  selection?: Pick<UnresolvedExecutionDefaults, "model" | "inference" | "outputSchema" | "tools">;
+  selection?: Pick<UnresolvedExecutionDefaults, "model" | "inference" | "outputSchema">;
 }
 
 export interface AkmAgentDispatchSeams {
@@ -80,7 +80,6 @@ function canonicalCurrent(options: AkmAgentDispatchOptions): UnresolvedExecution
   if (options.selection?.model !== undefined) current.model = options.selection.model;
   if (Object.hasOwn(options.selection ?? {}, "inference")) current.inference = options.selection?.inference;
   if (options.selection?.outputSchema !== undefined) current.outputSchema = options.selection.outputSchema;
-  if (options.selection?.tools !== undefined) current.tools = options.selection.tools;
   if (options.timeoutMs !== undefined) current.timeout = options.timeoutMs;
   if (options.cwd !== undefined) current.workspace = options.cwd;
   return current as UnresolvedExecutionDefaults;

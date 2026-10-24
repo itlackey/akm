@@ -41,13 +41,13 @@ function flags(profile: AgentProfile, req: AgentDispatchRequest): string[] {
 export const opencodeBuilder: AgentCommandBuilder = {
   platform: "opencode",
   personaChannel: "prompt",
-  lower: createAgentRequestLowerer({ adapter: "opencode", personaChannel: "prompt", tools: "none" }),
+  lower: createAgentRequestLowerer({ adapter: "opencode", personaChannel: "prompt" }),
   build(profile, req): BuiltCommand {
     // Refuse only a binary that reports OpenCode 2 or later; one whose version cannot be read is run as given.
     const { reportedMajor, version } = detectOpencodeMajor(profile.bin);
     if (reportedMajor !== undefined && reportedMajor >= 2) {
       throw new Error(
-        `${profile.bin} is OpenCode ${version || "2"}. The opencode harness runs OpenCode 1 only; OpenCode 2 runs embedded through an engine with platform "opencode-sdk".`,
+        `${profile.bin} reports ${version}. The opencode harness runs OpenCode 1 only; OpenCode 2 runs embedded through an engine with platform "opencode-sdk".`,
       );
     }
     return { argv: [profile.bin, ...flags(profile, req)], stdin: req.prompt };

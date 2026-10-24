@@ -484,12 +484,6 @@ export interface ShowResponse extends FragmentProvenance {
   prompt?: string;
   description?: string;
   tags?: string[];
-  /**
-   * Tool access policy for agent assets. Mapped from the frontmatter `tools` key.
-   * Can be a single tool name, a list of tool names, or a structured policy object
-   * (e.g. `{ read: "allow", write: "deny" }`).
-   */
-  toolPolicy?: string | string[] | Record<string, unknown>;
   modelHint?: string;
   /** For commands: which agent should execute this command (OpenCode convention) */
   agent?: string;

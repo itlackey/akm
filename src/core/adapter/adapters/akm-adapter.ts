@@ -364,7 +364,6 @@ function renderExecutionSource(c: BundleComponent, file: FileContext): AdapterRe
       executionDefaultsFromFrontmatter(data, {
         kind: document.type === "command" ? "command" : "persona",
         allowTopLevelEngine: true,
-        toolsKeys: ["tools"],
       }),
   });
 }

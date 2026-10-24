@@ -14,10 +14,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with a warning (`args` used to fail config validation).
   - Agent and workflow runs load the user's default OpenCode config, with akm's
     model on top when akm names one.
-  - Model work runs on an empty akm-owned config, with read, grep and glob and
-    akm's own `akm_search`, `akm_show` and `akm_curate`, which run in-process.
-    Every other tool is denied, and none of the user's plugins, MCP servers or
-    agents load. Its model is akm's, else the one the user's OpenCode config
+  - Model work runs read-only on an empty akm-owned config: OpenCode's tools
+    except edit, write, shell, execute and subagents, plus akm's own
+    `akm_search`, `akm_show` and `akm_curate`, which run in-process. None of the
+    user's plugins, MCP servers or agents load. Its model is akm's, else the one the user's OpenCode config
     selects.
   - Sessions are stored in akm's own OpenCode database,
     `<akm data dir>/opencode.db`.
@@ -52,6 +52,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The `opencode serve` server management, the OpenCode 1 and 2 HTTP adapters,
   the injected `akm-model-work` OpenCode agent, and the `@opencode-ai/sdk` and
   `@opencode/client` dependencies.
+- Asset tool requests. An agent or command's `tools:` (or a Claude command's
+  `allowed-tools:`) is no longer read, a task's `tools:` is ignored with a
+  warning, and `akm migrate apply` drops a v3 task's `akm.tools`. With them go
+  the `execution.allowedTools` config key (now an unknown key: warned, ignored
+  and dropped by `akm migrate apply`), the `EXECUTION_NOT_AUTHORIZED` error,
+  `toolPolicy` in `akm show`, the harness builders' tool flags, and recognizing
+  a file as an agent by its `tools:` key. Restrict an agent's tools in the
+  harness's own agent definition and select it with the engine's `agent`.
 
 ## [0.10.261013] - 2026-10-23
 

@@ -91,7 +91,6 @@ export const aiderBuilder: AgentCommandBuilder = {
   lower: createAgentRequestLowerer({
     adapter: AIDER_PLATFORM,
     personaChannel: "prompt",
-    tools: "none",
   }),
   build(profile, req) {
     const args: string[] = [...profile.args];

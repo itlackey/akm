@@ -116,61 +116,15 @@ describe("geminiBuilder — schema passthrough (prompt+validate tier)", () => {
   });
 });
 
-// ── Builder — tool policy ─────────────────────────────────────────────────────
-
-describe("geminiBuilder — tool policy", () => {
-  test("string policy → repeated --allowed-tools flags", () => {
-    const cmd = geminiBuilder.build(makeGeminiProfile(), { prompt: "go", tools: "run_shell_command, write_file" });
-    expect(cmd.argv).toEqual([
-      "gemini",
-      "--allowed-tools",
-      "run_shell_command",
-      "--allowed-tools",
-      "write_file",
-      "-p",
-      "go",
-    ]);
-  });
-
-  test("array policy → repeated --allowed-tools flags", () => {
-    const cmd = geminiBuilder.build(makeGeminiProfile(), { prompt: "go", tools: ["read_file", "run_shell_command"] });
-    expect(cmd.argv).toEqual([
-      "gemini",
-      "--allowed-tools",
-      "read_file",
-      "--allowed-tools",
-      "run_shell_command",
-      "-p",
-      "go",
-    ]);
-  });
-
-  test("structured policy object → NO tool flags (restriction is never widened)", () => {
-    const cmd = geminiBuilder.build(makeGeminiProfile(), {
-      prompt: "go",
-      tools: { read_file: "allow", write_file: "deny" },
-    });
-    const argv = cmd.argv as string[];
-    expect(argv.includes("--allowed-tools")).toBe(false);
-    expect(argv.includes("--yolo")).toBe(false);
-  });
-
-  test("no policy → bare headless shape (no auto-approval flag is invented)", () => {
-    const cmd = geminiBuilder.build(makeGeminiProfile(), { prompt: "go" });
-    expect(cmd.argv).toEqual(["gemini", "-p", "go"]);
-  });
-});
-
 // ── Builder — injection guards ────────────────────────────────────────────────
 
-describe("geminiBuilder — model/systemPrompt/tools values", () => {
-  test("a leading '--' in model/systemPrompt/tools is passed through, not rejected", () => {
+describe("geminiBuilder — model/systemPrompt values", () => {
+  test("a leading '--' in model/systemPrompt is passed through, not rejected", () => {
     expect(() =>
       geminiBuilder.build(makeGeminiProfile(), {
         prompt: "go",
         model: "--evil",
         systemPrompt: "--inject",
-        tools: ["--evil-flag"],
       }),
     ).not.toThrow();
   });
@@ -181,7 +135,6 @@ describe("geminiBuilder — model/systemPrompt/tools values", () => {
         prompt: "go",
         model: "gemini-2.5-pro",
         systemPrompt: "Be helpful.",
-        tools: "run_shell_command",
       }),
     ).not.toThrow();
   });

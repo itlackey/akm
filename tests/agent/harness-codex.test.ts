@@ -108,13 +108,6 @@ describe("codexBuilder — basic dispatch", () => {
     expect(argv.includes("--system-prompt")).toBe(false);
   });
 
-  test("tool policy is NOT emitted (codex governs tools via its own sandbox config)", () => {
-    const cmd = codexBuilder.build(makeCodexProfile(), { prompt: "do work", tools: "read,write" });
-    const argv = cmd.argv as string[];
-    expect(argv.includes("--allowedTools")).toBe(false);
-    expect(argv.join(" ")).not.toContain("read,write");
-  });
-
   test("sandbox flag is injected by default (codex exec defaults to read-only)", () => {
     const cmd = codexBuilder.build(makeCodexProfile(), { prompt: "go" });
     const argv = cmd.argv as string[];

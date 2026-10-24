@@ -129,9 +129,10 @@ points to, so `scripts/deploy.sh` linked to `real-script.txt` runs under the
 shell.
 
 Every field that used to live under v3's `akm:` options bag is a top-level
-key in task source v4: `agent`, `engine`, `model`, `inference`, `tools`,
-`timeout`, `redact`, `maxSteps`, and `maxRetries`, plus `description`,
-`when_to_use`, and `tags`. Environment entries (`env`) are literal string,
+key in task source v4: `agent`, `engine`, `model`, `inference`, `timeout`,
+`redact`, `maxSteps`, and `maxRetries`, plus `description`, `when_to_use`, and
+`tags`. A v3 `akm.tools` is dropped by the migration, and a v4 `tools` is
+ignored with a warning. Environment entries (`env`) are literal string,
 number, or boolean values. Keep credentials out of task source; `redact`
 contains environment variable names, never secret values.
 

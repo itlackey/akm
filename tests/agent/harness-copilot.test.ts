@@ -114,40 +114,15 @@ describe("copilotBuilder — schema passthrough (prompt+validate tier)", () => {
   });
 });
 
-// ── Builder — tool policy ─────────────────────────────────────────────────────
-
-describe("copilotBuilder — tool policy", () => {
-  test("string policy → repeated --allow-tool flags, no --allow-all-tools", () => {
-    const cmd = copilotBuilder.build(makeCopilotProfile(), { prompt: "go", tools: "shell, write" });
-    expect(cmd.argv).toEqual(["copilot", "--allow-tool", "shell", "--allow-tool", "write", "-p", "go"]);
-  });
-
-  test("array policy → repeated --allow-tool flags", () => {
-    const cmd = copilotBuilder.build(makeCopilotProfile(), { prompt: "go", tools: ["read", "shell"] });
-    expect(cmd.argv).toEqual(["copilot", "--allow-tool", "read", "--allow-tool", "shell", "-p", "go"]);
-  });
-
-  test("structured policy object → NO allow flags (restriction is never widened)", () => {
-    const cmd = copilotBuilder.build(makeCopilotProfile(), {
-      prompt: "go",
-      tools: { read: "allow", write: "deny" },
-    });
-    const argv = cmd.argv as string[];
-    expect(argv.includes("--allow-all-tools")).toBe(false);
-    expect(argv.includes("--allow-tool")).toBe(false);
-  });
-});
-
 // ── Builder — injection guards ────────────────────────────────────────────────
 
-describe("copilotBuilder — model/systemPrompt/tools values", () => {
-  test("a leading '--' in model/systemPrompt/tools is passed through, not rejected", () => {
+describe("copilotBuilder — model/systemPrompt values", () => {
+  test("a leading '--' in model/systemPrompt is passed through, not rejected", () => {
     expect(() =>
       copilotBuilder.build(makeCopilotProfile(), {
         prompt: "go",
         model: "--evil",
         systemPrompt: "--inject",
-        tools: ["--evil-flag"],
       }),
     ).not.toThrow();
   });
@@ -158,7 +133,6 @@ describe("copilotBuilder — model/systemPrompt/tools values", () => {
         prompt: "go",
         model: "gpt-5",
         systemPrompt: "Be helpful.",
-        tools: "shell",
       }),
     ).not.toThrow();
   });

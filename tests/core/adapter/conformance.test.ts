@@ -364,7 +364,6 @@ describe("conformance — read candidates and recognition are two-way canonical 
       const authored = [
         ["same.md", "Use $ARGUMENTS exactly.\n"],
         ["loose-workflow.md", "---\ntype: workflow\n---\n\n# Loose workflow\n"],
-        ["loose-tools-agent.md", "---\ntools: [Read]\n---\n\n# Loose tools agent\n"],
         ["loose-agent-command.md", "---\nagent: planner\n---\n\n# Loose agent command\n"],
         ["loose-model-agent.md", "---\nmodel: local\n---\n\n# Loose model agent\n"],
         ["loose-knowledge.md", "# Loose knowledge\n"],

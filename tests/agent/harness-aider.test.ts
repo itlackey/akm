@@ -94,11 +94,6 @@ describe("aiderBuilder — plain prompt", () => {
     // No bare argv element starts the payload as its own token.
     expect(argv.includes("--not-a-flag actually prose")).toBe(false);
   });
-
-  test("tool policy is deliberately dropped (no allowlist flags invented)", () => {
-    const cmd = aiderBuilder.build(makeAiderProfile(), { prompt: "go", tools: ["read", "shell"] });
-    expect(cmd.argv).toEqual(["aider", "--yes-always", "--no-pretty", "--message=go"]);
-  });
 });
 
 // ── Builder — exact model selection ─────────────────────────────────────────

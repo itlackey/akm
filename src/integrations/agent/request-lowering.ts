@@ -5,35 +5,19 @@
 import { ConfigError } from "../../core/errors";
 import { withSchemaInstruction } from "../../core/structured";
 import type { LoweringNotice, ResolvedExecutionRequestV1 } from "../../execution/resolved-request";
-import { MODEL_WORK_POLICY_ID, type ToolSelection } from "../../execution/source";
+import { MODEL_WORK_POLICY_ID } from "../../execution/source";
 import { getHarness } from "../harnesses";
 import type { AgentDispatchRequest, LoweredAgentDispatch } from "./builder-shared";
 import { composeConversationFallbackPrompt } from "./conversation-fallback";
 import { composePersonaFallbackPrompt } from "./persona-fallback";
 import type { AgentProfile } from "./profiles";
 
-export type ToolTranslation = "all" | "flat" | "sdk" | "none";
-
 /** What one harness can carry natively; everything else is composed into the prompt or noted. */
 export interface AgentLowererOptions {
   readonly adapter: string;
   readonly personaChannel: "native" | "prompt";
-  readonly tools: ToolTranslation;
   /** Inference keys this harness carries; any other key is reported untranslated. */
   readonly inference?: readonly string[];
-}
-
-/** A tool selection that actually names tools (not omitted, null, or empty). */
-export function hasToolSelection(value: ToolSelection | undefined): value is Exclude<ToolSelection, null> {
-  if (value === null || value === undefined) return false;
-  if (typeof value === "string" || Array.isArray(value)) return value.length > 0;
-  return Object.keys(value).length > 0;
-}
-
-function translatesTools(mode: ToolTranslation, value: ToolSelection): boolean {
-  if (mode === "all") return true;
-  if (typeof value === "string" || Array.isArray(value)) return mode === "flat" || mode === "sdk";
-  return mode === "sdk" && value !== null && Object.values(value).every((entry) => typeof entry === "boolean");
 }
 
 /** The notice for a request field a transport does not carry; dispatch continues. */
@@ -131,15 +115,6 @@ export function createAgentRequestLowerer(
         );
       }
       dispatch.modelWork = true;
-    } else if (request.tools !== undefined) {
-      // An explicit empty selection still reaches the builder (e.g. an empty allowlist).
-      if (hasToolSelection(request.tools) && !translatesTools(options.tools, request.tools)) {
-        throw new ConfigError(
-          `The ${options.adapter} transport cannot enforce the resolved tool policy.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
-      dispatch.tools = request.tools as AgentDispatchRequest["tools"];
     }
     const settings = request.runtime.settings;
     if (settings && Object.keys(settings).length > 0) skip("runtime.settings");

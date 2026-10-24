@@ -32,12 +32,7 @@
  *   `--output-format json` is emitted so stdout is the documented JSON
  *   envelope the gemini result extractor normalizes. The engine's shared
  *   retry-until-valid loop performs the actual validation.
- * - **tools** — a string/array tool policy maps to repeated
- *   `--allowed-tools <t>` flags (Gemini's run-without-confirmation
- *   allowlist). A *structured* policy object is NOT expressible as Gemini
- *   flags; it is deliberately dropped without widening to an auto-approve
- *   flag (never silently widen a restriction). With no policy at all,
- *   NOTHING is emitted — the matrix's headless shape is the bare
+ * - **tools** — nothing is emitted: the matrix's headless shape is the bare
  *   `gemini -p "<p>"`; autonomy flags (`--yolo`, `--approval-mode`) belong in
  *   `profile.args` where the operator opts in explicitly.
  *
@@ -54,25 +49,6 @@ import { createAgentRequestLowerer } from "../../agent/request-lowering";
 /** Canonical harness/platform id used for model-alias resolution. */
 export const GEMINI_PLATFORM = "gemini";
 
-/**
- * Split a tool policy into individual tool names for `--allowed-tools`.
- * Strings are comma-separated lists; arrays are taken as-is. Structured
- * policy objects return `undefined` (not expressible as Gemini flags — see
- * module doc).
- */
-function toolPolicyEntries(tools: NonNullable<AgentDispatchRequest["tools"]>): string[] | undefined {
-  if (typeof tools === "string") {
-    return tools
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-  }
-  if (Array.isArray(tools)) {
-    return tools.map((t) => t.trim()).filter(Boolean);
-  }
-  return undefined;
-}
-
 /** Assemble the `-p` payload: optional system prompt, then the task prompt. */
 function buildPromptPayload(req: AgentDispatchRequest): string {
   const sections: string[] = [];
@@ -84,7 +60,7 @@ function buildPromptPayload(req: AgentDispatchRequest): string {
 /**
  * Gemini CLI builder.
  * Command shape:
- *   gemini [--model <m>] [--allowed-tools <t> ...]
+ *   gemini [--model <m>]
  *          [--output-format json] -p "<systemPrompt?\n\nprompt>"
  */
 export const geminiBuilder: AgentCommandBuilder = {
@@ -93,20 +69,12 @@ export const geminiBuilder: AgentCommandBuilder = {
   lower: createAgentRequestLowerer({
     adapter: GEMINI_PLATFORM,
     personaChannel: "prompt",
-    tools: "flat",
   }),
   build(profile, req) {
     const args: string[] = [...profile.args];
     if (req.model) {
       const resolved = resolveDispatchModel(req, profile, GEMINI_PLATFORM) as string;
       args.push("--model", resolved);
-    }
-    if (req.tools) {
-      // Structured policy objects (entries === undefined) emit NO flags:
-      // dropping a restriction must never widen to auto-approval.
-      for (const tool of toolPolicyEntries(req.tools) ?? []) {
-        args.push("--allowed-tools", tool);
-      }
     }
     if (req.schema) {
       // Structured unit: ask for the documented JSON envelope so the result

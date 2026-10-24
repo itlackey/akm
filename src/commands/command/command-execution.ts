@@ -260,7 +260,6 @@ const DIAGNOSTIC_PROVENANCE_FIELDS = new Set([
   "runtime.settings",
   "runtime.timeoutMs",
   "runtime.workspace",
-  "tools",
 ]);
 
 const DIAGNOSTIC_NOTICE_FIELDS = new Set([
@@ -281,7 +280,6 @@ const DIAGNOSTIC_NOTICE_FIELDS = new Set([
   "runtime.settings",
   "runtime.timeoutMs",
   "runtime.workspace",
-  "tools",
 ]);
 
 function canonicalDiagnosticProvenanceField(field: string): string | undefined {

@@ -285,7 +285,6 @@ export function renderToolDirExecutionSource(
     defaults: (data) =>
       executionDefaultsFromFrontmatter(data, {
         kind: cls.type === "command" ? "command" : "persona",
-        toolsKeys: layout.adapterId === "claude" && cls.type === "command" ? ["allowed-tools", "tools"] : ["tools"],
       }),
     extensions: (data) => nativeExecutionExtensions(layout, cls, data),
   });

@@ -216,14 +216,13 @@ Every execution crosses the same plain functions:
 
 1. `resolveExecution()` selects the engine (nearest layer, `defaults.engine`,
    then the `opencode-sdk` fallback), merges the engine's defaults with the
-   caller's layers (nearest wins), expands a `models.json` alias once,
-   authorizes tools against `execution.allowedTools`, and returns the
+   caller's layers (nearest wins), expands a `models.json` alias once, and
+   returns the
    `ResolvedExecutionRequestV1`, the engine's `RunnerSpec` with the request
    applied, and per-field provenance. Credentials stay symbolic.
 2. `buildExecution()` hands the request to the harness's own builder (derived
    from `HARNESS_REGISTRY`), or builds chat messages for a direct LLM. A field
-   the transport cannot carry becomes a secret-free notice; a tool policy it
-   cannot enforce, or a denied tool selection, is a pre-dispatch error.
+   the transport cannot carry becomes a secret-free notice.
 3. `buildExecutionFromWire()` does the same from a journaled
    `{ request, runner }` without reading config, aliases, environment
    variables, or credentials — workflow resume.

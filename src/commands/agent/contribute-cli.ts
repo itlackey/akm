@@ -42,14 +42,14 @@ export const agentCommand = defineCommand({
   meta: {
     name: "agent",
     description:
-      "Dispatch an agent CLI (opencode, claude, …) with an optional agent persona and model defaults. Use --prompt for work; stored commands run through akm command run. Nonempty tool requests require separate operator authorization and are rejected by the current CLI.",
+      "Dispatch an agent CLI (opencode, claude, …) with an optional agent persona and model defaults. Use --prompt for work; stored commands run through akm command run.",
   },
   args: {
     ...GLOBAL_OUTPUT_ARGS,
     "agent-ref": {
       type: "positional",
       description:
-        "Optional agent asset ref (e.g. agents/code-reviewer). Resolves persona and model defaults; the current CLI rejects a nonempty tool request without separate operator authorization.",
+        "Optional agent asset ref (e.g. agents/code-reviewer). Resolves persona and model defaults.",
       required: false,
     },
     prompt: { type: "string", description: "Task prompt to pass to the agent" },

@@ -97,7 +97,7 @@ export function frozenSummaryJudge(
       timeoutMs: target.runner.timeoutMs ?? null,
       ...(eventSource !== undefined ? { eventSource } : {}),
     };
-    // Lowering and authorization precede every live credential/passthrough
+    // Lowering precedes every live credential/passthrough
     // sample. The injected dispatcher may be a test seam, but it receives the
     // exact same already-validated request and redaction declaration.
     const lowered = prepareWorkflowExecution(

@@ -68,7 +68,6 @@ export const piBuilder: AgentCommandBuilder = {
   lower: createAgentRequestLowerer({
     adapter: PI_PLATFORM,
     personaChannel: "native",
-    tools: "none",
   }),
   build(profile, req) {
     const args: string[] = [...profile.args];

@@ -570,7 +570,7 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
 }
 ```
 
-- `asset` is the show response in full (frontmatter fields such as `description`, `tags`, `toolPolicy`, the
+- `asset` is the show response in full (frontmatter fields such as `description`, `tags`, `modelHint`, the
   `content`, workflow `steps`, and so on depending on the type), and `links` groups declared links by kind
   (`outgoing`, `incoming`, `unresolved`). A missing ref is a `404` `ASSET_NOT_FOUND`.
 - `feedback.counts` are all-time totals by signal across every source; `history` is the latest 50 events, newest

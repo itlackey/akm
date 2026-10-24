@@ -138,7 +138,7 @@ export interface CallStructuredOptions<T> {
   enabled?: boolean;
   /**
    * Already-resolved symbolic runner, of any kind. Production callers use this
-   * path so authorization precedes credential lookup and aliases are never re-run.
+   * path so lowering precedes credential lookup and aliases are never re-run.
    */
   runner?: RunnerSpec;
   /** Additional exact invocation fields for the current call. */
@@ -288,7 +288,7 @@ export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise
   }
 
   // On an enabled path, preparation/lowering happen OUTSIDE tryLlmFeature so
-  // authorization and invalid-config failures remain hard failures instead of
+  // invalid-config failures remain hard failures instead of
   // being mistaken for provider fallbacks.
   const invoke = prepareInvocation();
 

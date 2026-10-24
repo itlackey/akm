@@ -397,39 +397,6 @@ describe("direct LLM engines: config engine → chat call", () => {
       await expect(runExecution(built, { chat: async () => "unused" })).rejects.toThrow(/AKM_PIPELINE_TEST_KEY/);
     });
   });
-
-  test("the direct LLM transport refuses a tool selection it cannot enforce", () => {
-    const resolved = resolveExecution({
-      content: "x",
-      config: config({ engines: { local: LLM_ENGINE }, execution: { allowedTools: ["read"] } }),
-      current: { engine: "local", tools: ["read"] },
-    });
-    expect(() => buildExecution(resolved.request, resolved.runner)).toThrow(/cannot enforce/);
-  });
-});
-
-describe("tool authorization is capped by execution.allowedTools", () => {
-  const engines = { claude: { kind: "agent", platform: "claude" } };
-
-  test("an allowed selection reaches the harness; a denied one stops at build", async () => {
-    const allowed = config({ engines, defaults: { engine: "claude" }, execution: { allowedTools: ["Read", "Grep"] } });
-    const { argv } = await spawnedFor({ content: "x", config: allowed, current: { tools: ["Read"] } });
-    expect(argv).toContain("--allowedTools");
-    expect(argv[argv.indexOf("--allowedTools") + 1]).toBe("Read");
-
-    const denied = resolveExecution({ content: "x", config: allowed, current: { tools: ["Bash"] } });
-    expect(denied.request.authorization.status).toBe("denied");
-    expect(() => buildExecution(denied.request, denied.runner)).toThrow(/not authorized/);
-  });
-
-  test("a runner-only resolution has no allowlist, so any tool selection is denied", () => {
-    const resolved = resolveExecution({
-      content: "x",
-      config: config({ engines, defaults: { engine: "claude" }, execution: { allowedTools: ["*"] } }),
-    });
-    const again = resolveExecution({ content: "y", runner: resolved.runner, current: { tools: ["Read"] } });
-    expect(again.request.authorization).toMatchObject({ status: "denied", policy: { id: "unconfigured" } });
-  });
 });
 
 describe("provenance and notices", () => {
@@ -623,30 +590,11 @@ describe("the model-work tool policy", () => {
   const engines = { claude: { kind: "agent", platform: "claude", workspace: "/configured/workspace" } };
   const modelWork = config({ engines, defaults: { engine: "claude" } });
 
-  test("is akm's own: allowed without execution.allowedTools, on a runner-only resolution too", () => {
+  test("is akm's own: allowed on a runner-only resolution too", () => {
     const { runner } = resolveExecution({ content: "x", config: modelWork });
     const again = resolveExecution({ content: "y", runner, modelWork: true });
     expect(again.request.authorization).toMatchObject({ status: "allowed", policy: { id: "model-work" } });
     expect(() => buildExecution(again.request, again.runner)).not.toThrow();
-  });
-
-  // The caller asks for the policy; no `tools` value names it. An asset's or a task's own `tools:`, even the
-  // exact tools the policy allows, is ordinary tools: the operator's `execution.allowedTools` decides.
-  test("an asset's or a task's own tools, the policy's four included, are denied without execution.allowedTools", () => {
-    const tools = ["read", "edit", "akm search", "akm show"];
-    const layers = [
-      { agentLayer: { id: "agents/a", values: { tools } } },
-      { commandLayer: { id: "commands/c", values: { tools } } },
-      { current: { tools } },
-    ];
-    for (const layer of layers) {
-      const { request } = resolveExecution({ content: "x", config: modelWork, ...layer });
-
-      expect(request.authorization).toMatchObject({
-        status: "denied",
-        policy: { id: "config-execution-allowed-tools" },
-      });
-    }
   });
 
   test("cannot run a native agent, which would replace the confined one", () => {

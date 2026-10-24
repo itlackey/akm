@@ -7,8 +7,8 @@
  * scheduled moment.
  *
  * The durable boundary is intentional: id/bundle resolution, source read,
- * strict task source parsing, target resolution, command
- * authorization/lowering, workflow projectability, and frozen script-byte
+ * strict task source parsing, target resolution, command lowering, workflow
+ * projectability, and frozen script-byte
  * capture (load-task.ts) all finish before an attempt is reserved or a log is
  * created (attempt-lifecycle.ts). Once prepared, the runner dispatches the
  * immutable command, workflow, shell, or script projection to its own arm

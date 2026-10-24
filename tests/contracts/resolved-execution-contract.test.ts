@@ -26,7 +26,6 @@ Review $ARGUMENTS exactly once.
 
 const PERSONA_RAW = `---
 description: Read-only reviewer
-tools: []
 ---
 Review without modifying files.
 `;
@@ -41,7 +40,7 @@ function commandSource() {
       adapter: "akm",
       file: "commands/review.md",
     },
-    defaults: { model: "balanced", tools: [] },
+    defaults: { model: "balanced" },
   });
 }
 
@@ -55,7 +54,6 @@ function personaSource() {
       adapter: "akm",
       file: "agents/reviewer.md",
     },
-    defaults: { tools: [] },
   });
 }
 
@@ -68,8 +66,7 @@ function commonRequest(command: ReturnType<typeof createResolvedCommand>): Resol
     model: { input: "balanced", interpretation: "alias", resolved: "provider/exact-model" },
     inference: { temperature: 0, enableThinking: false, extraParams: {} },
     outputSchema: null,
-    tools: [],
-    authorization: { status: "not-required", reason: "no tools selected", policy: {} },
+    authorization: { status: "not-required", policy: {} },
     runtime: { timeoutMs: 0, workspace: "", environment: {} },
     notices: [
       {
@@ -215,7 +212,6 @@ describe("resolved execution request v1", () => {
       persona: null,
       engine: { name: "fixture-llm", kind: "llm" },
       model: null,
-      tools: null,
       authorization: { status: "not-required" },
       runtime: { timeoutMs: null, workspace: null, environment: null },
       notices: [],
@@ -225,7 +221,6 @@ describe("resolved execution request v1", () => {
     expect(Object.hasOwn(request, "persona")).toBe(true);
     expect(request.persona).toBeNull();
     expect(request.model).toBeNull();
-    expect(request.tools).toBeNull();
     const canonical = canonicalResolvedExecutionRequest(request);
     expect(canonicalResolvedExecutionRequest(decodeResolvedExecutionRequest(JSON.parse(canonical)))).toBe(canonical);
   });

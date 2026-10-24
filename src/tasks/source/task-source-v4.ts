@@ -22,15 +22,15 @@
  * file into `./bounded-document.ts`, and `source-v3.ts` now imports (and,
  * for the names that were already part of its public surface, re-exports)
  * them instead of declaring its own copies — see `./bounded-document.ts`'s
- * own header and spec §6 F-2 for the extraction itself. `parseTimeout` and
- * `parseTools` moved that way; `nullableSelector` did not (a recorded
+ * own header and spec §6 F-2 for the extraction itself. `parseTimeout` moved
+ * that way; `nullableSelector` did not (a recorded
  * deviation from a literal reading of D2-N4's own extraction list — see the
  * P2a Review log) and stays declared directly in `source-v3.ts`.
  *
- * This file implements its OWN top-level-rooted versions of the three v3
+ * This file implements its OWN top-level-rooted versions of the two v3
  * helpers that hardcode the `["akm", …]` field path —
- * `parseTimeoutTopLevel`/`nullableSelectorTopLevel`/`parseToolsTopLevel`
- * below, siblings of v3's `parseTimeout`/`nullableSelector`/`parseTools` —
+ * `parseTimeoutTopLevel`/`nullableSelectorTopLevel` below, siblings of v3's
+ * `parseTimeout`/`nullableSelector` —
  * because task source v4 needs the same accept/reject semantics at a
  * different, un-prefixed field path, not the same field path.
  */
@@ -43,7 +43,7 @@ import {
   validateJsonSchemaSubset,
 } from "../../core/json-schema";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
-import { warn } from "../../core/warn";
+import { warn, warnOnce } from "../../core/warn";
 import {
   applyInputDefaults,
   INPUT_NAME_PATTERN,
@@ -157,7 +157,6 @@ export interface TaskSourceV4Execution {
   readonly engine?: string | null;
   readonly model?: string | null;
   readonly inference?: ExecutionJsonObject | null;
-  readonly tools?: string | readonly string[] | ExecutionJsonObject | null;
   readonly timeout?: string | number | null;
   readonly redact?: readonly string[];
   readonly maxSteps?: number;
@@ -324,16 +323,6 @@ function parseTimeoutTopLevel(value: unknown, ctx: BoundedDocumentContext): stri
   return value as string | number;
 }
 
-function parseToolsTopLevel(value: ExecutionJsonValue, ctx: BoundedDocumentContext): TaskSourceV4Execution["tools"] {
-  if (value === null || typeof value === "string") return value;
-  if (Array.isArray(value)) {
-    if (value.some((entry) => typeof entry !== "string")) sourceError(ctx, ["tools"], "array values must be strings.");
-    return value as readonly string[];
-  }
-  if (typeof value === "object") return value as ExecutionJsonObject;
-  sourceError(ctx, ["tools"], "must be a string, string array, mapping, or null.");
-}
-
 function parseTarget(input: ExecutionJsonObject, ctx: BoundedDocumentContext): TaskSourceV4Target {
   const hasUses = own(input, "uses");
   if (hasUses) {
@@ -399,7 +388,10 @@ function parseExecutionControls(input: ExecutionJsonObject, ctx: BoundedDocument
     const inference = presentJsonValue(input.inference, ctx, ["inference"]);
     out.inference = inference === null ? null : asRecord(inference, ctx, ["inference"]);
   }
-  if (own(input, "tools")) out.tools = parseToolsTopLevel(presentJsonValue(input.tools, ctx, ["tools"]), ctx);
+  // Retired: assets no longer restrict an agent's tools.
+  if (own(input, "tools")) {
+    warnOnce(`task-source-v4-tools:${ctx.filePath}`, `${ctx.filePath}: \`tools\` is retired and ignored.`);
+  }
   if (own(input, "timeout")) out.timeout = parseTimeoutTopLevel(input.timeout, ctx);
   if (own(input, "redact")) {
     const names = parseStringArray(input.redact, ctx, ["redact"], {
@@ -688,7 +680,7 @@ function checkTopLevelKeys(input: ExecutionJsonObject, ctx: BoundedDocumentConte
       ctx,
       ["akm"],
       "is removed in task source v4; its members are top-level keys now (schedule, timeout, engine, model, redact, " +
-        "maxSteps, maxRetries, description, when_to_use, tags, agent, inference, tools, and output for outputSchema) " +
+        "maxSteps, maxRetries, description, when_to_use, tags, agent, inference, and output for outputSchema) " +
         "— see docs/reference/tasks.md.",
     );
   }

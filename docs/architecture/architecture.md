@@ -422,16 +422,14 @@ wins: the selected engine's own model/inference/timeout/workspace, then the
 persona, the command, the invocation defaults, and the current call. Omitted,
 explicit `null`, zero, and empty values stay distinct. A recognized
 `models.json` alias expands once, at the layer that chose it; the request
-records the exact final model. Tools are authorized against the host-local
-`execution.allowedTools` ceiling; no asset grants itself a tool. The result's
+records the exact final model. The result's
 `provenance` names the layer behind each field (`akm task explain`,
 `command run --dry-run`).
 
 `buildExecution` hands the request to the selected harness's own builder
 (registered on `HARNESS_REGISTRY`), or builds chat messages for a direct LLM.
-A tool policy the transport cannot enforce, or a denied tool selection, stops
-here; any other field the transport cannot carry becomes a secret-free
-`untranslated-field` notice and dispatch continues.
+A field the transport cannot carry becomes a secret-free `untranslated-field`
+notice and dispatch continues.
 
 Credentials stay symbolic (an env descriptor, an `apiKeyFile` path, or a
 `${ref}` reference such as `${secrets/openai}`) in everything
@@ -505,8 +503,8 @@ External coding agents are reachable via two execution paths:
 - Keeps one embedded instance per distinct configuration for the life of the
   process (closed by `disposeDispatchResources()`), and creates one fresh
   session per call. Agent runs load the user's OpenCode config; model work runs
-  on an empty akm-owned config with only the `read` and `akm` capabilities, and
-  akm's read tools run in-process. Every session is stored in akm's own
+  read-only on an empty akm-owned config: the session denies the tools that
+  change things, and akm's read tools run in-process. Every session is stored in akm's own
   OpenCode database (`<akm data dir>/opencode.db`).
 - Nobody can answer an akm run: questions are cancelled and permission requests
   rejected, each with a message, and the model carries on.

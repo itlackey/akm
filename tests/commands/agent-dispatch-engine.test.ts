@@ -14,12 +14,10 @@ import { withEnv } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
 
 describe("akm agent CLI help", () => {
-  test("does not expose workflow flattening or present asset tool requests as authorization", async () => {
+  test("does not expose workflow flattening or tool policy", async () => {
     const usage = await renderUsage(agentCommand as Parameters<typeof renderUsage>[0]);
 
     expect(usage).not.toContain("--workflow");
-    expect(usage).toContain("separate operator authorization");
-    expect(usage).toContain("rejected by the current CLI");
     expect(usage).not.toContain("provides the system prompt, model, and tool policy");
     expect(usage).not.toContain("Load prompt from a workflow asset");
   });
@@ -172,7 +170,6 @@ describe("akmAgentDispatch engine capability", () => {
         selection: {
           model: "balanced",
           inference: { effort: "high", temperature: 0 },
-          tools: [],
           outputSchema: { type: "object" },
         },
         agentConfig: { configVersion: "0.9.0", semanticSearchMode: "off" },
@@ -208,7 +205,6 @@ describe("akmAgentDispatch engine capability", () => {
           model: "balanced",
           inference: { effort: "high", temperature: 0 },
           outputSchema: { type: "object" },
-          tools: [],
           timeout: 0,
           workspace: "",
         },

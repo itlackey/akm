@@ -126,7 +126,7 @@ export interface RunAgentOptions {
   /**
    * Abstract dispatch parameters. When present, the platform-specific
    * AgentCommandBuilder constructs the argv from these fields (system prompt,
-   * model alias, tool policy). When absent, the prompt is passed positionally.
+   * model). When absent, the prompt is passed positionally.
    */
   dispatch?: import("./builder-shared").AgentDispatchRequest;
   /**
