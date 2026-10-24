@@ -15,12 +15,7 @@
  * OpenCode 1's defaults and a one-line warning.
  */
 
-import {
-  type AgentCommandBuilder,
-  type AgentDispatchRequest,
-  type BuiltCommand,
-  resolveDispatchModel,
-} from "../../agent/builder-shared";
+import type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "../../agent/builder-shared";
 import type { AgentProfile } from "../../agent/profiles";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 import { detectOpencodeMajor } from "./version";
@@ -34,7 +29,7 @@ function flags(profile: AgentProfile, req: AgentDispatchRequest): string[] {
     else if (!(req.model && arg.startsWith("--model="))) args.push(arg);
   }
   if (req.agent) args.push("--agent", req.agent);
-  if (req.model) args.push("--model", resolveDispatchModel(req, profile, "opencode") as string);
+  if (req.model) args.push("--model", req.model);
   return args;
 }
 

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { cloneExecutionJson, cloneExecutionJsonObject, type ExecutionJsonObject } from "./json";
+import { cloneExecutionJsonObject, type ExecutionJsonObject } from "./json";
 
 export const EXECUTION_SOURCE_SCHEMA_VERSION = 1 as const;
 
@@ -20,18 +20,6 @@ export interface ExecutionSourceIdentity {
   /** SHA-256 of the authoritative native file bytes decoded as UTF-8. */
   readonly hash: string;
 }
-
-/** Extensions are keyed by their owning adapter, not merged into common fields. */
-export type AdapterOwnedExtensions = Readonly<Record<string, ExecutionJsonObject>>;
-
-/**
- * The model-work tool policy: unattended model work (improve, the judges, index
- * passes, remember) changes nothing directly; the stash stays read-only to it.
- * Each transport that can run model work confines it its own way (an LLM has
- * no tools); any other refuses it at build. A request carries it as
- * `authorization.policy.id`, set only when its caller asks (`modelWork`).
- */
-export const MODEL_WORK_POLICY_ID = "model-work";
 
 /** Ordinary defaults contributed by one command or persona source layer. */
 export interface UnresolvedExecutionDefaults {
@@ -55,7 +43,6 @@ interface AdapterRenderedExecutionSourceBase {
   readonly content: string;
   readonly defaults: Readonly<UnresolvedExecutionDefaults>;
   readonly identity: Readonly<ExecutionSourceIdentity>;
-  readonly extensions?: AdapterOwnedExtensions;
 }
 
 export interface AdapterRenderedCommandSource extends AdapterRenderedExecutionSourceBase {
@@ -73,35 +60,6 @@ function requireRecord(value: unknown, path: string): Record<string, unknown> {
     throw new TypeError(`${path} must be an object`);
   }
   return value as Record<string, unknown>;
-}
-
-type ExtensionEntry = readonly [owner: string, values: ExecutionJsonObject];
-
-export function createAdapterExtensions(owner: string, values: ExecutionJsonObject): AdapterOwnedExtensions;
-export function createAdapterExtensions(
-  first: ExtensionEntry,
-  ...rest: readonly ExtensionEntry[]
-): AdapterOwnedExtensions;
-export function createAdapterExtensions(
-  first: string | ExtensionEntry,
-  second?: ExecutionJsonObject | ExtensionEntry,
-  ...rest: readonly ExtensionEntry[]
-): AdapterOwnedExtensions {
-  const entries: readonly ExtensionEntry[] =
-    typeof first === "string"
-      ? [[first, second as ExecutionJsonObject]]
-      : [first, ...(second === undefined ? [] : [second as ExtensionEntry]), ...rest];
-  const out: Record<string, ExecutionJsonObject> = {};
-  for (const [owner, values] of entries) out[owner] = cloneExecutionJsonObject(values, `extensions.${owner}`);
-  return Object.freeze(out);
-}
-
-export function cloneAdapterExtensions(value: unknown, path: string): AdapterOwnedExtensions {
-  const out: Record<string, ExecutionJsonObject> = {};
-  for (const [owner, fields] of Object.entries(requireRecord(value, path))) {
-    out[owner] = cloneExecutionJsonObject(fields, `${path}.${owner}`);
-  }
-  return Object.freeze(out);
 }
 
 /** A selector or layer identifier that may cross the durable execution boundary. */
@@ -189,7 +147,6 @@ export interface CreateAdapterRenderedExecutionSourceInput {
   readonly content: string;
   readonly identity: ExecutionSourceIdentity;
   readonly defaults?: UnresolvedExecutionDefaults;
-  readonly extensions?: AdapterOwnedExtensions;
 }
 
 /** Freeze a fully adapter-rendered, body-only source. */
@@ -214,8 +171,5 @@ export function createAdapterRenderedExecutionSource(
     content,
     defaults: cloneUnresolvedExecutionDefaults(input.defaults ?? {}),
     identity: createExecutionSourceIdentity(input.identity),
-    ...(input.extensions
-      ? { extensions: cloneAdapterExtensions(input.extensions, "execution source extensions") }
-      : {}),
   }) as AdapterRenderedExecutionSource;
 }

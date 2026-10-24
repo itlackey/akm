@@ -51,7 +51,7 @@
  * (`./index.ts`).
  */
 
-import { type AgentCommandBuilder, resolveDispatchModel } from "../../agent/builder-shared";
+import type { AgentCommandBuilder } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 
 /** Canonical harness/platform id used for model-alias resolution. */
@@ -75,8 +75,7 @@ export const piBuilder: AgentCommandBuilder = {
       args.push("--system-prompt", req.systemPrompt);
     }
     if (req.model) {
-      const resolved = resolveDispatchModel(req, profile, PI_PLATFORM) as string;
-      args.push("--model", resolved);
+      args.push("--model", req.model);
     }
     if (req.schema) {
       // Structured unit: JSONL event stream on stdout — the pi result

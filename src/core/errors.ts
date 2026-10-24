@@ -41,6 +41,7 @@ export type ConfigErrorCode =
   | "DATA_DIR_NOT_WRITABLE"
   | "INDEX_SCHEMA_INCOMPATIBLE"
   | "LLM_NOT_CONFIGURED"
+  | "AGENT_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
   | "UNKNOWN_IMPROVE_STRATEGY"
   // Refused stashDir that would clobber a sensitive system path or the user's
@@ -224,7 +225,8 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   INDEX_SCHEMA_INCOMPATIBLE:
     "Run `akm index --full` to rebuild the derived index from the currently materialized sources.",
   LLM_NOT_CONFIGURED:
-    'Run `akm setup` or configure an `engines` entry with `kind: "llm"`, then select it with `defaults.llmEngine`.',
+    "Run `akm setup` to add a connection (an OpenAI-compatible endpoint) or enable a harness; model features need one.",
+  AGENT_NOT_CONFIGURED: "Run `akm setup` to enable a harness or add a connection; agent work needs one.",
   TEST_ISOLATION_MISSING:
     "Under bun test, when AKM_BUNDLE_DIR is set you MUST also set XDG_DATA_HOME (or AKM_DATA_DIR) and XDG_STATE_HOME (or AKM_STATE_DIR) to temp directories so the test does not touch the developer's real ~/.local/share/akm or ~/.local/state/akm.",
   UNSAFE_STASH_DIR:

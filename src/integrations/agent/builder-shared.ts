@@ -53,15 +53,6 @@ export interface LoweredAgentDispatch {
   readonly notices: readonly Readonly<LoweringNotice>[];
 }
 
-/** Models reaching a harness have already crossed the single model-map boundary. */
-export function resolveDispatchModel(
-  request: Pick<AgentDispatchRequest, "model">,
-  _profile: AgentProfile,
-  _platform: string,
-): string | undefined {
-  return request.model;
-}
-
 /** Concrete command ready to hand to the spawn wrapper. */
 export interface BuiltCommand {
   /** Full argv: [bin, ...flags, prompt]. */

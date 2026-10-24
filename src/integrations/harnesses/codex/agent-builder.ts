@@ -60,7 +60,7 @@ import { join } from "node:path";
 import { writeFileAtomic } from "../../../core/common";
 import { getCacheDir } from "../../../core/paths";
 import { sha256Hex } from "../../../runtime";
-import { type AgentCommandBuilder, resolveDispatchModel } from "../../agent/builder-shared";
+import type { AgentCommandBuilder } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 
 /**
@@ -137,8 +137,7 @@ export const codexBuilder: AgentCommandBuilder = {
     const sandboxArgs = ensureSandboxFlags(extra);
     const args: string[] = ["exec", ...sandboxArgs];
     if (req.model) {
-      const resolved = resolveDispatchModel(req, profile, "codex") as string;
-      args.push("--model", resolved);
+      args.push("--model", req.model);
     }
     // JSONL event stream on stdout — the codex result extractor's input.
     args.push("--json");

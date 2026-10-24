@@ -6,13 +6,13 @@
  * Built-in profile registry for external agent CLIs (v1 spec §12.1).
  *
  * A `AgentProfile` is the minimum metadata required to shell-out to a
- * coding-agent CLI. Named engines lower canonical harness metadata into this
+ * coding-agent CLI. A harness lowers canonical harness metadata into this
  * intentionally small internal shape. The wrapper is in `./spawn.ts`.
  */
 import { COMMON_SPAWN_ENV_PASSTHROUGH } from "../../core/spawn-env";
-import type { ExecutionJsonObject } from "../../execution/json";
-import { HARNESS_REGISTRY } from "../harnesses";
+import { getHarness, HARNESS_REGISTRY, INTERNAL_RUNTIME_ID } from "../harnesses";
 import type { AkmHarness } from "../harnesses/types";
+import type { ConnectionRunner, HarnessRunner } from "./runner";
 
 export type AgentStdioMode = "captured" | "interactive";
 export type AgentParseMode = "text" | "json";
@@ -24,7 +24,7 @@ export type AgentParseMode = "text" | "json";
 export interface AgentProfile {
   /** Profile name (key in `agent.profiles`). */
   readonly name: string;
-  /** Canonical harness platform selected by an engine. */
+  /** Canonical harness platform. */
   readonly platform?: string;
   /** Harness-owned lowering contract for persona delivery. */
   readonly personaChannel?: "native" | "prompt";
@@ -47,15 +47,10 @@ export interface AgentProfile {
   readonly envPassthrough: readonly string[];
   /** How the wrapper should attempt to parse stdout. */
   readonly parseOutput: AgentParseMode;
-  /** The engine's default native agent, used when a request names none. */
+  /** The harness's default native agent, used when a request names none. */
   readonly agent?: string;
   /** Exact model selected for this dispatch. */
   readonly model?: string;
-  /**
-   * The inference a dispatch resolved (an improve process's `llm` overlay, say),
-   * kept so a frozen runner resolves to it again. A harness reads the request's own.
-   */
-  readonly inference?: ExecutionJsonObject;
 }
 
 /**
@@ -92,7 +87,7 @@ function builtinProfiles(): Record<string, AgentProfile> {
 /**
  * The OpenCode CLI binary: the legacy OpenCode 1 harness runs it, and plugin
  * upgrades refresh OpenCode's plugin caches with it. The `opencode-sdk`
- * engine runs OpenCode embedded and needs no binary.
+ * runtime runs OpenCode embedded and needs no binary.
  */
 export const OPENCODE_BIN = "opencode";
 
@@ -111,4 +106,40 @@ export function listBuiltinAgentProfiles(): Record<string, AgentProfile> {
     out[name] = { ...profile };
   }
   return out;
+}
+
+/** The profile a harness runner spawns: its platform's built-in defaults under what the config set. */
+export function harnessProfile(runner: HarnessRunner): AgentProfile {
+  const harness = getHarness(runner.platform);
+  const builtin = getBuiltinAgentProfile(runner.platform);
+  return {
+    name: runner.name,
+    platform: runner.platform,
+    personaChannel: harness?.agentBuilder?.personaChannel ?? "prompt",
+    bin: runner.bin,
+    args: runner.args,
+    stdio: "captured",
+    ...(builtin?.env ? { env: builtin.env } : {}),
+    envPassthrough: builtin?.envPassthrough ?? [],
+    parseOutput: "text",
+    ...(runner.workspace ? { workspace: runner.workspace } : {}),
+    ...(runner.model ? { model: runner.model } : {}),
+    ...(runner.agent ? { agent: runner.agent } : {}),
+  };
+}
+
+/** The profile of akm's own runtime, the embedded OpenCode that runs agent work over a connection. It spawns nothing. */
+export function runtimeProfile(connection: ConnectionRunner, workspace?: string): AgentProfile {
+  return {
+    name: connection.name,
+    platform: INTERNAL_RUNTIME_ID,
+    personaChannel: "native",
+    bin: "",
+    args: [],
+    stdio: "captured",
+    envPassthrough: [],
+    parseOutput: "text",
+    model: connection.model,
+    ...(workspace ? { workspace } : {}),
+  };
 }

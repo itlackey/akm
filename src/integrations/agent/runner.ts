@@ -2,128 +2,135 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { LlmConnectionConfig } from "../../core/config/config";
-import { type CredentialDescriptor, materializeLlmConnection, type ResolvedLlmUse } from "./engine-resolution";
-import type { AgentProfile } from "./profiles";
+import { isRecord } from "../../core/common";
+import { inferenceWireFields, type LlmInference } from "../../core/llm-inference";
 
 /**
- * The resolved engine. Credentials are symbolic (an env descriptor, a file
- * path, or a `${ref}` reference) so this shape can be journaled; values are
+ * What an execution runs on, as `resolveTarget` decided it. Credentials stay
+ * symbolic (`apiKey` is the config's `$VAR` reference, or absent for the key held
+ * under `name` in `credentials.json`), so this shape can be journaled; the key is
  * read only at dispatch.
  */
-export type RunnerSpec =
-  | {
-      kind: "llm";
-      engine: string;
-      connection: LlmConnectionConfig;
-      credential?: CredentialDescriptor;
-      apiKeyFile?: string;
-      apiKeySecretRef?: string;
-      timeoutMs?: number | null;
-    }
-  | { kind: "agent"; engine: string; profile: AgentProfile; timeoutMs?: number | null }
-  | {
-      kind: "sdk";
-      engine: string;
-      profile: AgentProfile;
-      fallbackConnection?: LlmConnectionConfig;
-      fallbackCredential?: CredentialDescriptor;
-      fallbackApiKeyFile?: string;
-      fallbackApiKeySecretRef?: string;
-      fallbackTimeoutMs?: number | null;
-      timeoutMs?: number | null;
-    };
-
-export type LlmRunner = Extract<RunnerSpec, { kind: "llm" }>;
-export type SdkRunner = Extract<RunnerSpec, { kind: "sdk" }>;
-
-export type DispatchedLlmRunner = Omit<LlmRunner, "connection"> & { connection: LlmConnectionConfig };
-
-/** The symbolic LLM use behind one llm runner; nothing is read here. */
-export function llmUseFromRunner(runner: LlmRunner): ResolvedLlmUse {
-  return {
-    engine: runner.engine,
-    connection: runner.connection,
-    ...(runner.credential ? { credential: runner.credential } : {}),
-    ...(runner.apiKeyFile ? { apiKeyFile: runner.apiKeyFile } : {}),
-    ...(runner.apiKeySecretRef ? { apiKeySecretRef: runner.apiKeySecretRef } : {}),
-    timeoutMs: runner.timeoutMs ?? null,
-  };
+export interface ConnectionRunner {
+  readonly kind: "connection";
+  /** The connection's name; also the name its stored key is filed under. */
+  readonly name: string;
+  readonly endpoint: string;
+  readonly model: string;
+  /** Request fields sent as written: the connection's, under the model entry's. */
+  readonly request: Readonly<Record<string, unknown>>;
+  readonly apiKey?: string;
+  readonly contextLength?: number;
+  readonly concurrency?: number;
+  /** `null` runs unbounded. */
+  readonly timeoutMs: number | null;
 }
 
-/** The symbolic LLM use behind an sdk runner's provider fallback, when it has one. */
-export function sdkFallbackUseFromRunner(runner: SdkRunner): ResolvedLlmUse | undefined {
-  if (!runner.fallbackConnection) return undefined;
-  return {
-    engine: runner.engine,
-    connection: runner.fallbackConnection,
-    ...(runner.fallbackCredential ? { credential: runner.fallbackCredential } : {}),
-    ...(runner.fallbackApiKeyFile ? { apiKeyFile: runner.fallbackApiKeyFile } : {}),
-    ...(runner.fallbackApiKeySecretRef ? { apiKeySecretRef: runner.fallbackApiKeySecretRef } : {}),
-    timeoutMs:
-      runner.fallbackTimeoutMs !== undefined ? runner.fallbackTimeoutMs : (runner.fallbackConnection.timeoutMs ?? null),
-  };
+export interface HarnessRunner {
+  readonly kind: "harness";
+  readonly name: string;
+  readonly platform: string;
+  readonly bin: string;
+  readonly args: readonly string[];
+  readonly workspace?: string;
+  /** The harness's native agent to run when a request names none. */
+  readonly agent?: string;
+  readonly model?: string;
+  /** `null` runs unbounded. */
+  readonly timeoutMs: number | null;
 }
 
-/** Read the current credential and inject it: the dispatch boundary for one llm runner. */
-export function materializeLlmRunnerConnection(
-  runner: LlmRunner,
-  envSource: NodeJS.ProcessEnv = process.env,
-): LlmConnectionConfig {
-  return materializeLlmConnection(llmUseFromRunner(runner), envSource);
+export type RunnerSpec = ConnectionRunner | HarnessRunner;
+
+/** The engine name an earlier release's runner carries. */
+function frozenEngineName(value: Record<string, unknown>): string {
+  if (typeof value.engine !== "string") throw new TypeError("a frozen runner must carry an engine name");
+  return value.engine;
 }
 
-/** The same for an sdk runner's provider fallback, when it has one. */
-export function materializeSdkFallbackConnection(
-  runner: SdkRunner,
-  envSource: NodeJS.ProcessEnv = process.env,
-): LlmConnectionConfig | undefined {
-  const use = sdkFallbackUseFromRunner(runner);
-  return use ? materializeLlmConnection(use, envSource) : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+/** A runner a release before the connections rework froze, which cannot be run now. */
+function refuseFrozenRunner(why: string): never {
+  throw new TypeError(`a frozen runner from an earlier release cannot run now: ${why}; start the run afresh`);
 }
 
 /**
- * Read a journaled runner back. Tolerant: unknown keys are kept and missing
- * profile defaults are filled in; only a shape nothing could dispatch is refused.
- * Credentials stay as stored (a 0.9.x plan's `secret://<name>` included) because the
- * unit input hash covers them; they are read as `${ref}` where they are resolved.
+ * A `kind: "llm"` runner of an earlier release, as a connection runner. Its
+ * inference becomes the request fields it was sent as. Its credential must be an
+ * explicit `$VAR`: the implicit `AKM_ENGINE_<NAME>_API_KEY` convention, a key
+ * file and a secret-store reference are gone, and a run that relied on one would
+ * dispatch without its key.
  */
-export function decodeFrozenRunnerSpec(value: unknown): RunnerSpec {
-  if (!isRecord(value) || typeof value.engine !== "string") {
-    throw new TypeError("a frozen runner must be an object with an engine name");
+function readFrozenLlmRunner(value: Record<string, unknown>): ConnectionRunner {
+  const connection = value.connection;
+  if (!isRecord(connection) || typeof connection.endpoint !== "string" || typeof connection.model !== "string") {
+    throw new TypeError("a frozen llm runner must carry connection.endpoint and connection.model");
   }
-  if (value.kind === "llm") {
-    if (!isRecord(value.connection) || typeof value.connection.endpoint !== "string") {
-      throw new TypeError("a frozen llm runner must carry connection.endpoint");
-    }
-    return value as unknown as RunnerSpec;
+  if (value.apiKeyFile !== undefined || value.apiKeySecretRef !== undefined) {
+    refuseFrozenRunner("it reads its key from a file or the secret store");
   }
-  if (value.kind !== "agent" && value.kind !== "sdk") {
-    throw new TypeError("a frozen runner's kind must be llm, agent, or sdk");
+  const names = isRecord(value.credential) && Array.isArray(value.credential.names) ? value.credential.names : [];
+  if (names.some((name) => typeof name === "string" && name.startsWith("AKM_ENGINE_"))) {
+    refuseFrozenRunner("it reads its key from an AKM_ENGINE_* variable");
   }
+  const explicit = typeof names[0] === "string" ? names[0] : undefined;
+  const inference = connection as LlmInference;
+  return {
+    kind: "connection",
+    name: frozenEngineName(value),
+    endpoint: connection.endpoint,
+    model: connection.model,
+    request: inferenceWireFields(inference),
+    ...(explicit ? { apiKey: `$${explicit}` } : {}),
+    ...(typeof connection.contextLength === "number" ? { contextLength: connection.contextLength } : {}),
+    timeoutMs: typeof value.timeoutMs === "number" ? value.timeoutMs : null,
+  };
+}
+
+/** A `kind: "agent"` runner of an earlier release, as a harness runner. */
+function readFrozenAgentRunner(value: Record<string, unknown>): HarnessRunner {
   const profile = value.profile;
   if (!isRecord(profile) || typeof profile.name !== "string" || typeof profile.bin !== "string") {
     throw new TypeError("a frozen agent runner must carry profile.name and profile.bin");
   }
   return {
-    ...value,
-    profile: { args: [], envPassthrough: [], stdio: "captured", parseOutput: "text", ...profile },
-  } as unknown as RunnerSpec;
-}
-
-export function runnerIsLlm(runner: RunnerSpec): runner is LlmRunner {
-  return runner.kind === "llm";
+    kind: "harness",
+    name: frozenEngineName(value),
+    platform: typeof profile.platform === "string" ? profile.platform : profile.name,
+    bin: profile.bin,
+    args: Array.isArray(profile.args) ? (profile.args as string[]) : [],
+    ...(typeof profile.workspace === "string" ? { workspace: profile.workspace } : {}),
+    ...(typeof profile.agent === "string" ? { agent: profile.agent } : {}),
+    ...(typeof profile.model === "string" ? { model: profile.model } : {}),
+    timeoutMs: typeof value.timeoutMs === "number" ? value.timeoutMs : null,
+  };
 }
 
 /**
- * The LLM connection behind a runner, whatever its kind: an llm runner's own,
- * an sdk runner's provider fallback, none for an agent CLI.
+ * Read a journaled runner back. A current runner is kept as stored; an earlier
+ * release's `llm` and `agent` runners are read as the connection and harness
+ * runners they became, and its `sdk` runner, which has no equivalent, is refused
+ * so the run starts afresh.
  */
-export function runnerLlmConnection(runner: RunnerSpec): LlmConnectionConfig | undefined {
-  if (runner.kind === "llm") return runner.connection;
-  return runner.kind === "sdk" ? runner.fallbackConnection : undefined;
+export function decodeFrozenRunnerSpec(value: unknown): RunnerSpec {
+  if (!isRecord(value)) throw new TypeError("a frozen runner must be an object");
+  switch (value.kind) {
+    case "connection":
+      if (typeof value.name !== "string" || typeof value.endpoint !== "string" || typeof value.model !== "string") {
+        throw new TypeError("a frozen connection runner must carry name, endpoint and model");
+      }
+      return value as unknown as ConnectionRunner;
+    case "harness":
+      if (typeof value.name !== "string" || typeof value.platform !== "string" || typeof value.bin !== "string") {
+        throw new TypeError("a frozen harness runner must carry name, platform and bin");
+      }
+      return { args: [], ...value } as unknown as HarnessRunner;
+    case "llm":
+      return readFrozenLlmRunner(value);
+    case "agent":
+      return readFrozenAgentRunner(value);
+    case "sdk":
+      return refuseFrozenRunner("it ran OpenCode as an engine of its own");
+    default:
+      throw new TypeError("a frozen runner's kind must be connection or harness");
+  }
 }

@@ -12,7 +12,6 @@ import {
 } from "../../execution/json";
 import { type StrictRecordSnapshot, snapshotStrictRecord } from "../../execution/record";
 import {
-  type AdapterOwnedExtensions,
   type AdapterRenderedCommandSource,
   type AdapterRenderedExecutionSource,
   type AdapterRenderedPersonaSource,
@@ -290,9 +289,6 @@ export function executionDefaultsFromFrontmatter(
 type DefaultsProjection =
   | UnresolvedExecutionDefaults
   | ((data: Readonly<Record<string, unknown>>) => UnresolvedExecutionDefaults);
-type ExtensionsProjection =
-  | AdapterOwnedExtensions
-  | ((data: Readonly<Record<string, unknown>>) => AdapterOwnedExtensions | undefined);
 
 export interface RenderMarkdownExecutionSourceInput {
   readonly kind: "command" | "persona";
@@ -300,7 +296,6 @@ export interface RenderMarkdownExecutionSourceInput {
   readonly raw: string;
   readonly identity: Omit<ExecutionSourceIdentity, "hash">;
   readonly defaults?: DefaultsProjection;
-  readonly extensions?: ExtensionsProjection;
 }
 
 export function renderMarkdownExecutionSource(
@@ -327,12 +322,6 @@ export function renderMarkdownExecutionSource(
   if (hasDefaults && defaults === undefined) {
     throw new TypeError("adapter execution source defaults must be omitted or resolve to an object");
   }
-  const extensionsProjection = input.extensions;
-  const extensionsAreProjected = typeof extensionsProjection === "function";
-  const extensions = extensionsAreProjected ? extensionsProjection(parsed.data) : extensionsProjection;
-  if (Object.hasOwn(input, "extensions") && !extensionsAreProjected && extensions === undefined) {
-    throw new TypeError("adapter execution source extensions must be omitted or be an adapter-owned extension object");
-  }
   return createAdapterRenderedExecutionSource({
     kind,
     content: parsed.content,
@@ -344,6 +333,5 @@ export function renderMarkdownExecutionSource(
       hash: createHash("sha256").update(raw, "utf8").digest("hex"),
     },
     ...(hasDefaults ? { defaults } : {}),
-    ...(extensions === undefined ? {} : { extensions }),
   });
 }

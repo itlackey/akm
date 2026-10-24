@@ -49,11 +49,7 @@
  */
 
 import path from "node:path";
-import {
-  type AdapterOwnedExtensions,
-  type AdapterRenderedExecutionSource,
-  createAdapterExtensions,
-} from "../../../execution/source";
+import type { AdapterRenderedExecutionSource } from "../../../execution/source";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
@@ -245,25 +241,6 @@ export async function validateToolDir(
   return diagnostics;
 }
 
-function nativeExecutionExtensions(
-  layout: ToolDirLayout,
-  cls: ToolDirClassification,
-  data: Readonly<Record<string, unknown>>,
-): AdapterOwnedExtensions | undefined {
-  const values: Record<string, string> = {};
-  if (layout.adapterId === "claude" && cls.type === "command" && Object.hasOwn(data, "argument-hint")) {
-    if (typeof data["argument-hint"] !== "string") {
-      throw new TypeError("frontmatter.argument-hint must be a string");
-    }
-    values.argumentHint = data["argument-hint"];
-  }
-  if (layout.adapterId === "opencode" && Object.hasOwn(data, "mode")) {
-    if (typeof data.mode !== "string") throw new TypeError("frontmatter.mode must be a string");
-    values.mode = data.mode;
-  }
-  return Object.keys(values).length > 0 ? createAdapterExtensions(layout.adapterId, values) : undefined;
-}
-
 /** Translate a native Claude/OpenCode command or agent without exposing raw frontmatter. */
 export function renderToolDirExecutionSource(
   layout: ToolDirLayout,
@@ -286,7 +263,6 @@ export function renderToolDirExecutionSource(
       executionDefaultsFromFrontmatter(data, {
         kind: cls.type === "command" ? "command" : "persona",
       }),
-    extensions: (data) => nativeExecutionExtensions(layout, cls, data),
   });
 }
 

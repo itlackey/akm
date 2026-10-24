@@ -55,7 +55,7 @@
  * name without any further wiring.
  */
 
-import { type AgentCommandBuilder, type AgentDispatchRequest, resolveDispatchModel } from "../../agent/builder-shared";
+import type { AgentCommandBuilder, AgentDispatchRequest } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 
 /** Canonical harness/platform id used for model-alias resolution. */
@@ -92,8 +92,7 @@ export const amazonqBuilder: AgentCommandBuilder = {
     // Headless: units must run without interactive tool-approval prompts.
     args.push("--trust-all-tools");
     if (req.model) {
-      const resolved = resolveDispatchModel(req, profile, AMAZONQ_PLATFORM) as string;
-      args.push("--model", resolved);
+      args.push("--model", req.model);
     }
     // No system-prompt flag exists on `q chat` — it travels in the positional
     // payload, after the end-of-options separator.

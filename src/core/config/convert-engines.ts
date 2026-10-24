@@ -227,10 +227,10 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
     }
     for (const name of harnessNames) {
       const harness = named.harnesses[name] as Dict;
-      const shipped = getHarness(String(harness.platform))?.models?.[alias];
-      const model = str(p.model) ?? str(typeof shipped === "string" ? shipped : shipped?.model);
-      if (model !== undefined)
-        modelsOf(harness)[alias] = modelEntry(model, { ...portable, ...(effort !== undefined ? { effort } : {}) });
+      const model = str(p.model) ?? str(getHarness(String(harness.platform))?.models?.[alias]);
+      if (model !== undefined) modelsOf(harness)[alias] = model;
+      if (Object.keys(wire).length > 0)
+        notes.push(`${where}: a harness takes the model only; the inference settings are not carried over.`);
     }
   }
 

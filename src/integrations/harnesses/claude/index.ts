@@ -19,7 +19,7 @@
  */
 
 import type { SessionLogHarness } from "../../session-logs/types";
-import { caps } from "../shared";
+import { caps, type HarnessModelMap } from "../shared";
 import { BaseHarness } from "../types";
 import { claudeBuilder } from "./agent-builder";
 import { claudeCodeImporter } from "./config-import";
@@ -48,8 +48,8 @@ export class ClaudeHarness extends BaseHarness {
   readonly models = {
     fast: "claude-haiku-4-5-20251001",
     balanced: "claude-sonnet-4-6",
-    reasoning: { model: "claude-opus-4-7", effort: "high" },
-  } as const;
+    reasoning: "claude-opus-4-7",
+  } satisfies HarnessModelMap;
   readonly configImporter = claudeCodeImporter;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Session-id env marker: presence of a concrete session id (not the bare

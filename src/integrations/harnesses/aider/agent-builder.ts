@@ -66,7 +66,7 @@
  * name without any further wiring.
  */
 
-import { type AgentCommandBuilder, type AgentDispatchRequest, resolveDispatchModel } from "../../agent/builder-shared";
+import type { AgentCommandBuilder, AgentDispatchRequest } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 
 /** Canonical harness/platform id used for model-alias resolution. */
@@ -95,8 +95,7 @@ export const aiderBuilder: AgentCommandBuilder = {
   build(profile, req) {
     const args: string[] = [...profile.args];
     if (req.model) {
-      const resolved = resolveDispatchModel(req, profile, AIDER_PLATFORM) as string;
-      args.push("--model", resolved);
+      args.push("--model", req.model);
     }
     // Headless essentials (matrix shape): auto-confirm everything, and keep
     // captured stdout free of pretty/ANSI rendering for the extractor.

@@ -69,7 +69,7 @@
  * platform name without any further wiring.
  */
 
-import { type AgentCommandBuilder, type AgentDispatchRequest, resolveDispatchModel } from "../../agent/builder-shared";
+import type { AgentCommandBuilder, AgentDispatchRequest } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 
 /** Canonical harness/platform id used for model-alias resolution. */
@@ -115,9 +115,8 @@ export const openhandsBuilder: AgentCommandBuilder = {
     args.push(`--task=${buildTaskPayload(req)}`);
     let env: Record<string, string> | undefined;
     if (req.model) {
-      const resolved = resolveDispatchModel(req, profile, OPENHANDS_PLATFORM) as string;
       // Model travels via env, not argv — OpenHands' documented channel.
-      env = { [OPENHANDS_MODEL_ENV]: resolved };
+      env = { [OPENHANDS_MODEL_ENV]: req.model };
     }
     return { argv: [profile.bin, ...args], ...(env ? { env } : {}) };
   },

@@ -25,10 +25,10 @@ import fs from "node:fs";
 import path from "node:path";
 import type { OpenCode } from "@opencode/sdk";
 import { isRecord, toErrorMessage } from "../../../core/common";
-import type { LlmConnectionConfig } from "../../../core/config/config";
 import { getCacheDir, getDataDir } from "../../../core/paths";
 import { warnOnce } from "../../../core/warn";
 import type { ExecutionJsonObject } from "../../../execution/json";
+import type { ChatCompletionConfig } from "../../../llm/client";
 import { AKM_READ_TOOLS } from "../../agent/akm-read-tools";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
 import type { AgentProfile } from "../../agent/profiles";
@@ -75,7 +75,7 @@ function canonicalProviderBase(endpoint: string): string {
 }
 
 /** The inference a fallback LLM connection carries, which OpenCode can take. */
-function fallbackInference(llm: LlmConnectionConfig | undefined): ExecutionJsonObject {
+function fallbackInference(llm: ChatCompletionConfig | undefined): ExecutionJsonObject {
   const out: Record<string, unknown> = {};
   for (const key of ["temperature", "maxTokens", "contextLength", "enableThinking", "reasoningEffort"] as const) {
     if (llm?.[key] !== undefined) out[key] = llm[key];
@@ -94,7 +94,7 @@ function fallbackInference(llm: LlmConnectionConfig | undefined): ExecutionJsonO
  */
 export function modelConfig(
   named: string | undefined,
-  llm: LlmConnectionConfig | undefined,
+  llm: ChatCompletionConfig | undefined,
   inference: ExecutionJsonObject | null | undefined,
 ): Record<string, unknown> {
   const model = named ?? llm?.model;
@@ -121,7 +121,7 @@ export function modelConfig(
   if (slash <= 0 || Object.keys(entry).length === 0) return { model };
   warnOnce(
     `opencode-sdk-inference-overlay:${model}`,
-    `[akm] OpenCode model ${JSON.stringify(model)} comes from your OpenCode config, so akm applies its inference settings (${Object.keys(merged ?? {}).join(", ")}) best effort, and OpenCode may ignore some. Give the engine an llmEngine, or set them in your OpenCode config, to apply them reliably.`,
+    `[akm] OpenCode model ${JSON.stringify(model)} comes from your OpenCode config, so akm applies its inference settings (${Object.keys(merged ?? {}).join(", ")}) best effort, and OpenCode may ignore some. Run it through a connection, or set them in your OpenCode config, to apply them reliably.`,
   );
   return { model, provider: { [model.slice(0, slash)]: { models: { [model.slice(slash + 1)]: entry } } } };
 }
@@ -520,14 +520,14 @@ function failed(start: number, reason: AgentFailureReason, error: string, sessio
 }
 
 /**
- * Run one prompt on an embedded OpenCode. `llm` is the engine's fallback LLM
- * connection, used when akm supplies the endpoint.
+ * Run one prompt on an embedded OpenCode. `llm` is the connection
+ * the run goes through, used when akm supplies the endpoint.
  */
 export async function runOpencodeSdk(
   profile: AgentProfile,
   prompt: string,
   opts: RunAgentOptions = {},
-  llm?: LlmConnectionConfig,
+  llm?: ChatCompletionConfig,
 ): Promise<AgentRunResult> {
   const start = Date.now();
   const timeoutMs = opts.timeoutMs !== undefined ? opts.timeoutMs : DEFAULT_AGENT_TIMEOUT_MS;

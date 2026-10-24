@@ -43,7 +43,7 @@
  * name without any further wiring.
  */
 
-import { type AgentCommandBuilder, type AgentDispatchRequest, resolveDispatchModel } from "../../agent/builder-shared";
+import type { AgentCommandBuilder, AgentDispatchRequest } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 
 /** Canonical harness/platform id used for model-alias resolution. */
@@ -73,8 +73,7 @@ export const geminiBuilder: AgentCommandBuilder = {
   build(profile, req) {
     const args: string[] = [...profile.args];
     if (req.model) {
-      const resolved = resolveDispatchModel(req, profile, GEMINI_PLATFORM) as string;
-      args.push("--model", resolved);
+      args.push("--model", req.model);
     }
     if (req.schema) {
       // Structured unit: ask for the documented JSON envelope so the result

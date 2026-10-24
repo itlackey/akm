@@ -3,40 +3,35 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Run a built execution: the one place credentials are read. A direct LLM
- * goes to `chatCompletion`, an agent engine to `runAgent` (the harness builder
- * turns the request into argv), an SDK engine to `runOpencodeSdk`. Every
- * credential and passthrough value that could reach the child is redacted
- * from the result.
+ * Run a built execution: the one place credentials are read. Model work on a
+ * connection goes to `chatCompletion`, a harness to `runAgent` (the harness
+ * builder turns the request into argv), and agent work on a connection to
+ * `runOpencodeSdk`, akm's own runtime. Every credential and passthrough value
+ * that could reach the child is redacted from the result.
  */
 
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { assertNever } from "../../core/assert";
-import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
-import { UsageError } from "../../core/errors";
+import type { AkmConfig } from "../../core/config/config";
+import { resolveApiKey } from "../../core/config/credentials";
+import type { LlmInference } from "../../core/llm-inference";
 import {
   collectSensitiveValues,
   isEnvPassthroughValueSafeToExpose,
   redactSensitiveText,
   redactSensitiveValue,
 } from "../../core/redaction";
-import { MODEL_WORK_POLICY_ID } from "../../execution/source";
-import { chatCompletion, LlmCallError } from "../../llm/client";
+import { type ChatCompletionConfig, chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { getHarness } from "../harnesses";
 import { closeOpencodeSdk, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
 import { type AgentResultExtraction, modelFromArgs } from "./builder-shared";
-import {
-  lookupApiKeyFileValue,
-  lookupApiKeySecretRefValue,
-  lookupCredentialFromEnv,
-  resolveEngine,
-} from "./engine-resolution";
 import type { BuiltExecution } from "./execution";
-import type { AgentProfile } from "./profiles";
-import { materializeLlmRunnerConnection, materializeSdkFallbackConnection, type RunnerSpec } from "./runner";
+import { type AgentProfile, harnessProfile, runtimeProfile } from "./profiles";
+import { resolveTarget } from "./resolution";
+import type { ConnectionRunner, RunnerSpec } from "./runner";
 import { type AgentFailureReason, type AgentRunResult, type RunAgentOptions, runAgent } from "./spawn";
 
 export interface RunExecutionOptions {
@@ -46,12 +41,12 @@ export interface RunExecutionOptions {
   readonly onRetryAttempt?: () => void;
   /** Agent spawn; defaults to {@link runAgent}. */
   readonly runAgent?: (profile: AgentProfile, prompt: string, opts: RunAgentOptions) => Promise<AgentRunResult>;
-  /** OpenCode SDK dispatch; defaults to {@link runOpencodeSdk}. */
+  /** Internal runtime dispatch; defaults to {@link runOpencodeSdk}. */
   readonly runSdk?: (
     profile: AgentProfile,
     prompt: string,
     opts: RunAgentOptions,
-    fallbackConnection?: LlmConnectionConfig,
+    connection?: ChatCompletionConfig,
   ) => Promise<AgentRunResult>;
   /**
    * Operational overrides: stdio, parseOutput, signal, envSource, spawn,
@@ -83,24 +78,12 @@ export function collectDispatchSensitiveValues(
   envSource: NodeJS.ProcessEnv = opts.envSource ?? process.env,
 ): string[] {
   const values: (string | undefined)[] = [];
-  if (runner.kind === "llm") {
-    values.push(
-      runner.connection.apiKey,
-      lookupCredentialFromEnv(runner.credential, envSource),
-      runner.apiKeyFile ? lookupApiKeyFileValue(runner.apiKeyFile) : undefined,
-      runner.apiKeySecretRef ? lookupApiKeySecretRefValue(runner.apiKeySecretRef) : undefined,
-    );
+  if (runner.kind === "connection") {
+    values.push(resolveApiKey(runner.apiKey, runner.name, envSource, true));
   } else {
-    if (runner.kind === "sdk") {
-      values.push(
-        runner.fallbackConnection?.apiKey,
-        lookupCredentialFromEnv(runner.fallbackCredential, envSource),
-        runner.fallbackApiKeyFile ? lookupApiKeyFileValue(runner.fallbackApiKeyFile) : undefined,
-        runner.fallbackApiKeySecretRef ? lookupApiKeySecretRefValue(runner.fallbackApiKeySecretRef) : undefined,
-      );
-    }
-    values.push(...Object.values(runner.profile.env ?? {}));
-    for (const name of runner.profile.envPassthrough) {
+    const profile = harnessProfile(runner);
+    values.push(...Object.values(profile.env ?? {}));
+    for (const name of profile.envPassthrough) {
       if (!isEnvPassthroughValueSafeToExpose(name, envSource[name])) values.push(envSource[name]);
     }
   }
@@ -134,7 +117,7 @@ function llmFailureReason(error: unknown): AgentFailureReason {
   }
 }
 
-type LlmCall = (connection: LlmConnectionConfig, opts: RunAgentOptions) => Promise<AgentRunResult>;
+type LlmCall = (connection: ChatCompletionConfig, opts: RunAgentOptions) => Promise<AgentRunResult>;
 
 const USAGE_ERROR_CODES: Partial<Record<AgentFailureReason, LlmUsageErrorCode>> = {
   timeout: "timeout",
@@ -144,17 +127,15 @@ const USAGE_ERROR_CODES: Partial<Record<AgentFailureReason, LlmUsageErrorCode>> 
 };
 
 /**
- * The model an agent or SDK dispatch ran: the request's, else the one an agent
- * CLI's own `args` select, which its command carries when the request names
- * none. An SDK server never sees `args`, so an SDK engine with no model named
- * has none to report: opencode picks it.
+ * The model an agent or runtime dispatch ran: the request's, else the one a
+ * harness's own `args` select, which its command carries when the request names none.
  */
 function dispatchedModel({ request, runner }: BuiltExecution): string | undefined {
-  return request.model?.resolved ?? (runner.kind === "agent" ? modelFromArgs(runner.profile.args) : undefined);
+  return request.model?.model ?? (runner.kind === "harness" ? modelFromArgs(runner.args) : undefined);
 }
 
 /**
- * One usage record for an agent or SDK dispatch, through the same sink and
+ * One usage record for an agent or runtime dispatch, through the same sink and
  * ambient `withLlmStage` attribution as the LLM transport's per-HTTP-attempt
  * records: the model it ran, and tokens when the runner reported them.
  */
@@ -175,8 +156,34 @@ function recordDispatchUsage(execution: BuiltExecution, result: AgentRunResult):
   });
 }
 
+/** The chat connection a connection runner stands for: its key read now, and the request's portable settings on top. */
+function chatConnection(
+  runner: ConnectionRunner,
+  inference: LlmInference | null | undefined,
+  envSource: NodeJS.ProcessEnv,
+): ChatCompletionConfig {
+  const apiKey = resolveApiKey(runner.apiKey, runner.name, envSource);
+  return {
+    ...inference,
+    endpoint: runner.endpoint,
+    model: runner.model,
+    request: runner.request,
+    timeoutMs: runner.timeoutMs,
+    ...(runner.contextLength !== undefined ? { contextLength: runner.contextLength } : {}),
+    ...(apiKey ? { apiKey } : {}),
+  };
+}
+
+/** What one dispatch needs: the runner, what it is spawned or run as, and the request's portable settings. */
+interface DispatchTarget {
+  readonly runner: RunnerSpec;
+  readonly profile?: AgentProfile;
+  readonly inference?: LlmInference | null;
+}
+
+/** `llm` is given for a direct chat; without it a connection runs akm's internal runtime. */
 async function dispatchRunner(
-  runner: RunnerSpec,
+  { runner, profile, inference }: DispatchTarget,
   prompt: string,
   opts: RunAgentOptions,
   seams: RunExecutionOptions,
@@ -185,53 +192,44 @@ async function dispatchRunner(
   const envSource = opts.envSource ?? process.env;
   const secrets = collectDispatchSensitiveValues(runner, opts, envSource);
   let result: AgentRunResult;
-  switch (runner.kind) {
-    case "llm": {
-      if (!llm) throw new Error("an llm runner dispatches only a built execution's chat messages");
-      const connection = materializeLlmRunnerConnection(runner, envSource);
-      if (connection.apiKey) secrets.push(connection.apiKey);
-      result = await llm(connection, opts);
-      break;
-    }
-    case "agent":
-      result = await (seams.runAgent ?? runAgent)(runner.profile, prompt, opts);
-      break;
-    case "sdk": {
-      const fallbackConnection = materializeSdkFallbackConnection(runner, envSource);
-      if (fallbackConnection?.apiKey) secrets.push(fallbackConnection.apiKey);
-      result = await (seams.runSdk ?? runOpencodeSdk)(runner.profile, prompt, opts, fallbackConnection);
-      break;
-    }
-    default:
-      return assertNever(runner);
+  if (runner.kind === "harness") {
+    result = await (seams.runAgent ?? runAgent)(profile ?? harnessProfile(runner), prompt, opts);
+  } else {
+    const connection = chatConnection(runner, inference, envSource);
+    if (connection.apiKey) secrets.push(connection.apiKey);
+    result = llm
+      ? await llm(connection, opts)
+      : await (seams.runSdk ?? runOpencodeSdk)(profile ?? runtimeProfile(runner), prompt, opts, connection);
   }
   return redactResult(result, collectSensitiveValues(secrets));
 }
 
 /**
- * The scratch working directory for one model-work dispatch on an agent or SDK
- * engine, so the edit the model-work tool policy grants never reaches the
- * stash.
+ * The scratch working directory for one model-work dispatch on a harness or the
+ * internal runtime, so the edit the model-work tool policy grants never reaches
+ * the stash.
  */
 function createModelWorkDirectory(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "akm-model-work-"));
 }
 
+/** Whether this execution is model work that runs an agent (not a direct chat), and so needs the scratch directory. */
+function isConfinedAgentWork(execution: BuiltExecution): boolean {
+  return execution.request.modelWork && execution.messages === undefined;
+}
+
 /**
  * Run a built execution. Credentials are read here, once per call, and never
- * returned. Model work on an agent or SDK engine runs in a scratch working
- * directory that akm creates for the dispatch and removes after it, and must
- * end with an answer: an agent that stops with none (opencode at its step
+ * returned. Model work on a harness or the internal runtime runs in a scratch
+ * working directory that akm creates for the dispatch and removes after it, and
+ * must end with an answer: an agent that stops with none (opencode at its step
  * limit, for one) has failed with `parse_error`.
  */
 export async function runExecution(
   execution: BuiltExecution,
   options: RunExecutionOptions = {},
 ): Promise<AgentRunResult> {
-  const scratch =
-    execution.runner.kind !== "llm" && execution.request.authorization.policy?.id === MODEL_WORK_POLICY_ID
-      ? createModelWorkDirectory()
-      : undefined;
+  const scratch = isConfinedAgentWork(execution) ? createModelWorkDirectory() : undefined;
   try {
     return await runBuiltExecution(execution, options, scratch);
   } finally {
@@ -241,8 +239,7 @@ export async function runExecution(
 
 /** A successful reply's text, unwrapped from its harness's framing (claude's `--output-format json` result envelope, for one). */
 export function unwrapHarnessReply(runner: RunnerSpec, result: AgentRunResult): AgentResultExtraction {
-  const extractor =
-    runner.kind === "agent" ? getHarness(runner.profile.platform ?? runner.profile.name)?.resultExtractor : undefined;
+  const extractor = runner.kind === "harness" ? getHarness(runner.platform)?.resultExtractor : undefined;
   return extractor ? extractor(result) : { text: result.stdout };
 }
 
@@ -255,10 +252,10 @@ function modelWorkAnswer(runner: RunnerSpec, result: AgentRunResult): AgentRunRe
     ...(extracted.sessionId ? { sessionId: extracted.sessionId } : {}),
   };
   if (extracted.text.trim() !== "") return answer;
-  return { ...answer, ok: false, reason: "parse_error", error: `Engine "${runner.engine}" returned no answer.` };
+  return { ...answer, ok: false, reason: "parse_error", error: `"${runner.name}" returned no answer.` };
 }
 
-/** `scratch` is the model-work working directory, set only for model work on an agent or SDK engine. */
+/** `scratch` is the model-work working directory, set only for model work that runs an agent. */
 async function runBuiltExecution(
   execution: BuiltExecution,
   options: RunExecutionOptions,
@@ -273,89 +270,91 @@ async function runBuiltExecution(
     opts.env = { ...execution.options.env, AKM_EVENT_SOURCE: options.eventSource };
   }
   const chat = options.chat ?? chatCompletion;
-  const llm: LlmCall = async (connection, callOpts) => {
-    const started = Date.now();
-    try {
-      const stdout = await chat(connection, [...(execution.messages ?? [])], {
-        ...execution.chatOptions,
-        ...(Object.hasOwn(callOpts, "timeoutMs") ? { timeoutMs: callOpts.timeoutMs } : {}),
-        ...(callOpts.signal ? { signal: callOpts.signal } : {}),
-        ...(options.onRetryAttempt ? { onRetryAttempt: options.onRetryAttempt } : {}),
-      });
-      return { ok: true, exitCode: 0, stdout, stderr: "", durationMs: Date.now() - started };
-    } catch (error) {
-      // Returned rather than thrown so the redaction below covers provider bodies.
-      return {
-        ok: false,
-        exitCode: null,
-        stdout: "",
-        stderr: "",
-        durationMs: Date.now() - started,
-        error: error instanceof Error ? error.message : String(error),
-        reason: llmFailureReason(error),
-        ...(error instanceof LlmCallError ? { llmErrorCode: error.code } : {}),
-      };
-    }
-  };
-  let result = await dispatchRunner(execution.runner, execution.prompt, opts, options, llm);
+  const llm: LlmCall | undefined =
+    execution.messages === undefined
+      ? undefined
+      : async (connection, callOpts) => {
+          const started = Date.now();
+          try {
+            const stdout = await chat(connection, [...(execution.messages ?? [])], {
+              ...execution.chatOptions,
+              ...(Object.hasOwn(callOpts, "timeoutMs") ? { timeoutMs: callOpts.timeoutMs } : {}),
+              ...(callOpts.signal ? { signal: callOpts.signal } : {}),
+              ...(options.onRetryAttempt ? { onRetryAttempt: options.onRetryAttempt } : {}),
+            });
+            return { ok: true, exitCode: 0, stdout, stderr: "", durationMs: Date.now() - started };
+          } catch (error) {
+            // Returned rather than thrown so the redaction below covers provider bodies.
+            return {
+              ok: false,
+              exitCode: null,
+              stdout: "",
+              stderr: "",
+              durationMs: Date.now() - started,
+              error: error instanceof Error ? error.message : String(error),
+              reason: llmFailureReason(error),
+              ...(error instanceof LlmCallError ? { llmErrorCode: error.code } : {}),
+            };
+          }
+        };
+  let result = await dispatchRunner(
+    {
+      runner: execution.runner,
+      ...(execution.profile ? { profile: execution.profile } : {}),
+      inference: execution.request.inference as LlmInference | null | undefined,
+    },
+    execution.prompt,
+    opts,
+    options,
+    llm,
+  );
   if (scratch !== undefined && result.ok) result = modelWorkAnswer(execution.runner, result);
   // The LLM transport records each HTTP attempt itself.
-  if (execution.runner.kind !== "llm") recordDispatchUsage(execution, result);
+  if (llm === undefined) recordDispatchUsage(execution, result);
   return result;
 }
 
 export interface InteractiveAgentInvocationOptions {
   readonly config: AkmConfig;
-  readonly engine: string;
+  /** The harness (or connection) to launch; omitted means the default. */
+  readonly name?: string;
   readonly timeoutMs?: number;
   readonly cwd?: string;
 }
 
 export interface InteractiveAgentInvocationResult {
-  readonly engine: string;
+  /** What was launched: the name of the harness or connection. */
+  readonly name: string;
   readonly result: AgentRunResult;
 }
 
-/** `akm agent`: launch an agent engine interactively, with no prompt of its own. */
+/** `akm agent`: launch an agent interactively, with no prompt of its own. */
 export async function executeInteractiveAgentInvocation(
   input: InteractiveAgentInvocationOptions,
   seams: Pick<RunExecutionOptions, "runAgent" | "runSdk"> = {},
 ): Promise<InteractiveAgentInvocationResult> {
-  const runner = resolveEngine(input.engine, input.config);
-  if (runner.kind === "llm") {
-    throw new UsageError(
-      `Engine "${input.engine}" is an LLM engine; akm agent requires an agent engine.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
+  const runner = resolveTarget({
+    config: input.config,
+    layers: input.name === undefined ? [] : [{ engine: input.name }],
+  });
   const opts: RunAgentOptions = {
-    stdio: runner.kind === "sdk" ? runner.profile.stdio : "interactive",
+    stdio: runner.kind === "connection" ? "captured" : "interactive",
     parseOutput: "text",
-    ...(input.timeoutMs !== undefined
-      ? { timeoutMs: input.timeoutMs }
-      : runner.timeoutMs !== undefined
-        ? { timeoutMs: runner.timeoutMs }
+    timeoutMs: input.timeoutMs ?? runner.timeoutMs,
+    ...(input.cwd
+      ? { cwd: input.cwd }
+      : runner.kind === "harness" && runner.workspace
+        ? { cwd: runner.workspace }
         : {}),
-    ...(input.cwd ? { cwd: input.cwd } : runner.profile.workspace ? { cwd: runner.profile.workspace } : {}),
   };
-  return { engine: input.engine, result: await dispatchRunner(runner, "", opts, seams) };
+  return { name: runner.name, result: await dispatchRunner({ runner }, "", opts, seams) };
 }
 
 /**
- * Close the embedded OpenCode instances the SDK runner keeps for reuse. An
+ * Close the embedded OpenCode instances the internal runtime keeps for reuse. An
  * open one holds the event loop open, so the CLI and workflow engine call this
  * in `finally` blocks. A no-op when none was started.
  */
 export async function disposeDispatchResources(): Promise<void> {
   await closeOpencodeSdk();
-}
-
-/**
- * Fail fast, before an operation makes any durable change, when `runner`'s
- * required credential is missing. Reads it and keeps nothing: every dispatch
- * reads it again.
- */
-export function assertRunnerCredentials(runner: RunnerSpec, envSource?: NodeJS.ProcessEnv): void {
-  if (runner.kind === "llm") materializeLlmRunnerConnection(runner, envSource);
-  if (runner.kind === "sdk") materializeSdkFallbackConnection(runner, envSource);
 }

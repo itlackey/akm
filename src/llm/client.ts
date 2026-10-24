@@ -10,13 +10,11 @@
  */
 
 import { fetchWithTimeout, readBodyWithByteCap } from "../core/common";
-import { type LlmConnectionConfig, resolveSecret } from "../core/config/config";
-import { isApiKeyReference } from "../core/config/schema/primitives";
 import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
+import { inferenceWireFields, type LlmInference } from "../core/llm-inference";
 import { redactErrorBody, redactSensitiveText } from "../core/redaction";
 import { warn, warnVerbose } from "../core/warn";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../integrations/agent/config";
-import { resolveSecretFromStore } from "../sources/snapshot-fetchers/secret-seam";
 import {
   emitLlmUsage,
   extractUsageTokens,
@@ -84,8 +82,31 @@ export interface ChatMessage {
   content: string;
 }
 
-/** Connection fields consumed by the chat transport. */
-export type ChatCompletionConfig = LlmConnectionConfig & { supportsJsonSchema?: boolean };
+/**
+ * What the chat transport sends one request with: the endpoint and its key, the
+ * model, the connection's request fields (sent as written) and the portable
+ * settings (`temperature`, `maxTokens`, ...), which are translated to the
+ * endpoint's fields and sent over them.
+ */
+export type ChatCompletionConfig = LlmInference & {
+  /** The OpenAI-compatible base URL (`…/v1`), or the chat-completions URL itself. */
+  endpoint: string;
+  model: string;
+  /** The key itself, read at the dispatch boundary; never a reference. */
+  apiKey?: string;
+  timeoutMs?: number | null;
+  /** Request fields in the endpoint's own spelling. */
+  request?: Readonly<Record<string, unknown>>;
+};
+
+/** The base of an OpenAI-compatible endpoint: the URL without `/chat/completions` or a trailing slash. */
+export function openAiBaseUrl(endpoint: string): string {
+  return endpoint.replace(/\/+$/, "").replace(/\/chat\/completions$/, "");
+}
+
+function chatCompletionsUrl(endpoint: string): string {
+  return `${openAiBaseUrl(endpoint)}/chat/completions`;
+}
 
 interface ChatCompletionResponse {
   /** Model id echoed by the provider; may differ from the requested alias. */
@@ -357,7 +378,7 @@ const thinkingControlRejectedConnections = new Set<string>();
 const temperatureRejectedConnections = new Set<string>();
 const maxCompletionTokensConnections = new Set<string>();
 
-function connectionKey(config: LlmConnectionConfig): string {
+function connectionKey(config: ChatCompletionConfig): string {
   return `${config.endpoint}|${config.model}`;
 }
 
@@ -376,12 +397,12 @@ export function _resetEndpointSupportTrackersForTests(): void {
  * this instead of a persisted config flag — it reflects only what a real
  * call this run actually observed.
  */
-export function isJsonSchemaKnownUnsupported(config: LlmConnectionConfig): boolean {
+export function isJsonSchemaKnownUnsupported(config: ChatCompletionConfig): boolean {
   return jsonSchemaUnsupportedConnections.has(connectionKey(config));
 }
 
 /** Whether a real call this process showed this connection rejects the thinking-control fields (#1045). */
-export function isThinkingControlKnownRejected(config: LlmConnectionConfig): boolean {
+export function isThinkingControlKnownRejected(config: ChatCompletionConfig): boolean {
   return thinkingControlRejectedConnections.has(connectionKey(config));
 }
 
@@ -431,8 +452,7 @@ async function chatCompletionAttempt(
   messages: ChatMessage[],
   options: ChatCompletionOptions | undefined,
   timeoutMs: number | null,
-  includeThinking = (options?.enableThinking ?? config.enableThinking) !== undefined &&
-    !isThinkingControlKnownRejected(config),
+  includeThinking = sendsThinkingFields(config, options) && !isThinkingControlKnownRejected(config),
 ): Promise<string> {
   const wantsSchema =
     Boolean(options?.responseSchema) && config.supportsJsonSchema !== false && !isJsonSchemaKnownUnsupported(config);
@@ -502,6 +522,50 @@ async function retryWithoutSchema(
   return fallback;
 }
 
+/** Whether this request carries the two thinking-control fields, from a setting or as written. */
+function sendsThinkingFields(config: ChatCompletionConfig, options: ChatCompletionOptions | undefined): boolean {
+  return (
+    (options?.enableThinking ?? config.enableThinking) !== undefined ||
+    config.request?.chat_template_kwargs !== undefined ||
+    config.request?.enable_thinking !== undefined
+  );
+}
+
+/**
+ * The fields of one request: akm's default temperature, the connection's request
+ * fields as written, and the portable settings (the call's own over the
+ * connection's) translated, nearest last. A field the endpoint has rejected on an
+ * earlier call is left out, and the token cap goes by the name it asked for.
+ */
+function requestFields(
+  config: ChatCompletionConfig,
+  options: ChatCompletionOptions | undefined,
+  includeThinking: boolean,
+): Record<string, unknown> {
+  const settings: LlmInference = {
+    ...config,
+    ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+    ...(options?.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
+    ...(options?.enableThinking !== undefined ? { enableThinking: options.enableThinking } : {}),
+  };
+  const fields: Record<string, unknown> = {
+    temperature: 0.3,
+    ...config.request,
+    ...inferenceWireFields(settings),
+  };
+  const key = connectionKey(config);
+  if (temperatureRejectedConnections.has(key)) delete fields.temperature;
+  if (!includeThinking) {
+    delete fields.chat_template_kwargs;
+    delete fields.enable_thinking;
+  }
+  if (maxCompletionTokensConnections.has(key) && fields.max_tokens !== undefined) {
+    fields.max_completion_tokens = fields.max_tokens;
+    delete fields.max_tokens;
+  }
+  return fields;
+}
+
 async function chatCompletionAttemptOnce(
   config: ChatCompletionConfig,
   messages: ChatMessage[],
@@ -516,24 +580,11 @@ async function chatCompletionAttemptOnce(
     if (issue) throw new Error(formatExtraParamsIssue("LLM extraParams", issue));
   }
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  // Resolve ONLY a whole-string reference ($VAR/${VAR} or ${ref}).
-  // The execution boundary normally hands us a materialized credential after
-  // resolving the reference upstream, so re-running the substitution over a
-  // literal key mangled any credential containing `$` — `sk-live$ecret` lost
-  // everything from the `$` onward, and the request failed with an opaque
-  // 401. The narrow check keeps the symbolic form working for any direct
-  // caller that still passes one.
-  const resolvedKey = isApiKeyReference(config.apiKey ?? "")
-    ? resolveSecret(config.apiKey, resolveSecretFromStore)
-    : config.apiKey;
+  const resolvedKey = config.apiKey;
   if (resolvedKey) {
     headers.Authorization = `Bearer ${resolvedKey}`;
   }
 
-  // Only include max_tokens when explicitly set. The model/API knows its own
-  // limits; a hardcoded default creates silent truncation failures when the
-  // guess is wrong. Users who need a cap can set llm.maxTokens in config.
-  const resolvedMaxTokens = options?.maxTokens ?? config.maxTokens;
   const responseFormat =
     includeSchema && options?.responseSchema
       ? {
@@ -543,35 +594,9 @@ async function chatCompletionAttemptOnce(
           },
         }
       : {};
-  // #949: which of these two wire forms a backend honors is a fact about the
-  // backend (and any gateway in front of it), not about akm's own `provider`
-  // label — a llama.cpp build honors chat_template_kwargs, a bare
-  // `enable_thinking` is honored by nothing observed, and a gateway
-  // (freellmapi, Bifrost) can drop either one depending on how it was built.
-  // Send both whenever thinking is explicitly resolved so the same engine
-  // block keeps working across a direct vhost or any gateway in front of it.
-  const resolvedEnableThinking = includeThinking ? (options?.enableThinking ?? config.enableThinking) : undefined;
-  const thinkingParams =
-    resolvedEnableThinking === undefined
-      ? {}
-      : { chat_template_kwargs: { enable_thinking: resolvedEnableThinking }, enable_thinking: resolvedEnableThinking };
-  const reasoningEffortParams =
-    config.reasoningEffort === undefined ? {} : { reasoning_effort: config.reasoningEffort };
-
-  const key = connectionKey(config);
-  const maxTokensField = maxCompletionTokensConnections.has(key) ? "max_completion_tokens" : "max_tokens";
-  const requestBody = JSON.stringify({
-    model: config.model,
-    messages,
-    ...(temperatureRejectedConnections.has(key)
-      ? {}
-      : { temperature: options?.temperature ?? config.temperature ?? 0.3 }),
-    ...(resolvedMaxTokens !== undefined ? { [maxTokensField]: resolvedMaxTokens } : {}),
-    ...config.extraParams,
-    ...responseFormat,
-    ...thinkingParams,
-    ...reasoningEffortParams,
-  });
+  const fields = requestFields(config, options, includeThinking);
+  const requestBody = JSON.stringify({ ...fields, model: config.model, messages, ...responseFormat });
+  const endpointUrl = chatCompletionsUrl(config.endpoint);
 
   // Wall-clock start for per-attempt usage telemetry (#576). Captured here so the
   // emitted duration covers the full request/response/parse cycle of a single
@@ -591,7 +616,7 @@ async function chatCompletionAttemptOnce(
     let response: Response;
     try {
       response = await fetchWithTimeout(
-        config.endpoint,
+        endpointUrl,
         {
           method: "POST",
           headers,
@@ -709,9 +734,9 @@ async function chatCompletionAttemptOnce(
       finishReason: typeof json.choices?.[0]?.finish_reason === "string" ? json.choices[0].finish_reason : undefined,
       ...extractUsageTokens(json.usage),
     };
-    if (resolvedEnableThinking === false && (terminalFields.reasoningTokens ?? 0) > 0) {
+    if (fields.enable_thinking === false && (terminalFields.reasoningTokens ?? 0) > 0) {
       warn(
-        `[akm] LLM returned ${terminalFields.reasoningTokens} reasoning tokens despite enableThinking: false; ` +
+        `[akm] LLM returned ${terminalFields.reasoningTokens} reasoning tokens despite thinking being off; ` +
           'the provider may not honor that control. Configure reasoningEffort: "none" when the provider supports it.',
       );
     }
@@ -753,7 +778,7 @@ async function chatCompletionAttemptOnce(
  * on a 4xx — see the in-memory tracker below.
  */
 export async function probeLlmReachable(
-  config: LlmConnectionConfig,
+  config: ChatCompletionConfig,
   timeoutMs?: number,
 ): Promise<{ reachable: boolean; error?: string }> {
   try {
@@ -776,11 +801,11 @@ export async function probeLlmReachable(
  * cold local server is never asked to load a model just to be checked.
  */
 export async function probeLlmEndpoint(
-  config: LlmConnectionConfig,
+  config: Pick<ChatCompletionConfig, "endpoint">,
   timeoutMs = 3_000,
 ): Promise<{ reachable: boolean; error?: string }> {
   try {
-    await fetch(`${config.endpoint.replace(/\/+$/, "")}/models`, { signal: AbortSignal.timeout(timeoutMs) });
+    await fetch(`${openAiBaseUrl(config.endpoint)}/models`, { signal: AbortSignal.timeout(timeoutMs) });
     return { reachable: true };
   } catch (err) {
     return { reachable: false, error: err instanceof Error ? err.message : String(err) };
@@ -797,11 +822,11 @@ export async function probeLlmEndpoint(
  * past the run that produced it is the failure mode this exists to avoid.
  */
 export function probeEndpointOnce<T>(
-  connection: LlmConnectionConfig,
+  connection: Pick<ChatCompletionConfig, "endpoint">,
   cache: Map<string, Promise<T>>,
-  probe: (connection: LlmConnectionConfig) => Promise<T>,
+  probe: (connection: Pick<ChatCompletionConfig, "endpoint">) => Promise<T>,
 ): Promise<T> {
-  const key = connection.endpoint.replace(/\/+$/, "");
+  const key = openAiBaseUrl(connection.endpoint);
   let pending = cache.get(key);
   if (!pending) {
     pending = probe(connection);

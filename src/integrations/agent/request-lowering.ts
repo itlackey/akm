@@ -5,7 +5,6 @@
 import { ConfigError } from "../../core/errors";
 import { withSchemaInstruction } from "../../core/structured";
 import type { LoweringNotice, ResolvedExecutionRequestV1 } from "../../execution/resolved-request";
-import { MODEL_WORK_POLICY_ID } from "../../execution/source";
 import { getHarness } from "../harnesses";
 import type { AgentDispatchRequest, LoweredAgentDispatch } from "./builder-shared";
 import { composeConversationFallbackPrompt } from "./conversation-fallback";
@@ -31,17 +30,6 @@ export function untranslated(adapter: string, field: string): Readonly<LoweringN
   };
 }
 
-/** Request fields carrying adapter-owned extensions, which no transport translates. */
-export function extensionFields(request: ResolvedExecutionRequestV1): string[] {
-  return [
-    ...(request.extensions ? ["extensions"] : []),
-    ...(request.command.extensions ? ["command.extensions"] : []),
-    ...(request.persona?.extensions ? ["persona.extensions"] : []),
-    ...(request.engine.extensions ? ["engine.extensions"] : []),
-    ...(request.runtime.extensions ? ["runtime.extensions"] : []),
-  ];
-}
-
 /**
  * Build one harness's request builder: map a resolved request onto the
  * harness-neutral {@link AgentDispatchRequest} its argv builder consumes,
@@ -52,7 +40,6 @@ export function createAgentRequestLowerer(
 ): (profile: AgentProfile, request: ResolvedExecutionRequestV1) => LoweredAgentDispatch {
   const supportedInference = new Set(options.inference ?? []);
   return (_profile, request) => {
-    const modelWork = request.authorization.policy?.id === MODEL_WORK_POLICY_ID;
     const notices: Readonly<LoweringNotice>[] = [];
     const skip = (field: string): void => {
       notices.push(untranslated(options.adapter, field));
@@ -93,14 +80,14 @@ export function createAgentRequestLowerer(
       dispatch.schema = request.outputSchema as Record<string, unknown>;
     }
     dispatch.prompt = prompt;
-    if (request.model) dispatch.model = request.model.resolved;
+    if (request.model) dispatch.model = request.model.model;
     if (Object.hasOwn(request, "inference")) {
       dispatch.inference = request.inference ?? null;
       for (const key of Object.keys(request.inference ?? {}).sort()) {
         if (!supportedInference.has(key)) skip(`inference.${key}`);
       }
     }
-    if (modelWork) {
+    if (request.modelWork) {
       if (!getHarness(options.adapter)?.capabilities.modelWork) {
         throw new ConfigError(
           `The ${options.adapter} transport cannot enforce the model-work tool policy.`,
@@ -116,9 +103,6 @@ export function createAgentRequestLowerer(
       }
       dispatch.modelWork = true;
     }
-    const settings = request.runtime.settings;
-    if (settings && Object.keys(settings).length > 0) skip("runtime.settings");
-    for (const field of extensionFields(request)) skip(field);
     return { prompt, dispatch, notices };
   };
 }

@@ -3,28 +3,29 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The execution pipeline, config engine name to a dispatchable request:
+ * The execution pipeline, from the layers that speak for a call to a
+ * dispatchable request:
  *
  *   resolveExecution(input)          config (or a journaled runner) + caller layers
  *                                    → { request, runner, provenance }
  *   buildExecution(request, runner)  the harness builder → prompt + argv inputs
- *                                    (agent/sdk) or chat messages (llm)
+ *                                    (harness, or the internal runtime) or chat
+ *                                    messages (a connection doing model work)
  *   buildExecutionFromWire(wire)     resume: the same from a journaled
  *                                    { request, runner }, never reading config
  *   runExecution(built, options)     runner-dispatch.ts: credentials are read
- *                                    here, then spawn / SDK / chat
+ *                                    here, then spawn / runtime / chat
  *
- * One merge, nearest wins: the selected engine's own defaults, then the
- * persona, command, invocation defaults and the current call. Credentials stay
- * symbolic in everything this module returns.
+ * Where the call runs, and with which model, is `resolveTarget`'s
+ * (./resolution.ts); this module merges the rest of the layers (persona, agent,
+ * inference, schema, workspace), nearest wins. Credentials stay symbolic in
+ * everything returned.
  */
 
-import type { AkmConfig, EngineConfig } from "../../core/config/config-types";
+import type { AkmConfig } from "../../core/config/config-types";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
-import { DURATION_UNITS, parseDuration } from "../../core/time";
 import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
-import { EXECUTION_MAX_TIMEOUT_MS } from "../../execution/limits";
 import {
   createInlineResolvedCommand,
   createResolvedExecutionRequest,
@@ -35,20 +36,13 @@ import {
   type ResolvedExecutionRequestV1,
   type ResolvedModelSelection,
   type ResolvedPersonaContent,
-  type ToolAuthorizationResult,
 } from "../../execution/resolved-request";
-import {
-  isPortableExecutionAgentSelector,
-  MODEL_WORK_POLICY_ID,
-  type UnresolvedExecutionDefaults,
-} from "../../execution/source";
+import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
 import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import { getHarness } from "../harnesses";
-import { DEFAULT_LLM_TIMEOUT_MS } from "./config";
-import { FALLBACK_ENGINE_NAME, fallbackEngineConfig } from "./engine-fallback";
-import { configuredEngine, resolveEngine } from "./engine-resolution";
-import { engineModelAndInference, loadModelMap, type ResolvedModelMapV1, resolveModelMapAlias } from "./model-map";
-import { extensionFields, untranslated } from "./request-lowering";
+import { type AgentProfile, harnessProfile, runtimeProfile } from "./profiles";
+import { untranslated } from "./request-lowering";
+import { parseTimeout, resolveTarget } from "./resolution";
 import { decodeFrozenRunnerSpec, type RunnerSpec } from "./runner";
 import type { RunAgentOptions } from "./spawn";
 
@@ -58,13 +52,13 @@ export interface ExecutionLayer {
   readonly values: UnresolvedExecutionDefaults;
 }
 
-type LayerKind = "installation" | "engine" | "agent" | "command" | "invocation-defaults" | "current";
+type LayerKind = "agent" | "command" | "invocation-defaults" | "current";
 
 /** Which layer set one request field. */
 export interface ExecutionFieldProvenance {
   readonly layer: string;
-  readonly kind: LayerKind | "fallback" | "authorization";
-  readonly via: "explicit" | "model-alias" | "fallback" | "source" | "policy";
+  readonly kind: LayerKind | "installation";
+  readonly via: "explicit" | "source";
 }
 
 export interface ResolveExecutionInput {
@@ -72,7 +66,7 @@ export interface ResolveExecutionInput {
   readonly command?: ResolvedCommandContent;
   readonly content?: string;
   readonly argumentInput?: string;
-  /** Resolve the engine from this config… */
+  /** Resolve the target from this config… */
   readonly config?: AkmConfig;
   /** …or reuse an already-resolved runner (no config read, no model aliases). */
   readonly runner?: RunnerSpec;
@@ -83,30 +77,29 @@ export interface ResolveExecutionInput {
   readonly commandLayer?: ExecutionLayer;
   readonly invocationDefaults?: UnresolvedExecutionDefaults;
   readonly current?: UnresolvedExecutionDefaults;
-  readonly modelMap?: ResolvedModelMapV1;
-  /** Run under the model-work tool policy. */
+  /** Run as unattended model work: confined, and on a connection a direct call. */
   readonly modelWork?: boolean;
 }
 
 export interface ResolvedExecution {
   readonly request: ResolvedExecutionRequestV1;
-  /** The selected engine's runner with the request applied. Credentials are still symbolic. */
+  /** Where the request runs. Credentials are still symbolic. */
   readonly runner: RunnerSpec;
   /** The layer behind each request field, for `akm task explain` and `command run --dry-run`. */
   readonly provenance: Readonly<Record<string, ExecutionFieldProvenance>>;
-  /** Set when the implicit opencode-sdk fallback engine was selected. */
-  readonly fallbackEngineName?: string;
 }
 
 /** A request built for its runner's transport. */
 export interface BuiltExecution {
   readonly request: ResolvedExecutionRequestV1;
   readonly runner: RunnerSpec;
-  /** The harness prompt (agent/sdk), or the terminal user message (llm). */
+  /** The harness prompt (harness or runtime), or the terminal user message (chat). */
   readonly prompt: string;
   /** Spawn options: timeout, cwd, env, and the harness `dispatch` the argv is built from. */
   readonly options: Readonly<RunAgentOptions>;
-  /** Direct-LLM transport only. */
+  /** What the prompt is spawned or run as; absent for a direct chat. */
+  readonly profile?: AgentProfile;
+  /** Direct chat only. */
   readonly messages?: readonly ChatMessage[];
   readonly chatOptions?: Readonly<ChatCompletionOptions>;
   readonly notices: readonly Readonly<LoweringNotice>[];
@@ -117,25 +110,6 @@ interface Layer {
   readonly kind: LayerKind;
   readonly values: UnresolvedExecutionDefaults;
 }
-
-/** What the selected engine contributes before any caller layer. */
-interface EngineDefaults {
-  readonly kind: "llm" | "agent" | "sdk";
-  readonly platform: string;
-  /** The models.json column aliases resolve against. */
-  readonly modelMapKey: string;
-  readonly values: UnresolvedExecutionDefaults;
-}
-
-const LLM_INFERENCE_FIELDS = [
-  "temperature",
-  "maxTokens",
-  "supportsJsonSchema",
-  "extraParams",
-  "contextLength",
-  "enableThinking",
-  "reasoningEffort",
-] as const;
 
 function has(values: object | null | undefined, key: string): boolean {
   return (
@@ -154,201 +128,16 @@ function nearest(layers: readonly Layer[], key: keyof UnresolvedExecutionDefault
   return undefined;
 }
 
-function explicit(layer: Layer, via: ExecutionFieldProvenance["via"] = "explicit"): ExecutionFieldProvenance {
-  return { layer: layer.id, kind: layer.kind, via };
-}
-
-function inferenceOf(source: Readonly<Record<string, unknown>>): ExecutionJsonObject | undefined {
-  const out: Record<string, unknown> = {};
-  for (const key of LLM_INFERENCE_FIELDS) if (source[key] !== undefined) out[key] = source[key];
-  return Object.keys(out).length > 0 ? (out as ExecutionJsonObject) : undefined;
-}
-
-/** A configured engine's model, inference, timeout and workspace, and where its aliases resolve. */
-function engineDefaults(name: string, engine: EngineConfig, config: AkmConfig): EngineDefaults {
-  const own = engineModelAndInference(engine);
-  const values: Record<string, unknown> = {
-    ...(own.model !== undefined ? { model: own.model } : {}),
-    ...(own.inference !== undefined ? { inference: own.inference } : {}),
-    ...(Object.hasOwn(engine, "timeoutMs") ? { timeout: engine.timeoutMs ?? null } : {}),
-  };
-  if (engine.kind === "llm") return { kind: "llm", platform: engine.provider ?? name, modelMapKey: name, values };
-  if (engine.workspace !== undefined) values.workspace = engine.workspace;
-  if (engine.agent !== undefined) values.agent = engine.agent;
-  if (engine.platform !== "opencode-sdk") {
-    return { kind: "agent", platform: engine.platform, modelMapKey: engine.platform, values };
-  }
-  // An SDK engine runs its own `llmEngine`'s model/inference/timeout unless it sets its own. With no
-  // `llmEngine` it has no fallback, and opencode picks the model: `defaults.llmEngine` is not borrowed.
-  const fallbackName = engine.llmEngine;
-  const fallback =
-    fallbackName && config.engines && Object.hasOwn(config.engines, fallbackName)
-      ? config.engines[fallbackName]
-      : undefined;
-  if (fallback?.kind !== "llm" || !fallbackName) {
-    return { kind: "sdk", platform: "opencode-sdk", modelMapKey: "opencode-sdk", values };
-  }
-  const inherited = engineModelAndInference(fallback);
-  return {
-    kind: "sdk",
-    platform: "opencode-sdk",
-    modelMapKey: own.model === undefined ? fallbackName : "opencode-sdk",
-    values: {
-      ...(inherited.model !== undefined ? { model: inherited.model } : {}),
-      ...(inherited.inference !== undefined ? { inference: inherited.inference } : {}),
-      ...values,
-      timeout: Object.hasOwn(engine, "timeoutMs")
-        ? (engine.timeoutMs ?? null)
-        : Object.hasOwn(fallback, "timeoutMs")
-          ? (fallback.timeoutMs ?? null)
-          : DEFAULT_LLM_TIMEOUT_MS,
-    },
-  };
-}
-
-/** The same defaults read back from an already-resolved runner. */
-function runnerDefaults(runner: RunnerSpec): EngineDefaults {
-  const timeout = Object.hasOwn(runner, "timeoutMs") ? { timeout: runner.timeoutMs ?? null } : {};
-  if (runner.kind === "llm") {
-    const inference = inferenceOf(runner.connection as Record<string, unknown>);
-    return {
-      kind: "llm",
-      platform: runner.connection.provider ?? runner.engine,
-      modelMapKey: runner.engine,
-      values: {
-        ...(runner.connection.model !== undefined ? { model: runner.connection.model } : {}),
-        ...(inference ? { inference } : {}),
-        ...timeout,
-      },
-    };
-  }
-  const platform = runner.profile.platform ?? runner.profile.name;
-  const fallback = runner.kind === "sdk" ? runner.fallbackConnection : undefined;
-  const model = runner.profile.model ?? fallback?.model;
-  const fallbackInference = fallback ? inferenceOf(fallback as Record<string, unknown>) : undefined;
-  const inference =
-    fallbackInference !== undefined || runner.profile.inference !== undefined
-      ? { ...fallbackInference, ...runner.profile.inference }
-      : undefined;
-  return {
-    kind: runner.kind,
-    platform,
-    modelMapKey: platform,
-    values: {
-      ...(model !== undefined ? { model } : {}),
-      ...(inference ? { inference } : {}),
-      ...timeout,
-      ...(runner.profile.workspace !== undefined ? { workspace: runner.profile.workspace } : {}),
-      ...(runner.profile.agent !== undefined ? { agent: runner.profile.agent } : {}),
-    },
-  };
-}
-
-/**
- * The engine, from an ordered list: the nearest layer that names one, then
- * `defaults.engine`, then the implicit opencode-sdk fallback when its binary
- * is present. A named engine that is not configured is an error, never rescued.
- */
-function selectEngine(
-  config: AkmConfig,
-  layers: readonly Layer[],
-): { name: string; engine: EngineConfig; provenance: ExecutionFieldProvenance; fallback: boolean } {
-  for (let index = layers.length - 1; index >= 0; index -= 1) {
-    const layer = layers[index];
-    const name = layer?.values.engine;
-    if (layer && typeof name === "string" && name.length > 0) {
-      return { name, engine: configuredEngine(name, config), provenance: explicit(layer), fallback: false };
-    }
-  }
-  const installed = config.defaults?.engine;
-  if (installed) {
-    return {
-      name: installed,
-      engine: configuredEngine(installed, config),
-      provenance: { layer: "installation-defaults", kind: "installation", via: "explicit" },
-      fallback: false,
-    };
-  }
-  return {
-    name: FALLBACK_ENGINE_NAME,
-    engine: fallbackEngineConfig(config),
-    provenance: { layer: FALLBACK_ENGINE_NAME, kind: "fallback", via: "fallback" },
-    fallback: true,
-  };
-}
-
-function parseTimeout(value: unknown): number | null {
-  if (value === null) return null;
-  const milliseconds = typeof value === "string" ? parseDuration(value, DURATION_UNITS) : value;
-  if (
-    typeof milliseconds !== "number" ||
-    !Number.isInteger(milliseconds) ||
-    milliseconds < 0 ||
-    milliseconds > EXECUTION_MAX_TIMEOUT_MS
-  ) {
-    throw new ConfigError(
-      "Execution timeout must be null, a whole number of milliseconds, or a duration such as 20m.",
-      "INVALID_CONFIG_FILE",
-    );
-  }
-  return milliseconds;
-}
-
-function withInference(connection: Record<string, unknown>, inference: ExecutionJsonObject | null | undefined) {
-  const out: Record<string, unknown> = { ...connection };
-  for (const key of LLM_INFERENCE_FIELDS) delete out[key];
-  if (inference) for (const key of LLM_INFERENCE_FIELDS) if (inference[key] !== undefined) out[key] = inference[key];
-  return out;
-}
-
-/** Apply a request's model, inference, timeout and workspace to its runner. Idempotent. */
-function applyRequest(base: RunnerSpec, request: ResolvedExecutionRequestV1): RunnerSpec {
-  const timeout = Object.hasOwn(request.runtime, "timeoutMs")
-    ? { timeoutMs: request.runtime.timeoutMs ?? null }
-    : Object.hasOwn(base, "timeoutMs")
-      ? { timeoutMs: base.timeoutMs }
-      : {};
-  const model = request.model?.resolved;
-  if (base.kind === "llm") {
-    const { model: _model, ...connection } = base.connection;
-    return {
-      ...base,
-      connection: withInference(
-        { ...connection, ...(model !== undefined ? { model } : {}) },
-        request.inference,
-      ) as typeof base.connection,
-      ...timeout,
-    };
-  }
-  const { model: _model, workspace: _workspace, inference: ownInference, ...profile } = base.profile;
-  const workspace = request.runtime.workspace;
-  const inference = Object.hasOwn(request, "inference") ? request.inference : ownInference;
-  const next = {
-    ...base,
-    profile: {
-      ...profile,
-      ...(model !== undefined ? { model } : {}),
-      ...(typeof workspace === "string" ? { workspace } : {}),
-      ...(inference ? { inference } : {}),
-    },
-    ...timeout,
-  };
-  if (next.kind === "sdk" && next.fallbackConnection) {
-    let fallback: Record<string, unknown> = { ...next.fallbackConnection };
-    if (request.model === null) delete fallback.model;
-    if (Object.hasOwn(request, "inference")) fallback = withInference(fallback, request.inference);
-    next.fallbackConnection = fallback as typeof next.fallbackConnection;
-  }
-  return next as RunnerSpec;
+function explicit(layer: Layer): ExecutionFieldProvenance {
+  return { layer: layer.id, kind: layer.kind, via: "explicit" };
 }
 
 /**
  * Reasoning effort has one word in a request: `reasoningEffort`, which is what
- * engines, opencode and the LLM request body call it. `effort` is the same
- * setting as a `models.json` alias or an asset's `effort:` frontmatter spells
- * it, and becomes `reasoningEffort` here, in the one place every layer's
- * inference is merged, so the nearest layer wins whichever word it used. When
- * one inference object has both, `reasoningEffort` wins.
+ * the LLM request body calls it. `effort` is the same setting as an asset's
+ * `effort:` frontmatter spells it, and becomes `reasoningEffort` here, in the one
+ * place every layer's inference is merged, so the nearest layer wins whichever
+ * word it used. When one inference object has both, `reasoningEffort` wins.
  */
 function withReasoningEffort(inference: ExecutionJsonObject): ExecutionJsonObject {
   if (!Object.hasOwn(inference, "effort")) return inference;
@@ -374,10 +163,20 @@ function mergeInference(
   return deepMergeConfig(current ?? {}, next as Record<string, unknown>) as ExecutionJsonObject;
 }
 
+/** A journaled runner under this call's layers: the nearest layer's timeout and (exact) model replace its own. */
+function applyLayers(runner: RunnerSpec, layers: readonly Layer[]): RunnerSpec {
+  const timeout = nearest(layers, "timeout")?.values.timeout;
+  const model = nearest(layers, "model")?.values.model;
+  return {
+    ...runner,
+    ...(timeout !== undefined ? { timeoutMs: parseTimeout(timeout) } : {}),
+    ...(typeof model === "string" && model ? { model } : {}),
+  };
+}
+
 /**
- * Resolve one execution: select the engine, merge its defaults with the
- * caller's layers (nearest wins), expand a model alias, and
- * apply the result to the engine's runner.
+ * Resolve one execution: pick where it runs and the model (`resolveTarget`), merge
+ * the caller's other layers (nearest wins), and build the request for that target.
  */
 export function resolveExecution(input: ResolveExecutionInput): ResolvedExecution {
   const command =
@@ -387,7 +186,7 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
       ...(input.argumentInput !== undefined ? { argumentInput: input.argumentInput } : {}),
       content: input.content ?? "",
     });
-  const callerLayers: Layer[] = [
+  const layers: Layer[] = [
     ...(input.agentLayer ? [{ ...input.agentLayer, kind: "agent" as const }] : []),
     {
       id: input.commandLayer?.id ?? "inline-command",
@@ -399,68 +198,52 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
       : []),
     ...(input.current ? [{ id: "current-invocation", kind: "current" as const, values: input.current }] : []),
   ];
+  const modelWork = input.modelWork === true;
+
+  let runner: RunnerSpec;
+  if (input.runner) runner = applyLayers(input.runner, layers);
+  else if (input.config) {
+    runner = resolveTarget({ config: input.config, modelWork, layers: layers.map((layer) => layer.values) });
+  } else throw new TypeError("resolveExecution needs a config or a runner");
 
   const provenance: Record<string, ExecutionFieldProvenance> = {};
-  let name: string;
-  let defaults: EngineDefaults;
-  let base: RunnerSpec;
-  let fallback = false;
-  if (input.runner) {
-    name = input.runner.engine;
-    defaults = runnerDefaults(input.runner);
-    base = input.runner;
-    provenance.engine = { layer: "installation-defaults", kind: "installation", via: "explicit" };
-  } else {
-    if (!input.config) throw new TypeError("resolveExecution needs a config or a runner");
-    const selected = selectEngine(input.config, callerLayers);
-    name = selected.name;
-    fallback = selected.fallback;
-    defaults = engineDefaults(name, selected.engine, input.config);
-    base = resolveEngine(name, input.config, selected.engine);
-    provenance.engine = selected.provenance;
-  }
-  const layers: Layer[] = [{ id: name, kind: "engine", values: defaults.values }, ...callerLayers];
-
+  const targetLayer = [...layers]
+    .reverse()
+    .find((layer) => has(layer.values, "connection") || has(layer.values, "harness") || has(layer.values, "engine"));
+  provenance.target = targetLayer
+    ? explicit(targetLayer)
+    : { layer: "installation-defaults", kind: "installation", via: "explicit" };
   provenance.command = { layer: command.source?.ref ?? "inline", kind: "command", via: "source" };
+
   let persona = input.persona;
-  // The engine's own `agent` is only a default for a request that names none: it never replaces a
+  // The harness's own `agent` is only a default for a request that names none: it never replaces a
   // persona, and model work keeps its confined agent.
-  const engineAgentApplies = !persona && input.modelWork !== true;
-  let agentLayer = nearest(layers, "agent");
-  if (agentLayer?.kind === "engine" && !engineAgentApplies) agentLayer = undefined;
-  const agent = agentLayer?.values.agent;
+  let agent: string | null | undefined;
+  const agentLayer = nearest(layers, "agent");
   if (agentLayer) {
+    agent = agentLayer.values.agent;
     provenance.agent = explicit(agentLayer);
     // A native selector (or an explicit null) replaces any persona.
     if (typeof agent !== "string" || !isPortableExecutionAgentSelector(agent)) persona = null;
+  } else if (runner.kind === "harness" && runner.agent !== undefined && !persona && !modelWork) {
+    agent = runner.agent;
+    provenance.agent = { layer: runner.name, kind: "installation", via: "explicit" };
   }
   if (persona) provenance.persona = { layer: persona.source.ref, kind: "agent", via: "source" };
 
   const modelLayer = nearest(layers, "model");
-  let model: ResolvedModelSelection | null | undefined;
-  let aliasInference: ExecutionJsonObject | null | undefined;
-  if (modelLayer) {
-    provenance.model = explicit(modelLayer);
-    const value = modelLayer.values.model;
-    if (value === null) model = null;
-    else if (typeof value === "string" && value.length > 0) {
-      const map = input.modelMap ?? (input.config ? loadModelMap({ engines: input.config.engines }).map : undefined);
-      const selection = map
-        ? resolveModelMapAlias(value, defaults.modelMapKey, map)
-        : { input: value, interpretation: "exact" as const, model: value };
-      model = { input: selection.input, interpretation: selection.interpretation, resolved: selection.model };
-      if ("inference" in selection && selection.inference !== undefined) aliasInference = selection.inference;
-    } else {
-      throw new ConfigError("Resolved model must be null or a non-empty string.", "INVALID_CONFIG_FILE");
-    }
+  if (modelLayer) provenance.model = explicit(modelLayer);
+  const requested = modelLayer?.values.model;
+  let model: ResolvedModelSelection | undefined;
+  if (runner.model !== undefined) {
+    model = {
+      model: runner.model,
+      ...(typeof requested === "string" && requested !== runner.model ? { alias: requested } : {}),
+    };
   }
 
-  // An alias's inference applies at the layer that chose the alias, under that layer's own inference.
   let inference: ExecutionJsonObject | null | undefined;
   for (const layer of layers) {
-    if (layer === modelLayer && aliasInference !== undefined) {
-      inference = mergeInference(inference, aliasInference, explicit(layer, "model-alias"), provenance);
-    }
     if (has(layer.values, "inference")) {
       inference = mergeInference(inference, layer.values.inference ?? null, explicit(layer), provenance);
     }
@@ -472,79 +255,81 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
     return layer;
   };
   const schemaLayer = select("outputSchema", "outputSchema");
-  const modelWork = input.modelWork === true;
   const timeoutLayer = select("timeout", "runtime.timeoutMs");
   const workspaceLayer = select("workspace", "runtime.workspace");
   const environmentLayer = select("environment", "runtime.environment");
-  const settingsLayer = select("runtime", "runtime.settings");
-  const authorization: ToolAuthorizationResult = modelWork
-    ? { status: "allowed", reason: "The model-work tool policy is akm's own.", policy: { id: MODEL_WORK_POLICY_ID } }
-    : { status: "not-required" };
-  provenance.authorization = {
-    layer: modelWork ? MODEL_WORK_POLICY_ID : "not-required",
-    kind: "authorization",
-    via: "policy",
-  };
+  const workspace = workspaceLayer
+    ? (workspaceLayer.values.workspace ?? null)
+    : runner.kind === "harness"
+      ? runner.workspace
+      : undefined;
+  if (!timeoutLayer) provenance["runtime.timeoutMs"] = { layer: runner.name, kind: "installation", via: "explicit" };
 
   const request = createResolvedExecutionRequest({
     command,
     ...(input.conversation !== undefined ? { conversation: input.conversation } : {}),
-    ...(agentLayer ? { agent: agent as string | null } : {}),
+    ...(agent !== undefined ? { agent } : {}),
     ...(persona !== undefined ? { persona } : {}),
-    engine: { name, kind: defaults.kind, platform: defaults.platform },
-    ...(modelLayer ? { model: model ?? null } : {}),
+    target: {
+      name: runner.name,
+      kind: runner.kind,
+      ...(runner.kind === "harness" ? { platform: runner.platform } : {}),
+    },
+    ...(model ? { model } : {}),
     ...(inference !== undefined ? { inference } : {}),
     ...(schemaLayer ? { outputSchema: schemaLayer.values.outputSchema ?? null } : {}),
-    authorization,
+    modelWork,
     runtime: {
-      ...(timeoutLayer ? { timeoutMs: parseTimeout(timeoutLayer.values.timeout ?? null) } : {}),
-      ...(workspaceLayer ? { workspace: workspaceLayer.values.workspace ?? null } : {}),
+      timeoutMs: runner.timeoutMs,
+      ...(workspace !== undefined ? { workspace } : {}),
       ...(environmentLayer ? { environment: environmentLayer.values.environment ?? null } : {}),
-      ...(settingsLayer ? { settings: settingsLayer.values.runtime ?? null } : {}),
     },
-    notices: [],
   });
   const sorted = Object.fromEntries(Object.entries(provenance).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-  return {
-    request,
-    runner: applyRequest(base, request),
-    provenance: sorted,
-    ...(fallback ? { fallbackEngineName: name } : {}),
-  };
+  return { request, runner, provenance: sorted };
 }
 
 function nonEmpty(value: object | null | undefined): boolean {
   return value !== null && value !== undefined && Object.keys(value).length > 0;
 }
 
-function buildLlm(
+/** The inference keys the chat transport translates; any other is reported untranslated. */
+const CHAT_INFERENCE_KEYS: readonly string[] = [
+  "temperature",
+  "maxTokens",
+  "supportsJsonSchema",
+  "extraParams",
+  "contextLength",
+  "enableThinking",
+  "reasoningEffort",
+];
+
+function buildChat(
   request: ResolvedExecutionRequestV1,
-  runner: Extract<RunnerSpec, { kind: "llm" }>,
+  runner: Extract<RunnerSpec, { kind: "connection" }>,
   options: RunAgentOptions,
 ): BuiltExecution {
   if (typeof request.agent === "string" && request.persona === null) {
     throw new ConfigError(
-      `The direct LLM transport cannot consume native agent selector ${JSON.stringify(request.agent)}.`,
+      `A direct model call cannot consume native agent selector ${JSON.stringify(request.agent)}.`,
       "INVALID_CONFIG_FILE",
     );
   }
-  const notices: Readonly<LoweringNotice>[] = [...request.notices];
+  const notices: Readonly<LoweringNotice>[] = [];
   const skip = (field: string): void => {
-    notices.push(untranslated("llm", field));
+    notices.push(untranslated("connection", field));
   };
   for (const key of Object.keys(request.inference ?? {}).sort()) {
-    if (!(LLM_INFERENCE_FIELDS as readonly string[]).includes(key)) skip(`inference.${key}`);
+    if (!CHAT_INFERENCE_KEYS.includes(key)) skip(`inference.${key}`);
   }
   const chatOptions: ChatCompletionOptions = {};
-  // Sent unless the engine opts out; chatCompletion drops it once if the provider rejects it.
+  // Sent unless the call opts out; chatCompletion drops it once if the provider rejects it.
   if (request.outputSchema) {
-    if (runner.connection.supportsJsonSchema !== false) chatOptions.responseSchema = request.outputSchema;
+    if (request.inference?.supportsJsonSchema !== false) chatOptions.responseSchema = request.outputSchema;
     else skip("outputSchema");
   }
   if (request.runtime.workspace) skip("runtime.workspace");
   if (nonEmpty(request.runtime.environment)) skip("runtime.environment");
-  if (nonEmpty(request.runtime.settings)) skip("runtime.settings");
-  for (const field of extensionFields(request)) skip(field);
   const messages: ChatMessage[] = [
     ...(request.persona ? [{ role: "system" as const, content: request.persona.content }] : []),
     ...(request.conversation ?? []).map((message) => ({ role: message.role, content: message.content })),
@@ -554,22 +339,24 @@ function buildLlm(
 }
 
 /**
- * Build a request for its runner's transport: the harness's own builder for
- * agent/SDK engines, chat messages for a direct LLM.
+ * Build a request for its runner's transport: chat messages for model work on a
+ * connection; otherwise the harness's own builder, which for agent work on a
+ * connection is akm's internal runtime.
  */
 export function buildExecution(request: ResolvedExecutionRequestV1, runner: RunnerSpec): BuiltExecution {
-  const applied = applyRequest(runner, request);
   const environment = request.runtime.environment;
+  const workspace = request.runtime.workspace;
   const options: RunAgentOptions = {
     stdio: "captured",
     parseOutput: "text",
-    ...(applied.timeoutMs !== undefined ? { timeoutMs: applied.timeoutMs } : {}),
-    ...(applied.kind !== "llm" && applied.profile.workspace ? { cwd: applied.profile.workspace } : {}),
+    ...(request.runtime.timeoutMs !== undefined ? { timeoutMs: request.runtime.timeoutMs } : {}),
+    ...(typeof workspace === "string" ? { cwd: workspace } : {}),
     ...(environment ? { env: { ...environment } } : {}),
   };
-  if (applied.kind === "llm") return buildLlm(request, applied, options);
+  if (runner.kind === "connection" && request.modelWork) return buildChat(request, runner, options);
 
-  const platform = applied.profile.platform ?? applied.profile.name;
+  const profile = runner.kind === "harness" ? harnessProfile(runner) : runtimeProfile(runner);
+  const platform = profile.platform ?? profile.name;
   const harness = getHarness(platform);
   const lower = harness?.agentBuilder?.lower ?? harness?.executionLowerer?.lower;
   if (!lower) {
@@ -578,47 +365,22 @@ export function buildExecution(request: ResolvedExecutionRequestV1, runner: Runn
       "INVALID_CONFIG_FILE",
     );
   }
-  const built = lower(applied.profile, request);
+  const built = lower(profile, request);
   return {
     request,
-    runner: applied,
+    runner,
     prompt: built.prompt,
     options: { ...options, dispatch: built.dispatch },
-    notices: [...request.notices, ...built.notices],
+    profile,
+    notices: built.notices,
   };
 }
 
 /**
  * Resume: build a journaled `{ request, runner }` exactly as frozen. Never
- * reads config, models.json or credentials, so a config edit after the freeze
- * cannot change what a resumed unit runs.
+ * reads config or credentials, so a config edit after the freeze cannot change
+ * what a resumed unit runs.
  */
 export function buildExecutionFromWire(wire: { readonly request: unknown; readonly runner: unknown }): BuiltExecution {
   return buildExecution(decodeResolvedExecutionRequest(wire.request), decodeFrozenRunnerSpec(wire.runner));
-}
-
-/** Each configured engine's own model selection and models.json column, for `akm health`. */
-export function executionEngineDefinitionsFromConfig(config: AkmConfig): Readonly<
-  Record<
-    string,
-    {
-      readonly selection: { readonly name: string; readonly kind: "llm" | "agent" | "sdk"; readonly platform: string };
-      readonly defaults: UnresolvedExecutionDefaults;
-      readonly modelMapKey: string;
-    }
-  >
-> {
-  return Object.fromEntries(
-    Object.entries(config.engines ?? {}).map(([name, engine]) => {
-      const defaults = engineDefaults(name, engine, config);
-      return [
-        name,
-        {
-          selection: { name, kind: defaults.kind, platform: defaults.platform },
-          defaults: defaults.values,
-          modelMapKey: defaults.modelMapKey,
-        },
-      ];
-    }),
-  );
 }

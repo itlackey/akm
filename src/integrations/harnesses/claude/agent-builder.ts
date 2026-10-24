@@ -30,7 +30,7 @@
  * The builder's `platform` stays `'claude'` (the canonical harness id).
  */
 
-import { type AgentCommandBuilder, modelFromArgs, resolveDispatchModel } from "../../agent/builder-shared";
+import { type AgentCommandBuilder, modelFromArgs } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 
 /** The model-work tool policy on Claude Code: read, edit in the working directory, `akm search`, `akm show`. */
@@ -84,8 +84,7 @@ export const claudeBuilder: AgentCommandBuilder = {
       args.push("--system-prompt", req.systemPrompt);
     }
     if (req.model) {
-      const resolved = resolveDispatchModel(req, profile, "claude") as string;
-      args.push("--model", resolved);
+      args.push("--model", req.model);
     } else if (modelWork) {
       const model = modelFromArgs(profile.args);
       if (model) args.push("--model", model);
