@@ -19,7 +19,6 @@ section names are intentionally absent from this active suite.
 
 | File | Current contract |
 | --- | --- |
-| `asset-types.test.ts` | Runtime asset registry and current architecture docs |
 | `quality-rules.test.ts` | Runtime quality normalization and proposed filtering |
 | `configuration.test.ts` | Engine/strategy schema and source write constraints |
 | `runtime-boundaries.test.ts` | Current search/show/write/storage architecture |
@@ -28,5 +27,4 @@ section names are intentionally absent from this active suite.
 | `improve-cli-surface.test.ts` | Current improvement CLI surface |
 | `engine-boundary.test.ts` | Engine lowering and stateless LLM boundary |
 | `engine-interchange.test.ts` | One cross-engine contract over the LLM path, every CLI harness and opencode-sdk |
-| `lesson-type.test.ts` | Lesson registration and lint behavior |
 | `response-schemas-strict.test.ts` | Every response schema akm sends is valid for a strict structured-output provider |

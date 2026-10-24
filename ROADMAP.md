@@ -1,56 +1,32 @@
 # Roadmap
 
-This page outlines the high-level focus for the next two releases.
+This page outlines the high-level direction for the releases ahead.
 
 It is intentionally directional rather than exhaustive. Detailed command,
-schema, and migration behavior still lives in the release notes, the
-migration guides, and [STABILITY.md](STABILITY.md), which classifies
-today's public contract by surface. The internal design specs behind the
-0.9.0 architecture consolidation live under
-[`docs/architecture/specs/`](docs/architecture/specs/).
-
-## 0.8 Foundation
-
-Release `0.8.0` already established much of the product shape that `0.9` and
-`1.0` build on.
-
-- The CLI and config surface were substantially redesigned.
-- `akm improve` became the main self-improvement and maintenance entry point.
-- Task assets, proposal workflows, health reporting, and agent command-building
-  all landed as first-class capabilities.
-- Storage, indexing, graph extraction, and migration paths were tightened to
-  support the v1 contract freeze.
-
-That means the next two releases are less about inventing a new direction and
-more about hardening, simplifying, and freezing what `0.8.0` put in place.
+schema, and migration behavior lives in the release notes, the migration
+guides, and [STABILITY.md](STABILITY.md), which classifies today's public
+contract by surface and lists the planned changes under "On the horizon".
 
 ## 0.9
 
-Release `0.9` is the architecture-consolidation release ahead of the `1.0`
-contract freeze. It replaces the flat asset-type registry with a
-**bundle / adapter** model and settles the durable contracts `1.0` will freeze.
+Release `0.9` consolidated the architecture ahead of the `1.0` contract
+freeze. It replaced the flat asset-type registry with a **bundle / adapter**
+model and settled the durable contracts `1.0` will freeze.
 
 - **One canonical ref grammar.** Refs are `[bundle//]conceptId` — a
-  subdir-qualified concept id such as `skills/code-review` or `memories/vpn-note`
-  — replacing the pre-`0.9` `type:name` spelling. Durable state stores the
-  fully-qualified form; the short bundle-omitted form is input sugar. This is a
-  deliberate, one-time break, taken pre-`1.0` while it is still cheap.
+  subdir-qualified concept id such as `skills/code-review` or
+  `memories/vpn-note` — replacing the earlier `type:name` spelling. Durable
+  state stores the fully-qualified form; the short bundle-omitted form is input
+  sugar.
 - **Format-neutral bundles.** Installed sources are bundles, each recognized by
   a built-in adapter (Agent Skills, Claude/OpenCode commands and agents,
   knowledge, YAML workflows, tasks, env/secret files, scripts, OKF and LLM-wiki
   knowledge bases) instead of a closed asset-type list.
-- **Storage consolidation.** The durable databases collapse from four to three
-  (`state.db` / `index.db` / a separate `logs.db`); config migrates from the
-  flat `stashDir` / `sources` / `installed` keys to `bundles` / `defaultBundle`.
-  The one-time cutover is journaled and crash-resumable via `akm migrate apply`,
-  with a verified backup taken first.
-- **Debt paydown.** The improve / proposal / workflow internals are decomposed
-  onto one file-change transaction model and an ambient run context, the
-  deprecated `0.8` CLI aliases are removed, and the `vault` asset type is
-  retired in favor of `env` / `secret`.
-
-In short: `0.9` reduces ambiguity, pays down pre-`1.0` debt, and arrives at a
-small, durable core ready for the `1.0` freeze.
+- **Storage consolidation.** Durable state lives in `state.db`, `index.db` and
+  `logs.db`, and config is keyed by `bundles` / `defaultBundle`. `akm migrate
+  apply` moves an older installation to the current shape, with a backup first.
+- **Debt paydown.** The 0.8-era CLI aliases were removed and the `vault` asset
+  type was retired in favor of `env` / `secret`.
 
 ### The 0.9.x series
 
@@ -62,16 +38,18 @@ break ships with a CHANGELOG migration note.
 
 Alongside the bug fixes and compatibility improvements, `0.9.x` also focuses
 on **tuning the improve processes** — reflect, distill, consolidate, memory
-inference, graph extraction, and proactive maintenance — and **settling the
+inference, and proactive maintenance — and **settling the
 final design of those features** so the `0.10.0` release starts from a
 finished improve surface rather than one still being reshaped.
 
 ## 0.10
 
-The `0.10.x` series is focused on **bug fixes and tuning** on top of the
-debt-free 0.9 core — no new architecture. With the clean-up done, 0.10.x
-attempts to return to the normal semver discipline: breaking changes only in
-major and minor releases, never in patches.
+The `0.10.x` series is focused on **bug fixes and tuning** on top of the 0.9
+core. The planned structural work is the harness rework, the extraction of the
+migration tool, and the decision to stabilize or remove workflows (see "On the
+horizon" in [STABILITY.md](STABILITY.md)). With the clean-up done, 0.10.x
+returns to normal semver discipline: breaking changes only in major and minor
+releases, never in patches.
 
 ## 0.X
 
@@ -102,11 +80,8 @@ platform for both direct use and deeper tool integration.
 
 ## Scope Notes
 
-- The CLI remains the foundation in both releases.
-- `0.9` prioritizes hardening over expansion.
+- The CLI remains the foundation in every release.
 - `1.0` adds the SDK and in-process plugin story on top of a frozen core, not
   instead of it.
-- The roadmap assumes the `0.8.0` redesign is the baseline; later releases are
-  about stabilizing and extending that baseline, not replacing it.
 - Specific features may move between releases as implementation and testing
   shake out, but the themes above are the intended direction.
