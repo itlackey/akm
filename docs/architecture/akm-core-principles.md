@@ -183,7 +183,7 @@ Why: an accidental API is a compatibility promise nobody agreed to make.
 Enforced by: `package.json` (no `exports` map, Bun scripts),
 `tests/contracts/module-boundaries.test.ts`.
 
-### 11. Agent harnesses are thin, replaceable internals
+### 10. Agent harnesses are thin, replaceable internals
 
 akm is simple, lightweight tooling for agents and automated processes. A
 harness such as OpenCode (pi or another later) is an internal detail akm
