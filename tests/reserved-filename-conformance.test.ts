@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Producer-conformance for reserved filenames: AKM PRODUCERS emit
- * `index.md`/`log.md` only in the OKF structural listing/log shapes — never as
- * a concept document carrying asset frontmatter.
+ * D-R6 producer-conformance (ref-grammar decision §4, item 3; WI-8.5d): AKM
+ * PRODUCERS emit `index.md`/`log.md` only in the OKF §6/§7 structural
+ * listing/log shapes — never as a concept document carrying asset frontmatter.
  *
  * The recognition side (reserved files are never RECOGNIZED as items) is pinned
  * in `tests/core/adapter/akm-adapter.test.ts`. This file pins the WRITE side:
@@ -57,7 +57,7 @@ function walkTs(dir: string, out: string[]): void {
   }
 }
 
-describe("producer conformance — no AKM producer emits a reserved concept file", () => {
+describe("D-R6 producer conformance — no AKM producer emits a reserved concept file", () => {
   test("the only src files naming a literal index.md/log.md basename are allow-listed structural producers", () => {
     const files: string[] = [];
     walkTs(SRC_ROOT, files);

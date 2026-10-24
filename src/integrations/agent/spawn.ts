@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Agent CLI spawn wrapper.
+ * Agent CLI spawn wrapper (v1 spec §12.2).
  *
  * Single helper that owns:
  *   • Process spawn (Bun's subprocess API).
@@ -36,14 +36,16 @@ import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
  * otherwise well-formed LLM response. The agent worked; our guard blocked
  * the output. Health aggregators count these in a separate
  * `guardRejected` bucket so the LLM-failure-rate numerator is not
- * inflated.
+ * inflated. See `/tmp/akm-health-investigations/metrics-taxonomy-review.md`
+ * §1a / Pattern A.
  *
  * Note on `unsupported_type`: deterministic type-guard rejection. Reflect
  * refuses to operate on non-markdown asset types (script, env, secret, task);
- * the LLM is never even invoked. Distinct from `parse_error` so it is not
- * conflated with true LLM failures. Routed to the `reflect-skipped` action
- * bucket by the improve loop so it does not inflate the failure-rate
- * numerator.
+ * the LLM is never even invoked. Previously emitted as `parse_error` and
+ * conflated with true LLM failures — see review §1a, "Reflect refused
+ * asset type" row (~9% of reflect-failed events). Routed to the
+ * `reflect-skipped` action bucket by the improve loop so it does not
+ * inflate the failure-rate numerator.
  *
  * Note on `no_change`: deterministic noise-gate suppression (#580). The
  * agent responded fine but the candidate edit is byte-identical to the
@@ -70,7 +72,7 @@ export type AgentFailureReason =
   | "unsupported_type"
   | "no_change"
   | "quality_rejected"
-  // Cooperative cancellation via RunAgentOptions.signal (the seam for the
+  // Cooperative cancellation via RunAgentOptions.signal (P0.5 seam for the
   // workflow scheduler's budget preemption). Distinct from "timeout" so
   // callers can tell a budget/user abort from a wall-clock expiry.
   | "aborted";
@@ -113,10 +115,10 @@ export interface RunAgentOptions {
   /** `clearTimeout` shim. Defaults to the global. */
   clearTimeoutFn?: typeof clearTimeout;
   /**
-   * Observability seam (`workflow watch`): invoked at
+   * Observability seam (redesign addendum R2, `workflow watch`): invoked at
    * spawn start and spawn exit with ids/status only — pid, profile name,
-   * exit code, failure reason. NEVER prompt or output content.
-   * Best-effort: a throwing callback is swallowed so observability
+   * exit code, failure reason. NEVER prompt or output content (07 P1-B
+   * rule). Best-effort: a throwing callback is swallowed so observability
    * can never break a dispatch. No events fire when the child was never
    * spawned (pre-spawn abort, synchronous spawn failure).
    */

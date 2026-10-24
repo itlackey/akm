@@ -95,7 +95,7 @@ const FILES_PER_TRIAL = 5;
 // local runs — see the module doc.
 const CONCURRENT_TRIALS = 15;
 
-describe("akm index — two real concurrent runs never exit 78 or 70 (field follow-up to #956)", () => {
+describe("akm index — two real concurrent runs never exit 78 or 70 (field follow-up to #956, G1)", () => {
   test("without --skip-if-locked: every exit code across many concurrent pairs is 0 or 75, and every 75 carries a transient code with a --skip-if-locked hint", async () => {
     seedMemoryFiles(FILES_PER_TRIAL);
 

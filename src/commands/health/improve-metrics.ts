@@ -43,7 +43,7 @@ export function taskFailureDetail(row: TaskHistoryRow): Record<string, unknown> 
 /**
  * `akm health`'s `agentFailureRate` predicate: true for a `task_history` row
  * that represents a prepared command (agent/LLM) result. `target_kind` is
- * read in the current vocabulary — the
+ * read in the current (post-D8) vocabulary — the
  * `025-task-history-vocabulary-backfill` state migration rewrites every
  * legacy-vocabulary row before this ever runs against it, so a `"command"`
  * row here is unambiguously the agent/LLM arm.

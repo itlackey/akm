@@ -3,37 +3,63 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Contract for the task source v4 -> prepare-seam PROJECTION:
- * `projectTaskSourceV4(doc): PreparableTaskDocument`, where
- * `PreparableTaskDocument` is a NAME for `TaskV3SourceDocument` — the type
- * `prepareTaskV3Execution` consumes. The grammar/router half lives in
- * tests/tasks/source-v4.test.ts.
+ * Tests-first contract for P2a's task source v4 -> prepare-seam PROJECTION
+ * (spec docs/plans/specs/p2a-task-source-v4.md §3.5, D2-N5, D2-N6). Lane A
+ * TESTS — this file owns `projectTaskSourceV4()`; the grammar/router half
+ * lives in tests/tasks/source-v4.test.ts.
+ *
+ * Scope clarification (read before "fixing" this file to test something
+ * else): the task brief's one-line summary calls this a "v4 document ->
+ * TaskDefinition adapter". The SPEC (authoritative) is explicit that P2a
+ * touches no such thing — §4.4: "`src/tasks/model/definition.ts` is NOT
+ * modified. `TaskDefinition` gains no `inputs`/`output` in P2a; P2b widens
+ * it when it widens the adapter." The real P2a seam is
+ * `projectTaskSourceV4(doc): PreparableTaskDocument` (§3.5), where
+ * `PreparableTaskDocument` is a NAME for `TaskV3SourceDocument` (§3.1's file
+ * table) — the type `prepareTaskV3Execution` already consumes, unmodified.
+ * This file tests exactly that seam.
  *
  * The projection is DELIBERATELY LOSSY relative to the parsed
- * `TaskSourceV4Document`:
+ * `TaskSourceV4Document` — this is not a bug this file should paper over:
  *
- *   - host-local activation has no task-source projection — it is carried
- *     separately to the scheduler seam, not by this function.
+ *   - host-local activation has no task-source projection
+ *     (D2-N5) — it is carried separately to the scheduler seam, which is
+ *     Lane C's `scheduler-sync.ts` edit, not this function.
  *   - `inputs` (the document's typed input declarations) is NOT projected
- *     anywhere.
+ *     anywhere — input delivery is P2b (spec §0).
  *   - `schedule[i].inputs` (per-binding literal overrides) is NOT projected
- *     onto `triggers.schedules[i]`.
+ *     onto `triggers.schedules[i]` — same reason (B-38).
  *   - `schedule.length === 0` projects to `triggers = { manual: true,
- *     schedules: [] }` — v3's OWN spelling for "no cron, dispatch only", so no
- *     downstream consumer of `PreparableTaskDocument` learns a new shape.
+ *     schedules: [] }` (D2-N6) — v3's OWN spelling for "no cron, dispatch
+ *     only", so no downstream consumer of `PreparableTaskDocument` learns a
+ *     new shape.
  *   - the projected `version` is the LITERAL `3` — the prepare contract's
- *     discriminant, not a re-assertion that the source was v3.
+ *     discriminant, not a re-assertion that the source was v3. This is a
+ *     recorded wart (§3.5); P4 retires it with the type rename.
  *
  * Every assertion below about a mapped field is a TARGETED per-field check
- * (`projected.akm?.<key>`), not a whole-object `toEqual` on `akm` — whether the
- * projector emits an always-present (possibly empty) `akm` object or omits the
- * key entirely when nothing maps is undecided, and a whole-object equality
- * would silently take a position on it. `target`, `triggers` (incl.
- * `triggers.schedules`), `env`, `name`, `source`, and `version` ARE asserted
- * with whole-value equality; for `triggers.schedules` in particular,
- * whole-value equality is exactly what PROVES `enabled`/`inputs` were dropped
- * (an extra key would fail `toEqual` against a `{cron, source,
- * ordinal}`-only expectation).
+ * (`projected.akm?.<key>`), not a whole-object `toEqual` on `akm` — the spec
+ * does not pin whether the projector emits an always-present (possibly
+ * empty) `akm` object or omits the key entirely when nothing maps, and a
+ * whole-object equality would silently take a position on that undecided
+ * question. `target`, `triggers` (incl. `triggers.schedules`), `env`,
+ * `name`, `source`, and `version` ARE asserted with whole-value equality:
+ * the spec is fully explicit about all of those shapes, and for
+ * `triggers.schedules` in particular, whole-value equality is exactly what
+ * PROVES `enabled`/`inputs` were dropped (an extra key would fail `toEqual`
+ * against a `{cron, source, ordinal}`-only expectation).
+ *
+ * RED-phase import strategy: identical to tests/tasks/source-v4.test.ts —
+ * see that file's header for the full empirical rationale (multi-line named
+ * imports misplace the diagnostic line; biome's `--write` merges
+ * same-specifier named imports and only the LAST stacked `@ts-expect-error`
+ * survives). Every not-yet-existing MODULE is imported as a namespace behind
+ * ONE pin and destructured immediately after. `PreparableTaskDocument` is
+ * different: it is one new type on an EXISTING, already-resolving module
+ * (`src/tasks/prepare/prepared-execution.ts`), so importing it by name
+ * raises a single, single-line TS2305 ("has no exported member") — pinned
+ * the same way, no namespace indirection needed since there is nothing else
+ * from that path to merge with.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -50,8 +76,8 @@ type TaskSourceV4Document = TaskSourceV4Module.TaskSourceV4Document;
 const ROOT = path.resolve(import.meta.dir, "../..");
 const FIXTURES_DIR = path.join(ROOT, "tests/fixtures/execution-contracts/tasks/v4");
 
-// ── Fixture table: maps every fixture in ──────────────────────────────────────
-// ── tests/fixtures/execution-contracts/tasks/v4/ ───────────────────────────────
+// ── Fixture table (mirrors tests/tasks/parse-v3-adapter.test.ts's convention: ──
+// ── "maps every fixture in tests/fixtures/execution-contracts/tasks/v4/") ──
 
 interface ManifestFixture {
   readonly id: string;
@@ -78,12 +104,13 @@ function projectFixture(fixture: ManifestFixture): PreparableTaskDocument {
 const MANIFEST_FIXTURES = loadManifestFixtures();
 
 /**
- * Hand-derived from each fixture's YAML — NOT copied from manifest.json's own
- * "expected" block, which pins the RAW task-source-v4 PARSE shape
- * (schedule[].inputs, inputs:, target.uses nesting) for a DIFFERENT consumer
+ * Hand-derived from each fixture's YAML against §3.5's projection table —
+ * NOT copied from manifest.json's own "expected" block, which pins the RAW
+ * task-source-v4 PARSE shape (schedule[].inputs,
+ * inputs:, target.uses nesting) for a DIFFERENT consumer
  * (tests/tasks/source-v4.test.ts's grammar assertions). This table pins the
- * PROJECTED `PreparableTaskDocument` shape instead, which deliberately drops
- * several of those same fields (see file header).
+ * PROJECTED `PreparableTaskDocument` shape instead, which deliberately
+ * drops several of those same fields (see file header).
  */
 interface FixtureExpectation {
   readonly id: string;
@@ -232,7 +259,7 @@ function loadCase(fixture: ManifestFixture): LoadedCase {
   return { fixture, expectation: expectationFor(fixture.id), document, projected };
 }
 
-describe("projectTaskSourceV4 — every tests/fixtures/execution-contracts/tasks/v4/ fixture", () => {
+describe("projectTaskSourceV4 — every tests/fixtures/execution-contracts/tasks/v4/ fixture (spec §3.5)", () => {
   // Canary: if manifest.json gains/loses a fixture without a matching update
   // here, this fails first with a clear count mismatch rather than a
   // confusing per-property diff below.
@@ -280,7 +307,7 @@ describe("projectTaskSourceV4 — every tests/fixtures/execution-contracts/tasks
     }
   });
 
-  test("inputs: (the document's typed input declarations) never appears anywhere on the projected document", () => {
+  test("inputs: (the document's typed input declarations) never appears anywhere on the projected document — delivery is P2b (spec §0, §3.5)", () => {
     const fixture = MANIFEST_FIXTURES.find((entry) => entry.id === "inputs-and-output");
     if (!fixture) throw new Error("fixture 'inputs-and-output' must exist");
     const { projected } = loadCase(fixture);
@@ -315,7 +342,7 @@ describe("projectTaskSourceV4 — every tests/fixtures/execution-contracts/tasks
 
 // ── Purity: a pure, typed transform over an ALREADY-PARSED document ────────
 
-describe("projectTaskSourceV4 — purity (no YAML is fabricated, nothing is re-parsed)", () => {
+describe("projectTaskSourceV4 — purity (spec §3.5: no YAML is fabricated, nothing is re-parsed)", () => {
   test("accepts a hand-constructed TaskSourceV4Document with no YAML string and no file on disk", () => {
     const handBuilt: TaskSourceV4Document = {
       version: TASK_SOURCE_V4_VERSION,
@@ -337,7 +364,7 @@ describe("projectTaskSourceV4 — purity (no YAML is fabricated, nothing is re-p
     expect(projected.version).toBe(3);
   });
 
-  test("a manual-only hand-built document (schedule: []) projects triggers = { manual: true, schedules: [] }", () => {
+  test("a manual-only hand-built document (schedule: []) projects triggers = { manual: true, schedules: [] } (D2-N6)", () => {
     const handBuilt: TaskSourceV4Document = {
       version: TASK_SOURCE_V4_VERSION,
       target: { kind: "run", run: "echo hi" },
@@ -350,7 +377,7 @@ describe("projectTaskSourceV4 — purity (no YAML is fabricated, nothing is re-p
     expect(projected.triggers).toEqual({ manual: true, schedules: [] });
   });
 
-  test("src/tasks/source/project-v4.ts fabricates no synthetic v3 YAML text and re-parses nothing", () => {
+  test("src/tasks/source/project-v4.ts fabricates no synthetic v3 YAML text and re-parses nothing (P1b §4.3's invariant, carried forward per spec §3.5)", () => {
     const source = fs.readFileSync(path.join(ROOT, "src/tasks/source/project-v4.ts"), "utf8");
     expect(source).not.toContain("version: 3\nuses:");
     expect(source).not.toMatch(/parseDocument\s*\(/);

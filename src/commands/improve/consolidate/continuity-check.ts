@@ -3,11 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The retirement continuity check: before the pair pass mints a `retire`
- * proposal, replay the retired asset's own past user queries through akm's own
- * search — in-process, the same ranking a user gets, no LLM — and confirm the
- * successor ranks in the top 10 for every query where the retired asset did.
- * This is the forgetting-safety lane: a per-proposal search-rank replay.
+ * The retirement continuity check (0.9.17-alpha.9 plan §5.4, §5.5; rule R3):
+ * before the pair pass mints a `retire` proposal, replay the retired asset's
+ * own past user queries through akm's own search — in-process, the same
+ * ranking a user gets, no LLM — and confirm the successor ranks in the top
+ * 10 for every query where the retired asset did. This is the forgetting-
+ * safety lane's purpose (§4.6, §5.5), moved from a per-run salience-rank
+ * comparison to a per-proposal search-rank replay.
  *
  * No queries recorded for the retired asset: no check, no risk (nothing to
  * replay, so nothing to compare).
@@ -21,9 +23,9 @@ import { stripFrontmatterBody } from "../content-hash";
 import { type LedgerAccess, stripBundle } from "../ledger";
 import { loadRetrievalQueries } from "../retrieval-gate";
 
-/** At most this many of the retired asset's most recent queries are replayed. */
+/** At most this many of the retired asset's most recent queries are replayed (plan §5.4, §7). */
 export const CONTINUITY_MAX_QUERIES = 5;
-/** "Top 10" — both the pass/fail cutoff and the search `limit`. */
+/** "Top 10" per the plan's rule — both the pass/fail cutoff and the search `limit`. */
 export const CONTINUITY_TOP_N = 10;
 
 /** One search hit's ref, the only field the check reads. */
@@ -31,7 +33,7 @@ export interface ContinuityHit {
   ref: string;
 }
 
-/** One search call's result: the hits, and which ranking actually produced them. */
+/** One search call's result: the hits, and which ranking actually produced them (S2). */
 export interface ContinuitySearchResult {
   hits: readonly ContinuityHit[];
   mode: SearchExecutionMode;
@@ -53,7 +55,7 @@ export type ContinuitySearch = (query: string) => Promise<ContinuitySearchResult
 
 /**
  * Builds the real search call the continuity check uses, stateful across
- * every query asked of ONE instance: the first time a query falls back
+ * every query asked of ONE instance (S2): the first time a query falls back
  * to keyword-only ranking (`mode: "fts-fallback"` — most often a down or
  * unreachable embedding endpoint), every later call through THIS instance
  * forces `semanticSearchMode: "off"` instead of attempting semantic search
@@ -64,9 +66,10 @@ export type ContinuitySearch = (query: string) => Promise<ContinuitySearchResult
  * the throttle covers the whole run, not just one proposal's own queries —
  * and every call made once it has switched, across every remaining proposal
  * in the run, reports `forcedKeywordOnly: true`, not just the one call that
- * discovered the fallback (marking only THAT call unverified would let a
- * second proposal checked while the endpoint was still down come back with a
- * clean, `mode: "keyword"` — and therefore bulk-acceptable — result).
+ * discovered the fallback (round-3 review: the first fix only marked THAT
+ * call unverified, so a second proposal checked while the endpoint was
+ * still down came back with a clean, `mode: "keyword"` — and therefore
+ * bulk-acceptable — result).
  */
 export function createContinuitySearch(stashDir: string, config: AkmConfig): ContinuitySearch {
   const base: Omit<SearchLocalInput, "query" | "config"> = {
@@ -91,7 +94,7 @@ function rankOf(hits: readonly ContinuityHit[], conceptId: string): number | und
   return index === -1 ? undefined : index + 1;
 }
 
-/** Body only, whitespace collapsed — the same shape `db-search.ts`'s own content-dedupe compares. */
+/** Body only, whitespace collapsed — the same shape `db-search.ts`'s own content-dedupe compares (S3b). */
 function normalizedBody(raw: string): string {
   return stripFrontmatterBody(raw).replace(/\s+/g, " ").trim();
 }
@@ -104,8 +107,8 @@ function normalizedBody(raw: string): string {
  * ranking and either the retired asset never ranked top 10 for it, or the
  * survivor always did too. Never throws.
  *
- * Two measures against false flags (a real 300-pair admission produced 6
- * flags, half spurious):
+ * S3: two fixes against false flags measured on a real night-1 admission
+ * (300 pairs, 6 flags, half spurious):
  *  - queries are the SAME cleaned set `loadRetrievalQueries` replays for the
  *    retrieval regression gate (`../retrieval-gate.ts`) — stash-README
  *    boilerplate, harness/tool envelopes, pastes over 2,000 characters, and
@@ -116,7 +119,7 @@ function normalizedBody(raw: string): string {
  *    "successor missing from the top 10" finding here would not be a real
  *    risk, just that dedupe working as designed.
  *
- * A query that never ran (the search call threw), ran on the
+ * S2: a query that never ran (the search call threw), ran on the
  * keyword-only fallback (`mode: "fts-fallback"` — the real ranking was
  * attempted and failed, most often a down or unreachable embedding
  * endpoint), or ran after the shared search instance had already switched
@@ -135,27 +138,28 @@ export async function checkRetirementContinuity(args: {
   /** ConceptId, no bundle prefix (matches {@link RetirementMetadata}'s spelling). */
   retiredRef: string;
   successorRef: string;
-  /** Full file text (frontmatter included — stripped internally) of each side, for the identical-body skip. */
+  /** Full file text (frontmatter included — stripped internally) of each side, for the S3b identical-body skip. */
   retiredRaw: string;
   successorRaw: string;
   ledgerAccess: LedgerAccess;
   /** Test seam — production callers omit it and get the real search. */
   search?: ContinuitySearch;
 }): Promise<RetirementContinuityRisk | undefined> {
-  // Identical bodies — search's own content-dedupe already hides the
+  // S3b: identical bodies — search's own content-dedupe already hides the
   // successor for every query that would rank the retired asset, so there is
   // no real risk here to check for.
   if (normalizedBody(args.retiredRaw) === normalizedBody(args.successorRaw)) return undefined;
 
-  // The SAME cleaned queries the retrieval regression gate replays —
+  // S3a: the SAME cleaned queries the retrieval regression gate replays —
   // boilerplate, envelopes, pastes and duplicates dropped before replay.
   const queries = loadRetrievalQueries(args.ledgerAccess, args.retiredRef).slice(0, CONTINUITY_MAX_QUERIES);
   if (queries.length === 0) return undefined; // no queries recorded: no check, no flag
 
   const search = args.search ?? createContinuitySearch(args.stashDir, args.config);
-  // A query only ever needs "did the retired asset rank top 10, and if so, did
-  // the successor too?", and `rankOf` (search itself returning at most
-  // CONTINUITY_TOP_N hits) answers both directly.
+  // N2: no rank-change-report abstraction — a query only ever needs "did the
+  // retired asset rank top 10, and if so, did the successor too?", and
+  // `rankOf` (search itself returning at most CONTINUITY_TOP_N hits) already
+  // answers both directly.
   const ranks: ContinuityRiskRank[] = [];
   let unverifiedQueries = 0;
   for (const query of queries) {
@@ -163,12 +167,12 @@ export async function checkRetirementContinuity(args: {
     try {
       const result = await search(query);
       if (result.mode === "fts-fallback" || result.forcedKeywordOnly) {
-        unverifiedQueries++; // never silently compare keyword-only ranks
+        unverifiedQueries++; // S2: never silently compare keyword-only ranks
         continue;
       }
       hits = result.hits;
     } catch {
-      unverifiedQueries++; // a query that never ran cannot be "no risk"
+      unverifiedQueries++; // S2: a query that never ran cannot be "no risk"
       continue;
     }
     const retiredRank = rankOf(hits, args.retiredRef);

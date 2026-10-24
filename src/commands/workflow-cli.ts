@@ -4,7 +4,7 @@
 
 /**
  * `akm workflow` command family. `run` is the canonical start/resume/execute
- * surface; there is no public `start`, `next`, or `complete` lifecycle.
+ * surface; the former public `start`, `next`, and `complete` lifecycle is gone.
  * `create --print` emits Markdown; execution accepts peer `.md` and
  * GitHub-shaped `.yml` workflow sources. Validate with `akm lint --type workflows`.
  */
@@ -173,8 +173,9 @@ const workflowCreateCommand = defineJsonCommand({
     }
     assertWorkflowMarkdownName(effectiveName);
     if (args.print) {
-      // Raw document, not an envelope: `--print > starter.md` must yield a
-      // usable starter file, not `{ok,template,kind}` JSON.
+      // Raw document, not an envelope — the retired `workflow template` was
+      // format-exempt for the same reason: `--print > starter.md` must yield
+      // a usable starter file, not `{ok,template,kind}` JSON.
       process.stdout.write(getWorkflowTemplate());
       return;
     }
@@ -187,7 +188,7 @@ const workflowCreateCommand = defineJsonCommand({
     // a workflowEntryId without requiring an explicit `akm index` call
     // first. Uses the same incremental index path that `akm add` uses.
     // `result.bundleDir` — the indexer's own `IndexOptions.stashDir` field
-    // name is unchanged (indexer vocabulary is out of scope).
+    // name is unchanged (indexer vocabulary is out of scope, P4 row B-50).
     await akmIndex({ stashDir: result.bundleDir });
     output("workflow-create", { ok: true, ...result });
   },
@@ -422,9 +423,10 @@ function parseWorkflowTimeout(raw: string | undefined): number | undefined {
   return timeoutMs;
 }
 
-// Read-only compile+freeze introspection — zero durable writes, zero
-// usage/event rows. `--json` is deliberately NOT a flag anywhere in this CLI;
-// the global `--format json` is spliced on by `defineJsonCommand`.
+// P3b Lane B (spec docs/plans/specs/p3b-child-executor.md §4.6): read-only
+// compile+freeze introspection — zero durable writes, zero usage/event rows
+// (row B-48). `--json` is deliberately NOT a flag anywhere in this CLI
+// (B-N9); the global `--format json` is spliced on by `defineJsonCommand`.
 const workflowPlanCommand = defineJsonCommand({
   meta: {
     name: "plan",
@@ -437,14 +439,17 @@ const workflowPlanCommand = defineJsonCommand({
   },
   async run({ args }) {
     const result = await akmWorkflowPlan(args.ref);
-    // json-by-default, like every other verb (#903). Defaulting to the human
-    // summary would need a branch that cannot rely on `args.format` (citty
-    // parses per level, so a global pre-subcommand `--format json` is eaten by
-    // the ROOT command and the leaf reads undefined), and a resolved "json" is
-    // indistinguishable from "nothing configured", so an explicit
-    // `--format json` would silently do nothing for anyone whose config already
+    // json-by-default, like every other verb (#903). This used to default to
+    // the human summary, which cost ~60 lines of branch: `args.format` cannot
+    // detect "no format named" (citty parses per level, so a global
+    // pre-subcommand `--format json` is eaten by the ROOT command and the leaf
+    // reads undefined), so it had to route through `getParsedInvocation()`,
+    // then fold in a persisted `output.format`, and then still leave a
+    // resolved "json" on the text branch because that is indistinguishable
+    // from "nothing configured". The last compromise meant an explicit
+    // `--format json` silently did nothing for anyone whose config already
     // resolved to json. `--format text` still renders the summary through the
-    // registered formatter; it is just not the unmarked default.
+    // registered formatter; it is just no longer the unmarked default.
     output("workflow-plan", result);
   },
 });
@@ -492,7 +497,9 @@ export const workflowCommand = defineGroupCommand({
     plan: workflowPlanCommand,
   },
   // No `defaultRun`: bare `akm workflow` is a usage error (exit 2), the
-  // canonical bare-group behavior. Run `akm workflow list --active` for the
-  // active runs. `defineGroupCommand` derives the subcommand guard from
-  // `subCommands` directly, rather than from a second hand-maintained set.
+  // canonical bare-group behavior — owner ruling 12. Run `akm workflow list
+  // --active` for what the bare form used to print. This group was previously
+  // hand-rolled on `defineCommand` with its own `hasWorkflowSubcommand` guard,
+  // which duplicated the subcommand names in a second hand-maintained set;
+  // `defineGroupCommand` derives the guard from `subCommands` directly.
 });

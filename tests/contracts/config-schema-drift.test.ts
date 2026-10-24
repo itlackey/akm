@@ -109,7 +109,7 @@ describe("config schema drift pins", () => {
     }
   });
 
-  test("0.9.0 bundles/defaultBundle config-shape keys are present", () => {
+  test("0.9.0 bundles/defaultBundle config-shape keys are present (spec §10.1 / D-R5)", () => {
     const schema = readSchema();
     const props = schema.properties as Record<string, Record<string, unknown>>;
     // `bundles` is an object keyed by bundle slug; each entry carries the
@@ -122,7 +122,7 @@ describe("config schema drift pins", () => {
     }
     expect(props.defaultBundle).toEqual({ type: "string", minLength: 1 });
     expect(props.writable).toBeUndefined();
-    // `bindings` is never part of the accepted config surface.
+    // `bindings` (Tier B) is never part of the accepted config surface.
     expect(props.bindings).toBeUndefined();
   });
 

@@ -3,12 +3,37 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `computeChildInvocationKey` (rows A-17…A-19 in test names).
+ * P3a Lane A TESTS — `computeChildInvocationKey` (spec
+ * docs/plans/specs/p3a-plan-v5-child-freeze.md §3.4, rows A-17…A-19). Named
+ * in §7's "new suites this phase adds" table as its own file.
  *
- * Kept in its own file, separate from the `hashVersion` 6 tests in
- * tests/workflows/hash-v6.test.ts: every test below is about
- * `src/workflows/exec/child-invocation.ts` itself, so a failure to load that
- * module cannot hide results from unrelated tests.
+ * TEST-REVIEW FOLLOW-UP (round 3, finding 2): these tests originally lived
+ * inside `tests/workflows/hash-v6.test.ts`, combined with the `hashVersion`
+ * 6 tests (A-11…A-16) because both bumps ride in Lane A's one commit. That
+ * combination was itself the bug: a static top-level import of
+ * `src/workflows/exec/child-invocation.ts` (which does not exist on disk
+ * until Implement) block-fails module loading for the ENTIRE file — Bun
+ * never registers a single `describe`/`test` — so `hash-v6.test.ts`'s own
+ * A-11 (unit hash preimage) and A-12 (gate hash) tests produced no
+ * `hashVersion` 6 RED signal at all; they failed only as collateral damage
+ * of "cannot find module", indistinguishable from every other kind of
+ * red-phase breakage. Splitting `computeChildInvocationKey`'s tests into
+ * THIS standalone file fixes that: every test below is about
+ * `child-invocation.ts` itself, so a whole-file block failure hides nothing
+ * else the way it did inside the combined file — this is the same
+ * "isolate the not-yet-existing import so its RED reason doesn't leak into
+ * unrelated tests" convention `tests/tasks/source-v4.test.ts` and
+ * `tests/execution/input-contract.test.ts` already established, applied a
+ * second time at file granularity instead of within one file.
+ *
+ * RED phase: `src/workflows/exec/child-invocation.ts` does not exist on
+ * disk yet, so it is imported as a NAMESPACE behind exactly one
+ * directly-preceding `@ts-expect-error` pin — TypeScript reports one TS2307
+ * "Cannot find module" here, every name it introduces is typed `any` for
+ * the rest of THIS file, and Bun's module loader fails to load this file at
+ * test-run time before any `describe`/`test` registers. That is the
+ * intended RED signal for every test below. Implement removes the one
+ * directive the moment `child-invocation.ts` exists.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -18,9 +43,9 @@ import { canonicalJson } from "../../src/workflows/ir/plan-hash";
 
 const { computeChildInvocationKey } = ChildInvocationModule;
 
-// ── computeChildInvocationKey (A-17…A-19) ───────────────────────────────────
+// ── A-17…A-19: computeChildInvocationKey ────────────────────────────────────
 
-describe("computeChildInvocationKey", () => {
+describe("computeChildInvocationKey (§3.4, A-17…A-19)", () => {
   const base = { parentRunId: "run-1", parentUnitId: "unit-1", unitInputHash: "d".repeat(64) };
 
   test("is deterministic: the same three inputs hash identically", () => {

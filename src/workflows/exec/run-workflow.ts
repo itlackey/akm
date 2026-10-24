@@ -9,6 +9,7 @@
  * `completeWorkflowStep`; one O_EXCL lock file per run keeps a second driver
  * off (a dead holder's lock is reclaimed); gate loops are bounded; and the
  * SDK dispatch registry is drained on every exit so the process can exit.
+ * See docs/architecture/decisions/0011-engine-run-loop-invariants.md.
  */
 
 import { createHash } from "node:crypto";
@@ -300,7 +301,7 @@ async function runWorkflowAttempt(
     try {
       if (lock) releaseLock(lock);
     } finally {
-      // Process-lifecycle drain: release any cached SDK server
+      // Process-lifecycle drain (owner finding 4): release any cached SDK server
       // child processes so a one-shot CLI invocation exits cleanly instead of
       // hanging on the leaked handle. Runs even if the lock release itself
       // fails; a teardown-time error must not skip dispatch cleanup.
@@ -568,8 +569,8 @@ async function executeStepSubgraph(
         ...(plan.budget ? { budget: plan.budget } : {}),
         gateLoop,
         ...(gateFeedback ? { gateFeedback } : {}),
-        // Threaded to an exec unit's child env;
-        // undefined for every non-task caller (see RunWorkflowOptions doc).
+        // F-1: threaded to an exec unit's child env;
+        // undefined for every non-task caller (byte-identical, RunWorkflowOptions doc).
         ...(options.eventSource !== undefined ? { eventSource: options.eventSource } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
         ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),

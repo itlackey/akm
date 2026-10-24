@@ -3,11 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Hot-path pin — improve verbs must never hit `appendEvent`'s slow path.
+ * R25 hot-path pin — improve verbs must never hit `appendEvent`'s slow path.
  *
  * `appendEvent` without an `EventsContext` opens/migrates/closes state.db per
  * event (and re-reads env for the path) — ~170 redundant opens per improve
- * cycle. This suite pins that from both directions:
+ * cycle before the events-ctx threading. This suite pins the fix from both
+ * directions:
  *
  *   1. Every event a verb emits lands in the INJECTED context (handle
  *      identity: rows are written through the exact `EventsContext.db` proxy
@@ -20,9 +21,9 @@
  *      options (loop → verb wiring), so the long-lived handle actually
  *      reaches reflect/distill in production runs.
  *
- * Techniques: handle-identity DI + a counting-proxy `Database` as
- * `EventsContext.db`. No `mock.module` (lint-banned); sandbox helpers only;
- * injected `chat` seams so no real LLM runs.
+ * Techniques per the chunk-7 brief (WI-7.7): handle-identity DI + a
+ * counting-proxy `Database` as `EventsContext.db`. No `mock.module` (lint-
+ * banned); sandbox helpers only; injected `chat` seams so no real LLM runs.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

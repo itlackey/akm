@@ -3,25 +3,45 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Unit coverage for the `UsageErrorCode` members COMPOSITION_INVALID,
- * TASK_SOURCE_INVALID, TARGET_REF_INVALID, WORKFLOW_SOURCE_INVALID and
- * INPUT_BINDING_INVALID, and their `USAGE_HINTS` entries:
- * `new UsageError('x', '<code>').hint()` returns the hint string below for
- * each of the five.
+ * Unit coverage for the five new `UsageErrorCode` members added in P1a (D7)
+ * and their `USAGE_HINTS` entries.
+ *
+ * See docs/plans/specs/p1a-with-rejection-classifier.md §2.1 (the exact hint
+ * strings, reproduced verbatim below), §10 acceptance criterion 1
+ * ("src/core/errors.ts declares all five new UsageErrorCode members and a
+ * USAGE_HINTS entry for each, with the §2.1 strings"), and behavior row B-24
+ * ("`new UsageError('x', '<new code>').hint()` for each of the five returns
+ * the §2.1 hint string").
  *
  * This is a unit-level companion to `tests/integration/cli-errors.test.ts`'s
- * hint coverage. This file tests `src/core/errors.ts` directly with no
- * CLI/process plumbing.
+ * hint coverage (that file is a different lane's — see the spec's Lane 0
+ * file list, which adds B-24 coverage there additively). This file tests
+ * `src/core/errors.ts` directly with no CLI/process plumbing, and is a new
+ * file: no existing unit test file for `src/core/errors.ts` was found under
+ * `tests/` (only the integration-level `tests/integration/cli-errors.test.ts`
+ * and `tests/integration/cli-global-error-handlers.test.ts` exist).
+ *
+ * TEST-FIRST NOTE: authored under Lane C before `src/core/errors.ts`
+ * declares the five codes. The `NEW_CODE_HINTS` declaration below is typed
+ * as `UsageErrorCode`, so this file is EXPECTED TO FAIL `bunx tsc --noEmit`
+ * until the implementer appends the five members to the `UsageErrorCode`
+ * union; the `hint()` assertions are EXPECTED TO FAIL AT RUNTIME too (`bun
+ * test` does not type-check, so the mismatch surfaces as a real assertion
+ * failure: `USAGE_HINTS` has no entry for an as-yet-undeclared code, so
+ * `.hint()` returns `undefined` today) until the implementer also adds the
+ * five `USAGE_HINTS` entries.
  */
 
 import { describe, expect, test } from "bun:test";
 import { UsageError, type UsageErrorCode } from "../../src/core/errors";
 
 /**
- * The five codes, each paired with its required USAGE_HINTS entry. Typing this
- * array as `UsageErrorCode` is deliberate: a code missing from the
- * UsageErrorCode union fails to typecheck here, which is not a mistake to work
- * around with a cast.
+ * The five new codes from spec §2.1, paired with their required USAGE_HINTS
+ * entry, reproduced verbatim from the spec table. Typing this array as
+ * `UsageErrorCode` is deliberate: until src/core/errors.ts appends these
+ * five members to the UsageErrorCode union, this declaration itself fails to
+ * typecheck. That compile error is part of this phase's "write failing
+ * tests" contract, not a mistake to work around with a cast.
  */
 const NEW_CODE_HINTS: ReadonlyArray<readonly [UsageErrorCode, string]> = [
   [
@@ -40,9 +60,9 @@ const NEW_CODE_HINTS: ReadonlyArray<readonly [UsageErrorCode, string]> = [
   ["INPUT_BINDING_INVALID", "Check the step's with: keys against the target's declared inputs."],
 ];
 
-describe("diagnostics — five new UsageErrorCode members + USAGE_HINTS", () => {
+describe("D7 diagnostics — five new UsageErrorCode members + USAGE_HINTS (spec §2.1, B-24)", () => {
   for (const [code, expectedHint] of NEW_CODE_HINTS) {
-    test(`${code}: constructible as a UsageError, kind "usage", code round-trips, hint() returns the exact string`, () => {
+    test(`${code}: constructible as a UsageError, kind "usage", code round-trips, hint() returns the exact §2.1 string`, () => {
       const error = new UsageError("x", code);
       expect(error).toBeInstanceOf(UsageError);
       expect(error).toBeInstanceOf(Error);

@@ -51,7 +51,7 @@ afterEach(() => {
   }
 });
 
-describe("dangerous-key install gate (fail-closed)", () => {
+describe("dangerous-key install gate (C3 fail-closed)", () => {
   test("non-TTY install with a dangerous key is BLOCKED (no --allow-dangerous-env-keys)", async () => {
     const stashRoot = makeStashWithEnv("LD_PRELOAD=/evil/lib.so\nSAFE=ok\n");
 
@@ -132,7 +132,7 @@ describe("dangerous-key install gate (fail-closed)", () => {
 // akm codepath — there is no live `akm env run` hijack through it regardless
 // of contents. This is a residual, INTENTIONAL gap, not an oversight: see the
 // same doc comment for what it does and does not cover.
-describe("dangerous-key install gate — recursive env/ scan", () => {
+describe("dangerous-key install gate — recursive env/ scan (F2)", () => {
   test("a dangerous key in a NESTED env file (env/nested/inner.env) IS blocked — closes the verified bypass", async () => {
     const stashRoot = makeStashWithEnvAtRelPath("LD_PRELOAD=/tmp/evil.so\n", path.join("nested", "inner.env"));
 

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Health-check result shape.
+ * Health-check result shape (chunk-9 WI-9.5d per-domain split of `./types`).
  * Consumed by the check registry (`health/checks.ts`), the advisory
  * collectors, and the report renderers.
  */

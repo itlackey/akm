@@ -3,19 +3,22 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The CLI/API input boundaries route raw refs through `parseRefInput`, which
- * accepts the `[bundle//]conceptId` grammar. The pre-0.9.0
- * `[origin//]type:name` colon grammar is retired — it is NOT accepted here,
- * and it must never be re-accepted by any parser.
+ * Chunk-5 flip F1b (ref-grammar decision D-R1/D-R4): the CLI/API input
+ * boundaries route raw refs through `parseRefInput`, which accepts the
+ * `[bundle//]conceptId` grammar. The pre-0.9.0 `[origin//]type:name` colon
+ * grammar is retired (owner ruling 5, Q-02) — it is NOT accepted here, and it
+ * must never be re-accepted by any parser.
  *
  * This drives representative commands (`show`, `feedback`) at the
  * command level and proves that the SAME asset resolves through both surviving
  * spellings of its ref — the short `conceptId` and the fully-qualified
- * `bundle//conceptId`.
+ * `bundle//conceptId` — so F2's re-keyed test literals no longer throw at the
+ * parse edge before reaching the F1 dual-keyed readers.
  *
  * The asset lives ONLY in an installed source whose id (`catalog`) is a legal
  * bundle slug, so the `catalog//…` spelling exercises real origin resolution
- * (registryId match), not a primary-stash shortcut.
+ * (registryId match), not a primary-stash shortcut. ADDITIVE-stage coverage:
+ * the old suite never speaks the new grammar, so every assertion is net-new.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -36,9 +39,9 @@ let guidePath = "";
 /**
  * The two surviving spellings of the SAME `knowledge/guide` concept in the
  * `catalog` bundle: the short conceptId and the fully-qualified
- * `bundle//conceptId` form. The retired colon `type:name` grammar is
- * deliberately NOT included — its rejection is pinned in
- * `tests/resolve-ref.test.ts`.
+ * `bundle//conceptId` form. The retired colon `type:name` grammar (owner
+ * ruling 5, Q-02) is deliberately NOT included — its rejection is pinned at
+ * `tests/resolve-ref.test.ts:271-274`.
  */
 const SPELLINGS = ["knowledge/guide", "catalog//knowledge/guide"] as const;
 

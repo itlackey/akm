@@ -5,13 +5,17 @@
 /**
  * robots.txt parsing, matching, and a crawl-scoped fetch/cache policy.
  *
+ * Behavioral reference: docs/plans/specs/p1-robots.md (authoritative). This
+ * module is a clean rewrite against akm's contracts, not a port of any
+ * upstream source file.
+ *
  * Pure by design: no fetching happens here (see `RobotsTxtLoader`/
  * `loadRobotsTxt` in `website-ingest.ts`). There is no crawl-semantic
  * module-level state: the per-origin HTTP cache lives on the object
  * `createRobotsPolicy` returns so it dies with the crawl that created it —
  * a module-level `origin -> RobotsRuleSet` map would leak `disallowAll`
  * results across crawls and across the test suite's process-wide `bun test`
- * run. The module-level `WeakMap` below is a different
+ * run (see spec §6.1). The module-level `WeakMap` below is a different
  * category: it memoizes a pure function of an individual rule object's own
  * `pattern` field, keyed by that object's identity. It cannot leak meaning
  * between origins or tests — distinct `parseRobotsTxt` calls (even for
@@ -23,7 +27,7 @@
 
 import { warnVerbose } from "../../core/warn";
 
-// ── Constants ───────────────────────────────────────────────────────────────
+// ── §2 Constants (pinned by spec) ───────────────────────────────────────────
 
 /** Group-matching tokens for `User-agent`, compared case-insensitively. */
 export const ROBOTS_PRODUCT_TOKENS = ["akm", "akm-cli"] as const;
@@ -38,7 +42,7 @@ export const MAX_CRAWL_DELAY_MS = 10_000;
 /** Identical to the existing website-fetch `User-Agent` header. */
 export const ROBOTS_USER_AGENT_HEADER = "akm-cli website provider";
 
-// ── Public API surface ──────────────────────────────────────────────────────
+// ── §3 Public API surface (pinned by spec) ──────────────────────────────────
 
 export type RobotsRuleKind = "allow" | "disallow";
 
@@ -61,7 +65,7 @@ export interface RobotsRuleSet {
 /**
  * Frozen so a stray mutation (e.g. an accidental `.rules.push(...)` somewhere
  * that borrows one of these as a starting point) can never poison every other
- * crawl sharing this instance.
+ * crawl sharing this instance (spec §10, Review log 2026-08-01 finding 1).
  */
 const EMPTY_ROBOTS_RULES: readonly RobotsPathRule[] = Object.freeze([]);
 export const ALLOW_ALL_RULES: RobotsRuleSet = Object.freeze({
@@ -91,7 +95,7 @@ export interface RobotsPolicy {
   crawlDelayMs(url: string): Promise<number>;
 }
 
-// ── parseRobotsTxt ──────────────────────────────────────────────────────────
+// ── §4.1/§4.2 parseRobotsTxt ─────────────────────────────────────────────────
 
 interface RobotsGroup {
   /** Lowercased User-agent tokens naming this group. */
@@ -144,7 +148,7 @@ export function parseRobotsTxt(text: string): RobotsRuleSet {
     if (!line) continue;
 
     const colonIndex = line.indexOf(":");
-    if (colonIndex === -1) continue; // no colon => ignored
+    if (colonIndex === -1) continue; // P-21: no colon => ignored
 
     const directive = line.slice(0, colonIndex).trim().toLowerCase();
     const value = line.slice(colonIndex + 1).trim();
@@ -162,13 +166,13 @@ export function parseRobotsTxt(text: string): RobotsRuleSet {
       continue;
     }
 
-    if (!current) continue; // directive with no preceding User-agent => ignored
+    if (!current) continue; // P-13: directive with no preceding User-agent => ignored
     sawDirectiveSinceLastUserAgent = true;
 
     if (directive === "disallow" || directive === "allow") {
-      if (!value) continue; // empty value matches nothing
+      if (!value) continue; // P-16: empty value matches nothing
       if (!(value.startsWith("/") || value.startsWith("*"))) {
-        // Neither "/" nor "*"-rooted => ignored, diagnosed quietly.
+        // P-18: neither "/" nor "*"-rooted => ignored, diagnosed quietly.
         warnVerbose("[akm] robots.txt: ignoring %s value %s (patterns must start with '/' or '*')", directive, value);
         continue;
       }
@@ -177,8 +181,8 @@ export function parseRobotsTxt(text: string): RobotsRuleSet {
         pattern: value,
         specificity: value.length,
       };
-      // Compile once, here, at parse time — not on every URL check. See
-      // `compiledPatternCache`.
+      // Compile once, here, at parse time — not on every URL check (spec
+      // §6.4, review finding robots.ts:238). See `compiledPatternCache`.
       compiledPatternCache.set(rule, compilePatternSegments(value));
       current.rules.push(rule);
       continue;
@@ -189,7 +193,7 @@ export function parseRobotsTxt(text: string): RobotsRuleSet {
       if (parsed !== null) current.crawlDelayMsRaw = parsed;
     }
 
-    // Sitemap / unknown directives: ignored without diagnostic.
+    // Sitemap / unknown directives: ignored without diagnostic (P-19, P-20).
   }
 
   const productTokens: readonly string[] = ROBOTS_PRODUCT_TOKENS;
@@ -209,7 +213,7 @@ export function parseRobotsTxt(text: string): RobotsRuleSet {
   return { disallowAll: false, rules, crawlDelayMs };
 }
 
-// ── isPathAllowedByRobots ───────────────────────────────────────────────────
+// ── §4.3 isPathAllowedByRobots ───────────────────────────────────────────────
 //
 // Matching is NOT regex-based. A pattern compiled to a RegExp with
 // `*` -> `.*` produces one regex quantifier per wildcard; a pattern with
@@ -217,7 +221,7 @@ export function parseRobotsTxt(text: string): RobotsRuleSet {
 // `/*a*a*a*a*a*a*a*a$`, not consecutive stars — collapsing consecutive `*`
 // does not help here) makes the regex engine explore an exponential number
 // of ways to split a long non-matching input across those quantifiers,
-// hanging the process. Instead,
+// hanging the process (spec §6.4; review finding robots.ts:211). Instead,
 // patterns are compiled to a flat list of literal segments split on `*`
 // (consecutive `*` collapsed to one) and matched with a single left-to-right
 // scan: the first segment must prefix the target, each interior segment is
@@ -267,9 +271,9 @@ function isUnreservedByte(byte: number): boolean {
  * fallback) and match targets (`isPathAllowedByRobots`), so a percent-encoded
  * alias of a disallowed path — e.g. a link written as `/%73ecret/` — cannot
  * bypass `Disallow: /secret/` simply because `URL.pathname` preserves
- * %-escapes verbatim. Reserved-octet patterns like
+ * %-escapes verbatim. Reserved-octet patterns like spec §4.3 M-31's
  * `/caf%C3%A9` are untouched on both sides (0xC3/0xA9 are not unreserved),
- * so they keep matching themselves exactly.
+ * so they keep matching themselves exactly as before.
  */
 function normalizePercentEncoding(value: string): string {
   if (!value.includes("%")) return value;
@@ -293,10 +297,10 @@ function compilePatternSegments(pattern: string): CompiledRobotsPattern {
 
 /**
  * Per-rule-object cache of the compiled pattern (see the file-level doc
- * comment for why this is not cross-crawl "module-level state").
- * `parseRobotsTxt` populates this eagerly, once, when it creates
- * each `RobotsPathRule`, so a pattern is compiled once rather than on every
- * URL check. `compiledPatternFor` below is a defensive
+ * comment for why this is not "module-level state" in the sense spec §6.1
+ * forbids). `parseRobotsTxt` populates this eagerly, once, when it creates
+ * each `RobotsPathRule` — the compile-once requirement from spec §6.4 /
+ * review finding robots.ts:238. `compiledPatternFor` below is a defensive
  * fallback for `RobotsRuleSet`s assembled by hand (e.g. test fixtures)
  * rather than via `parseRobotsTxt`; it still compiles at most once per rule
  * object, just lazily on first use instead of at parse time.
@@ -359,7 +363,7 @@ export function isPathAllowedByRobots(rules: RobotsRuleSet, url: string): boolea
   try {
     parsed = new URL(url);
   } catch {
-    return true; // fail open, never closed, on an unparseable URL.
+    return true; // M-32: fail open, never closed, on an unparseable URL.
   }
 
   // Normalized the same way `compilePatternSegments` normalizes the rule
@@ -382,7 +386,7 @@ export function isPathAllowedByRobots(rules: RobotsRuleSet, url: string): boolea
   return best ? best.kind === "allow" : true;
 }
 
-// ── createRobotsPolicy / createAllowAllRobotsPolicy ─────────────────────────
+// ── §4.4 createRobotsPolicy / createAllowAllRobotsPolicy ────────────────────
 
 function outcomeToRuleSet(outcome: RobotsFetchOutcome): RobotsRuleSet {
   switch (outcome.kind) {
@@ -412,7 +416,7 @@ export function createRobotsPolicy(load: RobotsTxtLoader): RobotsPolicy {
     const pending = load(robotsUrl).then(outcomeToRuleSet);
     // A rejected fetch must not poison the cache: the next lookup for this
     // origin should retry the loader rather than replaying the same failure
-    // forever.
+    // forever (spec §4.4 L-04).
     pending.catch(() => {
       if (cache.get(origin) === pending) cache.delete(origin);
     });

@@ -4,7 +4,8 @@
 
 /**
  * `indexDocumentToStashEntry` — the inverse of the `akm` adapter's
- * `indexDocumentFromEntry` (`adapters/akm-adapter.ts`).
+ * `indexDocumentFromEntry` (`adapters/akm-adapter.ts`). akm 0.9.0 Chunk 5,
+ * milestone F4a (M2 groundwork).
  *
  * The indexer drains a single `IndexDocument` stream (`drainDirDocuments` × the
  * dispatched adapter's `recognize`) and persists its canonical projection in
@@ -18,17 +19,18 @@
  * onto named members, every other search-surface/provenance field onto
  * `documentJson` (the `DOCUMENT_JSON_CARRIED_FIELDS` set). This function reverses
  * that mapping exactly, so `indexDocumentToStashEntry(recognize(file))` deep-
- * equals the persisted document for the same file (the
+ * equals the current persisted document for the same file (the
  * `tests/integration/shadow-scan-parity.test.ts` gate pins this boundary).
  *
  * Two deliberate non-round-trip fields:
  *   - `filename` — dropped by `indexDocumentFromEntry` (no IndexDocument home),
- *     recovered here as `basename(doc.path)`; `applyPostContributorFields` sets
- *     it to `basename(file)` and `doc.path` IS that file, so the value is
- *     identical.
- *   - `fileSize` — never set by `recognize`; it is attached at PERSIST time
- *     (`withFileSize`). It is therefore intentionally absent here and added by
- *     the persist layer.
+ *     recovered here as `basename(doc.path)`. The old pipeline set it to
+ *     `basename(file)` in `applyPostContributorFields`, and `doc.path` IS that
+ *     file, so the value is identical.
+ *   - `fileSize` — never set by `recognize` NOR by the legacy flat-walk pass;
+ *     both pipelines attach it at PERSIST time (`withFileSize`). It is therefore
+ *     intentionally absent here and added by the persist layer, exactly as
+ *     before.
  *
  * Pure, type-only imports (no cycle participation).
  */
@@ -45,23 +47,23 @@ import {
 /**
  * Reconstruct the `IndexDocument` an `IndexDocument` was mapped from. First-class
  * IndexDocument members and the `documentJson`-carried extras are both restored;
- * every field is set only when present ("assign-only-when-defined"), so the
- * reconstruction deep-equals the original.
+ * every field is set only when present, matching the old pipeline's
+ * "assign-only-when-defined" assembly so the reconstruction deep-equals it.
  */
 export function indexDocumentToStashEntry(doc: IndexDocument): IndexDocument {
   const dj = (doc.documentJson ?? {}) as Record<string, unknown>;
 
   const entry: IndexDocument = {
     name: doc.name,
-    // `type` is a required member of IndexDocument, so no
+    // `type` is a required member of the merged IndexDocument (M-core-1), so no
     // `?? ""` fallback is needed — `recognize` always sets it.
     type: doc.type,
-    // Dropped by indexDocumentFromEntry — recovered from the read path.
-    // Always present on a recognized doc.
+    // Dropped by indexDocumentFromEntry — recovered from the read path (= the
+    // basename the old pipeline stored). Always present on a recognized doc.
     filename: path.basename(doc.path ?? ""),
   };
 
-  // ── First-class IndexDocument members ──
+  // ── First-class IndexDocument members (spec §3) ──
   if (doc.description !== undefined) entry.description = doc.description;
   if (doc.tags !== undefined) entry.tags = doc.tags;
   if (doc.content !== undefined) entry.content = doc.content;
@@ -98,7 +100,7 @@ export function indexDocumentToStashEntry(doc: IndexDocument): IndexDocument {
   if (doc.pinned !== undefined) entry.pinned = doc.pinned;
 
   // ── documentJson-carried extras (DOCUMENT_JSON_CARRIED_FIELDS) ──
-  // The `renderer` key on documentJson is adapter-internal presentation,
+  // The `renderer` key on documentJson is adapter-internal (WI-C presentation),
   // NOT a IndexDocument field — deliberately not restored.
   assignStringList(entry, "examples", dj.examples);
   assignStringList(entry, "usage", dj.usage);
@@ -119,7 +121,7 @@ export function indexDocumentToStashEntry(doc: IndexDocument): IndexDocument {
   assignStringList(entry, "sources", dj.sources);
   assignStringList(entry, "evidenceSources", dj.evidenceSources);
   assignStringList(entry, "uses", dj.uses);
-  // #730: OKF v0.2 provenance promoteProposal stamps onto AKM-native
+  // D2 (#730): OKF v0.2 provenance promoteProposal stamps onto AKM-native
   // writes, carried via DOCUMENT_JSON_CARRIED_FIELDS (akm-adapter.ts) —
   // unpacked back to a first-class member here exactly like `sources`/
   // `generation`/`evidenceSources` above, so it round-trips to the top level

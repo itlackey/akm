@@ -11,6 +11,8 @@
  * pattern as the `@huggingface/transformers` loader in
  * `src/llm/embedders/local.ts`. Production behavior is byte-identical: every
  * export delegates to the real package unless a test installed a fake.
+ *
+ * See docs/architecture/specs/di-seams-plan.md.
  */
 
 import type * as clack from "@clack/prompts";

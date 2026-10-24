@@ -355,7 +355,7 @@ describe("proposal show / list expose the gate decision (#577)", () => {
   });
 });
 
-describe("proposal show / list expose retirement.continuityRisk", () => {
+describe("proposal show / list expose retirement.continuityRisk (S4)", () => {
   const flagged = {
     id: "uuid-flagged",
     ref: "memories/old-note",
@@ -406,7 +406,7 @@ describe("proposal show / list expose retirement.continuityRisk", () => {
     },
   };
 
-  test("formatProposalListPlain marks a flagged retire proposal inline, and omits it for a clean one", () => {
+  test("formatProposalListPlain marks a flagged retire proposal inline, and omits it for a clean one (S4)", () => {
     const out = formatProposalListPlain({ totalCount: 2, proposals: [flagged, clean] });
     const flaggedLine = out.split("\n").find((l) => l.includes("uuid-flagged")) ?? "";
     const cleanLine = out.split("\n").find((l) => l.includes("uuid-clean")) ?? "";
@@ -414,7 +414,7 @@ describe("proposal show / list expose retirement.continuityRisk", () => {
     expect(cleanLine).not.toContain("continuity-risk");
   });
 
-  test("the marker survives `akm proposal list`'s DEFAULT (brief) shape, not just a hand-built fixture", () => {
+  test("the marker survives `akm proposal list`'s DEFAULT (brief) shape, not just a hand-built fixture (round 3)", () => {
     // The test above feeds formatProposalListPlain a raw fixture with
     // `retirement` already attached, as if shaped at "normal" — but
     // `proposal list` with no --detail flag shapes at "brief", which drops
@@ -430,14 +430,14 @@ describe("proposal show / list expose retirement.continuityRisk", () => {
     expect(cleanLine).not.toContain("continuity-risk");
   });
 
-  test("formatProposalShowPlain lists the actual failing query text, not just a count", () => {
+  test("formatProposalShowPlain lists the actual failing query text, not just a count (N3)", () => {
     const out = formatProposalShowPlain({ proposal: flagged });
     expect(out).toContain("retire.continuityRisk:");
     expect(out).toContain("excluded from bulk accept");
     expect(out).toContain('"how do I configure X": retired #1, successor absent from top 10');
   });
 
-  test("formatProposalShowPlain reports unverifiedQueries even with zero rank failures", () => {
+  test("formatProposalShowPlain reports unverifiedQueries even with zero rank failures (S2)", () => {
     const out = formatProposalShowPlain({ proposal: unverified });
     expect(out).toContain("retire.continuityRisk:");
     expect(out).toContain("1 query unverified (search failed or used the keyword-only fallback)");

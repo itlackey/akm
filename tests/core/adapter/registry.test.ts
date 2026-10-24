@@ -3,22 +3,23 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Gate for the format-family adapter registry (`src/core/adapter/registry.ts`)
- * + the built-in barrel (`src/core/adapter/adapters/index.ts`).
+ * WI-A gate (re-pinned for the registry-wiring WI) — the format-family adapter
+ * registry (`src/core/adapter/registry.ts`) + the built-in barrel
+ * (`src/core/adapter/adapters/index.ts`).
  *
- * The registry is a STATIC, FROZEN map: `getAdapters()` / `adapterForId()` are
- * populated at MODULE LOAD from the frozen `BUILTIN_ADAPTERS` list — NO
- * registration call is required, so production cannot leave the registry empty.
- * The registry is keyed by `adapter.id` ONLY (adapters are format families — no
- * per-`type` mapping). These tests DELIBERATELY perform no setup: they prove
- * the registry is live at import.
+ * The registry is now a STATIC, FROZEN map (normative §12.6): `getAdapters()` /
+ * `adapterForId()` are populated at MODULE LOAD from the frozen
+ * `BUILTIN_ADAPTERS` list — NO registration call is required, so production
+ * cannot leave the registry empty. The registry is keyed by `adapter.id` ONLY
+ * (adapters are format families, §0.2 — no per-`type` mapping). These tests
+ * DELIBERATELY perform no setup: they prove the registry is live at import.
  */
 
 import { describe, expect, test } from "bun:test";
 import { BUILTIN_ADAPTERS, okfAdapter } from "../../../src/core/adapter/adapters";
 import { adapterForId, getAdapters } from "../../../src/core/adapter/registry";
 
-/** The frozen probe order (array order == probe precedence). */
+/** The frozen §1.2 probe order (array order == probe precedence). */
 const PROBE_ORDER = [
   "website-snapshot",
   "agent-skills",
@@ -33,15 +34,16 @@ const PROBE_ORDER = [
   "generic-files",
 ];
 
-describe("adapter registry — static frozen map", () => {
+describe("adapter registry — static frozen map (normative §12.6)", () => {
   test("getAdapters() is populated at module load — no registration call required", () => {
-    // The registry is live purely from importing it. An empty registry would make
-    // every source fall back to `akm`.
+    // The registry is live purely from importing it. This is the exact
+    // production guarantee that was previously broken (empty registry ⇒ every
+    // source fell back to `akm`).
     expect(getAdapters().length).toBe(11);
     expect(getAdapters().map((a) => a.id)).toEqual(PROBE_ORDER);
   });
 
-  test("BUILTIN_ADAPTERS is the frozen probe order and matches getAdapters()", () => {
+  test("BUILTIN_ADAPTERS is the frozen §1.2 probe order and matches getAdapters()", () => {
     expect(Object.isFrozen(BUILTIN_ADAPTERS)).toBe(true);
     expect(BUILTIN_ADAPTERS.map((a) => a.id)).toEqual(PROBE_ORDER);
     expect(getAdapters().map((a) => a.id)).toEqual(BUILTIN_ADAPTERS.map((a) => a.id));
@@ -54,7 +56,7 @@ describe("adapter registry — static frozen map", () => {
     expect(adapterForId("okf")).toBe(okfAdapter);
   });
 
-  test("adapterForId returns undefined for an unknown id (caller skips + warns)", () => {
+  test("adapterForId returns undefined for an unknown id (spec §4 — caller skips + warns)", () => {
     expect(adapterForId("nope")).toBeUndefined();
   });
 

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The consolidate pair pass: runs
+ * The consolidate pair pass (0.9.17-alpha.9 plan §5.2, brief §A): runs
  * alongside the existing promote pass inside `akmConsolidate`, over new and
  * changed memory-tier assets. Judges each near-duplicate/superseding pair
  * with the calibrated relation prompt and mints a reviewed `retire` proposal
@@ -11,11 +11,12 @@
  * never writes belief edges for `contradicts`, and is never auto-accepted by
  * triage (`drain.ts`).
  *
- * Calibration (against the owner's grades): the combined retire class
- * (duplicate ∪ subsumed ∪ supersedes) is 20/22 = 0.91 precision. `T_PAIR` is
- * 0.93, not 0.90, because the 0.90–0.93 band alone graded 3/4.
+ * Calibration (owner grades, 2026-09-28; see the plan's "Human calibration,
+ * O5" section): the combined retire class (duplicate ∪ subsumed ∪
+ * supersedes) is 20/22 = 0.91 precision against the owner. `T_PAIR` is 0.93,
+ * not the initial 0.90, because the 0.90–0.93 band alone graded 3/4 (R1).
  *
- * Initiator eligibility and dating: "created" is the
+ * Initiator eligibility and dating (post-review, alpha.9): "created" is the
  * asset's git first-add time (one `git log` per run, {@link loadGitFirstAddedMap}),
  * not frontmatter or mtime — mtime is only the fallback for a file git does
  * not know. An initiator is eligible when it has no prior `consolidate-pair`
@@ -74,13 +75,13 @@ import { type ContinuitySearch, checkRetirementContinuity, createContinuitySearc
 
 export { PAIR_PASS_LEDGER_SOURCE };
 
-/** Neighbours fetched per initiator before filtering (wide enough that self/twin/bundle/tier misses rarely starve the kept 5 below). */
+/** Neighbours fetched per initiator before filtering (S2: wide enough that self/twin/bundle/tier misses rarely starve the kept 5 below). */
 export const PAIR_NEIGHBOR_FETCH_K = 20;
 /** Passing candidates kept per initiator, nearest-cosine-first. */
 export const PAIR_NEIGHBOR_K = 5;
-/** Calibrated floor: the 0.90–0.93 band alone graded 3/4 against the owner. */
+/** Calibrated floor (R1): the 0.90–0.93 band alone graded 3/4 against the owner. */
 export const T_PAIR = 0.93;
-/** The existing backlog (an initiator with no prior pair-pass attempt) goes >= 0.95 first. */
+/** O2: the existing backlog (an initiator with no prior pair-pass attempt) goes >= 0.95 first. */
 export const BACKFILL_FLOOR = 0.95;
 /**
  * An initiator git first-added within this many days judges at `T_PAIR` even
@@ -88,7 +89,7 @@ export const BACKFILL_FLOOR = 0.95;
  * not the higher bar reserved for working through the pre-existing backlog.
  */
 export const NEW_MATERIAL_DAYS = 7;
-/** Pairs judged per run, highest cosine first (the nightly cost budget). */
+/** Pairs judged per run, highest cosine first (plan §7's nightly cost budget). */
 export const MAX_PAIRS_PER_RUN = 300;
 /** Body characters sent to the judge per side: enough for nearly every note, so a retirement is judged on the whole text. */
 const PAIR_BODY_TRUNCATE_CHARS = 12_000;
@@ -231,7 +232,7 @@ export function loadPairPassPool(db: Database, bundleId: string): PairAsset[] {
   return assets;
 }
 
-// ── created/updated dates from git, not frontmatter/mtime ──────────────
+// ── B1: created/updated dates from git, not frontmatter/mtime ──────────────
 
 /** A path relative to `stashDir`, POSIX-separated — how `git log --name-only` spells it. */
 function repoRelativeKey(stashDir: string, filePath: string): string {
@@ -323,7 +324,7 @@ export function loadGitFirstAddedMap(stashDir: string): ReadonlyMap<string, numb
   return firstAdd;
 }
 
-/** Created instant (ms): git first-add when known, else file mtime — the one fallback both dating and the new-material check use. */
+/** Created instant (ms): git first-add when known, else file mtime (B1) — the one fallback both dating and the S1 new-material check use. */
 function createdMsOf(
   asset: PairAsset,
   gitFirstAdded: ReadonlyMap<string, number> | undefined,
@@ -341,7 +342,7 @@ function createdMsOf(
 export interface Initiator extends PairAsset {
   /** No prior `consolidate-pair` ledger row: judged at `BACKFILL_FLOOR` unless `newMaterial`. */
   backlog: boolean;
-  /** Git first-added (or, git-unknown, mtime-dated) within `NEW_MATERIAL_DAYS`. */
+  /** Git first-added (or, git-unknown, mtime-dated) within `NEW_MATERIAL_DAYS` (S1). */
   newMaterial: boolean;
   /** This run's own read of the asset's current body hash — the ledger-write step reuses it, never re-reading the file. */
   bodyHash: string;
@@ -359,7 +360,7 @@ function pairKey(a: string, b: string): string {
 }
 
 /**
- * A rejected retirement's dedup key: the exact ref pair plus both
+ * A rejected retirement's dedup key (item 0): the exact ref pair plus both
  * content hashes at judge time, so a re-selected initiator (its own ledger
  * row missing because a sibling candidate was dropped or failed, not because
  * this pair changed) does not get this same, already-rejected pair re-judged
@@ -370,7 +371,7 @@ function rejectedPairKey(retiredRef: string, successorRef: string, retiredHash: 
 }
 
 /**
- * Every rejected OR reverted consolidate-pair retirement on
+ * Item 0 / S1: every rejected OR reverted consolidate-pair retirement on
  * record, as {@link rejectedPairKey}s — read once per run, the same shape as
  * `pendingRetireRefs` in {@link runConsolidatePairPass}. `reverted` is
  * included alongside `rejected`: a person undoing an accept via `akm proposal
@@ -405,13 +406,13 @@ export function loadRejectedPairKeys(stashDir: string, proposalsCtx: ProposalsCo
 }
 
 /**
- * Initiators: the pool, in the retrieval
+ * Initiators (plan §5.2 step 1, S1 post-review): the pool, in the retrieval
  * scope, and content-eligible — no prior `consolidate-pair` ledger row, or a
  * row whose recorded body hash differs from the asset's current one. A row's
  * `next_eligible_at` is never consulted (the pair pass's own source carries
  * no timer at all — see `windowDays` in improve-ledger-repository.ts):
- * eligibility here is purely a function of content ("no row, or changed"),
- * matching the ledger-write step this run finishes with.
+ * eligibility here is purely a function of content, matching the brief's "no
+ * row, or changed" rule and the ledger-write step this run finishes with.
  */
 export function selectInitiators(
   pool: PairAsset[],
@@ -442,20 +443,20 @@ export function selectInitiators(
 }
 
 /**
- * Candidates: each initiator's nearest
+ * Candidates (plan §5.2 step 2, S1/S2 post-review): each initiator's nearest
  * neighbours, filtered and thresholded — the FULL set, sorted by cosine
  * descending, uncapped. `runConsolidatePairPass` applies `MAX_PAIRS_PER_RUN`
  * (needing the uncapped per-initiator totals to tell a cap-cut initiator
- * apart from a fully-judged one). Fetches `PAIR_NEIGHBOR_FETCH_K` (20)
+ * apart from a fully-judged one). S2: fetches `PAIR_NEIGHBOR_FETCH_K` (20)
  * raw neighbours and keeps the first `PAIR_NEIGHBOR_K` (5) that clear every
- * filter, so a few self/twin/bundle/tier misses in the raw top-5 do not
+ * filter, so a few self/twin/bundle/tier misses in the raw top-5 no longer
  * starve an initiator down to zero real candidates.
  */
 export function selectCandidates(db: Database, initiators: Initiator[], bundleId: string): PairCandidate[] {
   const candidates: PairCandidate[] = [];
   const seenPairs = new Set<string>();
   for (const initiator of initiators) {
-    // A changed-content or new-material initiator judges at T_PAIR; the
+    // S1: a changed-content or new-material initiator judges at T_PAIR; the
     // rest of the backlog (no row, not recently git-added) needs the higher
     // BACKFILL_FLOOR.
     const floor = initiator.backlog && !initiator.newMaterial ? BACKFILL_FLOOR : T_PAIR;
@@ -516,7 +517,7 @@ function loadSide(
   } catch {
     frontmatter = {};
   }
-  // Created is the git first-add time (mtime only when git does not know
+  // B1: created is the git first-add time (mtime only when git does not know
   // the file, or the bundle has none) — frontmatter createdAt/created is not
   // consulted; too few real assets carry it to be a reliable ordering.
   // Updated stays frontmatter `updated` when present, else falls back to created.
@@ -554,7 +555,7 @@ function orderByAge(x: PairSide, y: PairSide): { older: PairSide; newer: PairSid
   return xIsOlder ? { older: x, newer: y } : { older: y, newer: x };
 }
 
-/** The user message: dates decide "A (older)" / "B (newer)", matching the calibration sample's own ordering. */
+/** The user message: dates decide "A (older)" / "B (newer)" (plan Appendix A), matching the calibration sample's own ordering. */
 export function buildPairUserPrompt(older: PairSide, newer: PairSide): string {
   return [...sideSection("A (older)", older), ...sideSection("B (newer)", newer)].join("\n");
 }
@@ -570,7 +571,8 @@ export interface PairDecision {
 }
 
 /**
- * The calibrated outcome table (from the owner's grades): `duplicate`/`supersedes` keep the newer copy;
+ * The calibrated outcome table (owner grades, replacing plan §5.2's
+ * "shorter body" rule): `duplicate`/`supersedes` keep the newer copy;
  * `subsumed` keeps the side the judge did NOT name `redundant` (no proposal
  * if that pointer is missing or invalid). A side is retired only when the
  * judge listed nothing that it alone holds.
@@ -609,15 +611,15 @@ interface PairPassContext {
   warnings: string[];
   chat?: PairJudgeChat;
   /**
-   * The continuity check's search call — one shared instance for
-   * the whole run, production or test. `runConsolidatePairPass` builds
+   * The continuity check's search call (item 1) — one shared instance for
+   * the whole run (S2), production or test. `runConsolidatePairPass` builds
    * the real one via {@link createContinuitySearch} unless a test seam
    * overrides it.
    */
   continuitySearch: ContinuitySearch;
   /**
    * {@link rejectedPairKey} of every rejected OR reverted `consolidate-pair`
-   * retirement on record, so a pair the owner already declined
+   * retirement on record (item 0, S1), so a pair the owner already declined
    * — by rejecting it, or by accepting then reverting it — is never
    * re-proposed just because its initiator's OWN ledger row went missing (a
    * sibling candidate dropped or failed this run — see the ledger-write step
@@ -627,7 +629,7 @@ interface PairPassContext {
   /**
    * ConceptIds (stripped of bundle) already given a retire decision earlier
    * in THIS run — by an earlier pair, not a prior run (`pendingRetireRefs`
-   * covers that) — as EITHER the retired side or the successor (the
+   * covers that) — as EITHER the retired side or the successor (B2's
    * same-run chain guard: a just-used successor cannot itself be retired
    * later in this run, and an already-retired asset cannot be re-used as a
    * successor). Checked and updated synchronously (no `await` in between),
@@ -686,7 +688,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   const otherSide = loadSide(candidate.other, ctx.gitFirstAdded, ctx.stashDir);
   if (!initiatorSide || !otherSide) return { failed: false }; // unreadable since selection — skip, not a judge failure
 
-  // This exact pair (same two refs, same two content hashes,
+  // Item 0 / S1: this exact pair (same two refs, same two content hashes,
   // EITHER orientation) was already judged and rejected OR reverted. Checked
   // HERE, before the judge call, not after — the judge (not yet run) is what
   // decides which side would be "retired" this time, so both orientations
@@ -738,30 +740,31 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     [retired, successor] = [successor, retired];
   }
 
-  // Guards.
+  // Guards (plan §5.2 step 4 / brief §A "Guards").
   if (retired.asset.type === "memory" && isHotCapturedMemory(retired.asset.filePath)) {
     return { failed: false }; // never propose retiring a captureMode: hot memory — leave the pair alone
   }
   if (retired.asset.type === "memory" && retired.asset.name.endsWith(DERIVED_SUFFIX)) {
-    // Derive the parent path from the FULL file path, not from name +
+    // S3: derive the parent path from the FULL file path, not from name +
     // dirname — for a subfolder memory (e.g. memories/sub/foo.derived) the
     // name already carries "sub/", so joining dirname(filePath) (which ALSO
-    // ends in "sub") with it would double the subfolder segment.
+    // ends in "sub") with it used to double the subfolder segment.
     const parentPath = retired.asset.filePath.replace(/\.derived\.md$/, ".md");
     if (fs.existsSync(parentPath)) return { failed: false }; // never retire a .derived memory whose parent still exists
   }
   const retiredHash = contentHash(retired.raw, "body");
   const successorHash = contentHash(successor.raw, "body");
-  // An asset retired (or already spent as a successor) earlier in this
+  // B2: an asset retired (or already spent as a successor) earlier in this
   // run cannot be retired or reused as a successor again — the same-run half
   // of the chain guard (the accept-time hash/existence check is the other,
   // durable half).
   const retiredKey = stripBundle(retired.asset.ref);
   const successorKey = stripBundle(successor.asset.ref);
-  // A retire-worthy verdict the same-run chain guard drops is not a settled
-  // "no action" — a LATER run, once the conflicting retirement has been
-  // reviewed, may well mint it. Counted as failed so its initiator gets no
-  // row (otherwise most duplicate verdicts would be silently abandoned).
+  // Must-fix 1 (third review round): a retire-worthy verdict the same-run
+  // chain guard drops is not a settled "no action" — a LATER run, once the
+  // conflicting retirement has been reviewed, may well mint it. Counted as
+  // failed so its initiator gets no row (real data: night 1 alone judged 177
+  // duplicate verdicts into only 59 proposals — 118 silently abandoned).
   if (ctx.retiredThisRun.has(retiredKey) || ctx.retiredThisRun.has(successorKey)) return { failed: true };
   ctx.retiredThisRun.add(retiredKey);
   ctx.retiredThisRun.add(successorKey);
@@ -772,7 +775,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     ctx.perInitiatorProposed.add(candidate.initiator.ref);
     return { failed: false };
   }
-  // Continuity check: replay the retired asset's own
+  // Continuity check (plan §5.4, rule R3): replay the retired asset's own
   // past queries and flag, but do not block, a pair where the successor
   // would not have shown up where the retired asset did.
   const continuityRisk = await checkRetirementContinuity({
@@ -804,7 +807,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
       ctx.stashDir,
       {
         ref: retired.asset.ref,
-        // Its own generator, kept apart from the promote pass's
+        // S6: its own generator, kept apart from the promote pass's
         // "consolidate" proposals — `accept --generator consolidate` (bulk
         // promotion review) never sweeps a retire proposal, and the reverse.
         source: "consolidate-pair",
@@ -824,9 +827,9 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     // holds no claim of its own for any label (`decideRetirement` mints nothing
     // else); a duplicate must also leave the kept side with none, while a
     // subsumed or superseding successor holds more by definition. Replay
-    // precision 336/360 (duplicate 0.98, subsumed 0.92, supersedes 0.875);
-    // a duplicate alone was 109 of 111 safe on the owner's reviewed pairs.
-    // Anything else waits for a person.
+    // precision 336/360 (duplicate 0.98, subsumed 0.92, supersedes 0.875,
+    // 2026-10-07); a duplicate alone was 109 of 111 safe on the owner's
+    // reviewed pairs (2026-10-04). Anything else waits for a person.
     if (
       (verdict.relation !== "duplicate" || verdict.onlyInA.length + verdict.onlyInB.length === 0) &&
       !continuityRisk &&
@@ -849,7 +852,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     ctx.warnings.push(
       `Pair pass: could not mint a retire proposal for ${retired.asset.ref}: ${error instanceof Error ? error.message : String(error)}`,
     );
-    // A mint failure is transient (a lock, a disk error, a
+    // Must-fix 1: a mint failure is transient (a lock, a disk error, a
     // validation hiccup) — treated the same as a same-run drop, so no row is
     // written and the pair is retried next run instead of abandoned.
     return { failed: true };
@@ -866,7 +869,7 @@ const emptyLabelCounts = (): Record<ConsolidatePairJudgeLabel, number> => ({
 });
 
 /**
- * The pair pass: initiators -> candidates -> one judge call per
+ * The pair pass (alpha.9): initiators -> candidates -> one judge call per
  * pair -> retire proposals for the calibrated classes. Runs alongside the
  * promote pass, sharing its gate, its frozen LLM runner and its engine
  * concurrency. `bundleId` is the target bundle's id (`undefined` skips the
@@ -914,7 +917,8 @@ export async function runConsolidatePairPass(
   const initiatorsBacklog = initiators.filter((i) => i.backlog).length;
 
   // Never judge a pair when either side already has a pending retire
-  // proposal, as the retired ref OR its successor: an asset spoken for by one pending decision cannot
+  // proposal, as the retired ref OR its successor (B2 widens this from the
+  // retired ref alone): an asset spoken for by one pending decision cannot
   // also be judged as part of another until that decision resolves.
   const pendingRetireRefs = new Set<string>();
   try {
@@ -931,19 +935,21 @@ export async function runConsolidatePairPass(
 
   const rejectedPairKeys = loadRejectedPairKeys(stashDir, opts.proposalsCtx);
 
-  // Admit WHOLE initiators under MAX_PAIRS_PER_RUN, never individual pairs —
-  // a flat "top 300 candidates by cosine" cap would let a pending-blocked pair
-  // spend a budget slot doing nothing, and leave whichever initiators landed
-  // past slot 300 partially judged forever (no ledger row, so the SAME pairs
-  // would be re-judged every night with no way to ever finish). A group with
+  // Blocker 2: admit WHOLE initiators under MAX_PAIRS_PER_RUN, never
+  // individual pairs — the old flat "top 300 candidates by cosine" cap let a
+  // pending-blocked pair spend a budget slot doing nothing, and left
+  // whichever initiators landed past slot 300 partially judged forever (no
+  // row per S1's own rule, so the SAME pairs got re-judged every night with
+  // no way to ever finish; the reviewer's simulation measured 30 nights
+  // making 9,000 calls but completing only 455 distinct pairs). A group with
   // any pending-blocked pair is skipped before it can spend any budget at
   // all. New-or-changed initiators (T_PAIR floor) are admitted before ANY
   // backlog initiator regardless of cosine, then backlog initiators by their
   // own best cosine — within a tier, a later, smaller group that still fits
   // is admitted even after an earlier, larger one did not (first-fit), so
   // the budget is not left idle just because the next-best group overflows
-  // it. This lets the backlog drain over successive nights instead of never
-  // finishing.
+  // it. Simulated, this drains the real backlog in ~12 nights instead of
+  // never.
   const byInitiator = new Map<string, PairCandidate[]>();
   for (const c of candidates) {
     const list = byInitiator.get(c.initiator.ref);
@@ -978,14 +984,14 @@ export async function runConsolidatePairPass(
     rejectedPairKeys,
     retiredThisRun: new Set(),
     ...(seams.chat ? { chat: seams.chat } : {}),
-    // One instance for the whole run (not one per proposal), so its
+    // S2: one instance for the whole run (not one per proposal), so its
     // "fell back once, go keyword-only from here" throttle actually covers
     // every remaining query in this run, not just one proposal's own five.
     continuitySearch: seams.continuitySearch ?? createContinuitySearch(stashDir, config),
   };
 
   let failedJudgments = 0;
-  // An initiator with any failed (or never-sent) judge call
+  // Should-fix 3: an initiator with any failed (or never-sent) judge call
   // gets no ledger row — a failure attempted nothing conclusive, so writing
   // one would mean the pair is never retried.
   const failedInitiators = new Set<string>();
@@ -1003,10 +1009,10 @@ export async function runConsolidatePairPass(
       { signal: opts.signal },
     );
     results.forEach((r, idx) => {
-      // `concurrentMap` leaves an entry `undefined` for a call an
+      // Must-fix 3: `concurrentMap` leaves an entry `undefined` for a call an
       // aborted run never sent at all — `r?.failed === true` reads that as
       // `undefined === true` (false), so an unsent call counted as a clean
-      // "no action" verdict, hence the explicit `undefined` check.
+      // "no action" verdict. Explicit `undefined` check closes that gap.
       if (r === undefined || r.failed === true) {
         failedJudgments++;
         failedInitiators.add(judgeable[idx]!.initiator.ref);
@@ -1014,11 +1020,11 @@ export async function runConsolidatePairPass(
     });
   }
 
-  // A ledger row is written for an initiator only once ALL of its OWN
+  // S1: a ledger row is written for an initiator only once ALL of its OWN
   // candidates were admitted (whole-initiator admission above makes this a
   // simple membership check: judgeable either has every one of an
   // initiator's candidates, or none of them) and none of them failed
-  // — including an initiator with zero candidates, which
+  // (should-fix 3) — including an initiator with zero candidates, which
   // trivially satisfies both. One left out by the cap or a pending-proposal
   // collision gets no row at all, so the next run reconsiders it rather
   // than treating it as settled.
@@ -1045,7 +1051,7 @@ export async function runConsolidatePairPass(
     initiators: initiators.length,
     initiatorsBacklog,
     pairsConsidered: candidates.length,
-    // Parsed verdicts only — judgeable.length counted pairs that
+    // Must-fix 3: parsed verdicts only — judgeable.length counted pairs that
     // were admitted, not pairs a verdict actually came back for.
     pairsJudged: judgeable.length - failedJudgments,
     labelCounts: ctx.labelCounts,

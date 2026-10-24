@@ -111,7 +111,7 @@ async function addLocalSource(
       return { ...config, bundles };
     }
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
-    // An explicit `--name` is a contract on this (local) add path — validated
+    // D6: an explicit `--name` is a contract on this (local) add path — validated
     // strictly before nextBundleKey derives a key, since that shared helper is also
     // used by the out-of-scope `akm source add` (`addStash`) and stays forgiving.
     if (explicitName !== undefined) validateExplicitBundleName(bundles, explicitName);
@@ -170,7 +170,7 @@ async function addWebsiteSource(
     if (existingKey && name !== undefined) {
       validateExplicitBundleName(bundles, name, existingKey);
     }
-    // An explicit `--name` is a contract — validated strictly and used
+    // An explicit `--name` is a contract (D6) — validated strictly and used
     // as-is, never silently substituted. A DERIVED default (no --name) keeps
     // the forgiving `deriveBundleId` fallback, so a dotted hostname or a
     // URL collision still mints a usable id instead of erroring.
@@ -264,7 +264,7 @@ async function addRegistryStash(
 
   const currentConfig = loadConfig();
   const existingBundleKey = findInstalledBundleKey(currentConfig.bundles ?? {}, parsedRef.id);
-  // Validate an explicit `--name` before any network sync or write — an
+  // D6: validate an explicit `--name` before any network sync or write — an
   // illegal name, a name already taken by a different bundle, or re-adding
   // this same install under a different name than it already carries must
   // fail loudly here, not mint a `-<hash>` fallback deep inside the config
@@ -322,7 +322,7 @@ async function addRegistryStash(
     resolvedVersion: synced.resolvedVersion,
     resolvedRevision: synced.resolvedRevision,
     integrity: synced.integrity,
-    // Resolved lock state the install flow has on hand.
+    // §10.2 resolved lock state the install flow has on hand.
     localRoot: synced.contentDir,
     installedAt: synced.syncedAt,
   });
@@ -370,8 +370,8 @@ async function addRegistryStash(
 }
 
 /**
- * Persist or replace a registry-installed source as a `bundles` entry
- * (desired/resolved split). The bundle carries ONLY the
+ * Persist or replace a registry-installed source as a 0.9.0 `bundles` entry
+ * (spec §10.1 / §10.2 desired/resolved split). The bundle carries ONLY the
  * desired descriptor (git/npm locator + preserved `registryId` + `writable`);
  * the resolved cache root belongs exclusively in the lock (written by callers
  * via {@link upsertLockEntry} with the returned `bundleId`). A new install is
@@ -419,7 +419,7 @@ export function upsertInstalledRegistryEntry(
 
 /**
  * Remove a registry-installed source: delete its `bundles` entry and its lock
- * entry. Matches the bundle by preserved `registryId` or by a
+ * entry (spec §10.2). Matches the bundle by preserved `registryId` or by a
  * slug-legal install id used verbatim as the key. Idempotent.
  */
 export async function removeInstalledRegistryEntry(id: string): Promise<AkmConfig> {
@@ -463,9 +463,9 @@ function findInstalledBundleKey(bundles: Record<string, BundleConfigEntry>, inst
  * this install id (so re-installs keep the same key — a caller-visible name
  * mismatch was already rejected upstream, by {@link validateExplicitBundleName}
  * in `addRegistryStash`, before any write). Otherwise an explicit `--name`
- * is a contract — validated strictly and used as-is, never silently
+ * (D6) is a contract — validated strictly and used as-is, never silently
  * substituted. Without one, a batch-unique key is derived via the shared
- * {@link deriveBundleId} from the package/repo name the install id
+ * {@link deriveBundleId} (D-R5) from the package/repo name the install id
  * names rather than the basename of the materialized cache directory
  * (`extracted`) — unique against the currently-configured bundle keys.
  */

@@ -3,15 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Cross-adapter CONFORMANCE suite. Exercises the two properties the
- * format-neutral contract requires of EVERY registered `BundleAdapter`, driven
- * off `getAdapters()`, so the suite covers the adapters that are actually
- * registered rather than a hand-picked pair.
+ * WI-D gate — the cross-adapter CONFORMANCE suite (adapter-spec §4 / §12.3),
+ * the Chunk-2 CLOSE. Exercises the two properties the format-neutral contract
+ * requires of EVERY registered `BundleAdapter`, driven off `getAdapters()`,
+ * so the suite covers the adapters
+ * that are actually registered rather than a hand-picked pair.
  *
- * ── 1. `looksLikeRoot` own-root-only ──
+ * ── 1. `looksLikeRoot` own-root-only (§4) ──
  *
  * Install-time root detection MUST be UNAMBIGUOUS: on a bundle's own root,
- * exactly one adapter's `looksLikeRoot` fires (the ordered probe would
+ * exactly one adapter's `looksLikeRoot` fires (§1.2's ordered probe would
  * otherwise pick arbitrarily). We assert the full matrix over the two golden
  * roots — the `okf` reference bundle (`tests/fixtures/bundles/okf-sample/`,
  * which has a root `index.md` and NO `TYPE_DIRS` subdir) and the `akm`
@@ -19,23 +20,25 @@
  * subdirs and NO root `index.md`): each adapter's `looksLikeRoot` returns
  * `true` on its OWN golden root and `false` on the sibling's.
  *
- * These two frozen fixtures already separate cleanly (`okf-sample`'s only
- * subdirs are `guides`/`metrics`/`tables` — none a `TYPE_DIRS` value — so
+ * These two frozen fixtures already separate cleanly (verified: `okf-sample`'s
+ * only subdirs are `guides`/`metrics`/`tables` — none a `TYPE_DIRS` value — so
  * `akm.looksLikeRoot` abstains on it; `all-types` carries no root `index.md`,
- * so `okf.looksLikeRoot` abstains on it), so no dedicated single-adapter root
- * fixtures are needed. Neither the frozen `all-types` stash nor any golden is
+ * so `okf.looksLikeRoot` abstains on it), so NO dedicated single-adapter root
+ * fixtures were needed. Neither the frozen `all-types` stash nor any golden is
  * touched.
  *
- * ── 2. `index() == fold(recognize)` ──
+ * ── 2. `index() == fold(recognize)` (§12.3) ──
  *
  * The optional `index()` capability, when present, MUST equal folding
- * `recognize()` over the core walk. NEITHER `okf` NOR `akm` overrides
- * `index()`, so the conformance is VACUOUSLY satisfied — the core walk ×
- * `recognize` IS the index for these adapters. We first assert every
- * registered adapter leaves `index` undefined, then exercise the equality
- * CONCRETELY over each golden root by folding `recognize` over the
+ * `recognize()` over the core walk (adapter-spec §2's `index?` JSDoc /
+ * normative §14.2). NEITHER `okf` NOR `akm` overrides `index()`, so the
+ * conformance is VACUOUSLY satisfied — the core walk × `recognize` IS the index
+ * for these adapters. We first assert every registered adapter leaves `index`
+ * undefined (documenting the vacuous-true §12.3 shape), then exercise the
+ * equality CONCRETELY over each golden root by folding `recognize` over the
  * `walkStashFlat(root)` files directly (the walk×recognize mapping the live
- * indexer drains).
+ * indexer drains) — the per-adapter recognize-over-walk coverage that the retired
+ * `scanComponent` module used to carry (owner ruling 2026-07-21).
  */
 
 import { describe, expect, spyOn, test } from "bun:test";
@@ -80,8 +83,8 @@ const GENERIC_FILES_ROOT = path.join(BUNDLES, "generic-files");
 
 /**
  * adapter id → its OWN golden/fixture root. Every registered adapter EXCEPT the
- * explicit-config `generic-files` (whose `looksLikeRoot` never fires) is
- * claimed by the ordered probe on its own root.
+ * explicit-config `generic-files` (whose `looksLikeRoot` never fires, §1.2) is
+ * claimed by the §1.2 ordered probe on its own root.
  */
 const OWN_ROOT_BY_ID: Record<string, string> = {
   okf: OKF_ROOT,
@@ -97,11 +100,11 @@ const OWN_ROOT_BY_ID: Record<string, string> = {
   "generic-files": GENERIC_FILES_ROOT,
 };
 
-/** Adapters whose `looksLikeRoot` is intentionally never-firing (explicit-config). */
+/** Adapters whose `looksLikeRoot` is intentionally never-firing (explicit-config, §1.2). */
 const NEVER_FIRES = new Set(["generic-files"]);
 
 /**
- * The install-time probe: the FIRST registered adapter (registration order
+ * The §1.2 install-time probe: the FIRST registered adapter (registration order
  * == probe precedence) whose `looksLikeRoot` fires claims the root. This is the
  * REAL "cannot shadow" contract — several probes legitimately overlap (a wiki
  * root also has a root `index.md` so `okf` fires; a `.claude`/`.opencode`/dotenv
@@ -134,9 +137,9 @@ function foldRecognize(adapter: BundleAdapter, c: BundleComponent): IndexDocumen
   return out;
 }
 
-// ── 1. looksLikeRoot own-root-only ───────────────────────────────────────────
+// ── 1. looksLikeRoot own-root-only (§4) ──────────────────────────────────────
 
-describe("conformance — looksLikeRoot own-root-only", () => {
+describe("conformance — looksLikeRoot own-root-only (§4)", () => {
   test("the built-in registry is exactly the 11 format families, and every one has a fixture root", () => {
     // Pins the fixture set: every registered adapter has a golden/fixture root in
     // OWN_ROOT_BY_ID, so the ordered-probe matrix below is complete.
@@ -160,7 +163,7 @@ describe("conformance — looksLikeRoot own-root-only", () => {
     }
   });
 
-  test("the ordered probe selects each root's OWN adapter — no adapter shadows another", () => {
+  test("the §1.2 ordered probe selects each root's OWN adapter — no adapter shadows another", () => {
     for (const [id, root] of Object.entries(OWN_ROOT_BY_ID)) {
       if (NEVER_FIRES.has(id)) {
         // Explicit-config: NO probe claims a generic-files root.
@@ -192,11 +195,11 @@ describe("conformance — looksLikeRoot own-root-only", () => {
   });
 });
 
-// ── 2. index() == fold(recognize) ─────────────────────────────────────────────
+// ── 2. index() == fold(recognize) (§12.3) ────────────────────────────────────
 
-describe("conformance — index() == fold(recognize)", () => {
+describe("conformance — index() == fold(recognize) (§12.3)", () => {
   test("no built-in adapter overrides index() — the conformance is vacuously satisfied", () => {
-    // An adapter overriding index() MUST keep it == fold(recognize).
+    // §12.3: an adapter overriding index() MUST keep it == fold(recognize).
     // None of the built-ins override it, so the core walk × recognize IS the
     // index; the equality holds vacuously.
     expect(okfAdapter.index).toBeUndefined();
@@ -208,7 +211,8 @@ describe("conformance — index() == fold(recognize)", () => {
 
   // fold(recognize) over the golden walk is the live indexer's scan engine
   // (drainDirDocuments × adapter.recognize). These assertions pin each adapter's
-  // recognize-over-walk behavior directly.
+  // recognize-over-walk behavior directly (owner ruling 2026-07-21 — the
+  // walk×recognize mapping the retired `scanComponent` module used to wrap).
   test("akm: fold(recognize) over the all-types walk yields a stable ref/type stream", () => {
     const c = component("all-types", "akm", AKM_ROOT);
     const folded = foldRecognize(akmAdapter, c);

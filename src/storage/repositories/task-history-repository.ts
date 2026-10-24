@@ -3,8 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Repository for the state.db `task_history` table (per-task run ledger).
- * Re-exported by core/state-db.ts so existing importers resolve.
+ * Repository for the state.db `task_history` table (per-task run ledger,
+ * replaces the old per-task JSONL files). Extracted verbatim from
+ * core/state-db.ts — queries unchanged, only relocated behind the repository
+ * boundary. Re-exported by core/state-db.ts so existing importers resolve.
  *
  * @module task-history-repository
  */
@@ -27,9 +29,12 @@ export interface TaskHistoryMetadata {
   detail: TaskHistoryDetail | null;
   engine?: string | null;
   /**
-   * Result-vocabulary marker: present (always `2`) on every row written by
-   * the current code; migration 025 backfills it on older rows whose
-   * `target_kind` meaning changed.
+   * D8 result-vocabulary marker (spec docs/plans/specs/p1b-model-extraction.md
+   * §5.3): present (always `2`) on every row written by the new
+   * result-vocabulary code, absent on legacy rows written before it. The read
+   * boundary (src/tasks/run/task-history.ts's taskHistoryRowToResult) uses its
+   * presence to choose between the new `target_kind` strings and the legacy
+   * read-mapping table.
    */
   targetVocab?: 2;
 }
@@ -54,17 +59,18 @@ function validateDetail(value: unknown): asserts value is TaskHistoryDetail | nu
  * Decode the task-history metadata shape.
  *
  * Read-time compatibility shim (mirrors proposals-repository's
- * `storedToChanges`): older rows predate `metadataVersion`, and some carry
- * additive fields (`profile`, `repairReason`) written by prior releases. An
- * absent `metadataVersion` is a LEGACY row, not corruption — decode what's
- * present (defaulting the absent `detail` key to `null`) instead of throwing.
- * Unknown keys are ignored rather than hard-rejected, so the next additive
- * field never regresses this again; neither `profile` nor `repairReason` is
- * read anywhere downstream, so they are dropped harmlessly rather than
- * round-tripped. A `metadataVersion` that IS present but not `2` is a
- * genuinely unknown/future shape and still rejected, as is a non-number
- * `durationMs` or a `detail` that fails {@link validateDetail} — real
- * corruption, not version skew.
+ * `storedToChanges`): `metadataVersion` was added in a later release. 58% of
+ * a real install's `task_history` rows (8,596/14,801) predate the field
+ * entirely, and 88 more carry additive fields (`profile`, `repairReason`)
+ * written by prior releases. An absent `metadataVersion` is a LEGACY row, not
+ * corruption — decode what's present (defaulting the absent `detail` key to
+ * `null`) instead of throwing. Unknown keys are ignored rather than
+ * hard-rejected, so the next additive field never regresses this again;
+ * neither `profile` nor `repairReason` is read anywhere downstream, so they
+ * are dropped harmlessly rather than round-tripped. A `metadataVersion` that
+ * IS present but not `2` is a genuinely unknown/future shape and still
+ * rejected, as is a non-number `durationMs` or a `detail` that fails
+ * {@link validateDetail} — real corruption, not version skew.
  */
 export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryMetadata {
   let parsed: unknown = input;
@@ -208,6 +214,9 @@ export function upsertTaskHistory(db: Database, row: TaskHistoryRow): void {
 }
 
 /**
+ * Look up a task history row by task_id. Returns undefined when not found.
+ */
+/**
  * Return the most recent run for a given task_id, or undefined if no runs exist.
  */
 export function getTaskHistory(db: Database, taskId: string): TaskHistoryRow | undefined {
@@ -297,11 +306,11 @@ export interface TaskIntervalRow {
  * predicate is fixed because the only caller (commands/health.ts
  * `loadTaskIntervals`) builds wall-time intervals for the improve cron task.
  *
- * Note the bound is
+ * Owns the SQL formerly inlined in commands/health.ts. Note the bound is
  * EXCLUSIVE on the upper end (`started_at < ?`) — callers pass an already
  * widened window; this helper does not widen.
  *
- * Connection-lifetime rule: `.all()` materializes a plain array before
+ * Connection-lifetime rule (WS5): `.all()` materializes a plain array before
  * returning.
  */
 export function queryCompletedTaskIntervals(db: Database, since: string, until?: string): TaskIntervalRow[] {
@@ -327,7 +336,7 @@ export function countTaskHistoryTargetRefs(db: Database, oldBundleId: string): n
 /**
  * Rewrite every `task_history.target_ref` naming `oldBundleId` (a workflow
  * run's fully-qualified `<bundle>//conceptId` target) to `newBundleId`
- * (`akm bundle rename`). A row whose `target_ref` is unset or not
+ * (`akm bundle rename`, D6). A row whose `target_ref` is unset or not
  * bundle-qualified is not matched by the `LIKE` prefix and is left alone.
  * Returns the number of rows rewritten.
  */

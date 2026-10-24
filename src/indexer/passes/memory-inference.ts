@@ -22,13 +22,14 @@
  * Disabling — two orthogonal gates:
  *   1. The selected strategy sets `processes.memoryInference.enabled = false`
  *      blocks the pass at the feature-flag layer (no network call may ever
- *      issue).
+ *      issue). Historically the v1 spec §14 gate, superseded by the 0.8.0
+ *      profile shape.
  *   2. `index.memory.llm = false` (or no resolvable LLM profile) opts the
  *      pass out at the per-pass layer (#208).
  *   A pass runs iff both layers allow it. Existing inferred children are
  *   NEVER deleted — the user keeps what was already produced.
  *
- * Contract:
+ * Locked v1 contract:
  *   - LLM access is exclusively via the frozen runner returned by
  *     `resolveIndexPassExecution("memory", config)`.
  *   - All child memory writes go through `writeAssetToSource` in
@@ -133,8 +134,8 @@ export interface MemoryInferenceResult {
    * Absolute paths this call actually wrote or rewrote — every derived child
    * (`writeAssetToSource`) and every parent whose frontmatter was stamped
    * `inferenceProcessed: true` (`markParentProcessed`). Lets the caller index
-   * exactly these files (`indexWrittenAssets`) instead of a full reindex.
-   * Sourced from the run-scoped write-provenance journal
+   * exactly these files (`indexWrittenAssets`) instead of a full reindex
+   * R78 — sourced from the run-scoped write-provenance journal
    * (`core/write-provenance.ts`), so it can never drift from what actually
    * hit disk.
    */
@@ -373,7 +374,7 @@ async function inferPendingMemoryRecord(
  * short-circuits to a no-op result.
  */
 export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): Promise<MemoryInferenceResult> {
-  // Owns the write-provenance journal end-to-end so it closes on every
+  // R78: owns the write-provenance journal end-to-end so it closes on every
   // exit path, including a throw out of the body below — an unclosed journal
   // would keep reporting every later write in this process as this call's own.
   const provenance = beginWriteProvenance();
@@ -421,8 +422,8 @@ async function runMemoryInferencePassBody(
     return result;
   };
 
-  // Gate 1 — feature gate via isProcessEnabled, which reads the selected
-  // strategy's processes.memoryInference.enabled. Defaults to
+  // Gate 1 — feature gate via isProcessEnabled, which reads the 0.8.0 path
+  // (selected strategy's processes.memoryInference.enabled). Defaults to
   // enabled when the key is absent.
   if (!invocationOwnsRunner && !isProcessEnabled("index", "memory_inference", config)) return completeResult();
 
@@ -711,8 +712,8 @@ function markParentProcessed(parent: MemoryRecord): void {
   // Frontmatter-only rewrite of an existing asset: not a new asset write,
   // so writeAssetToSource isn't a fit here (it would round-trip the body
   // through the asset-spec rendering layer instead of preserving the
-  // user's original markdown bytes verbatim). This is the one deliberate
-  // exception to routing writes through it.
+  // user's original markdown bytes verbatim). The narrow exception is
+  // documented in v1 spec §10 step 5 and CLAUDE.md write-source rules.
   let raw: string;
   try {
     raw = fs.readFileSync(parent.filePath, "utf8");

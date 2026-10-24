@@ -3,18 +3,22 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * ExecutionProvenanceContext.
+ * P1b Lane C — ExecutionProvenanceContext (D5, spec §1.2 / §5.2 / §1.6 D5-N1).
  *
- * This file exercises the `RunTaskOptions.provenance` OPTION itself — an
- * explicit `ExecutionProvenanceContext` overriding the default, threaded across
- * all three dispatch arms — plus the disambiguation that an authored
- * `--scheduled` flag does NOT select the event source (the default context's
+ * `tests/integration/tasks-provenance-characterization.test.ts` (the flipped
+ * P0 file) proves the DEFAULT provenance context reproduces today's observable
+ * behavior for each dispatch arm (P-06 unchanged; P-05 reclassified; R-07
+ * fixed). This file is genuinely new coverage: it exercises the
+ * `RunTaskOptions.provenance` OPTION itself — an explicit
+ * `ExecutionProvenanceContext` overriding the default, threaded across all
+ * three dispatch arms — plus the D5-N1 disambiguation (an authored
+ * `--scheduled` flag does NOT select the event source; the default context's
  * `eventSource` is "task" whether or not the run is scheduled) and the
- * `akm task run` CLI boundary that builds the context.
+ * `akm task run` CLI boundary (§5.2 "Construction") that builds the context.
  *
- * Precedence rule under test throughout: an explicit `provenance.eventSource`
- * is only a FALLBACK — a recognized ambient `AKM_EVENT_SOURCE` still wins
- * everywhere it wins.
+ * Precedence rule under test throughout (spec §5.2, binding): an explicit
+ * `provenance.eventSource` is only a FALLBACK — a recognized ambient
+ * `AKM_EVENT_SOURCE` still wins everywhere it wins today (D5 clause d).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -90,23 +94,27 @@ function shellWord(value: string): string {
 
 function shellTask(command: readonly string[]): string {
   const run = command.map((value) => shellWord(value)).join(" ");
-  // The shell-quoted `run` value itself contains YAML-significant `'`
-  // characters (the shellWord POSIX-quoting idiom), so it cannot be spliced
-  // into the document as a bare/naively-templated scalar — that produces
-  // invalid YAML ("Unexpected single-quoted-scalar at node end"). Serialize
-  // through `yaml`'s own stringifier instead.
+  // Fixture bug fix (pre-existing, unrelated to any P1b authorized flip): the
+  // shell-quoted `run` value itself contains YAML-significant `'` characters
+  // (the shellWord POSIX-quoting idiom), so it cannot be spliced into the
+  // document as a bare/naively-templated scalar — that produced invalid YAML
+  // ("Unexpected single-quoted-scalar at node end"), never actually exercised
+  // while this file was red for unrelated (missing-API) reasons. Serialize
+  // through `yaml`'s own stringifier instead, exactly as the sibling
+  // characterization file's `shellTask` already does.
   return stringifyYaml({ version: 4, run });
 }
 
 describe("native (shell/script) arm reads provenance.eventSource, not a hardcoded literal", () => {
   test('an explicit provenance.eventSource overrides the "task" default in the child env', async () => {
-    // The child env bag's AKM_EVENT_SOURCE is
-    // `process.env.AKM_EVENT_SOURCE ?? provenance.eventSource`. With the
-    // default context that is the literal "task" — the DEFAULT context's
-    // eventSource, not a hardcoded fallback: a caller passing a non-default
-    // provenance context must see THAT value instead.
+    // NEW (D5, spec §5.2 point 1): "keep AKM_EVENT_SOURCE:
+    // process.env.AKM_EVENT_SOURCE ?? provenance.eventSource in the child env
+    // bag … With the default context this is byte-equivalent to today's ??
+    // 'task'." — i.e. the literal "task" the P0/P-06 pin observes is now the
+    // DEFAULT context's eventSource, not a hardcoded fallback: a caller
+    // passing a non-default provenance context must see THAT value instead.
     // ExecutionProvenanceContext.eventSource is the narrow "user" | "task"
-    // union, not the full UsageEventSource enum — "user"
+    // union (spec §5.2's type), not the full UsageEventSource enum — "user"
     // is the only legal non-default value a caller can construct.
     writeTask("native-explicit-source", shellTask([process.execPath, "-e", ECHO_SOURCE_SNIPPET]));
 
@@ -121,8 +129,8 @@ describe("native (shell/script) arm reads provenance.eventSource, not a hardcode
   });
 
   test("a pre-set ambient AKM_EVENT_SOURCE still wins over an explicit non-default provenance.eventSource", async () => {
-    // Precedence rule: an explicit context value is only
-    // a FALLBACK (the native arm's instance). The
+    // Precedence rule (spec §5.2, binding): an explicit context value is only
+    // a FALLBACK. This is the native arm's instance of D5 clause (d). The
     // ambient value itself is not restricted to "user" | "task" — only the
     // CONTEXT's own eventSource field is.
     writeTask("native-ambient-wins", shellTask([process.execPath, "-e", ECHO_SOURCE_SNIPPET]));
@@ -189,8 +197,8 @@ describe("command/prompt arm threads an explicit provenance.eventSource end to e
   }
 
   test('an explicit provenance.eventSource=user overrides the "task" default in the dispatched engine env and the recorded usage-event row', async () => {
-    // ExecutionProvenanceContext.eventSource is "user" | "task" only
-    // — "user" is the meaningful non-default value a caller can
+    // ExecutionProvenanceContext.eventSource is "user" | "task" only (spec
+    // §5.2's type) — "user" is the meaningful non-default value a caller can
     // construct, contrasted against the DEFAULT-context "task" the test.each
     // block below pins for the very same arm.
     writeStoredCommandTask("prompt-explicit-source");
@@ -218,10 +226,11 @@ describe("command/prompt arm threads an explicit provenance.eventSource end to e
     ]);
   });
 
-  // `scheduled: boolean` is a SEPARATE field on the context and does NOT
-  // select the event source: with the DEFAULT context (no explicit
-  // `provenance` passed), the command arm's eventSource is "task" REGARDLESS
-  // of `options.scheduled`.
+  // D5-N1 (spec §1.6, binding disambiguation): "`scheduled: boolean` stays a
+  // SEPARATE field on the context … It does NOT select the event source …
+  // R-07's fix applies to every prompt/command task run, not only scheduled
+  // ones." — with the DEFAULT context (no explicit `provenance` passed), the
+  // command arm's eventSource is "task" REGARDLESS of `options.scheduled`.
   test.each([
     true,
     false,
@@ -254,7 +263,7 @@ describe("command/prompt arm threads an explicit provenance.eventSource end to e
   });
 });
 
-describe('CLI boundary: `akm task run` builds { eventSource: "task", scheduled }', () => {
+describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { eventSource: "task", scheduled }', () => {
   test("manual and scheduled execution both run: the list decides what gets installed, not what may run", async () => {
     const id = "cli-local-activation";
     writeTask(id, "version: 4\nrun: 'true'\nschedule: '@daily'\n");
@@ -268,10 +277,11 @@ describe('CLI boundary: `akm task run` builds { eventSource: "task", scheduled }
     expect(scheduled.code, scheduled.stderr).toBe(0);
   });
 
-  // Exercised through the REAL CLI entry point
-  // (src/commands/tasks/tasks.ts's akmTasksRun) rather than a direct
+  // §1.6 D5-N1's binding resolution, exercised through the REAL CLI entry
+  // point (src/commands/tasks/tasks.ts's akmTasksRun) rather than a direct
   // runTask() call: `--scheduled` toggles `context.scheduled` only.
-  // eventSource is "task" in BOTH cases. A fake no-op agent binary (mirroring
+  // eventSource is "task" in BOTH cases — the R-07 fix is not conditioned on
+  // the flag. A fake no-op agent binary (mirroring
   // tests/integration/usage-provenance-cli.test.ts) makes dispatch succeed
   // without a real engine.
   test.each([
@@ -309,8 +319,14 @@ describe('CLI boundary: `akm task run` builds { eventSource: "task", scheduled }
   });
 });
 
-describe("RunTaskOptions.bundleDir replaces stashDir", () => {
-  // This test only pins the TYPE-LEVEL shape: a bare
+describe("F-3 (type-level only) — RunTaskOptions.bundleDir replaces stashDir", () => {
+  // Scope note: the MECHANICAL rename across every OTHER existing
+  // `RunTaskOptions` call site (tests/integration/tasks-runtime-v3-runner.test.ts
+  // — the canary G-1 requires stay unchanged except for this exact
+  // substitution — tests/integration/tasks-run-attempt-observability.test.ts,
+  // tests/integration/tasks-runner.test.ts) belongs to the same commit as the
+  // `src/tasks/run/**` rename itself, not to this lane's two new files or its
+  // authorized flips. This test only pins the TYPE-LEVEL shape: a bare
   // `bundleDir` (no `stashDir` anywhere) is a complete, valid RunTaskOptions.
   test("runTask accepts bundleDir (no stashDir) and resolves the task normally", async () => {
     writeTask("bundledir-type-level", "version: 4\nuses: workflows/noop\n");

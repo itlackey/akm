@@ -41,7 +41,7 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** The durable `proposals.ref` item_ref: `<bundle>//<conceptId>`. */
+/** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
 function durableRef(stashDir: string, type: string, name: string): string {
   const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
   return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
@@ -359,8 +359,8 @@ describe("existing knowledge body dedup", () => {
     expect(warnings.some((warning) => warning.includes("identical body already exists in knowledge"))).toBe(true);
   });
 
-  it("detects a duplicate whose body starts with its own --- block", async () => {
-    // Regression: the post-LLM dedup hash used to be computed as
+  it("detects a duplicate whose body starts with its own --- block (H1)", async () => {
+    // Regression for H1: the post-LLM dedup hash used to be computed as
     // contentHash(parseFrontmatter(memoryContent).content.trim(), "body") — an already-
     // stripped body run through cacheHash's own internal strip a second time.
     // A body that begins with its own `---`…`---` divider pair only diverges

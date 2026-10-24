@@ -6,17 +6,18 @@
  * Shared JSON parsing utilities for LLM and agent output.
  *
  * Lives in `src/core/` so that both `src/llm/` and `src/integrations/agent/`
- * can import without crossing the one-way boundary (agent/ must not import
- * from llm/).
+ * can import without crossing the one-way boundary defined by v1 spec §9.7
+ * (agent/ must not import from llm/).
  *
- * The canonical implementation:
+ * The canonical implementation is ported from `src/llm/client.ts` (most
+ * complete version):
  *   - Strips `<think>…</think>` reasoning blocks.
  *   - Strips markdown code fences (``` or ~~~, optional language tag, with
  *     trailing spaces on the fence line).
  *   - Escapes unescaped control characters (actual \n, \r, \t bytes) inside
  *     JSON string values so `JSON.parse` succeeds on outputs from local LLMs.
  *   - Balanced-brace scanner handles both `{…}` and `[…]` top-level
- *     structures.
+ *     structures (spawn.ts v0 only handled `{…}` — that was a bug).
  */
 
 /**
@@ -107,7 +108,13 @@ export function parseJsonResponse<T = unknown>(raw: string): T | undefined {
  *
  * Object-preferring: a `{…}` object found first is returned immediately;
  * a top-level array (`[…]`) is only a fallback, returned if no object is
- * found. Callers (all in `src/`) rely on this behavior.
+ * found. Preserves the historical behaviour every current caller (all in
+ * `src/`) relies on.
+ *
+ * An array-preferring mode (`expect: "array"`, for callers that specifically
+ * expect a JSON array) existed here for batched LLM entity-graph extraction
+ * (#635) and was removed with it in 0.9.17-alpha.9 — every remaining caller
+ * calls this with no options, so it was dead weight, not a live choice.
  */
 export function parseEmbeddedJsonResponse<T = unknown>(raw: string): T | undefined {
   const direct = parseJsonResponse<T>(raw);

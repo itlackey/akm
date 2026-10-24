@@ -3,14 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Gate for the AKM workspace's own `akm` adapter
- * (`src/core/adapter/adapters/akm-adapter.ts`).
+ * WI-B gate — the AKM workspace's own `akm` adapter
+ * (`src/core/adapter/adapters/akm-adapter.ts`), implementing
+ * `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §5.1 (BINDING) / §6 / §7.
  *
- * The `akm` adapter reproduces the `runMatchers` classification and
- * `resolveAssetPathFromName` placement verbatim by reusing the existing matcher
- * stack. The byte-for-byte goldens are the conformance gate, so this suite
- * drives the adapter over the SAME `tests/fixtures/stashes/all-types/` fixture
- * the goldens were captured from and asserts:
+ * §5.1 is a behavior-preserving port: the `akm` adapter reproduces TODAY'S
+ * `runMatchers` classification and `resolveAssetPathFromName` placement VERBATIM
+ * by reusing the existing matcher stack. The byte-for-byte Chunk-0b goldens are
+ * the conformance gate, so this suite drives the adapter over the SAME
+ * `tests/fixtures/stashes/all-types/` fixture the goldens were captured from and
+ * asserts:
  *
  *  1. recognition parity — `recognize().type` (and the carried renderer) for
  *     every fixture file equals `goldens/recognition/all-types.json`;
@@ -70,7 +72,7 @@ function allTypesContexts(): FileContext[] {
 
 // ── adapter metadata ─────────────────────────────────────────────────────────
 
-describe("akm adapter — metadata", () => {
+describe("akm adapter — metadata (§7)", () => {
   test("id / version", () => {
     expect(akmAdapter.id).toBe("akm");
     expect(akmAdapter.version).toBe("0.9.2");
@@ -84,12 +86,14 @@ describe("akm adapter — metadata", () => {
   });
 });
 
-// ── 1. recognition parity (byte-for-byte vs the golden) ──────────────────────
+// ── 1. recognition parity (byte-for-byte vs the Chunk-0b golden) ─────────────
 
-describe("akm adapter — recognize reproduces runMatchers classification (BINDING)", () => {
+describe("akm adapter — recognize reproduces runMatchers classification (§5.1 BINDING)", () => {
   test("every fixture file recognizes as its golden type + carries its golden renderer", () => {
     const contexts = allTypesContexts();
-    // 13 assets: exactly one file per type.
+    // 13 assets: 13 types (wiki retired in chunk 4; workflow-format-unification
+    // collapsed workflow to a single .md form, so the fixture stash is back to
+    // exactly one file per type).
     expect(contexts.length).toBe(13);
 
     let asserted = 0;
@@ -99,7 +103,7 @@ describe("akm adapter — recognize reproduces runMatchers classification (BINDI
       const doc = akmAdapter.recognize(component(), ctx);
       expect(doc, `recognize returned null for ${ctx.relPath}`).not.toBeNull();
       expect(doc?.type, `type mismatch for ${ctx.relPath}`).toBe(expected!.type);
-      // Winner's renderer is carried on documentJson (not a new field).
+      // Winner's renderer is carried on documentJson for WI-C (not a new field).
       expect((doc?.documentJson as { renderer?: string })?.renderer, `renderer mismatch for ${ctx.relPath}`).toBe(
         expected!.renderer,
       );
@@ -115,12 +119,12 @@ describe("akm adapter — recognize reproduces runMatchers classification (BINDI
     expect(asserted).toBe(Object.keys(RECOGNITION_GOLDEN.byRelPath).length);
   });
 
-  test("conceptId is the qualified `<stash-subdir>/<canonical-name>` spelling", () => {
+  test("conceptId is the D-R2 qualified `<stash-subdir>/<canonical-name>` spelling", () => {
     const byRel = new Map(allTypesContexts().map((c) => [c.relPath, c]));
-    // conceptId = stashDirFor(type)/canonicalName — for markdown types the OKF
-    // concept ID (path − .md); skill = its DIR (skills/<dir>, not .../SKILL);
-    // script keeps its extension; task/env strip theirs. `entry.name`/FTS keep the
-    // bare canonical name (identity ≠ search).
+    // Ref-grammar decision D-R2: conceptId = stashDirFor(type)/canonicalName —
+    // for markdown types the OKF concept ID (path − .md); skill = its DIR
+    // (skills/<dir>, not .../SKILL); script keeps its extension; task/env strip
+    // theirs. `entry.name`/FTS keep the bare canonical name (identity ≠ search).
     const cases: Array<[relPath: string, conceptId: string]> = [
       ["skills/all-types-skill/SKILL.md", "skills/all-types-skill"], // skill = its dir
       ["scripts/all-types-script.sh", "scripts/all-types-script.sh"], // script keeps ext
@@ -145,15 +149,15 @@ describe("akm adapter — recognize reproduces runMatchers classification (BINDI
   });
 });
 
-// ── 2. recognizeMatch — content/extension winners ───────────────────────────
+// ── 2. recognizeMatch — content/extension winners (§5.1) ─────────────────────
 
-describe("akm adapter — recognizeMatch classifies content/extension winners", () => {
+describe("akm adapter — recognizeMatch classifies content/extension winners (§5.1)", () => {
   test("classifies hand-built contexts where smartMd/extension is the winner", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-adapter-sync-"));
     tmpDirs.push(tmp);
     // Files placed OUTSIDE any type dir so the winner comes from a content/ext
     // probe, not a directory hint — exercising branches the all-types fixture's
-    // parentDir-hint winners mask (section 1 covers the dir-hint winners against the golden).
+    // parentDir-hint winners mask (§1 covers the dir-hint winners against the golden).
     const cases: Array<[rel: string, content: string, type: string]> = [
       ["note.md", "# Just knowledge\n\nplain body\n", "knowledge"], // smartMd knowledge @5
       ["cmd.md", "# Command\n\nUse $ARGUMENTS to pass input\n", "command"], // smartMd command @18 (body probe)
@@ -168,12 +172,12 @@ describe("akm adapter — recognizeMatch classifies content/extension winners", 
   });
 });
 
-// ── 3. placement parity (byte-for-byte vs the golden) ───────────────────────
+// ── 3. placement parity (byte-for-byte vs the Chunk-0b golden) ───────────────
 
-describe("akm adapter — placeNew reproduces resolveAssetPathFromName placement", () => {
+describe("akm adapter — placeNew reproduces resolveAssetPathFromName placement (§5.1)", () => {
   test("every akm type's qualified conceptId places at exactly the golden path", () => {
     for (const [type, entry] of Object.entries(PLACEMENT_GOLDEN.byType)) {
-      // The qualified path-form conceptId: <stash-subdir>/<canonical-name>.
+      // The §1.3 qualified path-form conceptId: <stash-subdir>/<canonical-name>.
       const conceptId = `${entry.stashDir}/${entry.name}`;
       const abs = akmAdapter.placeNew?.(component(), conceptId);
       expect(abs, `placeNew undefined for ${type}`).toBeDefined();
@@ -197,14 +201,16 @@ describe("akm adapter — placeNew reproduces resolveAssetPathFromName placement
   // remaining multi-extension probe branch to exercise.
 });
 
-// ── 3b. recognize folds the 11 metadata contributors ─────────────────────────
+// ── 3b. recognize folds the 11 metadata contributors (§2) ────────────────────
 
-describe("akm adapter — recognize folds the index-time metadata contributors", () => {
+describe("akm adapter — recognize folds the index-time metadata contributors (§2)", () => {
   // Direct pins of the index-time metadata fold (searchHints / toc / parameters)
-  // that `recognize` carries onto the IndexDocument, held as literals. Absence is
-  // pinned too (an empty ExpectedFold asserts recognize adds NO fold surface for
-  // that file). The memory fold's `observed_at` hint is mtime-derived, so it is
-  // pinned by shape.
+  // that `recognize` carries onto the IndexDocument. These values were the parity
+  // ORACLE's output — the retired `applyMetadataContributors` run on a minimal
+  // (name+type) seed, which the fold reproduces by construction — captured here
+  // as literals now that the oracle is gone. Absence is pinned too (an empty
+  // ExpectedFold asserts recognize adds NO fold surface for that file). The
+  // memory fold's `observed_at` hint is mtime-derived, so it is pinned by shape.
   interface ExpectedFold {
     searchHints?: string[];
     toc?: Array<{ level: number; text: string; line: number }>;
@@ -233,9 +239,11 @@ describe("akm adapter — recognize folds the index-time metadata contributors",
     "tasks/all-types-task.yml": {
       searchHints: ["schedule:@daily", "prompt:Say hello from the all-types fixture task."],
     },
-    // The fold surface carries no title/H1 (the workflow format has no authored
-    // titles — a step IS its id) — just each step's id + body prose
-    // (akm-metadata.ts's "workflow-md" contributor).
+    // workflow-format-unification: no more title/H1 in the fold surface (the
+    // unified format carries no authored titles anywhere — a step IS its id,
+    // spec §2.2) — just each step's id + body prose (akm-metadata.ts's
+    // "workflow-md" contributor). The second workflow-program-yaml fixture
+    // form is gone (deleted with the YAML program format, spec §3).
     "workflows/all-types-workflow.md": {
       searchHints: ["# All Types Fixture", "announce", "Print a single fixture line and stop."],
     },
@@ -243,10 +251,11 @@ describe("akm adapter — recognize folds the index-time metadata contributors",
   // mtime-derived observed_at hint — pinned by shape below, not in EXPECTED_FOLDS.
   const MEMORY_REL = "memories/all-types-memory.md";
 
-  // recognize carries the FULL metadata surface plus the contributor fold. The
-  // contributor-EXCLUSIVE fields (searchHints/toc/parameters) are what this test
-  // pins verbatim; the full-surface parity between recognize and the persisted
-  // index is proven by tests/integration/shadow-scan-parity.
+  // Chunk 5 M-b: recognize carries the FULL metadata surface (P1/P2/P4 + the
+  // contributor fold). The contributor-EXCLUSIVE fields (searchHints/toc/
+  // parameters) are what this test pins verbatim; the full-surface parity
+  // between recognize and the persisted index is proven by
+  // tests/integration/shadow-scan-parity.
   test("the contributor-exclusive folds (searchHints/toc/parameters) are carried verbatim into recognize", () => {
     let asserted = 0;
     for (const ctx of allTypesContexts()) {
@@ -275,7 +284,7 @@ describe("akm adapter — recognize folds the index-time metadata contributors",
     expect(asserted).toBe(13);
   });
 
-  test("the winning renderer is still carried on documentJson.renderer (contract intact)", () => {
+  test("the winning renderer is still carried on documentJson.renderer (WI-B contract intact)", () => {
     for (const ctx of allTypesContexts()) {
       const doc = akmAdapter.recognize(component(), ctx);
       expect((doc?.documentJson as { renderer?: string })?.renderer).toBeDefined();
@@ -303,9 +312,9 @@ describe("akm adapter — recognize folds the index-time metadata contributors",
   });
 });
 
-// ── 3c. reserved filenames (index.md / log.md) ───────────────────────────────
+// ── 3c. D-R6 reserved filenames (index.md / log.md) ──────────────────────────
 
-describe("akm adapter — reserved filenames are never items", () => {
+describe("akm adapter — D-R6 reserved filenames are never items (spec §5.1)", () => {
   test("a bundle-root README.md is documentation, not a knowledge item (#979)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-adapter-root-readme-"));
     tmpDirs.push(tmp);
@@ -320,7 +329,7 @@ describe("akm adapter — reserved filenames are never items", () => {
     const knowledgeDir = path.join(tmp, "knowledge");
     fs.mkdirSync(knowledgeDir);
     const file = path.join(knowledgeDir, "index.md");
-    // Without the reserved-filename guard the directoryMatcher would classify this as
+    // Without the D-R6 guard the directoryMatcher would classify this as
     // `knowledge`; the reserved-file exclusion must veto it.
     fs.writeFileSync(file, "# Directory listing\n\n- [a](all-types-knowledge.md)\n");
     expect(akmAdapter.recognize(component({ root: tmp }), buildFileContext(tmp, file))).toBeNull();
@@ -351,7 +360,7 @@ describe("akm adapter — reserved filenames are never items", () => {
 
 // ── 4. directoryList / looksLikeRoot ─────────────────────────────────────────
 
-describe("akm adapter — owned dirs + root probe", () => {
+describe("akm adapter — owned dirs + root probe (§7 / §1.2)", () => {
   test("directoryList = the TYPE_DIRS stash subdirs", () => {
     const dirs = new Set(akmAdapter.directoryList?.(component()));
     for (const d of [
@@ -391,10 +400,11 @@ describe("akm adapter — owned dirs + root probe", () => {
   });
 });
 
-// ── adapter-owned filtering ───────────────────────────────────────────────────
+// ── adapter-owned filtering (moved from `shouldIndexStashFile`) ───────────────
 //
-// The AKM-stash indexing policy lives in the `akm` adapter's `recognize` as
-// path/stat-based abstention.
+// Owner ruling 2026-07-21: the AKM-stash indexing policy that used to live in the
+// indexer's `shouldIndexStashFile` pre-filter now lives in the `akm` adapter's
+// `recognize` as path/stat-based abstention. Re-pinned at its new home.
 
 /** Build a temp AKM stash root and write `<relPath> = content`, creating parent dirs. */
 function makeStashWith(files: Record<string, string>): string {

@@ -3,12 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Source-target resolution contract.
+ * Tests-first WP7 source-target resolution contract.
  *
  * New starts must compile one single-job GitHub-shaped workflow through the
- * same command/task/script authorities used outside workflows, retain
+ * same WP5/G command/task/script authorities used outside workflows, retain
  * fully-qualified provenance, and fail before durable mutation on every
- * target the runtime cannot project.
+ * target the 0.9.2 runtime cannot project.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -242,8 +242,11 @@ describe("workflow v4 common target resolution", () => {
 
 describe("workflow v4 fail-closed source targets", () => {
   test.each([
-    // A 2-job document fails at PARSE, at the adapter boundary
-    // (multi-job-unsupported).
+    // P4 FLIP (docs/plans/specs/p4-deletions-closeout.md §3.3, row B-34,
+    // F-A3.11 — discovered flip, recorded in the Review log): a 2-job
+    // document now fails at PARSE, at the adapter boundary
+    // (multi-job-unsupported), not at the freeze-time "job boundaries and
+    // needs" check that row B-44 deletes.
     [
       "multi-job",
       [
@@ -260,8 +263,9 @@ describe("workflow v4 fail-closed source targets", () => {
       ].join("\n"),
       /requires exactly one job/i,
     ],
-    // This rejects as an unrecognized ref shape, not a
-    // recognized-but-out-of-scope one.
+    // P4 FLIP (docs/plans/specs/p4-deletions-closeout.md §3.1, row B-05,
+    // F-A1.19): the locator grammar is deleted — this now rejects as an
+    // unrecognized ref shape, not a recognized-but-out-of-scope one.
     ["remote-action", workflowYaml("      - id: remote\n        uses: actions/checkout@v4"), /target ref/i],
     [
       "nonprojectable-agent",

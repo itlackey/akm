@@ -57,7 +57,7 @@ function runEmit(error: unknown): Captured {
   return { exitCode, envelope: JSON.parse(stderr) as Record<string, unknown> };
 }
 
-describe("classifyExitCode via emitJsonError", () => {
+describe("classifyExitCode via emitJsonError (H6)", () => {
   it("restores the local process exit code to numeric zero", () => {
     process.exitCode = 0;
     runEmit(new UsageError("bad flag", "INVALID_FLAG_VALUE"));

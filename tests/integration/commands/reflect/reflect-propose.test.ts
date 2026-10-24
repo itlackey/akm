@@ -2,7 +2,8 @@
  * Mock-CLI tests for `akm reflect` and `akm propose` (#226).
  *
  * These exercise the proposal-producer pipeline end-to-end without spawning
- * a real agent CLI. We inject a fake {@link SpawnFn} so failure-reason
+ * a real agent CLI. We inject a fake {@link SpawnFn} (the same seam locked
+ * by `tests/architecture/agent-spawn-seam.test.ts`) so failure-reason
  * branches are deterministic.
  *
  * Coverage:
@@ -610,7 +611,7 @@ describe("akm propose", () => {
 
     const events = readEvents({ type: "propose_invoked" });
     expect(events.events.length).toBe(1);
-    // propose_invoked carries the same fully-qualified item_ref the
+    // WI-8.5b: propose_invoked now carries the same fully-qualified item_ref the
     // durable proposal is minted under.
     expect(events.events[0]?.ref).toBe(durableItemRef(stash, "skill", "hello"));
   });
@@ -752,7 +753,7 @@ describe("akm propose", () => {
     expect(listProposals(stash).length).toBe(0);
   });
 
-  // ── registered custom type ───────────────────────────────────────────────
+  // ── #284 GAP-HIGH 3: registered custom type ──────────────────────────────
   test("akmPropose accepts a custom type registered via registerAssetSpec", async () => {
     const { registerAssetSpec, deregisterAssetSpec } = await import("../../../../src/core/asset/asset-placement");
     registerAssetSpec("widget", {

@@ -138,7 +138,7 @@ describe("registry add/remove/list via config", () => {
 
 // ── registry remove safety guard (WS0) ──────────────────────────────────────
 
-describe("registry remove confirmation guard", () => {
+describe("registry remove confirmation guard (WS0)", () => {
   function seedRegistries(): void {
     const config = loadConfig();
     const registries: RegistryConfigEntry[] = [
@@ -369,7 +369,7 @@ describe("config roundtrip", () => {
 // directly) so a regression in the CLI wiring itself is caught, not just in
 // the underlying library function.
 
-describe("registry search via CLI consults configured registries", () => {
+describe("registry search via CLI consults configured registries (R-008)", () => {
   test("a registry added to config is searched by `akm search --from registry`", async () => {
     const index: RegistryIndex = {
       version: 3,
@@ -461,7 +461,7 @@ describe("registry search via CLI consults configured registries", () => {
 // both the configured-registries case and the default-fallback case here
 // guards the DRY-up against a behavioral regression.
 
-describe("registry list via CLI", () => {
+describe("registry list via CLI (R-066 #5)", () => {
   test("lists configured registries when present", async () => {
     const config = loadConfig();
     saveConfig({ ...config, registries: [{ url: "https://custom.example/index.json", name: "custom" }] });

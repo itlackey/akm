@@ -1,13 +1,18 @@
 /**
  * Tests for the agent command builder feature:
  *   - builders.ts: opencodeBuilder, claudeBuilder, getCommandBuilder
+ *
+ * Coverage follows v1 spec §12.2 and §12.3.
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentCommandBuilder, AgentDispatchRequest } from "../../src/integrations/agent/builder-shared";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 
-// No warn fake here: nothing under test imports warn. If a warn assertion is
-// needed, use the `_setWarnSinkForTests` seam via tests/_helpers/seams.ts.
+// NOTE: this file previously carried a full 13-export mock.module fake of
+// src/core/warn. Nothing under test here (builders and profiles)
+// imports warn, and the captured `warnings` array was never asserted — the
+// fake was dead weight and is gone. If a warn assertion is ever needed, use
+// the `_setWarnSinkForTests` seam via tests/_helpers/seams.ts.
 
 // ── Profile helpers ───────────────────────────────────────────────────────────
 
@@ -326,7 +331,7 @@ describe("getCommandBuilder — platform routing", () => {
   });
 });
 
-// ── builders.ts — argument injection guards ───────────────────────────────────
+// ── builders.ts — argument injection guards (M5) ──────────────────────────────
 
 describe("builders — argument injection guards", () => {
   test("opencodeBuilder: prompt preceded by '--' end-of-options separator", async () => {
@@ -351,6 +356,10 @@ describe("builders — argument injection guards", () => {
     expect(argv[sepIdx + 1]).toBe("do work");
   });
 
+  // "unknown platforms cannot synthesize a generic argv" (D10) removed:
+  // identical call and assertion as the "getCommandBuilder — platform
+  // routing" describe block's `getCommandBuilder("unknown")` test at :284-287.
+
   test("opencodeBuilder: a model/systemPrompt starting with '--' is passed through, not rejected", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const builder = getCommandBuilder("opencode");
@@ -367,6 +376,11 @@ describe("builders — argument injection guards", () => {
     expect(() => builder.build(profile, { prompt: "task", model: "--evil", systemPrompt: "--injected" })).not.toThrow();
   });
 
+  // "unknown platforms fail before accepting model flags" (D10) removed:
+  // identical call and assertion as :284-287, and mis-titled — neither this
+  // nor the removed :380-383 test asserted anything about argv or model
+  // flags despite their names.
+
   test("valid model and systemPrompt values do not throw", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const builder = getCommandBuilder("opencode");
@@ -381,7 +395,7 @@ describe("builders — argument injection guards", () => {
   });
 });
 
-// ── Registry-derived builders + missing-builder error ─────────────────────────
+// ── Registry-derived builders + missing-builder error (P0.5 drift fix) ────────
 
 describe("getCommandBuilder — derived from HARNESS_REGISTRY", () => {
   test("canonical ids resolve while profile and harness aliases are rejected", async () => {
@@ -392,7 +406,7 @@ describe("getCommandBuilder — derived from HARNESS_REGISTRY", () => {
     expect(() => getCommandBuilder("claude-code")).toThrow();
   });
 
-  test("adapters resolve only through canonical harness ids", async () => {
+  test("P2 adapters resolve only through canonical harness ids", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     for (const platform of ["codex", "gemini", "aider"]) {
       expect(getCommandBuilder(platform).platform).toBe(platform);
@@ -400,7 +414,7 @@ describe("getCommandBuilder — derived from HARNESS_REGISTRY", () => {
     }
   });
 
-  test("the harness additions resolve without profile aliases", async () => {
+  test("the P2 harness additions resolve without profile aliases", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     for (const platform of ["copilot", "pi", "amazonq", "openhands"]) {
       expect(getCommandBuilder(platform).platform).toBe(platform);

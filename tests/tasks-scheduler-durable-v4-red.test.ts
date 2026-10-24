@@ -91,8 +91,10 @@ describe("scheduled workflows under task sync", () => {
       ].join("\n"),
       /exactly one (?:source-IR )?job|single-job|multi-job|cannot project/i,
     ],
-    // The locator grammar does not exist: this rejects as an unrecognized ref
-    // shape (unsupported-uses-target).
+    // P4 FLIP (docs/plans/specs/p4-deletions-closeout.md §3.1, row B-05,
+    // F-A1.19): the locator grammar is deleted — this now rejects as an
+    // unrecognized ref shape (unsupported-uses-target), not the old
+    // remote-action-acquisition reason.
     [
       "remote action",
       workflow("invalid", ["      - id: remote", "        uses: actions/checkout@v4"]),

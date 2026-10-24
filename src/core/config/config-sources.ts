@@ -25,6 +25,11 @@ export function bundleComponentConfig(
 }
 
 /**
+ * Convert the current `bundles` map into its ordered provider projection:
+ * `defaultBundle` first, then map insertion order. Each entry's `name` is its
+ * bundle key. Returns `undefined` when no bundles map is configured.
+ */
+/**
  * A bundle's true identity: its configured `path` plus its component's
  * `root` (default `"."`), fully resolved. Two bundle entries whose bare
  * `path` differs (relative vs. absolute, trailing slash, `~` vs. expanded)
@@ -119,8 +124,8 @@ function hashBundleSourceIdentity(identity: Readonly<Record<string, unknown>>): 
 }
 
 /**
- * The resolved primary stash path — the `defaultBundle`'s filesystem `path` —
- * or `undefined` when no filesystem primary is configured.
+ * The resolved primary stash path — the `defaultBundle`'s filesystem `path`
+ * (spec §10.1) — or `undefined` when no filesystem primary is configured.
  */
 export function primaryBundlePath(config: AkmConfig): string | undefined {
   const bundles = config.bundles;
@@ -210,19 +215,19 @@ export function bundleEntryToSourceEntry(
     };
   }
   if (typeof bundle.npm === "string" && bundle.npm.length > 0) {
-    // An npm source carries the package spec in `path` (see parseSourceSpec).
+    // Today's npm source carries the package spec in `path` (see parseSourceSpec).
     return { type: "npm", path: bundle.npm, ...base };
   }
   return undefined;
 }
 
 /**
- * Desired bundle descriptor for a registry-installed source.
+ * Desired 0.9.0 bundle descriptor for a registry-installed source (spec §10.1).
  * Maps the install source kind onto the ONE source descriptor a bundle entry
  * carries: git/github → a provider-ready clone URL, npm → `{ npm: ref }`,
  * everything else (local/filesystem) → `{ path: stashRoot }`.
  *
- * CRITICAL: the materialized cache root NEVER appears in the
+ * CRITICAL (spec §10.2:453): the materialized cache root NEVER appears in the
  * descriptor for a git/npm bundle — the desired config carries only the source
  * descriptor; the install locator stays in `registryId` and the resolved root
  * belongs exclusively in the lock's `localRoot`. Callers layer
@@ -307,8 +312,8 @@ export function parseSourceSpec(entry: SourceConfigEntry): SourceSpec | undefine
 
 /**
  * Build the full ordered list of runtime {@link ConfiguredSource} values from a
- * loaded {@link AkmConfig}, resolved from `bundles` + `defaultBundle`: the
- * `defaultBundle` (primary) first, then map insertion order. The
+ * loaded {@link AkmConfig}, resolved from `bundles` + `defaultBundle` (spec
+ * §10.1): the `defaultBundle` (primary) first, then map insertion order. The
  * retired `stashDir`/`sources[]`/`installed[]` trio is never read or normalized.
  *
  * Entries with `enabled: false` are still emitted — callers decide whether to

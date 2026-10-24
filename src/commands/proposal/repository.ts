@@ -198,12 +198,12 @@ export interface CreateProposalInput {
   /** The eligibility lane that selected the source asset. */
   eligibilitySource?: EligibilitySource;
   /**
-   * A consolidate PROMOTION proposal's source memory ref: set
+   * A consolidate PROMOTION proposal's source memory ref (alpha.9, O1): set
    * by `emitPromotionProposal`. On accept, the source (and its `.derived`
    * twin) is retired through the same archive path a `retire` proposal uses.
    */
   promotionSource?: string;
-  /** Body content hash of `promotionSource` at mint time — see `Proposal.promotionSourceHash`. */
+  /** Body content hash of `promotionSource` at mint time (alpha.9, B3) — see `Proposal.promotionSourceHash`. */
   promotionSourceHash?: string;
   /** A feedback fix's reason and cited source — see `Proposal.feedback`. */
   feedback?: ProposalFeedbackFix;
@@ -514,7 +514,7 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
 export interface CreateRetireProposalInput {
   /** The ref of the asset being retired — becomes the proposal's own ref. */
   ref: string;
-  /** One of {@link PROPOSAL_SOURCES}; the consolidate pair pass always uses `"consolidate-pair"` — kept apart from `"consolidate"`'s promotions. */
+  /** One of {@link PROPOSAL_SOURCES}; the consolidate pair pass always uses `"consolidate-pair"` (S6) — kept apart from `"consolidate"`'s promotions. */
   source: ProposalSource | string;
   sourceRun?: string;
   target?: { source: string; root: string };
@@ -524,7 +524,7 @@ export interface CreateRetireProposalInput {
 }
 
 /**
- * Mint a `retire` proposal (the consolidate pair pass): its
+ * Mint a `retire` proposal (0.9.17-alpha.9, the consolidate pair pass): its
  * primary `FileChange` deletes `ref`'s own file rather than writing new
  * content, so this does not reuse {@link createProposal} (which always
  * builds a create/update change and enforces content/description rules that
@@ -681,7 +681,7 @@ export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: Propo
     if (exact) return exact;
     if (idOrRef.includes(":") || idOrRef.includes("/")) {
       const wantRef = filterRefIdentity(idOrRef);
-      // By-ref resolution never picks a retire proposal — the
+      // Should-fix 7: by-ref resolution never picks a retire proposal — the
       // newest pending proposal for a ref could be a `consolidate-pair`
       // retirement rather than the reflect/distill edit a person typed the
       // ref to accept, and accepting it archives the asset instead. A retire
@@ -884,7 +884,7 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
   const nowMs = (ctx?.now ?? Date.now)();
   const pending = listProposals(stashDir, { status: "pending" }, ctx);
   for (const p of pending) {
-    // A retire proposal never expires by age. The accept-time
+    // Should-fix 8: a retire proposal never expires by age. B2's accept-time
     // hash check already refuses it once it goes stale, and the
     // one-pending-retire-per-asset rule (pair-pass.ts's pendingRetireRefs)
     // bounds how many can queue up — retention expiry would instead
@@ -1237,7 +1237,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  * frontmatter; every other byte, the body included, stays as written. The
  * edited text is parsed back to confirm it holds exactly the intended mapping;
  * when it does not (an indented `---` inside a block scalar), the frontmatter is
- * written out again instead.
+ * written out again instead, as it always used to be.
  */
 function stampProposalProvenance(
   content: string,
@@ -1384,7 +1384,7 @@ export function preflightProposalPromotion(
     : repairedContent;
   if (markdown && fs.existsSync(assetPath)) {
     // Keep the live target's bookkeeping frontmatter the proposal doesn't set
-    // — dropping `inferenceProcessed` would re-run inference.
+    // (STALE, R20) — dropping `inferenceProcessed` would re-run inference.
     try {
       stampedContent = carryForwardBookkeepingFrontmatter(stampedContent, fs.readFileSync(assetPath, "utf8"));
     } catch {
@@ -1401,7 +1401,7 @@ export function preflightProposalPromotion(
 
 /**
  * The target's current bytes, provided it is still the one the proposal was
- * minted against: compared bookkeeping-insensitively when the
+ * minted against (STALE, R20): compared bookkeeping-insensitively when the
  * proposal carries a normalized before-hash, exactly otherwise. A target that
  * already holds this proposal's content is a promotion that wrote but did not
  * record — finishing it is allowed. Never overwrites newer content.
@@ -1465,7 +1465,7 @@ function acceptCommitMessage(proposal: Proposal): string {
 }
 
 /**
- * An accepted consolidate PROMOTION retires its source memory
+ * O1 (alpha.9): an accepted consolidate PROMOTION retires its source memory
  * (and its `.derived` twin), so promotion no longer leaves a memory/
  * knowledge duplicate behind. Runs whether a person accepted the promotion
  * or triage auto-promotion did — this is called from inside
@@ -1475,7 +1475,7 @@ function acceptCommitMessage(proposal: Proposal): string {
  * and a source already gone (raced with something else, or never existed)
  * is silently skipped, not an error.
  *
- * The promotion was queued against the source's content as it stood at
+ * B3: the promotion was queued against the source's content as it stood at
  * mint time (`accepted.promotionSourceHash`). If the source was edited since
  * — the freshest edit is exactly what a person would not want silently
  * discarded into the archive — this only warns and leaves the source alone;
@@ -1642,7 +1642,7 @@ function alreadyArchivedOriginalPaths(stashRoot: string, dirs: string[]): Set<st
 }
 
 /**
- * Record a retire accept's intent — `backupContent` and which
+ * Should-fix 5: record a retire accept's intent — `backupContent` and which
  * files (asset, `.derived` twin) are about to move — on the still-pending
  * proposal BEFORE any file is moved. A crash after this point resumes from
  * exactly this record instead of re-deriving `backupContent` from whatever
@@ -1745,10 +1745,10 @@ function persistRetireAcceptance(
 }
 
 /**
- * Throws a stale-retire `UsageError` unless the successor still exists
+ * B2: throws a stale-retire `UsageError` unless the successor still exists
  * and both sides' recorded body hashes still match their current files — the
- * durable half of the chain guard. Used for a fresh accept, and to re-check a
- * resumed accept whose intent was recorded but
+ * durable half of the chain guard. Used for a fresh accept, and (4b, third
+ * review round) to re-check a resumed accept whose intent was recorded but
  * nothing has moved yet: a separate proposal accepted in between (e.g. this
  * one's successor itself retired by a B->C accept) can make the decision
  * stale even though nothing about the retired side's own file changed.
@@ -1776,16 +1776,18 @@ function assertRetirementStillFresh(
 }
 
 /**
- * Accept a `retire` proposal (the consolidate pair pass): no
- * new content is written. This is a three-phase, resume-safe sequence: (1) record intent — `backupContent`
+ * Accept a `retire` proposal (0.9.17-alpha.9, the consolidate pair pass): no
+ * new content is written. Should-fix 5 (second review round) makes this a
+ * three-phase, resume-safe sequence: (1) record intent — `backupContent`
  * and the exact files about to move — on the still-pending proposal; (2)
  * move each file into the recoverable cleanup archive
  * (`archiveCleanupCandidate`), skipping any the tombstone scan shows a prior,
  * crashed attempt already moved; (3) finalize via
  * {@link persistRetireAcceptance}. A `supersedes` judgement writes the
- * supersede edge on the retired (older) side AFTER intent is recorded (recording
- * it first means a crash before the edge write can never cause a resume to
- * re-read the file and capture its own edge into `backupContent`), so the archived copy still preserves it. A
+ * supersede edge on the retired (older) side AFTER intent is recorded (4a,
+ * third review round — recording it first means a crash before the edge
+ * write can never cause a resume to re-read the file and capture its own
+ * edge into `backupContent`), so the archived copy still preserves it. A
  * target already gone with no recorded intent (raced with something else)
  * fails cleanly with a `UsageError`, the same clean-error idiom every other
  * staleness check in this file uses — never an unhandled throw.
@@ -1843,12 +1845,12 @@ async function retireProposalWithLease(
       // createRetireProposal always sets this — a row without one is corrupt, not merely stale.
       throw new Error(`Retire proposal ${proposal.id} has no retirement metadata.`);
     }
-    // The durable half of the chain guard (the same-run half is
+    // B2 (this is the durable half of the chain guard; the same-run half is
     // `retiredThisRun` in pair-pass.ts):
     assertRetirementStillFresh(proposal.id, proposal.ref, retirement, target.source, currentBytes);
     assertAkmAssetWrite(target.source);
     // Phase 1: record intent BEFORE any move, and BEFORE the supersede edge
-    // — `backupContent` is `currentBytes`, read
+    // (4a, third review round) — `backupContent` is `currentBytes`, read
     // above, before any mutation of this file. Recording first means a crash
     // between here and the edge write below can never cause a resume to
     // re-read the file and capture the edge INTO backupContent as if it were
@@ -1866,8 +1868,8 @@ async function retireProposalWithLease(
     }
   } else {
     assertAkmAssetWrite(target.source);
-    // Intent was recorded but Phase 2 never moved anything yet — re-run the
-    // freshness check before resuming. A
+    // 4b (third review round): intent was recorded but Phase 2 never moved
+    // anything yet — re-run the B2 freshness check before resuming. A
     // separate proposal accepted in the meantime (this one's successor
     // itself retired by a B->C accept) can make the decision stale even
     // though nothing here changed. Once something has moved, it is too late
@@ -1905,7 +1907,7 @@ async function retireProposalWithLease(
       path.join(mutationTarget.source.path, record.auditPath),
     );
   }
-  // The twin path is re-derived, not carried on the
+  // 4d (third review round): the twin path is re-derived, not carried on the
   // intent — it is a pure function of assetPath and the ref's type, and the
   // tombstone scan above (`alreadyDone`) already finds one archived earlier,
   // so storing it was redundant persisted state.
@@ -1974,10 +1976,10 @@ export async function revertProposal(
 }
 
 /**
- * Revert an accepted `retire` proposal: move the archived
+ * Revert an accepted `retire` proposal (0.9.17-alpha.9): move the archived
  * file(s) — the retired asset, and its `.derived` twin when one was archived
  * alongside it — back to where they lived, then overwrite the primary with
- * the exact pre-retire bytes `backupContent` recorded at accept —
+ * the exact pre-retire bytes `backupContent` recorded at accept (S4) —
  * byte-exact, so it also undoes any supersede edge accept wrote without
  * touching one a person had already written, and without appending a
  * trailing newline the original never had. Each archive dir is located from
@@ -1985,16 +1987,16 @@ export async function revertProposal(
  * tombstone names the exact paths to restore — no re-scan of every
  * tombstone in the archive.
  *
- * Every archive dir is resolved and validated before any of them are moved,
- * AND that validation tells "not
+ * Should-fix 5 (second review round): every archive dir is resolved and
+ * validated before any of them are moved, AND that validation tells "not
  * yet moved" apart from "already moved by an earlier, crashed attempt of
  * our own" (original present, archived copy gone) rather than treating the
  * latter as a conflict — so a retry of a crashed revert resumes instead of
  * erroring on its own prior work. The archive dirs (tombstones) are removed
  * only after the "reverted" decision is durably recorded, not interleaved
- * with the moves — deleting a file's tombstone first would, on a crash
- * between moving the file and recording the decision, leave an "accepted"
- * proposal a retry could neither finish nor re-validate.
+ * with the moves — a crash between moving a file and recording the
+ * decision used to delete that file's tombstone first, leaving an
+ * "accepted" proposal a retry could neither finish nor re-validate.
  */
 async function unretireProposalWithLease(
   stashDir: string,
@@ -2073,7 +2075,8 @@ async function unretireProposalWithLease(
         "INVALID_FLAG_VALUE",
       );
     }
-    // "Original present, archived copy missing" is not necessarily our own earlier, crashed revert — once a
+    // Must-fix 2 (third review round): "original present, archived copy
+    // missing" is not necessarily our own earlier, crashed revert — once a
     // purge can delete an archived copy on its own, a LATER, unrelated file
     // can occupy this same path (a new memory reusing a retired one's name),
     // and the write step below would overwrite it with the retired asset's
@@ -2110,7 +2113,7 @@ async function unretireProposalWithLease(
     restoredPaths.push(p.originalAbs, p.archivedAbs, p.auditPath);
     if (path.resolve(p.originalAbs) === path.resolve(assetPath)) primaryOriginalAbs = p.originalAbs;
   }
-  // Overwrite the primary with the EXACT pre-retire bytes recorded
+  // S4 / nit: overwrite the primary with the EXACT pre-retire bytes recorded
   // at accept (`backupContent`) — no appended trailing newline either, so
   // YAML comments, key order, a pre-existing human `supersededBy` edge, and
   // even the exact absence of a final newline all survive the round trip.
@@ -2208,7 +2211,8 @@ async function revertProposalWithLease(
   }
   const target = prepareWriteTargetForMutation(boundTarget);
   if (!fs.existsSync(assetPath) || contentHash(fs.readFileSync(assetPath)) !== recorded.contentHash) {
-    // By-ref resolution skips retire proposals, so reverting by ref when a SEPARATE retire proposal
+    // Nit (third review round): by-ref resolution skips retire proposals
+    // (should-fix 7), so reverting by ref when a SEPARATE retire proposal
     // for the same ref exists (pending or already accepted) lands here with
     // no clue that proposal is the real story — name it when one does.
     const siblingRetire = listProposalsReadOnly(stashDir, { ref: proposal.ref, includeArchive: true }, ctx).find(
@@ -2249,8 +2253,8 @@ function staleRefusal(check: () => void): string | undefined {
  * Why `proposal` cannot be reopened, or `undefined` when it can. Only a
  * rejected proposal comes back, and only one accept would not refuse as stale:
  * a retire proposal needs its successor and both recorded body hashes to still
- * match, any other its target to be what it was minted against
- * — so a reopened proposal is never one the next accept refuses.
+ * match (B2), any other its target to be what it was minted against
+ * (STALE, R20) — so a reopened proposal is never one the next accept refuses.
  */
 function reopenRefusal(config: AkmConfig, proposal: Proposal, queueTarget?: ResolvedWriteTarget): string | undefined {
   if (proposal.status !== "rejected") {

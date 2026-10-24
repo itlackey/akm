@@ -119,17 +119,17 @@ describe("plan freezing at workflow start (migration 006)", () => {
 
     expect(result.done).toBe(true);
     expect(prompts).toHaveLength(1);
-    // The frozen instructions dispatched, never the edited ones.
+    // Old semantics: the frozen instructions dispatched, never the edited ones.
     expect(prompts[0]).toContain("Do the ORIGINAL thing.");
     expect(prompts[0]).not.toContain("Do the EDITED thing.");
     expect(result.warnings?.some((w) => w.includes("has changed since this run was frozen"))).toBe(true);
   });
 
   test(`body instructions containing literal \${{ … }} pass through verbatim (stable contract)`, async () => {
-    // Regression: body prose is
+    // Peer-review regression, preserved under the unified format: body prose is
     // opaque data, never scanned for `${{ … }}` grammar — only frontmatter
     // whole-value positions (map.over/route.input/inputs) carry the reference
-    // grammar. A literal `${{ github.sha }}` (GitHub Actions
+    // grammar (spec §2.3). A literal `${{ github.sha }}` (GitHub Actions
     // syntax) in a step's instructions must dispatch byte-exact, never parsed
     // or substituted.
     writeWorkflow(

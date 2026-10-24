@@ -5,10 +5,12 @@
 /**
  * TESTS for state migration `025-task-history-vocabulary-backfill`.
  *
- * This migration retires the legacy `task_history.target_kind` read mapping by
- * rewriting every pre-vocabulary-change row to the current vocabulary once, in
- * place, instead of leaving three separate read sites to keep re-deriving the
- * mapping forever.
+ * This migration retires the D8 legacy `task_history.target_kind` read
+ * mapping (`docs/architecture/decisions/0005-task-result-vocabulary-and-
+ * legacy-read-mapping.md`'s 2026-09-01 supersession of row B-51,
+ * `docs/plans/specs/p4-deletions-closeout.md`) by rewriting every
+ * pre-D8 row to the current vocabulary once, in place, instead of leaving
+ * three separate read sites to keep re-deriving the mapping forever.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";

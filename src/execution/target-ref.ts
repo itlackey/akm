@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The target-ref classifier.
+ * The target-ref classifier (P1a Lane B, docs/plans/specs/p1a-with-rejection-classifier.md §4.1).
  *
  * `classifyTargetRef` is the canonical classifier for a canonical asset ref
  * used as an execution target: `commands/<name>`, `scripts/<name>`,
@@ -21,7 +21,7 @@
  *      first `/` is one of `commands`, `scripts`, `tasks`, `workflows`;
  *   5. the name segment after the first `/` is non-empty.
  *
- * Explicit non-goals: no GitHub locator grammar, no
+ * Explicit non-goals (binding, spec §4.1): no GitHub locator grammar, no
  * `akm/command` builtin special case, no resolution, no filesystem access, no
  * guessing. Callers layer builtin detection on top (see
  * `classifyWorkflowStepUses` in src/workflows/source-semantics.ts).

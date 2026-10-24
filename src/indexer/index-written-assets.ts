@@ -8,8 +8,10 @@
  * The index is maintained eagerly by every first-class mutation command
  * (`source add`, `wiki`, `workflow`, `setup` all run `akmIndex()` after
  * writing). The memory write paths — `akm remember` / `writeMarkdownAsset`
- * and extract's session assets — index through this module instead, so reads
- * never need a stale-triggered background reindex.
+ * and extract's session assets — historically did not, which is why reads
+ * used to compensate with stale-triggered background reindexes (the
+ * lock-contention footgun removed alongside this module's introduction, per
+ * the 2026-07 read-path reindex-contention findings §7).
  *
  * This is NOT a general reindex. It upserts exactly the files the caller just
  * wrote: frontmatter/metadata via the shared matcher pipeline, the canonical
@@ -49,8 +51,9 @@ export const WRITE_PATH_INDEX_BUSY_TIMEOUT_MS = 5_000;
  *
  * FAIL-OPEN at every step: any error (index.db absent, empty, locked past the
  * busy timeout, unparseable file) is reduced to a verbose-only warning and the
- * write command succeeds untouched. The degraded outcome is that the asset
- * appears after the next full `akm index` / improve-cron run.
+ * write command succeeds untouched. The degraded outcome is exactly the
+ * pre-write-path-indexing behavior: the asset appears after the next full
+ * `akm index` / improve-cron run.
  *
  * An absent or empty index is skipped on purpose — bootstrap belongs to the
  * first read (`ensureIndex`) or an explicit `akm index`, which also cover
@@ -103,7 +106,7 @@ export async function indexWrittenAssets(
     // The full walk never descends into dot-directories (for example `.meta/`)
     // — mirror that dot-segment skip here so this fast path indexes exactly
     // what a full run would. Sensitive/
-    // infra abstention is the adapter's job (see the `akmAdapter` note
+    // infra abstention is the adapter's job now (see the `akmAdapter` note
     // below), not a path pre-filter.
     const files = filePaths.filter((f) => {
       const rel = path.relative(stashDir, f);
@@ -113,7 +116,7 @@ export async function indexWrittenAssets(
 
     // Generate metadata BEFORE opening the DB so the write window stays
     // short. One drain call per file keeps the entry↔path pairing exact and
-    // reuses the full-index recognize engine: broken
+    // reuses the full-index recognize engine (F4a M-core-2 item 5): broken
     // workflows drop, valid workflow docs are cached for the side-table upsert.
     const component = deriveInstallations([
       { path: stashDir, writable: true, ...(options.bundleId ? { registryId: options.bundleId } : {}) },
@@ -136,7 +139,7 @@ export async function indexWrittenAssets(
         }
       }
       const ctx = buildFileContext(stashDir, file);
-      // Hardcoded `akmAdapter` on purpose: this
+      // Hardcoded `akmAdapter` on purpose (owner ruling 2026-07-21): this
       // write-path fast path only ever runs for assets a first-class akm
       // mutation command just wrote into a managed akm source, so the akm
       // adapter is always the right recognizer here — no per-component
@@ -187,7 +190,7 @@ export async function indexWrittenAssets(
         mutated ||= unindexableEntryIds.size > 0;
         for (const { file, entry, conceptId, contentHash } of pairs) {
           const entryWithSize = withFileSize(entry, file);
-          // Populate item_ref/content_hash
+          // Real provenance (F4a M-core-2 item 5): populate item_ref/content_hash
           // via the SAME derivation the full-index writer uses, so a write-path
           // row is never a NULL-item_ref straggler.
           const provenance = deriveEntryProvenance(

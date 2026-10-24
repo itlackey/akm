@@ -234,13 +234,13 @@ describe("addStash", () => {
     expect(getSources(loadConfig())).toEqual([]);
   });
 
-  // ── --provider npm with a bare package spec ─────────────────────────────
+  // ── R-013: --provider npm with a bare package spec ──────────────────────
   //
-  // Regression coverage: `akm add <pkg> --provider npm` must not silently ignore
-  // `providerType` for a non-URL target and create a filesystem bundle for
-  // `<cwd>/<pkg>` instead. A bare package spec must become a declarative npm
-  // bundle descriptor (`{ npm: <spec> }`), and a URL target must be rejected
-  // loudly at add time (never a valid npm spec).
+  // Regression coverage for R-013: `akm add <pkg> --provider npm` used to
+  // silently ignore `providerType` for any non-URL target and create a
+  // filesystem bundle for `<cwd>/<pkg>` instead. A bare package spec must
+  // become a declarative npm bundle descriptor (`{ npm: <spec> }`), and a URL
+  // target must be rejected loudly at add time (never a valid npm spec).
 
   test("a bare package spec with --provider npm creates an npm bundle, not a filesystem one", () => {
     const result = addStash({ target: "lodash", providerType: "npm" });
@@ -411,9 +411,9 @@ describe("removeStash", () => {
   });
 
   test("prefers URL match over name match", () => {
-    // A source name IS its bundle key (slug-legal), so it can never equal a URL;
-    // removeStash still matches by URL before falling back to the key, which this
-    // exercises.
+    // 0.9.0 (spec §11.1): a source name IS its bundle key (slug-legal), so it can
+    // never equal a URL; removeStash still matches by URL before falling back to
+    // the key, which this exercises.
     const url = "https://example.com";
     addStash({ target: url, providerType: "website", name: "my-source" });
     addStash({ target: "https://other.example.com", providerType: "website", name: "other-source" });
@@ -457,8 +457,10 @@ describe("removeStash", () => {
 });
 
 // ── Round-trip integration ──────────────────────────────────────────────────
-// These round-trip tests cover `addStash` / `removeStash` and read sources back
-// via `getSources(loadConfig())` directly.
+// R-063 #6: `listStashes`/`SourceListResult` (a thin `{ getSources(loadConfig()),
+// resolveSourceEntries() }` wrapper with zero production callers) were deleted;
+// these round-trip tests cover the real production functions (`addStash` /
+// `removeStash`) and now read sources back via `getSources(loadConfig())` directly.
 
 describe("round-trip integration", () => {
   test("add then list then remove filesystem source", () => {

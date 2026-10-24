@@ -12,16 +12,19 @@ import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv } from "../_he
 
 // Helpers.
 //
-// Tests run through the shared in-process harness (tests/_helpers/cli.ts),
-// which drives the akm citty command directly, so there is no subprocess
-// startup cost. Output and exit codes are captured in-process.
+// Migrated from per-test spawnSync("bun", ["src/cli.ts", ...]) to the shared
+// in-process harness (tests/_helpers/cli.ts). The harness drives the akm citty
+// command directly, so there is no subprocess startup cost. Output and exit
+// codes are captured in-process.
 //
 // The preload (tests/_preload.ts) already sandboxes HOME, the XDG dirs, and the
-// AKM dir overrides per test. Env/temp-dir mutation goes through the
-// allowlisted sandbox helpers (withEnv / makeStashDir / makeSandboxDir).
+// AKM dir overrides per test, so the explicit isolated dirs the spawn version
+// passed via env are no longer needed for isolation. Env/temp-dir mutation goes
+// through the allowlisted sandbox helpers (withEnv / makeStashDir /
+// makeSandboxDir) to satisfy the test-isolation lint.
 //
 // The one case that needs to run from a project working directory (registry
-// remove) spawns a real subprocess: it asserts project-vs-user config
+// remove) still spawns a real subprocess: it asserts project-vs-user config
 // layering driven by process.cwd(), and changing cwd in-process to a temp dir
 // breaks Bun's bare-specifier module resolver for the CLI's lazy dynamic
 // imports. That is a genuine process-level behavior, so it stays a subprocess.
@@ -60,7 +63,8 @@ function spawnCli(
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status ?? 1 };
 }
 
-// The default sandbox (from the preload) has no stash configured.
+// The default sandbox (from the preload) has no stash configured, which is what
+// the original spawn version achieved by passing AKM_BUNDLE_DIR undefined.
 
 // Tests.
 
@@ -68,6 +72,7 @@ describe("CLI error handling", () => {
   test("search without stash dir prints JSON error with hint", async () => {
     const { stderr, status } = await runCli("search", "test");
     // ConfigError (no bundle dir configured) -> exit 78 / STASH_DIR_NOT_FOUND.
+    // Ground-truthed by probing the actual CLI output before pinning.
     expect(status).toBe(78);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.code).toBe("STASH_DIR_NOT_FOUND");
@@ -88,7 +93,8 @@ describe("CLI error handling", () => {
     const { stderr, status } = await runCli("search", "test", "--from", "invalid");
     // Named-source validation: unknown source names produce INVALID_SOURCE_VALUE
     // with a message that lists valid source names (or says none are configured).
-    // Usage error -> exit 2.
+    // Usage error -> exit 2. Ground-truthed by probing the actual CLI output
+    // before pinning.
     expect(status).toBe(2);
     expect(stderr).toContain("Unknown source name");
     expect(stderr).toContain("INVALID_SOURCE_VALUE");
@@ -101,7 +107,8 @@ describe("CLI error handling", () => {
     const { stderr, status } = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () =>
       runCli("search", "test", "--detail", "invalid"),
     );
-    // Usage error (INVALID_DETAIL_VALUE) -> exit 2.
+    // Usage error (INVALID_DETAIL_VALUE) -> exit 2. Ground-truthed by probing
+    // the actual CLI output before pinning.
     expect(status).toBe(2);
     expect(stderr).toContain("Invalid value for --detail");
     expect(stderr).toContain("hint");
@@ -148,7 +155,8 @@ describe("CLI error handling", () => {
 
   test("config set with invalid JSON prints hint about quoting", async () => {
     const { stderr, status } = await runCli("config", "set", "embedding", "not-valid-json");
-    // Usage error (INVALID_JSON_CONFIG_VALUE) -> exit 2.
+    // Usage error (INVALID_JSON_CONFIG_VALUE) -> exit 2. Ground-truthed by
+    // probing the actual CLI output before pinning.
     expect(status).toBe(2);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
@@ -161,7 +169,8 @@ describe("CLI error handling", () => {
     // with code STASH_DIR_NOT_FOUND. The CLI surfaces error.hint(), not a regex
     // against the message string.
     const { stderr, status } = await runCli("search", "test");
-    // ConfigError (no bundle dir configured) -> exit 78.
+    // ConfigError (no bundle dir configured) -> exit 78. Ground-truthed by
+    // probing the actual CLI output before pinning.
     expect(status).toBe(78);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
@@ -171,18 +180,25 @@ describe("CLI error handling", () => {
   });
 });
 
-// CLI-envelope-level coverage of two diagnostic codes declared in
-// src/core/errors.ts: one test per code asserting the {ok:false,error,code}
-// JSON envelope on stderr and exit 2.
-describe("CLI envelope coverage for the diagnostic codes (COMPOSITION_INVALID, TASK_SOURCE_INVALID)", () => {
+// P1a carried advisory, wired here per docs/plans/specs/p1b-model-extraction.md
+// §1.5 (binding choice: "the envelope tests extend
+// tests/integration/cli-errors.test.ts. No tasks-cli-envelope family exists
+// at head … and minting one for two cases would fragment the CLI-envelope
+// surface.") and §5.5. Both codes were declared and WIRED by P1a (D7,
+// src/core/errors.ts) — this is new CLI-envelope-level coverage of an
+// already-correct throw, not a behavior flip: one test per code asserting
+// the {ok:false,error,code} JSON envelope on stderr and exit 2.
+describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID, TASK_SOURCE_INVALID)", () => {
   test("akm task run of a malformed task source emits {ok:false,code:TASK_SOURCE_INVALID} on stderr, exit 2", async () => {
     const stash = makeStashDir();
     disposers.push(stash);
     fs.mkdirSync(path.join(stash.dir, "tasks"), { recursive: true });
-    // Task source v4 makes scheduling OPTIONAL, so "neither akm.schedule nor
-    // on: declared" is not an error at all. `run:` and `uses:` both present is
-    // task source v4's own "exactly one executable selector"
-    // TASK_SOURCE_INVALID instead.
+    // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.2, row B-18/B-19,
+    // F-A2.35) retired the R-06 shape this fixture used to pin — task source
+    // v4 makes scheduling OPTIONAL, so "neither akm.schedule nor on:
+    // declared" is no longer an error at all (D2-N6). `run:` and `uses:`
+    // both present is task source v4's own "exactly one executable selector"
+    // TASK_SOURCE_INVALID instead — the same code, a different malformation.
     fs.writeFileSync(
       path.join(stash.dir, "tasks", "bad-source.yml"),
       "version: 4\nrun: echo hi\nuses: commands/x\n",
@@ -238,8 +254,8 @@ describe("CLI envelope coverage for the diagnostic codes (COMPOSITION_INVALID, T
       path.join(stash.dir, "tasks", "nightly.yml"),
       ["version: 4", "uses: commands/review", ""].join("\n"),
     );
-    // taskDispatch's head guard rejects a workflow step composing a task
-    // target with a with: block.
+    // Lane A's with-rejection (P1a, taskDispatch's head guard): a workflow
+    // step composing a task target with a with: block.
     fs.writeFileSync(
       path.join(stash.dir, "workflows", "with-on-task.yml"),
       [
@@ -274,12 +290,42 @@ describe("CLI envelope coverage for the diagnostic codes (COMPOSITION_INVALID, T
   });
 });
 
+// P4 (docs/plans/specs/p4-deletions-closeout.md §5.2, carried advisory R-R7):
+// investigated adding CLI-envelope + exit-2 coverage for TARGET_REF_INVALID
+// and TASK_TARGET_UNSUPPORTED — the two D7 codes with no test at this level
+// before P4's INVALID_FLAG_VALUE re-coding sweep — and found BOTH
+// unreachable through any real `akm` invocation, so no test is added for
+// either (a fabricated assertion of an unreachable code would be worse than
+// no coverage). Recorded per the phase's own rule ("a defect discovered …
+// is recorded … and left unfixed") rather than silently absorbed:
+//
+//   - TARGET_REF_INVALID: `classifyTargetRef`'s only two callers each
+//     immediately re-code its thrown UsageError before it can reach a CLI
+//     boundary. `src/tasks/source/task-source-v4.ts`'s `parseTarget` wraps
+//     it through `sourceError(ctx, ["uses"], cause.message)`, which always
+//     re-throws as TASK_SOURCE_INVALID (verified empirically: a v4 task with
+//     `uses: nonsense/target` surfaces `{code:"TASK_SOURCE_INVALID"}`, not
+//     TARGET_REF_INVALID). `src/workflows/source-ir/uses.ts`'s
+//     `classifyWorkflowSourceUses` similarly feeds a compile-time
+//     `WorkflowSourceSemanticError` (its own `unsupported-uses-target` family
+//     of codes), which the freeze wrapper's P4-N2 mapping (§3.3.4) recodes
+//     onto WORKFLOW_SOURCE_INVALID or COMPOSITION_INVALID at the CLI
+//     boundary. TARGET_REF_INVALID's `.code` is exercised only at the unit
+//     level (`tests/execution/target-ref.test.ts`).
+//   - TASK_TARGET_UNSUPPORTED: script-capture.ts's two live throw sites are
+//     both structurally unreachable in THIS runtime — `SCRIPT_EXTENSIONS`
+//     (src/core/recognition-util.ts) and `SCRIPT_INTERPRETERS`'s key set
+//     (script-capture.ts) are the identical 16 extensions, so no script
+//     asset can ever resolve (a prerequisite reached before
+//     `scriptInterpreter` runs) with an extension `scriptInterpreter` then
+//     rejects; and the Bun-required arm's guard (`!process.versions.bun`) is
+//     always false under `bun test`.
+//
 // WORKFLOW_SOURCE_INVALID, TASK_SOURCE_INVALID, COMPOSITION_INVALID, and
-// INPUT_BINDING_INVALID have CLI-level coverage: the describe block above;
-// tests/commands/tasks-input-flags.test.ts;
+// INPUT_BINDING_INVALID all already have CLI-level coverage: the describe
+// block above; tests/integration/commands/tasks-input-flags.test.ts;
 // tests/integration/workflows/workflow-source-collision.test.ts;
-// tests/commands/workflow-cli-contract.test.ts. TARGET_REF_INVALID's `.code` is
-// exercised at the unit level (`tests/execution/target-ref.test.ts`).
+// tests/integration/commands/workflow-cli-contract.test.ts.
 
 describe("error class hints", () => {
   test("ConfigError derives hint from code by default", () => {
@@ -319,7 +365,7 @@ describe("error class hints", () => {
   });
 
   test("NotFoundError derives hint from code by default", () => {
-    // #284: canned hints exist for the remaining codes.
+    // Wave C #284 added canned hints for the remaining codes.
     expect(new NotFoundError("missing source", "SOURCE_NOT_FOUND").hint()).toContain("akm bundle list");
     expect(new NotFoundError("missing asset", "ASSET_NOT_FOUND").hint()).toContain("akm search");
     expect(new NotFoundError("missing wf", "WORKFLOW_NOT_FOUND").hint()).toContain("akm workflow list");
@@ -426,12 +472,17 @@ describe("registry remove", () => {
 
 // Output-shape registry regression guard.
 //
+// On 2026-05-25 four CLI verbs (akm lint, akm tasks, akm graph, akm db) were
+// each broken by the same root cause: their command name was never registered
+// in src/output/shapes/passthrough.ts. Every invocation returned an
+// {"ok":false,"error":"output shape not registered for command: <name>"}
+// envelope with exit 0. The verbs ran their command logic correctly, then died
+// at the output-rendering step.
+//
 // The bug class: adding a defineCommand in src/cli.ts whose handler calls
 // output("X", result) without also adding "X" to PASSTHROUGH_COMMANDS (or
 // registering a custom shape elsewhere) leaves the command non-functional in a
-// way that no other test catches: every invocation returns an
-// {"ok":false,"error":"output shape not registered for command: <name>"}
-// envelope with exit 0, after the verb ran its command logic correctly.
+// way that no other test catches.
 //
 // This regression guard invokes each read-only verb against the isolated sandbox
 // stash and asserts the output doesn't carry the specific error string. It's
@@ -463,18 +514,20 @@ describe("output shape registry — every CLI verb returns a registered shape", 
   }
 });
 
-// Unknown commands and missing required args must exit 2 (usage), matching
-// STABILITY.md's exit-code table — not 1. citty's own `runMain`
-// unconditionally calls `process.exit(1)` for any error escaping
-// `runCommand`, including its unexported `CLIError` (unknown command /
-// missing args / "no command specified"), so `src/cli.ts` does not call
-// `runMain`; it drives `runCommand` directly and reclassifies that one error
-// family as USAGE (2). This can only be observed through a real subprocess:
-// the in-process harness (`runCliCapture` in tests/_helpers/cli.ts) drives
-// citty's `runCommand` directly and never runs `src/cli.ts`'s
-// `import.meta.main`-gated startup block where the reclassification lives
-// (see that harness's own module docstring).
-describe("citty CLIError family exits 2, not 1", () => {
+// R-032: unknown commands and missing required args must exit 2 (usage),
+// matching STABILITY.md's exit-code table — not 1. The root cause was
+// citty's own `runMain` unconditionally calling `process.exit(1)` for any
+// error escaping `runCommand`, including its unexported `CLIError` (unknown
+// command / missing args / "no command specified"). `src/cli.ts` no longer
+// calls `runMain`; it drives `runCommand` directly and reclassifies that one
+// error family as USAGE (2). This can only be observed through a real
+// subprocess: the in-process harness (`runCliCapture` in
+// tests/_helpers/cli.ts) drives citty's `runCommand` directly and never runs
+// `src/cli.ts`'s `import.meta.main`-gated startup block where the fix lives
+// (see that harness's own module docstring, and
+// tests/integration/commands/distill/distill-cli-flag.test.ts's comment on
+// the same split).
+describe("R-032: citty CLIError family exits 2, not 1", () => {
   test("akm totally-bogus (unknown top-level command) exits 2", () => {
     const { status, stderr } = spawnCli(["totally-bogus"], { cwd: repoRoot });
     expect(status).toBe(2);
@@ -489,7 +542,7 @@ describe("citty CLIError family exits 2, not 1", () => {
     expect(stderr).toContain("wiki");
   });
 
-  // `config enable`/`config disable` (a hardcoded skills.sh registry
+  // C4: `config enable`/`config disable` (a hardcoded skills.sh registry
   // toggle) were removed in 0.9.0 — use `akm registry add|remove`. Real
   // subprocess required: the in-process harness does not reproduce citty's
   // exit code for an unknown subcommand of a known group.
@@ -513,19 +566,24 @@ describe("citty CLIError family exits 2, not 1", () => {
     expect(stderr).toContain("Missing required positional argument");
   });
 
-  // Canonical bare-group behavior: every `akm <group>` with no subcommand
-  // produces the SAME structured usage envelope on stderr and exits 2, so a
-  // script can parse the failure uniformly.
-  // One test PER GROUP rather than one loop over all groups. The loop form
-  // spawned a real subprocess per group inside a single test, and at roughly
-  // half a second of Bun startup each it sat right on the harness's default 5s
+  // Owner ruling 12 canonical bare-group behavior: every `akm <group>` with no
+  // subcommand produces the SAME structured usage envelope on stderr and exits
+  // 2. Before 0.9.0 the twelve groups split three ways — some ran an implicit
+  // default action and exited 0, and `log`/`lessons`/`registry` fell through to
+  // citty's human usage banner on stdout. Matching exit codes was not enough:
+  // a script could not parse the failure uniformly.
+  // One test PER GROUP rather than one loop over all eleven. The loop form
+  // spawned eleven real subprocesses inside a single test, and at roughly half
+  // a second of Bun startup each it sat right on the harness's default 5s
   // per-test budget — green locally, intermittently red under CI load, and
   // reported as a timeout that names no group. Per-group tests each carry one
   // spawn, and a failure says which group broke.
   //
-  // `log` is not in this list: it is a terminal leaf command (bare `akm log`
-  // is a valid invocation, not a bare-group usage error; see
-  // tests/commands/observability-cli-envelope.test.ts).
+  // 0.9.0 CLI overhaul (S3): `log` and `lessons` dropped out of this list —
+  // `log` is now a terminal leaf command (bare `akm log` is a valid
+  // invocation, not a bare-group usage error; see
+  // tests/commands/observability-cli-envelope.test.ts) and `lessons` was
+  // removed entirely.
   for (const group of ["migrate", "registry", "config", "proposal", "env", "secret", "task", "workflow"]) {
     test(`bare akm ${group} emits the canonical usage envelope and exits 2`, () => {
       const { status, stderr } = spawnCli([group], { cwd: repoRoot });
@@ -537,7 +595,7 @@ describe("citty CLIError family exits 2, not 1", () => {
     });
   }
 
-  test("akm --help still exits 0 and prints usage (unaffected by the fix)", () => {
+  test("akm --help still exits 0 and prints usage (unaffected by the R-032 fix)", () => {
     const { status, stdout } = spawnCli(["--help"], { cwd: repoRoot });
     expect(status).toBe(0);
     expect(stdout).toContain("USAGE");
@@ -546,7 +604,7 @@ describe("citty CLIError family exits 2, not 1", () => {
     expect(stdout).toContain("1   not found / command-reported failure");
   });
 
-  // citty's CLIError is routed through the SAME
+  // S11 item 3: citty's CLIError is now routed through the SAME
   // `{ok:false,error,code,hint}` envelope every other command's failure
   // uses, instead of citty's own usage-banner + raw `console.error(message)`.
   test("akm totally-bogus emits the standard JSON envelope with a stable code", () => {
@@ -559,7 +617,7 @@ describe("citty CLIError family exits 2, not 1", () => {
     expect(parsed.hint).toContain("akm --help");
   });
 
-  // Did-you-mean via edit distance over the sibling command set
+  // S11 item 3: did-you-mean via edit distance over the sibling command set
   // at the point of failure.
   test("akm serach (typo of search) suggests the close sibling command", () => {
     const { status, stderr } = spawnCli(["serach"], { cwd: repoRoot });
@@ -586,7 +644,7 @@ describe("citty CLIError family exits 2, not 1", () => {
       [["history"], "akm log --ref"],
       [["mv", "a", "b"], "rekey-asset-ref.ts"],
       [["extract"], "akm proposal extract"],
-      // The removed `akm vault ...` family
+      // The removed `akm vault ...` family (0.9.0 release-notes headline)
       // falls through to a generic did-you-mean without this hint.
       [["vault", "list"], "akm env list"],
       [["vault", "get", "x"], "akm secret set"],
@@ -620,16 +678,16 @@ describe("citty CLIError family exits 2, not 1", () => {
     }
   });
 
-  // Removed flags (as opposed to removed commands) get a hint from
-  // `retiredFlagHint` (src/cli/retired-commands.ts) rather than only a generic
-  // "unknown flag" from src/cli/unknown-flags.ts. Uses a
+  // Removed 0.9 flags (as opposed to removed commands) get no hint at all
+  // today — just a generic "unknown flag" from src/cli/unknown-flags.ts.
+  // `retiredFlagHint` (src/cli/retired-commands.ts) closes that gap. Uses a
   // real subprocess (like the retired-spellings tests above), not the
   // `runCli` in-process harness: a `UsageError` thrown by `assertKnownFlags`
   // — BEFORE citty's own `runCommand` ever starts — escapes the harness's
   // replicated startup contract without going through `emitJsonError`, so it
   // lands in `stderr` as a raw message instead of the JSON envelope the real
-  // CLI always produces here (`bun src/cli.ts index --background` prints the
-  // proper `{"ok":false,...}` envelope).
+  // CLI always produces here (verified directly: `bun src/cli.ts index
+  // --background` prints the proper `{"ok":false,...}` envelope).
   test("retired flags on their current command hint the replacement procedure", () => {
     const cases: Array<[string[], string]> = [
       [["index", "--background"], "--quiet"],
@@ -649,9 +707,10 @@ describe("citty CLIError family exits 2, not 1", () => {
   });
 });
 
-// The sectioned root help groups top-level commands instead of citty's flat
-// alphabetical-by-declaration COMMANDS dump.
-describe("sectioned root help", () => {
+// S11 item 1/2: the sectioned root help groups top-level commands instead of
+// citty's flat alphabetical-by-declaration COMMANDS dump, and hides the
+// self-update-only `migrate` group from it (while it still executes).
+describe("S11: sectioned root help", () => {
   test("bare akm prints the sectioned overview and exits 0", () => {
     const { status, stdout, stderr } = spawnCli([], { cwd: repoRoot });
     expect(status).toBe(0);
@@ -703,7 +762,7 @@ describe("sectioned root help", () => {
   });
 
   test("akm --help lists migrate in the SYSTEM section", () => {
-    // The upgrade instructions tell users to run
+    // Previously hidden (S11): the upgrade instructions tell users to run
     // `akm migrate status`/`apply` first, so the command needs to be
     // discoverable from `akm --help` rather than a self-update-only secret.
     const { stdout } = spawnCli(["--help"], { cwd: repoRoot });
@@ -742,9 +801,10 @@ describe("sectioned root help", () => {
   });
 
   test("akm bundle add --help lists every registry adapter id in --adapter's description (#909)", () => {
-    // Regression: the valid `components.*.adapter` names must be discoverable
-    // from the CLI: `akm bundle add --help` names the `--adapter` flag and
-    // lists every registry adapter id.
+    // Regression: there was no way to discover the valid `components.*.adapter`
+    // names from the CLI at all (`akm bundle add --help` named no `--adapter`
+    // flag, let alone a registry listing). RED on old code: no `--adapter` flag
+    // existed, so none of these assertions held.
     const { status, stdout, stderr } = spawnCli(["bundle", "add", "--help"], { cwd: repoRoot });
     expect(status).toBe(0);
     expect(stderr).toBe("");
@@ -770,21 +830,37 @@ describe("sectioned root help", () => {
   });
 });
 
-// Every TERMINAL leaf command (akm health, akm index, akm lint, akm log,
-// akm hints, ...) must declare `GLOBAL_OUTPUT_ARGS` (src/cli/shared.ts) the way
-// every `defineJsonCommand` leaf does, so `--format`/`--detail`/`--shape`/
-// `--output` are visible in `--help`. `hints` is format-exempt (see
-// `formatExemptSurfaces()` below). The guard below fails loudly on any leaf
-// that doesn't declare them.
+// R-051: five TERMINAL leaf commands (akm health, akm index, akm lint, the
+// former akm log tail, and akm hints) were declared via a raw
+// `defineCommand`/inline `runWithJsonErrors` rather than `defineJsonCommand`,
+// so they did not automatically inherit `GLOBAL_OUTPUT_ARGS`
+// (src/cli/shared.ts) the way every `defineJsonCommand` leaf does. All five
+// already PARSED `--format`/`--detail`/`--shape`/`--output` correctly (none
+// declares a positional a stray value could fall into), so this was a
+// `--help` visibility / consistency gap, not a live parsing defect. This
+// package (PKG-8) owns and fixed three of the five (`health`/`index`/
+// `lint`); the other two (`log tail`, `hints`) lived in
+// src/commands/observability-cli.ts, owned by a different package at the
+// time — `hints` is format-exempt (see
+// `formatExemptSurfaces()` below), and `log tail` was the last one, fixed by
+// the W3-A backlog package. All six leaves now declare the flags, so the
+// allowlist this comment used to describe is gone: the guard below simply
+// fails loudly on any leaf that doesn't declare them.
 //
 // Scope note: this walk only considers TERMINAL leaves — commands with a
 // `run` and no `subCommands` of their own. `defineGroupCommand`-based
 // dispatch groups (`akm graph`, `akm task`, `akm proposal`, …) also have a
-// `run` (their subcommand-routing + bare-invocation guard), but the canonical
-// bare-group behavior is a usage error (exit 2) via `defineGroupCommand`'s
-// shared default, not a command-specific `output()` call, so they are out of
-// scope here.
-describe("GLOBAL_OUTPUT_ARGS coverage guard", () => {
+// `run` (their subcommand-routing + bare-invocation guard), but whether
+// their OWN bare-invocation behavior needs `GLOBAL_OUTPUT_ARGS` is a
+// separate, broader question this triage item didn't scope or fix. Note: as
+// of 0.9.0 (owner ruling 12) the canonical bare-group behavior is a usage
+// error (exit 2) via `defineGroupCommand`'s shared default, not a
+// command-specific `output()` call — `akm graph`'s bare invocation used to
+// call `output()` directly (the gap this comment originally flagged) but no
+// longer does. Some other groups may still carry a similar gap where
+// `defaultRun` remains an explicit override; touching those means editing
+// files this package does not own.
+describe("GLOBAL_OUTPUT_ARGS coverage guard (R-051)", () => {
   // biome-ignore lint/suspicious/noExplicitAny: walking citty's dynamically-shaped command tree
   type AnyCittyCommandForTest = Record<string, any>;
 
@@ -800,8 +876,11 @@ describe("GLOBAL_OUTPUT_ARGS coverage guard", () => {
    * depth. Excludes both pure routing groups with no `run` at all (never
    * render output on their own) and `defineGroupCommand` dispatch groups
    * that have both a `run` AND `subCommands` (out of scope — see the
-   * describe-block comment above). `akm log` is itself a terminal leaf, so
-   * this walk sweeps it up like any other leaf.
+   * describe-block comment above). 0.9.0 CLI overhaul (S3): `akm log` was
+   * one such pure routing group (`list`/`tail` subcommands); it is now
+   * itself a terminal leaf (the `tail` subcommand was dropped) and so is
+   * swept up by this walk like any other leaf. `akm lessons` (the other
+   * former example here) was dropped entirely.
    */
   function collectTerminalLeafCommands(
     cmd: AnyCittyCommandForTest,
@@ -839,7 +918,7 @@ describe("GLOBAL_OUTPUT_ARGS coverage guard", () => {
     expect(missing).toEqual([]);
   });
 
-  test("the three sites (health, index, lint) declare GLOBAL_OUTPUT_ARGS", () => {
+  test("the three PKG-8-owned sites (health, index, lint) declare GLOBAL_OUTPUT_ARGS", () => {
     const requiredKeys = Object.keys(GLOBAL_OUTPUT_ARGS);
     const leaves = collectTerminalLeafCommands(main as unknown as AnyCittyCommandForTest);
     for (const path of ["health", "index", "lint"]) {
@@ -853,9 +932,12 @@ describe("GLOBAL_OUTPUT_ARGS coverage guard", () => {
   });
 });
 
-// `--shape summary` is a hard usage error everywhere except `akm show`, and
-// that caveat should be visible from a leaf's own `--help`, not only the
-// root's.
+// R-050(c) (S11: R-050(b)'s own "--detail is a no-op on info/list/remember"
+// boilerplate was dropped from the canonical wording — `list` doesn't exist
+// as a bare command any more (folded into `akm bundle list`, S7), and a
+// caveat naming stale commands is worse than no caveat). `--shape summary`
+// is still a hard usage error everywhere except `akm show`, and that caveat
+// should still be visible from a leaf's own `--help`, not only the root's.
 describe("GLOBAL_OUTPUT_ARGS help text is scoped honestly (R-050c)", () => {
   test("--shape repeats the 'summary is show-only' caveat root help documents", () => {
     expect(GLOBAL_OUTPUT_ARGS.shape.description).toContain("summary");

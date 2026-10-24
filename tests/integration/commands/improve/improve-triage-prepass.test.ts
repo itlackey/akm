@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The triage drain runs as an improve PRE-pass,
+ * Phase 4 (proposal-triage): the triage drain runs as an improve PRE-pass,
  * under the hoisted `improve.lock`, gated on the `triage` process being enabled
  * and on a whole-stash / type-scoped run.
  *
@@ -117,7 +117,7 @@ describe("akm improve — triage pre-pass", () => {
       expect(drainProposalsFn).toHaveBeenCalledTimes(1);
       const opts = captured[0];
       expect(opts?.dryRun).toBe(false);
-      // No fresh ids exist pre-improve, so excludeIds is empty.
+      // Decision #2: no fresh ids exist pre-improve, so excludeIds is empty.
       expect(opts?.excludeIds?.size).toBe(0);
       expect(opts?.applyMode).toBe("queue");
     },
@@ -125,7 +125,7 @@ describe("akm improve — triage pre-pass", () => {
   );
 
   test(
-    "the pre-pass drain runs under withLlmStage, attributed to triage.judgment",
+    "R17: the pre-pass drain runs under withLlmStage, attributed to triage.judgment",
     async () => {
       writeMemory("alpha", "Remember alpha details.");
       await akmIndex({ stashDir, full: true });
@@ -391,7 +391,7 @@ describe("akm improve — triage pre-pass", () => {
   test(
     "lock-leak guard: improve.lock is released and a second run is not blocked",
     async () => {
-      // Regression guard for the lock hoist: the lock is
+      // Regression guard for the Phase 4 lock hoist (§7): the lock is now
       // acquired ABOVE the pre-index region (ensureIndex / collectEligibleRefs /
       // contradiction-detection / memory-cleanup analysis) so the triage pre-pass
       // runs under it. A throw anywhere in that region must release the lock
@@ -428,14 +428,14 @@ describe("akm improve — triage pre-pass", () => {
   test(
     "lock-leak guard (FIX 2): a throw from the end-of-run sync region does not leak the lock",
     async () => {
-      // Regression: the lock is held by a single try/finally that spans
+      // FIX-2 regression: the lock is now held by a single try/finally that spans
       // the budget-timer setup, openStateDatabase(), the strategyFilteredRefs
       // audit loop, AND the main run through the end-of-run sync. The finally
       // releases `improve.lock` exactly once. The end-of-run sync swallows its own
       // failures (non-fatal), so this run still resolves ok — but the key
       // assertion is that the lock file is gone afterward and a back-to-back run
-      // is not blocked. (A throw in the post-acquire/pre-mainTry gap would
-      // leak the lock; this asserts the unified finally always releases it.)
+      // is not blocked. (Pre-fix, a throw in the post-acquire/pre-mainTry gap
+      // leaked the lock; this asserts the unified finally always releases it.)
       writeMemory("alpha", "Remember alpha details.");
       await akmIndex({ stashDir, full: true });
 
@@ -472,7 +472,7 @@ describe("akm improve — triage pre-pass", () => {
   );
 
   test(
-    "ensureIndex runs BEFORE triage, and triage's own writes are indexed " +
+    "R6: ensureIndex runs BEFORE triage, and triage's own writes are indexed " +
       "incrementally before collectEligibleRefs runs",
     async () => {
       writeMemory("alpha", "Remember alpha details.");

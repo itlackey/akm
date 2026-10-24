@@ -15,29 +15,28 @@ import type { RunnerSpec } from "../integrations/agent/runner";
 import type { AgentFailureReason } from "../integrations/agent/spawn";
 import { assertNever } from "./assert";
 
-// ── Memory-cleanup domain types ─────────────────────────────────────────────
-// These live here (not in commands/improve/memory), the same layering rule as
-// the verb-result types below: this file's own ImproveMemoryCleanupResult
-// needs these shapes, so they live here rather than being imported UP from the
-// command module that consumes this file.
+// ── Memory-cleanup domain types (moved DOWN from commands/improve/memory,
+// same layering fix as the verb-result types below: this file's own
+// ImproveMemoryCleanupResult needs these shapes, so they live here rather
+// than being imported UP from the command module that consumes this file.
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
 /**
- * Retire-proposal-caused archive reasons: the consolidate pair pass's
- * `duplicate` / `subsumed` / `supersedes-translated-to-superseded`
- * judgements, and `promoted` (a promotion retiring its source memory).
+ * Retire-proposal-caused archive reasons (0.9.17-alpha.9): the consolidate
+ * pair pass's `duplicate` / `subsumed` / `supersedes-translated-to-superseded`
+ * judgements, and O1's `promoted` (a promotion retiring its source memory).
  */
 export type RetireArchiveReason = "duplicate" | "subsumed" | "superseded" | "promoted";
 export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived";
 
 export interface MemoryPruneCandidate {
   ref: string;
-  /** Absent for a retire-proposal-caused archive: it has no `.derived` family to key by. */
+  /** Absent for a retire-proposal-caused archive (alpha.9): it has no `.derived` family to key by. */
   parentRef?: string;
   reason: MemoryPruneReason | RetireArchiveReason;
   survivorRef?: string;
-  /** Retire-proposal path only: the proposal that caused this archive. */
+  /** Retire-proposal path only (alpha.9): the proposal that caused this archive. */
   proposalId?: string;
-  /** Retire-proposal path only: refs that supersede/replace the retired asset. */
+  /** Retire-proposal path only (alpha.9): refs that supersede/replace the retired asset. */
   successorRefs?: string[];
 }
 
@@ -116,13 +115,13 @@ export interface ArchivedMemoryCleanupRecord {
   archivedPath: string;
   auditPath: string;
   archivedAt: string;
-  /** Retire-proposal path only: the proposal that caused this archive. */
+  /** Retire-proposal path only (alpha.9): the proposal that caused this archive. */
   proposalId?: string;
-  /** Retire-proposal path only: refs that supersede/replace the retired asset. */
+  /** Retire-proposal path only (alpha.9): refs that supersede/replace the retired asset. */
   successorRefs?: string[];
   /**
-   * Retire-proposal path only: same instant as `archivedAt`, named so the
-   * purge sweep can key its 30-day grace off one
+   * Retire-proposal path only (alpha.9): same instant as `archivedAt`, named
+   * per the plan so the (later) purge sweep can key its 30-day grace off one
    * stable field name without caring whether an archive came from memory
    * cleanup or a retire proposal.
    */
@@ -159,7 +158,7 @@ export interface ImproveEligibleRef {
 export type ImprovePlanLane = EligibilitySource | "distill-only";
 
 export interface ImprovePlanGate {
-  /** `retrieval` is absent from plans stored by older releases (#986). */
+  /** `retrieval` is absent from plans stored before 0.9.17-alpha.7 (#986). */
   name: "profile" | "cleanup" | "validation" | "retrieval" | "signal" | "disk" | "limit";
   removed: number;
   reason: string;
@@ -288,7 +287,7 @@ export type ImproveActionClass = "accepted" | "rejected" | "skipped" | "error" |
  *   These are NOT rejections of produced content — they are the run declining
  *   to act on a ref it had no new reason to touch, and they scale with the
  *   whole indexed-ref pool (~13k/run), so folding them into `rejected` made the
- *   "accept rate" meaningless.
+ *   "accept rate" meaningless (deep-tuning analysis 2026-06-29, finding #1).
  * - `rejected` — the run PRODUCED a change and a content-policy guard then
  *   rejected it (`reflect-guard-rejected`). This is the genuine value-rejection
  *   signal; it is small and meaningful, no longer drowned by gated skips.
@@ -321,15 +320,17 @@ export function classifyImproveAction(mode: ImproveActionMode): ImproveActionCla
   }
 }
 
-// ── Verb result types ───────────────────────────────────────────────────────
+// ── Verb result types (moved DOWN from commands/improve/*, WI-9.8 KILL 2) ───
 //
 // ConsolidateResult / AkmDistillResult / AkmExtractResult / AkmReflectResult
-// live here rather than in their respective verb modules (consolidate.ts /
-// distill.ts / extract.ts / reflect.ts): core/ sits BELOW commands/, and
-// importing UP from the command modules (whose own heavy transitive imports
-// can route back here) would glue the whole improve command family into one
-// import-cycle SCC. Verb modules import their result types directly from
-// this leaf.
+// used to live in their respective verb modules (consolidate.ts / distill.ts
+// / extract.ts / reflect.ts), which this file imported UP from — the §10.7
+// layering inversion: core/ is supposed to sit BELOW commands/, but this file
+// depended on the very command modules that depend on it, and each verb
+// module's own (heavy) transitive imports could route back here, gluing the
+// whole improve command family into one import-cycle SCC. Moving the result
+// shapes down here fixes the dependency direction; verb modules import their
+// result types directly from this leaf.
 
 /** Op-kind discriminator used in {@link ConsolidateResult.skipReasons}. */
 export type ConsolidateOpKind = "merge" | "delete" | "promote" | "contradict";
@@ -347,12 +348,12 @@ export interface ConsolidateResult {
   promoted: string[];
   /** Promotion proposals that could not be emitted and must be retried. */
   failedPromotions?: number;
-  /** Number of contradiction edges written (#382). */
+  /** Number of contradiction edges written (C-3 / #382). */
   contradicted: number;
   /**
-   * Merges that failed the (retired) ADVISORY merge-information floor.
-   * Nothing sets this any more; it stays optional so results an older release
-   * persisted still read.
+   * R5 §4.2 — merges that failed the ADVISORY merge-information floor. The
+   * floor is retired and nothing sets this any more; it stays optional so
+   * results an older release persisted still read.
    */
   mergeFloorViolations?: number;
   /**
@@ -362,18 +363,21 @@ export interface ConsolidateResult {
    * failures so they surface in `akm health` instead of being absorbed into
    * a misleadingly healthy `processed` count.
    *
-   * Backstory: runs reported `processed: 118` / `merged: 0` / `deleted: 0`
-   * while every chunk was actually being rejected with `n_keep > n_ctx`. The
-   * "OK + warnings" envelope hid the fact that the pass was a no-op.
+   * Backstory: 2026-05-26 incident — 21/21 runs reported `processed: 118` /
+   * `merged: 0` / `deleted: 0` while every chunk was actually being rejected
+   * with `n_keep > n_ctx`. The "OK + warnings" envelope hid the fact that
+   * the pass was a no-op. See
+   * `/tmp/akm-health-investigations/consolidation-no-op.md`.
    */
   failedChunks?: number;
   /** Total chunks attempted this run; lets callers compute a failure rate. */
   totalChunks?: number;
   /**
    * Memories the LLM saw inside a chunk but proposed no op for. Per chunk:
-   * `chunk.length − unique(ops.targetRefs)`. Without this count they are a
-   * silent drop (no warning, event, or counter), and no consolidate prompt
-   * tuning is possible.
+   * `chunk.length − unique(ops.targetRefs)`. Pre-2026-05-26 this was a pure
+   * silent drop — 66% of consolidate memories had no warning, event, or
+   * counter. Without it, no consolidate prompt tuning is possible.
+   * See `/tmp/akm-health-investigations/tuning-reasons-investigation.md` §Q2.
    */
   judgedNoAction?: number;
   /**
@@ -387,12 +391,14 @@ export interface ConsolidateResult {
     skips: Array<{ op: ConsolidateOpKind | "unknown"; reason: string }>;
   }>;
   /**
-   * Secondary memories absorbed into successful merge operations. `merged` is
-   * an OP-LEVEL counter (1 per merge op), but each successful merge actions
-   * `1 + secondaries.length` memories. Without `mergedSecondaries`, those
-   * secondaries are excluded from `judgedNoAction` (their refs land in the
-   * chunk's `targetRefs`) and never accounted for elsewhere, leaving a gap in
-   * the accounting. Required for the invariant
+   * Secondary memories absorbed into successful merge operations. 2026-05-26
+   * accounting-leak fix: `merged` is an OP-LEVEL counter (1 per merge op), but
+   * each successful merge actions `1 + secondaries.length` memories. Without
+   * `mergedSecondaries`, those secondaries are excluded from `judgedNoAction`
+   * (their refs land in the chunk's `targetRefs`) and never accounted for
+   * elsewhere, producing the small "processed − actioned − noAction − skips
+   * = N missing" gap observed in the 2026-05-27 02:07 run (11 unaccounted)
+   * and prior runs. Required for the invariant
    * `processed == promoted + merged + mergedSecondaries + deleted + contradicted
    *           + judgedNoAction + Σ(skipReasons) + failedChunkMemories`.
    */
@@ -400,10 +406,10 @@ export interface ConsolidateResult {
   /**
    * Memories belonging to chunks whose LLM call failed (HTTP error / empty
    * response / invalid plan / consolidation-aborted by failure-rate threshold).
-   * These memories never reach the per-chunk
+   * 2026-05-26 accounting-leak fix: these memories never reach the per-chunk
    * `judgedNoAction` computation (it lives after the success-path continue
-   * guards) and never enter `skipReasons` either, so they would be a pure
-   * silent drop on every `failedChunks > 0` run. Required for the accounting
+   * guards) and never enter `skipReasons` either, so they were a pure silent
+   * drop on every `failedChunks > 0` run. Required for the accounting
    * invariant.
    */
   failedChunkMemories?: number;
@@ -411,7 +417,7 @@ export interface ConsolidateResult {
   deferredMemories?: number;
   /**
    * Memories dropped before chunking because their body already exists
-   * verbatim in `knowledge/`. Distinct from the post-LLM
+   * verbatim in `knowledge/` (R5 (b)). Distinct from the post-LLM
    * `promote_superseded`/duplicate skip reasons — this is a pre-LLM pool
    * narrowing count, so `processed` no longer includes these memories at
    * all. Surfaced so health/report readers see why `processed` dropped.
@@ -424,17 +430,17 @@ export interface ConsolidateResult {
   /** Stable, secret-free execution-lowering diagnostics. */
   notices?: readonly Readonly<LoweringNotice>[];
   /**
-   * Perf telemetry. Always emitted when consolidation runs —
+   * WS-5 perf telemetry (Part V). Always emitted when consolidation runs —
    * these are health VIEWS of the pipeline, not truth sources. Omitted on the
    * early-exit paths (no memories, all judged-unchanged) to keep the envelope
    * tidy.
    */
   perfTelemetry?: ConsolidatePerfTelemetry;
-  /** The pair pass's own report; absent when consolidate is disabled. */
+  /** The pair pass's own report (alpha.9); absent when consolidate is disabled. */
   pairPass?: ConsolidatePairPassResult;
 }
 
-/** The consolidate pair pass's six relation labels (the calibrated prompt). */
+/** The consolidate pair pass's six relation labels (plan Appendix A, the calibrated prompt). */
 export type ConsolidatePairJudgeLabel =
   | "duplicate"
   | "subsumed"
@@ -444,9 +450,9 @@ export type ConsolidatePairJudgeLabel =
   | "unrelated";
 
 /**
- * The pair pass's per-run report: initiators found, pairs judged,
- * label counts and the retire proposals minted (refs and counts only, never
- * asset text).
+ * The pair pass's per-run report (alpha.9): initiators found, pairs judged,
+ * label counts and the retire proposals minted — the fields the brief's
+ * MEASURE step reports (refs and counts only, never asset text).
  */
 export interface ConsolidatePairPassResult {
   /** Initiators after retrieval-scope and ledger filtering. */
@@ -457,7 +463,7 @@ export interface ConsolidatePairPassResult {
   pairsConsidered?: number;
   /** Pairs actually sent to the judge (excludes pairs skipped for the run cap or an existing pending retire proposal). */
   pairsJudged: number;
-  /** Contradictions stay human: they are reported only as `labelCounts.contradicts`, not as a separate count. */
+  /** Contradictions stay human: `labelCounts.contradicts`, not a separate count, is what the brief's MEASURE step reports. */
   labelCounts: Record<ConsolidatePairJudgeLabel, number>;
   /** Retire proposal ids minted this run (or, in a dry run, `retiredRef -> successorRef` preview strings). */
   retired: string[];
@@ -466,7 +472,7 @@ export interface ConsolidatePairPassResult {
 }
 
 /**
- * Per-run consolidation performance telemetry.
+ * WS-5 per-run consolidation performance telemetry (Part V §5 of the plan).
  * All fields are optional so existing callers that spread ConsolidateResult
  * can adopt the shape incrementally.
  */
@@ -515,9 +521,10 @@ export interface ConsolidatePerfTelemetry {
  *                          No proposal. Exit 0.
  *   - `validation_failed`— LLM returned content but it failed lesson lint.
  *                          No proposal. Exit non-zero (UsageError).
- *
- * `review_needed` (#388) replaces the binary quality-gate cutoff for the
- * uncertainty band (a mean of 2.5 or more with a criterion below 4).
+ */
+/**
+ * D-5 / #388: "review_needed" outcome replaces the binary quality-gate cutoff
+ * for the uncertainty band (a mean of 2.5 or more with a criterion below 4).
  * MT-Bench arXiv:2306.05685 reports
  * ~±0.5 judge variance — 15-25% of borderline proposals flip between runs.
  * The review-needed band converts uncertain cases into explicit human review
@@ -543,7 +550,7 @@ export interface AkmDistillResult {
   /** Type of proposal the invocation targeted or queued. */
   proposalKind?: "lesson" | "knowledge";
   /**
-   * Proposal id when `outcome === "queued"`, or when a `proposals` row
+   * Proposal id when `outcome === "queued"`, or (R10) when a `proposals` row
    * was minted for `outcome === "quality_rejected"` / `"review_needed"`.
    */
   proposalId?: string;
@@ -554,7 +561,7 @@ export interface AkmDistillResult {
   /** Validation findings when `outcome === "validation_failed"`. */
   findings?: { kind: string; field: string; message: string }[];
   /**
-   * The full proposal object when `outcome === "queued"`, or when a
+   * The full proposal object when `outcome === "queued"`, or (R10) when a
    * `proposals` row was minted for `outcome === "quality_rejected"` (status
    * `rejected`) / `"review_needed"` (status `pending`).
    */
@@ -577,7 +584,7 @@ export interface AkmDistillResult {
   /**
    * Judge score (1–5 float) when `outcome === "quality_rejected"`.
    * Present as -1 when the judge could not run (no LLM / timeout / parse
-   * failure) and the gate failed CLOSED — the proposal is rejected,
+   * failure) and the gate failed CLOSED (07 P0-2) — the proposal is rejected,
    * not minted.
    */
   score?: number;
@@ -755,12 +762,15 @@ export interface ImproveActionResult {
 }
 
 /**
- * Bounded replacement for per-ref `distill-skipped` action rows in
+ * C1 (13-bus-factor) — bounded replacement for the per-ref `distill-skipped`
+ * action rows that used to be persisted verbatim in
  * `improve_runs.result_json`. On a whole-stash run the loop emits one
- * `distill-skipped` action per gated ref (~13k rows/run), yet the ONLY
- * consumer of the detail (`health/improve-metrics.ts`) needs just the total
- * and the per-reason breakdown. So the list is folded into this aggregate
- * before persistence: the metric survives, the unbounded row list does not.
+ * `distill-skipped` action per gated ref (~13k rows/run, ~91% of result_json
+ * bytes on the live stash — the 90-day TTL cannot bound this per-run growth),
+ * yet the ONLY consumer of the detail (`health/improve-metrics.ts`) needs just
+ * the total and the per-reason breakdown. So we fold the list into this
+ * aggregate before persistence: the metric survives, the unbounded row list
+ * does not.
  */
 export interface DistillSkippedAggregate {
   /** Total number of distill-skipped actions this run (the metric total). */
@@ -857,8 +867,10 @@ export interface AkmImproveResult {
   plan?: ImproveExecutionPlan;
   /**
    * Refs the planner considered but excluded because every per-ref pass on
-   * the active profile (reflect + distill) would refuse them. They are kept
-   * out of `plannedRefs`, so they produce no synthetic skip actions.
+   * the active profile (reflect + distill) would refuse them. Additive
+   * field — pre-2026-05-27 these refs went into `plannedRefs` and produced
+   * 2× synthetic skip actions per run. See
+   * `/tmp/akm-health-investigations/planner-profile-metrics-deep-analysis.md`.
    *
    * Each ref has its `reason` set to `"strategy_filtered_all_passes"`. The
    * audit trail is also emitted as a single summary `improve_skipped` event
@@ -889,7 +901,7 @@ export interface AkmImproveResult {
    */
   skippedProcesses?: readonly Readonly<EngineUnavailableProcess>[];
   /**
-   * `--require-engines`'s reachability probe outcomes (one row per
+   * R17 — `--require-engines`'s reachability probe outcomes (one row per
    * probed target: process, engine, endpoint, reachable, latencyMs).
    * A failing probe already aborts the run (exit 78) before this result is
    * ever built, so every row present here is `reachable: true` — this
@@ -900,8 +912,8 @@ export interface AkmImproveResult {
   engineProbe?: readonly Readonly<EngineProbeOutcome>[];
   actions?: ImproveActionResult[];
   /**
-   * Bounded aggregate of the per-ref `distill-skipped` actions (kept out of
-   * {@link actions}, and thus `result_json`). Built
+   * C1 (13-bus-factor) — bounded aggregate of the per-ref `distill-skipped`
+   * actions that used to bloat {@link actions} (and thus `result_json`). Built
    * by {@link foldDistillSkipped} at assembly time; the per-ref rows are NOT
    * persisted. Omitted when zero refs were distill-skipped. Consumers read
    * `distill.skipped` / `skippedByReason` from here (see
@@ -945,9 +957,10 @@ export interface AkmImproveResult {
    */
   memoryInferenceDurationMs?: number;
   /**
-   * Wall-clock duration of the start-of-run implicit reindex (ms), when
-   * `ensureIndex` actually ran one, so blocking rebuilds (tens of minutes on a
-   * large stash) show up in the ledger. Same top-level surfacing convention as
+   * R6: wall-clock duration of the start-of-run implicit reindex (ms), when
+   * `ensureIndex` actually ran one — the previous no-op call discarded this
+   * entirely, hiding blocking rebuilds (tens of minutes on a large stash)
+   * from the ledger. Same top-level surfacing convention as
    * `memoryInferenceDurationMs`. Omitted when the index was already fresh
    * and no inline rebuild ran.
    */
@@ -955,7 +968,7 @@ export interface AkmImproveResult {
   /** Number of pending proposals purged because their target ref no longer exists on disk. */
   orphansPurged?: number;
   /**
-   * Pending proposals archived as expired this run
+   * Phase 6B (Advantage D6b): pending proposals archived as expired this run
    * because they aged past `config.archiveRetentionDays`.
    */
   proposalsExpired?: number;
@@ -966,11 +979,12 @@ export interface AkmImproveResult {
   /**
    * Number of reflect actions where a downstream content-policy guard
    * (e.g. EXCESSIVE_SHRINKAGE/EXCESSIVE_EXPANSION size rails) blocked an
-   * otherwise valid LLM response. NOT counted as LLM failure.
+   * otherwise valid LLM response. NOT counted as LLM failure. See
+   * `/tmp/akm-health-investigations/metrics-taxonomy-review.md` §1a.
    */
   reflectGuardRejectedActions?: number;
   /**
-   * Total proposals that hit the (deleted) confidence gate but failed
+   * Total proposals that hit the (deleted, 0.9.0) confidence gate but failed
    * validation. Always 0/omitted for new runs; kept for historical rows.
    */
   gateAutoAcceptFailedCount?: number;

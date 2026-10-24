@@ -160,7 +160,7 @@ describe("akm improve — end-of-run auto-sync", () => {
             name: "team",
             url: "https://example.com/team/stash.git",
             writable: true,
-            // Deprecated and now fully IGNORED: this no
+            // Deprecated and now fully IGNORED (Decision 6, WI-9.6b): this no
             // longer suppresses push. Kept in the fixture to prove exactly
             // that — push resolves to the batch-sync default (true) via
             // `improveProfile.sync?.push ?? true`, NOT `false`.

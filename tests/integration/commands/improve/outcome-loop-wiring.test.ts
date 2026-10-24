@@ -108,7 +108,7 @@ const minimalConfig = (): import("../../../../src/core/config/config").AkmConfig
 
 // ── Test 1: asset_outcome rows are written ─────────────────────────────────────
 
-describe("outcome-loop wiring — asset_outcome rows written during improve preparation", () => {
+describe("WS-2 wiring — asset_outcome rows written during improve preparation", () => {
   test("asset_outcome row is created for each processed ref after akmImprove", async () => {
     const stash = isolatedStash();
     writeSkill(stash, "ws2-alpha", "WS-2 alpha content.");
@@ -146,7 +146,7 @@ describe("outcome-loop wiring — asset_outcome rows written during improve prep
 
 // ── Test 2: outcomeSalience flows into asset_salience.outcome_salience ─────────
 
-describe("outcome-loop wiring — outcomeSalience flows into persisted asset_salience", () => {
+describe("WS-2 wiring — outcomeSalience flows into persisted asset_salience", () => {
   test("asset_salience.outcome_salience is non-zero after outcome_score is written", async () => {
     const stash = isolatedStash();
     writeSkill(stash, "ws2-gamma", "WS-2 gamma content.");

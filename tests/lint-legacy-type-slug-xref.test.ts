@@ -4,7 +4,7 @@
 
 /**
  * #882 — `akm lint` silently skipped `type:slug` xrefs (the grammar retired at
- * the write boundary, see resolve-ref.ts) instead of validating them.
+ * the write boundary, see resolve-ref.ts Q-02) instead of validating them.
  * `classifyConceptRef` only recognized the current conceptId (`type/slug`)
  * grammar via `typeNameFromConceptId`, so an old-grammar token mapped to
  * `undefined` and was treated as "not a local asset ref, skip" rather than

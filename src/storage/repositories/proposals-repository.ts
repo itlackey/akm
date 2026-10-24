@@ -3,8 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Repository for the state.db `proposals` table. Re-exported by
- * core/state-db.ts so existing importers resolve.
+ * Repository for the state.db `proposals` table. Extracted verbatim from
+ * core/state-db.ts — queries and row-mapping unchanged, only relocated behind
+ * the repository boundary. Re-exported by core/state-db.ts so existing importers
+ * resolve.
  *
  * @module proposals-repository
  */
@@ -46,14 +48,14 @@ function changesToStored(changes: FileChange[]): StoredFileChange[] {
  * column.
  *
  * Read-time compatibility shim (#858/#859): proposals created before this
- * field existed have no `changes` key in `metadata_json` at all (most of the
+ * field existed have no `changes` key in `metadata_json` at all (~89% of the
  * archived accepted/rejected rows on real installs) and that history cannot
  * be reconstructed from `content` alone. Treat a completely absent `changes`
  * key as a known legacy gap — return an empty change list rather than
  * throwing — so these rows still round-trip as real proposals (and count
  * toward accepted/rejected totals) instead of being dropped or crashing
  * every reader. A `changes` value that *is* present but malformed (wrong
- * type, invalid entries) is still corruption and throws; the
+ * type, invalid entries) is still corruption and throws, same as before; the
  * write path (`proposalToRowValues`) still refuses to persist an empty or
  * missing change list for new proposals, so this leniency only ever applies
  * to pre-existing rows.
@@ -336,7 +338,7 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
   validatePresentMetadata(meta);
 
   const changes = storedToChanges(meta.changes, row.content);
-  // #859: absent proposedTarget (common in the archive's accepted/rejected
+  // #859: absent proposedTarget (~93% of the real archive's accepted/rejected
   // rows) is envelope metadata that predates this field, not corruption — an
   // already-decided proposal is counted/displayed, never re-applied, so
   // decode tolerates its absence the same way it already tolerates absent
@@ -489,8 +491,8 @@ export function upsertProposal(db: Database, proposal: Proposal, stashDir: strin
 /**
  * List proposals, optionally filtered by stashDir, status, and/or ref.
  *
- * Results are ordered by `created_at ASC`, with `rowid` as a deterministic
- * tiebreak so two
+ * Results are ordered by `created_at ASC` (matching the historical
+ * `listProposals()` sort), with `rowid` as a deterministic tiebreak so two
  * proposals created in the same millisecond list in insertion order.
  */
 export function listStateProposals(
@@ -565,7 +567,8 @@ export function listProposalRefSources(db: Database, stashDir: string): Array<{ 
 /**
  * Find PENDING proposal ids in one stash whose id starts with `idPrefix`.
  * Backs the UUID-prefix form of `akm proposal show/accept/... <prefix>` —
- * prefix resolution is deliberately scoped to the live (pending) queue.
+ * prefix resolution is deliberately scoped to the live (pending) queue,
+ * mirroring the historical behaviour of scanning only the live directory.
  *
  * `%` / `_` / `\` in the prefix are escaped so the LIKE pattern is literal.
  */
@@ -601,8 +604,8 @@ export function countProposalsForBundleRename(db: Database, oldBundleId: string)
 }
 
 /**
- * Rewrite every proposal that names `oldBundleId` from `akm bundle rename`:
- * the fully-qualified `ref` column (`<bundle>//conceptId` — an
+ * Rewrite every proposal that names `oldBundleId` from `akm bundle rename`
+ * (D6): the fully-qualified `ref` column (`<bundle>//conceptId` — an
  * unqualified legacy `ref` resolves against `defaultBundle` at use time and
  * never names a bundle explicitly, so it is left alone), and
  * `metadata_json.proposedTarget.source`, which names the write-target bundle

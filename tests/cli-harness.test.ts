@@ -10,7 +10,8 @@
 //
 // The preload (tests/_preload.ts) sandboxes HOME, the XDG dirs, and the AKM dir
 // overrides per test, so these runs never touch real user config. Env/temp-dir
-// mutation goes through the allowlisted sandbox helpers.
+// mutation goes through the allowlisted sandbox helpers to satisfy the
+// test-isolation lint.
 
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
@@ -45,12 +46,15 @@ describe("in-process CLI harness", () => {
   });
 
   test("captures stderr and a non-zero exit for a known-bad invocation", async () => {
-    // `show` with a bare token whose leading segment names no asset type: a
-    // colon-less token is a valid short conceptId, so it fails as a NOT-FOUND (no
-    // such concept) rather than an arg-parse error. Either way the harness must
-    // capture a structured error envelope and a non-zero exit.
+    // `show` with a bare token whose leading segment names no asset type: under
+    // the 0.9.0 ref grammar (Chunk-5 flip F1b) a colon-less token is a valid
+    // short conceptId, so it fails as a NOT-FOUND (no such concept) rather than
+    // an arg-parse error — the "same UX as an unknown type" the resolver
+    // guarantees. Either way the harness must capture a structured error
+    // envelope and a non-zero exit.
     const { code, stderr } = await runCliCapture(["show", "invalid-ref-no-colon"]);
-    // ConfigError (no stash dir configured) -> exit 78.
+    // ConfigError (no stash dir configured) -> exit 78. Ground-truthed by
+    // probing the actual CLI output before pinning.
     expect(code).toBe(78);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
@@ -84,7 +88,8 @@ describe("in-process CLI harness", () => {
       { HOME: freshHome.dir, XDG_CONFIG_HOME: path.join(freshHome.dir, "config"), AKM_BUNDLE_DIR: undefined },
       () => runCliCapture(["search", "test"]),
     );
-    // ConfigError (no stash dir configured) -> exit 78.
+    // ConfigError (no stash dir configured) -> exit 78. Ground-truthed by
+    // probing the actual CLI output before pinning.
     expect(noStash.code).toBe(78);
     expect(noStash.stderr).toContain("STASH_DIR_NOT_FOUND");
 

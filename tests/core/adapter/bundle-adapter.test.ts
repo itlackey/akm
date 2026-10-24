@@ -3,24 +3,26 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Type-level conformance test for the `BundleAdapter` interface
- * (`src/core/adapter/bundle-adapter.ts`) + its supporting type family
- * (`src/core/adapter/types.ts`).
+ * WI-1.1 gate — type-level conformance test for the amended `BundleAdapter`
+ * interface (`src/core/adapter/bundle-adapter.ts`) + its supporting type
+ * family (`src/core/adapter/types.ts`).
  *
  * A minimal STUB adapter implements only the REQUIRED members (`id`,
  * `version`, `extensions`, `recognize`, `validate`) and is assigned to a
  * `BundleAdapter`-typed const below. That assignment is the COMPILE-TIME
  * half of the gate: `bunx tsc --noEmit` fails if the stub does not
  * structurally satisfy `BundleAdapter` given only its required members —
- * which in turn proves the whole type family (`BundleComponent`,
+ * which in turn proves the whole D1-1 type family (`BundleComponent`,
  * `IndexDocument`, `Diagnostic`, `ValidateContext`, ...) compiles and is
  * usable together with `FileChange` (reused from `core/file-change.ts`) and
- * the type-only `FileContext` import (`indexer/walk/file-context.ts`).
+ * the type-only `FileContext` import (D1-3, `indexer/walk/file-context.ts`).
  * The tests below are the RUNTIME half: the required methods are present
  * and callable, and behave sanely against fixture inputs.
  *
- * Real adapters and the `index() == fold(recognize())` conformance suite live
- * in `conformance.test.ts`.
+ * Deliberately NOT in scope here (per the chunk-1 brief):
+ *   - `scanComponent` (WI-1.3, a sibling module not yet minted);
+ *   - any REAL adapter or the `index() == fold(recognize())` conformance
+ *     suite (Chunk 2's gate, requires real adapters).
  */
 
 import { describe, expect, test } from "bun:test";
@@ -64,8 +66,10 @@ function makeValidateContext(): ValidateContext {
  * (id/version/extensions/recognize/validate). This assignment is the
  * compile-time conformance check — `stubAdapter` must structurally satisfy
  * `BundleAdapter` with every OTHER member (index, affectedItems,
- * renderExecutionSource, readCandidates, placeNew, directoryList,
- * looksLikeRoot) left absent, proving they are genuinely optional.
+ * renderExecutionSource, readCandidates, placeNew, directoryList, looksLikeRoot) left absent, proving they are genuinely
+ * optional per the transcription. (The spec's Tier-B authoring/export/memory
+ * facet methods are deferred, not declared on the 0.9.0 contract — see the
+ * interface docblock.)
  */
 const stubAdapter: BundleAdapter = {
   id: "stub",
@@ -83,7 +87,7 @@ const stubAdapter: BundleAdapter = {
       path: file.absPath,
       hash: "deadbeef",
       adapterId: "stub",
-      // `type` is a required member of the merged IndexDocument.
+      // `type` is a required member of the merged IndexDocument (F4a M-core-1).
       type: "knowledge",
       name: file.fileName,
     };
@@ -94,7 +98,7 @@ const stubAdapter: BundleAdapter = {
   },
 };
 
-describe("BundleAdapter type-level conformance", () => {
+describe("BundleAdapter type-level conformance (WI-1.1)", () => {
   test("a minimal stub implementing only the REQUIRED members typechecks as BundleAdapter", () => {
     // See the compile-time note on `stubAdapter` above. This assertion is
     // the runtime half: required methods exist and are callable.

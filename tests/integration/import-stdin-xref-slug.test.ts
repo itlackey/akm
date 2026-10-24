@@ -81,7 +81,7 @@ describe("import - (stdin) slug stability under --xref", () => {
     expect(conceptId((JSON.parse(structured.stdout) as { ref: string }).ref)).toBe(conceptId(plainRef));
   });
 
-  test("a stdin doc CARRYING ITS OWN frontmatter derives its slug from the parsed body — same with and without --xref", () => {
+  test("a stdin doc CARRYING ITS OWN frontmatter derives its slug from the parsed body — same with and without --xref (R2-3)", () => {
     // Exactly the doc class mergeXrefsIntoContent's merge branch exists for:
     // the raw content's first non-empty line is the `---` fence, which sent
     // inferAssetName to its random knowledge-<epoch>-<rand> fallback on BOTH

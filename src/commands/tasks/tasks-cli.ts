@@ -3,19 +3,25 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm task` command family, registered as `main.subCommands.task`. Handlers
- * whose body is a plain `runWithJsonErrors(...) + output(...)` use
- * `defineJsonCommand`, which emits the standard JSON envelope
- * (stdout/stderr/exit-code). `task run` keeps a plain `defineCommand` because it forwards the
- * task's own exit code via `process.exitCode` (not `process.exit()` —
+ * `akm task` command family. Extracted verbatim from src/cli.ts (WS6) so the
+ * God Module shrinks; the `main.subCommands.task` key and every subcommand's
+ * args/output shape are byte-identical. Handlers whose body is a plain
+ * `runWithJsonErrors(...) + output(...)` are migrated to `defineJsonCommand`,
+ * which emits the same JSON envelope (stdout/stderr/exit-code) as the inline
+ * form. `task run` keeps a plain `defineCommand` because it forwards the
+ * task's own exit code via `process.exitCode` (F4: not `process.exit()` —
  * that would skip pending cleanup).
  *
- * The group is the singular `task` (no plural `tasks` alias). The default
- * improve-schedule task set ships as embedded templates under
- * src/assets/tasks/improve/ (see src/tasks/embedded.ts), seeded through the
- * interactive `akm setup` task-review step rather than a separate CLI command.
- * `enable`/`disable` mutate the host-local scheduler allow-list, never the
- * task source. Every subcommand shares one `--bundle <bundle>` axis.
+ * 0.9 CLI overhaul (S6): the group was renamed from the plural `tasks` to the
+ * singular `task` — hard break, no alias. `init` was dropped: the default improve-schedule task set now ships as embedded
+ * templates under src/assets/tasks/improve/ (see src/tasks/embedded.ts),
+ * seeded through the interactive `akm setup` task-review step instead of a
+ * separate CLI command. `enable`/`disable` mutate the host-local scheduler
+ * allow-list, never the task source. Every subcommand shares one `--bundle <bundle>`
+ * axis (S8.4 ratified `task add`'s `--target` → `--bundle`; a later Gate-1
+ * fix reverted it to match `import`/`proposal accept`, splitting the
+ * write-target axis three-vs-one against `remember`/`clone`/`improve` — the
+ * final review re-applied the ratified rename here).
  */
 
 import { defineCommand } from "citty";
@@ -69,7 +75,7 @@ const bundleArg = {
  * other value spelling (`--<name>=false`, `--<name>=1`, `--<name>=`) walks
  * straight past it and is then absorbed downstream — by citty's non-strict
  * parser, or by `parseTaskInputFlags`' reserved-name skip — exactly the
- * silent-discard defect these rejecters exist to close. The
+ * silent-discard defect these rejecters exist to close (review round 1). The
  * name is taken as everything before the FIRST `=`, which is
  * `parseTaskInputFlags`' own split (see its `body.indexOf("=")` below), so the
  * rejecter and the scanner can never disagree about what a token names.
@@ -86,7 +92,7 @@ function hasFlagNamed(name: string): boolean {
 }
 
 /**
- * `--target` was renamed to `--bundle` on `task` in 0.9. citty is
+ * `--target` was renamed to `--bundle` on `task` in 0.9 (S8.4). citty is
  * non-strict, so the retired spelling is silently absorbed rather than
  * rejected — reject it explicitly instead (mirrors improve-cli.ts /
  * remember-cli.ts). The generic pre-dispatch gate cannot catch it either: it
@@ -96,14 +102,14 @@ function hasFlagNamed(name: string): boolean {
  * rejected here by name too, or nothing rejects it at all.
  *
  * Rejecting by NAME means `--target=<value>` can no longer carry a declared
- * task input named `target` either. That is settled on
+ * task input named `target` either (0.9.2 review round 2). That is settled on
  * the DECLARATION side, not by narrowing this rejecter back to whole-token
  * matching: `target` is listed in `TASK_RUN_SELF_DIAGNOSED_FLAGS`
  * (`../../tasks/task-run-reserved-flags.ts`), so `parseInputDeclarations`
  * refuses `inputs: {target: …}` with TASK_SOURCE_INVALID at authoring time and
  * no task can reach `akm task run` needing the flag this throws on. Do not
- * re-narrow the match here — the silently-ignored `--target=team` would come
- * straight back.
+ * re-narrow the match here — the silently-ignored `--target=team` that round 1
+ * closed would come straight back.
  */
 function rejectRetiredTaskTargetFlag(): void {
   if (!hasFlagNamed("target")) return;
@@ -126,7 +132,7 @@ function rejectRetiredTaskTargetFlag(): void {
  * exempts `task explain`'s whole dynamic namespace, `../../cli/unknown-flags`
  * §`dynamicNamedFlagCommands`). The net effect: `akm task explain <ref>
  * --scheduled` silently accepted and discarded the flag instead of rejecting
- * it — `scheduled` can never be a declared input name either
+ * it (finding F7) — `scheduled` can never be a declared input name either
  * (same reserved-name module), so this can never reject a flag that was ever
  * a valid input binding. Reject it explicitly, before the shared scanner ever
  * sees it — same UNKNOWN_FLAG diagnostic family the generic gate uses.
@@ -142,23 +148,24 @@ function rejectExplainScheduledFlag(): void {
   throw new UsageError('Unknown flag "--scheduled".', "UNKNOWN_FLAG");
 }
 
-// ── `akm task run` input flags: capture ────────────────────────────────────
+// ── `akm task run` input flags — Stage 1: capture (spec §5.1) ──────────────
 //
-// Mirrors `parseWorkflowParameterFlags` (src/commands/workflow-cli.ts)
+// Mirrors `parseWorkflowParameterFlags` (src/commands/workflow-cli.ts:232-289)
 // exactly: the CLI carries RAW string/boolean flag values to the boundary
-// that knows the task's declared contract (src/tasks/run/load-task.ts)
+// that knows the task's declared contract (Stage 2, src/tasks/run/load-task.ts)
 // — coercion happens once, there. `akm task run`'s own declared flags
 // (GLOBAL_OUTPUT_ARGS, --bundle, --scheduled) are excluded so they are never
-// mistaken for inputs; `--target` is excluded too, but only because
+// mistaken for inputs (B-33); `--target` is excluded too, but only because
 // `rejectRetiredTaskTargetFlag()` above always runs first and throws before
-// this is ever reached — it is not itself special-cased below.
+// this is ever reached (B-32) — it is not itself special-cased below.
 
 // `TASK_RUN_VALUE_FLAGS` / `TASK_RUN_BOOLEAN_FLAGS` are re-exported here
-// from a dependency-free leaf module so `src/tasks/source/task-source-v4.ts`
-// can reject a declared `inputs:` name that collides with one of them without
-// importing this CLI file — which would cycle back through `./tasks` ->
-// `../../tasks/source/*` into the parser (see
-// `../../tasks/task-run-reserved-flags.ts`'s own header).
+// (unchanged in name, location, and value) from a dependency-free leaf module
+// so `src/tasks/source/task-source-v4.ts` can reject a declared `inputs:`
+// name that collides with one of them without importing this CLI file —
+// which would cycle back through `./tasks` -> `../../tasks/source/*` into the
+// parser (code-review finding, docs/plans/specs/p2b-input-bindings.md review
+// round 2; see `../../tasks/task-run-reserved-flags.ts`'s own header).
 export { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS };
 
 const TASK_RUN_VALUE_FLAG_SET = new Set<string>(TASK_RUN_VALUE_FLAGS);
@@ -303,12 +310,11 @@ const tasksRunCommand = defineCommand({
         inputFlags,
       });
       output("task-run", envelope);
-      // Not `process.exit(envelope.exitCode)`, which would terminate
-      // synchronously and skip any pending cleanup (this command forwards a
-      // run task's own exit code, so it can be any value, not just 0/1).
-      // output() has already run and this is the last statement, so
-      // process.exitCode + the implicit return is equivalent without the
-      // synchronous cutoff.
+      // F4: was `process.exit(envelope.exitCode)`, terminating synchronously
+      // and skipping any pending cleanup (this command forwards a run task's
+      // own exit code, so it can be any value, not just 0/1). output() has
+      // already run and this is the last statement, so process.exitCode +
+      // the implicit return is equivalent without the synchronous cutoff.
       if (envelope.exitCode !== 0) process.exitCode = envelope.exitCode;
     });
   },
@@ -340,9 +346,9 @@ const tasksDisableCommand = defineJsonCommand({
 
 /**
  * #911: `task run <id>` and `task explain <ref>` take the id positionally, so
- * `task history <id>` is the natural thing to write — silently discarding it
- * would answer with every task's newest rows. A positional id means the same
- * as `--id`; giving both with different
+ * `task history <id>` is the natural thing to write — and it used to be
+ * accepted and silently discarded, answering with every task's newest rows.
+ * A positional id now means the same as `--id`; giving both with different
  * values is a usage error rather than a silent pick.
  */
 export function resolveTaskHistoryId(positional: string | undefined, flag: string | undefined): string | undefined {
@@ -427,7 +433,8 @@ const tasksSyncCommand = defineJsonCommand({
   },
 });
 
-// ── `akm task explain` — read-only introspection ───────────────────────────
+// ── `akm task explain` — read-only introspection (P2b Lane B, spec
+// docs/plans/specs/p2b-input-bindings.md §4.5, §1.7 B-N4) ──────────────────
 
 const tasksExplainCommand = defineJsonCommand({
   meta: {
@@ -445,9 +452,9 @@ const tasksExplainCommand = defineJsonCommand({
     // `--scheduled` must be rejected BEFORE the shared scanner below ever
     // sees it — the scanner treats it as `task run`'s own reserved flag
     // (silently skipped, never surfaced as unknown) rather than explain's,
-    // since it has no way to know which command called it.
+    // since it has no way to know which command called it (F7 fix).
     rejectExplainScheduledFlag();
-    // Capture: the SAME exact-name flag scanner `akm task run`
+    // Stage 1 (capture): the SAME exact-name flag scanner `akm task run`
     // uses (`parseTaskInputFlags` above) — `explain` never declares
     // `--scheduled`, but reusing the identical scanner is deliberate: one
     // implementation of "which argv tokens are task input flags", not two.
@@ -611,5 +618,6 @@ export const taskCommand = defineGroupCommand({
   // individual tasks is the generic `akm show <bundle//tasks/id>`; `list`
   // above is a delegating alias for `akm search --type task` (#951).
   // No `defaultRun`: bare `akm task` is a usage error (exit 2), the canonical
-  // bare-group behavior. Run `akm task doctor` for scheduler diagnostics.
+  // bare-group behavior — owner ruling 12. Run `akm task doctor` for what the
+  // bare form used to run.
 });

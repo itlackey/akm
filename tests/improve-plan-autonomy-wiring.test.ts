@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `resolveImprovePlan` applies the autonomy gate.
+ * D8 — `resolveImprovePlan` applies the autonomy gate.
  *
  * `tests/improve-autonomy-gate.test.ts` pins the gate's decisions in isolation.
  * This pins that the plan resolver actually USES it — the wiring, which a gate

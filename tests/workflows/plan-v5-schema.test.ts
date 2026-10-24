@@ -38,7 +38,7 @@ function freshUnitPlan(sourcePath: string) {
   return { ...JSON.parse(canonicalPlanJson(freezeWorkflow(ONE_STEP_MD, sourcePath))), irVersion: 5 };
 }
 
-/** The exact `contentHash` formula. */
+/** §3.5's exact `contentHash` formula. */
 function childContentHash(fields: {
   ref: string;
   planHash: string;
@@ -60,7 +60,7 @@ function childContentHash(fields: {
     .digest("hex");
 }
 
-/** A structurally-correct `FrozenChildWorkflowTarget`, as plain JSON. */
+/** A structurally-correct `FrozenChildWorkflowTarget` (§3.5), as plain JSON. */
 function buildChildTarget(options: {
   ref?: string;
   planHash: string;
@@ -109,7 +109,7 @@ function asChildTargetView(frozenTarget: unknown): DecodedChildTargetView {
   return frozenTarget as unknown as DecodedChildTargetView;
 }
 
-describe("plan irVersion 5 — a child-workflow frozen target decodes", () => {
+describe("plan irVersion 5 — a child-workflow frozen target decodes (A-01, A-02)", () => {
   test("a parent plan whose unit targets a child workflow decodes: irVersion 5, frozenTarget.kind child-workflow", () => {
     const childPlan = freshUnitPlan("workflows/child.md");
     const planHash = computePlanHash(childPlan);
@@ -153,7 +153,7 @@ describe("plan irVersion 5 — a child-workflow frozen target decodes", () => {
   });
 });
 
-describe("embedded child plans at decode", () => {
+describe("embedded child plans at decode (A-20…A-23, §2.7)", () => {
   test("an embedded child's planHash, contentHash and irVersion are recorded, not gates: stale hashes and an older irVersion decode", () => {
     const childPlan = freshUnitPlan("workflows/child-provenance.md");
     const childTarget = buildChildTarget({
@@ -195,7 +195,7 @@ describe("embedded child plans at decode", () => {
     expect(() => decodeWorkflowPlan(deep)).not.toThrow();
   });
 
-  test("an unknown frozenTarget.kind still fails with the existing closed-kind message shape", () => {
+  test("an unknown frozenTarget.kind still fails with the existing closed-kind message shape (A-24, PRESERVE)", () => {
     const parentPlanJson = embedChildTarget(freshUnitPlan("workflows/parent-unknown-kind.md"), {
       kind: "not-a-real-target-kind",
     });

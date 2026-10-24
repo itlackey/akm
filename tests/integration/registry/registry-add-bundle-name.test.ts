@@ -155,7 +155,7 @@ describe("akm bundle add <registry ref> without a usable --name", () => {
     });
   }
 
-  // An explicit --name is a contract — an illegal name fails loudly
+  // D6: an explicit --name is a contract — an illegal name fails loudly
   // before any write, rather than silently falling back to the package name.
   test("a --name that is not a legal bundle slug fails before any write", async () => {
     const result = await withEnv(fixtureEnv, () =>
@@ -169,7 +169,7 @@ describe("akm bundle add <registry ref> without a usable --name", () => {
   });
 });
 
-describe("akm bundle add <registry ref> --name conflicts", () => {
+describe("akm bundle add <registry ref> --name conflicts (D6)", () => {
   function configPath(): string {
     return path.join(storage.configDir, "akm", "config.json");
   }

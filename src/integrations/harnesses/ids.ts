@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Dependency-free harness-id + agent-dispatch-capability table (it keeps
- * config out of the harness-barrel import cycle).
+ * Dependency-free harness-id + agent-dispatch-capability table (WI-9.8 KILL 3
+ * — the config↔harness-barrel import cycle, plan §10.7 D.3 edge B).
  *
  * `core/config/config-types.ts` (and, through it, `config-schema.ts`) needs
  * two small, DATA-shaped facts about the harness registry: the canonical
@@ -12,15 +12,16 @@
  * support agent dispatch (for the `AgentEngineSchema` platform refinement).
  * Importing `./index.ts` (`HARNESS_REGISTRY`) for that would pull in every
  * harness's agent-builder + result-extractor and, transitively, the whole
- * agent runtime (`integrations/agent/builder-shared.ts` and friends), fusing
- * config into the same import-cycle SCC as the agent runtime. This table is the canonical, dependency-free MIRROR of that
+ * agent runtime (`integrations/agent/builder-shared.ts` and friends) — which
+ * is how config ended up fused into the same import-cycle SCC as the agent
+ * runtime. This table is the canonical, dependency-free MIRROR of that
  * subset; `./index.ts`'s `HARNESS_REGISTRY` construction asserts its entries
  * match this table (id, order, and agentDispatch) at module-load time, so the
  * two can never silently drift without a loud failure.
  *
- * Order matches `HARNESS_REGISTRY` exactly (the [opencode, claude,
- * opencode-sdk] prefix, then the remaining adapters) — `VALID_HARNESS_IDS`
- * feeds the committed JSON-schema enum order.
+ * Order matches `HARNESS_REGISTRY` exactly (plan §562: the original
+ * [opencode, claude, opencode-sdk] prefix, then the seven P2 adapters) —
+ * `VALID_HARNESS_IDS` feeds the committed JSON-schema enum order.
  */
 
 export interface HarnessIdEntry {

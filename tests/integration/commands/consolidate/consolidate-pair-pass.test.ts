@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The consolidate pair pass end-to-end: a real index.db
+ * The consolidate pair pass end-to-end (0.9.17-alpha.9): a real index.db
  * with crafted unit-vector embeddings (so cosine similarity is exact and
  * deterministic, the same technique consolidate-incremental.test.ts uses for
  * `getNeighborsByEntryId`), a fake judge via the `chat` test seam
@@ -12,9 +12,9 @@
  *
  * None of the `IsolatedAkmStorage` sandboxes below has a `.git` directory, so
  * `loadGitFirstAddedMap` always returns `undefined` for them and every
- * asset's "created" date falls back to its file mtime — tests that need
+ * asset's "created" date falls back to its file mtime (B1) — tests that need
  * a specific older/newer ordering set mtimes explicitly with `dateAsset`,
- * since frontmatter `createdAt` is not read for this at all. The final
+ * since frontmatter `createdAt` is no longer read for this at all. The final
  * describe block below is the one exception: it drives `loadGitFirstAddedMap`
  * against a real, disposable git repo to pin a real regression.
  */
@@ -77,7 +77,7 @@ function writeAsset(relPath: string, frontmatter: string, body = "Body text.\n")
   return filePath;
 }
 
-/** Sets a file's mtime ("created" falls back to mtime with no git) — `daysAgo` may be fractional. */
+/** Sets a file's mtime (B1: "created" falls back to mtime with no git) — `daysAgo` may be fractional. */
 function dateAsset(filePath: string, daysAgo: number): void {
   const at = new Date(Date.now() - daysAgo * MS_PER_DAY);
   fs.utimesSync(filePath, at, at);
@@ -236,7 +236,7 @@ describe("selectInitiators / selectCandidates — threshold math against a real 
     const oldPath = writeAsset("memories/old-note.md", "description: old note");
     const midPath = writeAsset("memories/mid-note.md", "description: between T_PAIR and BACKFILL_FLOOR");
     // Seed a ledger row recording a DIFFERENT content hash than the file's
-    // current body — eligibility (and hence "not backlog") is decided by
+    // current body — S1: eligibility (and hence "not backlog") is decided by
     // that mismatch, not by a time window.
     const stateDb = openStateDatabase();
     try {
@@ -291,7 +291,7 @@ describe("selectInitiators / selectCandidates — threshold math against a real 
     expect(candidates.map((c) => c.other.name)).toEqual(["mid-note"]);
   });
 
-  test("an initiator with a prior attempt whose content is UNCHANGED is not eligible (no timer, content only)", () => {
+  test("an initiator with a prior attempt whose content is UNCHANGED is not eligible (S1: no timer, content only)", () => {
     const oldPath = writeAsset("memories/old-note.md", "description: old note");
     const raw = fs.readFileSync(oldPath, "utf8");
     const stateDb = openStateDatabase();
@@ -324,7 +324,7 @@ describe("selectInitiators / selectCandidates — threshold math against a real 
     expect(initiators).toHaveLength(0);
   });
 
-  test("fetches 20 raw neighbours and keeps the first 5 that pass every filter, not just the raw top 5", () => {
+  test("S2: fetches 20 raw neighbours and keeps the first 5 that pass every filter, not just the raw top 5", () => {
     const initiatorPath = writeAsset("memories/initiator.md", "description: initiator");
     dateAsset(initiatorPath, 60);
     const db = openIndexDatabase(getDbPath());
@@ -332,8 +332,8 @@ describe("selectInitiators / selectCandidates — threshold math against a real 
     try {
       initiatorId = indexAsset(db, "memory", "initiator", initiatorPath, 0);
       // The 3 NEAREST neighbours all fail the bundle filter — a different
-      // bundleId, same index — so a fixed k=5 raw fetch would leave only 2 raw
-      // slots that could ever reach a same-bundle candidate.
+      // bundleId, same index — so with the old k=5 raw fetch, only 2 raw
+      // slots would ever reach a same-bundle candidate.
       for (let i = 0; i < 3; i++) {
         const noisePath = writeAsset(`memories/noise-${i}.md`, `description: noise ${i}`);
         const entry: IndexDocument = { type: "memory", name: `noise-${i}`, description: `noise ${i}` };
@@ -407,7 +407,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const proposal = getProposal(storage.stashDir, result.retired[0]!);
     expect(proposal.ref).toBe("stash//memories/old-note");
     expect(proposal.changes).toEqual([{ path: "memories/old-note.md", op: "delete" }]);
-    // Its own generator, kept apart from the promote pass's "consolidate" proposals.
+    // S6: its own generator, kept apart from the promote pass's "consolidate" proposals.
     expect(proposal.source).toBe("consolidate-pair");
     expect(proposal.retirement).toMatchObject({
       retiredRef: "memories/old-note",
@@ -416,7 +416,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
       reason: "duplicate",
     });
     expect(proposal.retirement?.cosine).toBeGreaterThan(0.96);
-    // No recorded query for old-note means no continuity check ran.
+    // Item 1: no recorded query for old-note means no continuity check ran.
     expect(proposal.retirement?.continuityRisk).toBeUndefined();
     // Nothing unique on either side: staged for the triage drain to accept unattended.
     expect(proposal.gateDecision).toMatchObject({ outcome: "staged", reason: "duplicate", gate: "consolidate-pair" });
@@ -433,8 +433,8 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     }
   });
 
-  test("a continuity-risk pair still mints, with the risk on its retirement metadata", async () => {
-    // Distinct bodies (an identical pair gets no check at all — this
+  test("item 1: a continuity-risk pair still mints, with the risk on its retirement metadata", async () => {
+    // Distinct bodies (S3b gives an identical pair no check at all — this
     // test is about the rank-based flag, so the two sides must differ).
     const oldPath = writeAsset("memories/old-note.md", "description: old", "Old body text.\n");
     dateAsset(oldPath, 60);
@@ -479,7 +479,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     });
   });
 
-  test("never mints two retire proposals for the same asset in one run, and a just-used successor cannot itself be retired in the same run (chain guard)", async () => {
+  test("never mints two retire proposals for the same asset in one run, and a just-used successor cannot itself be retired in the same run (B2 chain guard)", async () => {
     // A is the nearest neighbour of both B and C, and all three are mutually
     // close enough to pair up — three candidate pairs total: {A,B}, {B,C},
     // {A,C}. A "duplicate" judge on every pair would naively retire A twice
@@ -519,7 +519,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const refs = listProposals(storage.stashDir).map((p) => p.ref);
     expect(new Set(refs).size).toBe(refs.length);
 
-    // {B,C} was a genuine "duplicate"
+    // Must-fix 1 (third review round): {B,C} was a genuine "duplicate"
     // verdict, dropped only because the chain guard had already spent B this
     // run — not a settled "no action". b-note gets no ledger row for it.
     const stateDb = openStateDatabase();
@@ -750,7 +750,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(result.retired).toHaveLength(0);
   });
 
-  test("never retires a SUBFOLDER .derived memory whose parent still exists (no doubled subfolder segment)", async () => {
+  test("never retires a SUBFOLDER .derived memory whose parent still exists (S3: no doubled subfolder segment)", async () => {
     writeAsset("memories/sub/foo.md", "description: parent memory in a subfolder");
     const derivedPath = writeAsset(
       "memories/sub/foo.derived.md",
@@ -774,7 +774,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(result.retired).toHaveLength(0);
   });
 
-  test("skips a pair when either side already has a pending retire proposal, as the retired ref OR its successor", async () => {
+  test("skips a pair when either side already has a pending retire proposal, as the retired ref OR its successor (B2)", async () => {
     const { createRetireProposal } = await import("../../../../src/commands/proposal/repository");
     const oldPath = writeAsset("memories/old-note.md", "description: old");
     dateAsset(oldPath, 60);
@@ -825,7 +825,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(result.pairsJudged).toBe(0);
     // The pre-existing proposal is still the only one.
     expect(listProposals(storage.stashDir)).toHaveLength(1);
-    // Neither initiator got all of its candidates judged (both were
+    // S1: neither initiator got all of its candidates judged (both were
     // skipped by the pending-proposal filter), so neither gets a ledger row.
     const stateDb = openStateDatabase();
     try {
@@ -870,7 +870,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     }
   });
 
-  test("an initiator with no candidates still gets a ledger row, so it is not rescanned every night", async () => {
+  test("an initiator with no candidates still gets a ledger row (S1), so it is not rescanned every night", async () => {
     const lonelyPath = writeAsset("memories/lonely.md", "description: lonely");
     const farPath = writeAsset("memories/far.md", "description: far");
     const db = openIndexDatabase(getDbPath());
@@ -935,7 +935,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(chatCalls).toBe(0);
   });
 
-  test("a rejected retire proposal is not re-proposed once the initiator's content is unchanged (no timer)", async () => {
+  test("a rejected retire proposal is not re-proposed once the initiator's content is unchanged (S1: no timer)", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: old");
     dateAsset(oldPath, 60);
     const newPath = writeAsset("memories/new-note.md", "description: new");
@@ -962,12 +962,13 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     });
 
     // The rejected proposal's OWN row still keeps old-note "processed"
-    // (only the pair pass's ledger source is exempt from the retrieval-scope
-    // exclusion — a minted proposal, rejected or not, remains real evidence
-    // something happened to the asset). Seed a retrieval so scope isn't what
-    // keeps r2 quiet: without this, r2 would pass for the wrong reason (a
-    // residual scope exclusion, via the surviving proposal row) and would
-    // never actually exercise the content-hash rule this test is named for.
+    // (Blocker 1 exempts only the pair pass's ledger source — a minted
+    // proposal, rejected or not, remains real evidence something happened to
+    // the asset). Seed a retrieval so scope isn't what keeps r2 quiet:
+    // without this, r2 would pass for the same wrong reason Blocker 1 fixed
+    // for the ledger row (a residual scope exclusion), just via the
+    // surviving proposal row instead, and would never actually exercise the
+    // content-hash rule this test is named for.
     const stateDb = openStateDatabase();
     try {
       insertUsageEvent(stateDb, { event_type: "search", entry_ref: "stash//memories/old-note", source: "user" });
@@ -1003,10 +1004,10 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(r3.retired).toHaveLength(1); // content changed since the last attempt: judged again, and re-proposed
   });
 
-  test("a rejected pair stays rejected even when a sibling verdict drops the initiator's own ledger row", async () => {
+  test("item 0: a rejected pair stays rejected even when a sibling verdict drops the initiator's own ledger row", async () => {
     // I is the initiator both Y and Z pair against — indexed first, so it
     // claims both pairs (same "claims every pair it's nearest to" setup as
-    // the chain-guard test above). Y and Z sit on OPPOSITE sides of I
+    // the B2 chain-guard test above). Y and Z sit on OPPOSITE sides of I
     // (angles of opposite sign) so they are not each other's neighbour too —
     // only (I,Y) and (I,Z) clear T_PAIR, never (Y,Z) — keeping I the sole
     // initiator of both pairs in both runs below. I is dated inside
@@ -1027,8 +1028,8 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
     // Run 1: the (I,Y) pair judges cleanly and mints a retire proposal; the
     // (I,Z) pair's judge call fails — a dropped verdict unrelated to Y. I is
-    // the initiator of BOTH, so the rule that a row is written only once ALL
-    // of an initiator's own candidates succeeded leaves I with no row at all,
+    // the initiator of BOTH, so should-fix 3's rule (a row only once ALL of
+    // an initiator's own candidates succeeded) leaves I with no row at all,
     // even though the Y pair minted fine.
     const warnings: string[] = [];
     const r1 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
@@ -1053,12 +1054,12 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const stateDbAfterRun1 = openStateDatabase();
     try {
       // I had a genuine "duplicate" verdict on Y AND a dropped one on Z —
-      // that rule means no row at all, so I is reconsidered next run.
+      // should-fix 3 means no row at all, so I is reconsidered next run.
       expect(
         getImproveLedgerRow(stateDbAfterRun1, storage.stashDir, "memories/i-note", "consolidate-pair"),
       ).toBeUndefined();
       // Minting (even a proposal later rejected) marks i-note "processed" in
-      // the retrieval scope (the exemption covers only the pair
+      // the retrieval scope (Blocker 1's exemption covers only the pair
       // pass's OWN ledger source, not the proposal it wrote) — seed a search
       // so scope isn't what keeps run 2 from reconsidering it, the same
       // reason the "unchanged content" test above seeds one.
@@ -1077,11 +1078,11 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     });
 
     // Run 2: nothing about I or Y changed. I is re-selected (still no row),
-    // regenerating BOTH pairs. The (I,Y) pair is now skipped BEFORE the
+    // regenerating BOTH pairs. S1: the (I,Y) pair is now skipped BEFORE the
     // judge call (both orientations of its ref pair + content hashes match
     // the rejected record), so it costs no LLM call at all and must NOT mint
     // a second time. The (I,Z) pair still succeeds and mints normally —
-    // proving a rejected pair does not block unrelated pairs sharing the initiator.
+    // proving the fix does not block unrelated pairs sharing the initiator.
     let chatCalls2 = 0;
     const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
       chat: async (_connection, messages) => {
@@ -1102,7 +1103,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         });
       },
     });
-    expect(chatCalls2).toBe(1); // only (I,Z) reaches the judge — (I,Y) is skipped before callStage
+    expect(chatCalls2).toBe(1); // only (I,Z) reaches the judge — (I,Y) is skipped before callStage (S1)
     expect(r2.retired).toHaveLength(1);
     expect(getProposal(storage.stashDir, r2.retired[0]!).retirement?.successorRef).toBe("memories/z-note");
 
@@ -1130,8 +1131,8 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(fs.existsSync(zPath)).toBe(true);
   });
 
-  test("a reverted pair (accepted, then undone) stays settled too — not just a rejected one", async () => {
-    // Same I/Y/Z shape as the test above: I claims both (I,Y) and
+  test("S1: a reverted pair (accepted, then undone) stays settled too — not just a rejected one", async () => {
+    // Same I/Y/Z shape as item 0's test above: I claims both (I,Y) and
     // (I,Z); Y and Z sit on opposite sides of I so (Y,Z) itself never pairs.
     const iPath = writeAsset("memories/i-note.md", "description: i");
     dateAsset(iPath, 1);
@@ -1148,7 +1149,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
     // Run 1: (I,Y) mints and is ACCEPTED then REVERTED — the owner's other
     // way of saying "no, not this" besides an outright reject. (I,Z)'s judge
-    // call fails, so I gets no ledger row at all, forcing a
+    // call fails, so I gets no ledger row at all (should-fix 3), forcing a
     // full re-selection of I (and both its pairs) next run.
     const warnings: string[] = [];
     const r1 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
@@ -1206,7 +1207,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
     // Run 2: I is re-selected, regenerating both pairs. (I,Y) must be
     // skipped BEFORE the judge — reverted, unchanged since, counts the same
-    // as a rejected pair.
+    // as a rejected pair (S1).
     let chatCalls2 = 0;
     const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
       chat: async (_connection, messages) => {
@@ -1227,7 +1228,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         });
       },
     });
-    expect(chatCalls2).toBe(1); // only (I,Z) reaches the judge — (I,Y) is skipped before callStage
+    expect(chatCalls2).toBe(1); // only (I,Z) reaches the judge — (I,Y) is skipped before callStage (S1)
     expect(r2.retired).toHaveLength(1);
     expect(getProposal(storage.stashDir, r2.retired[0]!).retirement?.successorRef).toBe("memories/z-note");
 
@@ -1240,7 +1241,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
   });
 
   test("#997: a rejected pair settles only while it stays rejected — reopened, it is pending, so it is neither re-judged nor minted twice", async () => {
-    // Same I/Y/Z shape as the test above: I claims (I,Y) and (I,Z), Y and
+    // Same I/Y/Z shape as item 0's test above: I claims (I,Y) and (I,Z), Y and
     // Z on opposite sides so (Y,Z) never pairs; Z's judge call fails in run 1,
     // so I gets no ledger row and every later run regenerates both of its pairs.
     const iPath = writeAsset("memories/i-note.md", "description: i");
@@ -1275,7 +1276,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const proposalId = r1.retired[0]!;
     const stateDb = openStateDatabase();
     try {
-      // Seed the usage signal that keeps i-note in the retrieval scope (as the test above does).
+      // Seed the usage signal that keeps i-note in the retrieval scope (as item 0's test does).
       insertUsageEvent(stateDb, { event_type: "search", entry_ref: "stash//memories/i-note", source: "user" });
     } finally {
       stateDb.close();
@@ -1327,14 +1328,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(fs.existsSync(yPath) && fs.existsSync(iPath)).toBe(true); // reopening moved nothing
   });
 
-  test("a cap-cut initiator gets no ledger row and is picked back up next run", async () => {
-    // Patching MAX_PAIRS_PER_RUN is impractical here, so this proves the
-    // underlying mechanism directly: an initiator whose candidate did NOT make
-    // it into `judgeable` (skipped by the pending-proposal filter, the same
-    // "left something out" shape a cap-cut produces) gets no row, matching the
-    // "cap-cut initiators get no row" contract via the SAME
-    // totalByInitiator/attemptedByInitiator check runConsolidatePairPass uses
-    // for both cases.
+  test("a cap-cut initiator gets no ledger row and is picked back up next run (S1)", async () => {
+    // Three assets close enough to pair, but MAX_PAIRS_PER_RUN is patched
+    // (via a throwaway db read) is impractical here — instead this proves
+    // the underlying mechanism directly: an initiator whose candidate did
+    // NOT make it into `judgeable` (skipped by the pending-proposal filter,
+    // the same "left something out" shape a cap-cut produces) gets no row,
+    // matching the "cap-cut initiators get no row" contract via the SAME
+    // totalByInitiator/attemptedByInitiator check runConsolidatePairPass
+    // uses for both cases.
     const { createRetireProposal } = await import("../../../../src/commands/proposal/repository");
     const aPath = writeAsset("memories/a-note.md", "description: a");
     const bPath = writeAsset("memories/b-note.md", "description: b");
@@ -1559,14 +1561,15 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
   });
 });
 
-describe("loadGitFirstAddedMap — real git, large output (regression)", () => {
-  // `spawnSync`'s default maxBuffer is 1 MB, and a real bundle can print
-  // ~1.8 MB from this exact git log command — enough to silently overflow it.
-  // Overflow looks identical to "git failed" (a non-zero/null status), so
-  // every asset's "created" date would quietly fall back to mtime, with no
-  // warning anywhere. This fixture manufactures >1 MB of output the cheap way
-  // (many long, content-less filenames in one commit) rather than needing real
-  // history.
+describe("loadGitFirstAddedMap — real git, large output (B1 regression)", () => {
+  // Found by the post-review real-data measurement, not by any hand-sized
+  // fixture: `spawnSync`'s default maxBuffer is 1 MB, and the owner's real
+  // bundle alone prints ~1.8 MB from this exact git log command — enough to
+  // silently overflow it. Overflow looks identical to "git failed" (a
+  // non-zero/null status), so every asset's "created" date would have
+  // quietly fallen back to mtime, with no warning anywhere. This fixture
+  // manufactures >1 MB of output the cheap way (many long, content-less
+  // filenames in one commit) rather than needing real history.
   test("a git log output over 1 MB (spawnSync's default maxBuffer) is still read in full, not silently dropped", async () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "akm-gitmap-bigrepo-"));
     try {

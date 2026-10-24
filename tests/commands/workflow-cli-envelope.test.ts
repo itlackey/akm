@@ -3,9 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Characterization test for the `akm workflow` command family. Pins the full
+ * WS6 characterization test for the `akm workflow` command family. Pins the full
  * JSON envelope (stdout payload shape + the {ok:false,…} error envelope on
- * stderr / exit code) for representative subcommands. Workflows are
+ * stderr / exit code) for representative subcommands, proving the extraction of
+ * the family from cli.ts into src/commands/workflow-cli.ts and the migration of
+ * the leaf handlers onto `defineJsonCommand` is byte-identical. Workflows are
  * authored in-process via `workflow create --from <file>` against an isolated
  * stash dir; the CLI reads that stash back through AKM_BUNDLE_DIR via the
  * in-process harness.
@@ -24,7 +26,7 @@ afterEach(() => {
   for (const d of disposers.splice(0)) d.cleanup();
 });
 
-// Unified-format fixture (frontmatter graph + `## <id>` body).
+// Unified-format fixture (frontmatter graph + `## <id>` body — spec §2.2).
 const ONE_STEP_WORKFLOW = `---
 type: workflow
 description: Envelope test workflow
@@ -83,7 +85,7 @@ async function createReleaseFlow(stash: string): Promise<void> {
   if (status !== 0) throw new Error(`workflow create failed: ${stderr}`);
 }
 
-describe("akm workflow — JSON envelope snapshot", () => {
+describe("akm workflow — JSON envelope snapshot (WS6)", () => {
   test("workflow create: success envelope reports the written workflow", async () => {
     const stash = makeStashDir();
     const src = writeWorkflowSource();
@@ -93,8 +95,10 @@ describe("akm workflow — JSON envelope snapshot", () => {
     expect(env.ok).toBe(true);
     expect(typeof env.path).toBe("string");
     expect(fs.existsSync(env.path as string)).toBe(true);
-    // The envelope's third member is `bundleDir` (not `stashDir`;
-    // src/workflows/authoring/authoring.ts).
+    // 0.9.2 review round 2 (P4 sweep criterion-21 caveat, spec
+    // docs/plans/specs/p4-deletions-closeout.md §4.1 row B-49): the
+    // envelope's third member is `bundleDir` — BREAKING vs 0.9.1, which
+    // leaked `stashDir` here (src/workflows/authoring/authoring.ts).
     expect(env.bundleDir).toBe(stash);
     expect(env.stashDir).toBeUndefined();
   });
@@ -132,10 +136,11 @@ describe("akm workflow — JSON envelope snapshot", () => {
     const { stdout, status } = await runCli(["workflow", "create", "print-flow", "--print"], stash);
     expect(status).toBe(0);
     // Deliberately NOT an envelope even under --json: --print's contract is a
-    // pipeable raw starter document.
+    // pipeable raw starter document (parity with the removed `workflow
+    // template`, which was format-exempt for the same reason).
     expect(stdout.trimStart().startsWith("{")).toBe(false);
     // Unified template: no "# Workflow:"/"Step ID:" grammar — frontmatter
-    // carries the graph, `## <id>` headings carry the body.
+    // carries the graph, `## <id>` headings carry the body (spec §2.2).
     expect(stdout).toContain("type: workflow");
     expect(stdout).toContain("## first-step");
     expect(fs.existsSync(path.join(stash, "workflows", "print-flow.md"))).toBe(false);
@@ -182,6 +187,10 @@ describe("akm workflow — JSON envelope snapshot", () => {
     expect(env.hint).toContain("workflow run");
   });
 
+  // P3b Lane B (spec docs/plans/specs/p3b-child-executor.md §4.6, §6 F-B2):
+  // ONE additive arm, in the same additive convention P2b used for
+  // `task explain` (tests/integration/commands/tasks-explain.test.ts) —
+  // every pre-existing test above is byte-unchanged.
   test("workflow plan --format json: envelope carries ok, planHash, published:false, and a steps array", async () => {
     const stash = makeStashDir();
     await createReleaseFlow(stash);

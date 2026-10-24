@@ -343,7 +343,7 @@ describe("proposal queue target binding", () => {
     expect(fs.readFileSync(assetPath, "utf8")).toContain("Newer user content.");
   });
 
-  test("accept promotes across a bookkeeping-only target rewrite and carries the bookkeeping forward", async () => {
+  test("accept promotes across a bookkeeping-only target rewrite and carries the bookkeeping forward (STALE, R20)", async () => {
     const primary = stash("akm-proposal-bookkeeping-primary-");
     const team = stash("akm-proposal-bookkeeping-team-");
     const cfg = config(primary, team);
@@ -374,7 +374,7 @@ describe("proposal queue target binding", () => {
     expect(finalContent).toContain("inferenceProcessed: true");
   });
 
-  test("accept still rejects when the target's real content changed alongside bookkeeping", async () => {
+  test("accept still rejects when the target's real content changed alongside bookkeeping (STALE, R20)", async () => {
     const primary = stash("akm-proposal-real-change-primary-");
     const team = stash("akm-proposal-real-change-team-");
     const cfg = config(primary, team);

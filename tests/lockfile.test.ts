@@ -114,7 +114,7 @@ describe("readLockfile", () => {
     expect(result[0]!.integrity).toBe("sha512-xyz");
   });
 
-  test("preserves the bundle-lock fields (localRoot, manifestDigest, adapterIds, installedAt)", () => {
+  test("preserves the §10.2 bundle-lock fields (localRoot, manifestDigest, adapterIds, installedAt)", () => {
     const entry = validEntry({
       localRoot: "/cache/kit/content",
       manifestDigest: "sha256-manifest",
@@ -132,7 +132,7 @@ describe("readLockfile", () => {
 
   test("reads a pre-cutover per-source entry unchanged (shape-tolerant read)", () => {
     // The old shape had only id/source/ref (+ resolved*). It stays valid and the
-    // absent fields are simply undefined until the next upsert.
+    // absent §10.2 fields are simply undefined until the next upsert.
     writeRawLockfile(JSON.stringify([{ id: "old", source: "git", ref: "owner/repo", resolvedRevision: "deadbeef" }]));
     const result = readLockfile();
     expect(result).toHaveLength(1);
@@ -213,9 +213,9 @@ describe("writeLockfile", () => {
     } catch (error) {
       caught = error;
     }
-    // Ordinary contention, not a config error (#948): TransientError maps to exit
-    // 75 (sysexits EX_TEMPFAIL), telling a caller to retry rather than stop
-    // retrying as exit 78 (ConfigError) would.
+    // Ordinary contention, not a config error (#948 addendum): TransientError
+    // maps to exit 75 (sysexits EX_TEMPFAIL), telling a caller to retry rather
+    // than stop retrying as exit 78 (ConfigError) would.
     expect(caught).toBeInstanceOf(TransientError);
     expect((caught as TransientError).code).toBe("LOCKFILE_CONTENDED");
     expect((caught as Error).message).toMatch(/refusing to write without exclusive ownership/);
@@ -264,10 +264,11 @@ describe("upsertLockEntry", () => {
     expect(result).toHaveLength(2);
   });
 
-  // A corrupt lockfile must not fail OPEN: the lenient read returns [], and fed
-  // into the write, `writeLockfileUnlocked([...[], entry])` would silently
-  // replace every surviving lock entry with just the one being upserted —
-  // permanently destroying user state. upsertLockEntry must refuse the write.
+  // R-012: a corrupt lockfile used to fail OPEN on read (readLockfile -> [])
+  // and that empty read then fed straight into the write, so
+  // `writeLockfileUnlocked([...[], entry])` silently replaced every
+  // surviving lock entry with just the one being upserted — permanently
+  // destroying user state. upsertLockEntry must now refuse the write.
   test("refuses to upsert into a corrupt (unparseable) lockfile — does not destroy surviving entries", async () => {
     await writeLockfile([
       validEntry({ id: "team-skills", ref: "owner/team-skills" }),
@@ -278,17 +279,17 @@ describe("upsertLockEntry", () => {
     // Simulate a crash mid-write: truncate the JSON mid-object.
     fs.writeFileSync(lockPath, raw.slice(0, Math.floor(raw.length / 2)));
 
-    // The lenient read-only path still degrades to [] (pinned by the "returns
-    // empty array for corrupted JSON" test above).
+    // The lenient read-only path still degrades to [] (unchanged contract —
+    // pinned by the "returns empty array for corrupted JSON" test above).
     expect(readLockfile()).toEqual([]);
 
     await expect(upsertLockEntry(validEntry({ id: "new-install", ref: "some-pkg" }))).rejects.toThrow(
       /existing content is not valid JSON/,
     );
 
-    // The on-disk file was NOT overwritten with just the new entry — the original
-    // (corrupt) bytes are still there, untouched and recoverable, rather than
-    // silently destroyed.
+    // Critical assertion: the on-disk file was NOT overwritten with just the
+    // new entry — the original (corrupt) bytes are still there, untouched
+    // and recoverable, rather than silently destroyed.
     const finalRaw = fs.readFileSync(lockPath, "utf8");
     expect(finalRaw).toBe(raw.slice(0, Math.floor(raw.length / 2)));
     expect(finalRaw).toContain("team-skills");
@@ -338,7 +339,7 @@ describe("removeLockEntry", () => {
     expect(readLockfile()).toEqual([]);
   });
 
-  // Same destructive-overwrite risk as upsertLockEntry.
+  // R-012: same destructive-overwrite risk as upsertLockEntry.
   test("refuses to remove from a corrupt (unparseable) lockfile — does not destroy surviving entries", async () => {
     await writeLockfile([validEntry({ id: "team-skills" }), validEntry({ id: "private-tools" })]);
     const lockPath = getLockfilePath();

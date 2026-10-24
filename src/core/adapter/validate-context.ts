@@ -3,15 +3,20 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The ONE core {@link ValidateContext} implementation.
+ * The ONE core {@link ValidateContext} implementation — akm 0.9.0 chunk-2/lint
+ * follow-up ("make `validate()` genuinely load-bearing").
  *
  * `BundleAdapter.validate()` (`./bundle-adapter.ts`) is a REQUIRED interface
- * method whose contract is explicit: the adapter MUST NOT write and MUST NOT
+ * method whose contract is explicit and normative (`./bundle-adapter.ts:96-100`
+ * / the format-neutral spec §12.1): the adapter MUST NOT write and MUST NOT
  * read the live filesystem — `ctx` serves the run's on-disk SNAPSHOT WITH the
  * caller's pending {@link FileChange}s overlaid, plus a read-only `resolveRef`
- * for link/xref existence. That overlay is built ONCE, centrally — "one core
- * overlay implementation, not one per adapter" — so every `validate()` caller
- * shares identical overlay semantics.
+ * for link/xref existence. That overlay is meant to be built ONCE, centrally —
+ * "one core overlay implementation, not one per adapter" (the interface's own
+ * words) — so every `validate()` caller shares identical overlay semantics
+ * rather than each hand-rolling its own (as every adapter's own test suite has
+ * done up to now, see e.g. `tests/core/adapter/okf-adapter.test.ts`'s
+ * `overlayCtx`/`diskCtx`).
  *
  * The two production callers wired onto this factory:
  *   - `akm lint`'s non-akm adapter dispatch (`commands/lint/index.ts`) — a
@@ -28,16 +33,17 @@
  * A bare (unqualified) `conceptId` is resolved as BOTH:
  *   1. the AKM placement-derived path (`typeNameFromConceptId` + `stashDirFor`
  *      + `assetPathForName` — the exact derivation `commands/lint/base-linter.ts
- *      #refToRelPath` uses for the akm-native `missing-ref` check); and
+ *      #refToRelPath` already uses for the akm-native `missing-ref` check); and
  *   2. the DIRECT component-relative spelling (`<conceptId>.md`, and the bare
  *      `<conceptId>` for an extensionless asset) — the form every non-akm
  *      adapter's OWN conceptId already IS (OKF: path − `.md`; llm-wiki: same).
  * A `bundle//conceptId`-qualified ref has its bundle prefix stripped before
- * resolution — like `base-linter.ts#classifyConceptRef`, which does not scope
- * by bundle name either; it searches every configured stash root for the bare
- * conceptId. Existence is checked against the PRIMARY root (with the
- * pending-changes overlay applied) first, then each extra root (disk only — a
- * pending transaction never targets more than one bundle).
+ * resolution — mirroring `base-linter.ts#classifyConceptRef`'s existing
+ * behavior (the legacy resolver has never scoped-by-bundle-name either; it
+ * searches every configured stash root for the bare conceptId). Existence is
+ * checked against the PRIMARY root (with the pending-changes overlay applied)
+ * first, then each extra root (disk only — a pending transaction never
+ * targets more than one bundle).
  */
 
 import fs from "node:fs";
@@ -132,10 +138,11 @@ function stripFragment(ref: string): string {
 
 /**
  * Strip an optional `bundle//` qualifier. Mirrors `base-linter.ts
- * #classifyConceptRef`: the missing-ref checker does not resolve a qualifier
- * against a NAMED bundle either — it searches every configured stash root for
- * the bare conceptId. Keeping that same leniency here means this resolver's
- * answers agree with `akm lint` for every ref shape.
+ * #classifyConceptRef`'s existing behavior: the legacy missing-ref checker has
+ * never resolved a qualifier against a NAMED bundle either — it searches every
+ * configured stash root for the bare conceptId. Keeping that same leniency
+ * here means this resolver's answers agree with today's `akm lint` for every
+ * ref shape that already worked.
  */
 function stripBundlePrefix(ref: string): string {
   const boundary = ref.indexOf("//");

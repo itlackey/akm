@@ -14,7 +14,7 @@ function run(stuckActiveRuns: number, stuckActiveTasks: { taskId: string; ageMs:
   return check.run({ stuckActiveRuns, stuckActiveTasks } as unknown as HealthCheckContext);
 }
 
-describe("active-runs check", () => {
+describe("active-runs check (item 7)", () => {
   test("is registered as a hard check", () => {
     expect(check).toBeDefined();
     expect(check?.channel).toBe("hard");

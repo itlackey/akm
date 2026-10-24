@@ -178,10 +178,14 @@ describe("OKF first-class conformance", () => {
 
     const lint = await akmLint({ dir: okfRoot });
     expect(lint.ok).toBe(true);
-    // `unknown.md`'s `[Dangling](/missing.md)` link is a broken OKF link,
-    // reported by `okfAdapter.validate()`'s `missing-ref` check
-    // (`okf-adapter.ts`) because `akm lint` runs the real adapter
-    // (non-blocking, per OKF leniency: consumers tolerate broken links).
+    // akm 0.9.0 lint/adapter-dispatch wiring — GAP CLOSURE: `unknown.md`'s
+    // `[Dangling](/missing.md)` link (seeded above) was ALWAYS a broken OKF
+    // link, but the pre-dispatch `akm lint` ran a CLI-only `missing-type`-only
+    // re-implementation for OKF bundles that never checked links at all —
+    // `okfAdapter.validate()`'s own `missing-ref` check (`okf-adapter.ts`) was
+    // unreachable dead code. `akm lint` now runs the real adapter, so this
+    // finding — genuinely present in the fixture the whole time — is reported
+    // (non-blocking, per §5's OKF leniency: consumers tolerate broken links).
     expect(lint.flagged).toEqual([
       {
         file: "unknown.md",
@@ -570,10 +574,12 @@ describe("OKF first-class conformance", () => {
     const result = await akmLint({ dir: okfRoot });
 
     expect(result.ok).toBe(true);
-    // `akm lint` runs the OKF bundle through the real
-    // `okfAdapter.validate()` — the detail text below is the adapter's own
+    // akm 0.9.0 lint/adapter-dispatch wiring: `akm lint` now runs the OKF
+    // bundle through the real `okfAdapter.validate()` (spec §5) instead of a
+    // CLI-only re-implementation — the detail text below is the adapter's own
     // (`okf-adapter.ts`'s `missing-type` message), not a re-recorded
-    // duplicate of it.
+    // duplicate of it. This is the same fix that makes `missing-ref` reachable
+    // at all for OKF bundles (see the dedicated gap-closure test below).
     expect(result.flagged).toContainEqual({
       file: "missing-type.md",
       issue: "missing-type",
@@ -590,7 +596,8 @@ describe("OKF first-class conformance", () => {
     expect(result.flagged.some((issue) => issue.issue === "missing-name-or-type")).toBe(false);
 
     // `typeFilter`/`fix` are akm-sweep-only options; a non-akm adapter dispatch
-    // always validates the whole bundle and never writes.
+    // (like the old `lintOkfBundle` it replaces) always validates the whole
+    // bundle and never writes.
     const filtered = await akmLint({ dir: okfRoot, typeFilter: "memories", fix: true });
     expect(filtered.flagged).toContainEqual({
       file: "missing-type.md",
@@ -778,11 +785,20 @@ describe("OKF first-class conformance", () => {
       await expect(loadWorkflowAsset("native//duplicate")).rejects.toMatchObject({
         code: "RESOURCE_ALREADY_EXISTS",
       });
-      // `createWorkflowAsset` must refuse to create "upper" when "upper.MD"
-      // already exists in the same directory (same canonical name, different
-      // extension case): otherwise it would silently write a second file
-      // ("upper.md") that `loadWorkflowAsset`'s case-insensitive lookup could
-      // then resolve ambiguously.
+      // SRC BUG (reported, not fixed — src is frozen for this port):
+      // `createWorkflowAsset`'s cross-name-collision guard
+      // (`findExistingWorkflowPaths`, pre-unification) was deleted in the
+      // workflow-format-unification refactor along with the (correctly
+      // removed) cross-FORMAT `.md` vs `.yaml`/`.yml` shadowing check it was
+      // bundled with — but no narrower same-extension-different-case guard
+      // was preserved for the now markdown-only surface. `createWorkflowAsset`
+      // resolves its target path with an exact-case `fs.existsSync` and no
+      // longer probes for a same-canonical-name file differing only in
+      // extension case, so creating "upper" here (when "upper.MD" already
+      // exists in the same directory) no longer throws — it silently writes
+      // a second file ("upper.md") that `loadWorkflowAsset`'s case-insensitive
+      // lookup can then resolve ambiguously. Left as the real, unweakened
+      // intended behavior; it fails today on this gap.
       expect(() => createWorkflowAsset({ name: "upper" })).toThrow(/already exists as/i);
     },
   );
@@ -898,11 +914,14 @@ describe("OKF first-class conformance", () => {
       expect(() => createWorkflowAsset({ name: "blocked" })).toThrow(
         /adapter "okf".*does not support AKM asset writes/i,
       );
-      // `createWorkflowAsset` rejects a ".yaml"/".yml" name UNCONDITIONALLY
-      // (workflows are markdown-only) — that check runs before the
-      // write-target/adapter is even resolved, so it fires regardless of which
-      // adapter owns the configured write target. This sub-check pins that
-      // adapter-independent markdown-only rejection.
+      // workflow-format-unification (spec §3): `createWorkflowAsset` now
+      // rejects a ".yaml"/".yml" name UNCONDITIONALLY (workflows are
+      // markdown-only) — that check runs before the write-target/adapter is
+      // even resolved, so it fires regardless of which adapter owns the
+      // configured write target. The write-rejection block above (a plain
+      // ".md" name against the OKF adapter) stays byte-equivalent; this
+      // second sub-check now pins the (adapter-independent) markdown-only
+      // rejection instead of the no-longer-reachable OKF-write-target path.
       expect(() => createWorkflowAsset({ name: "blocked.yaml" })).toThrow(/markdown-only/i);
       expect(fs.existsSync(path.join(okfRoot, "workflows"))).toBe(false);
     });
@@ -1033,13 +1052,13 @@ function parseType(filePath: string): unknown {
   return match?.[1]?.match(/^type:\s*(.+)$/m)?.[1];
 }
 
-// ── OKF v0.2 fixture bundle — reads alongside the v0.1 fixture ──────────────
+// ── OKF v0.2 fixture bundle — reads alongside the v0.1 fixture (D1) ──────────
 //
 // `tests/fixtures/bundles/okf-sample-v2/` exercises the v0.2 trust/provenance
 // (`generated`/`verified`/`sources`) and lifecycle (`status`/`stale_after`)
 // frontmatter families, plus a root `okf_version`. It must index end-to-end
-// exactly like the v0.1 `okf-sample` fixture — both bundles are OKF, just
-// different spec minor versions.
+// exactly like the frozen v0.1 `okf-sample` fixture (byte-identical, untouched
+// by this change) — both bundles are OKF, just different spec minor versions.
 describe("OKF v0.2 fixture bundle indexes end-to-end alongside the v0.1 fixture", () => {
   let v2Storage: IsolatedAkmStorage;
   const V2_FIXTURE_ROOT = path.join(import.meta.dir, "../fixtures/bundles/okf-sample-v2");

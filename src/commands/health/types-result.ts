@@ -3,7 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Top-level `akm health` result shape — the return type of `akmHealth()`, combining every other
+ * Top-level `akm health` result shape (chunk-9 WI-9.5d per-domain split of
+ * `./types`) — the return type of `akmHealth()`, combining every other
  * domain (checks, metrics, improve, per-run, window-compare).
  */
 
@@ -31,7 +32,7 @@ export interface HealthReportContext {
   /** Pending proposal queue at report time. */
   pendingProposals: { ref: string; source: string; createdAt: string }[];
   /**
-   * Accept-rate-per-source metrics (#385), folded from the removed
+   * Accept-rate-per-source metrics (F-4 / #385), folded from the removed
    * `akm history --accept-rate-by-source` flag. See ./accept-rate.ts.
    */
   acceptRateBySource: AcceptRateEntry[];

@@ -606,7 +606,7 @@ describe("health engine probes", () => {
     expect(JSON.stringify(result)).not.toContain("PRIVATE_ALL_UNAVAILABLE_TOKEN");
   });
 
-  test("fails for the shipped default strategy with no non-LLM process enabled and every LLM engine credential-unavailable (#957)", () => {
+  test("fails for the shipped default strategy with no non-LLM process enabled and every LLM engine credential-unavailable (#957 round 2)", () => {
     // Reproduces the issue's exact scenario: the *unmodified* default
     // strategy (proactiveMaintenance and triage left disabled, as shipped —
     // no `improve.strategies` override at all) with every capability:"llm"

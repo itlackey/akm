@@ -5,6 +5,8 @@
 /**
  * `akm show` — entry point.
  *
+ * Spec §6.2:
+ *
  *   show(ref) → indexer.lookup(ref) → readFile(entry.filePath)
  *
  * The richer presentation logic (matchers, renderers, edit-hints,
@@ -69,7 +71,7 @@ import { getActiveWorkflowRun } from "../../workflows/runtime/runs";
 /**
  * Unified show: queries the local FTS5 index, then reads that row's file path.
  * A physical owner can arbitrate collisions during lookup, but show never
- * renders an asset without an indexed row; there is no provider or disk
+ * renders an asset without an indexed row. Spec §6.2; no provider or disk
  * fallback.
  *
  * When `detail` is `"brief"` or `"summary"`, the response omits
@@ -455,7 +457,7 @@ export async function showLocal(input: {
     throw new NotFoundError(`Indexed-safe fragment context is unavailable for ${input.ref}.`);
   }
   if (response.type === "workflow") response.action = buildWorkflowAction(canonicalRef);
-  // Provenance-aware toolPolicy CEILING. An agent's self-declared
+  // 07 P1-D: provenance-aware toolPolicy CEILING. An agent's self-declared
   // `tools` frontmatter is honoured ONLY for the operator's own PRIMARY stash —
   // the assets they authored. Every other source is content pulled from
   // elsewhere and must not name its own tool grant: registry-installed packs, a
@@ -607,7 +609,7 @@ function findUnrecognizedScriptSource(
 /**
  * Minimal `show`: ref → indexer lookup → file contents. Used by callers that
  * just need the raw file (e.g. clone, write-source) and don't want the full
- * renderer graph.
+ * renderer graph. Spec §6.2's literal flow.
  */
 export async function showByRef(ref: string): Promise<{ filePath: string; body: string }> {
   const parsed = parseBundleRef(ref);

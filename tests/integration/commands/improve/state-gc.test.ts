@@ -4,14 +4,14 @@
 
 /**
  * #733 — orphan-GC pass for unresolvable `asset_salience` / `asset_outcome`
- * state rows.
+ * state rows (Workstream C, docs/architecture/specs/0.9.0-close-out-plan.md).
  *
  * The pass is deliberately lean: one maintenance pass (`runOrphanStateGcPass`),
  * one additive migration (`021-asset-state-missing-since`), one event type
  * (`asset_state_gc`), one config gate (`improve.stateGc.collect`, default
  * false). These tests exercise `runOrphanStateGcPass` directly — the same
  * "focused unit coverage, injected db handles, no LLM" style as
- * `tests/integration/commands/improve/improve-maintenance-passes.test.ts` — rather than
+ * `tests/commands/improve/improve-maintenance-passes.test.ts` — rather than
  * driving a full `akmImprove()` run, so the correctness of the resolution
  * logic and the grace/collect gate is asserted without indexer/LLM overhead.
  *
@@ -21,8 +21,9 @@
  * parts (markdown parsing, embeddings) that add nothing to what's under test
  * here.
  *
- * The grace-window test seeds an OLD `missing_since` value directly instead of
- * sleeping — no wall-clock dependency.
+ * Per scripts/lint-tests-isolation.ts Rule 3, the grace-window test seeds an
+ * OLD `missing_since` value directly instead of sleeping — no wall-clock
+ * dependency.
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -82,7 +83,7 @@ const FIXTURE_BUNDLE = "fixture";
 /**
  * Insert a live `entries` row. A bare `conceptId` is bundle-qualified first,
  * because `item_ref` is the DURABLE, fully-qualified identity
- * (`<bundle>//<conceptId>`) — production never stores a bare
+ * (`<bundle>//<conceptId>`, spec §11.1 D-R3) — production never stores a bare
  * non-null `item_ref`, and `findEntryIdByBundleRef` resolves a bare lookup key
  * by `//conceptId` SUFFIX match, which cannot match an unqualified stored
  * value. Storing a bare `item_ref` here would make the fixture unresolvable in
@@ -149,10 +150,12 @@ describe("runOrphanStateGcPass", () => {
     }
   });
 
-  // A schema mismatch in getLiveRefSnapshot's `SELECT item_ref FROM entries`
-  // (e.g. a DB version upgrade that dropped `entries` — the case improve.ts's
-  // #339 comment names) must degrade to the same "orphan state GC failed: …"
-  // warning every other failure in this pass produces, not escape as a throw.
+  // getLiveRefSnapshot's `SELECT item_ref FROM entries` used to run
+  // OUTSIDE this pass's try/catch, so a schema mismatch (e.g. a DB version
+  // upgrade that dropped `entries` — the case improve.ts's #339 comment
+  // names) escaped as a throw instead of degrading to the same
+  // "orphan state GC failed: …" warning every other failure in this pass
+  // produces.
   test("a missing entries table degrades to a warning instead of throwing", () => {
     withStateDb((db) => upsertAssetSalience(db, "memories/gone", FIXTURE_VECTOR));
     const indexDb = openIndex();
@@ -290,8 +293,8 @@ describe("runOrphanStateGcPass", () => {
   });
 
   test("a source whose scan did not complete contributes no candidates (entries row preserved)", () => {
-    // Models indexer.ts's preserveExistingIndex / scanComplete gate:
-    // when a source's walk does not complete, its
+    // Models indexer.ts's preserveExistingIndex / scanComplete gate
+    // (~1195-1199): when a source's walk does not complete, its
     // last-known-good `entries` rows are left untouched rather than wiped.
     // From this pass's point of view there is no difference between
     // "genuinely still present" and "preserved because the scan was
@@ -366,10 +369,10 @@ describe("runOrphanStateGcPass", () => {
     expect(out.collected).toBe(0);
   });
 
-  // The pass builds one live-ref snapshot up front and matches every row
-  // against it in memory, rather than calling `getEntryByRef` (two indexDb
-  // statements, with the bare-ref fallback) once per pending row — O(N) round
-  // trips against index.db for N pending rows.
+  // R78: the pass used to call `getEntryByRef` (two indexDb statements, with
+  // the bare-ref fallback) once per pending row — O(N) round trips against
+  // index.db for N pending rows. It now builds one live-ref snapshot up front
+  // and matches every row against it in memory.
   test("a GC pass over N pending rows performs O(1) indexDb queries, not O(N)", () => {
     const orphanCount = 40;
     withStateDb((db) => {

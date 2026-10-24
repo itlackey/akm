@@ -1,5 +1,6 @@
 /**
- * Tests for `akmInit` (the implementation behind `akm bundle create`, #284).
+ * Tests for `akmInit` (the implementation behind `akm bundle create`, #284
+ * GAP-HIGH 12).
  *
  * Verifies that `akmInit` materialises every registered asset-type directory
  * on disk, including the `lessons/` directory required by the proposal queue.
@@ -57,7 +58,7 @@ describe("akmInit (akm bundle create)", () => {
     expect(fs.existsSync(path.join(stashDir, "memories"))).toBe(true);
   });
 
-  test("scaffolds a .gitignore ignoring env/ and secrets/", async () => {
+  test("scaffolds a .gitignore ignoring env/ and secrets/ (08-F1)", async () => {
     const stashDir = makeTempDir("akm-init-gitignore-");
     fs.rmSync(stashDir, { recursive: true, force: true });
     await akmInit({ dir: stashDir });
@@ -212,8 +213,8 @@ describe("akmInit (akm bundle create)", () => {
 
   // ── Default-stash persist decision matrix (#footgun: --dir must not clobber) ──
   describe("default stash persist decision matrix", () => {
-    // The persisted primary stash is the defaultBundle's path; `saveWithPrimary`
-    // seeds it the way `akm bundle create` writes it.
+    // 0.9.0 (spec §10.1): the persisted primary stash is the defaultBundle's
+    // path; `saveWithPrimary` seeds it the way `akm bundle create` now writes it.
     const saveWithPrimary = (dir: string) =>
       saveConfig({ ...loadUserConfig(), bundles: { main: { path: dir, writable: true } }, defaultBundle: "main" });
 

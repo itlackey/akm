@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Identity-passthrough commands — registered here so the registry stays
-// exhaustive. Each result object is already shaped at the
+// exhaustive (v1 spec §9). Each result object is already shaped at the
 // command boundary; the registry just confirms there's no surprise
 // command name slipping through.
 import type { OutputShapeEntry } from "./registry";

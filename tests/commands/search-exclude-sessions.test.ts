@@ -152,7 +152,7 @@ describe("#627 curate inherits session exclusion (AC1c)", () => {
 
 // ── AC2: explicit --type session bypasses the exclusion ─────────────────────
 
-describe("#627 explicit type:session bypasses exclusion", () => {
+describe("#627 explicit type:session bypasses exclusion (AC2)", () => {
   test(
     "akmSearch({ query, type:'session' }) still returns the session asset",
     async () => {
@@ -173,7 +173,7 @@ describe("#627 explicit type:session bypasses exclusion", () => {
 
 // ── AC3: includeSessions re-includes on the default path ────────────────────
 
-describe("#627 includeSessions re-includes sessions", () => {
+describe("#627 includeSessions re-includes sessions (AC3)", () => {
   test(
     "akmSearch({ query, includeSessions:true }) re-includes the session hit",
     async () => {
@@ -197,7 +197,7 @@ describe("#627 includeSessions re-includes sessions", () => {
 
 // ── AC4a: unset/empty defaultExcludeTypes preserves current behavior ─────────
 
-describe("#627 regression guard for default-exclude config", () => {
+describe("#627 regression guard for default-exclude config (AC4)", () => {
   test(
     "explicit empty defaultExcludeTypes=[] → sessions ARE returned (pre-#627 behavior)",
     async () => {

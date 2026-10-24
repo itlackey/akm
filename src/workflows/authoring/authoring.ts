@@ -59,10 +59,15 @@ export function assertWorkflowMarkdownName(name: string): void {
   );
 }
 
-// This return value is spread into the `akm workflow create` JSON envelope via
+// 0.9.2 review round 2 (P4 sweep criterion-21 caveat, spec
+// docs/plans/specs/p4-deletions-closeout.md §4.1 row B-49): this return's
+// third member was `stashDir` through 0.9.1 and leaked verbatim into the
+// `akm workflow create` JSON envelope (Stable per STABILITY.md) via
 // `output("workflow-create", { ok: true, ...result })`
-// (src/commands/workflow-cli.ts), so its keys, `bundleDir` included, are part
-// of that stable output shape.
+// (src/commands/workflow-cli.ts). Renamed to `bundleDir` here — the same
+// value-preserving field rename `RunTaskOptions.stashDir` got in P1b (see
+// src/tasks/run/task-result.ts's header, F-3) — so the shipped envelope now
+// matches current bundle vocabulary. BREAKING vs 0.9.1's envelope shape.
 export function createWorkflowAsset(input: { name: string; content?: string; from?: string; force?: boolean }): {
   ref: string;
   path: string;

@@ -6,7 +6,7 @@
  * Pure task runtime projection.
  *
  * This is the only bridge from an already-parsed, already-projected task
- * source document (the `PreparableTaskDocument` seam) into executable
+ * source document (the `PreparableTaskDocument` seam, P4-N4) into executable
  * work. It performs all source/config/asset reads before the task runner
  * reserves a durable attempt and returns immutable snapshots. In particular,
  * script work contains frozen bytes and their digest, never a path that can
@@ -15,9 +15,9 @@
  * `prepareTaskV3Execution`'s three production callers are
  * `src/tasks/run/load-task.ts`, `src/tasks/scheduler-sync.ts`, and
  * `src/workflows/freeze/targets/task.ts`'s `taskDispatch`. The name and the
- * `TaskV3*` type family it takes keep their names — only task source v4 ever
- * reaches this function, always via `src/tasks/source/project-v4.ts`'s
- * `projectTaskSourceV4()`.
+ * `TaskV3*` type family it takes stay (spec docs/plans/specs/p4-deletions-closeout.md
+ * §0, R-R1) — only task source v4 ever reaches this function now, always via
+ * `src/tasks/source/project-v4.ts`'s `projectTaskSourceV4()`.
  */
 
 import fs from "node:fs";
@@ -105,7 +105,7 @@ export async function prepareTaskV3Execution(
     return Object.freeze({ ...common, kind: "command" as const, invocation });
   }
   if (target.kind === "workflow") {
-    // Stays reachable — task source v4 still has a top-level env:.
+    // Stays reachable — task source v4 still has a top-level env: (P4-N4).
     if (Object.keys(environment).length > 0) {
       warn(
         "[akm] Task %s: env: is not translated for a workflow target and will be ignored; the durable workflow runtime does not consume it. Use a command target, or drop env:.",
@@ -134,7 +134,7 @@ export async function prepareTaskV3Execution(
     throw new UsageError("Script refs do not accept with.", "COMPOSITION_INVALID");
   }
   const resolved = await resolvedOwnedAsset(qualified, "script", context);
-  // Shared with prepare-script-target.ts's prepareScriptTarget():
+  // Shared with prepare-script-target.ts's prepareScriptTarget() (spec §4.3):
   // one implementation of the byte/interpreter capture, not two.
   const captured = captureScriptTarget(
     qualified,

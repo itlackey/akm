@@ -57,7 +57,7 @@ afterEach(() => {
 // 1. resolveFamilyContradictions (driven via akmImprove)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("belief-state transitions for asserted/deprecated", () => {
+describe("Phase 1A: belief-state transitions for asserted/deprecated", () => {
   test("'asserted' memory is not spuriously refreshed to 'active' when nothing changed", async () => {
     const stashDir = makeTempDir("akm-belief-asserted-stable-");
     writeMemory(stashDir, "deploy", { description: "parent memory" }, "Remember deploy guidance.");
@@ -149,7 +149,7 @@ describe("belief-state transitions for asserted/deprecated", () => {
 // 2. matchBeliefFilter via akmSearch
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("matchBeliefFilter classification", () => {
+describe("Phase 1A: matchBeliefFilter classification", () => {
   test("belief=current includes 'asserted' but excludes 'deprecated'", async () => {
     const stashDir = makeTempDir("akm-belief-filter-current-");
     writeMemory(stashDir, "parent", { description: "parent memory" }, "Parent.");

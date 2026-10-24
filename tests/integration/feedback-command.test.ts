@@ -383,7 +383,7 @@ describe("akm feedback", () => {
 
   // ── R-034: the response envelope must state whether the ranking update was
   // applied, and why not when it was skipped ─────────────────────────────────
-  test("rankingUpdate.applied is true for default (user) feedback source", async () => {
+  test("rankingUpdate.applied is true for default (user) feedback source (R-034)", async () => {
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
       "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
@@ -396,7 +396,7 @@ describe("akm feedback", () => {
     expect(parsed.rankingUpdate).toEqual({ applied: true });
   });
 
-  test("rankingUpdate.applied is false with a reason for a non-user event source", async () => {
+  test("rankingUpdate.applied is false with a reason for a non-user event source (R-034)", async () => {
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
       "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",

@@ -3,23 +3,37 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * MULTI-PROCESS crash-window resume for a CHILD-composing parent. A real
+ * MULTI-PROCESS crash-window resume for a CHILD-composing parent (spec
+ * docs/plans/specs/p3b-child-executor.md §5.2-§5.3, rows C-01…C-04). A real
  * `bun` driver is SIGKILLed at a precise durable window around child
  * publication/execution, and a fresh process converges the run exactly once —
- * the CHILD-level analogue of
- * tests/integration/workflows/workflow-crash-windows.test.ts, using its exact
- * SIGKILL technique and the SAME
- * tests/integration/_helpers/workflow-crossproc.ts helper, UNCHANGED (the
- * CHILD's own units dispatch through the identical fake-dispatcher seam the
- * parent's own leaf units would, since the child drive forwards the SAME
- * injected `dispatcher` down into its own `runWorkflowSteps` call — so
- * `dispatchCount(markerDir, <childUnitId>)` already counts them with no helper
- * change).
+ * the CHILD-level analogue of tests/integration/workflow-crash-windows.test.ts,
+ * using its exact SIGKILL technique and the SAME
+ * tests/integration/_helpers/workflow-crossproc.ts helper, UNCHANGED (spec
+ * §5.2: the CHILD's own units dispatch through the identical fake-dispatcher
+ * seam the parent's own leaf units would, since the child drive forwards the
+ * SAME injected `dispatcher` down into its own `runWorkflowSteps` call — spec
+ * row A-33 — so `dispatchCount(markerDir, <childUnitId>)` already counts them
+ * with no helper change).
+ *
+ * RED phase: the child executor (`src/workflows/exec/child-workflow.ts`,
+ * reached from the ONE dispatch seam in `native-executor.ts`) is not wired
+ * yet, so a composing step's unit currently fails closed
+ * (`WORKFLOW_CHILD_EXECUTION_UNSUPPORTED`) rather than driving a child run —
+ * every scenario below fails today for that reason. This file references only
+ * already-existing, already-typed APIs (repository accessors P3a shipped:
+ * `childRunsOf`, `publishChildWorkflowRun`, `getRunById`, `getUnit`; the
+ * existing `runWorkflowSteps`/`startWorkflowRun`/`resumeWorkflowRun` engine
+ * entry points; `computeChildInvocationKey`, `computeStepWorkList`,
+ * `frozenStepRows`, `canonicalPlanJson`/`computePlanHash`), so no
+ * `@ts-expect-error` directive is needed anywhere in it — Implement makes
+ * these assertions true by wiring the seam, not by changing any type this
+ * file touches.
  *
  * Windows (mirroring workflow-crash-windows.test.ts's Window A/B naming,
  * shifted one level down to the CHILD):
  *
- *   CW-1 — "the child row is published, before the child's own unit is
+ *   CW-1 (C-01) — "the child row is published, before the child's own unit is
  *   well underway": kill as soon as the child row appears. Best-effort (no
  *   production hook exists between "publish" and "drive" to hold on
  *   precisely), so the held child unit MAY already be mid-dispatch by the
@@ -27,12 +41,12 @@
  *   exactly one `workflow_started` event, eventual convergence) hold
  *   regardless of exactly which sub-window the kill actually landed in.
  *
- *   CW-2 — "a child unit row is `running`": held reliably via
+ *   CW-2 (C-02) — "a child unit row is `running`": held reliably via
  *   `CHAOS_HOLD_MATCH` on the child's own leaf unit's prompt, exactly like
  *   the top-level suite's Window A. Resume re-dispatches that ONE child unit
  *   exactly once and both runs complete.
  *
- *   CW-3 — "the child is `completed`, the parent's composing unit row
+ *   CW-3 (C-03) — "the child is `completed`, the parent's composing unit row
  *   is not yet finalized": the child's held unit is released and the test
  *   races to kill the instant the CHILD's own run row flips to `completed` —
  *   before the PARENT's own unit-finalization write can land. Best-effort for
@@ -40,14 +54,14 @@
  *   still proves the invariant under test (resume dispatches ZERO child
  *   units), since a fully-converged run resumes as a pure no-op too.
  *
- * Child-lock contention — two-parent-process contention on the SAME child.
- * The parent's own run lock already prevents two engines driving one PARENT
- * (run-lock.test.ts), so this is the CHILD-row analogue one level down —
- * pre-publish the child exactly as the engine will independently derive it,
- * plant its OWN run lock as held by another live process, then let a
- * genuinely unheld, real engine invocation drive the parent and observe the
- * busy refusal. No subprocess is needed for this one: the CONTRACT under test
- * is CHILD-lock arbitration, not process survival.
+ * C-04 — two-parent-process contention on the SAME child. The parent's own
+ * run lock already prevents two engines driving one PARENT (run-lock.test.ts),
+ * so this is the CHILD-row analogue one level down — pre-publish the child
+ * exactly as the engine will independently derive it, plant its OWN run lock
+ * as held by another live process, then let a genuinely unheld, real engine
+ * invocation drive the parent and observe the busy refusal. No subprocess is
+ * needed for this one: the CONTRACT under test is CHILD-lock arbitration, not
+ * process survival.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -114,7 +128,7 @@ const CHILD_LEAF_WF = [
   "",
 ].join("\n");
 
-/** A GitHub-shaped parent (composition requires it) with one composing step. */
+/** A GitHub-shaped parent (composition requires it — B-N4) with one composing step. */
 function writeComposingParent(stashDir: string, name: string, childRef: string): void {
   const file = path.join(stashDir, "workflows", `${name}.yml`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -143,9 +157,13 @@ async function firstChildOf(parentRunId: string): Promise<string | undefined> {
 
 /**
  * Wait for the parent's child row to appear, or for the crasher process to
- * exit first — whichever happens sooner. If the process exits without ever
- * publishing a child row, this fails fast with a clear message instead of
- * waiting out `pollUntil`'s own timeout for a row that will never appear.
+ * exit first — whichever happens sooner. RED phase: today the composing
+ * unit is handed to the plain injected fake dispatcher exactly like any
+ * other unit (nothing at the dispatch seam yet routes a `child-workflow`
+ * target away from it — spec §3.2), so the run completes trivially and the
+ * process exits long before any child row is ever published. This fails
+ * fast with a clear message instead of waiting out `pollUntil`'s own
+ * timeout for a row that will never appear via today's path.
  */
 async function waitForChildOrExit(parentRunId: string, crasher: RunnerChild, label: string): Promise<void> {
   const published = pollUntil(async () => (await firstChildOf(parentRunId)) !== undefined, { label });
@@ -162,8 +180,8 @@ async function waitForChildOrExit(parentRunId: string, crasher: RunnerChild, lab
   }
 }
 
-describe.skipIf(!BUN)("multi-process crash windows around a composing child", () => {
-  test("SIGKILL as soon as the child row is published → resume finds it by invocation_key, no duplicate child, no duplicate workflow_started event", async () => {
+describe.skipIf(!BUN)("multi-process crash windows around a composing child (C-01…C-03)", () => {
+  test("CW-1 (C-01): SIGKILL as soon as the child row is published → resume finds it by invocation_key, no duplicate child, no duplicate workflow_started event", async () => {
     writeProgram(storage.stashDir, "cw1-leaf", CHILD_LEAF_WF);
     writeComposingParent(storage.stashDir, "cw1-parent", "workflows/cw1-leaf");
     const started = await startWorkflowRun("workflows/cw1-parent", {});
@@ -200,7 +218,8 @@ describe.skipIf(!BUN)("multi-process crash windows around a composing child", ()
     // childRunsOf(parent).length === 1 alone is satisfied by the unique
     // index on invocation_key and says nothing about the event append, so
     // read the events table directly (the readStateEvents technique already
-    // used in tests/integration/storage/child-run-publication.test.ts).
+    // used at tests/integration/workflows/child-execution.test.ts:393 and
+    // tests/integration/storage/child-run-publication.test.ts:281).
     const eventsDb = openStateDatabase(getStateDbPath());
     let startedEventsForChild: number;
     try {
@@ -213,7 +232,7 @@ describe.skipIf(!BUN)("multi-process crash windows around a composing child", ()
     expect(startedEventsForChild).toBe(1);
   }, 45_000);
 
-  test("SIGKILL mid-child-unit-dispatch → both runs resumable; resume re-dispatches ONLY the interrupted child unit, once", async () => {
+  test("CW-2 (C-02): SIGKILL mid-child-unit-dispatch → both runs resumable; resume re-dispatches ONLY the interrupted child unit, once", async () => {
     writeProgram(storage.stashDir, "cw2-leaf", CHILD_LEAF_WF);
     writeComposingParent(storage.stashDir, "cw2-parent", "workflows/cw2-leaf");
     const started = await startWorkflowRun("workflows/cw2-parent", {});
@@ -259,7 +278,7 @@ describe.skipIf(!BUN)("multi-process crash windows around a composing child", ()
     expect(children).toHaveLength(1);
   }, 45_000);
 
-  test("SIGKILL after the child completes but before the parent's composing unit finalizes → resume completes the parent WITHOUT re-running the child", async () => {
+  test("CW-3 (C-03): SIGKILL after the child completes but before the parent's composing unit finalizes → resume completes the parent WITHOUT re-running the child", async () => {
     const releaseFile = path.join(storage.root, "cw3-release");
     writeProgram(storage.stashDir, "cw3-leaf", CHILD_LEAF_WF);
     writeComposingParent(storage.stashDir, "cw3-parent", "workflows/cw3-leaf");
@@ -306,9 +325,9 @@ describe.skipIf(!BUN)("multi-process crash windows around a composing child", ()
   }, 45_000);
 });
 
-// ── two-parent-process contention on one child ──────────────────────────────
+// ── C-04: two-parent-process contention on one child ────────────────────────
 
-/** Wait for `file` to exist, polling via Atomics.wait so no macrotask/timer scheduling is involved (mirrors tests/integration/storage/child-run-publication.test.ts's own helper). */
+/** Wait for `file` to exist, polling via Atomics.wait so no macrotask/timer scheduling is involved (mirrors tests/integration/storage/child-run-publication.test.ts's own C-09 helper). */
 function waitForFile(file: string, timeoutMs = 8_000): void {
   const deadline = Date.now() + timeoutMs;
   while (!fs.existsSync(file) && Date.now() < deadline) {
@@ -320,7 +339,7 @@ function waitForFile(file: string, timeoutMs = 8_000): void {
 /**
  * A worker script that opens its OWN bun:sqlite connection to the SAME
  * state.db file and calls the real, production `publishChildWorkflowRun` —
- * the tests/integration/storage/child-run-publication.test.ts
+ * the tests/integration/storage/child-run-publication.test.ts C-09
  * technique, duplicated here per this repo's test-file self-containment
  * convention (that file exports nothing). Mirrors openStateDatabase's own
  * busy_timeout so a genuinely concurrent BEGIN IMMEDIATE blocks and retries
@@ -358,15 +377,15 @@ try {
 `;
 }
 
-describe("two-parent-process contention on one child", () => {
-  test("two genuinely concurrent publishers racing the identical (parentRunId, invocationKey) converge on one child row, one workflow_started event, and the same returned id (the SELECT-else-INSERT race half)", async () => {
+describe("two-parent-process contention on one child (C-04)", () => {
+  test("two genuinely concurrent publishers racing the identical (parentRunId, invocationKey) converge on one child row, one workflow_started event, and the same returned id (the SELECT-else-INSERT race half; B-N16)", async () => {
     writeProgram(storage.stashDir, "c04-race-leaf", CHILD_LEAF_WF);
     writeComposingParent(storage.stashDir, "c04-race-parent", "workflows/c04-race-leaf");
     const started = await startWorkflowRun("workflows/c04-race-parent", {});
     const parentRunId = started.run.id;
 
     // Derive exactly what the engine's own dispatch seam independently
-    // derives for the composing unit — the SAME
+    // derives for the composing unit (spec §3.3 steps 1-3) — the SAME
     // (parentRunId, invocationKey) pair two genuinely concurrent processes
     // reaching this composing step would each compute on their own, with no
     // coordination between them.
@@ -438,7 +457,7 @@ describe("two-parent-process contention on one child", () => {
       );
 
       // Force a GENUINE overlap rather than racing on file-poll timing alone
-      // (the child-run-publication.test.ts technique, reused verbatim):
+      // (the child-run-publication.test.ts C-09 technique, reused verbatim):
       // take the write lock on a raw transaction BEFORE the worker can
       // possibly attempt its own publish, so the worker's own BEGIN
       // IMMEDIATE (inside its publishChildWorkflowRun call) is guaranteed to
@@ -462,7 +481,7 @@ describe("two-parent-process contention on one child", () => {
       waitForFile(readyFile);
       // Deterministic pause: give the worker's blocked BEGIN IMMEDIATE time
       // to actually register against the held lock before releasing it —
-      // same margin as child-run-publication.test.ts.
+      // same margin as the C-09 precedent.
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
       mainDb.exec("COMMIT");
 
@@ -519,7 +538,7 @@ describe("two-parent-process contention on one child", () => {
     const parentRunId = started.run.id;
 
     // Compute exactly what the engine's own dispatch seam will independently
-    // derive for the composing unit, then pre-publish +
+    // derive for the composing unit (spec §3.3 steps 1-2), then pre-publish +
     // pre-lock the child directly — one level down at the CHILD row.
     const parentRow = await withWorkflowRunsRepo((repo) => repo.getRunById(parentRunId));
     const plan = decodeWorkflowPlan(JSON.parse(parentRow?.plan_json ?? "null"));

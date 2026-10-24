@@ -81,7 +81,7 @@ describe("zero-flag remember", () => {
     const json = JSON.parse(result.stdout) as { ref: string; path: string };
     const content = fs.readFileSync(json.path, "utf8");
 
-    // zero-flag hot-path emits captureMode + beliefState
+    // Phase 1B / Rec 7: zero-flag hot-path emits captureMode + beliefState
     expect(content.startsWith("---")).toBe(true);
     const parsed = parseFrontmatter(content);
     expect(parsed.data.captureMode).toBe("hot");
@@ -91,8 +91,8 @@ describe("zero-flag remember", () => {
     // write — without it, `akm lint` flagged its own `remember` output as
     // `missing-updated`.
     expect(parsed.data.updated).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    // #834: the zero-flag hot path also synthesizes `description` from the body;
-    // otherwise this memory would index only on filename words.
+    // #834: the zero-flag hot path now also synthesizes `description` from
+    // the body — previously this memory would index only on filename words.
     expect(parsed.data.description).toBe("Deployment needs VPN access");
     expect(Object.keys(parsed.data).sort()).toEqual(["beliefState", "captureMode", "description", "type", "updated"]);
     expect(parsed.content).toContain("Deployment needs VPN access");
@@ -202,8 +202,8 @@ describe("remember --expires", () => {
   });
 
   test("--expires 6M resolves to a future ISO date ~6 months from now", async () => {
-    // `M` = months (30-day approximation); `m` means minutes, so months must be
-    // requested with the upper-case unit.
+    // Canonical grammar: `M` = months (30-day approximation). `m` now means
+    // minutes, so months must be requested with the upper-case unit.
     const { result } = await runCli(["remember", "Long-term access", "--tag", "access", "--expires", "6M"]);
     expect(result.status).toBe(0);
 
@@ -366,10 +366,10 @@ describe("memory metadata fold", () => {
     return { filePath, stashRoot };
   }
 
-  // The index-time memory fold: the `akm` adapter's synchronous fold on a
-  // minimal (name+type) seed, applied with the same precedence recognize uses.
-  // Kept async so the throw-free "no crash" pin below can still assert
-  // `.resolves`.
+  // The live index-time equivalent of the retired memory-md contributor: the
+  // `akm` adapter's synchronous fold on a minimal (name+type) seed, applied with
+  // the same precedence recognize uses. Kept async so the throw-free "no crash"
+  // pin below can still assert `.resolves`.
   async function applyMemoryMetadata(entry: IndexDocument, stashRoot: string, filePath: string): Promise<void> {
     const ctx = buildFileContext(stashRoot, filePath);
     applyFoldedMetadata(entry, foldRecognizedMetadata("memory-md", ctx));
@@ -488,9 +488,10 @@ describe("remember --enrich graceful degradation", () => {
     expect(result.status).toBe(0);
 
     // The warning is load-bearing: it proves standalone `--enrich` actually
-    // entered the enrichment branch. If `hasStructuredArgs` omitted `args.enrich`,
-    // this invocation would silently take the zero-flag raw-write hot path and
-    // never attempt enrichment.
+    // entered the enrichment branch. Before the 0.9.0 gate fix,
+    // `hasStructuredArgs` omitted `args.enrich`, so this invocation silently
+    // took the zero-flag raw-write hot path and never attempted enrichment
+    // (§24.2 "Agent/LLM" release gate).
     expect(result.stderr).toContain("--enrich requires an engine to be configured");
 
     const json = JSON.parse(result.stdout) as { path: string };
@@ -511,9 +512,9 @@ describe("remember --enrich graceful degradation", () => {
   });
 });
 
-// ── hot-path captureMode + beliefState ─────────────────────────────────────
+// ── Phase 1B / Rec 7: hot-path captureMode + beliefState ────────────────────
 
-describe("remember writes captureMode: hot + beliefState: asserted", () => {
+describe("remember writes captureMode: hot + beliefState: asserted (Phase 1B)", () => {
   test("--tag path writes captureMode: hot and beliefState: asserted", async () => {
     const { result } = await runCli(["remember", "VPN required for staging", "--tag", "ops"]);
     expect(result.status).toBe(0);
@@ -539,12 +540,12 @@ describe("remember writes captureMode: hot + beliefState: asserted", () => {
 
 // ── #834: description is synthesized whenever the caller doesn't supply one ─
 //
-// Without a synthesized description, `akm remember` memories carry no
-// `description:` on both the zero-flag hot path AND the structured-args path
+// Before this fix, `akm remember` wrote memories with no `description:` and
+// no `tags:` on both the zero-flag hot path AND the structured-args path
 // (e.g. `--tag`-only, with no `--description`/`--enrich`). akm's indexer
 // covers only synthesized frontmatter/headings, never body prose, so those
-// memories would be retrievable only by whatever words survive into the
-// auto-generated filename. This section proves both write paths populate
+// memories were retrievable only by whatever words survived into the
+// auto-generated filename. This section proves both write paths now populate
 // `description` deterministically, without clobbering a caller-supplied one.
 
 describe("remember synthesizes description when missing (#834)", () => {

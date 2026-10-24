@@ -29,12 +29,13 @@ const USAGE_EVENT_SOURCES = new Set<UsageEventSource>(["user", "improve", "task"
  * Resolve subprocess provenance without treating an invalid value as user
  * demand.
  *
- * `fallback` is what an unset/empty ambient value resolves to — it defaults to
- * `"user"`. A caller that
+ * `fallback` (spec docs/plans/specs/p1b-model-extraction.md §5.2, F-1) is what
+ * an unset/empty ambient value resolves to — it defaults to `"user"`, which
+ * reproduces every pre-P1b call site byte-for-byte (P-07). A caller that
  * already knows the invocation's provenance (the task runner, threading its
  * `ExecutionProvenanceContext`) passes its resolved value as the fallback
- * instead, so a recognized ambient `AKM_EVENT_SOURCE` always wins, and only
- * the *default* changes.
+ * instead, so a recognized ambient `AKM_EVENT_SOURCE` still wins everywhere it
+ * won before, and only the *default* changes.
  */
 export function resolveUsageEventSource(
   env: Record<string, string | undefined> = process.env,
@@ -126,7 +127,8 @@ export function insertUsageEventStrict(db: Database, event: UsageEvent): void {
 /**
  * Aggregate positive/negative feedback counts for a single entry.
  *
- * Returns plain numbers (NULL SUMs
+ * Lifted verbatim from `akm feedback` (feedback-cli.ts) where the same
+ * SUM(CASE …) query was hand-rolled inline. Returns plain numbers (NULL SUMs
  * over an empty set are coalesced to 0) so the result fully materialises before
  * any owning connection closes.
  */
@@ -145,6 +147,10 @@ export function countFeedbackSignals(db: Database, entryId: number): { pos: numb
 
 /**
  * Count usage events of a given `event_type`.
+ *
+ * Lifted verbatim from `akm improve` (improve.ts) where the show-event count
+ * was hand-rolled inline to drive the warning that the retrieval scope matches
+ * only search-retrieved assets.
  */
 export function countUsageEventsByType(db: Database, eventType: string): number {
   return (db.prepare("SELECT COUNT(*) AS cnt FROM usage_events WHERE event_type = ?").get(eventType) as { cnt: number })

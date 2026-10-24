@@ -53,7 +53,7 @@ function seedProposal(stash: string, ref = "lessons/rg-over-grep"): string {
   return result.id;
 }
 
-describe("akm proposal — JSON envelope snapshot", () => {
+describe("akm proposal — JSON envelope snapshot (WS6)", () => {
   test("proposal list: envelope shape is pinned (success path)", async () => {
     const stash = makeStashDir();
     seedProposal(stash);

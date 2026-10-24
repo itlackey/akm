@@ -5,11 +5,14 @@
 /**
  * Shared agent-command-builder types and helpers (#563).
  *
- * Kept apart from `agent/builders.ts` so per-harness builders (e.g.
+ * Extracted from `agent/builders.ts` so per-harness builders (e.g.
  * `harnesses/claude/agent-builder.ts`) can depend on the common
  * types/validation WITHOUT creating an import cycle back through
  * `builders.ts` (which imports the per-harness builders into its registry).
  * This module is a dependency-graph LEAF for the builder subsystem.
+ *
+ * Behaviour-preserving: the type shapes and helper bodies are unchanged from
+ * their previous home in `builders.ts`.
  */
 
 import type { ExecutionJsonObject } from "../../execution/json";
@@ -73,7 +76,8 @@ export interface BuiltCommand {
 }
 
 /**
- * Normalized payload extracted from one raw harness run.
+ * Normalized payload extracted from one raw harness run (P2, plan §"The
+ * adapter contract" step 3 / §"Structured-output normalization").
  *
  * `text` is the harness's final answer with transport framing stripped
  * (JSONL event streams, SDK envelopes, banner noise) — the input that
@@ -98,7 +102,7 @@ export interface AgentResultExtraction {
  * retry-until-valid loop stay in the engine, shared across harnesses.
  *
  * `AgentRunResult` is referenced via an inline `import("./spawn")` TYPE QUERY
- * rather than a top-level `import type` — this
+ * (WI-9.8 KILL 3, D.3 edge C) rather than a top-level `import type` — this
  * file is a dependency-graph LEAF that every harness's agent-builder AND
  * result-extractor import; `./spawn.ts` itself imports `./builders.ts`
  * (`getCommandBuilder`), which imports the harness barrel, which imports
@@ -106,7 +110,7 @@ export interface AgentResultExtraction {
  * An inline type query is erased at compile time (same as `core/config`'s
  * `typeof import("./config-schema")` pattern) so it carries zero runtime
  * footprint and is invisible to the static import graph, unlike a top-level
- * `import type` (which the cycle ratchet DOES count).
+ * `import type` (which the cycle ratchet DOES count — see trap list).
  */
 export type AgentResultExtractor = (result: import("./spawn").AgentRunResult) => AgentResultExtraction;
 

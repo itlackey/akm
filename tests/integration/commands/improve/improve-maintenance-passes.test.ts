@@ -3,12 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Focused unit coverage for the maintenance passes extracted from
- * `runImproveMaintenancePasses` / its `withIndexWriterLease` callback.
+ * WI-7.7 — focused unit coverage for the maintenance passes extracted from
+ * `runImproveMaintenancePasses` / its `withIndexWriterLease` callback (R31
+ * decomposition, testability requirement).
  *
  * Each pass is driven directly with an injected `memoryInferenceFn` seam —
- * no LLM, no real index.db — and its returned result object is asserted.
- * The #584/#585 db-handle and
+ * no LLM, no real index.db — and its returned result object is asserted
+ * instead of the old shared closure state. The #584/#585 db-handle and
  * borrowed-connection contracts keep their own integration suite
  * (`improve-db-locking.test.ts`).
  */
@@ -172,9 +173,10 @@ describe("runRetentionPurgePass", () => {
     expect(fs.existsSync(newFile)).toBe(true);
   });
 
-  // `vacuumIfReclaimable` runs in the purge callback, reading the freelist off
-  // the same connection the purge just used. Recipe (bulk-insert-then-delete)
-  // as in tests/integration/storage/state-db-integrity.test.ts, except the
+  // R0 step 3 wires vacuumIfReclaimable into the
+  // purge callback, reading the freelist off the same connection the purge
+  // just used. Recipe (bulk-insert-then-delete) reused from
+  // tests/integration/storage/state-db-integrity.test.ts:140-160, except the
   // "delete" here is the retention purge itself.
   test("VACUUMs state.db and appends state_db_vacuumed when the purge frees enough pages", () => {
     const stash = freshStash();

@@ -4,18 +4,19 @@
 
 /**
  * `TASK_INPUT_DIAGNOSTICS` — the task-side message/code vocabulary for
- * `materializeInputFlags`.
+ * `materializeInputFlags` (spec docs/plans/specs/p2a-task-source-v4.md §1.5
+ * D3-N3, §4.2, §5.1).
  *
  * `materializeInputFlags` (`src/execution/input-contract.ts`) contains no
  * literal user-facing string of its own — every message/code it raises comes
  * from a caller-supplied `InputFlagDiagnostics`. `src/workflows/ir/params.ts`
  * supplies `WORKFLOW_PARAMETER_DIAGNOSTICS` for workflow params; this module
- * is that same seam's task-side sibling, consumed by `akm task run`
+ * is that same seam's task-side sibling, consumed by `akm task run`'s Stage 2
  * (`src/tasks/run/load-task.ts`). Mirrors `WORKFLOW_PARAMETER_DIAGNOSTICS`'s
  * shape exactly (`unknownFlag`'s declared-name enumeration in the SEPARATE
- * `hint`, not the message) with task-flavored nouns and the codes
- * `UNKNOWN_FLAG` for an undeclared name and `INPUT_BINDING_INVALID` for every
- * value/contract failure.
+ * `hint`, not the message — `params.ts:65-72`) with task-flavored nouns and
+ * the codes §5.1 binds: `UNKNOWN_FLAG` for an undeclared name,
+ * `INPUT_BINDING_INVALID` for every value/contract failure.
  */
 
 import { UsageError } from "../../core/errors";
@@ -25,7 +26,7 @@ function invalidTaskInput(name: string, detail: string): UsageError {
   return new UsageError(`Task input "--${name}" ${detail}.`, "INPUT_BINDING_INVALID");
 }
 
-/** The task-input message/code vocabulary for `materializeInputFlags`. */
+/** The task-input message/code vocabulary for `materializeInputFlags` (D3-N3). */
 export const TASK_INPUT_DIAGNOSTICS: InputFlagDiagnostics = {
   unknownFlag: (name, declared) => {
     const available = declared.map((n) => `--${n}`).join(", ");

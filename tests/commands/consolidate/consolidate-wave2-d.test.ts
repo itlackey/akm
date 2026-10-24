@@ -1,10 +1,12 @@
 /**
- * Error-surface tests: hint text rendered in error output, `UsageError` /
- * `ConfigError` / `NotFoundError` exit codes, a malformed `akm show` ref
- * throwing `UsageError`/`MISSING_REQUIRED_ARGUMENT`, `config set` error
- * wording ("sources", not "stashes"), clone of a missing asset giving a
- * user-facing message without "Stash type root" leakage, and deprecation hints
- * naming real commands.
+ * Wave-2 QA fixes tests — Cluster D (errors, exit codes, hint text).
+ *
+ * #8  — hint field rendered in error output (already working; regression guard).
+ * #13 — UsageError exits 2, ConfigError exits 78, NotFoundError exits 1.
+ * #15 — `akm show foo` (malformed ref) throws UsageError/MISSING_REQUIRED_ARGUMENT.
+ * #16 — `config set sources <bad>` says "sources" not "stashes".
+ * #27 — clone missing asset: user-facing message, no "Stash type root" leakage.
+ * #38 — deprecation hints reference real commands.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -27,11 +29,16 @@ function captureWarnings(fn: () => void): string[] {
   }
 }
 
-// Exit-code classification is covered by tests/cli/exit-code-classification.test.ts,
-// which drives the actual `emitJsonError` seam and asserts the real
-// process.exitCode values (2 / 78 / 1 / 70).
+// #13's "error class exit-code classification" describe block was DELETED
+// here (D2, Phase 2 triage): all 4 tests asserted only `err.name` and
+// `instanceof` — tautologies over JS class semantics ("a UsageError is an
+// instanceof UsageError") that can never fail regardless of what exit code
+// the CLI actually emits. Real coverage of the exit-code mapping lives in
+// tests/cli/exit-code-classification.test.ts:60-99, which drives the actual
+// `emitJsonError` seam and asserts the real process.exitCode values (2 / 78 /
+// 1 / 70).
 
-// ── hint field rendered ───────────────────────────────────────────────────
+// ── #8: hint field rendered ───────────────────────────────────────────────────
 
 describe("error hint rendering (#8)", () => {
   test("ConfigError with hint: true returns hint", () => {
@@ -53,6 +60,7 @@ describe("error hint rendering (#8)", () => {
 
   test("NotFoundError with ASSET_NOT_FOUND has a canned hint (Wave C #284)", () => {
     const err = new NotFoundError("not found");
+    // Wave C added a default hint for ASSET_NOT_FOUND pointing at search/index.
     expect(err.hint()).toContain("akm search");
   });
 
@@ -62,9 +70,12 @@ describe("error hint rendering (#8)", () => {
   });
 });
 
-// ── config set sources error message says "sources" ─────────────────────────
+// ── #16: config set sources error message says "sources" ─────────────────────
 //
-// `setConfigValue` is the implementation backing `akm config set`.
+// R-063 #5: previously exercised via `parseConfigValue`, a compatibility
+// shim removed as dead code (zero production callers) — see the note in
+// tests/config-cli.test.ts. `setConfigValue` is the live implementation
+// backing `akm config set`.
 
 describe("config-cli setConfigValue sources error message (#16)", () => {
   const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
@@ -90,8 +101,9 @@ describe("config-cli setConfigValue sources error message (#16)", () => {
   });
 
   test("invalid array element shows dotted zod indexing ('registries.0') — sources key retired (#37)", () => {
-    // Zod uses dotted indexing in error paths; the `registries` array key
-    // exercises that error-path shape.
+    // Post-rewrite: Zod uses dotted indexing in error paths. The original pin
+    // used `sources`, which the 0.9.0 bundles cutover retired outright; the
+    // surviving `registries` array key exercises the same error-path shape.
     try {
       setConfigValue(base, "registries", "[{}]");
       throw new Error("should have thrown");
@@ -104,7 +116,7 @@ describe("config-cli setConfigValue sources error message (#16)", () => {
   });
 });
 
-// ── source-resolve user-facing error messages ───────────────────────────────
+// ── #27: source-resolve user-facing error messages ───────────────────────────
 
 describe("source-resolve user-facing errors (#27)", () => {
   test("error message does not contain 'Stash type root'", async () => {

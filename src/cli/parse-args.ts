@@ -4,13 +4,17 @@
 
 /**
  * Shared argument-parsing utilities for the AKM CLI entry point.
+ *
+ * These were extracted from `src/cli.ts` to eliminate repetition and keep the
+ * main CLI file focused on command definitions and routing.
  */
 
 import { UsageError } from "../core/errors";
 
-// findCittyTopLevelCommand(Index) + CittyArg(s)DefinitionForScan live in
-// ./invocation and are re-exported here for existing importers
-// (tests/tasks-embedded.test.ts, commands/read/show.ts).
+// findCittyTopLevelCommand(Index) + CittyArg(s)DefinitionForScan moved to
+// ./invocation (chunk-9 WI-9.9 argv-normalization fold — that cluster had no
+// internal imports, so it relocated cleanly); re-exported here so existing
+// importers (tests/tasks-embedded.test.ts, commands/read/show.ts) are unaffected.
 export {
   type CittyArgDefinitionForScan,
   type CittyArgsDefinitionForScan,

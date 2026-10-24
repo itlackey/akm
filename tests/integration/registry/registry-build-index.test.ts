@@ -209,7 +209,7 @@ describe("buildRegistryIndex", () => {
     const npmStash = result.index.stashes.find((stash) => stash.id === "npm:agent-stash");
     expect(npmStash).toBeDefined();
     expect(npmStash?.description).toBe("manual description");
-    // The legacy `curated` boolean is removed. The builder must
+    // v1 spec §4.2: the legacy `curated` boolean is removed. The builder must
     // not surface it on emitted stash entries even when input contained it.
     expect(npmStash as unknown as Record<string, unknown>).not.toHaveProperty("curated");
     expect(npmStash?.assetTypes).toEqual(["knowledge", "script", "skill"]);
@@ -233,13 +233,13 @@ describe("buildRegistryIndex", () => {
 
     const manualOnlyStash = result.index.stashes.find((stash) => stash.id === "github:manual/only");
     expect(manualOnlyStash).toBeDefined();
-    // Legacy `curated` from manual entries is silently ignored.
+    // v1 spec §4.2: legacy `curated` from manual entries is silently ignored.
     expect(manualOnlyStash as unknown as Record<string, unknown>).not.toHaveProperty("curated");
     expect(manualOnlyStash?.assetTypes).toEqual(["skill"]);
   });
 
   test("legacy curated key parses without error", async () => {
-    // `curated: true` is a removed legacy field on registry
+    // v1 spec §4.2: `curated: true` is a removed legacy field on registry
     // entries. Manual-entry JSON in the wild may still contain it. The
     // builder MUST silently ignore it (not throw, not fail validation),
     // and the entry MUST still be processed end-to-end.
@@ -346,7 +346,7 @@ describe("buildRegistryIndex", () => {
     ]);
 
     const reviewAsset = npmStash?.assets?.find((asset) => asset.type === "skill" && asset.name === "review");
-    // The `.stash.json` live reader is retired — the sidecar's curated
+    // #39: the `.stash.json` live reader is retired — the sidecar's curated
     // description/tags ("Curated review workflow", ["quality","code-review"])
     // must NOT surface; the asset carries only its generated metadata. A
     // published stash that wants curated metadata migrates to frontmatter.

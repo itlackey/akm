@@ -5,7 +5,8 @@
 /**
  * Plain-text renderers for `akm workflow *` commands.
  *
- * The workflow list/status/run/create/resume renderers form a
+ * Split out of `helpers.ts` (formerly 1418 lines / 59 fns) as its own
+ * sibling module: the workflow list/status/run/create/resume renderers form a
  * cohesive, self-contained cluster (they call only each other, never
  * formatters from other domains).
  */
@@ -30,7 +31,7 @@ export function formatWorkflowListPlain(result: Record<string, unknown>): string
     .join("\n");
 }
 
-/** Child-status glyphs, drawn from the repo's existing vocabulary (status-list.ts's ✗/✓, proposal-format.ts's →). */
+/** §4.5's glyph table (P3b) — drawn from the repo's existing vocabulary (status-list.ts's ✗/✓, proposal-format.ts's →). */
 const CHILD_STATUS_GLYPHS: Readonly<Record<string, string>> = {
   completed: "✓",
   active: "→",
@@ -39,7 +40,7 @@ const CHILD_STATUS_GLYPHS: Readonly<Record<string, string>> = {
 };
 
 /**
- * Render one `children:` tree node plus its own children,
+ * Render one `children:` tree node (P3b, spec §4.5) plus its own children,
  * recursively, indenting two spaces per level. Order is SPAWN order (the
  * envelope's own array order) — the tree is structural, never severity-sorted.
  */
@@ -92,9 +93,10 @@ export function formatWorkflowStatusPlain(result: Record<string, unknown>): stri
     }
   }
 
-  // The parent-child status tree: renders ONLY when `children` is a non-empty
-  // array, immediately after `steps:` and before `units:`. Absent for a
-  // childless run.
+  // The parent-child status tree (P3b, spec §4.5): renders ONLY when
+  // `children` is a non-empty array, immediately after `steps:` and before
+  // `units:`. Absent for a childless run — byte-identical to pre-P3b text
+  // (row B-33, PRESERVE).
   const children = Array.isArray(result.children) ? (result.children as Array<Record<string, unknown>>) : undefined;
   if (children && children.length > 0) {
     lines.push("children:");
@@ -133,7 +135,7 @@ export function formatWorkflowStatusPlain(result: Record<string, unknown>): stri
  * from a `{code, severity, adapter, field?, message}` lowering notice, or
  * `null` when `value` does not carry that shape. Shared by
  * `formatWorkflowRunPlain` (dispatch-time notices) and `formatWorkflowPlanPlain`
- * (freeze-time notices) — ONE projection, rendered the same
+ * (freeze-time notices, P3b §4.6, B-57) — ONE projection, rendered the same
  * way regardless of which invocation computed the notice.
  */
 function renderLoweringNoticeLine(value: unknown): string | null {
@@ -229,10 +231,10 @@ export function formatWorkflowResumePlain(r: Record<string, unknown>): string {
 }
 
 /**
- * A step's `inputBindings[]` (the `with:` line) — a literal shows its
+ * A step's `inputBindings[]` (P3b §4.6's `with:` line) — a literal shows its
  * value, a reference shows only its unresolved `from` (never a resolved
- * value; the plan's closed print list allows a literal *task/child* input
- * binding's `.value`, unlike a literal **environment** binding's).
+ * value; B-52/B-53's closed print list explicitly allows a literal *task/
+ * child* input binding's `.value`, unlike a literal **environment** binding's).
  */
 function formatInputBindingsList(bindings: readonly Record<string, unknown>[]): string {
   return bindings
@@ -246,12 +248,12 @@ function formatInputBindingsList(bindings: readonly Record<string, unknown>[]): 
 }
 
 /**
- * One `akm workflow plan` step line, plus its child-workflow
+ * One `akm workflow plan` step line (P3b, spec §4.6), plus its child-workflow
  * expansion's own steps, recursively, indented one level per composition
  * boundary. A child step also carries the child's `planHash` on the step
  * line itself, and (when present) a `with:` line for the step's own
  * `inputBindings[]` and an `exports:` line for the child's declared output
- * names.
+ * names — §4.6's worked example.
  */
 function renderPlanStepLines(step: Record<string, unknown>, ordinal: number, lines: string[], prefix = "  "): void {
   const stepId = typeof step.stepId === "string" ? step.stepId : "unknown";
@@ -286,9 +288,9 @@ function renderPlanStepLines(step: Record<string, unknown>, ordinal: number, lin
 }
 
 /**
- * `akm workflow plan <ref>` text mode: a human summary of
+ * `akm workflow plan <ref>` text mode (P3b, spec §4.6): a human summary of
  * the same compile+freeze data `--format json` returns — never a resolved
- * env/secret value.
+ * env/secret value (B-52, B-53).
  */
 export function formatWorkflowPlanPlain(result: Record<string, unknown>): string | null {
   if (typeof result.ref !== "string") return null;

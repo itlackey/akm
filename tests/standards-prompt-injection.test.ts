@@ -125,7 +125,7 @@ describe("standards prompt injection", () => {
     expect(prompt).toContain(factBody);
   });
 
-  test("regression: rendered standards sections never contain a colon-form ref", () => {
+  test("E-1 regression: rendered standards sections never contain a colon-form ref", () => {
     const factBody = "ALWAYS_NAME_SKILLS_KEBAB_CASE";
     const facts = path.join(stashDir, "facts", "conventions");
     fs.mkdirSync(facts, { recursive: true });

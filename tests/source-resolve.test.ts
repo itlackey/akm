@@ -39,8 +39,9 @@ describe("resolveAssetPath", () => {
     const stashDir = createTmpDir();
     // No scripts/ directory created
 
-    // The error message does not leak internal "Stash type root" wording, and
-    // names the slash conceptId (`scripts/deploy.sh`).
+    // QA #27: error message no longer leaks internal "Stash type root" wording
+    // 0.9.0 (Q-02): the retired `type:name` colon grammar is gone — the
+    // message now emits the slash conceptId (`scripts/deploy.sh`).
     await expect(resolveAssetPath(stashDir, "script", "deploy.sh")).rejects.toThrow(
       /Asset not found for ref: scripts\/deploy\.sh|not found for ref/i,
     );

@@ -20,7 +20,7 @@ import {
 } from "../../_helpers/sandbox";
 
 /**
- * Budget ceilings: the YAML `budget` block travels
+ * Budget ceilings (redesign addendum R2): the YAML `budget` block travels
  * end to end — parser → compiler → FROZEN plan (`plan_json`) — and the engine
  * enforces it per run:
  *
@@ -64,8 +64,8 @@ function execOnWorkflowDb(sql: string, ...params: Array<string | number>): void 
   }
 }
 
-// Unified-format fixtures (frontmatter graph + `## <step-id>` body). Map
-// units never splice the item into prose: "Review the
+// Unified-format fixtures (frontmatter graph + `## <step-id>` body — spec
+// §2.2). Map units never splice the item into prose (§2.3): "Review the
 // assigned item carefully." is dispatched with the item attached as
 // structured context (a `## Item (index N)` JSON block), not interpolated —
 // callers that need to distinguish units by item value match that JSON block
@@ -154,8 +154,8 @@ describe("budget.max_units", () => {
     // Step one carries a completion gate: the engine journals the judge call
     // as a unit row (`one.gate:l1`, phase "gate"). That row is NOT a dispatch
     // — the live path never consumes DispatchBudget for it — so a resumed
-    // run must not count it either. With max_units: 2, a seed that counted
-    // every journal row would spuriously fail step two on the resume below
+    // run must not count it either. Pre-fix, the seed counted every journal
+    // row: with max_units: 2 the resume below spuriously failed step two
     // with "budget exceeded" while the identical uninterrupted run passed.
     writeProgram(
       "gate-seeded",
@@ -404,7 +404,7 @@ describe("budget.max_tokens", () => {
       target: started.run.id,
       summaryJudge: null,
       dispatcher: async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
-        // Instructions are never interpolated: the item reaches
+        // Instructions are never interpolated (spec §2.3): the item reaches
         // the unit as attached JSON context (`## Item (index N)`), not a
         // spliced instruction string. The preamble also embeds the FULL
         // `params.files` JSON (both filenames), so a bare `"fast.ts"` check

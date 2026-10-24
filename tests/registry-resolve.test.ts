@@ -255,7 +255,7 @@ describe("parseRegistryRef — bare scoped npm package", () => {
 // pre-fix tree: `parseRegistryRef("itlackey/akm-stash")` threw
 // `Local path not found: <cwd>/itlackey/akm-stash`.
 
-describe("parseRegistryRef — `owner/repo` GitHub shorthand", () => {
+describe("parseRegistryRef — `owner/repo` GitHub shorthand (R-007)", () => {
   test("a bare owner/repo ref with no matching local directory resolves as GitHub shorthand", () => {
     // Guaranteed not to exist as a directory relative to the test cwd.
     const parsed = parseRegistryRef("itlackey/akm-stash-does-not-exist-on-disk");
@@ -305,7 +305,7 @@ describe("parseRegistryRef — `owner/repo` GitHub shorthand", () => {
 // override is honored end-to-end: metadata is fetched from the configured
 // mirror, not the public registry.
 
-describe("resolveRegistryArtifact — npm metadata honors AKM_NPM_REGISTRY", () => {
+describe("resolveRegistryArtifact — npm metadata honors AKM_NPM_REGISTRY (R-035)", () => {
   const originalRegistry = process.env.AKM_NPM_REGISTRY;
 
   afterEach(() => {

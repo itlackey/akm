@@ -3,21 +3,30 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm workflow plan <ref>`. Drives the REAL `akm` CLI in-process
- * (`runCliCapture`), like tests/commands/tasks-explain.test.ts does for
- * `task explain`.
+ * P3b Lane B TESTS — `akm workflow plan <ref>` (spec docs/plans/specs/
+ * p3b-child-executor.md §4.6, rows B-46…B-59; named in §7's new-suites table
+ * as this file). Drives the REAL `akm` CLI in-process (`runCliCapture`),
+ * exactly like `tests/integration/commands/tasks-explain.test.ts`'s P2b
+ * precedent for a brand-new read-only verb — no not-yet-existing TypeScript
+ * export is referenced directly anywhere in this file, so no
+ * `@ts-expect-error` directive is needed.
  *
- * The static registration (a required `ref` positional plus the global
- * `format` flag) is asserted in tests/contracts/command-cli-contract.test.ts —
- * this file does not duplicate that exact static assertion; the runtime "no
- * ref -> usage error" test is this file's own behavioral witness of the same
- * requirement.
+ * RED phase: `workflow plan` is not a registered `workflowCommand`
+ * subcommand at all today, so every invocation below fails with citty's own
+ * unknown-subcommand error (exit 2) instead of the behavior pinned here.
  *
- * Sentinel coverage is command-body-content and a literal env: value (both
- * simple, unambiguous fixtures); a script-bytes sentinel is not separately
- * constructed here — the closed print-list table still gets its own structural
- * assertion that a script target's `bytesBase64` and a command's
- * `request.command.content` are never among the fields this verb reads at all.
+ * B-59 (the static registration: a required `ref` positional plus the global
+ * `format` flag) is the AUTHORIZED additive arm in
+ * tests/contracts/command-cli-contract.test.ts (spec F-B4) — this file does
+ * not duplicate that exact static assertion; B-58's runtime "no ref -> usage
+ * error" test is this file's own behavioral witness of the same requirement.
+ *
+ * B-53's sentinel coverage is command-body-content and a literal env: value
+ * (both simple, unambiguous fixtures); a script-bytes sentinel is not
+ * separately constructed here — the closed print-list table (§4.6) still
+ * gets its own structural assertion (B-51/B-52) that a script target's
+ * `bytesBase64` and a command's `request.command.content` are never among
+ * the fields this verb reads at all.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -102,7 +111,7 @@ function tableCounts(): DbRowCounts {
   }
 }
 
-// A closed set of the ONLY keys authorized at the envelope's root.
+// A closed set of the ONLY keys §4.6 authorizes at the envelope's root.
 const ENVELOPE_ROOT_KEYS = new Set([
   "ok",
   "ref",
@@ -120,8 +129,9 @@ const ENVELOPE_ROOT_KEYS = new Set([
   "notices",
   "warnings",
   // Passthrough envelope stamping (#484), applied uniformly to every
-  // command's JSON output — not a behavior this verb controls, so it is
-  // allowed here rather than asserted against.
+  // command's JSON output — not itself part of §4.6's list, but not a
+  // behavior this verb controls either, so it is allowed here rather than
+  // asserted against.
   "shape",
   "schemaVersion",
 ]);
@@ -151,7 +161,9 @@ function writeBasicWorkflow(): void {
  * `params.chanel`, which the `params:` block does not declare.
  *
  * Its own fixture rather than a tweak to `writeBasicWorkflow`, which many
- * tests here depend on staying warning-free.
+ * tests here depend on staying warning-free. Previously this suite used the
+ * basic workflow directly, because a step with no `output:` schema warned —
+ * the advisory #886 deleted for firing on every step while guarding nothing.
  * The behavior under test is that `workflow plan` returns advisories in the
  * envelope instead of calling warn(), so any one advisory serves.
  */
@@ -182,11 +194,11 @@ describe("akm workflow plan <ref> — json by default (#903)", () => {
     writeBasicWorkflow();
     await index();
 
-    // `plan` is the one verb whose default is not a human summary: a bespoke
-    // human-summary default could not reliably tell "no format named" from
-    // "--format json named globally before the subcommand", so an explicit
-    // `--format json` silently did nothing whenever the resolved format was
-    // already json (#903).
+    // `plan` used to be the one verb that defaulted to a human summary. That
+    // cost a bespoke branch which could not reliably tell "no format named"
+    // from "--format json named globally before the subcommand", so an
+    // explicit `--format json` silently did nothing whenever the resolved
+    // format was already json. Deleted in #903.
     const result = await runCliCapture(["workflow", "plan", "workflows/basic-plan"]);
     expect(result.code).toBe(0);
     const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
@@ -205,12 +217,13 @@ describe("akm workflow plan <ref> — json by default (#903)", () => {
   });
 });
 
-describe("akm workflow plan <ref> — text mode", () => {
+describe("akm workflow plan <ref> — text mode (B-46)", () => {
   test("exits 0 and prints a human summary on stdout", async () => {
     writeBasicWorkflow();
     await index();
 
-    // #903: text is not the unmarked default, so ask for it.
+    // #903: text is no longer the unmarked default, so ask for it. The
+    // renderer itself is unchanged and still worth pinning.
     const result = await runCliCapture(["workflow", "plan", "workflows/basic-plan", "--format", "text"]);
     expect(result.code).toBe(0);
     expect(result.stdout.length).toBeGreaterThan(0);
@@ -219,7 +232,7 @@ describe("akm workflow plan <ref> — text mode", () => {
   });
 });
 
-describe("akm workflow plan <ref> --format json", () => {
+describe("akm workflow plan <ref> --format json (B-47, B-N9)", () => {
   test("prints one JSON object with the exact closed key set", async () => {
     writeBasicWorkflow();
     await index();
@@ -244,19 +257,20 @@ describe("akm workflow plan <ref> --format json", () => {
     expect(envelope.execution).toMatchObject({ maxConcurrency: expect.any(Number) });
   });
 
-  test("never spells --json: the flag is --format json, and --json is rejected", async () => {
+  test("never spells --json (B-N9): the flag is --format json, and --json is rejected", async () => {
     writeBasicWorkflow();
     await index();
     const result = await runCliCapture(["workflow", "plan", "workflows/basic-plan", "--json"]);
     // Unknown-flag rejection (src/cli/unknown-flags.ts UNKNOWN_FLAG usage error)
     // -> exit 2. This path prints a plain-text message, not the JSON error
-    // envelope, so there is no `code` field to assert on here.
+    // envelope, so there is no `code` field to assert on here. Ground-truthed
+    // by probing the actual CLI output before pinning.
     expect(result.code).toBe(2);
     expect(result.stderr).toContain('Unknown flag "--json"');
   });
 });
 
-describe("akm --format json workflow plan <ref> — global (pre-subcommand) flag position", () => {
+describe("akm --format json workflow plan <ref> — global (pre-subcommand) flag position (code-review round 4, finding 3 / Review log R3)", () => {
   test("--format json BEFORE the subcommand still emits the JSON envelope, not the text summary", async () => {
     writeBasicWorkflow();
     await index();
@@ -323,9 +337,10 @@ describe("akm workflow plan <ref> honors a persisted output.format config defaul
     await index();
     writeSandboxConfig({ output: { format: "json" } });
 
-    // `plan` is json-by-default, so a resolved "json" and "nothing
-    // configured" need no distinction and the envelope is simply correct
-    // (#903).
+    // Before #903 this case deliberately produced the human text summary: a
+    // resolved "json" was indistinguishable from "nothing configured", so the
+    // bespoke branch could not honour it. `plan` is json-by-default now, so
+    // there is nothing to distinguish and the envelope is simply correct.
     const result = await runCliCapture(["workflow", "plan", "workflows/basic-plan"]);
     expect(result.code).toBe(0);
     const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
@@ -347,7 +362,7 @@ describe("akm workflow plan <ref> honors a persisted output.format config defaul
   });
 });
 
-describe("akm workflow plan <ref> writes NOTHING durable", () => {
+describe("akm workflow plan <ref> writes NOTHING durable (B-48)", () => {
   test("zero new rows across every workflow table, the events table, and usage_events — either mode", async () => {
     writeBasicWorkflow();
     await index();
@@ -364,7 +379,7 @@ describe("akm workflow plan <ref> writes NOTHING durable", () => {
     expect(afterJson).toEqual(before);
   });
 
-  test("emits no warn()/log output — stderr stays empty on a successful plan", async () => {
+  test("emits no warn()/log output — stderr stays empty on a successful plan (B-56)", async () => {
     writeBasicWorkflow();
     await index();
     const result = await runCliCapture(["workflow", "plan", "workflows/basic-plan"]);
@@ -373,12 +388,12 @@ describe("akm workflow plan <ref> writes NOTHING durable", () => {
   });
 });
 
-describe("akm workflow plan <ref> — compile warnings surface in warnings[]", () => {
+describe("akm workflow plan <ref> — compile warnings surface in warnings[] (B-56)", () => {
   test("a compile advisory is returned in warnings[], not written to stderr", async () => {
     // The document below trips a checkWorkflowPlan advisory (compile.ts).
     // The behavior under test is that `workflow plan` returns it in the
     // envelope's warnings[] instead of calling warn() — which would show up on
-    // stderr at `akm workflow run`, breaking this verb's no-stderr guarantee.
+    // stderr at `akm workflow run`, breaking this verb's B-48 guarantee.
     writeWarningWorkflow();
     await index();
     const result = await runCliCapture(["workflow", "plan", "workflows/warns-plan", "--format", "json"]);
@@ -389,15 +404,17 @@ describe("akm workflow plan <ref> — compile warnings surface in warnings[]", (
   });
 });
 
-describe("akm workflow plan <ref> — lowering notices from freeze surface in notices[]", () => {
+describe("akm workflow plan <ref> — lowering notices from freeze surface in notices[] (B-57)", () => {
   // The unit opts its `test-llm` engine out of json_schema
   // (`supports_json_schema: false`), so the direct-LLM builder
   // (src/integrations/agent/execution.ts's buildLlm) cannot carry this step's
+  // declared unit output: schema and emits a real "untranslated-field"
   // notice. That notice is computed at freeze time
-  // (freeze/targets/command.ts's commandResult builds the execution), and
-  // `akm workflow plan` must surface it through the same
-  // {code, severity, adapter, field, message} projection `akm workflow run`
-  // already renders (tests/output-workflow-lowering-notices.test.ts).
+  // (freeze/targets/command.ts's commandResult builds the execution) and was
+  // once silently discarded — it is exactly the
+  // freeze-time notice row B-57 requires `akm workflow plan` to surface,
+  // through the same {code, severity, adapter, field, message} projection
+  // `akm workflow run` already renders (tests/output-workflow-lowering-notices.test.ts).
   function writeLoweringNoticeWorkflow(): void {
     write(
       "workflows/plan-lowering-notice.md",
@@ -441,7 +458,7 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
     const text = await runCliCapture(["workflow", "plan", "workflows/plan-lowering-notice", "--format", "text"]);
     expect(text.code).toBe(0);
     expect(text.stdout).toContain("notices:");
-    // Exact line shape: `! lowering[<severity>] <code> (<adapter>): <message>`.
+    // §4.6's exact line shape: `! lowering[<severity>] <code> (<adapter>): <message>`.
     expect(text.stdout).toContain("! lowering[");
     expect(text.stdout).toContain("untranslated-field");
     expect(text.stdout).toContain("llm");
@@ -449,7 +466,7 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
   });
 });
 
-describe("akm workflow plan <ref> — a workflow composing a child", () => {
+describe("akm workflow plan <ref> — a workflow composing a child (B-49)", () => {
   function writeChild(): void {
     write(
       "workflows/plan-child.md",
@@ -489,8 +506,9 @@ describe("akm workflow plan <ref> — a workflow composing a child", () => {
     expect(Array.isArray(expansion.steps)).toBe(true);
   });
 
-  // Text mode must carry the same child plan hash,
-  // `with:` input bindings, and `exports:` line as --format json.
+  // Code review finding B: text mode must carry the same child plan hash,
+  // `with:` input bindings, and `exports:` line the spec's §4.6 worked
+  // example prescribes — not just --format json.
   test("text mode: the step line carries the child's plan hash, a with: line for its bindings, and an exports: line", async () => {
     write(
       "workflows/plan-child-params.md",
@@ -547,7 +565,7 @@ describe("akm workflow plan <ref> — a workflow composing a child", () => {
   });
 });
 
-describe("akm workflow plan <ref> — a task-wrapped step", () => {
+describe("akm workflow plan <ref> — a task-wrapped step (B-50)", () => {
   test("a per-step expansion names via: task and the taskRef", async () => {
     write("commands/plan-noop.md", "Do nothing.\n");
     write("tasks/plan-wrapper.yml", ["version: 4", "run: echo wrapped", "shell: sh", ""].join("\n"));
@@ -564,7 +582,7 @@ describe("akm workflow plan <ref> — a task-wrapped step", () => {
   });
 });
 
-describe("akm workflow plan <ref> — inputBindings: literal shown, reference shown unresolved", () => {
+describe("akm workflow plan <ref> — inputBindings: literal shown, reference shown unresolved (B-51)", () => {
   test("a literal with: value is shown; a reference with: {from:...} shows its from, never a resolved value", async () => {
     write("commands/plan-consume.md", "Consume a note.\n");
     write(
@@ -602,7 +620,7 @@ describe("akm workflow plan <ref> — inputBindings: literal shown, reference sh
   });
 });
 
-describe("akm workflow plan <ref> — SECRET-FREE, sentinel proof", () => {
+describe("akm workflow plan <ref> — SECRET-FREE, sentinel proof (B-52, B-53)", () => {
   const COMMAND_SENTINEL = "PLAN-COMMAND-BODY-SENTINEL-7f2a9c";
   const ENV_SENTINEL = "plan-env-sentinel-1";
 
@@ -671,7 +689,7 @@ describe("akm workflow plan <ref> — SECRET-FREE, sentinel proof", () => {
   });
 });
 
-describe("akm workflow plan <ref> — a workflow that fails to freeze", () => {
+describe("akm workflow plan <ref> — a workflow that fails to freeze (B-55)", () => {
   function writeBrokenWorkflow(): void {
     write(
       "workflows/plan-broken.md",
@@ -714,7 +732,7 @@ describe("akm workflow plan <ref> — a workflow that fails to freeze", () => {
   });
 });
 
-describe("akm workflow plan — no ref / an unknown ref", () => {
+describe("akm workflow plan — no ref / an unknown ref (B-58)", () => {
   test("no ref at all: usage error, exit 2", async () => {
     const result = await runCliCapture(["workflow", "plan"]);
     expect(result.code).toBe(2);

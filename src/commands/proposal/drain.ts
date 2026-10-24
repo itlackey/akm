@@ -543,7 +543,7 @@ export async function drainProposals(
     // A consolidate pair-pass `retire` proposal is auto-accepted only when the
     // pair pass staged it: nothing unique on either side, confirmed by a
     // second look, no continuity risk; every other one waits for a direct
-    // `akm proposal accept`. Checked before isEmptyDiff, which
+    // `akm proposal accept` (spec §25.6). Checked before isEmptyDiff, which
     // has nothing meaningful to read on a delete-primary change.
     if (isRetireProposal(proposal)) {
       const staged = proposal.gateDecision;

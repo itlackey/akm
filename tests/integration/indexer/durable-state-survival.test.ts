@@ -3,8 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Durable-state SURVIVAL across a full rebuild under item_ref keys —
- * usage/feedback rows must never be lost across a reindex.
+ * akm 0.9.0 Chunk-5 flip, F4c M2 — durable-state SURVIVAL across a full rebuild
+ * under the new item_ref keys (spec §11.4 — usage/feedback rows must never be
+ * lost across a reindex).
  *
  * Index finalize only relinks current item refs. This pins that a rebuild
  * (which nulls entry ids) re-resolves them from durable `entry_ref` and
@@ -49,9 +50,9 @@ test("usage + feedback survive a full rebuild via the item_ref relink", async ()
 
   const dbPath = getDbPath();
   let db = openExistingDatabase(dbPath);
-  // usage_events lives in state.db; entries in index.db.
+  // Chunk-8 WI-8.3: usage_events lives in state.db; entries in index.db.
   let stateDb = openStateDatabase();
-  // Entries are keyed by `item_ref`; look them up by conceptId.
+  // Entries are keyed by the new-grammar `item_ref`; look them up by conceptId.
   const alphaId = findEntryIdByRef(db, "memories/alpha");
   const betaId = findEntryIdByRef(db, "memories/beta");
   expect(alphaId).toBeNumber();
@@ -60,8 +61,8 @@ test("usage + feedback survive a full rebuild via the item_ref relink", async ()
   const betaItemRef = getItemRefById(db, betaId as number) as string;
   expect(alphaItemRef).toContain("//memories/alpha");
 
-  // Record durable state under the item_ref spelling (every
-  // `entry_ref` is the fully-qualified `bundle//conceptId`):
+  // Record durable state under the item_ref spelling (post-cutover, every
+  // `entry_ref` is already the fully-qualified `bundle//conceptId`):
   //   - two search + one show retrieval for alpha, one search for beta;
   //   - positive/negative feedback for alpha.
   for (const ev of ["search", "search", "show"] as const) {
@@ -96,7 +97,7 @@ test("usage + feedback survive a full rebuild via the item_ref relink", async ()
 
   db = openExistingDatabase(dbPath);
   stateDb = openStateDatabase();
-  // Entry ids may have changed; resolve afresh (conceptId lookup).
+  // Entry ids may have changed; resolve afresh (new-grammar conceptId lookup).
   const alphaId2 = findEntryIdByRef(db, "memories/alpha") as number;
   const betaId2 = findEntryIdByRef(db, "memories/beta") as number;
 

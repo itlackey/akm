@@ -3,11 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Shared ref-resolution helpers for the `env` and `secret` command families,
- * used by `src/commands/env/env-cli.ts` and `src/commands/env/secret-cli.ts`
- * (a single copy of the parse/resolve/make + path-traversal-guard logic).
- * env/secret VALUES are never read or surfaced here — these helpers only
- * resolve refs to absolute paths and guard against directory traversal.
+ * Shared ref-resolution helpers for the `env` and `secret` command families
+ * (WS6). These were duplicated/co-located inline in `src/cli.ts`; hoisting them
+ * here lets `src/commands/env/env-cli.ts` and `src/commands/env/secret-cli.ts` import a
+ * single copy of the parse/resolve/make + path-traversal-guard logic (the WS6
+ * "env traversal-guard copies 5 → 1" KPI). Behaviour is byte-identical to the
+ * inline forms: env/secret VALUES are never read or surfaced here — these
+ * helpers only resolve refs to absolute paths and guard against directory
+ * traversal.
  */
 
 import fs from "node:fs";
@@ -31,12 +34,13 @@ export type { IndexSearchSource };
 /**
  * Walk each stash's env files and return one entry per `.env` file, using the
  * env asset spec's canonical-name logic (e.g. `env/team/prod.env` →
- * `env/team/prod`, `env/team/.env` → `env/team/default`). Lives here (#950) so
- * `commands/health` can reuse it to name which env asset supplies a
- * credential's variable. `listKeysFn` stays injected (rather than a
+ * `env/team/prod`, `env/team/.env` → `env/team/default`). Moved here from
+ * `commands/env/env-cli.ts` (#950) so `commands/health` can reuse it to name
+ * which env asset supplies a credential's variable — pure move, `akm env
+ * list`'s behaviour is unchanged. `listKeysFn` stays injected (rather than a
  * static import of `commands/env/env.ts`) so this core module never depends
  * upward on the commands layer. `config` defaults to the real `loadConfig()`
- * (the default for `akm env list`); `commands/health` passes its own
+ * (unchanged default for `akm env list`); `commands/health` passes its own
  * injected/resolved config so a test-supplied `loadConfig` seam is honoured
  * instead of this always re-reading the real config/sources.
  */
@@ -91,7 +95,7 @@ function assertNotRemovedVaultRef(ref: string): void {
 }
 
 /**
- * The retired `type:name` ref grammar taught `env:<name>` /
+ * Q-08 ruling: the pre-0.9.0 `type:name` ref grammar taught `env:<name>` /
  * `secret:<name>` (help text and docs also implied `environment:`/`secrets:`
  * variants) as the way to address a single env/secret. That grammar is GONE —
  * NO alias, no re-acceptance (same rule as the retired `vault:` prefix above).
@@ -116,10 +120,10 @@ function assertNotColonRef(ref: string, aliases: readonly string[], replacement:
 }
 
 export function parseEnvRef(ref: string): AssetRef {
-  // Accept a bare env name (`prod`, `sub/prod`) or the
+  // Accept a bare env name (`prod`, `sub/prod`) or the new-grammar
   // `[bundle//]env/name` conceptId. A bare name's leading segment maps to no
   // asset type, so it is qualified with the `env/` conceptId prefix; anything
-  // already a full ref is parsed as-is.
+  // already a full new-grammar ref is parsed as-is.
   assertNotRemovedVaultRef(ref);
   assertNotColonRef(ref, ["env", "environment"], "env/");
   return parseRefInput(isFullRefInput(ref) ? ref : `env/${ref}`);
@@ -156,7 +160,7 @@ export function findEnvSource(origin: string | undefined, type: "env" | "secret"
  * second time even when the walk itself honoured an injected one.
  */
 export function makeEnvRef(name: string, source?: IndexSearchSource, config: AkmConfig = loadConfig()): string {
-  // Output spelling: `env/name` in the primary stash, `bundle//env/name`
+  // F4b output-spelling flip: `env/name` in the primary stash, `bundle//env/name`
   // for a slug-clean named source.
   return displayRef({ type: "env", name, bundleId: source?.registryId }, displayDefaultBundle(source, config));
 }
@@ -164,7 +168,7 @@ export function makeEnvRef(name: string, source?: IndexSearchSource, config: Akm
 /**
  * Resolve an env ref to an absolute `.env` path. Accepts the `env/<name>`
  * conceptId (or a bare name, auto-qualified into it) — the retired
- * `env:`/`environment:` colon spelling is rejected loudly, never
+ * `env:`/`environment:` colon spelling is rejected loudly (Q-08), never
  * silently resolved. The path is returned even when the file does not yet
  * exist (so `create` writes under `env/`).
  */
@@ -203,7 +207,7 @@ export function parseSecretRef(ref: string): AssetRef {
 }
 
 export function makeSecretRef(name: string, source?: IndexSearchSource): string {
-  // Output spelling: `secrets/name` in the primary stash,
+  // F4b output-spelling flip: `secrets/name` in the primary stash,
   // `bundle//secrets/name` for a slug-clean named source.
   return displayRef({ type: "secret", name, bundleId: source?.registryId }, displayDefaultBundle(source));
 }
@@ -247,9 +251,11 @@ export function resolveSecretPath(
 //
 // READS (`env run`/`show`/`list`/`path`, `secret run`/`list`) keep the
 // origin-aware, all-sources `findEnvSource` resolution above. (`secret path`
-// and `secret remove` are not CLI verbs: a read-side `path` and a write-side
-// `remove` could silently name different files for the same ref.
-// `resolveSecretPath` below is still exercised by `secret run`.) WRITES route
+// used this same read-side resolver too, until it was REMOVED from the CLI in
+// 0.9.0 alongside `secret remove` — R-027 / D-49 — because `remove` resolved
+// through the WRITE-target path below instead, so the two spellings could
+// silently name different files for the same ref; `resolveSecretPath` below
+// still exists and is still exercised by `secret run`.) WRITES route
 // through the canonical `resolveWriteTarget` selection every other write command
 // (remember/import/tasks/knowledge) shares: explicit `--target` wins, else
 // `defaultWriteTarget`, else the working stash, and the chosen source must be

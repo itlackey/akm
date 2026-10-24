@@ -3,17 +3,23 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Workspace activation-policy conformance.
+ * Consolidated workspace activation-policy conformance (plan §11 Chunk 6.5).
  *
- * "Installation is not activation": installing a bundle that carries tasks,
- * env files, and workflows grants NOTHING until the operator explicitly
- * activates them. The enforcement points delegate to one
- * `core/activation-policy` module. These tests pin each decision at the policy
- * point and, together, prove the install-grants-nothing-until-enable property
- * the call sites enforce.
+ * "Installation is not activation" (History D8): installing a bundle that
+ * carries tasks, env files, and workflows grants NOTHING until the operator
+ * explicitly activates them. Before Chunk 6.5 this enforcement was scattered
+ * across four spots that each re-derived the rule; they now delegate to one
+ * `core/activation-policy` module. These tests pin each ported decision at the
+ * policy point and, together, prove the install-grants-nothing-until-enable
+ * property the call sites enforce. No new trust/approval machinery ships
+ * (§1.3).
  *
- * Task activation does not gate scheduler fire-time: task source v4 has no
- * document-level `enabled` to gate at fire time.
+ * The former rule 3 (task activation gates scheduler fire-time,
+ * `shouldSkipUnactivatedTask`) was retired in P4 (spec
+ * docs/plans/specs/p4-deletions-closeout.md §3.2.7, P4-N6): task source v4
+ * has no document-level `enabled` to gate at fire time — see
+ * `src/core/activation-policy.ts`'s own header for where that enforcement
+ * moved.
  */
 
 import { describe, expect, test } from "bun:test";

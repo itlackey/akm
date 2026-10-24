@@ -9,6 +9,7 @@
  * bindings by name against another contract (a task's effective inputs
  * against a child workflow's `params:`) without re-deriving their kind. A
  * reference's resolved value is validated before each attempt (`exec/step-work.ts`).
+ * See docs/architecture/decisions/0008-task-binding-normalization.md.
  */
 
 import { isRecord } from "../../core/common";

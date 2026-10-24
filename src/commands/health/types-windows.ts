@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Window-compare shapes.
+ * Window-compare shapes (chunk-9 WI-9.5d per-domain split of `./types`).
  * `--window-compare`/`--windows` resolve to a list of {@link WindowSpec}s, each
  * projected into a {@link WindowResult}; `health/windows.ts` diffs two of them
  * into {@link DeltaEntry} records.

@@ -40,7 +40,7 @@ function parsed(
   return { data: { updated: "2026-01-01", ...data }, content, frontmatter: frontmatter ?? "updated: 2026-01-01" };
 }
 
-describe("shared base-check missing-ref scanner", () => {
+describe("shared base-check missing-ref scanner (D-R3 flip)", () => {
   test("a fully-qualified `bundle//conceptId` prose ref is recognized and flagged when missing", async () => {
     const { ctx, asked } = recordingContext();
     const diags = await runBaseValidateChecks("doc.md", parsed("See core//memories/foo for context."), "/root", ctx);
@@ -58,7 +58,7 @@ describe("shared base-check missing-ref scanner", () => {
     expect(diags.some((d) => d.issue === "missing-ref")).toBe(false);
   });
 
-  test("a BARE short conceptId in prose is NOT a ref", async () => {
+  test("a BARE short conceptId in prose is NOT a ref (D-R3)", async () => {
     const { ctx, asked } = recordingContext();
     const diags = await runBaseValidateChecks("doc.md", parsed("The memories/foo note explains it."), "/root", ctx);
     expect(asked).toHaveLength(0);

@@ -1,14 +1,20 @@
 /**
- * Output-shape tests:
+ * Wave-2 QA fixes tests — Cluster E (output shapes, remember, info, vault, registry brief).
  *
- *   - `akm show` JSON shape always includes path + editable.
- *   - `registry search --detail brief` projects name + installRef + score.
+ * #7  — `akm show` JSON shape always includes path + editable.
+ * #28 — `registry search --detail brief` projects name + installRef + score.
+ * #35 — (deleted) vault listEntries was removed with the env comment-leak fix.
+ *
+ * #2 (info sourceProviders) and #20 (remember --description frontmatter) were
+ * covered here only by unit-shape-smoke tests; Phase 2 triage moved their
+ * real coverage elsewhere (see the deletion notes below) so this file no
+ * longer imports `assembleInfo` or `buildMemoryFrontmatter`.
  */
 
 import { describe, expect, test } from "bun:test";
 import { shapeSearchHit, shapeShowOutput } from "../../../src/output/shapes/helpers";
 
-// ── show shape includes path + editable ──────────────────────────────────────
+// ── #7: show shape includes path + editable ───────────────────────────────────
 
 describe("shapeShowOutput — path + editable always included (#7)", () => {
   const showResult = {
@@ -51,10 +57,10 @@ describe("shapeShowOutput — path + editable always included (#7)", () => {
   });
 });
 
-// ── registry brief projects name + installRef + score ────────────────────────
+// ── #28: registry brief projects name + installRef + score ───────────────────
 
 describe("shapeSearchHit — registry brief projects name + score (#28)", () => {
-  // Registry hits do not carry a `curated` boolean.
+  // v1 spec §4.2: registry hits no longer carry the legacy `curated` boolean.
   const registryHit = {
     type: "registry",
     title: "deploy-stash",
@@ -84,6 +90,11 @@ describe("shapeSearchHit — registry brief projects name + score (#28)", () => 
     expect(out.name).toBe("some-kit");
   });
 
+  // D6 (Phase 2 triage): "brief does NOT return empty object for registry
+  // hits" was DELETED here — it asserted `Object.keys(out).length > 0` on
+  // this same `registryHit` fixture, which `:72-78` above already asserts
+  // key-by-key (name/score/installRef individually present).
+
   test("normal mode keeps description, action, installRef, score (curated removed in v1)", () => {
     const out = shapeSearchHit(registryHit as Record<string, unknown>, "normal") as Record<string, unknown>;
     expect(out.description).toBeDefined();
@@ -92,3 +103,25 @@ describe("shapeSearchHit — registry brief projects name + score (#28)", () => 
     expect(out).not.toHaveProperty("curated");
   });
 });
+
+// D4 (Phase 2 triage): the "buildMemoryFrontmatter — description field (#20)"
+// describe block (5 tests: included/omitted-absent/omitted-empty/
+// omitted-whitespace/special-chars-serialised) was DELETED here. It is
+// superseded by tests/remember-unit.test.ts:36-97 ("buildMemoryFrontmatter —
+// YAML injection guard"), which actually parses the emitted YAML (this file's
+// version only did substring `toContain` checks) and pins the same
+// included/omitted-absent/omitted-whitespace/special-chars behavior, plus the
+// exact `description: ""` case added there alongside this deletion so the
+// omitted-when-empty case is not lost.
+
+// #35's listEntries ({key, comment} pairs) was DELETED with the env
+// comment-leak fix: comment text can contain commented-out credentials and no
+// production code consumed it. Key-name listing is covered by tests/env.test.ts.
+
+// D5 (Phase 2 triage): the "assembleInfo — sourceProviders populated from
+// stashDir (#2)" describe block was DELETED here. Its sole test asserted only
+// `typeof assembleInfo === "function"` — its own comment called it a
+// signature smoke test. Real coverage now lives in
+// tests/integration/info-command.test.ts ("returns sourceProviders from
+// config" and, strengthened alongside this deletion, "sourceProviders is
+// empty with no configured bundle, and reflects a configured bundle").

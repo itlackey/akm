@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The autonomy gate's decision layer.
+ * D8 — the autonomy gate's decision layer.
  *
  * `akm improve` stays on; what is gated is the lanes that mutate assets without
  * review. The shipped `default` strategy enables several of those, so with the
@@ -105,7 +105,7 @@ describe("applyAutonomyGate with autonomy ON", () => {
 });
 
 describe("lane inventory", () => {
-  test("covers exactly the three gated lanes, and not advisory consolidation or sync.push", () => {
+  test("covers exactly the three lanes D8 gates, and not advisory consolidation or sync.push", () => {
     expect([...(AUTONOMY_LANES as readonly string[])].sort()).toEqual([
       "memoryCleanup",
       "memoryInference",

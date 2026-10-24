@@ -7,10 +7,11 @@
  *
  * Drives the adapter over `tests/fixtures/bundles/dotenv/` and asserts the four
  * authored goldens under `tests/fixtures/format-family-goldens/dotenv/`. The
- * load-bearing property: env surfaces KEY NAMES only, secret surfaces the FILE
- * NAME only — VALUES / COMMENTS / raw CONTENT never appear on the emitted
- * document, and the redaction is keyed on the ADAPTER, not on the open `type`
- * value (a `secrets/*.env` is name-only even though it has KEY=VALUE lines).
+ * load-bearing property (normative §21.2): env surfaces KEY NAMES only, secret
+ * surfaces the FILE NAME only — VALUES / COMMENTS / raw CONTENT never appear on
+ * the emitted document, and the redaction is keyed on the ADAPTER, not on the
+ * open `type` value (a `secrets/*.env` is name-only even though it has KEY=VALUE
+ * lines).
  */
 
 import { describe, expect, test } from "bun:test";

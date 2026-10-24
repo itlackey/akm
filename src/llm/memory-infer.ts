@@ -67,10 +67,12 @@ export interface MemoryInferTelemetry {
  * unless the engine sets `supportsJsonSchema: false`; the client drops it once
  * for a provider that rejects it.
  *
- * Mirrors the validation gate below (title/description/content + non-empty
- * tags/searchHints) so a schema-compliant response is guaranteed to pass the
- * downstream check, avoiding "incomplete derived memory payload from LLM;
- * skipping memory" for shape-only failures.
+ * Extends the responseSchema lift (PR 1, asset-writers-investigation §5) to
+ * the memory-inference path. Mirrors the validation gate below
+ * (title/description/content + non-empty tags/searchHints) so a
+ * schema-compliant response is guaranteed to pass the downstream check
+ * — no more "incomplete derived memory payload from LLM; skipping memory"
+ * for shape-only failures.
  */
 export const DERIVED_MEMORY_JSON_SCHEMA = {
   type: "object",
@@ -93,7 +95,8 @@ export const DERIVED_MEMORY_JSON_SCHEMA = {
  * must not abort the rest of the index pass.
  *
  * Routes through `callStructured({ feature: "memory_inference", ... })` so the
- * feature gate, error classification, and onFallback hook are honoured uniformly.
+ * feature gate, error classification, and onFallback hook are honoured uniformly
+ * (Fix C5).
  */
 export async function compressMemoryToDerivedMemory(
   llmRunner: RunnerSpec,

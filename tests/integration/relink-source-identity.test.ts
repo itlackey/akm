@@ -65,13 +65,13 @@ test("full reindex relinks duplicate usage only to its qualified source and scop
   expect(stashId).toBeNumber();
   closeDatabase(db);
 
-  // usage_events lives in state.db — seed it there.
+  // Chunk-8 WI-8.3: usage_events lives in state.db now — seed it there.
   const stateDb = openStateDatabase();
   const insert = stateDb.prepare(
     "INSERT INTO usage_events (event_type, entry_id, entry_ref, source, created_at) VALUES ('show', ?, ?, 'user', datetime('now'))",
   );
-  // The durable `usage_events.entry_ref` is the conceptId
-  // (`[bundle//]memories/duplicate`), not the legacy `memory:duplicate`.
+  // Post-Chunk-8 the durable `usage_events.entry_ref` is the new-grammar
+  // conceptId (`[bundle//]memories/duplicate`), not the legacy `memory:duplicate`.
   insert.run(null, "team//memories/duplicate");
   insert.run(stashId as number, "stash//memories/duplicate");
   insert.run(null, "memories/duplicate");

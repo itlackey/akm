@@ -4,7 +4,7 @@
 
 /**
  * Shared collect-input / probe / derive-config helpers for the wizard's
- * connection steps (shared by the three near-identical steps in
+ * connection steps (§4.6 dedup of the three near-identical steps in
  * connection.ts). Prompt copy, validation messages, and the probe's spinner
  * text are shared VERBATIM so the wizard's observable flow is unchanged;
  * each step keeps its own option assembly and branching.

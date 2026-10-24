@@ -3,21 +3,25 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Per-directory document drain. Runs the `akm` adapter's `recognize` over a
- * directory's files and reconstructs the durable `IndexDocument` via {@link
+ * Per-directory document drain — akm 0.9.0 Chunk 5, milestone F4a M-core-2 (the
+ * engine swap). Replaces the live indexer's per-dir flat-walk matcher-pass
+ * `IndexDocument` stream with the `akm` adapter's `recognize` `IndexDocument`
+ * stream, reconstructing the durable `IndexDocument` via {@link
  * indexDocumentToStashEntry} (proven lossless by the shadow-parity gate).
  *
- * Behavior the adapter fold does NOT carry, handled here at the drain layer:
+ * Two behaviors the adapter fold does NOT carry, restored here at the drain
+ * layer (spec §14.2 "drain the full document stream"):
  *
- *  - **Broken-workflow drop.** The `akm` adapter's synchronous
- *    `foldRecognizedMetadata` SWALLOWS the workflow parse error, so a broken
- *    workflow would otherwise silently index. We run the shared source-IR
- *    compiler on drained workflow docs and DROP the entry with a
- *    `Skipped workflow …` warning ({@link buildMetadataSkipWarning}), so the
- *    workflow-skip summary counts it.
+ *  - **Broken-workflow drop (item 3).** The live path dropped a broken workflow
+ *    via the renderer contributor's throw → metadata-pass skip-with-warning; the
+ *    `akm` adapter's synchronous `foldRecognizedMetadata` SWALLOWS the parse
+ *    error, so a broken workflow would otherwise silently index. We run the
+ *    shared source-IR compiler on drained workflow docs and DROP
+ *    the entry with the same `Skipped workflow …` warning
+ *    ({@link buildMetadataSkipWarning}), so the workflow-skip summary counts it.
  *
  * `doc.hash` (= sha256 of the file content) is surfaced per recognized file so
- * the persist layer can populate the `content_hash` column. It is keyed
+ * the persist layer can populate the `content_hash` column (item 2). It is keyed
  * by the file's absolute path rather than by the entry object.
  *
  * Pure of DB/global state; a new leaf (nothing imports it back), so it joins no
@@ -44,13 +48,13 @@ export interface DrainedDir {
   entries: IndexDocument[];
   /** Per-file skip warnings (broken workflows), same shape the metadata pass emitted. */
   warnings: string[];
-  /** `doc.hash` keyed by the recognized file's absolute path (content_hash source). */
+  /** `doc.hash` keyed by the recognized file's absolute path (content_hash source, item 2). */
   hashByFile: Map<string, string>;
   /**
    * `doc.conceptId` keyed by the recognized file's absolute path. The persist
    * layer prefers this over re-deriving via akm's `stashDirFor` scheme so a
    * non-akm adapter's identity (`pages/foo`, snapshot paths, …) survives into
-   * `item_ref` verbatim (identity comes from the owning adapter).
+   * `item_ref` verbatim (D-R3: identity comes from the owning adapter).
    */
   conceptIdByFile: Map<string, string>;
   /** Authored paths rejected by workflow source-ownership preflight. */
@@ -62,10 +66,11 @@ export interface DrainedDir {
 /**
  * Drain one directory's recognized documents into durable entries.
  *
- * `fileContexts` are the dir's walked files (the drain does not pre-filter —
- * the adapter owns filtering). `adapter.recognize` returns
+ * `fileContexts` are the dir's walked files (the drain no longer pre-filters —
+ * adapter-owned filtering, owner ruling 2026-07-21). `adapter.recognize` returns
  * `null` for a file it abstains on (no matcher claims it, an OKF reserved file,
- * or an AKM sensitive/infra file) — silently skipped.
+ * or an AKM sensitive/infra file) — silently skipped, the same contract the
+ * legacy flat-walk pass's "no matcher claims the file" case had.
  */
 export function drainDirDocuments(
   adapter: BundleAdapter,
@@ -150,17 +155,20 @@ export function drainDirDocuments(
 }
 
 /**
- * `(stashRoot, files) → StashFile`: builds a FileContext per file and drains them
- * through the `akm` adapter's `recognize`. For callers that only need the
- * recognized entries (`manifest`'s no-index fallback, the `registry`
- * static-index builder, and the metadata unit tests). The OKF reserved-file
- * exclusion and the AKM sensitive/infra abstention are enforced by the adapter
- * itself. Provenance is not persisted by these callers, so the synthetic
- * component id is immaterial.
+ * `(stashRoot, files) → StashFile` drop-in for the deleted flat-walk matcher
+ * pass (F4a M-core-3): builds a FileContext per file and drains them through the
+ * `akm` adapter's `recognize`. The recognize engine is the proven-equal
+ * replacement for the old matcher-pass metadata assembly (shadow-parity gate), so
+ * callers that only need the recognized entries (`manifest`'s no-index fallback,
+ * the `registry` static-index builder, and the metadata unit tests) get identical
+ * entries — plus the D-R6 reserved-file exclusion and the AKM sensitive/infra
+ * abstention the adapter now enforces itself. Provenance is not persisted by these
+ * callers, so the synthetic component id is immaterial.
  */
 export function recognizeStashEntries(stashRoot: string, files: string[]): StashFile {
   const component: BundleComponent = { id: stashRoot, adapter: "akm", root: stashRoot, writable: false };
-  // No pre-filter: the `akm` adapter's `recognize` claims/abstains per file.
+  // No pre-filter: the `akm` adapter's `recognize` claims/abstains per file
+  // (owner ruling 2026-07-21 — adapter-owned filtering).
   const contexts = files.map((file) => buildFileContext(stashRoot, file));
   const drained = drainDirDocuments(akmAdapter, component, contexts);
   return drained.warnings.length > 0
@@ -198,10 +206,10 @@ function docRenderer(doc: IndexDocument): string | undefined {
 }
 
 /**
- * Build the `Skipped workflow <path>:\n…` warning: the workflow parser's
- * `path:line — message` summary wrapped in
+ * Build the `Skipped workflow <path>:\n…` warning byte-for-byte the way the live
+ * pipeline did: the workflow parser's `path:line — message` summary wrapped in
  * the `Workflow has errors:` prefix (the string `loadDocument`/`loadProgram`
- * throw), then {@link buildMetadataSkipWarning}'s workflow branch. `startsWith
+ * threw), then {@link buildMetadataSkipWarning}'s workflow branch. `startsWith
  * "Skipped workflow "` so `isWorkflowSkipWarning` counts it for the summary.
  */
 function workflowDropWarning(file: FileContext, errors: ReadonlyArray<{ line: number; message: string }>): string {

@@ -10,7 +10,7 @@
  * strict superset of the skill's report.html; this module computes the 17
  * `%%TOKEN%%` replacements it consumes.
  *
- * Structure: `./report-view-model.ts`
+ * Structure (chunk-9 WI-9.5a / H2, anchors C.6): `./report-view-model.ts`
  * holds the pure `AkmHealthResult`→`HealthReportViewModel` extractor — every
  * computed number/string/series the report shows, with NO HTML. This module
  * holds the thin VM→HTML fragment renderers (one per template section) plus
@@ -21,9 +21,11 @@
  * sorted by startedAt; `%%GENERATED_AT%%` derives from the latest run (or the
  * window anchor), so output is byte-identical for identical inputs.
  *
- * ECharts delivery: CDN-only. `buildEchartsTag` always emits a `<script src>`
- * tag pointed at the jsDelivr CDN, so viewing the report requires network
- * access. There is no env var or option for an offline report.
+ * ECharts delivery (chunk-9 WI-9.4d, anchors C.1): CDN-only. The vendored
+ * `~1MB` `echarts.min.js` self-contained/"inline" mode was removed along with
+ * the asset itself — `buildEchartsTag` always emits a `<script src>` tag
+ * pointed at the jsDelivr CDN, so viewing the report now requires network
+ * access. There is no env var or option to opt back into an offline report.
  */
 
 import { escapeHtml, isoTimeTag } from "../../output/html-render";
@@ -118,7 +120,7 @@ const badgeByStatus = {
 
 const ECHARTS_CDN = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js";
 
-/** Always CDN — see the module docstring's ECharts note. Shared with the metrics dashboard. */
+/** Always CDN — see the module docstring's chunk-9 WI-9.4d note. Shared with the metrics dashboard. */
 export function buildEchartsTag(): string {
   return `<script src="${ECHARTS_CDN}"></script>`;
 }
@@ -126,7 +128,7 @@ export function buildEchartsTag(): string {
 /**
  * Build the time-slice `<option>`s for the report's filter bar, DERIVED from
  * the actual report window (`vm.sliceCandidates`) so the choices always make
- * sense (a fixed 1d–21d list would be useless on a 24h or 7d report).
+ * sense (the old hard-coded 1d–21d list was useless on a 24h or 7d report).
  * "All" is the default; the sub-window options carry their cutoff in
  * milliseconds (consumed by filteredRuns), largest first.
  */
@@ -334,7 +336,7 @@ function renderSummaryRowsHtml(vm: HealthReportViewModel): string {
 }
 
 /**
- * Merge + de-duplicate advisories and the "what to watch" cards (built
+ * Merge + de-duplicate advisories and the old "what to watch" cards (built
  * from the same VM data — invalid rows, sem-blocked, proposals, tail-latency,
  * failed-runs, …) into ONE prioritized list (P1/P2/P3 + a remediation command
  * per item), keyed so each concern appears exactly once.

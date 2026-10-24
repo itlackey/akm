@@ -3,33 +3,63 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Delivery of a composed task's bound inputs (rows B-35..B-40 in test names).
+ * P2b Lane B — delivery (spec docs/plans/specs/p2b-input-bindings.md §4,
+ * rows B-35..B-40).
  *
  * A workflow step's `with:` on `uses: tasks/<ref>` binds the composed task's
- * declared `inputs:`. This file pins how the EFFECTIVE bound values are
- * delivered to each of the three composed-target kinds:
+ * declared `inputs:` (Lane A2, §3). This file pins how the EFFECTIVE bound
+ * values are delivered to each of the three composed-target kinds:
  *
  *   - shell/script  -> ONE `AKM_TASK_INPUTS` env var, canonical JSON, never
- *     one var per input (B-35/B-36), and the same spawn-boundary size guard
- *     that covers `AKM_INPUTS`/`AKM_PARAMS`/`AKM_ITEM` covers it too (B-37);
+ *     one var per input (§4.1, B-35/B-36), and the same spawn-boundary size
+ *     guard that already covers `AKM_INPUTS`/`AKM_PARAMS`/`AKM_ITEM` covers it
+ *     too (§4.1/B-N1, B-37);
  *   - command (agent/LLM) -> a structured `## Task inputs` fenced JSON block
  *     appended to the assembled prompt, after the byte-exact authored prose,
- *     never spliced into it (B-38);
- *   - workflow -> the effective inputs become the child run's `params` (B-40)
- *     — this one is NOT step composition; it is a v4 TASK whose OWN target is
- *     `uses: workflows/<ref>`, run via `akm task run`.
+ *     never spliced into it (§4.2/B-N2, B-38);
+ *   - workflow -> the effective inputs become the child run's `params`
+ *     (§4.3, B-40) — this one is NOT step composition; it is a v4 TASK whose
+ *     OWN target is `uses: workflows/<ref>`, run via `akm task run`.
  *
  * Also pinned: the NEGATIVE half of delivery (B-39) — a task-composed step
  * whose EFFECTIVE inputs are empty (the target declares no `inputs:` at all,
  * or declares only optional inputs with no default and `with:` supplies
  * none) delivers NOTHING new: no `AKM_TASK_INPUTS` var, no `## Task inputs`
  * prompt block, byte-identical to a plain (non-task-composed) step
- * (`tests/integration/workflows/exec-unit.test.ts`, B-02).
+ * (`tests/integration/workflows/exec-unit.test.ts:426-433`, B-02).
  *
- * Every scenario is driven through the REAL workflow-source YAML grammar
- * (`with:` is authored as plain YAML/JSON, decoded structurally) and observed
- * through REAL subprocess execution (`executeStepPlan`) or the REAL `akm task
- * run` CLI path.
+ * RED TODAY, for one of two reasons depending on the scenario:
+ *
+ *   - every scenario that authors a `with:` (every B-35/B-36/B-37/B-38 case,
+ *     and today's positive B-40 cases): `taskDispatch`
+ *     (`src/workflows/ir/source-freeze-v4.ts`) still throws `UsageError`
+ *     `COMPOSITION_INVALID` the instant a task-composed step authors ANY
+ *     `with:` (P1a's fail-closed placeholder, spec §1.7 A-N5) — so every
+ *     `startWorkflowRun(...)` call below rejects before freeze ever reaches
+ *     the new binding logic.
+ *   - every B-39 negative scenario (no `with:` authored at all, by
+ *     construction — there is nothing to bind): LC-N1 (p2a §1.5) still peeks
+ *     the composed target's version and throws `UsageError`
+ *     `TASK_SOURCE_INVALID` for ANY `version: 4` task composed from a
+ *     workflow step, `with:` or not (spec §1.7 A-N6) — a DIFFERENT
+ *     `taskDispatch` guard than the one above, but the same "P2b hasn't
+ *     landed yet" root cause. B-35/B-36's own empirical-baseline sub-run
+ *     (a `with:`-free composition of the same target kind, added to fix an
+ *     exact-allowed-set comparison rather than a single negative regex) hits
+ *     this identical LC-N1 guard before its bound half ever runs.
+ *
+ * The workflow-target scenario (B-40) fails differently: it never throws,
+ * but `projectTaskSourceV4` does not yet forward a v4 task's `inputs:` into
+ * the child run's params (P2a's own docstring: "input delivery is P2b"), so
+ * the child run's `params` come back `{}` instead of the expected effective
+ * inputs — an assertion failure, not a thrown error.
+ *
+ * No `@ts-expect-error` type-suppression pins are needed anywhere in this
+ * file: every scenario is driven through the REAL workflow-source YAML
+ * grammar (`with:` is authored as plain YAML/JSON, decoded structurally,
+ * never a TypeScript symbol) and observed through REAL subprocess execution
+ * (`executeStepPlan`) or the REAL `akm task run` CLI path — no not-yet-
+ * existing TypeScript export is referenced directly anywhere below.
  *
  * Sandbox/freeze pattern follows
  * tests/integration/workflows/immutable-resolution-v4-red.test.ts (task
@@ -73,8 +103,9 @@ beforeEach(() => {
   // Layered on top of writeWorkflowTestConfig()'s engine config: an explicit
   // named bundle so `akm task run` (the CLI path the workflow-target
   // scenario, B-40, drives) resolves the fixture the same way
-  // tests/commands/tasks-input-flags.test.ts does. writeSandboxConfig merges
-  // over the existing engines/defaults keys rather than replacing them.
+  // tests/integration/commands/tasks-input-flags.test.ts's P2a precedent
+  // does. writeSandboxConfig merges over the existing engines/defaults keys
+  // rather than replacing them.
   writeSandboxConfig({
     bundles: { fixture: { path: storage.stashDir, writable: true } },
     defaultBundle: "fixture",
@@ -126,7 +157,7 @@ async function firstStep(ref: string): Promise<{ runId: string; step: WorkflowPl
 
 // ── B-35/B-36 — shell/script targets: ONE AKM_TASK_INPUTS env var ──────────
 
-describe("shell/script task target — AKM_TASK_INPUTS is exactly one canonical-JSON env var", () => {
+describe("shell/script task target — AKM_TASK_INPUTS is exactly one canonical-JSON env var (B-35, B-36)", () => {
   /**
    * Runs a single-step workflow composing an already-written `taskRef` and
    * returns the AKM_*-prefixed subset of the child process's full env name
@@ -134,7 +165,8 @@ describe("shell/script task target — AKM_TASK_INPUTS is exactly one canonical-
    * of the same target-kind shape (B-39's own shape), so the bound-run
    * assertions below can require the bound run's AKM_* set to be EXACTLY
    * that baseline plus AKM_TASK_INPUTS — a per-input var emitted under ANY
-   * spelling (not merely AKM_TASK_INPUT_*) fails this test.
+   * spelling, not merely the AKM_TASK_INPUT_* one the old assertion checked
+   * alone, now fails this test.
    */
   async function akmEnvNames(workflowName: string, steps: string): Promise<string[]> {
     writeWorkflow(workflowName, steps);
@@ -154,7 +186,7 @@ describe("shell/script task target — AKM_TASK_INPUTS is exactly one canonical-
       .filter((name) => name.length > 0 && name.startsWith("AKM_"));
   }
 
-  test("a shell-target (run:/shell:) task receives AKM_TASK_INPUTS with the exact canonical JSON, and no per-input var exists under any spelling", async () => {
+  test("a shell-target (run:/shell:) task receives AKM_TASK_INPUTS with the exact canonical JSON, and no per-input var exists under any spelling (B-35)", async () => {
     // Baseline: the identical execution surface — a shell-target task
     // composed from a workflow step — with NO inputs: declared and NO
     // with: authored, the same "no effective inputs" shape B-39 pins below.
@@ -212,13 +244,13 @@ describe("shell/script task target — AKM_TASK_INPUTS is exactly one canonical-
     // The roster is closed and enumerable: the bound run's AKM_*-prefixed
     // name set is EXACTLY the empirical baseline plus AKM_TASK_INPUTS — never
     // one var per input, under this spelling or any other (the same
-    // exact-allowed-set idiom tests/integration/workflows/exec-unit.test.ts uses
-    // for B-02).
+    // exact-allowed-set idiom
+    // tests/integration/workflows/exec-unit.test.ts:426-433 uses for B-02).
     const boundAkmNames = names.filter((n) => n.startsWith("AKM_"));
     expect(boundAkmNames.sort()).toEqual([...baselineAkmNames, "AKM_TASK_INPUTS"].sort());
   });
 
-  test("a script-target (uses: scripts/<ref>) task receives the identical AKM_TASK_INPUTS delivery, and no per-input var exists under any spelling", async () => {
+  test("a script-target (uses: scripts/<ref>) task receives the identical AKM_TASK_INPUTS delivery, and no per-input var exists under any spelling (B-36)", async () => {
     // Same empirical-baseline idiom as B-35 above, for the script target.
     write("scripts/echo-inputs-baseline.sh", ["#!/bin/sh", "env | cut -d= -f1", ""].join("\n"));
     write(
@@ -273,20 +305,21 @@ describe("shell/script task target — AKM_TASK_INPUTS is exactly one canonical-
   });
 });
 
-// ── B-31/B-35 — a REFERENCE binding's RESOLVED value reaches AKM_TASK_INPUTS,
-// not merely a validated-then-dropped one ──
+// ── B-31/B-35 (P2b test-review finding #1) — a REFERENCE binding's RESOLVED
+// value reaches AKM_TASK_INPUTS, not merely a validated-then-dropped one ──
 // Every B-35/B-36/B-38 case above binds only literals/defaults.
-// tests/workflows/task-binding-resolution.test.ts's own B-31 exercises
-// computeStepWorkList directly with hand-built stepOutputs, proving the
-// reference arm at the WORK-LIST layer; this sibling drives the SAME two-stage
-// resolution through the REAL delivery pipeline this file's own B-35/B-36
-// cases already use (executeStepPlan → real subprocess spawn → real env var
-// read-back), so an implementation that resolves+validates a reference and
-// then omits it from the effective input map — the "bindings accepted but
-// dropped" defect — is pinned end-to-end for a real delivery surface, not
-// merely for the pre-attempt work-list shape.
+// tests/integration/workflows/task-binding-resolution.test.ts's own B-31
+// exercises computeStepWorkList directly with hand-built stepOutputs, proving
+// the reference arm at the WORK-LIST layer; this sibling drives the SAME
+// two-stage resolution through the REAL delivery pipeline this file's own
+// B-35/B-36 cases already use (executeStepPlan → real subprocess spawn → real
+// env var read-back), so an implementation that resolves+validates a
+// reference and then omits it from the effective input map — the exact
+// "bindings accepted but dropped" defect this phase exists to close — is
+// pinned end-to-end for a real delivery surface, not merely for the
+// pre-attempt work-list shape.
 
-describe("shell task target — a REFERENCE binding's RESOLVED value reaches AKM_TASK_INPUTS", () => {
+describe("shell task target — a REFERENCE binding's RESOLVED value reaches AKM_TASK_INPUTS (B-31, B-35, B-N1)", () => {
   test("scope: {from: steps.collect.output.scope} resolves against a prior step's REAL evidence, and the RESOLVED value ('all', never the {from: ...} shape it was authored as) is what AKM_TASK_INPUTS carries", async () => {
     write(
       "tasks/shell-echo-ref.yml",
@@ -347,14 +380,14 @@ describe("shell task target — a REFERENCE binding's RESOLVED value reaches AKM
 });
 
 // ── B-39 (shell/script half) — empty effective inputs deliver NOTHING new ──
-// tests/integration/workflows/exec-unit.test.ts pins the allowed AKM_* name
-// set for a PLAIN `exec:` step (B-02, no task composition at all). This is the
-// task-composed sibling that set omits: a task-composing step whose composed
-// target ends up with no EFFECTIVE inputs must be byte-identical to that same
-// plain-step roster — no AKM_TASK_INPUTS key, on EITHER of the two ways "no
-// effective inputs" can arise.
+// tests/integration/workflows/exec-unit.test.ts:426-433 pins the allowed
+// AKM_* name set for a PLAIN `exec:` step (B-02, no task composition at
+// all). This is the task-composed sibling that set omits: a task-composing
+// step whose composed target ends up with no EFFECTIVE inputs must be
+// byte-identical to that same plain-step roster — no AKM_TASK_INPUTS key,
+// on EITHER of the two ways "no effective inputs" can arise (B-N1).
 
-describe("shell/script task target — empty effective inputs emit NO AKM_TASK_INPUTS var at all", () => {
+describe("shell/script task target — empty effective inputs emit NO AKM_TASK_INPUTS var at all (B-39, B-N1)", () => {
   test("the target declares no inputs: at all — AKM_TASK_INPUTS is absent from the child's env name list", async () => {
     write(
       "tasks/shell-no-inputs.yml",
@@ -403,7 +436,7 @@ describe("shell/script task target — empty effective inputs emit NO AKM_TASK_I
         "",
       ].join("\n"),
     );
-    // No with: at all — "extra" is optional with no default, so
+    // No with: at all — "extra" is optional with no default (B-20), so
     // freezeTaskInputBindings produces zero entries even though the
     // CONTRACT itself is non-empty, unlike the sibling test above.
     writeWorkflow(
@@ -429,7 +462,7 @@ describe("shell/script task target — empty effective inputs emit NO AKM_TASK_I
 
 // ── B-37 — the spawn-boundary size guard covers AKM_TASK_INPUTS too ────────
 
-describe("oversized effective inputs fail exec_context_too_large at the pre-spawn boundary check", () => {
+describe("oversized effective inputs fail exec_context_too_large at the pre-spawn boundary check (B-37, B-N1)", () => {
   test("a literal input whose canonical JSON exceeds THIS platform's per-variable ceiling fails naming AKM_TASK_INPUTS, its size, and the platform limit", async () => {
     const LIMITS = execContextLimits();
     // Same idiom as tests/integration/workflows/exec-unit.test.ts's own
@@ -475,7 +508,7 @@ describe("oversized effective inputs fail exec_context_too_large at the pre-spaw
 
 // ── B-38 — command (agent/LLM) targets: the fenced "## Task inputs" block ──
 
-describe("command target — a structured '## Task inputs' fenced JSON block, prose byte-unchanged, never interpolated", () => {
+describe("command target — a structured '## Task inputs' fenced JSON block, prose byte-unchanged, never interpolated (B-38, B-N2)", () => {
   test("the assembled prompt carries the resolved inputs as a fenced JSON block; the composed command's authored prose survives byte-exact; the bound value is never spliced into prose", async () => {
     const INSTRUCTIONS = "Echo the composed note for the delivery suite.\n";
     write("commands/echo-note.md", INSTRUCTIONS);
@@ -525,7 +558,8 @@ describe("command target — a structured '## Task inputs' fenced JSON block, pr
     // The authored prose is appended byte-exact — never templated.
     expect(prompt).toContain(INSTRUCTIONS);
 
-    // A structured fenced JSON block carries the resolved inputs.
+    // A structured fenced JSON block carries the resolved inputs (spec §4.2
+    // quotes this heading/sentence verbatim).
     expect(prompt).toContain("## Task inputs");
     expect(prompt).toContain("The composed task's declared inputs resolved to:");
     expect(prompt).toContain(canonicalInputJson({ note: MARKER }));
@@ -542,7 +576,7 @@ describe("command target — a structured '## Task inputs' fenced JSON block, pr
 
 // ── B-39 (command half) — empty effective inputs append NO prompt block ────
 
-describe("command target — empty effective inputs append NO '## Task inputs' block", () => {
+describe("command target — empty effective inputs append NO '## Task inputs' block (B-39, B-N2)", () => {
   test("the target declares no inputs: at all — the prompt has no '## Task inputs' heading, and the authored prose is byte-unchanged", async () => {
     const INSTRUCTIONS = "Echo the composed note for the delivery suite, with nothing bound.\n";
     write("commands/echo-plain.md", INSTRUCTIONS);
@@ -579,9 +613,9 @@ describe("command target — empty effective inputs append NO '## Task inputs' b
 
 // ── B-40 — workflow targets: effective inputs become the child run's params ─
 // This is NOT step composition — it is a v4 TASK whose own target is
-// `uses: workflows/<ref>`, run directly via `akm task run`.
+// `uses: workflows/<ref>`, run directly via `akm task run` (spec §4.3).
 
-describe("workflow target — a v4 task's effective inputs become the child run's params", () => {
+describe("workflow target — a v4 task's effective inputs become the child run's params (B-40)", () => {
   function writeChildWorkflow(): void {
     writeWorkflow("child", ["      - id: work", '        run: "true"', "        shell: sh"].join("\n"));
   }

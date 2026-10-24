@@ -269,11 +269,13 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
 
   // ── Migration 003 — improve_runs ────────────────────────────────────────────
   //
-  // Records every `akm improve` invocation as a durable row.
+  // Records every `akm improve` invocation as a durable row, replacing the
+  // legacy `<stash>/.akm/runs/<runId>/improve-result.json` artifact files.
   //
   // The `dry_run` column is FIRST-CLASS and indexed so productivity audits can
   // cleanly filter dry-run probes out of real-run analyses without parsing
-  // `result_json`.
+  // `result_json`. The dry-run/real-run artifact-trap (recorded in
+  // feedback_akm_dryrun_artifact_trap) was the specific motivating bug.
   //
   // Indexed (query) columns:
   //   id            TEXT PK   — runId (`buildImproveRunId()` output).
@@ -341,7 +343,9 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   //
   // Tracks which platform sessions the extractor has processed, so the discovery
   // pass in `akm extract --since <window>` skips sessions whose content hasn't
-  // changed since the last successful run.
+  // changed since the last successful run. Replaces the akm-plugin
+  // session-checkpoint hook's implicit "write-once" memory of what's been
+  // captured — but persistent and queryable.
   //
   // Indexed (query) columns:
   //   harness          TEXT     — harness name (claude, opencode, ...).
@@ -417,8 +421,8 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
 
   // ── Migration 006 — pending proposal lookup index ──────────────────────────
   //
-  // Supports the transaction-scoped dedup / queue-mutation hardening. The
-  // queue acquires an IMMEDIATE write transaction before it
+  // Supports the transaction-scoped dedup / queue-mutation hardening added in
+  // 0.9.x. The queue now acquires an IMMEDIATE write transaction before it
   // reads pending proposals, so the hot path is a stash-scoped `status='pending'
   // AND ref=?` probe followed by an update/insert. This composite index keeps
   // that lookup index-covered under contention.
@@ -432,19 +436,19 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
 
   // ── Migration 007 — consolidation_judged ────────────────────────────────────
   //
-  // Judged-state cache for nightly consolidation (#581), released history: the
-  // cache was later removed and migration 018 drops this table. It let one
-  // consolidation run cover the FULL memory corpus cheaply by SKIPPING
-  // memories already judged with unchanged content, instead of narrowing to a
-  // recent time-window slice (which leaves a near-duplicate backlog the corpus
-  // can never clear).
+  // Judged-state cache for nightly consolidation (#581). Lets one consolidation
+  // run cover the FULL memory corpus cheaply by SKIPPING memories already judged
+  // with unchanged content, instead of narrowing to a recent time-window slice
+  // (which leaves a near-duplicate backlog the corpus can never clear).
   //
   // The consolidate LLM judging loop UPSERTs a row for every memory it saw in a
   // successfully-judged chunk; the next run hashes each candidate's current
   // content and skips it when the hash equals the cached `content_hash`
   // (judged-unchanged → no re-judge). A memory whose content changed produces a
   // new hash and is re-judged. This converts coverage from O(window) to
-  // O(changed/new).
+  // O(changed/new). DEFAULT OFF — gated behind
+  // `processes.consolidate.judgedCache.enabled`; when the feature is off this
+  // table is never read or written and behaviour is byte-identical to today.
   //
   // Indexed (query) columns:
   //   entry_key    TEXT PK   — `memory:<name>` ref; one row per judged memory.
@@ -472,7 +476,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
 
   // ── Migration 008 — body_embeddings ─────────────────────────────────────────
   //
-  // cacheHash-keyed body-embedding cache. Stores the embedding of the
+  // cacheHash-keyed body-embedding cache (WS-3a). Stores the embedding of the
   // case-preserving stripped body so the dedup pre-pass and the consolidation
   // clustering step share one computed vector per unique body, eliminating
   // redundant embedding calls across runs.
@@ -506,13 +510,13 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
     `,
   },
 
-  // ── Migration 009 — asset_salience ──────────────────────────────────────────
+  // ── Migration 009 — asset_salience (WS-1 salience vector) ───────────────────
   //
   // Per-asset salience vector persisted in state.db (canonical store).
   //
   // Three independently-stored, independently-decayable sub-scores:
   //   encoding_salience  — intrinsic importance (Gap 1; v1 = type-weight stub).
-  //   outcome_salience   — differential usefulness (0 until an outcome is recorded).
+  //   outcome_salience   — differential usefulness (WS-2; 0 until that lands).
   //   retrieval_salience — frequency × recency (the decayable term).
   //
   // Plus the scalar projection for ranking:
@@ -552,15 +556,15 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
     `,
   },
 
-  // ── Migration 010 — asset_outcome ───────────────────────────────────────────
+  // ── Migration 010 — asset_outcome (WS-2 outcome loop) ───────────────────────
   //
-  // Per-asset outcome loop persisted in state.db.
+  // Per-asset outcome loop persisted in state.db (S2 seam, WS-2).
   //
   // Stores the differential "was this retrieval useful" signal so the salience
-  // vector's `outcomeSalience` sub-score (`W_OUTCOME` term) is non-zero.
+  // vector's `outcomeSalience` sub-score (WS-1 `W_OUTCOME` term) is non-zero.
   //
   // Columns:
-  //   asset_ref TEXT PK             — asset ref (FK to asset_salience).
+  //   asset_ref TEXT PK             — `type:name` asset ref (FK to asset_salience).
   //   last_retrieved_at INTEGER     — Unix-ms of the most recent retrieval.
   //   retrieval_count INTEGER       — total retrieval count from the index DB.
   //   expected_retrieval_rate REAL  — EMA-smoothed expected count per cycle.
@@ -607,7 +611,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   },
   // ── Migration 011 — asset_salience: homeostatic_demoted_at column ─────────────
   //
-  // Homeostatic demotion. Records the last time `retrievalSalience`
+  // WS-3b step 0a (homeostatic demotion). Records the last time `retrievalSalience`
   // was demoted for this asset so:
   //   (a) Each run can identify assets that have been demoted but not yet
   //       re-retrieved (they stay in the demoted state until a retrieval
@@ -624,7 +628,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
       ALTER TABLE asset_salience ADD COLUMN homeostatic_demoted_at INTEGER DEFAULT NULL;
     `,
   },
-  // ── Migration 012 — improve_gate_thresholds (per-phase threshold store) ─────
+  // ── Migration 012 — improve_gate_thresholds (WS-4 per-phase threshold store) ─
   //
   // Persists the auto-tuned accept-gate threshold PER PHASE so that each phase
   // (reflect, distill, extract, consolidate) maintains its own calibrated
@@ -638,7 +642,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   //   updated_at INTEGER   — Unix milliseconds of the last update.
   //
   // `makeGateConfig` reads the stored threshold for its phase (falling back to
-  // the caller-supplied `globalThreshold` when no row exists yet).
+  // the caller-supplied `globalThreshold` when no row exists yet). WS-4's
   // `persistPhaseThreshold` writes it after each auto-tune step.
   {
     id: "012-improve-gate-thresholds",
@@ -654,9 +658,10 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   //
   // Replaces the brittle timestamp-based incrementality (`session_ended_at`,
   // compared against the live session metadata) with a content hash. The old
-  // clock/timestamp logic both double-processed AND over-suppressed sessions
-  // under clock skew / out-of-order endedAt. The hash makes the skip decision
-  // byte-exact and clock-independent.
+  // clock/timestamp logic caused the Jun 11-12 double-extract + over-throttle
+  // incident (clock skew / out-of-order endedAt both double-processed AND
+  // over-suppressed sessions). The hash makes the skip decision byte-exact and
+  // clock-independent.
   //
   // Additive ADD COLUMN (migration-safe; mirrors migration 011's style). All
   // pre-existing rows read back `content_hash = NULL`, which the skip logic
@@ -747,9 +752,10 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
       ALTER TABLE asset_salience ADD COLUMN encoding_source TEXT DEFAULT NULL;
     `,
   },
-  // ── Migration 016 — collapse/churn detector ──────────────────────────────────
+  // ── Migration 016 — collapse/churn detector (R5) ─────────────────────────────
   //
-  // Longitudinal store-health history for the improve pipeline.
+  // Longitudinal store-health history for the improve pipeline
+  // (docs/architecture/specs/improve-collapse-churn-detector-design.md).
   //
   //   canary_queries — the fixed canary set, minted deterministically from the
   //     live stash on first detector run and NEVER auto-refreshed (silent
@@ -811,19 +817,21 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_improve_runs_strategy_started ON improve_runs(strategy, started_at);
     `,
   },
-  // ── Migration 018 — drop dead-lane schema ────────────────────────────────────
+  // ── Migration 018 — drop dead-lane schema (Chunk 7, WI-7.3) ──────────────────
   //
-  // Drops the on-disk schema for three deleted lanes. Append-only: migrations
-  // 007/010/014 above are left verbatim; this
+  // Drops the on-disk schema for three lanes deleted by the 0.9.0 bundle-adapter
+  // refactor. Append-only: migrations 007/010/014 above are left verbatim; this
   // migration only removes what they created.
   //
   //   - recombine_hypotheses (+ its last-seen index) — the whole-corpus
-  //     cross-episodic synthesis pass (migration 014) was deleted.
+  //     cross-episodic synthesis pass (migration 014) was deleted in Chunk 7
+  //     WI-7.1 (R28).
   //   - consolidation_judged — the judged-state cache (#581, migration 007) was
-  //     deleted. This is a LIVE behavior change: every consolidate run now
-  //     re-judges unchanged memories (more LLM calls) instead of skipping them.
+  //     deleted in Chunk 7 WI-7.3 (plan §5). This is a LIVE behavior change:
+  //     every consolidate run now re-judges unchanged memories (more LLM calls)
+  //     instead of skipping them — see the chunk-7 ledger.
   //   - asset_outcome.review_pressure (+ its DESC index) — the review-pressure
-  //     lane (#613, migration 010) was deleted; this
+  //     lane (#613, migration 010) was deleted in Chunk 7 WI-7.2 (R21); this
   //     migration finishes the column/index drop the code-side deletion left
   //     pending. `retrieval_count`/`outcome_score` and their index are untouched.
   {
@@ -839,10 +847,10 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
     `,
   },
 
-  // ── Migration 019 — proposal input fingerprints ──────────────────────────────
+  // ── Migration 019 — proposal input fingerprints (Chunk 6, WI-6.4) ────────────
   //
-  // Durable store for the input fingerprints that replace the
-  // dedup/cooldown content-hash machinery: one row per processed
+  // Durable store for the §23.6 input fingerprints that replace the
+  // dedup/cooldown content-hash machinery (plan §4.5): one row per processed
   // fingerprint (scheme version + source + target ref + target before-hash +
   // reserved evidence/guidance/evaluator terms + engine/model-id term). A
   // matching fingerprint skips re-processing the same inputs unless
@@ -983,7 +991,8 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
 
   // ── Migration 021 — asset_salience / asset_outcome: missing_since (#733) ────
   //
-  // Orphan-GC grace clock (#733). Neither table carries a
+  // Orphan-GC grace clock (Workstream C / #733,
+  // docs/architecture/specs/0.9.0-close-out-plan.md). Neither table carries a
   // column that records when a row's ref STOPPED resolving against
   // `entries.item_ref` — `updated_at` is bumped by improve itself on every
   // touch, so it cannot double as a "went missing" timestamp.
@@ -1048,18 +1057,19 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
     `,
   },
 
-  // ── Migration 023 — child workflow run parentage ──────────────────────────
+  // ── Migration 023 — child workflow run parentage (P3a) ────────────────────
   //
   // Adds the columns and partial unique index `publishChildWorkflowRun`
   // (src/storage/repositories/workflow-runs-repository.ts) needs to record a
   // durable child workflow run under the parent unit that spawned it, and to
-  // make that publication idempotent per invocation.
+  // make that publication idempotent per invocation
+  // (docs/plans/specs/p3a-plan-v5-child-freeze.md §5.1).
   //
   // Disambiguation: this migration's `workflow_runs.parent_unit_id` is the
   // PARENT RUN's unit that spawned this CHILD RUN — a cross-run composition
-  // edge. It is NOT the same concept as
+  // edge, new in P3a. It is NOT the same concept as the pre-existing
   // `workflow_run_units.parent_unit_id` (migration 004, consolidated above
-  // into migration 020's `workflow_run_units` table),
+  // into migration 020's `workflow_run_units` table, migrations.ts:934),
   // which records MAP FAN-OUT TEMPLATE PARENTAGE — one expanded unit's row
   // pointing back at the map-template unit it fanned out from, WITHIN a
   // single run. Same column name, two tables, two different concepts. So the
@@ -1087,11 +1097,12 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
     `,
   },
 
-  // ── Migration 024 — workflow run outputs ───────────────────────────────────
+  // ── Migration 024 — workflow run outputs (P3b) ─────────────────────────────
   //
   // Adds workflow_runs.outputs_json — the resolved map of a plan's declared
   // outputs:, persisted once at run completion in the SAME transaction as the
-  // final step's completion. NULL for every run whose plan declares no outputs: (the
+  // final step's completion (docs/plans/specs/p3b-child-executor.md §4.3,
+  // B-N13). NULL for every run whose plan declares no outputs: (the
   // overwhelming majority, including every run before this migration) and for
   // every run that fails or blocks before completing — never `{}`.
   // `WorkflowRunsRepository.setRunOutputs` is the only writer;
@@ -1103,26 +1114,29 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
     `,
   },
 
-  // ── Migration 025 — task_history result-vocabulary backfill ────────────────
+  // ── Migration 025 — task_history D8 result-vocabulary backfill ─────────────
   //
-  // The result-vocabulary re-code renamed the written `target_kind` vocabulary
+  // The D8 re-code (docs/architecture/decisions/0005-task-result-vocabulary-
+  // and-legacy-read-mapping.md) renamed the written `target_kind` vocabulary
   // and marked every new row with `targetVocab: 2` in `metadata_json`, but
-  // left every row written before it in the OLD vocabulary, which would push
+  // left every row written before it in the OLD vocabulary forever, pushing
   // the "which generation is this row" decision onto three separate read
   // sites (src/tasks/run/task-history.ts, src/commands/health/
-  // improve-metrics.ts, src/commands/health/windows.ts). `task_history` is
-  // DB-owned data and the remap is deterministic and total, so it belongs in a
-  // one-time migration, not three permanently-recurring read-side shims.
+  // improve-metrics.ts, src/commands/health/windows.ts). That is exactly the
+  // shape `docs/plans/specs/p4-deletions-closeout.md` row B-51 ratified
+  // keeping "forever" — SUPERSEDED here: `task_history` is DB-owned data, the
+  // remap is deterministic and total, so it belongs in a one-time migration,
+  // not three permanently-recurring read-side shims.
   //
   // The remap, applied only to rows with no `targetVocab` marker yet (a
   // NULL/absent `$.targetVocab` in the JSON column — already-marked or
   // malformed metadata_json is left untouched; malformed rows are a
   // pre-existing, unrelated skip-and-warn concern at read time):
   //   - target_kind 'prompt'  -> 'command' (the prepared command/agent-LLM
-  //     arm; the re-code renamed its written label, this backfills the old one)
+  //     arm; D8 renamed its written label, this backfills the old one)
   //   - target_kind 'command' -> 'shell'   (the legacy native shell/script
-  //     arm's shared old label; the re-code split it into 'shell'/'script', and
-  //     only 'shell' is reconstructable — the old vocabulary never distinguished
+  //     arm's shared old label; D8 split it into 'shell'/'script', and only
+  //     'shell' is reconstructable — the old vocabulary never distinguished
   //     script from shell, matching the read mapping this migration retires)
   // Only 'prompt' and legacy 'command' rows actually change meaning between
   // vocabularies (see the read mapping this migration retires); every other
@@ -1172,7 +1186,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
 
   // ── Migration 027 — claude-code -> claude harness rename (#915) ──
   //
-  // The rename shipped without a data migration, so rows written under
+  // The 0.9.2 rename shipped without a data migration, so rows written under
   // the old key were invisible to every reader keyed on "claude".
   //
   // `extract_sessions_seen` has PRIMARY KEY (harness, session_id), so a
@@ -1218,7 +1232,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
   //
   // The same migration drops the tables the ledger supersedes or whose code is
   // gone: `proposal_fingerprints` was a dedup cache derived from proposals
-  // rows, `improve_gate_thresholds` has no reader,
+  // rows, `improve_gate_thresholds` has had no reader since 0.9.0,
   // `proposal_fs_imports` lost its importer, `canary_queries` /
   // `improve_cycle_metrics` belonged to the removed collapse detector, and
   // `consolidation_judged` was already dropped by 018 (a no-op here for any
@@ -1299,7 +1313,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
 
   // ── Migration 029 — improve_ledger.content_hash ───────────────────────────
   //
-  // The consolidate pair pass selects initiators by content change,
+  // The consolidate pair pass (alpha.9) selects initiators by content change,
   // not a time window: no row means eligible, a row whose content_hash
   // differs from the asset's current body means eligible, otherwise not
   // (src/commands/improve/consolidate/pair-pass.ts, selectInitiators). Every

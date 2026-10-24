@@ -3,8 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Helpers prepareTaskV3Execution depends on; only the subset prepare.ts calls
- * is exported.
+ * File-private helpers prepareTaskV3Execution depends on, moved body-intact
+ * out of the pre-P1b src/tasks/runtime-v3.ts (spec
+ * docs/plans/specs/p1b-model-extraction.md §4.1, Lane B / D4 module map).
+ * None of these was exported at head either; only the subset prepare.ts's
+ * moved function body calls is exported here.
  */
 
 import type { PreparedCommandInvocation } from "../../commands/command/command-execution";
@@ -173,7 +176,8 @@ export function validateWorkflowRuntimeSource(
   const source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(readFile(file, workspaceRoot));
   const compiled = compileWorkflowSource(source, { path: file, workspaceRoot });
   if (!compiled.ok) {
-    // A task-wrapped workflow target's own multi-job source is a composition
+    // P4-N2's mapping (docs/plans/specs/p4-deletions-closeout.md §3.3.4): a
+    // task-wrapped workflow target's own multi-job source is a composition
     // failure, same as freezing it directly would be; any other compile
     // failure is WORKFLOW_SOURCE_INVALID.
     const detail = compiled.errors.map((error) => `${error.path}:${error.line}: ${error.message}`).join("; ");

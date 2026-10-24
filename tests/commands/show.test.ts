@@ -256,7 +256,7 @@ describe("akmShow sensitive fragments", () => {
   });
 });
 
-// ── Agent toolPolicy provenance ceiling ───────────────────────────────────────
+// ── Agent toolPolicy provenance ceiling (07 P1-D) ─────────────────────────────
 
 describe("akmShow agent toolPolicy provenance ceiling", () => {
   const AGENT_MD = [
@@ -325,8 +325,8 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     expect(result.toolPolicy).toBeUndefined();
   });
 
-  test("a read against a cold git bundle (no cache, no lock) skips it fast with a warning — never clones", async () => {
-    // Query time must never touch the network. A configured
+  test("a read against a cold git bundle (no cache, no lock) skips it fast with a warning — never clones (spec §14.3)", async () => {
+    // Query time must never touch the network (spec §14.3 / D11). A configured
     // git bundle with NO materialized cache AND NO lock localRoot is UNAVAILABLE
     // for the read: it is skipped with a warning naming the remedy, while the
     // primary stash still resolves. The hostile `git:contrib/pack` URL would
@@ -451,9 +451,9 @@ describe("akmShow editability", () => {
     const result = await akmShow({ ref: "scripts/remote.sh" });
 
     expect(result.type).toBe("script");
-    // A configured search-path source is a named bundle, so its assets carry
-    // that bundle key as their origin. Editability is unchanged — a real
-    // on-disk path.
+    // #37: a configured search-path source is a named bundle, so its assets now
+    // carry that bundle key as their origin (was null under the old unnamed
+    // filesystem-source shape). Editability is unchanged — a real on-disk path.
     expect(result.origin).toBe("searchpath");
     expect(result.editable).toBe(true);
     expect(result.editHint).toBeUndefined();
@@ -641,7 +641,7 @@ describe("akmShow content-based classification", () => {
   });
 });
 
-// ── Markdown fragments (the only section selector) ───────────────────────────
+// ── Markdown fragments (the only section selector — D2) ──────────────────────
 
 describe("akmShow markdown fragments", () => {
   const GUIDE = ["# Intro", "Welcome.", "", "## Setup", "Install things.", "", "## Usage", "Use things."].join("\n");
@@ -697,9 +697,10 @@ describe("akmShow memory with a .derived.md child", () => {
   });
 });
 
-// Direct unit coverage for `input.detail === "brief"` /
-// `buildBriefResponse` on `akmShowUnified` itself (the CLI-layer resolution
-// that feeds it is covered separately in tests/commands/show-argv.test.ts).
+// F6/R-021: direct unit coverage for `input.detail === "brief"` /
+// `buildBriefResponse` on `akmShowUnified` itself — previously ZERO test in
+// the suite exercised this path (the CLI-layer resolution that feeds it is
+// covered separately in tests/integration/commands/show-argv.test.ts).
 describe("akmShow detail levels", () => {
   test("detail: 'brief' strips content/template/prompt but keeps identity + edit fields", async () => {
     writeFile(

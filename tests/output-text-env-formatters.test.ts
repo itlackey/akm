@@ -17,7 +17,7 @@ import { getTextFormatterHandler } from "../src/output/text/registry";
 
 const ENV_COMMANDS = ["env-list", "env-create", "env-export", "env-remove"] as const;
 
-describe("env text formatters (rename guard)", () => {
+describe("env text formatters (WS7 rename guard)", () => {
   for (const command of ENV_COMMANDS) {
     it(`registers a plain-text formatter for "${command}"`, () => {
       expect(typeof getTextFormatterHandler(command)).toBe("function");

@@ -9,12 +9,13 @@
  * rich report needs — per-run rows, window-compare deltas, the pending
  * proposal queue, and the window labels — travels in the result itself
  * (`runs`/`deltas`/`report`, populated by `akm health --report`). There is no
- * out-of-band context: binding the proposal queue through module state set by
- * the command right before `output()` would couple the renderer to call order
- * and make the command branch on the output format to know when to bind it.
+ * out-of-band context: an earlier revision bound the proposal queue through
+ * module state set by the command right before `output()`, which coupled the
+ * renderer to call order and made the command branch on the output format to
+ * know when to bind it. Putting the data in the envelope removed both.
  *
- * The Markdown renderer registers into the shared per-command registry
- * (`../../output/render-registry.ts`) alongside every other command's `--format
+ * The Markdown renderer registers into the shared per-command registry (D7,
+ * `../../output/render-registry.ts`) alongside every other command's `--format
  * md` renderer. The HTML renderer does not: `health` and `metrics` are the only
  * commands with a bespoke HTML report, so `cli/shared.ts` calls
  * {@link renderHealthHtml} (and `renderMetricsHtml`) directly instead of going

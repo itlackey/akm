@@ -3,13 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `archiveCleanupCandidate` covers any memory, knowledge or lesson file (not
- * only `.derived` memories), for `akm proposal accept` on a consolidate
- * pair-pass `retire` proposal or a promotion retirement — plus
- * `derivedTwinPath`, which locates the `.derived` twin those callers take
- * along. Memory cleanup's own family-prune usage must stay byte-identical (its
- * `previousBeliefState` inference, its tombstone shape without the new
- * fields).
+ * alpha.9: `archiveCleanupCandidate` generalized to cover any memory,
+ * knowledge or lesson file (not only `.derived` memories), for `akm proposal
+ * accept` on a consolidate pair-pass `retire` proposal or an O1 promotion
+ * retirement — plus `derivedTwinPath`, which locates the `.derived` twin
+ * those callers take along. Memory cleanup's own family-prune usage must
+ * stay byte-identical (its `previousBeliefState` inference, its tombstone
+ * shape without the new fields).
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -46,7 +46,7 @@ function markGitBacked(stashDir: string): void {
   fs.mkdirSync(path.join(stashDir, ".git"), { recursive: true });
 }
 
-/** A REAL git repo: the purge sweep checks `git ls-files`/`git status` for real, so tests that expect a purge to actually happen need a real repo, not just a `.git` directory. */
+/** A REAL git repo (B1): the purge sweep now checks `git ls-files`/`git status` for real, so tests that expect a purge to actually happen need a real repo, not just a `.git` directory. */
 function git(stashDir: string, ...args: string[]): string {
   const result = spawnSync("git", ["-C", stashDir, ...args], { encoding: "utf8" });
   expect(result.status).toBe(0);
@@ -88,8 +88,9 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
     expect(record.proposalId).toBe("proposal-1");
     expect(record.successorRefs).toEqual(["memories/new-note"]);
     expect(record.retiredAt).toBe(record.archivedAt);
-    // Read from frontmatter, not inferred from `reason` (which would produce
-    // "active" for anything but "superseded-derived").
+    // Read from frontmatter, not inferred from `reason` (which under the OLD
+    // inference would have produced "active" for anything but
+    // "superseded-derived").
     expect(record.previousBeliefState).toBe("superseded");
     expect(record.parentRef).toBeUndefined();
 
@@ -113,9 +114,9 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
 
   test("memory cleanup's own family-prune usage is unchanged: reason-based inference, no proposalId/successorRefs on the tombstone", () => {
     const stashDir = sandbox();
-    // Actual frontmatter says "active", but the reason-based inference for
-    // superseded-derived must still win — proving this path does not read
-    // the real frontmatter value.
+    // Actual frontmatter says "active", but the OLD inference for
+    // superseded-derived must still win — proving this path was not
+    // switched over to reading the real frontmatter value.
     const filePath = writeAsset(stashDir, "memories/child.derived.md", "beliefState: active");
     const candidate: MemoryPruneCandidate = {
       ref: "memory:child.derived",
@@ -142,9 +143,10 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
     const filePath = writeAsset(stashDir, "memories/old-note.md", "description: an old note");
     const candidate: MemoryPruneCandidate = { ref: "memories/old-note", reason: "duplicate" };
     // Removed out from under it: the rename this call makes will fail
-    // (ENOENT), simulating a crash right where the rename would happen. The
-    // tombstone is already on disk by the time the rename is attempted; with
-    // the move first, this failure would leave no trace at all.
+    // (ENOENT), simulating a crash right where the rename would happen.
+    // Under the OLD ordering (move, then write the tombstone) this failure
+    // would leave no trace at all. Under the fixed ordering, the tombstone
+    // is already on disk by the time the rename is even attempted.
     fs.rmSync(filePath);
     expect(() => archiveCleanupCandidate(stashDir, candidate, filePath)).toThrow();
 
@@ -179,7 +181,7 @@ describe("derivedTwinPath", () => {
   });
 });
 
-describe("purgeGracedArchive — the purge sweep", () => {
+describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)", () => {
   /** A retire-shaped archive (proposalId set), via the real production path so `retiredAt` matches reality. Returns the tombstone's own `retiredAt`. */
   function archiveRetirement(stashDir: string, relPath: string, ref: string): string {
     const filePath = writeAsset(stashDir, relPath, "description: a retired asset");
@@ -229,7 +231,7 @@ describe("purgeGracedArchive — the purge sweep", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     const retiredAt = archiveRetirement(stashDir, "memories/boundary.md", "memories/boundary");
-    commitAll(stashDir, "archive retirement"); // committed and clean — grace-period date is the only remaining gate
+    commitAll(stashDir, "archive retirement"); // committed and clean (B1) — grace-period date is the only remaining gate
     // now - retiredAt == exactly RETIRE_GRACE_DAYS (computed from the tombstone's
     // own timestamp, not two independent Date.now() calls, which would drift by
     // the test's own execution time and make this boundary check flaky).
@@ -241,7 +243,7 @@ describe("purgeGracedArchive — the purge sweep", () => {
     });
   });
 
-  test("past the grace period AND committed-clean in git: the archived file is deleted, cleanup.md is not", () => {
+  test("past the grace period AND committed-clean in git: the archived file is deleted, cleanup.md is not (B1)", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
@@ -291,7 +293,7 @@ describe("purgeGracedArchive — the purge sweep", () => {
     expect(fs.existsSync(path.join(archiveRoot, dir, "memories", "child.derived.md"))).toBe(true);
   });
 
-  test("an untracked archived file (never committed) is kept — git has no other copy of it", () => {
+  test("an untracked archived file (never committed) is kept — git has no other copy of it (B1)", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     // A `kind: "filesystem"` bundle's `proposal accept` never commits
@@ -309,7 +311,7 @@ describe("purgeGracedArchive — the purge sweep", () => {
     expect(fs.existsSync(path.join(archiveRoot, dir, "cleanup.md"))).toBe(true);
   });
 
-  test("a modified archived file (committed, then edited on disk with no new commit) is kept", () => {
+  test("a modified archived file (committed, then edited on disk with no new commit) is kept (B1)", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
@@ -327,7 +329,7 @@ describe("purgeGracedArchive — the purge sweep", () => {
     expect(fs.existsSync(path.join(archiveRoot, dir, "memories", "stale.md"))).toBe(true);
   });
 
-  test("a symlinked archive/<dir> is never followed — nothing outside the archive is touched", () => {
+  test("a symlinked archive/<dir> is never followed — nothing outside the archive is touched (N1)", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
@@ -335,8 +337,8 @@ describe("purgeGracedArchive — the purge sweep", () => {
 
     // A directory OUTSIDE the archive, shaped exactly like a purgeable
     // retirement (tombstone with a stale retiredAt, tracked and clean in
-    // git) — if the symlink below were ever followed, this is what would be
-    // deleted.
+    // git) — if the symlink below were ever followed, this is what the old
+    // code would delete.
     const victimDir = path.join(stashDir, "outside-the-archive");
     fs.mkdirSync(victimDir, { recursive: true });
     const retiredAt = new Date(Date.now() - (RETIRE_GRACE_DAYS + 1) * MS_PER_DAY).toISOString();
@@ -360,7 +362,7 @@ describe("purgeGracedArchive — the purge sweep", () => {
     expect(fs.existsSync(path.join(victimDir, "cleanup.md"))).toBe(true);
   });
 
-  test("a broken 'git status' (nonzero exit) purges NOTHING this sweep, even though 'git ls-files' still works, and warns once", () => {
+  test("a broken 'git status' (nonzero exit) purges NOTHING this sweep, even though 'git ls-files' still works, and warns once (G8, round-3 review)", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
@@ -403,7 +405,7 @@ describe("purgeGracedArchive — the purge sweep", () => {
     expect(warnings[0]).toContain("archive purge");
   });
 
-  test("a broken submodule (gitlink) that fails 'git status' but not 'git ls-files' purges NOTHING", () => {
+  test("a broken submodule (gitlink) that fails 'git status' but not 'git ls-files' purges NOTHING (G9, round-3 review)", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
@@ -433,7 +435,7 @@ describe("purgeGracedArchive — the purge sweep", () => {
     expect(fs.existsSync(archivedFile)).toBe(true);
   });
 
-  test("an assume-unchanged tracked file hides its own edit from 'git status' — kept, not purged", () => {
+  test("an assume-unchanged tracked file hides its own edit from 'git status' — kept, not purged (G10, round-3 review)", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     archiveRetirement(stashDir, "memories/stale.md", "memories/stale");

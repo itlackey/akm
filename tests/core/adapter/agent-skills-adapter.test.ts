@@ -8,7 +8,7 @@
  * Drives the adapter over `tests/fixtures/bundles/agent-skills/` and asserts the
  * four authored goldens under `tests/fixtures/format-family-goldens/agent-skills/`.
  * Exercises RECOGNITION ≠ VALIDATION: the two invalid skills still recognize;
- * their violations surface only in `validate`.
+ * their §4.5 violations surface only in `validate`.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -111,7 +111,7 @@ describe("agent-skills adapter — renderer golden (renders regardless of validi
   }
 });
 
-describe("agent-skills adapter — lint golden (hard rules)", () => {
+describe("agent-skills adapter — lint golden (Agent Skills §4.5 hard rules)", () => {
   const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
 
   test("each SKILL.md validates to exactly the golden's issue codes", async () => {

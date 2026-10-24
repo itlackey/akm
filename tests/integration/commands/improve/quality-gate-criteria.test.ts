@@ -44,7 +44,7 @@ function lastDistillEvent(): Record<string, unknown> | undefined {
   return rows[rows.length - 1]?.metadata as Record<string, unknown> | undefined;
 }
 
-describe("writeQualityRejection — quality_rejected lands in the improve ledger", () => {
+describe("writeQualityRejection — quality_rejected lands in the improve ledger (R16)", () => {
   test("criteria reach the event and the envelope; the input gets the distill rejection window", () => {
     const criteria = { reusable: 2, actionability: 3, nonRedundancy: 2 };
     const result = writeQualityRejection({

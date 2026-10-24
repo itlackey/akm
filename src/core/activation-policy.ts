@@ -4,24 +4,25 @@
 
 /**
  * Workspace activation policy — the single point that encodes akm's
- * "**installation is not activation**" rule.
+ * "**installation is not activation**" rule (History D8; plan §11 Chunk 6.5,
+ * §1.3).
  *
  * Installing a bundle / stash / source grants NOTHING on its own: a bundle can
  * carry tasks, env files, and workflows and none of them fire, inject, or gain
- * write access until the operator explicitly activates them. The enforcement
- * is consolidated here as pure decision predicates while the I/O,
- * operator-facing messages, and the interactive add-time confirm / rollback
- * UX stay at their call sites.
+ * write access until the operator explicitly activates them. Before this module
+ * the enforcement lived in four scattered spots that re-derived the same policy
+ * independently; they are consolidated here as pure decision predicates while
+ * the I/O, operator-facing messages, and the interactive add-time confirm /
+ * rollback UX stay at their original call sites.
  *
  * The rules, and where each is applied:
  *
  *   1. **Dangerous env-key injection** (`env-binding.ts`). Injecting an env
  *      whose keys include a genuine RCE-class process-hijacking variable
  *      (LD_PRELOAD, PATH, GIT_SSH_COMMAND, BASH_FUNC_*, …) is BLOCKED when the
- *      env comes from a third-party stash (one installed from elsewhere: a git,
- *      website or npm bundle; see `isThirdPartySource`) and only WARNED for the
- *      operator's own first-party stash (the working bundle or a local
- *      directory), an explicit `--allow-dangerous-env-keys`, or a key from the
+ *      env comes from a third-party stash (one installed from a registry, i.e.
+ *      `source.registryId` is set) and only WARNED for the operator's own
+ *      first-party stash, an explicit `--allow-dangerous-env-keys`, or a key from the
  *      interactive-tool group (EDITOR/VISUAL/PAGER — high-FP, and never
  *      actually invoked by akm's own env-injection path). → {@link decideDangerousEnvInjection}
  *
@@ -35,17 +36,18 @@
  *      only the primary stash and sources explicitly marked `writable: true`
  *      are write-activated. → {@link isSourceWriteActivated}
  *
- * Scheduler activation is a separate host-local allow-list
+ * Scheduler activation is now a separate host-local allow-list
  * (`scheduler.enabled`) rather than a predicate in this module. Authored
  * task/workflow sources cannot grant it. Sync installs only allow-listed refs,
  * and scheduled task fire re-checks the same local grant so a stale native
  * entry cannot bypass a later disable.
  *
- * This module ships **no new trust / approval / security machinery**: no
- * labeling, action clamps, confirm prompts, digests, trust records, or
+ * These are behavior-preserving PORTS of the pre-0.9.0 rules. This module ships
+ * **no new trust / approval / security machinery** (2026-07-14 decision, §1.3):
+ * no labeling, action clamps, confirm prompts, digests, trust records, or
  * persisted `workspace_bindings`. It is a pure leaf — it imports nothing from
- * the rest of the tree — so routing the call sites through it adds no new
- * import edges.
+ * the rest of the tree — so routing the four call sites through it adds no new
+ * import edges. env/secret handling is unchanged.
  */
 
 // ── Rule 1: dangerous env-key injection (env-binding.ts) ─────────────────────
@@ -91,7 +93,7 @@ const INTERACTIVE_TOOL_ENV_KEYS = new Set(["EDITOR", "VISUAL", "PAGER"]);
  * @param dangerousKeys The subset of injected keys flagged as process-hijacking
  *   (already filtered by the caller via `isDangerousEnvKey`).
  * @param thirdParty `true` when the env's source is a third-party stash — i.e.
- *   `isThirdPartySource` is true for it.
+ *   its origin carries a `registryId`.
  * @param allowDangerousEnvKeys `true` when the operator passed `--allow-dangerous-env-keys` (or
  *   its equivalent) for this injection. Defaults to `false`.
  */

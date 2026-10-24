@@ -72,18 +72,20 @@ function stepTarget(plan: ReturnType<typeof decodeWorkflowPlan>, index: number):
 }
 
 /**
- * Narrows a `FrozenWorkflowTarget` to its `child-workflow` member. Isolated here
- * (mirroring tests/workflows/child-workflow-freeze.test.ts's identical helper)
- * so the narrowing lives in one place instead of at every call site across this
- * file.
+ * §3.5: `FrozenWorkflowTarget` gains a `child-workflow` member in Implement.
+ * Isolated here (mirroring tests/workflows/child-workflow-freeze.test.ts's
+ * identical helper) so Implement removes each directive as its own line
+ * becomes type-valid, instead of one per call site across this file.
  */
 function childWorkflowFields(target: FrozenWorkflowTarget | undefined): {
   readonly planHash: string;
 } {
   if (!target) throw new Error("childWorkflowFields: target is undefined");
-  // `FrozenChildWorkflowTarget` is a discriminated union member (schema-v4.ts):
-  // `command`/`shell`/`script` do not carry `.planHash`, so TypeScript only
-  // admits the access below once `kind` narrows `target`.
+  // Implement landed `FrozenChildWorkflowTarget` as a proper discriminated
+  // union member (schema-v4.ts A-N1): `command`/`shell`/`script` do not
+  // carry `.planHash`, so TypeScript only admits the access below once
+  // `kind` narrows `target`. The red-phase `@ts-expect-error` pin is now
+  // genuinely unused and is removed, per this file's own header comment.
   if (target.kind !== "child-workflow") {
     throw new Error(`childWorkflowFields: expected a child-workflow target, got ${target.kind}`);
   }
@@ -92,10 +94,10 @@ function childWorkflowFields(target: FrozenWorkflowTarget | undefined): {
   };
 }
 
-// ── editing child source AFTER publication cannot change the ─────────────
-// ── already-frozen parent (row B-06) ────────────────────────────────────────
+// ── B-06: editing child source AFTER publication cannot change the ─────────
+// ── already-frozen parent ───────────────────────────────────────────────
 
-describe("editing child source after parent publication does not change the parent's frozen child plan", () => {
+describe("editing child source after parent publication does not change the parent's frozen child plan (row B-06)", () => {
   test("re-reading the stored run's plan_json shows the ORIGINAL child content, byte-identical, not the edited one", async () => {
     write("workflows/child.md", leafWorkflowDoc());
     writeParent("parent-b06", ["      - id: dispatch", "        uses: workflows/child"]);

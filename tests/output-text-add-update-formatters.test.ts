@@ -70,7 +70,7 @@ describe("formatUpdatePlain", () => {
     expect(formatUpdatePlain({ processed: [] })).toBe("update: nothing to update");
   });
 
-  it("renders a successful plain git/website sync instead of 'nothing to update'", () => {
+  it("renders a successful plain git/website sync instead of 'nothing to update' (R-015/adjacent)", () => {
     // R-015-adjacent repro: a successful single-target `akm bundle update <git-name>`
     // returned processed: [] (git/website plain syncs have no UpdateResultItem
     // to report), so the old formatter rendered the same text as a true no-op.
@@ -91,7 +91,7 @@ describe("formatUpdatePlain", () => {
     expect(text).toBe("update: local reconciled (filesystem)");
   });
 
-  it("reports skipped plain sources instead of omitting them", () => {
+  it("reports skipped plain sources instead of omitting them (R-015)", () => {
     // R-015 repro: `akm bundle update --all` against a stash with only plain sources
     // returned processed: [] and rendered "nothing to update", never
     // mentioning the four configured sources anywhere.

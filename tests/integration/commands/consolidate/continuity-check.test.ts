@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The retirement continuity check, against a real state.db `usage_events`
- * table and a fake `search` seam — never the real `searchLocal` (no embedding
- * provider in tests).
+ * The retirement continuity check (0.9.17-alpha.9 plan §5.4, rule R3;
+ * item 1), against a real state.db `usage_events` table and a fake `search`
+ * seam — never the real `searchLocal` (no embedding provider in tests).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -57,7 +57,7 @@ function recordQuery(ref: string, query: string): void {
  * truncated to `CONTINUITY_TOP_N` — the same `limit` the real search call
  * uses, so a rank beyond it is genuinely absent from the hits, not merely
  * unlisted. `mode` defaults to "semantic" (a verified query) — pass
- * "fts-fallback" for the unverified-query tests.
+ * "fts-fallback" for S2's unverified-query tests.
  */
 function fixedRanking(
   refs: string[],
@@ -201,7 +201,7 @@ describe("checkRetirementContinuity", () => {
     expect(searchCalls).toBeGreaterThan(0);
   });
 
-  test("a search failure drops that one query from the rank comparison, but still flags as unverified", async () => {
+  test("a search failure drops that one query from the rank comparison, but still flags as unverified (S2)", async () => {
     recordQuery("memories/old-note", "query one");
     recordQuery("memories/old-note", "query two");
     let call = 0;
@@ -225,7 +225,7 @@ describe("checkRetirementContinuity", () => {
     expect(risk?.unverifiedQueries).toBe(1);
   });
 
-  describe("unverified queries never read as no-risk-found", () => {
+  describe("S2: unverified queries never read as no-risk-found", () => {
     test("every search throws: flagged as unverified, not undefined", async () => {
       recordQuery("memories/old-note", "query one");
       const risk = await checkRetirementContinuity({
@@ -246,8 +246,8 @@ describe("checkRetirementContinuity", () => {
     test("a query that falls back to keyword-only ranking is unverified, not silently trusted", async () => {
       recordQuery("memories/old-note", "query one");
       // The retired asset ranks #1 and the successor is entirely absent —
-      // exactly the shape that would otherwise flag as a rank failure. An
-      // fts-fallback hit is never compared at all, only counted unverified.
+      // exactly the shape that would otherwise flag as a rank failure. S2:
+      // an fts-fallback hit is never compared at all, only counted unverified.
       const risk = await checkRetirementContinuity({
         stashDir: storage.stashDir,
         config: {} as never,
@@ -286,7 +286,7 @@ describe("checkRetirementContinuity", () => {
       expect(risk?.ranks[0]?.query).toBe("query one");
     });
 
-    test("a second proposal checked while the endpoint is still down is ALSO unverified, not just the first", async () => {
+    test("a second proposal checked while the endpoint is still down is ALSO unverified, not just the first (round 3)", async () => {
       recordQuery("memories/old-note", "query one");
       recordQuery("memories/beta-old", "query two");
       // Mirrors createContinuitySearch's OWN forcedKeywordOnly bookkeeping —
@@ -448,7 +448,7 @@ describe("checkRetirementContinuity", () => {
   });
 });
 
-describe("createContinuitySearch: keyword-only throttle after the first fallback", () => {
+describe("createContinuitySearch: keyword-only throttle after the first fallback (S2)", () => {
   test("once a query falls back to keyword-only, every later call through the SAME instance skips the semantic attempt entirely", async () => {
     const config: AkmConfig = {
       semanticSearchMode: "auto",
@@ -494,7 +494,7 @@ describe("createContinuitySearch: keyword-only throttle after the first fallback
 
     const second = await search("deploy");
     expect(second.mode).toBe("keyword"); // forced semanticSearchMode: "off" — not another fallback
-    // `mode: "keyword"` alone reads as a clean, verified
+    // Round-3 review (S2): `mode: "keyword"` alone reads as a clean, verified
     // query — but the endpoint is presumed still down, so this call must
     // still identify itself as degraded, not just the very first one.
     expect(second.forcedKeywordOnly).toBe(true);

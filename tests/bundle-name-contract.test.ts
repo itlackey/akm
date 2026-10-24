@@ -3,12 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Bundle naming is a contract: an illegal or already-taken `--name` fails
- * before any write on every add path (local, website, registry — registry
- * coverage lives in tests/integration/registry/registry-add-bundle-name.test.ts,
- * which needs a real sync), re-adding an installed ref under a different
- * `--name` names `akm bundle rename` instead of silently keeping the old key,
- * and every add result carries `bundleId`.
+ * D6 — bundle naming is a contract: an illegal or already-taken `--name`
+ * fails before any write on every add path (local, website, registry —
+ * registry coverage lives in
+ * tests/integration/registry/registry-add-bundle-name.test.ts, which needs a
+ * real sync), re-adding an installed ref under a different `--name` names
+ * `akm bundle rename` instead of silently keeping the old key, and every add
+ * result carries `bundleId`.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -52,7 +53,7 @@ function configPath(): string {
   return path.join(storage.configDir, "akm", "config.json");
 }
 
-describe("akm bundle add <local path> --name", () => {
+describe("akm bundle add <local path> --name (D6)", () => {
   test("every successful add result carries bundleId", async () => {
     const dir = createTmpDir();
     makeStashDir(dir);
@@ -116,7 +117,7 @@ describe("akm bundle add <local path> --name", () => {
   // is independently blocked by the prototype-pollution guard in
   // `src/core/config/deep-merge.ts`'s `UNSAFE_KEYS`, which every config load
   // — not just an `extends` chain — runs through; that is a separate,
-  // deliberate guard.)
+  // deliberate guard out of scope for this item.)
   test("--name toString succeeds on a fresh config", async () => {
     const dir = createTmpDir();
     makeStashDir(dir);
@@ -128,7 +129,7 @@ describe("akm bundle add <local path> --name", () => {
   });
 });
 
-describe("akm bundle add <website URL> --name", () => {
+describe("akm bundle add <website URL> --name (D6)", () => {
   // The name contract is enforced inside the config mutation, before the
   // website mirror is fetched — so these never need a mocked network.
   test("an illegal bundle name fails before any write", async () => {

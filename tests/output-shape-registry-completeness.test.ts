@@ -1,9 +1,13 @@
-// Regression guard for the output-shape registry exhaustiveness contract.
-// Every `output("<name>", ...)` callsite in src/ must have a matching
-// `registerOutputShape("<name>", ...)` — otherwise `shapeForCommand` throws
-// "output shape not registered for command: <name>" at runtime, on every
-// invocation of that command. This test scans the codebase mechanically so
-// drift surfaces immediately.
+// Regression guard for the output-shape registry exhaustiveness contract
+// (v1 spec §9). Every `output("<name>", ...)` callsite in src/ must have a
+// matching `registerOutputShape("<name>", ...)` — otherwise `shapeForCommand`
+// throws "output shape not registered for command: <name>" at runtime.
+//
+// Pre-2026-05-27 we shipped 12 commands (tasks-sync, tasks-add, tasks-show,
+// tasks-remove, tasks-run, tasks-history, tasks-doctor, agent-result, setup,
+// proposal-accept-batch, proposal-reject-batch, proposal-revert) that would
+// throw on every invocation because their shape was never registered. This
+// test scans the codebase mechanically so future drift surfaces immediately.
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";

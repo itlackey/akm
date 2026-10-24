@@ -54,7 +54,7 @@ function durableRef(ref: string): string {
 let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
-  // index.db lives under $DATA; isolate it so tests don't
+  // index.db moved from $CACHE to $DATA in v0.9; isolate it so tests don't
   // share or contaminate the real ~/.local/share/akm/index.db.
   const akmDataDir = makeSandboxDir("akm-improve-memory-data-");
   const akmStateDir = makeSandboxDir("akm-improve-memory-state-");
@@ -182,7 +182,7 @@ describe("akm improve memory cleanup", () => {
 
     await buildIndex(stashDir);
 
-    // The signal-delta gate requires recent feedback to make the parent
+    // 0.8.0: signal-delta gate requires recent feedback to make the parent
     // memory eligible for reflect/distill, and only negative feedback plans a
     // reflect. Without this the test's reflectFn / distillFn assertions don't fire.
     appendEvent({
@@ -353,7 +353,7 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      // session_extraction defaults on. When the host
+      // session_extraction defaults on (a30d7dd, 2026-05-26). When the host
       // happens to have `~/.claude/projects` or opencode session dirs (typical
       // for dev machines), getAvailableHarnesses() returns harnesses and the
       // extract pass runs — fails with "No LLM connection configured for
@@ -797,7 +797,7 @@ describe("akm improve memory cleanup", () => {
     });
 
     expect(result.plannedRefs).toEqual([]);
-    // Memory-inference always runs and discovers its own
+    // Post-Item-9 fix: memory-inference always runs and discovers its own
     // candidates (no orchestrator candidateRefs filter). On this fixture it
     // finds nothing, but the action is still recorded. Website-source
     // exclusion still holds — what matters is reflectedRefs/distilledRefs.
@@ -805,6 +805,8 @@ describe("akm improve memory cleanup", () => {
     expect(reflectedRefs).toEqual([]);
     expect(distilledRefs).toEqual([]);
   });
+
+  // ── Merged from improve-memory-cleanup2.test.ts (same describe title) ────────
 
   test("requireFeedbackSignal restricts planning to refs with recent feedback", async () => {
     const stashDir = makeTempDir("akm-improve-memory-signal-filter-");
@@ -896,12 +898,12 @@ describe("akm improve memory cleanup", () => {
   }, 60_000);
 
   test("derived memories never enter plannedRefs (skip-the-skip churn fix)", async () => {
-    // Regression: `.derived` memories must not be enqueued in
-    // plannedRefs with reason="memory-cleanup" — the in-loop check refuses to
-    // reflect on derived refs, so they would be re-planned every run with no
-    // real work done. The cleanup phase (analyzeMemoryCleanup) inspects
-    // derived memories independently of plannedRefs, so they should never
-    // appear.
+    // Regression: prior to 2026-05-21, `.derived` memories were enqueued in
+    // plannedRefs with reason="memory-cleanup", only to be immediately bounced
+    // by the in-loop check that refuses to reflect on derived refs. Observed
+    // effect: same 11 derived refs re-planned every hourly run with no real
+    // work done. The cleanup phase (analyzeMemoryCleanup) inspects derived
+    // memories independently of plannedRefs, so they should never appear.
     const stashDir = makeTempDir("akm-improve-derived-not-planned-");
     writeMemory(stashDir, "parent", { description: "parent memory" }, "Parent body.");
     writeMemory(
@@ -954,7 +956,7 @@ describe("akm improve memory cleanup", () => {
     expect(result.ok).toBe(true);
     // The derived memory MUST NOT appear in plannedRefs.
     expect(result.plannedRefs.some((p) => p.ref.endsWith(".derived"))).toBe(false);
-    // The synthetic `derived-memory-reflect-skipped` action is not
+    // The synthetic `derived-memory-reflect-skipped` action is no longer
     // emitted because the ref never enters the loop.
     expect(
       result.actions?.some(
@@ -1068,9 +1070,9 @@ describe("akm improve memory cleanup", () => {
     });
 
     expect(distilledRefs).toEqual([]);
-    // Refs without any new feedback signal are fully skipped at the
-    // planner level (signal-delta gate). The per-ref
-    // distill-skipped rows are not persisted in `result.actions` — they
+    // 0.8.0: refs without any new feedback signal are fully skipped at the
+    // planner level (signal-delta gate). C1 (13-bus-factor): the per-ref
+    // distill-skipped rows are no longer persisted in `result.actions` — they
     // are folded into the bounded `distillSkipped` aggregate. Assert the ref +
     // its reason survive on the aggregate (this single ref lands in the capped
     // sample list) and that no per-ref distill-skipped row leaked into actions.
@@ -1158,10 +1160,10 @@ describe("akm improve memory cleanup", () => {
       },
     });
 
-    // memory-inference does not receive an explicit candidateRefs
+    // Item 9 fix: memory-inference no longer receives an explicit candidateRefs
     // filter from the orchestrator — it discovers candidates via its own
     // filesystem scan. The mock above pushes whatever options.candidateRefs is
-    // (undefined → empty Set), so we just assert the pass was invoked.
+    // (now undefined → empty Set), so we just assert the pass was invoked.
     expect(inferredRefs).toEqual([[]]);
     expect(result.memoryInference).toEqual({
       considered: 1,
@@ -1178,15 +1180,16 @@ describe("akm improve memory cleanup", () => {
     });
   });
 
-  // Memory inference indexes exactly the files it wrote
-  // (indexWrittenAssets) instead of running a full reindex between memory
-  // inference and graph extraction, so reindexFn is never called for this
-  // reason and the derived file lands in index.db without one.
+  // R78: this used to assert a full reindex ("reindex" in callOrder) ran
+  // between memory inference and graph extraction. It now indexes exactly
+  // the files memory inference wrote (indexWrittenAssets) instead, so
+  // reindexFn is never called for this reason and the derived file lands in
+  // index.db without one.
   test("improve indexes memory inference's written paths incrementally, without a full reindex", async () => {
     const stashDir = makeTempDir("akm-improve-memory-reindex-order-");
     writeMemory(stashDir, "vpn", { description: "vpn memory" }, "Remember vpn details.");
     await buildIndex(stashDir);
-    // Isolate the incremental-index path under test from the consolidation
+    // Isolate the incremental-index path under test from the D9 consolidation
     // reindex (a genuinely separate, still-full reindex this run would
     // otherwise also trigger and make "no full reindex" unprovable here).
     saveConfig(

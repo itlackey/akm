@@ -33,7 +33,7 @@ describe("isExactSemver", () => {
   });
 });
 
-describe("isSemverRange — every supported range form", () => {
+describe("isSemverRange — every form R-068 #3 called out", () => {
   test.each([
     ["1.2.x", true],
     [">1.0.0", true],

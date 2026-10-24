@@ -51,14 +51,15 @@ export interface WorkflowRunDetail {
    */
   warnings?: string[];
   /**
-   * Per-unit diagnostics for `akm workflow status --units` (PR #714).
-   * Present only when the caller opts in. See
+   * Per-unit diagnostics for `akm workflow status --units` (PR #714 review
+   * round 2, #22). Present only when the caller opts in. See
    * {@link WorkflowUnitDiagnostic}.
    */
   units?: WorkflowUnitDiagnostic[];
   /**
    * The parent-child status tree. Absent, never `[]`, when
-   * this run has no children.
+   * this run has no children — so a childless run's envelope stays
+   * byte-identical to pre-P3b.
    */
   children?: WorkflowChildRunNode[];
 }
@@ -496,7 +497,7 @@ export async function resumeWorkflowRun(runId: string): Promise<WorkflowRunDetai
 }
 
 /**
- * Give up on a run: flip it to `failed` so it stops counting as
+ * Give up on a run (08-F6): flip it to `failed` so it stops counting as
  * active — the run-level verb the concurrency-guard message in
  * {@link startWorkflowRun} advertises. Terminal-state runs are refused;
  * {@link resumeWorkflowRun} can reopen an abandoned run if it was a mistake.
@@ -920,7 +921,7 @@ function toChildRunNode(repo: WorkflowRunsRepository, rootRunId: string, row: Wo
       ? {
           resume: {
             command: `akm workflow resume ${row.id}`,
-            // biome-ignore lint/suspicious/noThenProperty: mirrors the real WorkflowChildRunNode.resume.then field name
+            // biome-ignore lint/suspicious/noThenProperty: mirrors spec §4.5's real WorkflowChildRunNode.resume.then field name
             then: `akm workflow resume ${rootRunId} && akm workflow run ${rootRunId}`,
           },
         }
@@ -945,8 +946,9 @@ function toWorkflowRunSummary(run: WorkflowRunRow): WorkflowRunSummary {
     agentHarness: run.agent_harness ?? null,
     agentSessionId: run.agent_session_id ?? null,
     planIrVersion: run.plan_ir_version ?? null,
-    // All three optional and conditionally spread, so a non-child run with no
-    // declared outputs carries none of them.
+    // P3b: all three optional and conditionally spread, so every
+    // pre-existing (non-child, no-outputs-declared) run's envelope is
+    // byte-identical.
     ...(run.outputs_json ? { outputs: parseJsonObject(run.outputs_json) ?? {} } : {}),
     ...(run.parent_run_id ? { parentRunId: run.parent_run_id } : {}),
     ...(run.parent_unit_id ? { spawnedByUnitId: run.parent_unit_id } : {}),

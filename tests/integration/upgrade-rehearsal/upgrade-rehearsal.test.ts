@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * This suite installs the PREVIOUS published `akm-cli`
+ * RUNTIME-03/ORG-03: this suite installs the PREVIOUS published `akm-cli`
  * release as a real global npm package (real `npm pack` / `npm install
  * --global` into a throwaway prefix), uses it to build a realistic home
  * (five bundle kinds, scheduled tasks, a synced fake crontab), then installs
@@ -43,7 +43,7 @@ const REQUESTED = process.env.AKM_UPGRADE_REHEARSAL === "1";
 // The CI matrix (.github/workflows/ci.yml's upgrade-rehearsal job) runs each
 // KNOWN_UPGRADE_ORIGINS entry in its own parallel job by setting this to one
 // origin; unset (local dev, tests/release-check.sh) runs every origin's
-// describe block in this one process.
+// describe block in this one process, same as before this filter existed.
 const ORIGIN_FILTER = process.env.AKM_UPGRADE_REHEARSAL_ORIGIN?.trim();
 
 if (!REQUESTED) {
@@ -431,7 +431,7 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
  * release before source-bound scheduler grants (0.9.16). A 0.9.15-built
  * home has a scheduled task installed by the OLD release's own direct
  * activation (`task add`, no `--disabled`) with NO `scheduler.enabled`
- * config grant at all. Deliberately
+ * config grant at all — the exact 2026-09-24 scenario. Deliberately
  * separate from the `"previous"` describe block above: it needs only the
  * minimal fixture `buildLegacyGrantHome` builds (see its own comment for
  * why), not the full five-bundle-kind home.

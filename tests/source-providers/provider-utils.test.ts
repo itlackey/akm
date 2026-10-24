@@ -5,7 +5,7 @@ import { copyIncludedPaths } from "../../src/sources/include";
 import { copyDirectoryContents, detectStashRoot } from "../../src/sources/providers/provider-utils";
 import { type Cleanup, makeSandboxDir, makeStashDir } from "../_helpers/sandbox";
 
-/** The conformance-oracle fixtures the ordered probe classifies. */
+/** The conformance-oracle fixtures the ordered §1.2 probe classifies. */
 const AKM_ROOT = path.resolve(__dirname, "../fixtures/stashes/all-types");
 const OKF_ROOT = path.resolve(__dirname, "../fixtures/bundles/okf-sample");
 
@@ -120,9 +120,9 @@ describe("source provider copy safety", () => {
   });
 });
 
-describe("detectStashRoot — ordered registry probe (registry wiring)", () => {
+describe("detectStashRoot — ordered §1.2 registry probe (WI: registry wiring)", () => {
   test("an akm stash root (type dirs) is returned as-is — behavior-identical to the old akm-only probe", () => {
-    // `akm.looksLikeRoot` fires (type dirs).
+    // `akm.looksLikeRoot` fires (type dirs), same as the former hardcoded probe.
     expect(detectStashRoot(AKM_ROOT)).toBe(path.resolve(AKM_ROOT));
   });
 
@@ -134,7 +134,9 @@ describe("detectStashRoot — ordered registry probe (registry wiring)", () => {
   });
 
   test("a NON-akm bundle root (okf: root index doc) is now recognized at the top level", () => {
-    // The ordered registry probe claims this via `okf.looksLikeRoot`.
+    // The single-adapter probe missed this; the ordered registry probe claims it
+    // via `okf.looksLikeRoot`. (The pre-wiring code also returned this via its
+    // final `return root` fallback, so the outcome is identical here too.)
     expect(detectStashRoot(OKF_ROOT)).toBe(path.resolve(OKF_ROOT));
   });
 

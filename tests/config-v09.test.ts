@@ -223,10 +223,11 @@ describe("0.9 config contract", () => {
   });
 
   // #852 (following #815): `extraParams.reasoning_effort` was the documented
-  // workaround for LM Studio, where `enableThinking` is a no-op.
-  // `reasoningEffort` is now a first-class — and therefore protected — field, so
-  // the legacy key warns and auto-lifts: it loads onto the first-class field in
-  // memory, warning once and naming `akm migrate apply` as the way to persist it.
+  // 0.9.1 workaround for LM Studio, where `enableThinking` is a no-op.
+  // `reasoningEffort` became a first-class — and therefore protected — field
+  // in 0.9.2. AGENTS.md cites this exact guard as already fixed to
+  // warn-and-auto-lift; loads onto the first-class field in memory, warning
+  // once and naming `akm migrate apply` as the way to persist it.
   test("loads a legacy reasoning_effort extraParams override by lifting it, naming akm migrate apply in the warning", () => {
     writeConfig({
       configVersion: "0.9.0",
@@ -277,7 +278,7 @@ describe("0.9 config contract", () => {
     expect(() => loadUserConfig()).not.toThrow();
   });
 
-  test("incrementalSince and neighborsPerChanged (retired consolidate keys) — one warning, survive a load and an ordinary write, dropped only by akm migrate apply", () => {
+  test("item 3: incrementalSince and neighborsPerChanged (retired consolidate keys) — one warning, survive a load and an ordinary write, dropped only by akm migrate apply", () => {
     const consolidatePath = ["improve", "strategies", "default", "processes", "consolidate"];
     writeConfig({
       configVersion: "0.9.0",
@@ -382,7 +383,7 @@ describe("0.9 config contract", () => {
     ).toBe(true);
   });
 
-  test("accepts a bundles + defaultBundle config (0.9.0 shape)", () => {
+  test("accepts a bundles + defaultBundle config (0.9.0 shape, spec §10.1 / D-R5)", () => {
     const ok = validateConfigShape({
       configVersion: "0.9.0",
       bundles: {
@@ -502,7 +503,7 @@ describe("0.9 config contract", () => {
     ).toBe(false);
   });
 
-  test("resolveConfiguredSources consumes bundles: defaultBundle first, then map insertion order", () => {
+  test("resolveConfiguredSources consumes bundles: defaultBundle first, then map insertion order (D-R4/D-R5)", () => {
     const config = {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",

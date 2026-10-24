@@ -635,8 +635,8 @@ describe("previous-release corpus — upgrade must not break reads", () => {
   // plain `command: /path/to/akm ...` shape. On a real 0.9.4 install, every
   // v2 task whose `command:` started with `env NAME=value... cmd args...`
   // (a common, ordinary way to write a cron command) hit
-  // TASK_SCHEMA_VERSION_UNSUPPORTED instead of being migratable.
-  // `akm migrate apply` converts it.
+  // TASK_SCHEMA_VERSION_UNSUPPORTED instead of being migratable — this is
+  // exactly the gap that shipped in 0.9.4. `akm migrate apply` converts it.
   describe("task source v2 — env-prefixed command (#867)", () => {
     test("a real-shaped env-prefixed task is refused naming `akm migrate apply` and converts via akm-migrate", () => {
       const filePath = path.join(FIXTURES_DIR, "task-v2-env-prefixed.yml");
@@ -698,8 +698,8 @@ describe("previous-release corpus — AKM_BUNDLE_DIR duplicate 'stash' bundle (#
 // ── Retired 0.8 source-config keys (`stashDir`/`sources[]`/`installed[]`) ──
 //
 // This was the worst config-load break in the repo: `stashDir`/`sources[]`/
-// `installed[]` fully predate the `bundles` + `defaultBundle` shape
-// and no migrator ever existed for them, so a real 0.8-era
+// `installed[]` fully predate the 0.9.0 `bundles` + `defaultBundle` shape
+// (spec §10.1) and no migrator ever existed for them, so a real 0.8-era
 // config.json failed EVERY akm command with no working command left to
 // recover with. `legacy-source-shape-shim.ts` is the in-memory read shim
 // (same pattern as the task-source v2/v3 and configVersion shims elsewhere
@@ -890,10 +890,10 @@ describe("previous-release corpus — retired index.graph.lazyGraphExtraction ke
 
     const config = loadConfig();
 
-    // The whole `index.graph` pass is retired (see the describe
-    // block below), not just these two sub-fields. The unknown-
-    // key walk stops at `index.graph` itself, so the coarser whole-key
-    // warning applies instead of a per-field "lazyGraphExtraction" message —
+    // 0.9.17-alpha.9 retires the whole `index.graph` pass (see the describe
+    // block below), not just these two alpha.5-era sub-fields. The unknown-
+    // key walk now stops at `index.graph` itself, so the coarser whole-key
+    // warning supersedes the old per-field "lazyGraphExtraction" message —
     // one warning, not two.
     expect(warnings.filter((w) => w.includes("index.graph"))).toHaveLength(1);
     expect(warnings.filter((w) => w.includes("lazyGraphExtraction"))).toHaveLength(0);
@@ -1147,11 +1147,13 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
 // still wrapped in akm's own `# akm:task <id> BEGIN`/`END` sentinels — akm's
 // unambiguous, self-authored proof of ownership — but the scheduled
 // invocation predates `--scheduler-context`, which `extractCronInvocation`
-// otherwise requires to parse a row at all. An unparseable row would be
-// invisible to `inspectCronState().installed`, so `akm task sync` would treat
-// the task as absent, try to install it, and collide with the
+// otherwise requires to parse a row at all. Before the fix, an unparseable
+// row was invisible to `inspectCronState().installed`, so `akm task sync`
+// treated the task as absent, tried to install it, and collided with the
 // still-physically-present artifact — permanently blocking sync for every
-// task on any install upgrading past v0.9.2.
+// task on any install upgrading past v0.9.2. #880 could not add this
+// fixture because writing it requires the fix (`src/tasks/backends/cron.ts`)
+// to exist first.
 describe("previous-release corpus — pre-`--scheduler-context` crontab row (#881)", () => {
   function memoryExec(initial = ""): CronExec & { current: () => string } {
     let store = initial;

@@ -14,9 +14,9 @@ import { getWorkflowStatus, listWorkflowRuns, startWorkflowRun } from "../../../
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 
 /**
- * Param validation: a program can declare `params.files: { type: array }`;
- * a `--params '{"files":"not-an-array"}'` supplied at start must not flow
- * silently into unit prompts. The param schemas are frozen into the plan and
+ * Reviewer #12: a program can declare `params.files: { type: array }`, but a
+ * `--params '{"files":"not-an-array"}'` supplied at start used to flow silently
+ * into unit prompts. The param schemas are now frozen into the plan and
  * validated at start (reject) and re-asserted when the engine loads the frozen
  * plan (loud corruption when the journaled params row was edited after the run
  * started).
@@ -31,8 +31,8 @@ beforeEach(() => {
 
 afterEach(() => storage.cleanup());
 
-// Unified-format fixture (frontmatter graph + `## <id>` body).
-// Prose is never templated: the review step refers to the
+// Unified-format fixture (frontmatter graph + `## <id>` body — spec §2.2).
+// Prose is never templated (spec §2.3): the review step refers to the
 // `files`/`mode` params in plain language rather than a template expression.
 const PARAM_GUARD_WF = `---
 type: workflow

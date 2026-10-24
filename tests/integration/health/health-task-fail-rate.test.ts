@@ -62,7 +62,7 @@ function seedTasks(failed: number, completed: number): void {
   }
 }
 
-describe("task-fail-rate advisory", () => {
+describe("task-fail-rate advisory (C2)", () => {
   test("fires warn at exactly the 5% threshold", async () => {
     // 1 failed / 20 total = 0.05 → at threshold.
     seedTasks(1, 19);
@@ -142,7 +142,7 @@ function seedTaskRows(taskId: string, failed: number, completed: number): void {
 // Item 6: a single consistently-failing task can hide behind a healthy
 // aggregate when the overall population is large. `task-fail-rate` now also
 // warns off the worst single task_id (min row-count floor applies).
-describe("task-fail-rate worst-single-task signal", () => {
+describe("task-fail-rate worst-single-task signal (item 6)", () => {
   test("warns off the worst task when the aggregate stays below threshold", async () => {
     // 96 distinct single-row healthy tasks (0 failed) + one "flaky-task" with
     // 5 rows (1 failed, 4 completed). Aggregate = 1/101 ≈ 1% (well below 5%).

@@ -5,9 +5,10 @@
 /**
  * Dispatch resolver for the standards prompt seam.
  *
- * There is no wiki `schema.md` injection: LLM Wiki content is served
- * by the `llm-wiki` adapter, which owns its own `schema.md` contract. This
- * resolver covers **stash standards**: for any write target, return the concatenated
+ * The wiki `schema.md` injection (former "Feature A") was collapsed in chunk 4
+ * with the wiki asset-type death (plan §11 Chunk 4): LLM Wiki content is served
+ * by the `llm-wiki` adapter, which owns its own `schema.md` contract. What
+ * remains is **stash standards**: for any write target, return the concatenated
  * `category: convention`/`meta` fact bodies plus the per-type SOFT conventions
  * layer (#646), type-scoped to the write target. The underlying readers degrade
  * to `""` on missing/malformed input and never throw, so this resolver never
@@ -27,7 +28,7 @@ import { resolveTypeConventions, typeConventionRef } from "./resolve-type-conven
 function refType(ref: string | undefined): string | undefined {
   if (!ref) return undefined;
   const body = ref.includes("//") ? ref.slice(ref.indexOf("//") + 2) : ref;
-  // conceptId `<stash-subdir>/<name>`: delegate to the reverse table
+  // 0.9.0 conceptId `<stash-subdir>/<name>`: delegate to the D-R2 reverse table
   // so the leading stash subdir maps back to its asset type (the canonical path).
   return typeNameFromConceptId(body)?.type;
 }

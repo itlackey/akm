@@ -33,7 +33,7 @@ function slugify(name: string): string {
 }
 
 /**
- * Enforce the `--name` contract on every add path: an explicit name is
+ * Enforce the `--name` contract on every add path (D6): an explicit name is
  * not a silent hint that may fall back to a derived id — it is a request
  * that either succeeds exactly or fails loudly, before anything is written.
  *

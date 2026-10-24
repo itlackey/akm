@@ -678,7 +678,7 @@ describe("runOpencodeSdk — the dispatch's inference reaches the server config"
 
 // ── P0.5 seams: usage + sessionId + cooperative abort ─────────────────────────
 
-describe("runOpencodeSdk — usage/sessionId seams", () => {
+describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
   const profile: AgentProfile = {
     name: "opencode-sdk",
     bin: "",
@@ -852,7 +852,7 @@ describe("runOpencodeSdk — usage/sessionId seams", () => {
 // overlaid onto process.env only for the synchronous prefix of the
 // createOpencode call — the window where the SDK snapshots the child env).
 
-describe("runOpencodeSdk — per-call cwd (worktree isolation seam)", () => {
+describe("runOpencodeSdk — per-call cwd (R2 worktree isolation seam)", () => {
   test("opts.cwd is forwarded as query.directory on create and prompt", async () => {
     const capture: PromptCapture = {};
     const fake = makeFakeServer(capture);
@@ -877,7 +877,7 @@ describe("runOpencodeSdk — per-call cwd (worktree isolation seam)", () => {
   });
 });
 
-describe("runOpencodeSdk — env-keyed server registry (env bindings on the sdk runner)", () => {
+describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the sdk runner)", () => {
   afterEach(() => {
     __setServerFactory(null);
     closeServer();

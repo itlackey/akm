@@ -6,13 +6,15 @@
  * Shared `entries`-row projection + mapper for the `index.db` storage repos.
  *
  * Centralizes the one canonical `entries` SELECT column list and the
- * JSON-parse-guarded row → {@link DbIndexedEntry} mapping shared by several
- * queries. Corrupt `document_json` rows are skipped (warn once) rather
+ * JSON-parse-guarded row → {@link DbIndexedEntry} mapping that several queries
+ * used to reimplement. Corrupt `document_json` rows are skipped (warn once) rather
  * than crashing the caller.
  *
- * It imports the shared shapes from the leaf types module
- * `./index-entry-types.ts` rather than reaching across the storage↔indexer
- * boundary into `db.ts`, so it does not participate in an import cycle.
+ * Relocated from `src/indexer/db/entry-mapper.ts` (WI-5a): it now imports the
+ * shared shapes from the leaf types module `./index-entry-types.ts` rather
+ * than reaching across the storage↔indexer boundary into `db.ts`, so it no
+ * longer participates in the `db.ts` / `entry-mapper.ts` / `schema.ts` import
+ * cycle that used to pin them together.
  */
 
 import { warn } from "../../core/warn";

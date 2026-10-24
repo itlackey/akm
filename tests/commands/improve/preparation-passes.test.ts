@@ -3,8 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Focused unit coverage for the pure preparation-stage passes extracted from
- * `runImprovePreparationStage`.
+ * WI-7.6 — focused unit coverage for the pure preparation-stage passes
+ * extracted from `runImprovePreparationStage` (R31 decomposition, testability
+ * requirement).
  *
  * `partitionBySignalDelta` (the signal-delta partition read against the
  * improve ledger) is driven directly with in-memory feedback maps and ledger
@@ -224,7 +225,7 @@ describe("partitionBySignalDelta — the four buckets", () => {
     expect(out.fullySkippedCount).toBe(1);
   });
 
-  test("explicit --scope <ref> bypasses every gate", () => {
+  test("O-2 (#365): explicit --scope <ref> bypasses every gate", () => {
     const stash = freshStash();
     const out = partitionBySignalDelta({
       scope: { mode: "ref", value: "memories/target" },

@@ -3,10 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `opencode` tool-directory adapter.
+ * The `opencode` tool-directory adapter — akm 0.9.0 format-family work item
+ * (#46).
  *
- * Recognizes an OpenCode `.opencode` layout
- * (https://opencode.ai/docs/{commands,agents,skills,rules}/): a root `AGENTS.md`
+ * Recognizes an OpenCode `.opencode` layout (spec §6/§7, real-world:
+ * https://opencode.ai/docs/{commands,agents,skills,rules}/): a root `AGENTS.md`
  * → `instruction`, `commands/*.md` → `command`, `agents/*.md` → `agent`,
  * `skills/<name>/SKILL.md` → `skill`, and ABSTAINS on `opencode.json` runtime
  * config. Only OpenCode's canonical plural tool directories are accepted.
@@ -54,7 +55,7 @@ function dirExists(p: string): boolean {
 }
 
 /**
- * Install-time probe: a root is an `.opencode` tool dir when it carries
+ * Install-time probe (§1.2): a root is an `.opencode` tool dir when it carries
  * an `opencode.json`/`opencode.jsonc` config, OR a root `AGENTS.md` plus at
  * least one tool dir. Neither marker exists on an akm/okf/wiki root, so the
  * probe is unambiguous; registered ahead of `akm` so a `.opencode` root (whose

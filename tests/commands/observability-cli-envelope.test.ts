@@ -47,7 +47,7 @@ afterEach(() => {
   stashCleanup = () => {};
 });
 
-describe("akm observability cluster — JSON envelope snapshot", () => {
+describe("akm observability cluster — JSON envelope snapshot (WS6)", () => {
   test("log: success envelope carries events array + totalCount + nextOffset", async () => {
     const { stdout, status } = await runCli(["log"]);
     expect(status).toBe(0);

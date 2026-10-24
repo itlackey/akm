@@ -3,8 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Outcome loop. Opens a real SQLite state.db (openStateDatabase), which
- * is why this file lives in tests/integration/.
+ * WS-2 outcome loop. Opens a real SQLite state.db (openStateDatabase), which
+ * is why this file lives in tests/integration/ (ORG-05, 0.9.8 stabilization;
+ * see AGENTS.md's classification rule).
  *
  * Covers:
  *   - `updateAssetOutcome`: warm-start, differential update.
@@ -13,9 +14,10 @@
  *   - `outcomeScoreToSalience`: normalisation + diversity floor.
  *   - Migration 010 creates asset_outcome table.
  *
- * The `review_pressure` (#613) code/type no longer exists, but the DB column
- * survives (DEFAULT 0 tolerates omission from INSERT/UPDATE), so this suite's
- * raw-SQL seed helpers leave it out of their column lists too.
+ * `review_pressure` (#613) code/type was deleted in Chunk 7 (WI-7.2, R21) —
+ * the DB column itself survives until Chunk 7's migration 018 (DEFAULT 0
+ * tolerates omission from INSERT/UPDATE), so this suite's raw-SQL seed
+ * helpers drop it from their column lists too.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -280,7 +282,7 @@ describe("updateAssetOutcome — differential update (second call)", () => {
     }
   });
 
-  test("outcome_score is clamped to OUTCOME_SCORE_MAX (RPE saturation)", () => {
+  test("outcome_score is clamped to OUTCOME_SCORE_MAX (RPE saturation, G2)", () => {
     const { db } = openTestDb();
     try {
       // Seed a legacy unbounded row above the ceiling (live max was 3.13).
@@ -420,7 +422,7 @@ describe("outcomeScoreToSalience — normalisation + diversity floor", () => {
   });
 });
 
-// ── Two-sided prediction error ────────────────────────────────────────────────
+// ── Two-sided prediction error (fix task 1/5) ────────────────────────────────
 
 describe("updateAssetOutcome — two-sided prediction error (EMA-over-delta)", () => {
   test("below-expected delta produces strictly negative predictionError and lowers score", () => {

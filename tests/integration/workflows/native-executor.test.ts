@@ -24,11 +24,10 @@ import { withSeam } from "../../_helpers/seams";
 import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
 /**
- * Native executor over the sole frozen workflow plan: fan-out through the
- * scheduler, schema-validated structured output with retry, the explicit
- * failure policy (`on_error` / `retry`), per-unit persistence, and the engine
- * loop that advances the gated step spine strictly through
- * `completeWorkflowStep`.
+ * Native executor over the sole frozen workflow plan: fan-out through the scheduler,
+ * schema-validated structured output with retry, the explicit failure policy
+ * (`on_error` / `retry`), per-unit persistence, and the engine loop that
+ * advances the gated step spine strictly through `completeWorkflowStep`.
  *
  * All dispatch goes through an injected fake dispatcher — no agent binaries,
  * no LLM. The workflow DB is a sandboxed tmp dir via AKM_DATA_DIR. Plans come
@@ -36,13 +35,17 @@ import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow
  * via the `freezeWorkflow` helper). Markdown and GitHub-shaped YAML are peer
  * authoring formats for that one compiler/runtime architecture.
  *
- * Instructions are byte-exact prose everywhere — there is no `${{ item }}` /
- * `${{ params.x }}` substitution INTO the instructions text. A map unit's item
- * + index reach it as ATTACHED CONTEXT instead (a "## Item (index N)" block
+ * SEMANTIC CHANGE (workflow-format-unification, spec §2.3): instructions are
+ * byte-exact prose everywhere now — there is no more `${{ item }}` / `${{
+ * params.x }}` substitution INTO the instructions text. A map unit's item +
+ * index reach it as ATTACHED CONTEXT instead (a "## Item (index N)" block
  * `buildUnitPrompt` appends, `src/workflows/exec/step-work.ts`), addressed by
- * its canonical JSON — never spliced into prose. Tests therefore assert the
- * canonical-JSON item block (`'"a.ts"'`) rather than a substituted prompt
- * string.
+ * its canonical JSON — never spliced into prose. Tests that used to assert a
+ * SUBSTITUTED prompt string (`"Review a.ts carefully."`) now assert the
+ * canonical-JSON item block instead (`'"a.ts"'`), with a comment marking the
+ * change; a couple of tests whose entire premise was substitution-only are
+ * replaced with the closest equivalent and reported where none exists (see
+ * inline SUSPECTED SRC BEHAVIOR / DELETED notes below).
  */
 
 let tmpDir = "";
@@ -214,15 +217,19 @@ describe("executeStepPlan — fan-out", () => {
   });
 
   test("hostile item content is data: $-patterns and expression-looking values render verbatim as canonical JSON, never re-scanned", async () => {
-    // Items are attached as their own canonical-JSON context block via plain
-    // string concatenation (never `.replace`), so the GetSubstitution-pattern
-    // injection class ("$&"/"${{ … }}" surviving a String.prototype.replace
-    // substitution) is moot by construction. What matters, and is proved
-    // below: (1) hostile item content appears verbatim in its JSON context
-    // block, (2) it is NEVER resolved against params, and (3) the preamble's
-    // `{{PARAMS_JSON}}` substitution — which DOES use `.replaceAll` — still
-    // uses the function-replacer form, so a param value containing "$&"
-    // survives unmangled too.
+    // SEMANTIC CHANGE (spec §2.3): the pre-unification version of this test
+    // proved the OLD splice mechanism's single-pass guarantee (an item
+    // containing "$&"/"${{ … }}" had to survive a String.prototype.replace
+    // substitution unmangled). There is no more splicing — an item is
+    // attached as its own canonical-JSON context block via plain string
+    // concatenation (never `.replace`), so the entire GetSubstitution-pattern
+    // injection class is moot by construction, not merely "closed". What
+    // still matters, and is proved below: (1) hostile item content appears
+    // verbatim in its JSON context block, (2) it is NEVER resolved against
+    // params (there is no resolution of items at all any more), and (3) the
+    // preamble's `{{PARAMS_JSON}}` substitution — which DOES use
+    // `.replaceAll` — still uses the function-replacer form, so a param value
+    // containing "$&" survives unmangled too.
     const items = ["src/a$&b.ts", "Makefile uses $$(CC)", "${{ params.secret }}"];
     seedRun({ params: { files: items }, steps: [{ id: "review", title: "Review files" }] });
     const prompts: string[] = [];
@@ -243,7 +250,7 @@ describe("executeStepPlan — fan-out", () => {
     // The expression-looking item is inserted literally — never re-resolved.
     // (params.secret legitimately appears elsewhere in the prompt, in the
     // preamble's own params JSON block — params are documented non-secret and
-    // attach to every unit — so the assertion that matters is that
+    // attach to every unit, spec §2.3 — so the assertion that matters is that
     // the ITEM block specifically was never resolved/substituted.)
     expect(prompts.some((p) => p.includes('fan-out list:\n"${{ params.secret }}"'))).toBe(true);
     expect(prompts.every((p) => !p.includes('fan-out list:\n"LEAKED-SECRET"'))).toBe(true);
@@ -398,10 +405,13 @@ describe("executeStepPlan — fan-out item shapes (edge cases)", () => {
   });
 
   test("a null fan-out item fails the work-list BEFORE any dispatch", async () => {
-    // A null item is rejected EXPLICITLY in computeStepWorkList, with the same
-    // fail-before-dispatch posture as the duplicate-item check: a null item is
-    // producer garbage and names the producing step instead of burning an
-    // agent run on it.
+    // The pre-unification format rejected a null item incidentally (resolving
+    // `${{ item }}` failed). With items attached as context instead of
+    // spliced, the refactor briefly made a null item dispatch as a normal
+    // unit ("Item: null") — an accidental behavioral reversal. The rejection
+    // is now EXPLICIT in computeStepWorkList, same fail-before-dispatch
+    // posture as the duplicate-item check: a null item is producer garbage
+    // and names the producing step instead of burning an agent run on it.
     seedRun({ params: { files: [null] }, steps: [{ id: "review", title: "Review files" }] });
     const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     let dispatches = 0;
@@ -421,7 +431,7 @@ describe("executeStepPlan — fan-out item shapes (edge cases)", () => {
     expect(result.summary).toContain("index 0");
   });
 
-  test("duplicate fan-out items dispatch instead of failing the work-list — occurrence-suffixed unit ids", async () => {
+  test("duplicate fan-out items dispatch instead of failing the work-list — occurrence-suffixed unit ids (issue 6)", async () => {
     seedRun({ params: { files: ["a", "a", "b"] }, steps: [{ id: "review", title: "Review files" }] });
     const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     let dispatches = 0;
@@ -596,7 +606,7 @@ describe("executeStepPlan — structured output", () => {
   });
 });
 
-// ── Empty free-text outputs (PR #714) ────────────────────────────────────────
+// ── Empty free-text outputs (PR #714 comment B) ──────────────────────────────
 //
 // A SUCCESSFUL schemaless unit that returns "" is "no output": dispatchUnit
 // drops the falsy text, finishUnitAttempt journals result_json = NULL, the promoted
@@ -674,12 +684,20 @@ describe("executeStepPlan — empty free-text output is 'no output' (PR #714 com
   });
 
   test("a downstream declared input of an empty-output step fails the WHOLE STEP deterministically (resolved to null)", async () => {
-    // A step whose declared `inputs: [steps.build.output]` is unresolvable (the
-    // referenced artifact is null) is a WHOLE-STEP failure (`result.units` is
-    // empty), not a per-unit one: `inputs:` is resolved ONCE for the WHOLE
-    // STEP, before any unit is constructed (`computeStepWorkList`,
-    // `src/workflows/exec/step-work.ts`). The failure is deterministic,
-    // "resolved to null" appears in the message, and nothing dispatches.
+    // SEMANTIC CHANGE (spec §2.3): the pre-unification version referenced
+    // `${{ steps.build.output }}` inside `consume`'s INSTRUCTIONS, which
+    // failed as a PER-UNIT `expression_error` (carried on `result.units[0]`,
+    // never dispatching). The unified format's equivalent surface is
+    // `consume`'s declared `inputs: [steps.build.output]` — but `inputs:` is
+    // resolved ONCE for the WHOLE STEP, before any unit is constructed
+    // (`computeStepWorkList`, `src/workflows/exec/step-work.ts`), so an
+    // unresolvable declared input is now a WHOLE-STEP failure (`result.units`
+    // is empty), not a per-unit one. Reading `computeStepWorkList`'s
+    // unit-construction loop confirms there is no remaining code path that
+    // produces a per-unit `resolved: { ok: false }` — reported to the
+    // orchestrating agent (see the identical note in `step-work.test.ts`).
+    // The still-true parts of the original narrative — deterministic failure,
+    // "resolved to null" in the message, zero dispatch — are preserved below.
     seedRun({
       steps: [
         { id: "build", title: "Build" },
@@ -763,11 +781,11 @@ describe("executeStepPlan — vote reducer", () => {
   });
 });
 
-describe("executeStepPlan — harness-native session id journaling", () => {
+describe("executeStepPlan — harness-native session id journaling (P2 peer review)", () => {
   test("a dispatcher-revealed sessionId is persisted on the unit row and rehydrated on reuse", async () => {
-    // Regression: the harness session id that defaultUnitDispatcher extracts
-    // (e.g. codex `session_configured`) must reach
-    // workflow_run_units.session_id rather than evaporate inside dispatchUnit.
+    // Peer-review regression: defaultUnitDispatcher extracts the harness
+    // session id (e.g. codex `session_configured`), but it used to evaporate
+    // inside dispatchUnit — never reaching workflow_run_units.session_id.
     seedRun({ steps: [{ id: "extract", title: "Extract facts" }] });
     const stepPlan = plan(SCHEMA_WF).steps[0]!;
     const ctx = { runId: RUN_ID, workflowRef: "workflows/demo", params: {}, evidence: {} };
@@ -836,7 +854,7 @@ describe("executeStepPlan — harness-native session id journaling", () => {
   });
 });
 
-describe("executeStepPlan — durable-row reuse", () => {
+describe("executeStepPlan — durable-row reuse (peer review)", () => {
   test("re-executing a step reuses completed units with the same input hash instead of re-dispatching", async () => {
     seedRun({ params: { files: ["a", "b"] }, steps: [{ id: "review", title: "Review files" }] });
     const stepPlan = plan(FAN_OUT_WF).steps[0]!;
@@ -896,7 +914,7 @@ describe("executeStepPlan — durable-row reuse", () => {
     });
     // Content-derived identity: a different item is a different unit id — it
     // never matches the journaled row, so it dispatches live (no divergence:
-    // divergence is same-id-different-hash, covered in the identity suite).
+    // divergence is same-id-different-hash, covered in the R2 identity suite).
     await executeStepPlan(stepPlan, {
       runId: RUN_ID,
       workflowRef: "workflows/demo",
@@ -910,8 +928,8 @@ describe("executeStepPlan — durable-row reuse", () => {
 
 describe("executeStepPlan — durable-row reuse never counts against a declared budget", () => {
   test("durable-row reuse is free: a journal-heavy resume reuses instead of re-dispatching", async () => {
-    // Regression: a pre-batch check (`journaled +
-    // items.length > cap`) plus reuse-counted-as-dispatch would make any
+    // Peer-review regression: the old pre-batch check (`journaled +
+    // items.length > cap`) plus reuse-counted-as-dispatch made any
     // partially-completed fan-out with many journaled units impossible to
     // resume. Only real dispatches ever consume a declared budget.max_units.
     const files = Array.from({ length: 20 }, (_, i) => `f${i}.ts`);
@@ -947,7 +965,7 @@ describe("executeStepPlan — durable-row reuse never counts against a declared 
   });
 });
 
-describe("step output promotion — steps.<id>.output addresses real results", () => {
+describe("step output promotion — steps.<id>.output addresses real results (peer review R1)", () => {
   const DOCS_SHAPE_WF = `---
 type: workflow
 steps:
@@ -980,7 +998,7 @@ Summarize the reviews (declared inputs above carry the full array and its first 
     // evidence envelope {units, itemCount} — and a collect fan-out's output
     // is the array of per-item results in item order. `summarize` addresses
     // both the whole array and its first element via TWO declared `inputs:`
-    // entries, attached as separate "###
+    // entries (spec §2.3's sub-path support), attached as separate "###
     // <reference>" context blocks rather than spliced into prose.
     seedRun({
       steps: [
@@ -1125,7 +1143,7 @@ Do second.
     expect(result.done).toBe(true);
     expect(result.executed.map((step) => step.notices)).toEqual([[notice], [notice]]);
     expect(result.notices).toEqual([notice]);
-    // Params attach as structured JSON context to EVERY unit,
+    // Params attach as structured JSON context to EVERY unit (spec §2.3),
     // never spliced into instructions.
     expect(prompts[1]).toContain('"flavor":"vanilla"');
 
@@ -1160,7 +1178,7 @@ Do second.
     expect(status.run.status).toBe("failed");
   });
 
-  test("refuses a non-active run BEFORE dispatching any unit", async () => {
+  test("refuses a non-active run BEFORE dispatching any unit (peer review #2)", async () => {
     seedRun({
       steps: [
         { id: "first", title: "First" },
@@ -1395,7 +1413,7 @@ Fix it.
     { id: "wrap-up", title: "Wrap up" },
   ];
 
-  test("routing survives resume: the journaled decision replays, unselected targets stay skipped", async () => {
+  test("routing survives resume: the journaled decision replays, unselected targets stay skipped (peer review)", async () => {
     // Route decisions must be pure functions of (frozen plan, params,
     // journaled results) — NOT per-invocation memory. First invocation stops
     // right after the route step completed (maxSteps), simulating a crash /
@@ -1551,11 +1569,11 @@ Branch c2.
     { id: "c2", title: "C2" },
   ];
 
-  test("cascaded routing: a skipped router's own branch targets are skipped, never dispatched", async () => {
-    // branch-router is an UNSELECTED target of
+  test("cascaded routing: a skipped router's own branch targets are skipped, never dispatched (peer review)", async () => {
+    // Peer-review regression: branch-router is an UNSELECTED target of
     // classify → it is skipped without evaluating its route. Its targets
-    // (c1, c2) must cascade into the skip set rather than dispatch units for
-    // safe, c1 AND c2. Note params carries no "branch": the
+    // (c1, c2) must cascade into the skip set — the old code dispatched
+    // units for safe, c1 AND c2. Note params carries no "branch": the
     // skipped router's input must never even be resolved.
     seedRun({ params: { pick: "right" }, steps: CASCADE_STEPS });
     const dispatched: string[] = [];
@@ -1613,7 +1631,7 @@ Branch c2.
     expect(byId.get("c2")).toBe("skipped");
   });
 
-  test("resume after a fan-out failure re-dispatches ONLY the incomplete unit", async () => {
+  test("resume after a fan-out failure re-dispatches ONLY the incomplete unit (peer review)", async () => {
     // End-to-end confirmation of the documented resume contract: a failed
     // 6-item fan-out journals 6 attempts; after `workflow resume`, the
     // engine reuses the 5 completed rows and dispatches exactly one unit —

@@ -43,7 +43,7 @@ function invalidParameter(name: string, message: string): UsageError {
   return new UsageError(`Workflow parameter "--${name}" ${message}.`, "INVALID_FLAG_VALUE");
 }
 
-/** The workflow-parameter message/code vocabulary for `materializeInputFlags`. */
+/** The workflow-parameter message/code vocabulary for `materializeInputFlags` (D3-N3) — today's five strings, unchanged. */
 const WORKFLOW_PARAMETER_DIAGNOSTICS: InputFlagDiagnostics = {
   unknownFlag: (name, declared) => {
     const available = declared.map((n) => `--${n}`).join(", ");

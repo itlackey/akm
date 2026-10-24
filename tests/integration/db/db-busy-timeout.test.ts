@@ -8,12 +8,16 @@
  * SQLITE_BUSY errors were observed in production when concurrent improve runs
  * contended on index.db or state.db writer locks — most often when a
  * post-inference reindex overlapped an event write from a parallel cron task.
- * A 5 s window was too narrow for this workload; 30 s matches
- * common resilient-SQLite guidance.
+ * The previous 5 s window was too narrow for this workload; 30 s matches
+ * common resilient-SQLite guidance and eliminated the observed failures.
  *
  * Covered open paths:
- *   - index.db:    openIndexDatabase() and openExistingDatabase() (src/storage/repositories/index-connection.ts)
+ *   - index.db:    openIndexDatabase() and openExistingDatabase() (src/indexer/db/db.ts)
  *   - state.db:    openStateDatabase()                       (src/core/state-db.ts)
+ *
+ * (Chunk-8 WI-8.3: workflow.db is deleted; its rows moved into state.db, so the
+ * former openWorkflowDatabase() open path — which had set NO busy_timeout, an
+ * instant-SQLITE_BUSY hazard — is gone with it.)
  */
 
 import { afterEach, describe, expect, test } from "bun:test";

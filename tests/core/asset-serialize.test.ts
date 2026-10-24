@@ -341,7 +341,7 @@ describe("assembleAssetFromString — shared fence/body template, BYO serializer
  * the swap is byte-identical for ANY input — pin that here so the equivalence
  * is provable, not asserted.
  */
-describe("regression — residual yamlStringify(fm).trimEnd() sites → serializeFrontmatter", () => {
+describe("WS8 regression — residual yamlStringify(fm).trimEnd() sites → serializeFrontmatter", () => {
   const cases: Array<{ label: string; fm: Record<string, unknown> }> = [
     { label: "extract.ts:193 (extracted candidate fm)", fm: { description: "x", sources: ["session:claude:abc"] } },
     {

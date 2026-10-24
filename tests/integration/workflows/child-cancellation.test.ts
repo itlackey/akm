@@ -3,16 +3,31 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Cancellation across the parent/child boundary.
+ * P3b Lane A TESTS — cancellation across the parent/child boundary
+ * (docs/plans/specs/p3b-child-executor.md §2.4 "Cancellation, provenance,
+ * nesting" rows A-28…A-30; §3.5 "Cancellation and leases"). This file owns
+ * ONLY these three rows (A-31…A-36 belong to
+ * tests/integration/workflows/child-nesting.test.ts, per the spec's own §7
+ * new-suites table).
  *
- * Two tests use DIRECT `driveChildWorkflowUnit(input)` calls with a two-step
- * child plan: the injected dispatcher aborts a local `AbortController` as a
- * side effect of answering the FIRST unit, so the SECOND unit's pre-dispatch
- * abort check (`runUnit`'s `if (input.signal?.aborted) …`,
- * native-executor.ts) fires cleanly, mirroring `ctx.signal` being "the parent
- * unit's dispatch signal" exactly as a real engine invocation would thread it.
+ * GREEN: this file's one import of `driveChildWorkflowUnit` from
+ * `src/workflows/exec/child-workflow.ts` resolves normally; `bunx tsc
+ * --noEmit` stays green. Before Implement created that module, the import
+ * carried the established `@ts-expect-error` red-phase directive (see
+ * tests/integration/workflows/child-execution.test.ts's file header for the
+ * full rationale) and every test below failed as a block at the bun:test
+ * *runtime*; Implement removed the directive the moment the module was
+ * created.
  *
- * The third drives the FULL top-level engine on both levels (`runWorkflowSteps`
+ * A-28/A-29 use DIRECT `driveChildWorkflowUnit(input)` calls with a
+ * two-step child plan: the injected dispatcher aborts a local
+ * `AbortController` as a side effect of answering the FIRST unit, so the
+ * SECOND unit's pre-dispatch abort check (`runUnit`'s
+ * `if (input.signal?.aborted) …`, native-executor.ts — existing, unchanged)
+ * fires cleanly, mirroring `ctx.signal` being "the parent unit's dispatch
+ * signal" (§3.3.1) exactly as a real engine invocation would thread it.
+ *
+ * A-30 drives the FULL top-level engine on both levels (`runWorkflowSteps`
  * on a real parent whose one step composes a real child) and aborts the
  * parent's caller signal while the child's unit is in flight — proving the
  * cascade reaches all the way into the nested child drive, not just the
@@ -146,10 +161,10 @@ function parentUnitId(stepId: string): string {
   return `${stepId}:solo`;
 }
 
-// ── an abort mid-child-drive leaves both runs resumable ─────────────────────
+// ── A-28, A-29: an abort mid-child-drive leaves both runs resumable ─────────
 
-describe("a parent AbortSignal aborted mid-child-drive is observed by the child, leaving it resumable", () => {
-  /** One shared dispatcher for BOTH `ctx.dispatcher` and the top-level `dispatcher` field — the test is agnostic about which of the two the drive actually reads, so both must observe the identical abort-on-first-call behavior. */
+describe("A-28, A-29 — a parent AbortSignal aborted mid-child-drive is observed by the child, leaving it resumable", () => {
+  /** One shared dispatcher for BOTH `ctx.dispatcher` and the top-level `dispatcher` field — the row is agnostic about which of the two the drive actually reads, so both must observe the identical abort-on-first-call behavior. */
   function abortingDispatcher(controller: AbortController, counter: { count: number }) {
     return async (): Promise<{ ok: true; text: string }> => {
       counter.count++;
@@ -162,7 +177,7 @@ describe("a parent AbortSignal aborted mid-child-drive is observed by the child,
     };
   }
 
-  test("the child drive returns ok: false, failureReason 'aborted', once the signal fires mid-drive", async () => {
+  test("A-28: the child drive returns ok: false, failureReason 'aborted', once the signal fires mid-drive", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(twoStepChildPlan(), { ref: "workflows/two-step-child" });
     const controller = new AbortController();
@@ -199,7 +214,7 @@ describe("a parent AbortSignal aborted mid-child-drive is observed by the child,
     expect(counter.count).toBe(1);
   });
 
-  test("after the abort, the child's own run lock is released and the child run stays active (resumable)", async () => {
+  test("A-29: after the abort, the child's own run lock is released and the child run stays active (resumable)", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(twoStepChildPlan(), { ref: "workflows/two-step-child-b" });
     const controller = new AbortController();
@@ -233,7 +248,7 @@ describe("a parent AbortSignal aborted mid-child-drive is observed by the child,
     const childRunId = outcome.childRun?.runId as string;
     expect(childRunId).toBeDefined();
     const childRow = await withWorkflowRunsRepo((repo) => repo.getRunById(childRunId));
-    // Left active/resumable: the aborted drive never finalized
+    // Left active/resumable (§3.4's table): the aborted drive never finalized
     // the interrupted step, so the run derives "active", never "failed".
     expect(childRow?.status).toBe("active");
     // The child's OWN runWorkflowAttempt `finally` releases its OWN run lock
@@ -242,10 +257,10 @@ describe("a parent AbortSignal aborted mid-child-drive is observed by the child,
   });
 });
 
-// ── aborting the PARENT drive aborts the nested child drive too ─────────────
+// ── A-30: aborting the PARENT drive aborts the nested child drive too ──────
 
-describe("aborting the parent's drive mid-dispatch aborts the child drive too", () => {
-  test("the parent's abort cascades into the child; both stop, and the child is left resumable", async () => {
+describe("A-30 — aborting the parent's drive mid-dispatch aborts the child drive too", () => {
+  test("A-30: the parent's abort cascades into the child; both stop, and the child is left resumable", async () => {
     const parentRunId = randomUUID();
     const parentStepId = "compose";
     const childPlan = twoStepChildPlan();

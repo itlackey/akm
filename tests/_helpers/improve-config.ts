@@ -7,12 +7,12 @@ const TEST_LLM_ENGINE = "test-improve-llm";
  * their model calls.
  *
  * This helper wires ENGINES ONLY. It deliberately does not touch
- * `experimental.improveAutonomy`: granting autonomy here would silently run
- * every caller suite — most of them testing behaviour unrelated to the gated
- * lanes — under a non-default config. A suite that exercises
- * consolidate/memory-inference/cleanup/contradiction opts in visibly with
- * {@link withImproveAutonomy} instead, so the grant is readable at the suite
- * that depends on it.
+ * `experimental.improveAutonomy`: an earlier revision granted autonomy here,
+ * which silently ran every one of its ~20 caller suites — most of them testing
+ * behaviour unrelated to the gated lanes — under a non-default config. A suite
+ * that exercises consolidate/memory-inference/cleanup/contradiction opts in
+ * visibly with {@link withImproveAutonomy} instead, so the grant is readable at
+ * the suite that depends on it.
  */
 export function withTestImproveLlm(config: AkmConfig): AkmConfig {
   return {
@@ -33,7 +33,7 @@ export function withTestImproveLlm(config: AkmConfig): AkmConfig {
 }
 
 /**
- * Opt a test config into `experimental.improveAutonomy`.
+ * Opt a test config into `experimental.improveAutonomy` (D8).
  *
  * Use ONLY in suites that exercise the gated lanes — consolidate
  * merge/delete, memory-inference writes, the memory-cleanup and contradiction

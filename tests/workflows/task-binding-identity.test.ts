@@ -3,37 +3,55 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The IDENTITY suite for task input bindings.
+ * P2b Lane A — the IDENTITY suite (docs/plans/specs/p2b-input-bindings.md
+ * §1.1(4), §3.2's file table, §3.6, A-N7; rows B-01, B-43, B-44).
  *
  * tests/workflows/task-input-bindings.test.ts is the freeze MATRIX (every
  * INPUT_BINDING_INVALID rejection, plus normalize/merge rules) and already
  * carries its own "hash coverage" describe proving a CHANGED binding changes
- * the unit input hash (B-41, B-42). This file is the complementary suite —
- * what stays the SAME:
+ * the unit input hash (B-41, B-42). This file is the complementary suite
+ * §3.2's file table names separately — what stays the SAME:
  *
- *   - B-01 (PRESERVE): a step with no `with:` on a target that declares no
- *     inputs freezes `inputBindings` ABSENT — never `[]` — so every existing
- *     frozen target's canonical JSON, and therefore every existing plan_hash /
- *     unit inputHash, is untouched.
- *   - B-44 (PRESERVE): `computeUnitInputHash`'s own prefix
- *     (`akm.workflow.unit\0v7\0`) and `hashVersion` (7), plus
- *     `WORKFLOW_PLAN_VERSION`, are pinned externally. The binding-free
- *     preimage's FIELD LIST below carries no `taskInputs` key — a step with no
- *     bindings gains no preimage field.
+ *   - B-01 (PRESERVE, A-N7): a step with no `with:` on a target that
+ *     declares no inputs freezes `inputBindings` ABSENT — never `[]` — so
+ *     every existing frozen target's canonical JSON, and therefore every
+ *     existing plan_hash / unit inputHash, is untouched by this phase.
+ *   - B-44 (PRESERVE, A-N7): `computeUnitInputHash`'s own prefix
+ *     (now `akm.workflow.unit\0v7\0`) and `hashVersion` (now 7), plus
+ *     `WORKFLOW_PLAN_VERSION`, are pinned externally. P2b bumped NOTHING
+ *     (§1.1(4): "P2b bumps nothing. P3a owns irVersion 5 + hashVersion 6");
+ *     P3a landed 6; the R-R15 fix (PR #844 review F6) then bumped unit+gate
+ *     to 7 when the resolved-`taskInputs` preimage field landed, and this
+ *     file's fixture pins those current values. The binding-free preimage's
+ *     FIELD LIST below is still byte-identical to P3a's — a step with no
+ *     bindings gained no `taskInputs` key.
  *   - B-43 (NEW): freezing the identical BOUND workflow twice — the same
  *     `with:` literal, the same declared task — produces byte-identical
  *     plan hashes and unit input hashes, proving that folding
- *     `inputBindings` into the hash preimage (covered wholesale via
- *     `computeUnitInputHash`'s `frozenTarget` field) is still a PURE function
- *     of the frozen plan.
+ *     `inputBindings` into the hash preimage (A-N7: covered wholesale via
+ *     `computeUnitInputHash`'s `frozenTarget` field, `step-work.ts:598`)
+ *     is still a PURE function of the frozen plan.
  *
- * Nothing else pinned the frozen hash VOCABULARY itself, only its reaction to
- * a changed binding (which proves a hash CAN change, never that its
- * prefix/version, or the absence of a stray `inputBindings: []`, stayed put).
+ * Before this file, `rg 'hashVersion' tests/` and `rg 'akm.workflow.unit'
+ * tests/` were both empty (P2b test-review finding #4) — nothing pinned the
+ * frozen hash VOCABULARY itself, only its reaction to a changed binding
+ * (which proves a hash CAN change, never that its prefix/version, or the
+ * absence of a stray `inputBindings: []`, stayed put).
  *
- * B-01's target is a task with no `inputs:` key declared, and B-44's fixture
- * is a plain `akm/command` step that never reaches task composition at all;
- * `computeUnitInputHash` itself is untouched code.
+ * B-01 and B-44 need no unlanded API and carry no `@ts-expect-error` pin —
+ * each exercises ONLY already-working freeze/hash machinery: B-01's target
+ * is a task with no `inputs:` key declared (P4
+ * docs/plans/specs/p4-deletions-closeout.md §7.2 F-A2.30 converted this from
+ * a `version: 3` fixture — A-N6's LC-N1 deferral this comment used to cite
+ * was already lifted by P2b itself, and task source v3 acceptance is retired
+ * by P4, so a `version: 4` task with no `inputs:` key is now the faithful
+ * fixture for the identical "declares no inputs" claim), and B-44's fixture
+ * is a plain `akm/command` step that never reaches task composition at all.
+ * `computeUnitInputHash` itself is untouched code. Both are GREEN today and
+ * stay green as a continuous ratchet through Implement. B-43
+ * needs the `with:`-bindings path (A-N3's decode widening, A-N6's
+ * composition-deferral lift) and is RED today for the same two reasons
+ * documented at the top of task-input-bindings.test.ts.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -104,11 +122,17 @@ async function freeze(ref: string) {
   };
 }
 
-describe("freeze identity — absence-when-empty is the identity-preserving default", () => {
+describe("P2b freeze identity — B-01: absence-when-empty is the identity-preserving default (A-N7)", () => {
   test("a task-composing step whose target declares no inputs: at all, with no with:, freezes a target with no OWN inputBindings key", async () => {
     // task source v4, no `inputs:` key declared — mirroring
-    // tests/workflows/with-rejection.test.ts's own reasoning: "declares no inputs"
-    // holds structurally, independent of any binding logic.
+    // tests/workflows/with-rejection.test.ts's own reasoning (its header
+    // comment, P4 F-A2.30): "declares no inputs" holds structurally,
+    // independent of any binding logic, regardless of task source version.
+    // Converted from a `version: 3` fixture (P4 retired task source v3
+    // acceptance); B-01's own claim is a PRESERVATION claim — "byte-
+    // identical to TODAY" — and the v4 form makes the identical claim the v3
+    // one used to, so this stays the more faithful fixture, not merely a
+    // workaround.
     write("tasks/no-inputs.yml", ["version: 4", "uses: commands/review", 'schedule: "@daily"', ""].join("\n"));
     write("commands/review.md", "Review the composed task target.\n");
     writeWorkflow("no-with", [`      - id: ${STEP_ID}`, "        uses: tasks/no-inputs"]);
@@ -127,8 +151,8 @@ describe("freeze identity — absence-when-empty is the identity-preserving defa
   });
 });
 
-describe("freeze identity — the frozen hash vocabulary is unchanged", () => {
-  test('WORKFLOW_PLAN_VERSION is 6, and computeUnitInputHash\'s prefix + hashVersion are exactly "akm.workflow.unit\\0v7\\0" / 7 — version 6 landed first, then the taskInputs fix bumped it to 7', async () => {
+describe("P2b freeze identity — B-44: the frozen hash vocabulary is unchanged (A-N7, §1.1(4))", () => {
+  test('WORKFLOW_PLAN_VERSION is 6, and computeUnitInputHash\'s prefix + hashVersion are exactly "akm.workflow.unit\\0v7\\0" / 7 — P3a landed 6, the R-R15 taskInputs fix bumped 7', async () => {
     expect(WORKFLOW_PLAN_VERSION).toBe(6);
 
     writeWorkflow("plain-command", [
@@ -146,7 +170,8 @@ describe("freeze identity — the frozen hash vocabulary is unchanged", () => {
     // Reconstructed EXTERNALLY, field-for-field, from step-work.ts's own
     // computeUnitInputHash preimage — a plain akm/command step (no fan-out,
     // no declared step `inputs:`, no gate feedback, and NO inputBindings, so
-    // no `taskInputs` key: that field is conditional and absent here).
+    // no `taskInputs` key: the R-R15 field is conditional and absent here)
+    // needs no unlanded API to rebuild.
     const expectedPreimage = {
       hashVersion: 7,
       role: "unit",
@@ -172,7 +197,7 @@ describe("freeze identity — the frozen hash vocabulary is unchanged", () => {
   });
 });
 
-describe("freeze identity — freezing the identical BOUND workflow twice is byte-identical", () => {
+describe("P2b freeze identity — B-43: freezing the identical BOUND workflow twice is byte-identical", () => {
   test("two independent freezes of the same with:-bound task-composing step produce byte-identical plan hashes and unit input hashes", async () => {
     write("commands/review.md", "Review the composed task target.\n");
     write(
@@ -219,9 +244,9 @@ describe("freeze identity — freezing the identical BOUND workflow twice is byt
     expect(first.planHash).toBe(second.planHash);
 
     // ...and so is the per-unit dispatch-time hash (computeUnitInputHash),
-    // computed independently for each freeze — adding inputBindings to the
-    // preimage did not make the hash a function of anything but the frozen plan
-    // itself.
+    // computed independently for each freeze — the fact §1.1(4) needs:
+    // adding inputBindings to the preimage did not make the hash a function
+    // of anything but the frozen plan itself.
     const firstUnit = computeStepWorkList(first.plan.steps[0]!, { runId: first.runId, params: {}, stepOutputs: {} });
     const secondUnit = computeStepWorkList(second.plan.steps[0]!, {
       runId: second.runId,

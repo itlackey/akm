@@ -195,7 +195,7 @@ describe("renderReflectPromptPreview (#952)", () => {
 // returns `[]` for these rows, so every legacy rejected proposal made the
 // whole prompt-gathering step throw. Reading the preview from
 // `p.payload.content` instead (always populated) fixes it.
-describe("readRejectedProposals tolerates legacy rows with no persisted changes", () => {
+describe("readRejectedProposals tolerates legacy rows with no persisted changes (R1)", () => {
   test("a rejected proposal with no metadata_json.changes does not throw and its content still reaches the prompt", async () => {
     const stashDir = storage.stashDir;
     writeLesson(stashDir, "test-lesson", "existing description", "existing usage");
@@ -245,7 +245,7 @@ describe("readRejectedProposals tolerates legacy rows with no persisted changes"
 // is a procedural refusal (the target changed after mint), not a judgement on
 // the content, and would mislead the LLM into avoiding content it was never
 // actually judged on. An ordinary rejection stays in the context.
-describe("readRejectedProposals excludes stale-target auto-rejects from the Reflexion context", () => {
+describe("readRejectedProposals excludes stale-target auto-rejects from the Reflexion context (STALE, R20)", () => {
   test("a stale-target auto-reject's reason and content preview do not reach the prompt; an ordinary rejection's do", async () => {
     const stashDir = storage.stashDir;
     writeLesson(stashDir, "test-lesson", "existing description", "existing usage");

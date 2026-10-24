@@ -54,9 +54,9 @@ export interface ImproveHealthMetrics {
     error: number;
   };
   autoAccept: {
-    /** Proposals the triage drain promoted (`triage.promoted`). */
+    /** Proposals promoted by the auto-accept gate. */
     promoted: number;
-    /** Promoted proposals that then failed validation (`gateAutoAcceptFailedCount`, historical rows only); they stay pending. */
+    /** Proposals that passed the confidence threshold but failed validation; they stay pending. */
     validationFailed: number;
   };
   /** Whole-stash snapshot from the newest complete run in the window — never a sum across runs. */

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Shared skeleton for {@link SessionLogHarness} providers.
+ * Shared skeleton for {@link SessionLogHarness} providers (§4.6 dedup).
  *
  * Holds only what the concrete providers genuinely share: safe stat'ing,
  * recursive directory walking, the mtime-filtered file→summary listing loop,

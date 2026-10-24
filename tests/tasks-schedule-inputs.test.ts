@@ -3,7 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Schedule-supplied inputs.
+ * P2b Lane B — schedule-supplied inputs (spec
+ * docs/plans/specs/p2b-input-bindings.md §4.4, §1.7 B-N3, rows B-45..B-51).
  *
  * A task source v4 `schedule[i].inputs` mapping is a PER-BINDING literal
  * override. It reaches an actual scheduled run through the scheduler argv —
@@ -14,19 +15,34 @@
  * contract.
  *
  * This file is deliberately separate from, and does not duplicate, its two
- * siblings that already own adjacent ground: tests/tasks-scheduler-sync-v4.test.ts
- * (the whole-set sync planner) and tests/tasks-scheduler-invocation.test.ts
- * (the existing round-trip/malformed-tail coverage this file extends in
- * spirit, not in place). Every fixture id below is chosen to be distinct from
- * both.
+ * siblings that already own adjacent ground:
+ * tests/integration/tasks-scheduler-sync-v4.test.ts (the whole-set sync
+ * planner's B-07/B-08/B-38 rows, including the F-B2 flip of its own
+ * "warns exactly once" test — not this file's to touch) and
+ * tests/integration/tasks-scheduler-invocation.test.ts (the existing
+ * round-trip/malformed-tail coverage this file extends in spirit, not in
+ * place). Every fixture id below is chosen to be distinct from both.
  *
- * Sync-time coverage goes through the REAL task source v4 YAML grammar via the
- * SAME `prepareSchedulerSyncSourceSet` / `finalizeSchedulerSyncPlan` seam
- * tests/tasks-scheduler-sync-v4.test.ts uses; the round-trip/malformed-tail
- * coverage drives the exported `buildScheduledInvocation` /
- * `parseScheduledInvocationArgv` with plain `string[]` argv literals; the
- * end-to-end delivery proof drives the REAL `akm task run` CLI with the exact
- * argv the scheduler would install.
+ * RED TODAY, for two independent reasons:
+ *   - `SchedulerSourceSchedule` (`src/tasks/scheduler-binding.ts`) has no
+ *     `inputs` field yet, and `compileTaskSchedulerBindings` builds ONE fixed
+ *     `invocation` tail for every schedule entry (never a sorted flag tail) —
+ *     so the "sorted tail" test below observes the OLD fixed tail instead.
+ *   - `parsePublicSchedulerInvocation` (`src/tasks/scheduler-invocation.ts`)
+ *     still requires `--scheduled` to be the LAST token — so
+ *     `buildScheduledInvocation` rejects ANY tail carrying input
+ *     flags, and the round-trip test's "no throw" expectation fails.
+ *
+ * No `@ts-expect-error` type-suppression pins: sync-time coverage goes
+ * through the REAL task source v4 YAML grammar (schedule[].inputs already
+ * parses today — P2a landed it) via the SAME `prepareSchedulerSyncSourceSet`
+ * / `finalizeSchedulerSyncPlan` seam
+ * tests/integration/tasks-scheduler-sync-v4.test.ts already uses; the
+ * round-trip/malformed-tail coverage drives the ALREADY-EXPORTED
+ * `buildScheduledInvocation` / `parseScheduledInvocationArgv` with plain
+ * `string[]` argv literals; the end-to-end delivery proof drives the REAL
+ * `akm task run` CLI with the exact argv the scheduler would install. No
+ * not-yet-existing TypeScript export is referenced directly anywhere below.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -42,8 +58,8 @@ import { listWorkflowRuns } from "../src/workflows/runtime/runs";
 import { runCliCapture } from "./_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 
-// ── Part 1: sync-time compilation + validation (mirrors the seam ──────────
-// ── tests/tasks-scheduler-sync-v4.test.ts uses exactly) ────────────────────
+// ── Part 1: sync-time compilation + validation (mirrors the established ────
+// ── tests/integration/tasks-scheduler-sync-v4.test.ts seam exactly) ────────
 
 function root(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "akm-schedule-inputs-"));
@@ -54,7 +70,7 @@ function write(file: string, content: string): void {
   fs.writeFileSync(file, content);
 }
 
-describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after --scheduled", () => {
+describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after --scheduled (B-45)", () => {
   test("two inputs authored out of alphabetical order, one boolean, compile a tail sorted by name — the boolean as `--alpha true`, never a bare flag", async () => {
     const bundleRoot = root();
     write(
@@ -139,7 +155,7 @@ describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after -
     ]);
   });
 
-  test("empty/absent schedule[].inputs still compiles the fixed, zero-extra-token tail (byte-identical when there is nothing to add)", async () => {
+  test("empty/absent schedule[].inputs still compiles the fixed, zero-extra-token tail (B-N3: byte-identical when there is nothing to add)", async () => {
     const bundleRoot = root();
     write(
       path.join(bundleRoot, "tasks", "bare-nightly.yml"),
@@ -167,7 +183,7 @@ describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after -
   });
 });
 
-describe("schedule[].inputs is validated against the declared contract, never silently accepted", () => {
+describe("schedule[].inputs is validated against the declared contract, never silently accepted (B-50)", () => {
   test("an unknown (undeclared) schedule[].inputs name is refused — the sync path never resolves it into a binding", async () => {
     const bundleRoot = root();
     write(
@@ -204,7 +220,7 @@ describe("schedule[].inputs is validated against the declared contract, never si
 
 // ── Part 2: the compiled tail round-trips; a malformed one is refused ──────
 
-describe("a compiled input-flag tail round-trips through the public scheduler invocation parser", () => {
+describe("a compiled input-flag tail round-trips through the public scheduler invocation parser (B-46)", () => {
   test("buildScheduledInvocation accepts the sorted tail, and parseScheduledInvocationArgv recovers the identical public invocation plus target", () => {
     const invocation = [
       "task",
@@ -227,7 +243,7 @@ describe("a compiled input-flag tail round-trips through the public scheduler in
   });
 });
 
-describe("a malformed input-flag tail is refused by the existing invalidSchedulerInvocation() ConfigError", () => {
+describe("a malformed input-flag tail is refused by the existing invalidSchedulerInvocation() ConfigError (B-47)", () => {
   test.each([
     ["a bare flag with no trailing value", ["task", "run", "x", "--bundle", "team", "--scheduled", "--alpha"]],
     [
@@ -248,16 +264,16 @@ describe("a malformed input-flag tail is refused by the existing invalidSchedule
 });
 
 // ── Part 3: the compiled tail, actually executed, reaches a real run ───────
-// The "same path as `akm task run --<name>`" is proven through a
-// workflow-target v4 task: the SAME src/tasks/runtime-v3.ts with->params seam
-// serves both a workflow-step composition caller and a bare `akm task run`
-// caller. This sidesteps any ambiguity about whether a DIRECT
-// shell/script/command run's own declared inputs reach its child process env
-// (out of scope here; that question belongs to
-// tests/workflows/task-inputs-delivery.test.ts, which is scoped to
-// workflow-STEP composition specifically).
+// B-48's "same path as `akm task run --<name>`" is proven through a
+// workflow-target v4 task (spec §4.3's mechanism is caller-agnostic: the
+// SAME src/tasks/runtime-v3.ts with->params seam serves both a workflow-step
+// composition caller and a bare `akm task run` caller) — this sidesteps any
+// ambiguity about whether P2b wires a DIRECT shell/script/command run's own
+// declared inputs to its child process env (out of scope here; that
+// question belongs to tests/integration/workflows/task-inputs-delivery.test.ts,
+// which is scoped to workflow-STEP composition specifically).
 
-describe("a scheduled run's compiled invocation tail delivers schedule-supplied inputs through the SAME materialization path as `akm task run --<name>`", () => {
+describe("a scheduled run's compiled invocation tail delivers schedule-supplied inputs through the SAME materialization path as `akm task run --<name>` (B-48)", () => {
   let storage: IsolatedAkmStorage;
 
   function setUp(): void {

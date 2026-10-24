@@ -1,24 +1,30 @@
 /**
- * Regression tests for GitHub issues 191–194.
+ * Regression tests for GitHub issues 191–194 (filed against 0.6.0-rc1).
  *
- * Issue 191 — search misses freshly-added memory. Test asserts the current
- * correct behavior so we don't regress.
+ * Issue 191 — search misses freshly-added memory
+ *   Status at re-run: NOT REPRODUCING. Test asserts the current correct
+ *   behavior so we don't regress.
  *
- * Issue 192 — `akm list` reports no stash after `akm init`. Test asserts the
- * current correct behavior so we don't regress.
+ * Issue 192 — `akm list` reports no stash after `akm init`
+ *   Status at re-run: NOT REPRODUCING. Test asserts the current correct
+ *   behavior so we don't regress.
  *
- * Issue 193 — `database is locked` during normal CLI use. The underlying gap
- * was no `PRAGMA busy_timeout`; the test asserts the pragma is set.
+ * Issue 193 — `database is locked` during normal CLI use
+ *   Status at re-run: NOT REPRODUCING under heavy concurrency, but the
+ *   underlying gap (no `PRAGMA busy_timeout`) is real. Test asserts the
+ *   pragma is set after fix.
  *
- * Issue 194 — `workflowEntryId: null` after `workflow create --from`. Test
- * asserts the field is non-null on first start after a fresh import.
+ * Issue 194 — `workflowEntryId: null` after `workflow create --from`
+ *   Status at re-run: REPRODUCED. Test asserts the field is non-null on
+ *   first start after a fresh import.
  *
- * The CLI-driving tests (#191, #192, #194) allocate fresh isolated
- * HOME/XDG/stash dirs per test and run the CLI in-process; each runCli call
- * re-pins that env + resets the config/embedder caches so back-to-back
- * invocations re-read the test's tempdirs, restoring env in finally. The #193
- * tests never spawn the CLI — they exercise openIndexDatabase via dynamic
- * import.
+ * Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process
+ * harness (tests/_helpers/cli.ts). The CLI-driving tests (#191, #192, #194)
+ * allocate fresh isolated HOME/XDG/stash dirs per test and run the CLI
+ * in-process; each runCli call re-pins that env + resets the config/embedder
+ * caches so back-to-back invocations re-read the test's tempdirs,
+ * restoring env in finally. The #193 tests never spawned the CLI — they
+ * exercise openIndexDatabase via dynamic import and are unchanged.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -60,11 +66,11 @@ const RUNCLI_ENV_KEYS = [
 ] as const;
 
 /**
- * In-process CLI runner. Pins
+ * In-process replacement for the former spawnSync("bun", [CLI, ...]). Pins
  * this test's isolated HOME/XDG/stash env, resets the module-level singletons
  * so the run re-reads against it, drives the CLI in-process, and restores env
- * in finally so the per-test sandbox tripwire stays satisfied. Returns a
- * spawnSync-shaped result.
+ * in finally so the per-test sandbox tripwire stays satisfied. Returns the
+ * spawnSync-shaped result the assertions expect.
  */
 async function runCli(
   args: string[],
@@ -99,7 +105,7 @@ afterEach(() => {
   }
 });
 
-// Unified-format fixture (frontmatter graph + `## <id>` body).
+// Unified-format fixture (frontmatter graph + `## <id>` body — spec §2.2).
 const ACA_WORKFLOW = `---
 type: workflow
 description: Test workflow imported via workflow create --from

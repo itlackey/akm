@@ -105,8 +105,10 @@ describe("ordinary AKM lint recognizes peer workflow YAML", () => {
       fixed: false,
       line: 11,
     });
-    // The locator grammar does not exist: this rejects as an unrecognized ref
-    // shape ("target ref ... must be a canonical ... asset ref").
+    // P4 FLIP (docs/plans/specs/p4-deletions-closeout.md §3.1, row B-05,
+    // F-A1.19): the locator grammar is deleted — this now rejects as an
+    // unrecognized ref shape ("target ref ... must be a canonical ...
+    // asset ref"), not the old "remote action acquisition" wording.
     expect(result.flagged[0]?.detail.toLowerCase()).toContain("target ref");
     expect(JSON.stringify(result)).not.toContain("AKM_SECRET_BYTES_MUST_NOT_LEAK");
     expect(result.summary).toEqual({ fixed: 0, flagged: 1, warnings: 0 });
@@ -173,11 +175,11 @@ describe("ordinary AKM lint recognizes peer workflow YAML", () => {
   });
 
   test("user directories named .cache or registry ARE linted (only akm's real registry cache is excluded)", async () => {
-    // Asserting zero findings for these paths would pin a bug: a bare
-    // name/segment match silently disabled lint for any user directory that
-    // happened to be called ".cache" or "registry" (fixed alongside #874;
-    // exclusion is now isAkmRegistryCachePath, anchored to akm's resolved cache
-    // root, not a name).
+    // Pre-0.9.6 this asserted zero findings for these paths — which pinned the
+    // exact bug where a bare name/segment match silently disabled lint for any
+    // user directory that happened to be called ".cache" or "registry"
+    // (fixed alongside #874; exclusion is now isAkmRegistryCachePath, anchored
+    // to akm's resolved cache root, not a name).
     const root = fixtureRoot("akm-lint-yaml-cached-peer-");
     write(root, "workflows/release.md", VALID_MARKDOWN);
     write(root, "workflows/.cache/shadow.yml", INVALID_YAML);

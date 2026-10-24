@@ -7,10 +7,10 @@
  *
  * Drives the adapter over `tests/fixtures/bundles/generic-files/` and asserts the
  * four authored goldens under `tests/fixtures/format-family-goldens/generic-files/`.
- * Exercises the script / document / file classification, the identity
- * placement, and the EXPLICIT-CONFIG-ONLY contract (`looksLikeRoot` never
- * fires). `script` presents type-specifically; `document`/`file` fall to the
- * generic renderer fallback.
+ * Exercises the open-question-5 classification (script / document / file), the
+ * identity placement, and the EXPLICIT-CONFIG-ONLY contract (`looksLikeRoot`
+ * never fires). `script` presents type-specifically; `document`/`file` fall to
+ * the generic renderer fallback.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -56,7 +56,7 @@ describe("generic-files adapter — metadata + explicit-config", () => {
     expect(genericFilesAdapter.version).toBe("0.9.0");
   });
 
-  test("looksLikeRoot NEVER fires (explicit-config only)", () => {
+  test("looksLikeRoot NEVER fires (explicit-config only, §1.2)", () => {
     expect(genericFilesAdapter.looksLikeRoot?.(FIXTURE_ROOT)).toBe(false);
   });
 });

@@ -763,7 +763,7 @@ describe("writeSupersededEdge in memory-belief", () => {
     expect(parsed.data.supersededBy).toEqual(["stash//memories/alpha-fix", "stash//memories/zeta-fix"]);
   });
 
-  test("a pre-existing SCALAR supersededBy edge is preserved, not dropped", async () => {
+  test("a pre-existing SCALAR supersededBy edge is preserved, not dropped (finding #14)", async () => {
     // Scalar edges are live data: the indexer's normalizeNonEmptyStringList
     // accepts them and lint never flags them. Merging must promote the scalar
     // to a list, mirroring mergeXrefsIntoContent.

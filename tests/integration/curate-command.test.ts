@@ -13,7 +13,8 @@ import {
   writeSandboxConfig,
 } from "../_helpers/sandbox";
 
-// Each runCli call pins a fresh isolated set of XDG
+// Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
+// (tests/_helpers/cli.ts). Each runCli call pins a fresh isolated set of XDG
 // dirs (cache/config/data) plus AKM_BUNDLE_DIR via the allowlisted withEnv
 // wrapper and resets the config cache before driving the CLI in-process,
 // restoring env in finally. The `curate` command auto-indexes into index.db
@@ -166,7 +167,8 @@ describe("curate command", () => {
     const stashDir = makeStash();
     const { dataDir } = await runCliWithDataDir(stashDir, ["curate", "release", "--format=json"]);
 
-    // usage_events lives in state.db, not index.db.
+    // Check the database for the curate event. Chunk-8 WI-8.3: usage_events
+    // lives in state.db now, not index.db.
     const dbPath = path.join(dataDir, "akm", "state.db");
     expect(fs.existsSync(dbPath)).toBe(true);
 
@@ -186,7 +188,7 @@ describe("curate command", () => {
     }
   });
 
-  // ── --detail / --shape are effective on curate ──────────────────────────────
+  // ── WS2: --detail / --shape are now effective on curate ─────────────────────
   test("--detail full projects description on stash items; brief omits it", async () => {
     const stashDir = makeStash();
     const brief = JSON.parse(await runCli(stashDir, ["curate", "release", "--format=json"])) as {

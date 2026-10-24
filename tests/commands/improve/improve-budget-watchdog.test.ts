@@ -105,7 +105,7 @@ describe("budget signal remainingBudgetMs getter (WS-3a blocker fix)", () => {
   });
 });
 
-describe("armBudgetWatchdog (#566)", () => {
+describe("armBudgetWatchdog (H7 #566)", () => {
   test("clean drain within grace: dispose() cancels the hard-kill — no exit", () => {
     const timers = new FakeTimers();
     const controller = new AbortController();

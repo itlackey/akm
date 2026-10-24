@@ -36,7 +36,7 @@ const INFO_INDEX_BUSY_TIMEOUT_MS = 750;
 /**
  * Assemble system info describing the current capabilities, configuration,
  * and index state. Used by `akm info`, which must behave like a help
- * command: always print a report and exit 0, whatever else
+ * command (owner ruling): always print a report and exit 0, whatever else
  * is happening. Every section below is read best-effort, so one failing
  * lookup degrades only its own field(s) instead of the whole report;
  * `infoCommand` itself (stash-cli.ts) wraps this whole call as the final
@@ -56,7 +56,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   }
 
   // Primary stash directory + default bundle name — same resolution
-  // `akm sources list` uses, so `akm info` and `akm sources list`
+  // `akm sources list` uses (R-057), so `akm info` and `akm sources list`
   // agree on which stash is primary. No bundle created yet
   // (STASH_DIR_NOT_FOUND, the ordinary fresh-install state) reports where a
   // fresh `akm setup`/`akm bundle create` would put it, same as "report the
@@ -99,7 +99,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     ...(r.enabled !== undefined ? { enabled: r.enabled } : {}),
   }));
 
-  // Stash providers — the unified `bundles` source list, which
+  // Stash providers — the unified `bundles` source list (spec §10.1), which
   // already includes the primary (`defaultBundle`) stash first.
   const configuredSources = getSources(config);
   const sourceProviders = configuredSources.map((s) => ({
@@ -218,7 +218,7 @@ function readIndexStats(resolvedPath: string): InfoResponse["indexStats"] {
     // Surface the error so operators can diagnose mismatches between
     // `akm info` and `akm health` rather than silently returning zeros.
     // Routed through core/warn's `error()` (not a raw process.stderr.write)
-    // so `--quiet`/`setQuiet()` actually gate this line.
+    // so `--quiet`/`setQuiet()` actually gate this line (R-057).
     error(`[akm info] failed to read index stats from ${resolvedPath}: ${String(err)}`);
     return { ...EMPTY, unavailable: describeIndexReadFailure(err) };
   } finally {

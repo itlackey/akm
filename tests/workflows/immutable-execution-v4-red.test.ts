@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Contract for the immutable executable projection.
+ * Tests-first contract for WP7's immutable executable projection.
  *
  * These fixtures pin the single common target shape emitted by every start.
  * The `executable` identity the fixtures carry is what older releases froze;
@@ -100,8 +100,13 @@ function cwdTarget(overrides: Record<string, unknown> = {}) {
 function commandPlan(options: { isolation?: "none" | "worktree"; target?: Record<string, unknown> } = {}) {
   const isolation = options.isolation ?? "none";
   const target = options.target ?? cwdTarget(isolation === "worktree" ? { gitCommitOid: "a".repeat(40) } : {});
-  // This plan is fed to decodeWorkflowPlan as `unknown`, so the irVersion
-  // literal here carries no type-level consequence.
+  // F-A9 (docs/plans/specs/p3a-plan-v5-child-freeze.md §6): mechanical value
+  // bump only, no assertion below this fixture builder changes. This plan is
+  // fed to decodeWorkflowPlan as `unknown`, so the literal here carries no
+  // type-level consequence — it is red today only because the decoder still
+  // requires exactly irVersion 4 and goes green once WORKFLOW_PLAN_VERSION
+  // lands; every executable/cwd/gitCommitOid assertion in this file is
+  // otherwise untouched.
   return {
     irVersion: 5,
     title: "immutable",

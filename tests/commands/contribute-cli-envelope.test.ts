@@ -37,7 +37,7 @@ afterEach(() => {
   stashCleanup = () => {};
 });
 
-describe("akm contribution cluster — JSON envelope snapshot", () => {
+describe("akm contribution cluster — JSON envelope snapshot (WS6)", () => {
   test("agent (no engine): {ok:false} usage envelope on stderr (exit 2)", async () => {
     // `akm agent` now falls back to an `opencode-sdk` engine when an opencode
     // binary is resolvable, so the no-engine failure is only deterministic with

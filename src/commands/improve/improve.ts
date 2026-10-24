@@ -263,7 +263,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         syncRepoDir && isGitBackedStash(syncRepoDir) ? new Set(listGitChangedPaths(syncRepoDir)) : new Set<string>();
       journal = beginWriteProvenance();
 
-      // The purge sweep. Deterministic, no LLM,
+      // Step 8 (alpha.9 plan §5.4): the purge sweep. Deterministic, no LLM,
       // and first — before anything else this run might touch the archive
       // for. Git-backed bundles only; a bundle with no git history of its
       // own is left untouched (akm health reports its size instead).
@@ -280,7 +280,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         }
       }
 
-      // The index is made current BEFORE triage: triage promotes into the
+      // The index is made current BEFORE triage (R6): triage promotes into the
       // stash, and a reindex after it would always find fresh work.
       const bootstrap = await runIndexBootstrapPass(setup, budgetAbortController.signal);
       preEnsureCleanupWarnings.push(...bootstrap.warnings);
@@ -423,7 +423,7 @@ export function resolveImproveReadSource(
 /**
  * Run setup, fully synchronous: the budget signal, the invocation plan, the
  * write target, the profile-defaulted options, and the state.db and lock paths
- * pinned before the first await (a later env change cannot redirect them).
+ * pinned before the first await (C2: a later env change cannot redirect them).
  */
 function resolveImproveRunSetup(options: AkmImproveOptions) {
   const startMs = Date.now();
@@ -1061,7 +1061,7 @@ function finalizeImproveResult(args: {
   const consolidation = preparation.consolidation;
   const { memoryInference, allWarnings, deadUrls, deadUrlCoverage, orphansPurged, proposalsExpired } = postLoop;
   const { memoryInferenceDurationMs } = postLoop;
-  // The per-ref distill-skipped rows fold into a bounded aggregate before persistence.
+  // The per-ref distill-skipped rows fold into a bounded aggregate before persistence (C1).
   const { actions: persistedActions, aggregate: distillSkippedAggregate } = foldDistillSkipped(finalActions);
   // This run's LLM accounting (#944): built from the records this run's own
   // sink collected, so calls other akm processes persist to state.db while

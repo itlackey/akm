@@ -46,7 +46,7 @@ export type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 // ── Test seam ────────────────────────────────────────────────────────────────
 // Swap-and-restore overrides. Inert in production; only tests install fakes,
 // via tests/_helpers/seams.ts (which restores them automatically after each
-// test).
+// test). See docs/architecture/specs/di-seams-plan.md.
 
 interface EmbedderOverridesForTests {
   embed?: typeof embed;
@@ -224,9 +224,9 @@ export async function embedBatch(
 
 // ── Similarity ──────────────────────────────────────────────────────────────
 
-// `cosineSimilarity` lives in `./embedders/types.ts` so importers (notably
-// `db.ts`) can pull the math function without dragging in this module and its
-// Transformers.js import chain.
+// `cosineSimilarity` was moved to `./embedders/types.ts` so importers
+// (notably `db.ts`) can pull the math function without dragging in this
+// module and its Transformers.js import chain.
 export { cosineSimilarity } from "./embedders/types";
 
 // ── Model ID resolution ─────────────────────────────────────────────────────

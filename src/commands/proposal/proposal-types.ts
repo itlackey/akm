@@ -16,8 +16,8 @@ import type { FileChange } from "../../core/file-change";
  * lane. When several lanes qualify, the most specific reactive one wins:
  * `scope` > `signal-delta`. `unknown` is only for a lane that genuinely cannot
  * be attributed; `proactive` and `high-salience` (those lanes only score now),
- * `forgetting-safety` and `replay` are retired — none is assigned by anything,
- * all appear on rows older releases wrote.
+ * `forgetting-safety` and `replay` are retired — none is assigned by anything
+ * any more, all appear on rows older releases wrote.
  */
 export type EligibilitySource =
   | "signal-delta"
@@ -36,7 +36,7 @@ export const PROPOSAL_SOURCES = [
   "reflect",
   "distill",
   "consolidate",
-  /** The consolidate pair pass's own retire proposals — kept apart from `consolidate`'s promotions so a bulk `accept --generator consolidate` never sweeps a retirement, and the reverse. */
+  /** The consolidate pair pass's own retire proposals (alpha.9, S6) — kept apart from `consolidate`'s promotions so a bulk `accept --generator consolidate` never sweeps a retirement, and the reverse. */
   "consolidate-pair",
   "extract",
   "improve",
@@ -148,7 +148,8 @@ export interface ProposalGateDecision {
 }
 
 /**
- * A consolidate pair-pass retire proposal's metadata. `ref` is the retired asset (same as `Proposal.ref`);
+ * A consolidate pair-pass retire proposal's metadata (plan §5.2, alpha.9
+ * brief §A "Proposal"). `ref` is the retired asset (same as `Proposal.ref`);
  * `reason` is the tombstone vocabulary `archiveCleanupCandidate` writes,
  * derived from `judgeLabel` (`supersedes` → `superseded`, the other two
  * labels unchanged).
@@ -181,7 +182,8 @@ export interface RetirementMetadata {
   /** Tombstone-vocabulary reason (`judgeLabel` translated: supersedes -> superseded). */
   reason: Exclude<RetireReason, "promoted">;
   /**
-   * Set at mint by the retirement continuity check when the retired asset ranked top 10 for one of its own past queries
+   * Set at mint by the retirement continuity check (alpha.9 plan §5.4, rule
+   * R3) when the retired asset ranked top 10 for one of its own past queries
    * but the successor did not. The proposal still mints — a person can still
    * accept it by id — but it is excluded from every bulk accept path.
    */
@@ -202,7 +204,7 @@ export interface RetirementContinuityRisk {
   failingQueries: number;
   ranks: ContinuityRiskRank[];
   /**
-   * Of the replayed queries, how many could not be verified: the
+   * Of the replayed queries, how many could not be verified (S2): the
    * search call threw, or fell back to keyword-only ranking instead of the
    * real one. Omitted when every query was verified. A proposal carrying
    * this is excluded from bulk accept the same as a `failingQueries` one —
@@ -222,11 +224,11 @@ export interface RetiredArchiveRecord {
 }
 
 /**
- * A retire accept's durable intent, recorded on the still-
+ * A retire accept's durable intent (should-fix 5), recorded on the still-
  * "pending" proposal BEFORE any file is moved: the exact bytes to preserve
  * as `backupContent`. A crashed accept resumes from this record instead of
- * re-deriving it from whatever the archive happens to contain. There is no
- * `twinPath`: the twin, if any, is a
+ * re-deriving it from whatever the archive happens to contain. No `twinPath`
+ * (4d, third review round, dropped as redundant): the twin, if any, is a
  * pure function of `assetPath` and the ref's type (`derivedTwinPath`), and
  * whether it was already archived by an earlier, crashed attempt is exactly
  * what the tombstone scan (`alreadyArchivedOriginalPaths`) independently
@@ -259,7 +261,7 @@ export interface Proposal {
   /** SHA-256 of the target as of mint (absent for a create). */
   beforeHash?: string;
   /**
-   * The same, with akm's bookkeeping frontmatter removed: the
+   * The same, with akm's bookkeeping frontmatter removed (STALE, R20): the
    * freshness check prefers it, so a same-run bookkeeping rewrite of the target
    * does not stale out the proposal while a real edit still does.
    */
@@ -277,12 +279,12 @@ export interface Proposal {
   /** Exactly where the accepted content went; prevents cross-target revert. */
   acceptedTarget?: { source: string; root: string; path: string; contentHash: string };
   eligibilitySource?: EligibilitySource;
-  /** Consolidate pair-pass retire proposals only: set at mint. */
+  /** Consolidate pair-pass retire proposals only (alpha.9): set at mint. */
   retirement?: RetirementMetadata;
   /** Set at accept time for a retire proposal; read back by `akm proposal revert`. */
   retiredArchive?: RetiredArchiveRecord;
   /**
-   * A consolidate PROMOTION proposal's source memory ref: set
+   * A consolidate PROMOTION proposal's source memory ref (alpha.9, O1): set
    * at mint by `emitPromotionProposal`. On accept, `promoteProposal` retires
    * this memory (and its `.derived` twin) through the same archive path, so
    * an accepted promotion no longer leaves a memory/knowledge duplicate
@@ -291,7 +293,7 @@ export interface Proposal {
   promotionSource?: string;
   /**
    * Body content hash (`contentHash(_, "body")`) of `promotionSource` at
-   * mint time. Accept re-reads the source and only archives it
+   * mint time (alpha.9, B3). Accept re-reads the source and only archives it
    * when the hash still matches — an edit made after the promotion was
    * queued survives, not silently discarded into the archive. Absent on a
    * proposal minted before this field existed; those never archive their
@@ -299,7 +301,7 @@ export interface Proposal {
    */
   promotionSourceHash?: string;
   /**
-   * A pending retire proposal's recorded accept intent, set
+   * A pending retire proposal's recorded accept intent (should-fix 5), set
    * right before the first file move and cleared once accept finishes.
    * Still present means a prior accept attempt crashed after recording it
    * but before finishing — the next accept resumes from it idempotently
@@ -320,12 +322,12 @@ export function proposalWaitingSince(proposal: Pick<Proposal, "createdAt" | "rev
   return proposal.reviewHistory?.at(-1)?.reopenedAt ?? proposal.createdAt;
 }
 
-/** A pending or accepted proposal whose primary change deletes its target (a consolidate retire proposal). */
+/** A pending or accepted proposal whose primary change deletes its target (a consolidate retire proposal, alpha.9). */
 export function isRetireProposal(proposal: Pick<Proposal, "changes">): boolean {
   return proposal.changes[0]?.op === "delete";
 }
 
-/** A promote refused because the target changed after mint — not a merit judgement. */
+/** A promote refused because the target changed after mint (STALE, R20) — not a merit judgement. */
 export const STALE_TARGET_GATE_REASON = "stale-target";
 /** The gate on a retire proposal the triage drain may accept unattended: a staged pair-judged retirement. */
 export const PAIR_PASS_GATE = "consolidate-pair";

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * A reference binding's RESOLVED value
+ * R-R15 (PR #844 review finding F6) — a reference binding's RESOLVED value
  * reaches the unit's prompt and its (informational) input hash, `hashVersion`
  * 7. Resume skips a completed unit by id: a resumed invocation whose upstream
  * journaled output changed reuses the completed row rather than re-running
@@ -106,14 +106,14 @@ function invoke(step: WorkflowPlanStep, upstreamOutput: string, dispatcher: Retu
   });
 }
 
-describe("resolved task inputs reach the prompt and input hash; resume skips completed units", () => {
+describe("R-R15 — resolved task inputs reach the prompt and input hash; resume skips completed units", () => {
   test("resume reuses the journaled row whether or not the bound value changed", async () => {
     const step = seedBoundConsumeStep();
 
-    // Pure layer: the same frozen
-    // step against two different upstream outputs computes two different
+    // Pure layer, the repro's defect assertion INVERTED: the same frozen
+    // step against two different upstream outputs now computes two different
     // unit hashes for the same content-derived unit id — and still delivers
-    // two different prompts.
+    // two different prompts, as it always did.
     const listV1 = computeStepWorkList(step, { runId: RUN_ID, params: {}, stepOutputs: { fetch: "VALUE-ONE" } });
     const listV2 = computeStepWorkList(step, { runId: RUN_ID, params: {}, stepOutputs: { fetch: "VALUE-TWO" } });
     if (!listV1.ok || !listV2.ok) throw new Error("work list failed");

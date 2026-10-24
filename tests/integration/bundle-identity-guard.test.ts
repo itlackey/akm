@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Bundle-rename startup guard: warn (never silently re-mint) when
+ * WI-8.4 — §11.5 bundle-rename startup guard: warn (never silently re-mint) when
  * a configured bundle id has no indexed rows but the index holds rows under a
  * bundle id that is no longer configured (the hand-rename signature).
  */
@@ -76,7 +76,7 @@ function bundleConfigAt(id: string, bundlePath: string): AkmConfig {
   } as unknown as AkmConfig;
 }
 
-describe("bundle-rename startup guard", () => {
+describe("§11.5 bundle-rename startup guard", () => {
   test("warns on the hand-rename signature (configured id missing, unconfigured id indexed)", () => {
     seedIndexBundles(["oldname"]);
     warnOnBundleRenameDrift(bundleConfigAt("newname", "/s/oldname"));

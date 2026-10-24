@@ -62,7 +62,7 @@ function isBatchTensor(v: unknown): v is TransformerBatchTensor {
 // ── Test seam ────────────────────────────────────────────────────────────────
 // Swap-and-restore override for the dynamic Transformers.js import.
 // Inert in production; only tests install fakes, via tests/_helpers/seams.ts
-// (which restores them automatically).
+// (which restores them automatically). See docs/architecture/specs/di-seams-plan.md.
 
 interface TransformersEnvironment {
   allowRemoteModels?: boolean;

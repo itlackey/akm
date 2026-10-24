@@ -156,7 +156,7 @@ afterEach(() => {
   stashDir = "";
 });
 
-describe("akm search conceptId-prefix enumeration", () => {
+describe("akm search conceptId-prefix enumeration (D4)", () => {
   test('"memories/projecta/" enumerates exactly that subtree, recursive', async () => {
     const hits = await search({ query: "memories/projecta/", source: "local" });
     const names = hits.map((h) => h.name).sort();
@@ -403,7 +403,7 @@ describe("akm search conceptId-prefix enumeration", () => {
   });
 });
 
-describe("akm search bundle-qualified enumeration", () => {
+describe("akm search bundle-qualified enumeration (D4)", () => {
   beforeEach(async () => {
     saveConfig({
       semanticSearchMode: "off",

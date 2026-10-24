@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `akm improve` autonomy gate.
+ * The `akm improve` autonomy gate (D8).
  *
  * `akm improve` stays ON by default. What this gates is **autonomy** — the lanes
  * that mutate a user's assets without review. A blanket experimental gate on the

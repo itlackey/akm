@@ -3,12 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm proposal` command family (#225). Leaf handlers use
- * `defineJsonCommand`, which wraps the body in `runWithJsonErrors` and emits
- * the standard JSON envelope (stdout/stderr/exit-code).
+ * `akm proposal` command family (#225). Extracted verbatim from src/cli.ts
+ * (WS6) so the God Module shrinks; the `main.subCommands.proposal` key and
+ * every subcommand's args/output shape are byte-identical. Leaf handlers are
+ * migrated to `defineJsonCommand`, which wraps the body in `runWithJsonErrors`
+ * and emits the same JSON envelope (stdout/stderr/exit-code) as the inline
+ * `runWithJsonErrors` form it replaces.
  *
- * `extract` and `new` live here; there is no top-level `extract` or `propose`
- * registration.
+ * 0.9 CLI overhaul (S8): the former top-level `extract` and `propose`
+ * commands are absorbed here as `extract` and `new` — no top-level
+ * registration remains for either spelling.
  */
 
 import { getParsedInvocation } from "../../cli/invocation";
@@ -49,7 +53,7 @@ export function mergeProposalDrainNotices(
 
 /**
  * `--source` was renamed to `--generator` on `proposal accept`/`proposal
- * reject` in 0.9. citty is non-strict, so the
+ * reject` in 0.9 (WS3/S8 — "Removed in 0.9.0"). citty is non-strict, so the
  * retired spelling is silently absorbed rather than rejected — a bulk
  * accept/reject invoked with `--source <name>` then has neither `--generator`
  * nor a positional id, and falls through to the single-proposal path, which
@@ -66,8 +70,8 @@ function rejectRetiredProposalSourceFlag(subcommand: "accept" | "reject"): void 
 
 /**
  * Parse + validate the shared bulk-adjudication filter flags
- * (`--max-diff-lines`, `--older-than`), shared by the accept and reject bulk
- * branches.
+ * (`--max-diff-lines`, `--older-than`). Extracted from the two verbatim
+ * copies that lived in the accept and reject bulk branches (WI-6.6).
  */
 function parseBulkFilterFlags(args: Record<string, unknown>): { maxDiffLines?: number; olderThanMs?: number } {
   const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
@@ -138,7 +142,7 @@ const proposalAcceptCommand = defineJsonCommand({
     },
     queue: { type: "string", description: "Select the proposal queue by source name" },
     target: { type: "string", description: "Write destination; must match the proposal's recorded target" },
-    // Batch accept by generator, diff size, or age (#393).
+    // F-6 / #393: Batch accept by generator, diff size, or age.
     generator: {
       type: "string",
       description:
@@ -169,7 +173,7 @@ const proposalAcceptCommand = defineJsonCommand({
   async run({ args }) {
     rejectRetiredProposalSourceFlag("accept");
     const generator = args.generator as string | undefined;
-    // Bulk-accept when --generator is provided without a positional id (#393).
+    // F-6 / #393: Bulk-accept when --generator is provided without a positional id.
     if (generator && !args.id) {
       const { confirmDestructive } = await import("../../cli/confirm.js");
       const confirmed = await confirmDestructive(
@@ -193,7 +197,7 @@ const proposalAcceptCommand = defineJsonCommand({
       output("proposal-accept-batch", {
         accepted: count,
         results,
-        // How many otherwise-matching proposals were skipped specifically
+        // S4: how many otherwise-matching proposals were skipped specifically
         // because they carry retirement.continuityRisk — visible under
         // --dry-run and on a real run alike, distinct from an ordinary
         // --max-diff-lines/--older-than miss.
@@ -228,7 +232,7 @@ const proposalRejectCommand = defineJsonCommand({
     },
     reason: { type: "string", description: "Reason for rejection (required)" },
     queue: { type: "string", description: "Select the proposal queue by source name" },
-    // Batch reject by generator, diff size, or age (#393).
+    // F-6 / #393: Batch reject by generator, diff size, or age.
     generator: {
       type: "string",
       description:
@@ -265,7 +269,7 @@ const proposalRejectCommand = defineJsonCommand({
         "MISSING_REQUIRED_ARGUMENT",
       );
     }
-    // Bulk-reject when --generator is provided without a positional id (#393).
+    // F-6 / #393: Bulk-reject when --generator is provided without a positional id.
     if (generator && !args.id) {
       const { confirmDestructive } = await import("../../cli/confirm.js");
       const confirmed = await confirmDestructive(
@@ -367,7 +371,7 @@ const proposalDiffCommand = defineJsonCommand({
   },
 });
 
-// Revert an accepted proposal.
+// Phase 6C (Advantage D6c): revert an accepted proposal.
 //
 // Exit codes (mapped by `runWithJsonErrors` from the typed errors thrown by
 // `akmProposalRevert` / `revertProposal`):
@@ -471,7 +475,7 @@ const proposalDrainCommand = defineJsonCommand({
     const stashDir = resolveStashDir();
     const cfg = loadConfig();
 
-    // Read the triage block from the named improve strategy. CLI flags
+    // Phase 2: read the triage block from the named improve strategy. CLI flags
     // always override config; config supplies defaults for any flag omitted.
     const selectedStrategy = resolveImproveStrategy(args.strategy as string | undefined, cfg);
     const triageConfig = selectedStrategy.config.processes?.triage;
@@ -523,7 +527,7 @@ const proposalDrainCommand = defineJsonCommand({
       );
     }
 
-    // --judgment is an invocation-level opt-in that overrides a
+    // Phase 3: --judgment is an invocation-level opt-in that overrides a
     // disabled block. An explicitly selected strategy may opt in through its
     // judgment block; the implicit default strategy keeps standalone drain's
     // historical no-judge behavior.
@@ -589,10 +593,11 @@ export const proposalCommand = defineGroupCommand({
     name: "proposal",
     description: "Manage the proposal queue: list, show, diff, accept, reject, reopen, revert, extract, new, drain",
   },
-  // The group declares no `--queue`/`--status`/`--ref`/`--type`: the bare form
-  // is not `proposal list` (see below), and `proposalListCommand` declares the
-  // identical set, so declaring them here would just advertise flags in
-  // `akm proposal --help` that no group-level body reads.
+  // The group declared `--queue`/`--status`/`--ref`/`--type` only so the bare
+  // form could act as `proposal list`. That form is gone (see below), and
+  // `proposalListCommand` declares the identical set, so keeping them here
+  // would just advertise flags in `akm proposal --help` that no group-level
+  // body reads.
   subCommands: {
     list: proposalListCommand,
     show: proposalShowCommand,
@@ -606,6 +611,6 @@ export const proposalCommand = defineGroupCommand({
     new: proposeCommand,
   },
   // No `defaultRun`: bare `akm proposal [--status …]` is a usage error (exit 2),
-  // the canonical bare-group behavior. Use `akm proposal list` for the
-  // listing.
+  // the canonical bare-group behavior — owner ruling 12. `akm proposal list`
+  // takes the same flags and produces what the bare form used to.
 });

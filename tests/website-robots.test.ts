@@ -3,11 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * robots.txt compliance: pure-function and policy-layer unit tests.
+ * P1 — robots.txt compliance: pure-function and policy-layer unit tests.
  *
- * Test names carry a row id prefix (P-xx parsing, D-xx crawl-delay, M-xx
- * pattern matching, L-xx policy, F-xx loading) so failures can be traced to the
- * exact requirement.
+ * Authoritative spec: docs/plans/specs/p1-robots.md. Row IDs in test names
+ * (P-xx, D-xx, M-xx, L-xx, F-xx, G-xx) refer to that spec's behavior tables
+ * (§4.1–§4.7) so failures can be traced back to the exact requirement.
  *
  * No real network: `loadRobotsTxt` tests go through `withMockedFetch`, and
  * every non-IP-literal hostname passes an injected `resolveHostname` stub so
@@ -61,10 +61,10 @@ beforeEach(() => {
   });
 });
 
-// ── Constants (pin these exactly) ───────────────────────────────────────────
+// ── §2 Constants (pin these exactly) ────────────────────────────────────────
 
 describe("robots.ts constants", () => {
-  test("pins the exact values of the robots.txt parser constants", () => {
+  test("pins the exact values specified in §2 of the spec", () => {
     expect(ROBOTS_PRODUCT_TOKENS).toEqual(["akm", "akm-cli"]);
     expect(ROBOTS_BYTE_CAP).toBe(512 * 1024);
     expect(ROBOTS_FETCH_TIMEOUT_MS).toBe(15_000);
@@ -79,113 +79,113 @@ describe("robots.ts constants", () => {
   });
 });
 
-// ── parseRobotsTxt — grouping and directives (P-01…P-24) ───────────────────
+// ── §4.1 parseRobotsTxt — grouping and directives (P-01…P-24) ──────────────
 
 describe("parseRobotsTxt — grouping and directives", () => {
-  test("empty input yields the empty rule set", () => {
+  test("P-01: empty input yields the empty rule set", () => {
     expect(parseRobotsTxt("")).toEqual({ disallowAll: false, rules: [], crawlDelayMs: null });
   });
 
-  test("a wildcard group's Disallow becomes one disallow rule", () => {
+  test("P-03: a wildcard group's Disallow becomes one disallow rule", () => {
     const result = parseRobotsTxt("User-agent: *\nDisallow: /private/");
     expect(result.rules).toEqual([{ kind: "disallow", pattern: "/private/", specificity: "/private/".length }]);
   });
 
-  test("directive names are case-insensitive", () => {
+  test("P-04: directive names are case-insensitive", () => {
     const result = parseRobotsTxt("USER-AGENT: *\nDISALLOW: /a");
     expect(result.rules).toEqual([{ kind: "disallow", pattern: "/a", specificity: 2 }]);
   });
 
-  test("pattern VALUES are case-sensitive (kept verbatim)", () => {
+  test("P-05: pattern VALUES are case-sensitive (kept verbatim)", () => {
     const result = parseRobotsTxt("User-agent: *\nDisallow: /Case");
     expect(result.rules).toEqual([{ kind: "disallow", pattern: "/Case", specificity: 5 }]);
   });
 
-  test("a group naming the 'akm' product token matches", () => {
+  test("P-06: a group naming the 'akm' product token matches", () => {
     const result = parseRobotsTxt("user-agent: akm\nDisallow: /x");
     expect(result.rules).toEqual([{ kind: "disallow", pattern: "/x", specificity: 2 }]);
   });
 
-  test("a group for an unrelated UA with no wildcard fallback matches nothing", () => {
+  test("P-08: a group for an unrelated UA with no wildcard fallback matches nothing", () => {
     const result = parseRobotsTxt("User-agent: googlebot\nDisallow: /x");
     expect(result.rules).toEqual([]);
   });
 
-  test("a matching SPECIFIC group suppresses the wildcard group entirely", () => {
+  test("P-09: a matching SPECIFIC group suppresses the wildcard group entirely", () => {
     const result = parseRobotsTxt("User-agent: *\nDisallow: /all\n\nUser-agent: akm\nDisallow: /mine");
     expect(result.rules).toEqual([{ kind: "disallow", pattern: "/mine", specificity: 5 }]);
   });
 
-  test("consecutive User-agent lines form ONE group (assert on match behavior, not array length)", () => {
+  test("P-10: consecutive User-agent lines form ONE group (assert on match behavior, not array length)", () => {
     const result = parseRobotsTxt("User-agent: akm\nUser-agent: akm-cli\nDisallow: /x");
     expect(isPathAllowedByRobots(result, "http://example.com/x")).toBe(false);
     expect(isPathAllowedByRobots(result, "http://example.com/y")).toBe(true);
   });
 
-  test("rules from all matching SPECIFIC groups are unioned", () => {
+  test("P-11: rules from all matching SPECIFIC groups are unioned", () => {
     const result = parseRobotsTxt("User-agent: akm\nDisallow: /a\n\nUser-agent: akm-cli\nDisallow: /b");
     expect(isPathAllowedByRobots(result, "http://example.com/a")).toBe(false);
     expect(isPathAllowedByRobots(result, "http://example.com/b")).toBe(false);
     expect(isPathAllowedByRobots(result, "http://example.com/c")).toBe(true);
   });
 
-  test("rules from multiple wildcard groups are unioned", () => {
+  test("P-12: rules from multiple wildcard groups are unioned", () => {
     const result = parseRobotsTxt("User-agent: *\nDisallow: /a\n\nUser-agent: *\nDisallow: /b");
     expect(isPathAllowedByRobots(result, "http://example.com/a")).toBe(false);
     expect(isPathAllowedByRobots(result, "http://example.com/b")).toBe(false);
   });
 
-  test("a Disallow with no preceding User-agent is ignored", () => {
+  test("P-13: a Disallow with no preceding User-agent is ignored", () => {
     expect(parseRobotsTxt("Disallow: /orphan").rules).toEqual([]);
   });
 
-  test("CRLF line endings parse identically to LF, no stray \\r in the pattern", () => {
+  test("P-14: CRLF line endings parse identically to LF, no stray \\r in the pattern", () => {
     const result = parseRobotsTxt("User-agent: *\r\nDisallow: /x\r\n");
     expect(result.rules).toEqual([{ kind: "disallow", pattern: "/x", specificity: 2 }]);
   });
 
-  test("trailing comments are stripped from both the UA value and the pattern", () => {
+  test("P-15: trailing comments are stripped from both the UA value and the pattern", () => {
     const result = parseRobotsTxt("User-agent: *  # our bot\nDisallow: /x # secret");
     expect(result.rules).toEqual([{ kind: "disallow", pattern: "/x", specificity: 2 }]);
   });
 
-  test("an empty Disallow value is ignored (matches everything => allowed)", () => {
+  test("P-16: an empty Disallow value is ignored (matches everything => allowed)", () => {
     expect(parseRobotsTxt("User-agent: *\nDisallow:").rules).toEqual([]);
   });
 
-  test("Allow and Disallow both parse into their own rule kinds", () => {
+  test("P-17: Allow and Disallow both parse into their own rule kinds", () => {
     const result = parseRobotsTxt("User-agent: *\nAllow: /pub/\nDisallow: /");
     expect(result.rules).toContainEqual({ kind: "allow", pattern: "/pub/", specificity: 5 });
     expect(result.rules).toContainEqual({ kind: "disallow", pattern: "/", specificity: 1 });
     expect(result.rules).toHaveLength(2);
   });
 
-  test("a Disallow value neither / nor *-rooted is ignored, diagnosed via warnVerbose only", () => {
+  test("P-18: a Disallow value neither / nor *-rooted is ignored, diagnosed via warnVerbose only", () => {
     const result = parseRobotsTxt("User-agent: *\nDisallow: relative/path");
     expect(result.rules).toEqual([]);
     expect(warnCalls).toEqual([]);
     expect(warnVerboseCalls.length).toBeGreaterThanOrEqual(1);
   });
 
-  test("unknown directives are ignored without error", () => {
+  test("P-20: unknown directives are ignored without error", () => {
     expect(parseRobotsTxt("User-agent: *\nUnknown-Directive: foo").rules).toEqual([]);
   });
 
-  test("a line with no colon is ignored", () => {
+  test("P-21: a line with no colon is ignored", () => {
     expect(parseRobotsTxt("User-agent: *\ngarbage").rules).toEqual([]);
   });
 
-  test("only the first colon splits directive from value", () => {
+  test("P-22: only the first colon splits directive from value", () => {
     const result = parseRobotsTxt("User-agent: *\nDisallow: /a:b");
     expect(result.rules).toEqual([{ kind: "disallow", pattern: "/a:b", specificity: 4 }]);
   });
 
-  test("a leading UTF-8 BOM before User-agent is stripped", () => {
+  test("P-23: a leading UTF-8 BOM before User-agent is stripped", () => {
     const result = parseRobotsTxt("﻿User-agent: *\nDisallow: /x");
     expect(result.rules).toEqual([{ kind: "disallow", pattern: "/x", specificity: 2 }]);
   });
 
-  test("5000 rule lines parse without pathological blowup", () => {
+  test("P-24: 5000 rule lines parse without pathological blowup", () => {
     const lines = ["User-agent: *"];
     for (let i = 0; i < 5000; i++) lines.push(`Disallow: /path-${i}`);
     const result = parseRobotsTxt(lines.join("\n"));
@@ -198,7 +198,7 @@ describe("parseRobotsTxt — grouping and directives", () => {
   });
 });
 
-// ── parseRobotsTxt — Crawl-delay (D-01…D-12) ────────────────────────────────
+// ── §4.2 parseRobotsTxt — Crawl-delay (D-01…D-12) ───────────────────────────
 
 describe("parseRobotsTxt — Crawl-delay", () => {
   test.each([
@@ -212,22 +212,22 @@ describe("parseRobotsTxt — Crawl-delay", () => {
     expect(result.crawlDelayMs).toBe(expected);
   });
 
-  test("crawlDelayMs is the MAXIMUM across all matching (specific) groups, then clamped", () => {
+  test("D-09: crawlDelayMs is the MAXIMUM across all matching (specific) groups, then clamped", () => {
     const result = parseRobotsTxt("User-agent: akm\nCrawl-delay: 1\n\nUser-agent: akm-cli\nCrawl-delay: 4");
     expect(result.crawlDelayMs).toBe(4000);
   });
 
-  test("Crawl-delay inside a non-matching group does not apply", () => {
+  test("D-10: Crawl-delay inside a non-matching group does not apply", () => {
     expect(parseRobotsTxt("User-agent: googlebot\nCrawl-delay: 2").crawlDelayMs).toBeNull();
   });
 
-  test("Crawl-delay: NaN is ignored; Crawl-delay: Infinity is clamped", () => {
+  test("D-12: Crawl-delay: NaN is ignored; Crawl-delay: Infinity is clamped", () => {
     expect(parseRobotsTxt("User-agent: *\nCrawl-delay: NaN").crawlDelayMs).toBeNull();
     expect(parseRobotsTxt("User-agent: *\nCrawl-delay: Infinity").crawlDelayMs).toBe(10_000);
   });
 });
 
-// ── isPathAllowedByRobots — pattern matching (M-01…M-32) ───────────────────
+// ── §4.3 isPathAllowedByRobots — pattern matching (M-01…M-32) ──────────────
 
 function ruleSet(rules: Array<{ kind: RobotsRuleKind; pattern: string }>): RobotsRuleSet {
   return {
@@ -242,68 +242,68 @@ function urlFor(pathAndQuery: string): string {
 }
 
 describe("isPathAllowedByRobots", () => {
-  test("no rules allows anything", () => {
+  test("M-01: no rules allows anything", () => {
     expect(isPathAllowedByRobots(ruleSet([]), urlFor("/anything"))).toBe(true);
   });
 
-  test("disallowAll blocks everything regardless of rules", () => {
+  test("M-02: disallowAll blocks everything regardless of rules", () => {
     expect(isPathAllowedByRobots(DISALLOW_ALL_RULES, urlFor("/"))).toBe(false);
   });
 
-  test("Disallow: / blocks the root and any deeper path", () => {
+  test("M-03/M-04: Disallow: / blocks the root and any deeper path", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/" }]);
     expect(isPathAllowedByRobots(rules, urlFor("/"))).toBe(false);
     expect(isPathAllowedByRobots(rules, urlFor("/deep/page"))).toBe(false);
   });
 
-  test("Disallow: /private is a PREFIX match (no word boundary)", () => {
+  test("M-05/M-06/M-07: Disallow: /private is a PREFIX match (no word boundary)", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/private" }]);
     expect(isPathAllowedByRobots(rules, urlFor("/private"))).toBe(false);
     expect(isPathAllowedByRobots(rules, urlFor("/private/x"))).toBe(false);
     expect(isPathAllowedByRobots(rules, urlFor("/privateer"))).toBe(false);
   });
 
-  test("a trailing-slash pattern does not prefix-match a longer word", () => {
+  test("M-08: a trailing-slash pattern does not prefix-match a longer word", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/private/" }]);
     expect(isPathAllowedByRobots(rules, urlFor("/privateer"))).toBe(true);
   });
 
-  test("path matching is case-sensitive", () => {
+  test("M-10: path matching is case-sensitive", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/private" }]);
     expect(isPathAllowedByRobots(rules, urlFor("/Private"))).toBe(true);
   });
 
-  test("a trailing $ anchors the end of pathname+search", () => {
+  test("M-11/M-12: a trailing $ anchors the end of pathname+search", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/*.pdf$" }]);
     expect(isPathAllowedByRobots(rules, urlFor("/docs/a.pdf"))).toBe(false);
     expect(isPathAllowedByRobots(rules, urlFor("/docs/a.pdf?v=1"))).toBe(true);
   });
 
-  test("without a trailing $, a query-string suffix does not save a match", () => {
+  test("M-13: without a trailing $, a query-string suffix does not save a match", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/*.pdf" }]);
     expect(isPathAllowedByRobots(rules, urlFor("/docs/a.pdf?v=1"))).toBe(false);
   });
 
-  test("'*' matches any sequence, including empty", () => {
+  test("M-14/M-15/M-16: '*' matches any sequence, including empty", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/a/*/b" }]);
     expect(isPathAllowedByRobots(rules, urlFor("/a/x/b"))).toBe(false);
     expect(isPathAllowedByRobots(rules, urlFor("/a//b"))).toBe(false);
     expect(isPathAllowedByRobots(rules, urlFor("/a/x/c"))).toBe(true);
   });
 
-  test("a trailing $ with no wildcard requires an exact match", () => {
+  test("M-17/M-18: a trailing $ with no wildcard requires an exact match", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/x$" }]);
     expect(isPathAllowedByRobots(rules, urlFor("/x"))).toBe(false);
     expect(isPathAllowedByRobots(rules, urlFor("/xy"))).toBe(true);
   });
 
-  test("regex metacharacters in a pattern are literal", () => {
+  test("M-20/M-21: regex metacharacters in a pattern are literal", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/a+b" }]);
     expect(isPathAllowedByRobots(rules, urlFor("/a+b"))).toBe(false);
     expect(isPathAllowedByRobots(rules, urlFor("/aab"))).toBe(true);
   });
 
-  test("Allow wins over a broader Disallow by longest match", () => {
+  test("M-23/M-24: Allow wins over a broader Disallow by longest match", () => {
     const rules = ruleSet([
       { kind: "disallow", pattern: "/" },
       { kind: "allow", pattern: "/pub" },
@@ -312,7 +312,7 @@ describe("isPathAllowedByRobots", () => {
     expect(isPathAllowedByRobots(rules, urlFor("/other"))).toBe(false);
   });
 
-  test("an exact tie between Allow and Disallow goes to Allow", () => {
+  test("M-25: an exact tie between Allow and Disallow goes to Allow", () => {
     const rules = ruleSet([
       { kind: "disallow", pattern: "/p" },
       { kind: "allow", pattern: "/p" },
@@ -320,7 +320,7 @@ describe("isPathAllowedByRobots", () => {
     expect(isPathAllowedByRobots(rules, urlFor("/p"))).toBe(true);
   });
 
-  test("longest match wins with wildcard/anchor patterns on both sides", () => {
+  test("M-26/M-27: longest match wins with wildcard/anchor patterns on both sides", () => {
     const rules = ruleSet([
       { kind: "disallow", pattern: "/folder/" },
       { kind: "allow", pattern: "/folder/*.html$" },
@@ -329,17 +329,17 @@ describe("isPathAllowedByRobots", () => {
     expect(isPathAllowedByRobots(rules, urlFor("/folder/a.txt"))).toBe(false);
   });
 
-  test("the pattern must match starting at the pathname, not inside the query string", () => {
+  test("M-29: the pattern must match starting at the pathname, not inside the query string", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/?q=" }]);
     expect(isPathAllowedByRobots(rules, urlFor("/search?q=1"))).toBe(true);
   });
 
-  test("a leading wildcard lets the pattern match inside the query string", () => {
+  test("M-30: a leading wildcard lets the pattern match inside the query string", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/*?q=" }]);
     expect(isPathAllowedByRobots(rules, urlFor("/search?q=1"))).toBe(false);
   });
 
-  test("percent-encoded octets compare literally, as URL.pathname produces them", () => {
+  test("M-31: percent-encoded octets compare literally, as URL.pathname produces them", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/caf%C3%A9" }]);
     expect(isPathAllowedByRobots(rules, urlFor("/caf%C3%A9"))).toBe(false);
   });
@@ -364,7 +364,7 @@ describe("isPathAllowedByRobots", () => {
   // unreserved octets (they decode to non-ASCII UTF-8 continuation bytes),
   // so they must never be decoded — only left exactly as written on both
   // sides, which still compares equal to itself.
-  test("percent-encoding regression: reserved/non-ASCII octets (e.g. %C3%A9) are never decoded", () => {
+  test("percent-encoding regression: reserved/non-ASCII octets (M-31's %C3%A9) are never decoded", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/caf%C3%A9" }]);
     expect(isPathAllowedByRobots(rules, urlFor("/caf%C3%A9"))).toBe(false);
     // A path-separator escape (%2F) must never be decoded to a literal '/' —
@@ -375,12 +375,12 @@ describe("isPathAllowedByRobots", () => {
     expect(isPathAllowedByRobots(slashRules, urlFor("/a%2Fb"))).toBe(false); // matches itself
   });
 
-  test("an unparseable URL fails open (allowed), not closed", () => {
+  test("M-32: an unparseable URL fails open (allowed), not closed", () => {
     const rules = ruleSet([{ kind: "disallow", pattern: "/" }]);
     expect(isPathAllowedByRobots(rules, "not a url")).toBe(true);
   });
 
-  // ReDoS / pattern-collapse: consecutive '*' must collapse to a single
+  // §6.4 ReDoS / pattern-collapse: consecutive '*' must collapse to a single
   // '.*' per run, not one '.*' per '*'. A naive `pattern.replace(/\*/g, ".*")`
   // (one '.*' per star, uncollapsed) compiles a regex with 40 sequential
   // '.*' groups; matched against a long string containing none of the
@@ -391,12 +391,12 @@ describe("isPathAllowedByRobots", () => {
   // how many literal '*' characters appear in the pattern.
   //
   // The time budget is enforced via bun's own per-test `timeout` (not a
-  // manual `Date.now()`/`performance.now()` delta assertion, which is
-  // flake-prone): a correct (collapsed) implementation resolves in well under a
-  // millisecond, while a naive uncollapsed one blows this budget by many orders
-  // of magnitude.
+  // manual `Date.now()`/`performance.now()` delta assertion, which
+  // `scripts/lint-tests-isolation.ts` bans as flake-prone): a correct
+  // (collapsed) implementation resolves in well under a millisecond, while a
+  // naive uncollapsed one blows this budget by many orders of magnitude.
   test(
-    "a pathological run of consecutive '*' resolves quickly, not via catastrophic backtracking",
+    "§6.4: a pathological run of consecutive '*' resolves quickly, not via catastrophic backtracking",
     () => {
       const rules = ruleSet([{ kind: "disallow", pattern: `/${"*".repeat(40)}x` }]);
 
@@ -416,12 +416,13 @@ describe("isPathAllowedByRobots", () => {
     { timeout: 100 },
   );
 
-  // ReDoS regression: collapsing consecutive '*' does NOT defeat this shape.
-  // Here the wildcards are separated by a short literal ("a"), so there is
-  // nothing to collapse — a regex-based matcher built as
-  // `/^\/(?:.*a){N}$/`-equivalent from `/*a*a*a*a*a*a*a*a$` forces the engine to
-  // explore an exponential number of ways to split a long, non-matching path
-  // across N '.*' groups before concluding failure. A regex matcher measured 8
+  // §6.4 ReDoS regression (review finding robots.ts:211): collapsing
+  // consecutive '*' does NOT defeat this shape. Here the wildcards are
+  // separated by a short literal ("a"), so there is nothing to collapse —
+  // a regex-based matcher built as `/^\/(?:.*a){N}$/`-equivalent from
+  // `/*a*a*a*a*a*a*a*a$` forces the engine to explore an exponential number
+  // of ways to split a long, non-matching path across N '.*' groups before
+  // concluding failure. Measured against the old implementation: 8
   // wildcards ~217ms, 10 ~2.8s, 11 ~7.5s, 12 ~19.9s (~2.7x per added
   // wildcard) — i.e. it never returns for realistic wildcard counts well
   // within the 512 KiB robots.txt cap. A non-backtracking matcher resolves
@@ -429,7 +430,7 @@ describe("isPathAllowedByRobots", () => {
   // budget leaves no room for exponential behavior to sneak back in while
   // still being nowhere near what a correct implementation needs.
   test(
-    "regression: distinct '*a' wildcards (not consecutive '*') do not backtrack catastrophically",
+    "§6.4 regression: distinct '*a' wildcards (not consecutive '*') do not backtrack catastrophically",
     () => {
       const wildcardCount = 30;
       const pattern = `/${"*a".repeat(wildcardCount)}$`;
@@ -455,7 +456,7 @@ describe("isPathAllowedByRobots", () => {
   );
 });
 
-// ── createRobotsPolicy / createAllowAllRobotsPolicy (L-01…L-04) ─────────────
+// ── §4.4 createRobotsPolicy / createAllowAllRobotsPolicy (L-01…L-04) ───────
 
 function loaderReturning(outcome: RobotsFetchOutcome): { load: RobotsTxtLoader; calls: string[] } {
   const calls: string[] = [];
@@ -467,7 +468,7 @@ function loaderReturning(outcome: RobotsFetchOutcome): { load: RobotsTxtLoader; 
 }
 
 describe("createRobotsPolicy", () => {
-  test("a 'body' outcome is parsed via parseRobotsTxt", async () => {
+  test("L-01: a 'body' outcome is parsed via parseRobotsTxt", async () => {
     const text = "User-agent: *\nDisallow: /private\nCrawl-delay: 1\n";
     const policy = createRobotsPolicy(async () => ({ kind: "body", text }));
     await expect(policy.rulesFor("http://example.test/")).resolves.toEqual(parseRobotsTxt(text));
@@ -475,20 +476,20 @@ describe("createRobotsPolicy", () => {
     expect(await policy.isAllowed("http://example.test/ok")).toBe(true);
   });
 
-  test("an 'unavailable' outcome caches ALLOW_ALL_RULES", async () => {
+  test("L-02: an 'unavailable' outcome caches ALLOW_ALL_RULES", async () => {
     const policy = createRobotsPolicy(async () => ({ kind: "unavailable" }));
     await expect(policy.rulesFor("http://example.test/")).resolves.toEqual(ALLOW_ALL_RULES);
     expect(await policy.isAllowed("http://example.test/anything")).toBe(true);
   });
 
-  test("an 'unreachable' outcome caches DISALLOW_ALL_RULES", async () => {
+  test("L-03: an 'unreachable' outcome caches DISALLOW_ALL_RULES", async () => {
     const policy = createRobotsPolicy(async () => ({ kind: "unreachable" }));
     await expect(policy.rulesFor("http://example.test/")).resolves.toEqual(DISALLOW_ALL_RULES);
     expect(await policy.isAllowed("http://example.test/anything")).toBe(false);
     expect(await policy.crawlDelayMs("http://example.test/anything")).toBe(0);
   });
 
-  test("a loader throw propagates and caches nothing (retried on next call)", async () => {
+  test("L-04: a loader throw propagates and caches nothing (retried on next call)", async () => {
     let callCount = 0;
     const load: RobotsTxtLoader = async () => {
       callCount++;
@@ -541,7 +542,7 @@ describe("createAllowAllRobotsPolicy", () => {
   });
 });
 
-// ── loadRobotsTxt (F-01…F-12) ───────────────────────────────────────────────
+// ── §4.5 loadRobotsTxt (F-01…F-12) ──────────────────────────────────────────
 
 const ROBOTS_URL = "https://example.test/robots.txt";
 // No real DNS: a fixed public-looking answer, matching website-ssrf.test.ts's
@@ -549,7 +550,7 @@ const ROBOTS_URL = "https://example.test/robots.txt";
 const resolveHostname = async () => ["93.184.216.34"];
 
 describe("loadRobotsTxt", () => {
-  test("200 with a body returns { kind: 'body' }", async () => {
+  test("F-01: 200 with a body returns { kind: 'body' }", async () => {
     const text = "User-agent: *\nDisallow: /x";
     const outcome = await withMockedFetch(
       () => loadRobotsTxt(ROBOTS_URL, { resolveHostname }),
@@ -559,7 +560,7 @@ describe("loadRobotsTxt", () => {
     expect(warnCalls).toEqual([]);
   });
 
-  test("204 with an empty body still parses to allow-all", async () => {
+  test("F-02: 204 with an empty body still parses to allow-all", async () => {
     const outcome = await withMockedFetch(
       () => loadRobotsTxt(ROBOTS_URL, { resolveHostname }),
       () => new Response(null, { status: 204 }),
@@ -567,7 +568,7 @@ describe("loadRobotsTxt", () => {
     expect(outcome).toEqual({ kind: "body", text: "" });
   });
 
-  test("404 is unavailable and completely silent (the common case)", async () => {
+  test("F-03: 404 is unavailable and completely silent (the common case)", async () => {
     const outcome = await withMockedFetch(
       () => loadRobotsTxt(ROBOTS_URL, { resolveHostname }),
       () => new Response("not found", { status: 404 }),
@@ -577,7 +578,7 @@ describe("loadRobotsTxt", () => {
     expect(warnVerboseCalls).toEqual([]);
   });
 
-  test("401 is unavailable with no diagnostic", async () => {
+  test("F-04: 401 is unavailable with no diagnostic", async () => {
     const outcome = await withMockedFetch(
       () => loadRobotsTxt(ROBOTS_URL, { resolveHostname }),
       () => new Response("nope", { status: 401 }),
@@ -586,7 +587,7 @@ describe("loadRobotsTxt", () => {
     expect(warnCalls).toEqual([]);
   });
 
-  test("500 is unavailable (not unreachable) and warns, naming the URL, status, and respectRobots", async () => {
+  test("F-06: 500 is unavailable (not unreachable) and warns, naming the URL, status, and respectRobots", async () => {
     const outcome = await withMockedFetch(
       () => loadRobotsTxt(ROBOTS_URL, { resolveHostname }),
       () => new Response("boom", { status: 500 }),
@@ -599,7 +600,7 @@ describe("loadRobotsTxt", () => {
     expect(message).toMatch(/respectRobots/);
   });
 
-  test("an oversized body (via Content-Length) is unavailable and warns naming the URL and cap", async () => {
+  test("F-08: an oversized body (via Content-Length) is unavailable and warns naming the URL and cap", async () => {
     const outcome = await withMockedFetch(
       () => loadRobotsTxt(ROBOTS_URL, { resolveHostname }),
       () => new Response("x", { status: 200, headers: { "content-length": String(ROBOTS_BYTE_CAP + 1) } }),
@@ -610,7 +611,7 @@ describe("loadRobotsTxt", () => {
     expect(message).toContain(String(ROBOTS_BYTE_CAP));
   });
 
-  test("a thrown network error is unavailable, diagnosed via warnVerbose only", async () => {
+  test("F-09: a thrown network error is unavailable, diagnosed via warnVerbose only", async () => {
     const outcome = await withMockedFetch(
       () => loadRobotsTxt(ROBOTS_URL, { resolveHostname }),
       () => {
@@ -622,7 +623,7 @@ describe("loadRobotsTxt", () => {
     expect(warnVerboseCalls.length).toBeGreaterThanOrEqual(1);
   });
 
-  test("a redirect response missing Location is unavailable, diagnosed via warnVerbose", async () => {
+  test("F-10: a redirect response missing Location is unavailable, diagnosed via warnVerbose", async () => {
     const outcome = await withMockedFetch(
       () => loadRobotsTxt(ROBOTS_URL, { resolveHostname }),
       () => new Response(null, { status: 302 }),
@@ -631,7 +632,7 @@ describe("loadRobotsTxt", () => {
     expect(warnVerboseCalls.length).toBeGreaterThanOrEqual(1);
   });
 
-  test("a redirect hop to a forbidden/private host is unavailable and that host is never fetched", async () => {
+  test("F-11: a redirect hop to a forbidden/private host is unavailable and that host is never fetched", async () => {
     const seenUrls: string[] = [];
     const outcome = await withMockedFetch(
       () => loadRobotsTxt(ROBOTS_URL, { resolveHostname }),
@@ -648,7 +649,7 @@ describe("loadRobotsTxt", () => {
     expect(warnVerboseCalls.length).toBeGreaterThanOrEqual(1);
   });
 
-  test("a guard rejection on the INITIAL robots.txt URL propagates, never becomes allow-all", async () => {
+  test("F-12: a guard rejection on the INITIAL robots.txt URL propagates, never becomes allow-all", async () => {
     let caught: unknown;
     try {
       await withMockedFetch(

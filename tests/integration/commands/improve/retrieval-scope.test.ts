@@ -4,7 +4,8 @@
 
 /**
  * #986 — improve reworks only what retrieval returns, plus new material no
- * improve stage has processed. Opens a real state.db and index.db.
+ * improve stage has processed. Opens a real state.db and index.db
+ * (integration per the ORG-03 rule).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

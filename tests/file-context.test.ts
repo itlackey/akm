@@ -430,12 +430,16 @@ describe("recognizeMatch", () => {
     expect(result).toBeNull();
   });
 
-  // Regression test for the task matcher: the "tasks" DIR_TYPE_MAP rule in
-  // matchers.ts once tested `ext === ".md"`, so tasks/*.yml never recognized:
-  // recognizeMatch() returned null for every task file, `akm show` threw
-  // "unrecognized layout", the flat indexer silently dropped tasks (never
-  // indexed/searchable), and the task-yaml metadata contributor was dead code.
-  // This test must FAIL if the "tasks" rule regresses back to `.md`.
+  // Regression test for the task-matcher defect (chunk-0b, WI-0b.1): the
+  // "tasks" DIR_TYPE_MAP rule in matchers.ts tested `ext === ".md"`, a
+  // leftover from before tasks migrated to `.yml` in 0.8.0 (commit
+  // 031c659f updated every other consumer — asset-spec, asset-registry,
+  // renderers, task-linter — but missed this matcher). As a result
+  // tasks/*.yml never recognized: recognizeMatch() returned null for every
+  // task file, `akm show task:<name>` threw "unrecognized layout", the
+  // flat indexer silently dropped tasks (never indexed/searchable), and
+  // the task-yaml metadata contributor was dead code. This test must FAIL
+  // if the "tasks" rule regresses back to `.md`.
   test("recognizeMatch recognizes tasks/<name>.yml as type 'task' with renderer 'task-yaml'", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "tasks", "nightly-report.yml");
@@ -452,9 +456,9 @@ describe("recognizeMatch", () => {
 
 // ── 2b. task-yaml metadata fold ──────────────────────────────────────────────
 //
-// Extraction must parse the PLAIN task YAML document (no `---` fences) through
-// the canonical source parser, not the frontmatter parser (which would
-// silently return `{}`).
+// Regression test for the task-yaml defect: extraction must parse the PLAIN
+// strict-v3 YAML document (no `---` fences) through the canonical source
+// parser, not the frontmatter parser (which would silently return `{}`).
 describe("task-yaml metadata fold", () => {
   test("populates schedule/workflow searchHints and task/scheduled tags from strict task source YAML", () => {
     const root = tmpDir();
@@ -673,6 +677,10 @@ describe("Renderer", () => {
     expect(all).toHaveLength(13);
 
     const names = all.map((r) => r.name).sort();
+    // `wiki-md` was removed in chunk 4 (the wiki asset-type is retired).
+    // `workflow-program-yaml` is removed by workflow-format-unification
+    // (spec §3): the YAML workflow *program* is deleted as a distinct
+    // on-disk format — one workflow renderer (`workflow-md`) now.
     expect(names).toEqual([
       "agent-md",
       "command-md",

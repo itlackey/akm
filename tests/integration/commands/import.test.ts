@@ -1,7 +1,8 @@
 /**
  * import --target tests
  *
- * Verifies the `--target` flag on `akm import`. Resolution order is:
+ * Verifies the `--target` flag added to `akm import` per v1 implementation
+ * plan §6 decision 3. Resolution order is:
  *   --target → defaultWriteTarget → defaultBundle → ConfigError
  *
  * These tests exercise the explicit-target path:
@@ -9,11 +10,11 @@
  *   - errors on unknown target names (UsageError)
  *   - errors on non-writable targets (ConfigError)
  *
- * These tests run in-process through the shared harness
- * (tests/_helpers/cli.ts). Every case here imports from a file path or a URL
- * (never the "-" stdin source), so none needs to feed process.stdin. The URL
- * case still performs a real fetch against a local HTTP server, which the
- * in-process CLI does natively.
+ * Migrated from per-test spawnSync/spawn("bun", ["src/cli.ts", ...]) to the
+ * shared in-process harness (tests/_helpers/cli.ts). Every case here imports
+ * from a file path or a URL (never the "-" stdin source), so none needs to feed
+ * process.stdin — they all run in-process. The URL case still performs a real
+ * fetch against a local HTTP server, which the in-process CLI does natively.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -47,8 +48,9 @@ function writeConfig(configDir: string, body: Record<string, unknown>): void {
 /**
  * In-process CLI runner. Pins the test's isolated stash + config dirs for the
  * duration of the call (via the allowlisted withEnv helper) and resets the
- * embedder singletons so the run reads the pinned env. runCliCapture resets
- * the config and output-mode singletons itself.
+ * embedder singletons so the run reads the pinned env, matching what a
+ * fresh subprocess got for free. runCliCapture resets the config and
+ * output-mode singletons itself.
  */
 async function runCli(args: string[], options: { stashDir?: string; configDir: string }) {
   const stashDir = options.stashDir ?? makeTempDir("akm-import-stash-");
@@ -137,6 +139,7 @@ describe("import --target", () => {
 
     const { result } = await runCli(["import", sourcePath, "--target", "read-only"], { configDir });
     // Config error (non-writable target) -> exit 78 / code INVALID_CONFIG_FILE.
+    // Ground-truthed by probing the actual CLI output before pinning.
     expect(result.status).toBe(78);
 
     const json = JSON.parse(result.stderr) as { error: string; code?: string };

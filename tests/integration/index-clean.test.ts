@@ -132,7 +132,7 @@ test("akmIndex --clean --dry-run with missing file: removed is 0, ref listed, en
   }
 });
 
-test("akmIndex --dry-run without --clean rejects instead of silently running a real index", async () => {
+test("akmIndex --dry-run without --clean rejects instead of silently running a real index (R-022)", async () => {
   const stashDir = storage.stashDir;
   writeFile(path.join(stashDir, "scripts", "deploy", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 

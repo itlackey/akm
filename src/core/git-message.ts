@@ -9,9 +9,9 @@
  * (which `core/write-source.ts` imports `getCachePaths`/`listGitChangedPaths`/
  * `parseGitRepoUrl`/`saveGitStash` from, via the `sources/providers/git`
  * barrel, by value) does not need to import back into `write-source.ts` just
- * for this helper — that back-edge would be a 3-file static-graph cycle
- * (write-source.ts → git.ts → git-stash.ts → write-source.ts). Callers import
- * `sanitizeCommitMessage` directly so
+ * for this helper — that back-edge was a 3-file static-graph cycle
+ * (write-source.ts → git.ts → git-stash.ts → write-source.ts; chunk 9 WI-9.8
+ * KILL 6 sever). Callers import `sanitizeCommitMessage` directly so
  * the dependency graph stays acyclic.
  */
 

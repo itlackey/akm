@@ -3,15 +3,21 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Contract for `src/tasks/prepare/**`'s three-caller shape parity.
+ * Contract for `src/tasks/prepare/**`'s three-caller shape parity (spec
+ * docs/plans/specs/p1b-model-extraction.md §4, Lane B / D4 module map).
  *
- * `prepareTaskV3Execution` lives in `src/tasks/prepare/prepare.ts`, imported
- * directly by its three callers: `src/tasks/run/load-task.ts`,
+ * `prepareTaskV3Execution` moved body-intact to `src/tasks/prepare/prepare.ts`
+ * at the P1b split, behind a `src/tasks/runtime-v3.ts` compat shim kept only
+ * so production callers did not all need rewiring in the same change-set.
+ * P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, row B-25, F-A2.15)
+ * DELETED that shim once every caller was rewired to import `prepare/prepare`
+ * directly — today's three callers are `src/tasks/run/load-task.ts`,
  * `src/tasks/scheduler-sync.ts`, and `src/workflows/freeze/targets/task.ts`
- * (`resolveTaskForComposition`/`taskDispatch`).
+ * (`resolveTaskForComposition`/`taskDispatch`; `src/workflows/ir/source-freeze-v4.ts`,
+ * the file this comment used to cite, is itself a P4-deleted shim, row B-27).
  *
  * This file pins that each caller's EXACT context shape — as literally
- * constructed at its call site — produces the expected
+ * constructed at its call site today — produces the expected
  * `PreparedTaskV3Execution` once routed through `prepare/prepare`'s entry
  * point. The context objects are typed against `PrepareTaskV3ExecutionContext`
  * (a real, tsc-checked type — not a hand-rolled guess), and
@@ -19,22 +25,25 @@
  * that same live import — so a caller-shaped context literal that does not
  * structurally satisfy the real parameter type fails `tsc`, not merely a
  * runtime assertion. This is the "type-level usage" proof: if the entry's
- * signature drifts, every test below stops compiling before it ever runs.
+ * signature drifts from today's, every test below stops compiling before it
+ * ever runs.
  *
  * Every fixture below is a bare `run:` (shell) task source v4 document: it
  * needs no `config.engines`, no stored command/workflow/script asset, and —
  * critically — never invokes `resolveAsset`/`readFile`/`commandSourceLoader`
  * (those branches belong to the command/workflow/script arms). That isolates
- * this file's one concern — did each caller's context shape survive unchanged
- * — from `prepareTaskV3Execution`'s per-kind behavior, which is characterized
- * elsewhere. Each stub below throws if invoked, so an accidental call is
- * itself a loud test failure.
+ * this file's one concern — did each caller's context shape survive the P1b
+ * move and the P4 shim deletion unchanged — from `prepareTaskV3Execution`'s
+ * per-kind behavior, which is already characterized elsewhere (the P0/P1a
+ * suites and this phase's Lane A/C tests). Each stub below throws if invoked,
+ * so an accidental call is itself a loud test failure.
  *
  * STRUCTURAL RATCHET: the three caller-shape tests above pin BEHAVIOR only.
  * They say nothing about whether `src/tasks/runtime-v3.ts` still exists as a
  * second copy of this logic for some caller to have been missed rewiring off
- * of. The check below closes that gap — mirrors tests/tasks/run-split.test.ts's
- * analogous "the deleted shim does not exist" check for src/tasks/runner.ts.
+ * of. The check below closes that gap — mirrors
+ * tests/tasks/run-split.test.ts's analogous "the deleted shim does not
+ * exist" check for src/tasks/runner.ts (P4 F-A2.16).
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -76,7 +85,7 @@ function shellDocument(root: string) {
   return projectTaskSourceV4(parsed.v4);
 }
 
-describe("prepare/prepare.ts's entry — three-caller shape parity", () => {
+describe("prepare/prepare.ts's entry — three-caller shape parity (P1b spec §4.1/§4.2, D4; P4 shim deletion)", () => {
   test("run/load-task.ts's context shape — bundleName/bundleRoot/config + resolveAsset({bundle,type,name}) + conditional schedulerContext", async () => {
     const root = sandboxRoot();
     const document = shellDocument(root);
@@ -153,7 +162,7 @@ describe("prepare/prepare.ts's entry — three-caller shape parity", () => {
   });
 });
 
-describe("src/tasks/runtime-v3.ts — the deleted compat shim", () => {
+describe("src/tasks/runtime-v3.ts — the deleted compat shim (spec §9, P4 §3.2.7 row B-25)", () => {
   test("does not exist — every caller is rewired to prepare/prepare.ts directly", () => {
     expect(fs.existsSync(RUNTIME_V3_FILE)).toBe(false);
   });

@@ -267,7 +267,7 @@ function processAlive(pid: number): boolean {
   }
 }
 
-describe("a provider or harness error is ok:false, never ok with empty output", () => {
+describe("C1: a provider or harness error is ok:false, never ok with empty output", () => {
   const rows: [string, string, Transport][] = [
     [LLM.name, "http-500", LLM],
     [LLM.name, "http-200-error-body", LLM],
@@ -285,7 +285,7 @@ describe("a provider or harness error is ok:false, never ok with empty output", 
   });
 });
 
-describe("structured output", () => {
+describe("C2: structured output", () => {
   const schema = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
   const instruction = `\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(schema)}`;
   // An LLM gets the schema as response_format; every agent transport gets the
@@ -334,7 +334,7 @@ describe("structured output", () => {
   });
 });
 
-describe("the model-work tool policy is confined or refused at build", () => {
+describe("C3: the model-work tool policy is confined or refused at build", () => {
   const modelWork = { modelWork: true };
   const PROMPT = "Reply with the single word: pong";
 
@@ -478,7 +478,7 @@ describe("the model-work tool policy is confined or refused at build", () => {
   });
 });
 
-describe("failures and timeouts", () => {
+describe("C4: failures and timeouts", () => {
   test.each(ALL_TRANSPORTS)("%s: a timeout is reason timeout", async (_name, transport) => {
     const result = await dispatch(transport, "hang", { timeout: 300 });
 
@@ -544,7 +544,7 @@ describe("failures and timeouts", () => {
   });
 });
 
-describe("inference reaches the transport, or is reported as untranslated", () => {
+describe("C7: inference reaches the transport, or is reported as untranslated", () => {
   const PROMPT = "Reply with the single word: pong";
   const INFERENCE = {
     temperature: 0.2,
@@ -694,7 +694,7 @@ describe("inference reaches the transport, or is reported as untranslated", () =
   });
 });
 
-describe("usage", () => {
+describe("C6: usage", () => {
   const reported = { promptTokens: 3, completionTokens: 5, totalTokens: 8 };
   // The LLM path records each HTTP attempt; an agent or SDK path records the dispatch.
   const rows: [string, Transport, Partial<LlmUsageRecord>][] = [

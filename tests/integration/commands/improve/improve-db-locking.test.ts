@@ -20,14 +20,14 @@
  *   (and then owns and closes) its own handle.
  *
  * Post-consolidation reindex requires an actual mutation:
- *   The post-consolidation branch of the same reindex seam must fire only when
- *   consolidation actually wrote something, not whenever
- *   `consolidation.processed > 0` (memories the LLM judged). Merge/delete/
- *   contradict ops are advisory and never auto-applied (consolidate.ts), and
- *   the one op that does execute — promote — writes a proposal to state.db, not
- *   to the stash, so `processed > 0` is true on nearly every consolidating run
- *   while the reindex's own precondition (files on disk changed) almost never
- *   holds.
+ *   The post-consolidation branch of the same reindex seam used to fire
+ *   whenever `consolidation.processed > 0` (memories the LLM judged), not
+ *   whenever consolidation actually wrote anything. Merge/delete/contradict
+ *   ops are advisory and never auto-applied (consolidate.ts), and the one op
+ *   that does execute — promote — writes a proposal to state.db, not to the
+ *   stash, so `processed > 0` was true on nearly every consolidating run
+ *   while the reindex's own precondition (files on disk changed) almost
+ *   never held.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -65,7 +65,7 @@ async function indexStash(stashDir: string): Promise<void> {
     withImproveAutonomy(
       withTestImproveLlm({
         semanticSearchMode: "off",
-        // Consolidation is a separate, still-full-reindex trigger —
+        // Consolidation is a separate, still-full-reindex trigger (D9) —
         // disabled so these DB-locking tests exercise exactly the reindex
         // site each one names, not whichever one consolidation also fires.
         improve: { strategies: { default: { processes: { consolidate: { enabled: false } } } } },
@@ -117,12 +117,12 @@ function stubMemoryInferenceResult(overrides?: Partial<MemoryInferenceResult>): 
 }
 
 describe("#584: index.db handle is closed before reindexFn runs", () => {
-  // Memory inference's writes are indexed with `indexWrittenAssets` over
-  // exactly the paths the pass wrote, not a full reindex through the
-  // `reindexFn` seam. `indexWrittenAssets` opens its own
+  // R78: memory inference's writes used to trigger a FULL reindex through
+  // this same `reindexFn` seam (call site 1) — replaced with `indexWrittenAssets`
+  // over exactly the paths the pass wrote. `indexWrittenAssets` opens its own
   // write handle on the same index.db WAL file, so the #584 discipline (close
   // the maintenance handle first, reopen a fresh one after, even on failure)
-  // applies around the incremental call.
+  // still applies — just around the incremental call instead of `reindexFn`.
   test("maintenance handle is closed during the post-inference index update", async () => {
     const stash = storage.stashDir;
     writeMemory(stash, "alpha");
@@ -165,7 +165,7 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
         proposalRef: "lessons/stub",
       }),
       // Report a written path so the maintenance pass triggers the
-      // post-inference incremental index (#584 call site 1).
+      // post-inference incremental index (#584 call site 1, now indexWrittenAssets).
       memoryInferenceFn: async (ctx) => {
         capturedInferenceDb = ctx.db;
         return stubMemoryInferenceResult({
@@ -190,9 +190,12 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
     // The reopened handle (dbCell.current) must be fresh and usable for
     // whatever runs next in the same maintenance sequence
     // (runProposalHygienePass, then runOrphanStateGcPass(ctx, dbCell) —
-    // loop-stages.ts). runOrphanStateGcPass returns
+    // loop-stages.ts). Graph extraction used to be the pipeline stage
+    // exercising this same post-reopen handle and asserted directly on it
+    // (`handleOpenDuringGraphExtraction`/`graphDb`); retired in
+    // 0.9.17-alpha.9 along with that assertion. runOrphanStateGcPass returns
     // early with this exact warning when `dbCell.current` is falsy — its
-    // absence here is the fresh-handle proof.
+    // absence here is the fresh-handle proof now.
     const resultWarnings = (result as unknown as { warnings?: string[] }).warnings ?? [];
     expect(resultWarnings).not.toContain("orphan state GC skipped: no index.db handle available");
 

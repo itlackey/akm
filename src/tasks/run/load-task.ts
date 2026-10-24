@@ -38,8 +38,10 @@ import { validateTaskConceptId, validateTaskId } from "../task-id";
 import type { RunTaskOptions } from "./task-result";
 
 /**
- * The literal bundle-name fallback, hoisted to a named constant. The VALUE is
- * user-visible data and must not change.
+ * F-3 (spec §5.4): the literal bundle-name fallback, hoisted to a named
+ * constant — the VALUE does not change (it is user-visible data, R-09's
+ * observable behavior). The now-deleted `runner.ts:173`'s (P4) bare
+ * `"stash"` became this at the P1b runner.ts split.
  */
 export const DEFAULT_BUNDLE_NAME = "stash";
 
@@ -71,7 +73,8 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
     (source.target.uses.kind === "builtin-command" || source.target.uses.kind === "command");
   const config = requiresCommandConfig ? loadConfig() : CONFIG_FREE_TASK_RUNTIME;
   const bundleName = options.bundleName ?? config.defaultBundle ?? DEFAULT_BUNDLE_NAME;
-  // Materialize akm task run's raw input flags (captured in
+  // P2a Lane C, Stage 2 (spec docs/plans/specs/p2a-task-source-v4.md §5.1):
+  // materialize akm task run's raw input flags (Stage 1,
   // src/commands/tasks/tasks-cli.ts) against the task's own declared
   // inputs: contract (empty when the document declares none, so any input
   // flag on such a task fails UNKNOWN_FLAG — there is nothing declared to
@@ -80,7 +83,8 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
   // required input satisfied only by its own default (never supplied as a
   // flag) needs the SEPARATE validateInputs call below, run after defaults
   // are applied — materializeInputFlags returns {} immediately for zero
-  // flags, before ever checking `required` (see input-contract.ts's header).
+  // flags, before ever checking `required` (spec §5.1, input-contract.ts's
+  // own header).
   const inputContract: InputContract = parsed.v4.inputs ?? {};
   const materializedInputs = materializeInputFlags(inputContract, options.inputFlags ?? [], TASK_INPUT_DIAGNOSTICS);
   const defaultedInputs = applyInputDefaults(inputContract, materializedInputs);
@@ -97,13 +101,14 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
     });
     options.captureTaskInvocation(invocation);
   }
-  // A task source v4 document's own declared `inputs:` deliver into a
-  // `uses: workflows/<ref>` target's child-run params through the existing
+  // P2b Lane B (spec docs/plans/specs/p2b-input-bindings.md §4.3, B-40): a
+  // task source v4 document's own declared `inputs:` deliver into a
+  // `uses: workflows/<ref>` target's child-run params through the EXISTING
   // with-> params path (prepare.ts's workflow branch already reads
   // `document.target.with`) — task source v4 never authors `with:` on a
-  // workflow target itself (task-source-v4.ts accepts `with:` only on
-  // `uses: akm/command`), so this override is purely additive for a
-  // workflow-target task.
+  // workflow target itself (task-source-v4.ts's own parser accepts `with:`
+  // only on `uses: akm/command`, source/task-source-v4.ts:329-333), so this
+  // override is purely additive for a workflow-target task.
   const deliverySource =
     source.target.kind === "uses" && source.target.uses.kind === "workflow"
       ? { ...source, target: { ...source.target, with: defaultedInputs as ExecutionJsonObject } }

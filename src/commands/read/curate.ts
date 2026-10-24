@@ -110,13 +110,13 @@ export interface CurateOptions {
   /**
    * Usage-event provenance for telemetry. Defaults to `"user"`. The CLI passes
    * the AKM_EVENT_SOURCE-derived value so pipeline/task-runner curates are not
-   * recorded as user demand.
+   * recorded as user demand (was previously hardcoded to "user").
    */
   eventSource?: UsageEventSource;
   /** Internal projection used only to decide whether derived surface content was emitted. */
   attributionProjection?: AttributionProjection;
   /**
-   * When true, skip logging usage events for this curate call:
+   * When true, skip logging usage events for this curate call (F2/R-055):
    * neither the top-level curate event nor the underlying search/show reads
    * feed usage-events telemetry.
    * Curate's own nested `akmSearch`/`akmShowUnified` calls always pass
@@ -158,9 +158,9 @@ function logCurateEvent(
   try {
     withIndexDb(
       (db) => {
-        // Resolve each curated item's DURABLE fully-qualified `item_ref` +
-        // entry_id from index.db (`db`); the usage_events writes land in
-        // state.db.
+        // Resolve each curated item's DURABLE fully-qualified `item_ref` (D-R3)
+        // + entry_id from index.db (`db`); the usage_events writes land in
+        // state.db (Chunk-8 WI-8.3).
         const perItem = result.items
           .filter((item): item is typeof item & { ref: string } => "ref" in item && typeof item.ref === "string")
           .flatMap((item) => {
@@ -250,7 +250,7 @@ export async function curateSearchResults(
   const allStashHits = result.hits.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
   const registryHits = result.registryHits ?? [];
 
-  // `--type` NARROWS the candidate pool. The caller's search
+  // F3/R-018: `--type` NARROWS the candidate pool. The caller's search
   // usually applied the filter already, but `curateSearchResults` is also
   // driven directly (tests, `searchResponse` fixtures) with a
   // `SearchResponse` that was never type-filtered.
@@ -259,7 +259,7 @@ export async function curateSearchResults(
 
   const selectedStashHits = (await maybeRerankCuratedStashHits(query, stashHits)).slice(0, limit);
 
-  // Respect `--limit` for registry fill instead of hard-capping it
+  // F4/R-019: respect `--limit` for registry fill instead of hard-capping it
   // at a bare literal 2 — the remaining slots after stash hits ARE the cap.
   const selectedRegistryHits =
     selectedStashHits.length >= limit ? [] : registryHits.slice(0, limit - selectedStashHits.length);
@@ -433,7 +433,7 @@ function buildCurateSummary(query: string, items: CuratedItem[]): string {
   if (items.length === 0) {
     return `No curated assets were selected for "${query}".`;
   }
-  // Emit the flipped conceptId ref for stash items (registry items have no
+  // F4b: emit the flipped conceptId ref for stash items (registry items have no
   // ref — keep their `registry:<name>` label).
   const labels = items.map((item) => ("ref" in item ? item.ref : `${item.type}:${item.name}`));
   return `Selected ${items.length} curated result${items.length === 1 ? "" : "s"}: ${labels.join(", ")}.`;

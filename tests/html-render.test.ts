@@ -29,7 +29,8 @@ describe("resolveTemplatePath", () => {
   });
 
   test("sanitizes path-traversal command names to a bare basename under the templates dir", () => {
-    // There is no generic default.html fallback, so a hostile/unknown command
+    // `--format html` is health-only (chunk-9 WI-9.4c / Decision 4): there is
+    // no more generic default.html fallback, so a hostile/unknown command
     // name resolves to `<basename>.html` (which simply won't exist) rather
     // than escaping the templates directory.
     const p = resolveTemplatePath("../../../etc/passwd");

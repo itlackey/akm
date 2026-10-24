@@ -1,7 +1,7 @@
 /**
  * Reflect pipeline safety-rail tests.
  *
- * Covers these regressions:
+ * Covers the regressions found in the May 2026 review of 323 reflect proposals:
  *
  *   1. Frontmatter stripped on rewrite (15+ cases).
  *   2. Reflect prepending YAML frontmatter to executable `.ts` script assets.
@@ -126,9 +126,10 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    // Deterministic type-guard rejections (LLM never invoked) route through
-    // `unsupported_type` so the improve loop can map them to `reflect-skipped`
-    // instead of inflating `reflect-failed`.
+    // Reason changed 2026-05-26: deterministic type-guard rejections (LLM
+    // never invoked) now route through `unsupported_type` so the improve
+    // loop can map them to `reflect-skipped` instead of inflating
+    // `reflect-failed`. See metrics-taxonomy-review §1a.
     expect(result.reason).toBe("unsupported_type");
     expect(result.error).toContain("not supported by reflect");
     expect(result.error).toContain("script");
@@ -151,7 +152,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     expect(result.error).toContain("env");
   });
 
-  test("secret:* ref is rejected (secret material must never reach reflect's LLM)", async () => {
+  test("secret:* ref is rejected (08-F2: secret material must never reach reflect's LLM)", async () => {
     const stash = makeStashDir();
     let spawned = false;
     const spy: SpawnFn = (cmd) => {

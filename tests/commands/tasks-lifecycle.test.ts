@@ -170,7 +170,7 @@ describe("task lifecycle failure handling", () => {
     expect(uninstallCalls).toEqual(["quiet-force"]);
   });
 
-  // A workflow task's `timeoutMs` is its whole-run bound (the task
+  // Issue 11: a workflow task's `timeoutMs` is its whole-run bound (the task
   // runner turns it into the abort signal `akm workflow run --timeout` uses),
   // so `--timeout-ms` is no longer refused alongside `--workflow`. Engine and
   // model stay prompt-only — a workflow's engines come from its frozen plan.
@@ -214,9 +214,13 @@ describe("task lifecycle failure handling", () => {
     ).rejects.toMatchObject({ code: "INVALID_FLAG_VALUE" });
   });
 
-  // `renderTaskYaml` authors `version: 4`, so a github-action-shaped
-  // --workflow value hits task source v4's OWN `classifyTaskSourceV4Uses`
-  // shape check first rather than v3's generic trailing classification throw.
+  // P4 FLIP (docs/plans/specs/p4-deletions-closeout.md §3.2.6, row B-20;
+  // implementer addition to §7.2, recorded in the commit body and the Review
+  // log): `renderTaskYaml` now authors `version: 4` (sub-step (b)), so a
+  // github-action-shaped --workflow value hits task source v4's OWN
+  // `classifyTaskSourceV4Uses` shape check first (row B-11, unchanged by
+  // §3.1's deletion of the v3 locator grammar) rather than v3's generic
+  // trailing classification throw this test previously pinned.
   test("add rejects a remote-action-shaped workflow before source or scheduler mutation", async () => {
     await expect(
       akmTasksAdd({ id: "remote", schedule: "@daily", workflow: "owner/repository/action@v1" }, { backend }),
@@ -264,9 +268,11 @@ describe("task lifecycle failure handling", () => {
   // set rather than poisoning the whole sync, so `a-valid` still installs.
   test("sync reconciles the rest of the desired set and reports a source that fails to parse", async () => {
     writeTask("a-valid", taskYaml("echo yes", "@daily"));
-    // A version: 2 document is rejected by the version router itself
-    // (TASK_SCHEMA_VERSION_UNSUPPORTED) before it ever reaches a field-level
-    // parser.
+    // A version: 2 document is now rejected by the version router itself
+    // (TASK_SCHEMA_VERSION_UNSUPPORTED, row B-15) before it ever reaches a
+    // field-level parser — the old v3 parser's own "must be exactly 3"
+    // wording this test used to assert is unreachable for a version: 2
+    // document under any routing this phase produces.
     writeTask("b-invalid", 'version: 2\nschedule: "@daily"\ncommand: echo no\n');
     setSchedulerRefEnabled("stash//tasks/a-valid", true);
     setSchedulerRefEnabled("stash//tasks/b-invalid", true);

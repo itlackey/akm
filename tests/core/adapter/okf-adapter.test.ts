@@ -3,8 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Gate for the reference `okf` adapter
- * (`src/core/adapter/adapters/okf-adapter.ts`).
+ * WI-A gate — the reference `okf` adapter
+ * (`src/core/adapter/adapters/okf-adapter.ts`), implementing
+ * `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §5 / §5.1 / §9.
  *
  * Recognition is driven off a real, conformant OKF fixture bundle
  * (`tests/fixtures/bundles/okf-sample/`) via the core `buildFileContext`
@@ -69,14 +70,14 @@ function makeValidateContext(overrides: Partial<ValidateContext> = {}): Validate
 // ── adapter metadata ─────────────────────────────────────────────────────────
 
 describe("okf adapter — metadata", () => {
-  test("id / version / extensions", () => {
+  test("id / version / extensions per §5", () => {
     expect(okfAdapter.id).toBe("okf");
     expect(okfAdapter.version).toBe("0.9.0");
     expect(okfAdapter.extensions).toEqual([".md"]);
   });
 });
 
-// ── recognize: `type` from frontmatter ───────────────────────────────────────
+// ── recognize: `type` from frontmatter (§5.1 BINDING) ────────────────────────
 
 describe("okf adapter — recognize reads `type` from frontmatter", () => {
   test("free-form OKF type is read verbatim from frontmatter", () => {
@@ -112,7 +113,7 @@ describe("okf adapter — recognize reads `type` from frontmatter", () => {
 
 // ── recognize: reserved files ────────────────────────────────────────────────
 
-describe("okf adapter — reserved files return null", () => {
+describe("okf adapter — reserved files return null (§5, OKF §1.4)", () => {
   test("root index.md and log.md are excluded", () => {
     expect(okfAdapter.recognize(component(), fc("index.md"))).toBeNull();
     expect(okfAdapter.recognize(component(), fc("log.md"))).toBeNull();
@@ -134,7 +135,7 @@ describe("okf adapter — reserved files return null", () => {
 
 // ── recognize: conceptId / ref / projection ──────────────────────────────────
 
-describe("okf adapter — conceptId + OKF field projection", () => {
+describe("okf adapter — conceptId + OKF field projection (§0.1/§3)", () => {
   test("conceptId = path within component root minus `.md`; ref = `<c.id>//<conceptId>`", () => {
     const doc = okfAdapter.recognize(component(), fc("tables/orders.md"));
     expect(doc?.conceptId).toBe("tables/orders");
@@ -215,9 +216,9 @@ describe("okf adapter — v0.2 `updated` precedence: generated.at over legacy ti
   });
 });
 
-// ── recognize: v0.2 trust/provenance/lifecycle families (okf-support.md v0.2 note) ─
+// ── recognize: v0.2 trust/provenance/lifecycle families (§0.1, okf-support.md v0.2 note) ─
 
-describe("okf adapter — v0.2 provenance family: generated/verified/sources land under the NAMESPACED `provenance` field (collision avoidance)", () => {
+describe("okf adapter — v0.2 provenance family: generated/verified/sources land under the NAMESPACED `provenance` field (D1.3 collision avoidance)", () => {
   test("generated {by, at} populates provenance.generatedBy / provenance.generatedAt", () => {
     const doc = okfAdapter.recognize(
       component(),
@@ -244,7 +245,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
     ]);
   });
 
-  test("verified SINGLE-MAPPING form (no list dash, shorthand the OKF v0.2 spec permits) normalizes to a one-element array", () => {
+  test("verified SINGLE-MAPPING form (no list dash, v0.2 §-permitted shorthand) normalizes to a one-element array", () => {
     const doc = okfAdapter.recognize(
       component(),
       synthetic(
@@ -306,9 +307,9 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
       },
       { resource: "gs://acme-bucket/q3/events.parquet" },
     ]);
-    // The PRE-EXISTING AKM-native `sources: string[]` field (wiki citations) must
-    // NEVER be populated by the okf adapter — it is a completely different field
-    // from `provenance.sources`.
+    // The PRE-EXISTING AKM-native `sources: string[]` field (wiki citations, D1.3
+    // collision) must NEVER be populated by the okf adapter — it is a completely
+    // different field from `provenance.sources`.
     expect(doc?.sources).toBeUndefined();
   });
 
@@ -448,9 +449,9 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
   });
 });
 
-// ── links: both OKF forms ────────────────────────────────────────────────────
+// ── links: both OKF forms (§9) ───────────────────────────────────────────────
 
-describe("okf adapter — OKF link resolution, both forms", () => {
+describe("okf adapter — OKF link resolution, both forms (§9)", () => {
   test("`/`-rooted and relative links both resolve to component-root-relative conceptIds", () => {
     const doc = okfAdapter.recognize(component(), fc("tables/orders.md"));
     // `/tables/customers.md` (dedup of two occurrences) + `../metrics/wau.md`
@@ -519,7 +520,7 @@ describe("okf adapter — placement / probe", () => {
   });
 });
 
-// ── validate: LENIENT ────────────────────────────────────────────────────────
+// ── validate: LENIENT (§5) ───────────────────────────────────────────────────
 
 function change(relPath: string, after: string): FileChange {
   return { path: relPath, op: "update", after };
@@ -529,7 +530,7 @@ function readFixture(relPath: string): string {
   return fs.readFileSync(path.join(FIXTURE_ROOT, relPath), "utf8");
 }
 
-describe("okf adapter — validate is LENIENT", () => {
+describe("okf adapter — validate is LENIENT (§5)", () => {
   test("missing `type` => an INFO diagnostic (issue `missing-type`), never an error", async () => {
     const diags = await okfAdapter.validate(
       component(),
@@ -576,7 +577,7 @@ describe("okf adapter — validate is LENIENT", () => {
     expect(diags.some((d) => d.issue === "missing-ref")).toBe(false);
   });
 
-  test("a `timestamp` satisfies the freshness check — no `missing-updated` (legacy v0.1 fallback)", async () => {
+  test("a `timestamp` satisfies the freshness check — no `missing-updated` (§0.1, legacy v0.1 fallback)", async () => {
     const diags = await okfAdapter.validate(
       component(),
       [change("tables/orders.md", readFixture("tables/orders.md"))],
@@ -640,13 +641,16 @@ describe("okf adapter — validate is LENIENT", () => {
   });
 });
 
-// ── Format-family goldens (#730) ────────────────────────────────────────────
+// ── Format-family goldens (#730 D3.3) ───────────────────────────────────────
 //
-// Mirrors the shape the other format families use
+// OKF was the only BUILTIN_ADAPTERS entry without a
+// tests/fixtures/format-family-goldens/<family>/ directory (scripts/lint-
+// goldens-presence.ts triage). Mirrors the shape the other nine families use
 // (recognition/placement/renderer/lint.json), driven off the SAME frozen
-// tests/fixtures/bundles/okf-sample/ fixture the tests above use. This golden
-// captures the OKF adapter's REAL output (`specificationGolden: false`, a real
-// `capturedAtHead`).
+// tests/fixtures/bundles/okf-sample/ fixture the tests above already use —
+// unlike those nine (authored ahead of their adapters as spec-authored
+// targets), this golden captures the OKF adapter's REAL, already-shipped
+// output (`specificationGolden: false`, a real `capturedAtHead`).
 
 describe("okf adapter — recognition golden", () => {
   const golden = loadGolden("recognition");

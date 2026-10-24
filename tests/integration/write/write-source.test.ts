@@ -1,7 +1,7 @@
 /**
  * Tests for src/core/write-source.ts — the single dispatch point for writes.
  *
- * Covers the write-dispatch contract:
+ * Covers the locked v1 contract from spec §2.6 / §2.7 / §5.4 / §10 step 5:
  *
  *   - writable refusal (default-resolution + explicit `writable: false`)
  *   - plain filesystem write
@@ -446,7 +446,7 @@ describe("resolveWriteTarget", () => {
     fs.rmSync(paths.rootDir, { recursive: true, force: true });
   });
 
-  test("git target with a lock localRoot reads AND writes through that root (lock-first unification)", async () => {
+  test("git target with a lock localRoot reads AND writes through that root (§10.2 lock-first unification)", async () => {
     const url = "https://example.invalid/acme/locked-layout.git";
     // The derived cache repoDir is what BOTH paths used to (write) or would
     // (read fallback) resolve to WITHOUT a lock — the divergence under test.
@@ -456,7 +456,7 @@ describe("resolveWriteTarget", () => {
     const localRoot = makeTempDir("akm-lock-localroot-");
     expect(path.resolve(localRoot)).not.toBe(path.resolve(derivedRepoDir));
 
-    // Record the resolved lock state. The lockfile lives under
+    // Record the resolved lock state (spec §10.2). The lockfile lives under
     // XDG_DATA_HOME (set in beforeEach), keyed by the bundle name ("team").
     await writeLockfile([{ id: "team", source: "git", ref: url, localRoot }]);
 
@@ -646,7 +646,7 @@ describe("commit message sanitization (issue #270, via boundary commit)", () => 
 
     const log = spawnSync("git", ["-C", workDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
     expect(log.stdout.includes("\x00")).toBe(false);
-    // formatRefForMessage emits the slash conceptId grammar
+    // 0.9.0 (Q-02): formatRefForMessage emits the slash conceptId grammar
     // (`memories/beta`), not the retired `memory:beta` colon form.
     expect(log.stdout.trim()).toBe("Update teamhidden//memories/beta");
   });

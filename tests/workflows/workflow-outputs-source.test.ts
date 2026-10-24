@@ -77,22 +77,22 @@ function outputsView(plan: unknown): DecodedOutputsView {
 
 // ── B-03…B-10: pure grammar / compile-level checks (no sandbox needed) ─────
 
-describe("outputs: — authoring grammar", () => {
-  test("an output name outside the param-name grammar fails, naming the key and the grammar", () => {
+describe("outputs: — authoring grammar (B-03…B-09)", () => {
+  test("B-03: an output name outside the param-name grammar fails, naming the key and the grammar", () => {
     const result = compileSource(twoStepDoc(["outputs:", `  ${BAD_OUTPUT_NAME}:`, "    from: steps.summarize.output"]));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(errorMessages(result)).toContain(BAD_OUTPUT_NAME);
   });
 
-  test("from: that is not a valid steps.<id>.output(.<seg>)* reference fails through the reference grammar", () => {
+  test("B-05: from: that is not a valid steps.<id>.output(.<seg>)* reference fails through the reference grammar", () => {
     const result = compileSource(twoStepDoc(["outputs:", "  report:", "    from: not-a-valid-reference!!"]));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(errorMessages(result)).toContain("report");
   });
 
-  test("from: naming a step id the document does not declare fails compile, naming the step and the output", () => {
+  test("B-06: from: naming a step id the document does not declare fails compile, naming the step and the output", () => {
     const result = compileChecked(twoStepDoc(["outputs:", "  report:", "    from: steps.ghost.output"]));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
@@ -101,7 +101,7 @@ describe("outputs: — authoring grammar", () => {
     expect(messages).toContain("report");
   });
 
-  test("from: params.<name> is rejected — an output projects a step artifact, never a param", () => {
+  test("B-07: from: params.<name> is rejected — an output projects a step artifact, never a param", () => {
     const result = compileSource(
       twoStepDoc(["params:", "  scope: { type: string }", "outputs:", "  report:", "    from: params.scope"]),
     );
@@ -110,7 +110,7 @@ describe("outputs: — authoring grammar", () => {
     expect(errorMessages(result)).toContain("report");
   });
 
-  test("a schema: outside the enforced JSON Schema subset fails, same message shape as a params: schema", () => {
+  test("B-08: a schema: outside the enforced JSON Schema subset fails, same message shape as a params: schema", () => {
     const result = compileSource(
       twoStepDoc([
         "outputs:",
@@ -124,7 +124,7 @@ describe("outputs: — authoring grammar", () => {
     expect(errorMessages(result)).toContain("report");
   });
 
-  test("a schema: over the 256 KiB resource limit fails, naming the cap", () => {
+  test("B-09: a schema: over the 256 KiB resource limit fails, naming the cap", () => {
     const hugeEnum = JSON.stringify(["x".repeat(300_000)]);
     const result = compileSource(
       twoStepDoc([
@@ -140,7 +140,7 @@ describe("outputs: — authoring grammar", () => {
   });
 });
 
-describe("outputs: — a GitHub-shaped workflow cannot declare one", () => {
+describe("outputs: — a GitHub-shaped workflow cannot declare one (B-10, PRESERVE, B-N4)", () => {
   test("outputs: at the root of a .yml workflow is rejected by the existing closed ROOT_KEYS check", () => {
     const yaml = [
       "name: gh-outputs-rejected",
@@ -186,8 +186,8 @@ function expectDecodeUsageError(input: unknown): UsageError {
   return caught;
 }
 
-describe("outputs: — decoding a stored plan", () => {
-  test("a workflow declaring no outputs: has plan.outputs absent (never {}), and the hash is a stable function of the plan", () => {
+describe("outputs: — decoding a stored plan (B-11…B-16)", () => {
+  test("B-11: a workflow declaring no outputs: has plan.outputs absent (never {}), and the hash is a stable function of the plan", () => {
     const plan = freezeWorkflow(TWO_STEP_MD, "workflows/no-outputs.md");
     expect(Object.hasOwn(plan, "outputs")).toBe(false);
     expect(outputsView(plan).outputs).toBeUndefined();
@@ -195,13 +195,13 @@ describe("outputs: — decoding a stored plan", () => {
     expect(computePlanHash(redecoded)).toBe(computePlanHash(plan));
   });
 
-  test("decodeWorkflowPlan accepts a plan with a valid outputs entry", () => {
+  test("B-12: decodeWorkflowPlan accepts a plan with a valid outputs entry", () => {
     const plan = freezeWorkflow(TWO_STEP_MD, "workflows/valid-outputs.md");
     const decoded = decodeWorkflowPlan(splicedOutputs(plan, { report: { from: "steps.summarize.output" } }));
     expect(outputsView(decoded).outputs?.report?.from).toBe("steps.summarize.output");
   });
 
-  test("key order, extra keys, and an unknown step are the resolver's concern, not a decode refusal", () => {
+  test("B-13…B-16: key order, extra keys, and an unknown step are the resolver's concern, not a decode refusal", () => {
     const plan = freezeWorkflow(TWO_STEP_MD, "workflows/tolerant-outputs.md");
     const decoded = decodeWorkflowPlan(
       splicedOutputs(plan, {
@@ -223,7 +223,7 @@ describe("outputs: — decoding a stored plan", () => {
 // ── B-01, B-02, B-17: the full author -> compile -> freeze -> durable-plan
 // ── pipeline (needs an isolated stash + index + config) ────────────────────
 
-describe("outputs: — end-to-end freeze into the durable plan", () => {
+describe("outputs: — end-to-end freeze into the durable plan (B-01, B-02, B-17)", () => {
   let storage: IsolatedAkmStorage;
 
   beforeEach(() => {
@@ -249,7 +249,7 @@ describe("outputs: — end-to-end freeze into the durable plan", () => {
     return decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
   }
 
-  test("outputs: {report: {from: steps.summarize.output}} parses, compiles, and freezes into plan.outputs", async () => {
+  test("B-01: outputs: {report: {from: steps.summarize.output}} parses, compiles, and freezes into plan.outputs", async () => {
     write("workflows/with-output.md", twoStepDoc(["outputs:", "  report:", "    from: steps.summarize.output"]));
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
@@ -257,7 +257,7 @@ describe("outputs: — end-to-end freeze into the durable plan", () => {
     expect(outputsView(decoded).outputs?.report?.from).toBe("steps.summarize.output");
   });
 
-  test("outputs: with a schema: freezes the schema alongside from", async () => {
+  test("B-02: outputs: with a schema: freezes the schema alongside from", async () => {
     write(
       "workflows/with-schema-output.md",
       twoStepDoc([
@@ -276,7 +276,7 @@ describe("outputs: — end-to-end freeze into the durable plan", () => {
     });
   });
 
-  test("two independent freezes of the same source declaring outputs: produce a byte-identical plan hash", async () => {
+  test("B-17: two independent freezes of the same source declaring outputs: produce a byte-identical plan hash", async () => {
     write("workflows/stable-outputs.md", twoStepDoc(["outputs:", "  report:", "    from: steps.summarize.output"]));
     await akmIndex({ stashDir: storage.stashDir, full: true });
 

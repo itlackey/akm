@@ -3,8 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The consolidate pair pass's `retire` proposal effect, a promotion retiring
- * its source, and the correctness guards around both.
+ * 0.9.17-alpha.9 — the consolidate pair pass's `retire` proposal effect
+ * (plan §5.4, brief §B), O1 (a promotion retires its source), and the
+ * review-round correctness fixes (B2/B3/S4/S5/S6).
  *
  * A `retire` proposal's primary `FileChange` deletes its target instead of
  * writing content: accepting it archives the asset (and its `.derived`
@@ -14,7 +15,7 @@
  * producers end-to-end (mint -> accept -> revert), not hand-built fixtures.
  *
  * `retirement()` computes REAL body hashes from files actually on disk (both
- * the retired side and the successor, which must exist) — the accept-time
+ * the retired side and the successor, which must exist) — B2's accept-time
  * check refuses a proposal whose recorded hashes do not match the current
  * files, so a fixture with a fabricated hash or a missing successor file
  * would only prove the guard works, not the happy path it is meant for.
@@ -127,7 +128,7 @@ function findArchiveEntry(originalRel: string): { dirAbs: string; originalAbs: s
   throw new Error(`no archive entry found for ${originalRel}`);
 }
 
-/** Real git plumbing: `purgeGracedArchive` requires the archive to be git-tracked and clean — `withIsolatedAkmStorage` sets up no `.git` on its own. */
+/** Real git plumbing (S5): `purgeGracedArchive` requires the archive to be git-tracked and clean (B1) — `withIsolatedAkmStorage` sets up no `.git` on its own. */
 function git(...args: string[]): string {
   const result = spawnSync("git", ["-C", storage.stashDir, ...args], { encoding: "utf8" });
   expect(result.status).toBe(0);
@@ -213,7 +214,7 @@ describe("akm proposal accept on a retire proposal", () => {
     expect(tombstone.originalPath).toBe("memories/old-note.md");
 
     // Ledger: the proposal's own decision is recorded under its own source
-    // (consolidate-pair, not the promote pass's consolidate).
+    // (S6: consolidate-pair, not the promote pass's consolidate).
     const db = openStateDatabase();
     try {
       const row = getImproveLedgerRow(db, storage.stashDir, archived.ref, "consolidate-pair");
@@ -315,7 +316,7 @@ describe("akm proposal accept on a retire proposal", () => {
     expect(second.proposal.status).toBe("accepted");
   });
 
-  describe("crash recovery (intent-based, resume-safe)", () => {
+  describe("S5 crash recovery (second review round: intent-based, resume-safe)", () => {
     test("intent recorded but no file moved yet — accept resumes from it and finishes", async () => {
       const oldPath = writeAsset("memories/old-note.md", "description: an old note");
       const newPath = writeAsset("memories/new-note.md", "description: a new note");
@@ -444,8 +445,8 @@ describe("akm proposal accept on a retire proposal", () => {
           reason: "superseded",
         }),
       });
-      // Simulates the crash window: intent recorded with the
-      // pre-edge bytes — exactly what the ordering (record intent,
+      // Simulates the crash window 4a closes: intent recorded with the
+      // pre-edge bytes — exactly what the fixed ordering (record intent,
       // THEN write the edge) always captures — while the file on disk still
       // has no edge yet.
       const db = openStateDatabase();
@@ -519,7 +520,7 @@ describe("akm proposal accept on a retire proposal", () => {
     });
   });
 
-  describe("accept-time freshness — both sides, not just the retired one", () => {
+  describe("B2: accept-time freshness — both sides, not just the retired one", () => {
     test("refuses when the successor was edited after judging", async () => {
       const oldPath = writeAsset("memories/old-note.md", "description: an old note");
       const newPath = writeAsset("memories/new-note.md", "description: a new note");
@@ -705,7 +706,7 @@ describe("akm proposal revert on a retire proposal", () => {
     expect(fs.existsSync(twinPath)).toBe(true);
   });
 
-  test("byte-exact — YAML comments, key order and a pre-existing human supersededBy edge all survive the round trip", async () => {
+  test("S4: byte-exact — YAML comments, key order and a pre-existing human supersededBy edge all survive the round trip", async () => {
     const original =
       "---\n# a comment akm never wrote\ndescription: 'quoted old'\ntags: [x, y]\nsupersededBy:\n  - memories/someone-elses-note\nbeliefState: superseded\nupdated: 2026-06-01\n---\nOld body.\n";
     const filePath = writeAsset("memories/old-note.md", "placeholder"); // overwritten below with the exact bytes
@@ -733,7 +734,7 @@ describe("akm proposal revert on a retire proposal", () => {
     expect(fm.supersededBy).toEqual(["memories/someone-elses-note"]);
   });
 
-  test("validates every archive dir before moving any of them — a twin whose destination is occupied leaves the primary archived too", async () => {
+  test("S5: validates every archive dir before moving any of them — a twin whose destination is occupied leaves the primary archived too", async () => {
     const parentPath = writeAsset("memories/parent.md", "description: parent");
     const twinPath = writeAsset(
       "memories/parent.derived.md",
@@ -767,7 +768,7 @@ describe("akm proposal revert on a retire proposal", () => {
     expect(fs.readdirSync(archiveRoot)).toHaveLength(2);
   });
 
-  describe("crash recovery on revert (resume-safe)", () => {
+  describe("S5 crash recovery on revert (second review round: resume-safe, P4)", () => {
     test("primary already moved back, twin still archived — revert resumes and finishes both", async () => {
       const parentPath = writeAsset("memories/parent.md", "description: parent");
       const twinPath = writeAsset(
@@ -841,7 +842,7 @@ describe("akm proposal revert on a retire proposal", () => {
       expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted");
     });
 
-    test("a REAL purge sweep past grace deletes the archived bytes — revert then refuses with 'archived copy ... is missing', status stays accepted, the tombstone survives, and a second sweep is a no-op", async () => {
+    test("a REAL purge sweep past grace deletes the archived bytes — revert then refuses with 'archived copy ... is missing', status stays accepted, the tombstone survives, and a second sweep is a no-op (S5)", async () => {
       const parentPath = writeAsset("memories/parent.md", "description: parent");
       const newPath = writeAsset("memories/new-note.md", "description: a new note");
       const config = makeConfig(storage.stashDir);
@@ -860,13 +861,14 @@ describe("akm proposal revert on a retire proposal", () => {
 
       const entry = findArchiveEntry("memories/parent.md");
       const tombstonePath = path.join(entry.dirAbs, "cleanup.md");
-      // The REAL retiredAt string the accept path actually wrote: there is
-      // exactly one form, `new Date().toISOString()`, read back here rather
-      // than hand-typed, so this test fails if that round-trip ever changes.
+      // The REAL retiredAt string the accept path actually wrote (S5: "every
+      // retiredAt string form the code actually writes" — there is exactly
+      // one, `new Date().toISOString()`, read back here rather than
+      // hand-typed, so this test fails if that round-trip ever changes).
       const retiredAt = parseFrontmatter(fs.readFileSync(tombstonePath, "utf8")).data.retiredAt;
       expect(typeof retiredAt).toBe("string");
 
-      // purgeGracedArchive only purges a git-tracked, clean archive —
+      // B1: purgeGracedArchive only purges a git-tracked, clean archive —
       // `withIsolatedAkmStorage` has no `.git` of its own, so this test
       // makes one and commits the archive exactly as a real accept + sync
       // (or an owner's own commit) would.
@@ -1172,7 +1174,7 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
     );
   });
 
-  test("bulk accept --generator consolidate-pair sweeps only retire proposals; --generator consolidate sweeps only promotions", async () => {
+  test("S6: bulk accept --generator consolidate-pair sweeps only retire proposals; --generator consolidate sweeps only promotions", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");
     const config = makeConfig(storage.stashDir);
@@ -1216,7 +1218,7 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
     expect(getProposal(storage.stashDir, retireProposal.id).status).toBe("accepted");
   });
 
-  test("a continuityRisk proposal is skipped by bulk accept, but a person can still accept it by id", async () => {
+  test("item 1: a continuityRisk proposal is skipped by bulk accept, but a person can still accept it by id", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");
     const config = makeConfig(storage.stashDir);
@@ -1239,7 +1241,7 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
       generator: "consolidate-pair",
     });
     expect(sweep.count).toBe(0); // flagged: never swept, whatever the generator
-    expect(sweep.skippedForContinuityRisk).toBe(1); // reported apart from an ordinary filter miss
+    expect(sweep.skippedForContinuityRisk).toBe(1); // S4: reported apart from an ordinary filter miss
     expect(getProposal(storage.stashDir, riskyProposal.id).status).toBe("pending");
 
     // A person can still accept it directly, by id.
@@ -1247,7 +1249,7 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
     expect(accepted.proposal.status).toBe("accepted");
   });
 
-  test("bulk REJECT is unaffected by continuityRisk — declining a flagged proposal is always safe", async () => {
+  test("item 1: bulk REJECT is unaffected by continuityRisk — declining a flagged proposal is always safe", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");
     const config = makeConfig(storage.stashDir);
@@ -1271,11 +1273,11 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
       reason: "bulk reject sweep",
     });
     expect(rejectSweep.count).toBe(1);
-    expect(rejectSweep.skippedForContinuityRisk).toBe(0); // only accept excludes for continuityRisk
+    expect(rejectSweep.skippedForContinuityRisk).toBe(0); // S4: only accept excludes for continuityRisk
     expect(getProposal(storage.stashDir, riskyProposal.id).status).toBe("rejected");
   });
 
-  test("--max-diff-lines counts a retire proposal by its target's own current line count, not its empty payload", async () => {
+  test("S6: --max-diff-lines counts a retire proposal by its target's own current line count, not its empty payload", async () => {
     const bigPath = writeAsset(
       "memories/big-note.md",
       "description: a big note",
@@ -1315,8 +1317,8 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
   });
 });
 
-describe("an accepted promotion retires its source memory", () => {
-  test("archives promotionSource (and its .derived twin) when the promotion is accepted and its body is unchanged", async () => {
+describe("O1: an accepted promotion retires its source memory", () => {
+  test("archives promotionSource (and its .derived twin) when the promotion is accepted and its body is unchanged (B3)", async () => {
     const sourceContent = "---\ndescription: source memory\n---\n\nSource body.\n";
     const sourcePath = writeAsset("memories/source-note.md", "placeholder");
     fs.writeFileSync(sourcePath, sourceContent, "utf8");
@@ -1351,7 +1353,7 @@ describe("an accepted promotion retires its source memory", () => {
     expect(tombstone.successorRefs).toEqual([result.ref]);
   });
 
-  test("a source edited after the promotion was minted is left alone — not archived", async () => {
+  test("B3: a source edited after the promotion was minted is left alone — not archived", async () => {
     const originalContent = "---\ndescription: source memory\n---\n\nOriginal fact.\n";
     const sourcePath = writeAsset("memories/source-note.md", "placeholder");
     fs.writeFileSync(sourcePath, originalContent, "utf8");
@@ -1379,7 +1381,7 @@ describe("an accepted promotion retires its source memory", () => {
     expect(content).toContain("NEW FACT ADDED LATER");
   });
 
-  test("a promotion minted before promotionSourceHash existed never archives its source", async () => {
+  test("B3: a promotion minted before promotionSourceHash existed never archives its source", async () => {
     const sourcePath = writeAsset("memories/source-note.md", "description: source memory");
     const config = makeConfig(storage.stashDir);
     const proposal = createProposal(storage.stashDir, {
@@ -1432,7 +1434,7 @@ describe("an accepted promotion retires its source memory", () => {
   });
 });
 
-describe("retire and promote proposals mint under separate sources", () => {
+describe("retire and promote proposals mint under separate sources (S6)", () => {
   test("listProposals(status: pending) shows both, filterable by their own distinct source", () => {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");
@@ -1462,7 +1464,7 @@ describe("retire and promote proposals mint under separate sources", () => {
   });
 });
 
-describe("drain hard-skip is unconditional on the retire shape (not on the source string)", () => {
+describe("drain hard-skip is unconditional on the retire shape (S6: not on the source string)", () => {
   test("drainProposals with applyMode: promote and reject leaves a retire proposal pending, whatever its source value", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");
@@ -1502,7 +1504,7 @@ describe("revert by ref names a sibling retire proposal when refusing (nit, thir
     await akmProposalAccept({ stashDir: storage.stashDir, id: reflect.id, config });
 
     // A retire proposal for the SAME ref is minted and accepted afterwards —
-    // by-ref resolution skips it, so a bare `revert
+    // by-ref resolution skips it (should-fix 7), so a bare `revert
     // lessons/dup-target` lands on the reflect proposal instead, whose
     // target is now gone (archived by the retire).
     const newPath = writeAsset("lessons/dup-elsewhere.md", "description: elsewhere");

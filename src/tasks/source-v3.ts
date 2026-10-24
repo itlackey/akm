@@ -3,35 +3,46 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The prepare seam's document vocabulary.
+ * The prepare seam's document vocabulary (spec
+ * docs/plans/specs/p4-deletions-closeout.md §3.2.3).
  *
  * `src` no longer accepts task v3 source — the v3 grammar (`parseTaskV3Yaml`,
- * `parseTaskV3Document`, `classifyTaskV3Uses`) survives only vendored, frozen,
- * in `src/tasks/source/task-source-v3-frozen.ts` — the ONE place left that
- * reads a v3 document, reachable only through `akm migrate apply` /
- * `akm-migrate`.
+ * `parseTaskV3Document`, `classifyTaskV3Uses`, and the GitHub Action locator
+ * grammar deleted from classification ahead of this file's own shrink)
+ * survives only vendored, frozen, in
+ * `src/tasks/source/task-source-v3-frozen.ts` — the ONE place
+ * left that reads a v3 document, reachable only through `akm migrate apply`
+ * / `akm-migrate`.
  *
  * This file's surviving purpose is the `TaskV3*` type family
  * `src/tasks/prepare/prepare.ts` (`prepareTaskV3Execution`) and its
  * supporting modules still take as their input shape —
  * `PreparableTaskDocument` (`src/tasks/prepare/prepared-execution.ts`) is a
  * name for `TaskV3SourceDocument` that is not version-bound. The type
- * family keeps its `V3` name (a version-neutral rename is deferred). Only task
- * source v4 ever reaches this shape —
- * `src/tasks/source/project-v4.ts`'s `projectTaskSourceV4()` is the only
+ * family's NAME stays (spec §0, R-R1: the rename to something version-
+ * neutral is deferred to a follow-up commit after the sweep, so the
+ * deletion diff this phase exists to prove is not buried under an
+ * unrelated rename storm). Only task source v4 ever reaches this shape now
+ * — `src/tasks/source/project-v4.ts`'s `projectTaskSourceV4()` is the only
  * producer.
  *
- * Workflow `on:` trigger parsing lives in `src/workflows/github-yaml.ts`
- * (`parseTriggers`); `src/workflows/**` imports nothing from `src/tasks/**`
- * source modules.
+ * The workflow-side trigger classifier that used to live here
+ * (`classifyTaskV3Triggers`) is re-homed to `src/workflows/github-yaml.ts`
+ * (`parseTriggers`, P4-N3) — its subject was always a WORKFLOW's `on:`
+ * trigger fragment, not a task document, and after the move
+ * `src/workflows/**` imports nothing at all from `src/tasks/**` source
+ * modules.
  */
 
 import type { ParsedBuiltinCommandAction } from "../commands/command/builtin-action";
 import type { ExecutionJsonObject } from "../execution/json";
 import { TASK_V3_MAX_SCHEDULES } from "./source/bounded-document";
 
-// Re-exported at its existing name so no importer changes; task-source-v4.ts
-// is the one surviving `src` consumer.
+// D2-N4 (spec docs/plans/specs/p2a-task-source-v4.md §3.1, §9): re-exported
+// at its EXISTING name so no importer changes. The one name a surviving
+// `src` consumer still imports (task-source-v4.ts) — every other
+// bounded-document re-export this file used to carry was dropped in P4
+// §3.2.3.
 export { TASK_V3_MAX_SCHEDULES };
 
 export const TASK_EXTENSION = ".yml";
@@ -91,7 +102,7 @@ export type TaskV3Target =
 /**
  * The trigger shape a task document projects to — a local, independent
  * declaration rather than an import so `src/tasks/**` and `src/workflows/**`
- * stay decoupled in both directions. `src/tasks/source/project-v4.ts`'s
+ * stay decoupled in both directions (P4-N3). `src/tasks/source/project-v4.ts`'s
  * `projectTaskSourceV4()` is the only producer of a value in this shape now.
  */
 interface PreparableTaskTriggerPlan {

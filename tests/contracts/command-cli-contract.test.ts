@@ -28,6 +28,11 @@ describe("canonical command CLI surface", () => {
   });
 });
 
+// P2b Lane B (spec docs/plans/specs/p2b-input-bindings.md §1.2 binding, §7
+// F-B3): the contract must be extended in the SAME commit that registers a
+// new verb. `akm task explain` (B-N4) is read-only introspection — a `ref`
+// positional plus the global `format` flag (GLOBAL_OUTPUT_ARGS,
+// src/cli/shared.ts), like every defineJsonCommand leaf.
 // #955: the contract must be extended in the SAME commit that registers a
 // new flag. `akm index --reembed` forces a full purge + re-embed, bypassing
 // the embedding-fingerprint-rename canary.
@@ -65,10 +70,10 @@ describe("canonical task CLI surface", () => {
     expect(explain?.args?.format).toMatchObject({ type: "string" });
   });
 
-  // #951: `task list` is a pure delegating alias for `akm search --type task`:
-  // a zero-logic alias re-adds the spelling operators reach for without
-  // reintroducing a second implementation. It shares `search`'s own
-  // positional/limit/from args.
+  // #951: `task list` is a pure delegating alias for `akm search --type task`
+  // (0.9.0 removed it as redundant LOGIC — a zero-logic alias re-adds the
+  // spelling operators reach for without reintroducing a second
+  // implementation). It shares `search`'s own positional/limit/from args.
   test("registers task list with search's query/limit/from args", () => {
     const list = (taskCommand as unknown as DynamicCommand).subCommands?.list;
     expect(list?.args?.query).toMatchObject({ type: "positional", required: false });
@@ -77,12 +82,14 @@ describe("canonical task CLI surface", () => {
   });
 });
 
-// Extended in the SAME commit that registers the verb, mirroring the
-// "canonical task CLI surface" describe above. `akm workflow plan <ref>` is
-// read-only compile+freeze introspection — a `ref` positional plus the global
-// `format` flag (GLOBAL_OUTPUT_ARGS, src/cli/shared.ts), like every
-// defineJsonCommand leaf. `--json` is deliberately NOT a flag anywhere in this
-// CLI; every doc example spells `--format json`.
+// P3b Lane B (spec docs/plans/specs/p3b-child-executor.md §1.2 binding, §6
+// F-B4): extended in the SAME commit that registers the verb, mirroring this
+// file's own "canonical task CLI surface" describe above. `akm workflow plan
+// <ref>` is read-only compile+freeze introspection (§4.6) — a `ref`
+// positional plus the global `format` flag (GLOBAL_OUTPUT_ARGS,
+// src/cli/shared.ts), like every defineJsonCommand leaf. `--json` is
+// deliberately NOT a flag anywhere in this CLI (B-N9); every doc example
+// spells `--format json`.
 describe("canonical workflow CLI surface", () => {
   test("registers workflow plan <ref> with a format flag", () => {
     const top = main.subCommands as unknown as Record<string, DynamicCommand>;

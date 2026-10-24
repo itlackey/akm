@@ -880,7 +880,7 @@ describe("exec unit — retained output is BOUNDED, but a passing command is nev
   }, 30_000);
 });
 
-describe("exec unit — an INCOMPLETE capture is never a success", () => {
+describe("exec unit — an INCOMPLETE capture is never a success (finding 2)", () => {
   /**
    * A command whose LEADER writes a prefix of its output and exits 0
    * immediately, leaving a detached descendant holding the stdout fd open far
@@ -1037,7 +1037,7 @@ describe("exec unit — a STDERR-only drain failure never discards a valid artif
   }, 30_000);
 });
 
-describe("exec unit — a stderr-only diagnosis survives to the journal", () => {
+describe("exec unit — a stderr-only diagnosis survives to the journal (finding 3)", () => {
   const CAUSE = "fatal: reactor core temperature exceeded 9000K at line 42";
 
   test("a command that explains itself ONLY on stderr is visible through `status --units` and the run summary", async () => {

@@ -181,7 +181,7 @@ function withPrimaryStashBundle(
 
 // ── Test 1: first run writes asset_salience rows ─────────────────────────────
 
-describe("salience wiring — first run (empty table)", () => {
+describe("WS-1 wiring — first run (empty table)", () => {
   test("asset_salience rows are written after the first run", async () => {
     const stash = isolatedStash();
     writeSkill(stash, "beta", "Beta content.");
@@ -240,7 +240,7 @@ describe("salience wiring — first run (empty table)", () => {
 
 // ── Test 3: recordNoOp fires on no_change reflect ─────────────────────────────
 
-describe("salience wiring — no-op tracking via consecutive_no_ops", () => {
+describe("WS-1 wiring — no-op tracking via consecutive_no_ops", () => {
   test("consecutive_no_ops increments after a no_change reflect", async () => {
     const stash = isolatedStash();
     writeSkill(stash, "delta", "Delta content.");
@@ -336,7 +336,7 @@ describe("salience wiring — no-op tracking via consecutive_no_ops", () => {
 
 // ── Test 4: consolidation-selection dampener (Blocker: consumer not tested) ──
 
-describe("salience wiring — dampener consumption (consecutive_no_ops >= threshold penalises order)", () => {
+describe("WS-1 wiring — dampener consumption (consecutive_no_ops >= threshold penalises order)", () => {
   /**
    * Scenario:
    *   - Two skills, `alpha-stable` and `beta-fresh`, written to the isolated stash.

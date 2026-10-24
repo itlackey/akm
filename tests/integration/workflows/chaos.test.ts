@@ -4,7 +4,7 @@
 
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: `\${{ … }}` is
 // tested here as literal, hostile PROSE content (never workflow expression
-// grammar — the unified format has none in the body).
+// grammar — the unified format has none in the body, spec §2.3).
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -27,7 +27,7 @@ import type { SummaryJudge } from "../../../src/workflows/validate-summary";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 
 /**
- * Chaos tests — adversarial resilience of the frozen-plan engine. Every
+ * R4 chaos tests — adversarial resilience of the frozen-plan engine. Every
  * scenario asserts on DURABLE state (workflow.db journal, state.db events,
  * run/step rows), never on logs, and is fully deterministic: injected
  * dispatchers/judges, no sleeps, no live LLM or agent binaries. Runs execute
@@ -205,7 +205,7 @@ describe("chaos: crash / resume (durable-row)", () => {
       maxConcurrency: 1,
       summaryJudge: null,
       dispatcher: async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
-        // Instructions are never interpolated: the item reaches
+        // Instructions are never interpolated (spec §2.3): the item reaches
         // the unit as attached JSON context, and the preamble ALSO echoes the
         // full params.files list (which contains "c.ts") into every unit's
         // prompt — so match the unit's OWN item block (fan-out preserves
@@ -455,7 +455,7 @@ describe("chaos: hostile content — single-pass resolution", () => {
     });
     expect(result.done).toBe(true);
 
-    // Body prose is never templated: `discover`'s output reaches
+    // Body prose is never templated (spec §2.3): `discover`'s output reaches
     // `use` as ATTACHED JSON context (its `inputs:` declaration), never
     // spliced into the instructions. Scope the assertion to that declared-
     // inputs block — the preamble legitimately echoes the run's `secret`
@@ -551,7 +551,7 @@ describe("chaos: hostile content — events, clipping, journaled gate feedback",
     expect(eventsDump).not.toContain("HEADmarker");
     expect(eventsDump).not.toContain("akm-report-contract");
     expect(eventsDump).not.toContain(HOSTILE_SECRET);
-    // Instructions are never interpolated so no resolved "Review
+    // Instructions are never interpolated (spec §2.3) so no resolved "Review
     // <item>" phrase is ever produced; assert directly on the fan-out ITEM
     // VALUE itself (attached as context, never spliced) to keep this a real
     // check rather than a vacuous one under the new format.

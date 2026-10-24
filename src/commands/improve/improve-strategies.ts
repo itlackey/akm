@@ -69,7 +69,7 @@ export function shouldSkipRef(
   const allowed = process?.allowedTypes ?? DEFAULT_ALLOWED_TYPES[processName];
   if (!allowed.includes(parsed.type)) return { skip: true, reason: "type-filter" };
 
-  // Reflect only — raw wiki-ingest snapshots are type `knowledge`, so
+  // R12: reflect only — raw wiki-ingest snapshots are type `knowledge`, so
   // allowedTypes alone can't exclude them (distill/consolidate are memory-only).
   if (processName === "reflect") {
     const excludePrefixes = strategy.processes?.reflect?.excludeRefPrefixes;
@@ -204,7 +204,7 @@ export interface EngineUnavailableProcess {
 }
 
 /**
- * One `--require-engines` reachability probe outcome, recorded on the
+ * R17 — one `--require-engines` reachability probe outcome, recorded on the
  * improve run result so a passing (but slow or flaky) probe leaves a trace
  * instead of vanishing the moment the run proceeds. Built in
  * `improve-cli.ts`'s `assertRequiredEnginesReachable` from the same
@@ -228,7 +228,7 @@ export interface ResolvedImprovePlan {
   triageJudgment: RunnerSpec | null;
   triageJudgmentNotices?: readonly Readonly<LoweringNotice>[];
   /**
-   * Lanes the autonomy gate downgraded for this run. Empty when
+   * D8 — lanes the autonomy gate downgraded for this run. Empty when
    * `experimental.improveAutonomy` is set. The run reports each one so a gated
    * lane is never a silent no-op.
    */
@@ -284,7 +284,7 @@ export function projectResolvedProcessRouting(plan: ResolvedImprovePlan): Proces
             model: runnerLlmConnection(process.runner)?.model,
             engineKind: process.runner.kind,
           }
-        : // #800/#957 — a credential-unavailable process never carries a
+        : // #800/#957 round 3 — a credential-unavailable process never carries a
           // runner, but its structurally resolved engine/model is still worth
           // showing in the routing table (dry-run preview, health probe).
           unavailable?.engine
@@ -358,7 +358,7 @@ export function resolveImprovePlan(
   } = {},
 ): ResolvedImprovePlan {
   const selected = resolveImproveStrategy(name, config);
-  // Gate autonomy BEFORE the plan is built, so every downstream consumer
+  // D8 — gate autonomy BEFORE the plan is built, so every downstream consumer
   // (process enablement, LLM preflight, triage judgment) sees one already-safe
   // strategy rather than each having to re-ask whether autonomy is allowed.
   const { config: gatedStrategyConfig, gated } = applyAutonomyGate(selected.config, config);
@@ -398,7 +398,7 @@ function buildImprovePlan(
   const env = options.env ?? process.env;
   const processes = {} as Record<ImproveProcessName, ResolvedImproveProcess>;
   const engineUnavailable: EngineUnavailableProcess[] = [];
-  // #957 — distinguishes "credential unavailable" (a working engine
+  // #957 round 2 — distinguishes "credential unavailable" (a working engine
   // whose secret isn't in this environment) from "no engine selected at all"
   // among the pushes below, so `allowAllDisabled` can bypass the ConfigError
   // only for the former. The latter is the guard's original, pre-#957
@@ -423,7 +423,7 @@ function buildImprovePlan(
     // "no engine" branch below — set here so the shared push/continue block
     // can tell the two apart in its reason text.
     let credentialUnavailableMessage: string | undefined;
-    // #800/#957 — the structurally resolved engine/model/contextLength
+    // #800/#957 round 3 — the structurally resolved engine/model/contextLength
     // for the credential-unavailable case only, so a dry-run preview can read
     // what resolution decided (e.g. the consolidation chunk-size estimate)
     // without the runner ever carrying a credential-less connection forward.

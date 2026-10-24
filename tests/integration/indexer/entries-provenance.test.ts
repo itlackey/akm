@@ -3,12 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The writer persists the durable bundle-adapter
+ * Chunk-5 Step 2 (spec §14.4): the writer persists the durable bundle-adapter
  * identity + provenance (`item_ref`/`bundle_id`/`component_id`/`concept_id`/
  * `adapter_id`/`type`) into the canonical `entries` schema.
  *
- * This pins the write-boundary derivation to the exact spelling emitted as
- * `IndexDocument.ref` (proven equivalent by
+ * This pins the write-boundary derivation to the exact spelling the Step-3
+ * `scanComponent` swap will emit as `IndexDocument.ref` (proven equivalent by
  * `shadow-scan-parity.test.ts`):
  *   - conceptId == the qualified placement plus `document_json.name`;
  *   - item_ref  == `<bundle>//<conceptId>` where the bundle id is the
@@ -103,8 +103,8 @@ describe("canonical entries provenance", () => {
       // The typed column and stored document agree on the open token.
       expect(row.type).toBe(entry.type);
 
-      // conceptId == the QUALIFIED spelling: `stashDirFor(type)/name`
-      // (bare-name fallback only for a foreign type
+      // conceptId == the D-R2 QUALIFIED spelling: `stashDirFor(type)/name`
+      // (ref-grammar decision D-R2; bare-name fallback only for a foreign type
       // with no placement stash-subdir).
       const typeStashDir = stashDirFor(entry.type);
       const expectedConceptId = typeStashDir !== undefined ? `${typeStashDir}/${entry.name}` : entry.name;
@@ -117,7 +117,7 @@ describe("canonical entries provenance", () => {
       expect(row.adapter_id, `adapter_id for ${row.file_path}`).toBe("akm");
 
       // item_ref == `<bundle>//<conceptId>` — the canonical stored spelling
-      // (== IndexDocument.ref).
+      // (== IndexDocument.ref emitted by scanComponent).
       expect(row.item_ref, `item_ref for ${row.file_path}`).toBe(`${expectedBundle}//${expectedConceptId}`);
     }
   });

@@ -3,7 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Plain-text rendering of the combined migration plan's task-file section.
+ * Plain-text rendering of the combined migration plan's task-file section
+ * (spec docs/plans/specs/p4-deletions-closeout.md §3.2.5, rows B-31/B-32).
  */
 
 import type { TextFormatterEntry } from "./registry";

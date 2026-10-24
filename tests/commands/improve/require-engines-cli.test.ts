@@ -136,7 +136,7 @@ function planWithTargets(
   } as unknown as ResolvedImprovePlan;
 }
 
-describe("assertRequiredEnginesReachable — engineProbe", () => {
+describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
   test("returns one outcome per target, with numeric latency, when every probe is reachable", async () => {
     const plan = planWithTargets({
       reflect: { endpoint: "https://a.example.test/v1", model: "model-a", engine: "engineA" },

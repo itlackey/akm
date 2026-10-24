@@ -3,14 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Shared test helper for the fully-qualified `<bundle>//<conceptId>` item_ref
- * that `createProposal` (and every durable-state writer) stores, and that the
- * indexer mints for an accepted asset.
+ * Shared test helper for the WI-8.5a durable-spelling flip: the fully-qualified
+ * `<bundle>//<conceptId>` item_ref that `createProposal` (and every durable-state
+ * writer) now stores, and that the indexer mints for an accepted asset.
  *
- * The bundle id is the write-target stash's installation id — the same
- * `deriveInstallations` derivation the index write path uses — so a test
- * asserting the stored `proposals.ref` / `events.ref` / entry `item_ref` sources
- * its expected spelling here rather than a legacy `type:name` literal.
+ * The bundle id is the write-target stash's installation id — the SAME
+ * `deriveInstallations` derivation the index write path uses — so a test asserting
+ * the stored `proposals.ref` / `events.ref` / entry `item_ref` sources its
+ * expected spelling here rather than a legacy `type:name` literal.
  */
 
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";

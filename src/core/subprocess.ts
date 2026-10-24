@@ -59,6 +59,15 @@ export type SpawnFn = (
 ) => SpawnedSubprocess;
 
 /**
+ * Kill the process group of `proc` with `signal`, falling back to
+ * `proc.kill(signal)` when `proc.pid` is unavailable (e.g. test fakes).
+ *
+ * Passing a negative PID to `process.kill` targets the entire process
+ * group, so opencode's child processes (the .opencode binary, etc.) are
+ * reaped alongside the node wrapper. The fallback keeps test fakes working
+ * without modification.
+ */
+/**
  * Whether a captured spawn should ask for its own process group.
  *
  * POSIX: yes. `detached` is `setsid()`, which is what makes {@link killGroup}'s
@@ -106,15 +115,6 @@ export function buildSpawnOptions(
   };
 }
 
-/**
- * Kill the process group of `proc` with `signal`, falling back to
- * `proc.kill(signal)` when `proc.pid` is unavailable (e.g. test fakes).
- *
- * Passing a negative PID to `process.kill` targets the entire process
- * group, so opencode's child processes (the .opencode binary, etc.) are
- * reaped alongside the node wrapper. The fallback keeps test fakes working
- * without modification.
- */
 export function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"): void {
   if (typeof proc.pid === "number") {
     try {
@@ -132,10 +132,10 @@ export function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"
 }
 
 /**
- * SIGTERM→SIGKILL kill ladder shared by the timeout and abort paths.
- * No-op when the child has already exited; otherwise runs
+ * SIGTERM→SIGKILL kill ladder shared by the timeout and abort paths (§4.6
+ * dedup, H3). No-op when the child has already exited; otherwise runs
  * `onKill` (the caller's reason flag — `timedOut` / `aborted` — set BEFORE
- * the first signal), SIGTERMs the
+ * the first signal, exactly as the inlined copies did), SIGTERMs the
  * process group, and schedules a follow-up SIGKILL after `graceMs` in case
  * the process ignores SIGTERM. The SIGKILL timer is unref'ed so it never
  * pins the event loop.
@@ -444,7 +444,9 @@ const UNBOUNDED_STREAM_READ_SAFETY_MS = 60 * 60 * 1000;
  * Drain deadline for a run WITH a wall budget, counted from the moment the
  * pipe's owner left — the child exited, or (a child that survived its own kill
  * ladder) the budget expired. Anything still holding the fd open then is a
- * background descendant, not the command, so a short fixed grace suffices.
+ * background descendant, not the command, so this is the same 2 s the old
+ * capture-anchored deadline allowed past the budget; only its starting point
+ * moved earlier.
  */
 const POST_EXIT_STREAM_DRAIN_GRACE_MS = 2_000;
 
@@ -554,10 +556,11 @@ export async function runManagedSubprocess(
   // differ. Unbounded, the caller asked for NO cap on the run, so only the
   // child's own exit can end it. Bounded, the wall budget ends it too — a child
   // that outlived its own kill ladder is not something akm can keep waiting on
-  // — which keeps a budget + grace ceiling for a command that really did
-  // spend its whole budget, while a leader exiting in milliseconds does not
-  // hold the drain (and with it the unit, and with it a fan-out slot) open for
-  // a budget it never came close to spending.
+  // — which leaves the SAME budget + grace ceiling as before for a command that
+  // really did spend its whole budget, and cuts the common case that used to
+  // stall: a leader exiting in milliseconds no longer holds the drain (and with
+  // it the unit, and with it a fan-out slot) open for a budget it never came
+  // close to spending.
   const streamDrainTimeoutMs = timeoutMs !== null ? POST_EXIT_STREAM_DRAIN_GRACE_MS : UNBOUNDED_STREAM_READ_SAFETY_MS;
   // Settles on a rejected `proc.exited` too: either way the child is gone.
   const childSettled = capture ? proc.exited.catch(() => undefined) : undefined;

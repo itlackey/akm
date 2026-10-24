@@ -23,7 +23,7 @@ function bundle(id: string, concepts: string[]): RefResolutionBundle {
   return { id, hasConcept: (conceptId) => set.has(conceptId) };
 }
 
-// ── resolveRef ──────────────────────────────────────────────────────────────
+// ── resolveRef (D-R4) ───────────────────────────────────────────────────────
 
 describe("resolveRef", () => {
   test("default-bundle hit — short ref resolves to defaultBundle when present there", () => {
@@ -121,7 +121,7 @@ describe("typeNameFromConceptId", () => {
   });
 });
 
-// ── parseRefInput (input-boundary parser) ───────────────────────────────────
+// ── parseRefInput (F1b input-boundary parser) ───────────────────────────────
 
 describe("parseRefInput", () => {
   test("bare concept ids project to type/name values", () => {
@@ -139,12 +139,15 @@ describe("parseRefInput", () => {
     });
   });
 
-  // The ref-parser seam accepts opaque adapter conceptIds: a well-formed
-  // `<segment>/<rest>` conceptId is accepted as opaque data even when its leading
-  // segment is not an AKM placement stashDir, so valid adapter-emitted conceptIds
-  // (OKF items, website pages, wiki pageKinds, adapter `instruction` docs) are
-  // not rejected by ref-consuming commands.
-  test("new-grammar conceptId with an unknown-but-well-formed prefix → accepted as opaque data", () => {
+  // Q-07/D11 — the ref-parser seam accepts opaque adapter conceptIds. Prior to
+  // this, ANY conceptId whose leading segment was not an AKM placement stashDir
+  // threw here — rejecting perfectly valid adapter-emitted conceptIds (OKF
+  // items, website pages, wiki pageKinds, adapter `instruction` docs) in every
+  // ref-consuming command except `show` (which bypasses this parser). This
+  // test used to pin the OLD (defect) behavior — a NotFoundError for
+  // "notatype/thing" — and is UPDATED here to pin the corrected D11 behavior:
+  // a well-formed `<segment>/<rest>` conceptId is accepted as opaque data.
+  test("new-grammar conceptId with an unknown-but-well-formed prefix → accepted as opaque data (D11)", () => {
     expect(parseRefInput("notatype/thing")).toEqual({ type: "notatype", name: "notatype/thing", origin: undefined });
     expect(parseRefInput("tables/customers")).toEqual({
       type: "tables",
@@ -158,7 +161,7 @@ describe("parseRefInput", () => {
     });
   });
 
-  test("opaque acceptance round-trips through the UNCHANGED conceptIdFromTypeName", () => {
+  test("D11 opaque acceptance round-trips through the UNCHANGED conceptIdFromTypeName", () => {
     // This is the property the proposals-repository canonical-ref check and the
     // index-utility-repository event matcher both depend on: reconstructing
     // `type`/`name` via conceptIdFromTypeName must reproduce the exact input
@@ -169,7 +172,7 @@ describe("parseRefInput", () => {
     }
   });
 
-  test("collision guard: a leading segment that coincidentally spells a real type KEY (not its stashDir) still round-trips", () => {
+  test("D11 collision guard: a leading segment that coincidentally spells a real type KEY (not its stashDir) still round-trips", () => {
     // "skill" (singular) is a real PLACEMENT_SPECS type key, but ITS stashDir is
     // "skills" (plural) — so "skill/foo" is not a known placement dir and falls
     // into the opaque branch. Naively using "skill" as the opaque `type` would
@@ -193,7 +196,7 @@ describe("parseRefInput", () => {
     }
   });
 
-  test("does NOT loosen acceptance of a bare (no-slash) name — still the caller's bare-name-to-qualify job", () => {
+  test("D11 does NOT loosen acceptance of a bare (no-slash) name — still the caller's bare-name-to-qualify job", () => {
     expect(() => parseRefInput("notatype")).toThrow(NotFoundError);
     expect(() => parseRefInput("prod")).toThrow(NotFoundError);
   });
@@ -203,8 +206,8 @@ describe("parseRefInput", () => {
     expect(isFullRefInput("catalog//readme")).toBe(true);
   });
 
-  test("does NOT re-accept the retired colon `type:name` grammar", () => {
-    // No slash at all after the colon.
+  test("D11 does NOT re-accept the retired colon `type:name` grammar (Q-02)", () => {
+    // No slash at all after the colon — already rejected pre-D11 too.
     expect(() => parseRefInput("skill:code-review")).toThrow(NotFoundError);
     expect(() => parseRefInput("knowledge:guide.md")).toThrow(NotFoundError);
     // A slash appears in the NAME after the colon — this is exactly the shape
@@ -276,10 +279,11 @@ describe("displayRef (F4b output-spelling rule)", () => {
     ).toBe("team-catalog//workflows/release");
   });
 
-  test("non-default bundle → bundle//conceptId (always the new grammar)", () => {
-    // Every source has a legal slug bundle id, so a non-default bundle always
-    // displays as `bundle//conceptId`. A raw non-slug registryId reaching here
-    // (edge case) is emitted verbatim as the bundle.
+  test("non-default bundle → bundle//conceptId (WI-8.5c: always the new grammar)", () => {
+    // Post-Chunk-8 the config migration assigned every source a legal slug bundle
+    // id, so a non-default bundle always displays as the new `bundle//conceptId`
+    // grammar — the legacy `origin//type:name` arm is retired. A raw non-slug
+    // registryId reaching here (edge case) is emitted verbatim as the bundle.
     expect(displayRef({ type: "agent", name: "helper", bundleId: "github:evil/pack" })).toBe(
       "github:evil/pack//agents/helper",
     );

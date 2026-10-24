@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Integration: opens real SQLite files through openStateDatabase /
+// Integration (ORG-03): opens real SQLite files through openStateDatabase /
 // the migration runner to exercise migration 028's backfill.
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -60,7 +60,7 @@ describe("nextEligibleAt — the one cadence function", () => {
   });
 
   test("the consolidate pair pass's own source carries no timer, for any outcome", () => {
-    // The pair pass's eligibility is entirely
+    // S1 (post-review): the pair pass's eligibility is entirely
     // content-driven (selectInitiators compares content_hash, never reads
     // next_eligible_at) — every row it writes is "eligible now" regardless
     // of outcome, unlike every other source's outcome-driven cadence.

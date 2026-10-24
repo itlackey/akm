@@ -53,7 +53,7 @@ function makeStashDir(): string {
   return dir;
 }
 
-/** The durable `proposals.ref` item_ref: `<bundle>//<conceptId>`. */
+/** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
 function durableRef(stashDir: string, type: string, name: string): string {
   const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
   return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
@@ -79,10 +79,10 @@ function distillConfig(stashDir: string, distill: Record<string, unknown>): AkmC
 }
 
 function configAbsentFeature(stashDir: string): AkmConfig {
-  // No distill process binding → distill defaults to true. The
+  // No distill process binding → distill defaults to true per 0.8.0. The
   // quality gate is explicitly OFF: these callers exercise the benchmark-scored
-  // / merge-resolution mechanics with non-judge chat stubs, and the
-  // fail-CLOSED gate would otherwise reject them (and its chat call would
+  // / merge-resolution mechanics with non-judge chat stubs, and after 07 P0-2
+  // the fail-CLOSED gate would otherwise reject them (and its chat call would
   // trip the "chat must not be called" guards).
   return distillConfig(stashDir, { qualityGate: { enabled: false } });
 }
@@ -90,9 +90,9 @@ function configAbsentFeature(stashDir: string): AkmConfig {
 function configEnabled(stashDir: string): AkmConfig {
   // Distill mechanics tests exercise the distill path, NOT the LLM-as-judge
   // quality gate. The gate defaults ON in production (`lesson_quality_gate`
-  // → distill.qualityGate.enabled ?? true), and it fails CLOSED
+  // → distill.qualityGate.enabled ?? true), and after 07 P0-2 it fails CLOSED
   // when the judge can't render a verdict — so a non-judge-aware chat stub
-  // would reject every proposal. Turn the gate OFF here so these tests
+  // would now reject every proposal. Turn the gate OFF here so these tests
   // stay focused on distill mechanics; the dedicated judge tests below use
   // `configJudgeEnabled` and supply real judge verdicts.
   return distillConfig(stashDir, { enabled: true, qualityGate: { enabled: false } });
@@ -102,7 +102,7 @@ function configJudgeEnabled(stashDir: string): AkmConfig {
   // Distill enabled AND the LLM-as-judge quality gate ON — for tests that
   // exercise judge-verdict routing. Callers MUST supply a judge-aware chat
   // stub (returns JSON `{score,reason}` when the prompt asks to "Score this
-  // lesson"), or the fail-CLOSED gate rejects the proposal.
+  // lesson"), or the fail-CLOSED gate (07 P0-2) rejects the proposal.
   return distillConfig(stashDir, { enabled: true, qualityGate: { enabled: true } });
 }
 
@@ -277,7 +277,7 @@ describe("buildDistillPrompt", () => {
     expect(prompt).toContain("(asset is not currently indexed");
   });
 
-  test("negative signal feedback goes into '## What failed' section", () => {
+  test("D-3: negative signal feedback goes into '## What failed' section", () => {
     const prompt = buildDistillPrompt({
       inputRef: "skills/deploy",
       assetContent: null,
@@ -294,7 +294,7 @@ describe("buildDistillPrompt", () => {
     expect(prompt).not.toContain("## What worked");
   });
 
-  test("positive signal feedback goes into '## What worked' section", () => {
+  test("D-3: positive signal feedback goes into '## What worked' section", () => {
     const prompt = buildDistillPrompt({
       inputRef: "skills/deploy",
       assetContent: null,
@@ -311,7 +311,7 @@ describe("buildDistillPrompt", () => {
     expect(prompt).not.toContain("## What failed");
   });
 
-  test("mixed signals produce both What-worked and What-failed sections", () => {
+  test("D-3: mixed signals produce both What-worked and What-failed sections", () => {
     const prompt = buildDistillPrompt({
       inputRef: "skills/deploy",
       assetContent: null,
@@ -326,7 +326,7 @@ describe("buildDistillPrompt", () => {
     expect(prompt).toContain("Broke prod");
   });
 
-  test("non-signal events fall back to flat format", () => {
+  test("D-3: non-signal events fall back to flat format", () => {
     // When no positive/negative signals are present, fall back to old format.
     const prompt = buildDistillPrompt({
       inputRef: "skills/deploy",
@@ -375,13 +375,13 @@ describe("buildDistillPrompt", () => {
   });
 });
 
-// A legacy rejected proposal (metadata_json has no `changes`
+// (R1) A legacy rejected proposal (metadata_json has no `changes`
 // key at all — the pre-#858/#859 archive shape) must not throw before the
-// distill prompt is built. `storedToChanges` deliberately returns `[]` for
-// these rows, so the Reflexion-context mapper must read the preview from
-// `p.payload.content` (always populated) rather than `proposalContent(p)`,
-// which throws when `changes[0]?.after` is undefined.
-describe("akmDistill — rejected proposals tolerate legacy rows with no persisted changes", () => {
+// distill prompt is built. The Reflexion-context mapper used
+// `proposalContent(p)`, which throws when `changes[0]?.after` is undefined;
+// `storedToChanges` deliberately returns `[]` for these rows. Reading the
+// preview from `p.payload.content` instead (always populated) fixes it.
+describe("akmDistill — rejected proposals tolerate legacy rows with no persisted changes (R1)", () => {
   test("a rejected proposal with no metadata_json.changes does not throw and its content still reaches the prompt", async () => {
     const stash = makeStashDir();
     const sourceFile = path.join(stash, "skills", "duplicate.md");
@@ -426,11 +426,11 @@ describe("akmDistill — rejected proposals tolerate legacy rows with no persist
 });
 
 // buildDistillMessages excludes the drain's stale-target auto-rejects from the
-// Reflexion "don't repeat this" context: that rejection is a
+// Reflexion "don't repeat this" context (STALE, R20): that rejection is a
 // procedural refusal (the target changed after mint), not a judgement on the
 // content, and would mislead the LLM into avoiding content it was never
 // actually judged on. An ordinary rejection stays in the context.
-describe("akmDistill — rejected proposals exclude stale-target auto-rejects from the Reflexion context", () => {
+describe("akmDistill — rejected proposals exclude stale-target auto-rejects from the Reflexion context (STALE, R20)", () => {
   test("a stale-target auto-reject's reason and content preview do not reach the prompt; an ordinary rejection's do", async () => {
     const stash = makeStashDir();
     const sourceFile = path.join(stash, "skills", "dup-stale-vs-ordinary.md");
@@ -478,9 +478,10 @@ describe("akmDistill — rejected proposals exclude stale-target auto-rejects fr
 // ── Acceptance: gate disabled ───────────────────────────────────────────────
 
 describe("akmDistill — feature gate", () => {
-  // The `distill` gate defaults to `true` (matches the built-in `default`
-  // profile), so an absent feature flag is not "disabled" — see
-  // `explicit \`distill: false\` → also config_disabled` below
+  // 0.8.0 unified the `feedback_distillation` gate into the `distill` gate
+  // and flipped the default to `true` (matches the built-in `default` profile).
+  // The "absent feature flag → disabled" test from the legacy gate no longer
+  // applies — see `explicit \`distill: false\` → also config_disabled` below
   // and the `configDisabled(...)` helper.
 
   test("explicit `distill: false` → also config_disabled, NO event emitted", async () => {
@@ -608,7 +609,7 @@ describe("akmDistill — LLM error paths", () => {
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      // The distill gate defaults to true; with no llm profile wired,
+      // 0.8.0: the distill gate defaults to true; with no llm profile wired,
       // the inner call throws ConfigError(LLM_NOT_CONFIGURED) which the
       // tryLlmFeature wrapper folds into llm_failed.
     } as unknown as AkmConfig;
@@ -627,12 +628,14 @@ describe("akmDistill — LLM error paths", () => {
   });
 });
 
-// ── Acceptance: distinguish config_disabled from llm_failed ─────────────────
+// ── Acceptance: Item 1 — distinguish config_disabled from llm_failed ────────
 //
-// A conflated "disabled or LLM failed" message gives operators no signal to
-// act on, and a gate-off invocation must not accumulate phantom
-// `distill_invoked` events for invocations that never made an LLM call. These
-// two tests pin that distinction.
+// Empirical context: a 108-run audit on release/0.8.0 found 100% of skipped
+// outcomes were actually the config-gate-off branch. The previous conflated
+// message ("disabled or LLM failed") gave operators no signal to act on, and
+// the planner accumulated phantom `distill_invoked` events for invocations
+// that never made an LLM call. These two tests pin the new behaviour so the
+// signal does not regress.
 
 describe("akmDistill — Item 1: precise gate-off vs LLM-failed outcomes", () => {
   test("explicit distill:false → outcome 'config_disabled', NO distill_invoked event emitted", async () => {
@@ -693,8 +696,10 @@ describe("akmDistill — Item 1: precise gate-off vs LLM-failed outcomes", () =>
 
 describe("akmDistill — validation failure", () => {
   test("LLM returns lesson missing `when_to_use` AND body has no real trigger → validation_failed (no placeholder fallback)", async () => {
-    // A circular `When working with <slug>.` placeholder is a systematic
-    // defect, so distill refuses to fabricate a when_to_use when no
+    // Updated for the pipeline-fix sweep: the previous behaviour synthesised a
+    // circular `When working with <slug>.` placeholder. That fallback is the
+    // root cause of one of the systematic defects observed across 323 archived
+    // rejected proposals, so we now refuse to fabricate a when_to_use when no
     // trigger sentence can be extracted from the body. Validation fails cleanly.
     const stash = makeStashDir();
     let threw: Error | undefined;
@@ -1427,7 +1432,7 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
     expect(result.outcome).toBe("queued");
     expect(result.filteredFeedbackCount).toBe(0);
     expect(result.feedbackFullyFiltered).toBe(false);
-    // Negative/positive signals appear in verbal contrast sections.
+    // D-3: negative/positive signals now appear in verbal contrast sections.
     expect(receivedPrompt).toContain("## What failed");
     expect(receivedPrompt).toContain("## What worked");
   });
@@ -1483,9 +1488,9 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
   });
 });
 
-// ── #284: success envelope shape contract ───────────────────────────────────
+// ── #284 GAP-MED 3: success envelope shape contract ─────────────────────────
 
-// ── #284: feature gate ON but llm config missing ───────────────────────────
+// ── #284 GAP-HIGH 7: feature gate ON but llm config missing ────────────────
 
 describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
   test("feature_distillation: true but no `llm` block → outcome=llm_failed, no crash", async () => {
@@ -1532,7 +1537,7 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
       readEventsFn: emptyEvents,
       sourceRun: "run-shape-contract",
     });
-    // Locked envelope keys: ok, outcome, inputRef, proposalRef,
+    // Locked envelope keys (v1 §11/§14): ok, outcome, inputRef, proposalRef,
     // proposalId. Queued path additionally carries proposal stub fields via
     // `result.proposal` if present.
     expect(result.ok).toBe(true);
@@ -1540,7 +1545,7 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
     expect(result.inputRef).toBe("skills/deploy");
     expect(result.proposalRef).toBe("lessons/skill-deploy-lesson");
     expect(typeof result.proposalId).toBe("string");
-    // schemaVersion present at the top level
+    // schemaVersion present at the top level (v1 spec lock)
     expect((result as unknown as { schemaVersion: number }).schemaVersion).toBe(1);
   });
 
@@ -1548,8 +1553,8 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skills/deploy",
-      // Explicitly disable distill — the default is enabled, so an absent
-      // flag does not trip the gate; set processes.distill.enabled: false.
+      // Explicitly disable distill — 0.8.0 default is enabled, so an absent
+      // flag no longer trips the gate; we have to set processes.distill.enabled: false.
       config: configDisabled(stash),
       stashDir: stash,
       chat: async () => {
@@ -1565,9 +1570,9 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
   });
 });
 
-// ── #369 — fast path forces LLM when destination knowledge exists ─────────────
+// ── D-1 / #369 — fast path forces LLM when destination knowledge exists ───────
 
-describe("fast path calls LLM merge when destination knowledge exists (#369)", () => {
+describe("D-1: fast path calls LLM merge when destination knowledge exists (#369)", () => {
   test("NOOP: LLM says no update needed — proposal is skipped", async () => {
     const stash = makeStashDir();
     // Create an existing knowledge file at the destination
@@ -1612,7 +1617,7 @@ describe("fast path calls LLM merge when destination knowledge exists (#369)", (
       },
     });
 
-    // NOOP → proposal not created, outcome skipped
+    // D-1: NOOP → proposal not created, outcome skipped
     expect(result.ok).toBe(true);
     expect(result.outcome).toBe("skipped");
     expect(chatCalls.length).toBeGreaterThan(0); // LLM was called for merge resolution
@@ -1657,12 +1662,12 @@ describe("fast path calls LLM merge when destination knowledge exists (#369)", (
       chat: async () => JSON.stringify({ action: "UPDATE", content: mergedContent }),
     });
 
-    // UPDATE → proposal queued with merged content
+    // D-1: UPDATE → proposal queued with merged content
     expect(result.ok).toBe(true);
     expect(result.outcome).toBe("queued");
     const { listProposals } = await import("../../src/commands/proposal/repository");
-    // proposals.ref is the durable item_ref; result.proposalRef is the
-    // display spelling, so query the queue directly (one proposal here).
+    // WI-8.5a: proposals.ref is now the durable item_ref; result.proposalRef is the
+    // legacy display spelling, so query the queue directly (one proposal here).
     const proposals = listProposals(stash);
     expect(proposals.length).toBeGreaterThan(0);
     const proposal = proposals[0];
@@ -1725,10 +1730,11 @@ describe("fast path calls LLM merge when destination knowledge exists (#369)", (
   });
 });
 
-// ── Pipeline-fix regression tests ────────────────────────────────────────────
+// ── Pipeline-fix regression tests (improve-pipeline-fixes branch) ────────────
 //
-// These tests pin systematic failure modes of distilled proposals. Each test
-// maps to one of four root causes:
+// These tests pin the systematic failure modes observed across 323 archived
+// rejected distill proposals on the 0.8.x release branch. Each test maps to
+// one of the four root causes the pipeline fix targets:
 //   1. Recursive lesson distillation (lesson:lesson-…-lesson-lesson refs).
 //   2. Double-frontmatter blocks (YAML header + bold-markdown restatement).
 //   3. `description` is a section-heading fragment or placeholder.
@@ -1769,8 +1775,8 @@ describe("isValidDescription (pipeline-fix regression)", () => {
     expect(r.ok).toBe(false);
   });
 
-  // Code-fragment shape — e.g.
-  // `description: "def _dedup_proposal(proposal)"` (the LLM pasted a function
+  // Code-fragment shape — added 2026-05-21 after triage found a proposal with
+  // `description: "def _dedup_proposal(proposal)"` (LLM pasted a function
   // signature from the source memory body into the description field).
   test.each([
     "def _dedup_proposal(proposal) -> ProposalResult",
@@ -1903,7 +1909,7 @@ describe("akmDistill — pipeline-fix integration", () => {
     expect(result.proposalRef).not.toMatch(/-lesson-lesson$/);
   });
 
-  test("refuses env/secret refs as input (secret bytes never reach the LLM)", async () => {
+  test("refuses env/secret refs as input (08-F2: secret bytes never reach the LLM)", async () => {
     const stash = makeStashDir();
     for (const ref of ["env/prod-api", "secrets/signing-key"]) {
       const result = await akmDistill({
@@ -1929,7 +1935,7 @@ describe("akmDistill — pipeline-fix integration", () => {
   });
 
   test("LLM returns the archived recursive-lesson bad fixture → routed to review, not discarded", async () => {
-    // Modeled on a real bad proposal (lesson-of-a-lesson
+    // Synthesised from proposal id 187de1c9-d7eb-47c1-92a2-23ad29f669cc (lesson-of-a-lesson
     // with double frontmatter, placeholder description, and circular when_to_use). The
     // recursive-ref guard fires first, so chat is never called — but to be defensive we
     // also exercise the path where the bad content comes from a non-lesson source.
@@ -1959,7 +1965,7 @@ describe("akmDistill — pipeline-fix integration", () => {
     expect(result.outcome).toBe("review_needed");
     expect(result.score).toBe(2.0);
     expect(result.reason).toMatch(/description|when_to_use|frontmatter/);
-    // review_needed now mints a pending proposal so a human can triage
+    // R10: review_needed now mints a pending proposal so a human can triage
     // it in the normal queue.
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
@@ -1994,7 +2000,7 @@ describe("akmDistill — pipeline-fix integration", () => {
     });
 
     expect(result.outcome).toBe("review_needed");
-    // review_needed now mints a pending proposal for human triage.
+    // R10: review_needed now mints a pending proposal for human triage.
     expect(listProposals(stash)).toHaveLength(1);
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.at(-1)?.metadata?.outcome).toBe("review_needed");
@@ -2024,9 +2030,9 @@ describe("akmDistill — pipeline-fix integration", () => {
   });
 });
 
-// ── judge-verdict routing + output encoding salience ─────────────────────────
+// ── R3/G4: judge-verdict routing + output encoding salience ──────────────────
 
-describe("akmDistill — judge verdict routing + output encoding salience", () => {
+describe("akmDistill — R3 judge verdict routing + G4 output encoding salience", () => {
   test("generation and quality judging each read the credential at dispatch; neither value is persisted", async () => {
     const stash = makeStashDir();
     const sourcePath = path.join(stash, "skills", "deploy.md");
@@ -2112,13 +2118,13 @@ describe("akmDistill — judge verdict routing + output encoding salience", () =
     });
     expect(result.outcome).toBe("queued");
 
-    // The judge verdict is longitudinally queryable on the queued event
+    // R3: the judge verdict is longitudinally queryable on the queued event
     // (normalized score/5), not just a one-shot proposal.confidence write.
     const { events } = readEvents({ type: "distill_invoked" });
     const queued = events.find((e) => e.metadata?.outcome === "queued");
     expect(queued?.metadata?.judgeConfidence).toBeCloseTo(4.5 / 5, 9);
 
-    // The OUTPUT lesson ref carries a real content-derived encoding score
+    // G4: the OUTPUT lesson ref carries a real content-derived encoding score
     // from creation (lessons are refused as distill inputs, so this is their
     // only chance to escape the type-weight stub).
     const db = openStateDatabase();
@@ -2132,7 +2138,7 @@ describe("akmDistill — judge verdict routing + output encoding salience", () =
     }
   });
 
-  // The gate staged 12 lessons in one review and 10 were bad, so a pass is a person's call, not the drain's.
+  // The gate staged 12 lessons on 2026-10-05 and 10 were bad, so a pass is a person's call, not the drain's.
   test("a lesson that passes the judge is deferred for review, with the judge's scores and reason", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
@@ -2214,7 +2220,7 @@ describe("akmDistill — judge verdict routing + output encoding salience", () =
     expect(listProposals(stash)).toEqual(before);
   });
 
-  test("end-to-end: gate ON + unjudgeable verdict → routed to review, never auto-queued", async () => {
+  test("07 P0-2 end-to-end: gate ON + unjudgeable verdict → routed to review, never auto-queued", async () => {
     const stash = makeStashDir();
     // Distill returns a valid lesson, but the judge's second call receives the
     // same non-JSON text → parse failure → the gate fails CLOSED. This drives
@@ -2230,7 +2236,7 @@ describe("akmDistill — judge verdict routing + output encoding salience", () =
     });
     expect(result.outcome).toBe("review_needed");
     expect(result.score).toBe(-1);
-    // review_needed mints a pending proposal (for human triage) — the
+    // R10: review_needed mints a pending proposal (for human triage) — the
     // point of this test is that it is never auto-QUEUED as accepted content.
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
@@ -2303,7 +2309,7 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
   // evidence about the memory. The lessons it produced were about the tool
   // error, not the memory's subject, and became proposals for a human. A lesson
   // criterion at 2 or below rejects, so does the lesson that states what neither
-  // its source nor its feedback does.
+  // its source nor its feedback does (17 of the 19 queued on 2026-10-05 were bad).
   describe("a lesson the judge scores 2 or below on a criterion, or about a different subject than its source (#999)", () => {
     const TOOL_FAILURE = "The curated ref could not be shown because two physical assets share the same logical ref.";
     const RUNBOOK = "Run the report against the nightly snapshot, then compare p95 latency with last week.";
@@ -2411,8 +2417,8 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
       expect(ledgerRow(fixture)).toMatchObject({ outcome: "review_needed" });
     });
 
-    // A lesson that says what neither its source nor its feedback says is an invention. It is
-    // rejected, with the judge's reason in the ledger.
+    // A lesson that says what neither its source nor its feedback says is an invention. It reached a reviewer
+    // as a borderline on 2026-10-05; it is rejected now, with the judge's reason in the ledger.
     test("grounding 2 is quality_rejected like grounding 1, whatever the mean is", async () => {
       const fixture = setup();
       const reason = "On the runbook's subject, but it adds a cause the runbook does not state.";
@@ -2513,7 +2519,7 @@ Bind the gateway to port 8081. Port 8080 conflicts with another service on the h
     });
 
     // The generator is given the source body, frontmatter stripped, first 3000
-    // characters. The judge can reject on grounding, so it reads that same
+    // characters. The judge can now reject on grounding, so it reads that same
     // slice rather than the raw file's first 2000 characters, which for a
     // memory with a long frontmatter block are all frontmatter.
     test("the judge is given the source body the lesson was generated from, not the raw file", async () => {
@@ -2573,7 +2579,7 @@ Always restart the gateway once the deploy finishes. A running gateway keeps ser
 // ── A lesson that already exists is not overwritten ─────────────────────────
 //
 // The lesson ref derives from the memory's name, so a second distill of the same memory proposes the same ref, and
-// accepting it replaces the lesson, which reviewers rejected every time.
+// accepting it replaces the lesson. All 5 such overwrites recorded by the 2026-10-05 review were rejected.
 
 describe("akmDistill — a lesson already at the target ref", () => {
   function writeLesson(stash: string, name: string): { filePath: string; content: string } {
@@ -2680,7 +2686,7 @@ describe("akmDistill — a lesson already at the target ref", () => {
   });
 });
 
-// Most memories record what was done rather than a lesson, so the prompt and schema must not force a lesson
+// 18 of the 19 memories distilled on 2026-10-05 recorded what was done, and the prompt and schema forced a lesson
 // from every one. The writer may find none.
 describe("akmDistill — the writer finds no lesson", () => {
   const NONE_JSON = (reason: string) =>

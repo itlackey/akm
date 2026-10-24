@@ -208,7 +208,7 @@ describe("runSetupFromConfig — deep merge", () => {
   });
 });
 
-describe("runSetupFromConfig — top-level key allowlist", () => {
+describe("runSetupFromConfig — top-level key allowlist (R-017)", () => {
   function captureWarnings(): string[] {
     const warnCalls: string[] = [];
     overrideSeam(_setWarnSinkForTests, (level, args) => {

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Index verification truthfulness (the "Semantic" release gate).
+ * Index verification truthfulness (§24.2 "Semantic" release gate).
  *
  * 1. The semantic status reflects the stored vectors: `ready-js` once every
  *    entry has one, whatever width the provider served, and `blocked` when
@@ -98,7 +98,8 @@ describe("index verification truthfulness", () => {
   test("a failing embedding provider lands a real 'blocked' verification, not a crash or a lie", async () => {
     // Drives an actual provider failure through akmIndex() to the persisted
     // status — the production glue between "the fetch threw" and
-    // "semanticStatus: blocked".
+    // "semanticStatus: blocked" that only manually-written status files
+    // exercised before.
     server = Bun.serve({
       port: 0,
       fetch: () => new Response("upstream exploded", { status: 500 }),

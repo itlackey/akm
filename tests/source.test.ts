@@ -215,8 +215,9 @@ describe("source commands and resolution", () => {
     const stashDir = createTmpDir("akm-stash-");
     try {
       await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
-        // The error should not leak "Stash type root" wording; be user-facing, and
-        // name the slash conceptId (`agents/missing.md`).
+        // QA #27: error should not leak "Stash type root" wording; be user-facing.
+        // 0.9.0 (Q-02): the retired `type:name` colon grammar is gone — the
+        // message now emits the slash conceptId (`agents/missing.md`).
         await expect(akmShow({ ref: "agents/missing.md" })).rejects.toThrow(
           /Asset not found for ref: agents\/missing\.md|not found for ref/i,
         );
@@ -244,9 +245,9 @@ describe("source commands and resolution", () => {
   test("akmShow rejects traversal and absolute path refs", async () => {
     const stashDir = createTmpDir("akm-stash-");
     await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
-      // The conceptId validator (`validateName`) is the path-safety guard: a
-      // `../`-leading conceptId trips traversal, an absolute path trips the
-      // absolute-path guard — both at the input-parse boundary.
+      // The new-grammar conceptId validator (`validateName`) is the path-safety
+      // guard: a `../`-leading conceptId trips traversal, an absolute path trips
+      // the absolute-path guard — both at the input-parse boundary.
       await expect(akmShow({ ref: "../outside.sh" })).rejects.toThrow(/Path traversal/);
       await expect(akmShow({ ref: "/etc/passwd" })).rejects.toThrow(/Absolute path/);
     });
@@ -451,7 +452,7 @@ Creates a user.
 
   test("akmInit returns created false when stash dir already exists", async () => {
     const tmpHome = createTmpDir("akm-home-");
-    // Pre-create the akm directory at the default location (~/akm)
+    // Pre-create the akm directory at the new default location (~/akm)
     const stashPath = path.join(tmpHome, "akm");
     fs.mkdirSync(stashPath, { recursive: true });
 

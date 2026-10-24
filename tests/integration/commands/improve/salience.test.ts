@@ -54,12 +54,12 @@ function openTestStateDb() {
 
 // ── Weight contract ────────────────────────────────────────────────────────────
 
-describe("salience weight contract", () => {
+describe("WS-1/WS-2 weight contract", () => {
   test("W_ENCODING + W_OUTCOME + W_RETRIEVAL = 1.0", () => {
     expect(W_ENCODING + W_OUTCOME + W_RETRIEVAL).toBeCloseTo(1.0, 9);
   });
 
-  test("W_OUTCOME constant is 0.15 (target value)", () => {
+  test("W_OUTCOME constant is 0.15 (WS-2 target value)", () => {
     // The constant reflects the WS-2 opt-in target. The weight is only
     // applied in the rankScore projection when outcomeWeightEnabled=true.
     expect(W_OUTCOME).toBe(0.15);
@@ -69,7 +69,7 @@ describe("salience weight contract", () => {
     expect(W_ENCODING_PARITY + W_OUTCOME_PARITY + W_RETRIEVAL_PARITY).toBeCloseTo(1.0, 9);
   });
 
-  test("parity constants reflect the two-way split (w_e=0.30, w_r=0.70, w_o=0)", () => {
+  test("parity constants reflect WS-1 two-way split (w_e=0.30, w_r=0.70, w_o=0)", () => {
     expect(W_ENCODING_PARITY).toBe(0.3);
     expect(W_OUTCOME_PARITY).toBe(0);
     expect(W_RETRIEVAL_PARITY).toBe(0.7);
@@ -182,7 +182,7 @@ describe("computeSalience — outcome sub-score", () => {
     expect(v.outcome).toBe(1.0);
   });
 
-  test("outcome affects rankScore by DEFAULT (loop closure) and not on explicit opt-out", () => {
+  test("outcome affects rankScore by DEFAULT (R1 loop closure) and not on explicit opt-out", () => {
     // Default: outcomeWeightEnabled absent → WS-2 weights (w_o=0.15) — the
     // outcome signal shapes ranking out of the box.
     const vHigh = computeSalience({
@@ -225,7 +225,7 @@ describe("computeSalience — outcome sub-score", () => {
     expect(vZeroOff.outcome).toBe(0);
   });
 
-  test("opt-out rankScore matches the parity formula exactly (ranking-invariance assertion)", () => {
+  test("opt-out rankScore matches WS-1 parity formula exactly (ranking-invariance assertion)", () => {
     // Integration invariant: outcomeWeightEnabled=false must produce rankScore
     // equal to (W_ENCODING_PARITY * encoding + W_RETRIEVAL_PARITY * retrieval) *
     // sizePenalty, clamped to [0,1].  This test uses deterministic inputs and
@@ -344,7 +344,7 @@ describe("computeSalience — retrieval sub-score", () => {
     expect(noUse.retrieval).toBeLessThan(recent.retrieval);
   });
 
-  test("recency floor keeps decaying on the long half-life (no parking at 0.1)", () => {
+  test("recency floor keeps decaying on the long half-life (R4 — no parking at 0.1)", () => {
     // Under the old formula both very-stale assets parked at the 0.1 floor and
     // became indistinguishable. The floor now halves every 180 days, so an
     // unreviewed-forever asset keeps drifting down monotonically.

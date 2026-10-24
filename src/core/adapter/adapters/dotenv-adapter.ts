@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `dotenv` adapter.
+ * The `dotenv` adapter — akm 0.9.0 format-family work item (#46).
  *
- * A metadata-only env/secret bundle. REDACTION IS
+ * A metadata-only env/secret bundle (spec §6/§7, normative §21.2). REDACTION IS
  * A HARD CONTRACT keyed on the ADAPTER, never on the open `type` value (a
  * frontmatter `type:` cannot opt out):
  *   - `env/*.env` → `type: env` — only the KEY NAMES are surfaced (on `hints`);
@@ -17,7 +17,7 @@
  * conceptId: env strips `.env`; secret keeps its natural path (including any
  * extension). Neither branch ever writes a value onto the emitted document.
  *
- * ── validate ──
+ * ── validate (spec §6 env/secret validation column) ──
  *
  * The dangerous-key scan (`dangerous-env-key`), reusing the akm adapter's
  * `dangerousEnvKeyDiagnostics` — which preserves the code-grounded narrowness:
@@ -46,7 +46,7 @@ const COMPONENT_ID = "main";
 const ENV_DIR = "env";
 /** The `secrets/` content subdir (whole-file secrets). */
 const SECRETS_DIR = "secrets";
-/** Non-secret marker suffixes under `secrets/`. */
+/** Non-secret marker suffixes under `secrets/` (spec §6 secret row). */
 const SECRET_SKIP_SUFFIXES = [".lock", ".sensitive"];
 
 type DotenvType = "env" | "secret";
@@ -74,12 +74,13 @@ function classify(relPath: string): DotenvType | null {
  * `secrets/<name>`.
  *
  * The flag documents itself as excluding the asset from BOTH `env list` output
- * and the search index. Indexing filters are adapter-owned, so this adapter
- * must honor the marker itself, not only skip files whose OWN name ends in
- * `.sensitive`: a dotenv bundle is a legal env/secret write target, and a
- * marked `env/prod.env` indexed with every KEY NAME as a hint (or a marked
- * secret indexed by name) would contradict `env list` / `secret list`, which
- * hide them.
+ * and the search index. Indexing filters are adapter-owned (the walk no longer
+ * pre-filters), and the akm adapter abstains on the marker — but this adapter
+ * only skipped files whose OWN name ended in `.sensitive`. A dotenv bundle is a
+ * legal env/secret write target, so a marked `env/prod.env` there was still
+ * indexed with every KEY NAME as a hint and a marked secret still indexed by
+ * name, while `env list` / `secret list` correctly hid them. The two surfaces
+ * disagreed about a documented promise.
  */
 function hasSensitiveMarker(absPath: string, type: DotenvType): boolean {
   const marker = type === "env" ? absPath.replace(/\.env$/i, ".sensitive") : `${absPath}.sensitive`;
@@ -208,7 +209,7 @@ export const dotenvAdapter: BundleAdapter = {
   },
 
   /**
-   * Install-time probe: a root whose ONLY content dirs are `env/` and/or
+   * Install-time probe (§1.2): a root whose ONLY content dirs are `env/` and/or
    * `secrets/` (at least one present). The env/secrets-ONLY requirement keeps a
    * full akm workspace — which also carries `env/` + `secrets/` alongside many
    * other stash subdirs — from being mistaken for a dotenv bundle, so the probe

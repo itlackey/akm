@@ -3,19 +3,27 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Shadow-parity gate: the PERSISTED INDEX (built by the real `akmIndex` over
- * the fixture stashes) must match the `recognize` stream that produced it —
- * proving the indexer persists exactly what `akmAdapter.recognize`
- * recognizes, with the durable identity:
+ * Chunk 5 F4a M-core-3 — FLIPPED shadow-parity gate (the F4 regression net).
+ *
+ * Before the flip this file compared two IN-MEMORY streams: the legacy
+ * `generateMetadataFlat` `IndexDocument` stream vs the `scanComponent`
+ * `IndexDocument` stream. F4a M-core-2 made `scanComponent`-style
+ * `akmAdapter.recognize` the LIVE indexer engine and M-core-3 DELETED
+ * `generateMetadataFlat`, so there is no legacy stream left to compare against.
+ *
+ * The gate now asserts the PERSISTED INDEX (built by the real `akmIndex` over
+ * the fixture stashes) against the `recognize` stream that produced it — proving
+ * the engine swap persists exactly what `recognize` recognizes, with the durable
+ * D-R2 identity:
  *
  *   1. same set of ITEMS (no item gained or lost), keyed by `(type, conceptId)`;
- *   2. every item persists with `item_ref == <bundle>//<conceptId>` and a
- *      populated `content_hash` (the diff-persist provenance write);
+ *   2. every item persists with `item_ref == <bundle>//<conceptId>` (D-R2) and a
+ *      populated `content_hash` (the diff-persist provenance write, M-core-2);
  *   3. the durable `document_json` deep-equals `indexDocumentToStashEntry(doc)` —
  *      the exact IndexDocument `recognize` reconstructs — modulo the persist-time
  *      `fileSize` (attached by `withFileSize`, absent from the doc). This one
- *      equality SUBSUMES folded-search-fields and filter/ranking-signal checks:
- *      every one of those surfaces is derived from `document_json`.
+ *      equality SUBSUMES the old folded-search-fields and filter/ranking-signal
+ *      arms: every one of those surfaces is derived from `document_json`.
  *
  * Run over `all-types` (every asset type) and `search-filter` (rich curated/
  * belief/scope frontmatter + `.derived` twins).
@@ -41,7 +49,8 @@ const STASHES: Array<{ name: string; root: string }> = [
 /**
  * The `recognize` document stream — the engine's own source of truth: fold the
  * `akm` adapter's `recognize` over the same `walkStashFlat(root)` files the live
- * indexer drains (the walk×recognize mapping).
+ * indexer drains (the walk×recognize mapping that replaced the retired
+ * `scanComponent` module, owner ruling 2026-07-21).
  */
 function newStream(root: string): IndexDocument[] {
   const bundle = "parity";
@@ -64,7 +73,7 @@ interface PersistedRow {
   entry: any;
 }
 
-/** Identity key: type + conceptId, the ref's distinguishing pair. */
+/** new identity key: type + conceptId (the D-R2 qualified spelling), the ref's distinguishing pair. */
 const docKey = (d: IndexDocument): string => `${d.type}:${d.conceptId}`;
 const rowKey = (r: PersistedRow): string => `${r.entryType}:${r.conceptId}`;
 
@@ -124,7 +133,7 @@ for (const { name, root } of STASHES) {
       expect(new Set(rows.map(rowKey))).toEqual(new Set(docs.map(docKey)));
     });
 
-    test("each item persists with item_ref = <bundle>//<conceptId> and a content_hash", () => {
+    test("each item persists with item_ref = <bundle>//<conceptId> (D-R2) and a content_hash", () => {
       const rowByKey = new Map(rows.map((r) => [rowKey(r), r]));
       // All rows share ONE bundle prefix (single-source fixture).
       const bundles = new Set(rows.map((r) => r.itemRef?.split("//")[0]));
@@ -133,7 +142,7 @@ for (const { name, root } of STASHES) {
         const r = rowByKey.get(docKey(d));
         expect(r, `no persisted row for ${docKey(d)}`).toBeDefined();
         if (!r) continue;
-        // item_ref's suffix is exactly the conceptId (proves the durable identity).
+        // item_ref's suffix is exactly the conceptId (proves the D-R2 identity).
         expect(r.itemRef).toBe(`${r.itemRef?.split("//")[0]}//${d.conceptId}`);
         expect(r.contentHash, `content_hash for ${docKey(d)}`).toBeTruthy();
       }

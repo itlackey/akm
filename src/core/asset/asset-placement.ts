@@ -3,12 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Pure recognition/placement layer for the built-in akm asset types.
+ * Pure recognition/placement layer for the built-in akm asset types — akm
+ * 0.9.0 chunk-3 (the taxonomy-cutover leaf).
  *
  * This module is the SINGLE SOURCE OF TRUTH for the `AssetSpec` filesystem
  * surface (`stashDir`/`isRelevantFile`/`toCanonicalName`/`toAssetPath`), the
  * per-type stash-subdir map, and the derive/resolve helpers built on them.
- * The surface is reached through the small typed
+ * Chunk-3 deleted the mutable taxonomy globals that used to expose this data
+ * as ambient registries; the surface is now reached through the small typed
  * accessors below (`stashDirFor`/`stashDirNames`/`placementTypes`/
  * `assetPathForName`/`placementSpecFor`), which the `akm` bundle adapter
  * (`adapter/adapters/akm-adapter.ts`) consumes for placement.
@@ -95,8 +97,8 @@ const BUILTIN_PLACEMENT_SPECS = {
   command: { stashDir: "commands", ...markdownSpec },
   agent: { stashDir: "agents", ...markdownSpec },
   knowledge: { stashDir: "knowledge", ...markdownSpec },
-  // `instruction` as a real stash-resident type, mirroring `knowledge`'s plain
-  // markdown spec.
+  // R-045 / Q-18 second half (owner ruling 11, EXECUTE NOW) — `instruction` as
+  // a real stash-resident type, mirroring `knowledge`'s plain markdown spec.
   // This is distinct from the ADAPTER-OWNED instruction docs emitted by
   // format-family adapters (root CLAUDE.md/AGENTS.md via `tool-dir-shared.ts`):
   // those carry `document.ownsPresentation === true` and are routed straight
@@ -110,9 +112,10 @@ const BUILTIN_PLACEMENT_SPECS = {
   workflow: { stashDir: "workflows", ...workflowSpec },
   script: { stashDir: "scripts", ...scriptSpec },
   memory: { stashDir: "memories", ...markdownSpec },
-  // Environment assets — whole `.env` files sourced/injected wholesale. Only
-  // key NAMES are surfaced as metadata; values and comment text are never read
-  // for indexing (comments routinely contain commented-out credentials).
+  // Environment assets — whole `.env` files sourced/injected wholesale. Replaced
+  // the deprecated `vault` type (removed in 0.9.0). Only key NAMES are surfaced
+  // as metadata; values and comment text are never read for indexing (comments
+  // routinely contain commented-out credentials).
   env: {
     stashDir: "env",
     isRelevantFile: (fileName) => fileName === ".env" || fileName.endsWith(".env"),
@@ -144,7 +147,7 @@ const BUILTIN_PLACEMENT_SPECS = {
     toCanonicalName: (typeRoot, filePath) => toPosix(path.relative(typeRoot, filePath)),
     toAssetPath: (typeRoot, name) => path.join(typeRoot, name),
   },
-  // `lesson` asset type. Required frontmatter fields are
+  // v1 spec §13 — `lesson` asset type. Required frontmatter fields are
   // `description` and `when_to_use`; lint enforces both.
   lesson: { stashDir: "lessons", ...markdownSpec },
   // Scheduled tasks. A task file pairs a cron-style schedule with a target
@@ -167,15 +170,15 @@ const BUILTIN_PLACEMENT_SPECS = {
   // `sessions/<harness>/<session-id>.md`.
   session: { stashDir: "sessions", ...markdownSpec },
   // Durable stash-level semantic knowledge — facts about the user, team, or
-  // project. A plain markdown spec.
+  // project. A plain markdown spec; see docs/architecture/specs/fact-asset-type.md.
   fact: { stashDir: "facts", ...markdownSpec },
 } satisfies Record<string, AssetSpec>;
 
 /**
- * Compile-time `placementTypes() ⊆ KNOWN_TYPES` subset assertion: every key of
- * the STATIC built-in table above must also be a
+ * Compile-time `placementTypes() ⊆ KNOWN_TYPES` subset assertion (owner
+ * ruling 11): every key of the STATIC built-in table above must also be a
  * {@link KnownType} (`core/recognition-util.ts`), so the two registries can
- * never silently drift apart. `satisfies Record<string, AssetSpec>`
+ * never silently drift apart again. `satisfies Record<string, AssetSpec>`
  * above preserves the literal key union (a plain `Record<string, AssetSpec>`
  * annotation would widen it to `string` and defeat this check); if a future
  * edit adds a `BUILTIN_PLACEMENT_SPECS` key that is not in `KNOWN_TYPES`,

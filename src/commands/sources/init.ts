@@ -129,7 +129,7 @@ async function akmInitReal(options?: {
   // Ensure the default stash is a local git repo (no remote required)
   ensureGitRepo(stashDir);
 
-  // Scaffold a default `.gitignore` that keeps env/ + secrets/ out of git
+  // 08-F1: scaffold a default `.gitignore` that keeps env/ + secrets/ out of git
   // so a `git push` can never leak them. Idempotent + non-clobbering; the user
   // opts into versioning by un-ignoring a path.
   ensureStashGitignore(stashDir);
@@ -158,8 +158,8 @@ async function akmInitReal(options?: {
   let previousStashDir: string | undefined;
   if (options?.persistConfig !== false) {
     const result = mutateConfig((latest) => {
-      // The primary stash is the `defaultBundle`'s filesystem `path`, not the
-      // retired top-level `stashDir`.
+      // 0.9.0 (spec §10.1): the primary stash is the `defaultBundle`'s filesystem
+      // `path`, not the retired top-level `stashDir`.
       const currentPrimary = primaryBundlePath(latest);
       const shouldPersist = !dirExplicitlyProvided || !currentPrimary || setDefault;
       if (!shouldPersist) {

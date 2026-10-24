@@ -3,11 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Declared-output resolution and the exported result.
+ * Declared-output resolution and the exported result (P3b, spec
+ * docs/plans/specs/p3b-child-executor.md §4.3, §4.4).
  *
  * Pure; no IO. `resolveWorkflowRunOutputs` reads PERSISTED step rows (never
  * live in-memory evidence — `completeWorkflowStep` sees only the current
- * step's; a resumed run has nothing else to rebuild the scope from)
+ * step's; a resumed run has nothing else to rebuild the scope from, B-N12)
  * and fails loudly, by name, when a declared output's source artifact was
  * replaced by a truncation envelope at persistence.
  *

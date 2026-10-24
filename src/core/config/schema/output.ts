@@ -3,7 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `output` config section.
+ * `output` config section. Extracted verbatim from the former `config-schema.ts`
+ * monolith — no behavior change.
  */
 import { z } from "zod";
 
@@ -11,7 +12,7 @@ import { z } from "zod";
 
 export const OutputConfigSchema = z
   .object({
-    // Every `--format` value is a valid default, not just the three that
+    // D7 — every `--format` value is a valid default, not just the three that
     // predated universal md/html rendering. Kept in step with OUTPUT_FORMATS
     // (`src/output/context.ts`).
     format: z.enum(["json", "yaml", "text", "jsonl", "md", "html"]).optional(),

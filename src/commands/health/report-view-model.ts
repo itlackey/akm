@@ -4,7 +4,7 @@
 
 /**
  * Pure `AkmHealthResult` (+ report options) → `HealthReportViewModel`
- * extractor for the health HTML report.
+ * extractor for the health HTML report (chunk-9 WI-9.5a / H2, anchors C.6).
  *
  * Every computed number, string, boolean, and series the report shows is
  * derived here — deltas, trends, staleness, rate/duration formatting, the
@@ -404,7 +404,7 @@ type AggregatesPhase = Pick<
   | "failedRuns"
 >;
 
-/** Aggregates + the sub-rollups + their formatted-rate strings. */
+/** Aggregates (collect.py step 6) + the WS-5 sub-rollups + their formatted-rate strings. */
 function buildAggregatesPhase(result: AkmHealthResult, runsPhase: RunsPhase): AggregatesPhase {
   const { runs, invalidRuns } = runsPhase;
   const improve = result.improve;
@@ -553,7 +553,7 @@ function groupProposalsBySource(proposals: PendingProposalLike[]): Array<[string
   return [...bySource.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
 
-/** Summary table rows: the base metric set + the coverage/minting/perf/degradation extensions, when present. */
+/** Summary table rows: the base metric set + the WS-5 coverage/minting/perf/degradation extensions, when present. */
 function buildSummaryRows(aggregates: AggregatesPhase, trend: TrendBlock): SummaryRow[] {
   const { consolidation: cons, wallTime, llm, coverage } = aggregates;
 
@@ -619,8 +619,10 @@ function buildSummaryRows(aggregates: AggregatesPhase, trend: TrendBlock): Summa
 /**
  * Extract the health HTML report's view model from an `AkmHealthResult` +
  * report options. Pure — no HTML, no I/O, no clock/RNG reads. Byte-identical
- * output for identical inputs. One phase helper per section above; this
- * function is the extract-then-compose glue.
+ * output for identical inputs, mirroring the pre-split
+ * `buildHealthHtmlReplacements` arithmetic exactly. File-level decomposed
+ * (chunk-9 WI-9.5a) into one phase helper per section above; this function is
+ * the extract-then-compose glue.
  */
 export function buildHealthReportViewModel(
   result: AkmHealthResult,

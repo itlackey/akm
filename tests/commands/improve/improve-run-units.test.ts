@@ -3,11 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Focused unit coverage for the pure run units extracted from `akmImprove`.
+ * WI-7.7 — focused unit coverage for the pure run units extracted from
+ * `akmImprove` (R31 decomposition, testability requirement).
  *
- * The lock-skipped and dry-run envelope builders are driven directly — no
- * lock, no LLM, no stage sequencing. The exit-path topology itself stays
- * pinned by the akmImprove characterization suites (improve-skip-if-locked,
+ * The P2/P3 envelope builders are driven directly — no lock, no LLM, no stage
+ * sequencing. The exit-path topology itself (P1–P8) stays pinned by the
+ * akmImprove characterization suites (improve-skip-if-locked,
  * improve-dry-run-side-effects, improve-lock-invariants,
  * improve-budget-watchdog, ...).
  */
@@ -16,7 +17,7 @@ import { describe, expect, test } from "bun:test";
 import { buildDryRunResult, buildLockSkippedResult } from "../../../src/commands/improve/improve";
 import type { ImproveEligibleRef } from "../../../src/core/improve-types";
 
-describe("buildLockSkippedResult — the envelope", () => {
+describe("buildLockSkippedResult — the P2 envelope", () => {
   test("field-exact skip envelope, runId conditional", () => {
     const withRunId = buildLockSkippedResult("default", { mode: "all" }, "run-1");
     expect(withRunId).toEqual({
@@ -38,7 +39,7 @@ describe("buildLockSkippedResult — the envelope", () => {
   });
 });
 
-describe("buildDryRunResult — the envelope", () => {
+describe("buildDryRunResult — the P3 envelope", () => {
   test("plan-only envelope with conditional guidance/cleanup/filtered spreads", () => {
     const run = {
       selectedStrategy: { name: "default" },

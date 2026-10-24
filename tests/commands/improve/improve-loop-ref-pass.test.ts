@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Focused unit coverage for the per-ref improve-loop pass extracted from
- * `runImproveLoopStage`.
+ * WI-7.7 — focused unit coverage for the per-ref improve-loop pass extracted
+ * from `runImproveLoopStage` (R31 decomposition, testability requirement).
  *
  * `processImproveLoopRef` is driven directly with injected `reflectFn` /
  * `distillFn` seams — no LLM, no index.db — and its returned {@link LoopRefTally}
@@ -118,7 +118,7 @@ describe("processImproveLoopRef — reflect half", () => {
     const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
 
     // The distill half always records its type-filter skip for knowledge refs
-    // (default distill allowedTypes is ["memory"]).
+    // (default distill allowedTypes is ["memory"]) — same as the inline loop did.
     expect(tally.actions.map((a) => a.mode)).toEqual(["reflect", "distill-skipped"]);
     expect(tally.recentErrorPushes).toEqual([]);
     expect(tally.reflectsWithErrorContext).toBe(0);
@@ -157,7 +157,7 @@ describe("processImproveLoopRef — reflect half", () => {
 
     const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
 
-    // #378: only reflect-originator errors reach the prompt.
+    // O-5 / #378: only reflect-originator errors reach the prompt.
     expect(receivedAvoid).toEqual(["boom 1", "boom 2"]);
     expect(tally.reflectsWithErrorContext).toBe(1);
   });
@@ -194,13 +194,13 @@ describe("processImproveLoopRef — reflect half", () => {
     expect(tally.actions[1]!.result).toEqual({ ok: true, reason: "type-filter" });
   });
 
-  test(".derived memory refs skip reflect with the synthetic action", async () => {
+  test(".derived memory refs skip reflect with the B6 synthetic action", async () => {
     const { stashDir } = freshSandbox();
     const env = makeEnv({ stashDir });
 
     const tally = await processImproveLoopRef(eligibleRef("memories/note.derived"), env);
 
-    // Derived-memory reflect skip, then the weak-signal distill skip (memory ref, no
+    // B6 reflect skip, then the weak-signal distill skip (memory ref, no
     // feedback signal, non-ref scope) — both synthetic, no seam invoked.
     expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped", "distill-skipped"]);
     expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "derived-memory-reflect-skipped" });
@@ -272,7 +272,7 @@ describe("processImproveLoopRef — distill half", () => {
   const memoryRef = "memories/finding-1";
 
   function distillOnlyEnv(overrides: Partial<ImproveLoopEnv> & { stashDir: string }): ImproveLoopEnv {
-    // distill-only refs skip the reflect call entirely, isolating the
+    // distill-only refs skip the reflect call entirely (Bug D2), isolating the
     // distill half; the ref bears a feedback signal so the weak-signal gate is open.
     return makeEnv({
       distillOnlyRefSet: new Set([memoryRef]),
@@ -386,7 +386,7 @@ describe("processImproveLoopRef — distill half", () => {
     expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "require_planned_refs" });
   });
 
-  test("a UsageError from distill is recorded as a validation_failed distill action", async () => {
+  test("B7: a UsageError from distill is recorded as a validation_failed distill action", async () => {
     const { stashDir } = freshSandbox();
     const env = distillOnlyEnv({
       stashDir,

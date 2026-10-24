@@ -316,10 +316,12 @@ describe("findSafeInsertionPointInText", () => {
 
 // ── Integration: safe line insertion ─────────────────────────────────────────
 //
-// `findSafeInsertionPoint` + `splice` — the logic the former
-// `BaseLinter.insertLinesSafely` helper wrapped — are exercised directly here.
+// akm 0.9.0 chunk-3 (plan §12): the `BaseLinter.insertLinesSafely` protected
+// helper died with the linter class hierarchy (it was unused by any linter).
+// Its two lines of logic — `findSafeInsertionPoint` + `splice` — are exercised
+// directly here, which is what the helper wrapped.
 
-/** Pick a safe insertion index, then splice. */
+/** The former `BaseLinter.insertLinesSafely` body: pick a safe index, splice. */
 function insertLinesSafely(raw: string, newLines: string[], proposedLineNumber: number): string {
   const ls = raw.split(/\r?\n/);
   const safeIdx = findSafeInsertionPoint(ls, proposedLineNumber);
@@ -348,7 +350,8 @@ describe("safe line insertion (findSafeInsertionPoint + splice)", () => {
       "More text after the table.",
     ].join("\n");
 
-    // Proposed line 12 = inside the table body (between data rows).
+    // Proposed line 12 = inside the table body (between data rows). This is
+    // exactly the regression case from the akm-stash alignment sweep.
     const callout = ["", "> NOTE: Task files must be `.yml`.", ""];
     const fixed = insertLinesSafely(raw, callout, 12);
     const fixedLines = fixed.split("\n");
@@ -382,6 +385,8 @@ describe("safe line insertion (findSafeInsertionPoint + splice)", () => {
 
 describe("regression: akm-cli-reference table corruption", () => {
   test("callout proposed at line 5 of an Execution-section table lands after the table", () => {
+    // Mirrors the structure of knowledge/akm-cli-reference.md lines 64-72
+    // where the auto-fix originally split the table.
     const body = [
       "## Execution and authoring", // 0
       "", // 1

@@ -146,8 +146,8 @@ export const workflowMdRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const plan = loadPlan(ctx);
-    // The `akm workflow run <ref>` action is DISPLAY output — its spelling
-    // follows the display rule (`displayRef`). A
+    // WI-8.5b (display flip): the `akm workflow run <ref>` action is DISPLAY
+    // output — its spelling follows the D-R5 display rule (`displayRef`). A
     // primary/default-bundle workflow renders the SHORT conceptId
     // (`workflows/<name>`); a named source qualifies it as
     // (`<bundle>//workflows/<name>`).

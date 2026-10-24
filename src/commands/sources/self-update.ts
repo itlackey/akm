@@ -177,8 +177,8 @@ export function detectInstallMethod(signals?: InstallSignals): InstallMethod {
   }
 
   // Bun-compiled binaries: mainPath points to a virtual /$bunfs/
-  // path, NOT process.execPath (comparing mainPath to process.execPath is
-  // always false for compiled binaries).
+  // path, NOT process.execPath. The old check (mainPath === process.execPath) was
+  // always false for compiled binaries, causing "unknown" for every binary user.
   if (s.bunMain !== undefined) {
     // Primary check: compiled binaries embed sources under /$bunfs/
     if (s.bunMain.startsWith("/$bunfs/")) {
@@ -258,7 +258,7 @@ export async function checkForUpdate(
 /**
  * Whether the operator has asked to bypass upgrade checksum verification.
  *
- * Deliberately NOT a CLI flag: STABILITY.md states checksum verification
+ * Deliberately NOT a CLI flag (C6): STABILITY.md states checksum verification
  * is not optional, so the recovery hatch for a genuinely broken `checksums.txt`
  * is this internal, undocumented-on-purpose env var — not something
  * discoverable in `--help` or offered by tab completion.
@@ -625,7 +625,8 @@ async function runPackageManagerUpgrade(input: {
  * Read the version the on-PATH `akm` actually reports, or `undefined` when
  * that cannot be determined (no shim on PATH in a sandbox, unparseable
  * output). Verification is fail-open on its own infrastructure — only a
- * CONFIRMED mismatch downgrades an upgrade result.
+ * CONFIRMED mismatch downgrades an upgrade result (§24.2 Package/release
+ * gate).
  */
 function readInstalledCliVersion(akmBin: string): string | undefined {
   const result = childProcess.spawnSync(akmBin, ["--version"], {

@@ -3,12 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `src/core/recognition-util.ts` util home.
+ * WI-1.2 — `src/core/recognition-util.ts` util home (D1-4).
  *
  * Two things pinned here:
  *   (a) the four relocated symbols export with their expected values/shapes
  *       (a behavior-preserving move must not change them); and
- *   (b) the cycle-safety invariant — this module must import NOTHING
+ *   (b) the D1-5 cycle-safety invariant — this module must import NOTHING
  *       from `src/` — mechanized by reading the source text directly and
  *       asserting no `import ... from "..."` line references a relative
  *       (`./`/`../`) path, since a relative specifier from this file could
@@ -70,7 +70,7 @@ describe("recognition-util — relocated symbol values (behavior-preserving move
   });
 });
 
-describe("recognition-util — cycle-safety invariant (import-free)", () => {
+describe("recognition-util — D1-5 cycle-safety invariant (import-free)", () => {
   const SRC_PATH = path.join(import.meta.dir, "../../src/core/recognition-util.ts");
 
   test("the file exists at the expected util-home path", () => {
@@ -93,11 +93,13 @@ describe("recognition-util — cycle-safety invariant (import-free)", () => {
   });
 });
 
-// `asset-placement.ts`'s PLACEMENT_SPECS registry and this file's KNOWN_TYPES
-// tuple are two independently maintained registries. `asset-placement.ts` also
-// enforces this at COMPILE time (`_BuiltinPlacementKeysAreKnownTypes`), but that
-// check only covers the static built-in table; this runtime test is the
-// executable contract and pins `instruction`'s placement specifically.
+// Owner ruling 11 (R-045 / Q-18 second half): `asset-placement.ts`'s
+// PLACEMENT_SPECS registry and this file's KNOWN_TYPES tuple are two
+// independently maintained registries. `asset-placement.ts` also enforces
+// this at COMPILE time (`_BuiltinPlacementKeysAreKnownTypes`), but that check
+// only covers the static built-in table; this runtime test is the executable
+// contract the guardrail asked for and pins `instruction`'s placement
+// (the type this ruling registers) specifically.
 describe("placementTypes() ⊆ KNOWN_TYPES (owner ruling 11 — registries must never drift apart)", () => {
   test("every placement type key is a recognized KnownType", () => {
     for (const type of placementTypes()) {

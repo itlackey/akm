@@ -3,29 +3,74 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The unit/gate `hashVersion` vocabulary (rows A-11…A-16 in test names).
+ * P3a Lane A TESTS — the unit/gate `hashVersion` vocabulary (spec
+ * docs/plans/specs/p3a-plan-v5-child-freeze.md §3.3, rows A-11…A-16).
  *
- * `hashVersion` is 7: the unit AND gate prefixes carry the conditional
- * `taskInputs` preimage field — the RESOLVED values of a target's
- * `inputBindings` — and changing the preimage's coverage requires a bump. The
- * file KEEPS its historical name `hash-v6.test.ts`; sibling suites reference it
- * by name in their headers.
+ * NOW AT `hashVersion` 7: the R-R15 fix (PR #844 review finding F6) added the
+ * conditional `taskInputs` preimage field — the RESOLVED values of a target's
+ * `inputBindings`, striking §3.3's documented exclusion #4 — and bumped the
+ * unit AND gate prefixes 6 → 7 in lockstep (P4's own recorded imperative,
+ * docs/plans/specs/p4-deletions-closeout.md §8 criterion 8; ADR-0002's rule
+ * that changing the preimage's coverage requires a bump). `hashVersion` 6
+ * never shipped in any released tag (v0.9.2-alpha.1…4 all carry v5), so the
+ * bump invalidates no released user's journal. The file KEEPS its historical
+ * name — sibling suites reference `hash-v6.test.ts` by name in their headers,
+ * and the P3a narrative below is history, accurate as written for the values
+ * P3a landed.
  *
- * `computeChildInvocationKey` (rows A-17…A-19) is deliberately NOT in this file
- * — see `tests/workflows/child-invocation-key.test.ts`. Combining them would
- * make `child-invocation.ts` a STATIC top-level import here, so a failure to
- * load it would hide this file's own results.
+ * `computeChildInvocationKey` (§3.4, rows A-17…A-19) is deliberately NOT in
+ * this file — see `tests/workflows/child-invocation-key.test.ts` and its own
+ * header (test-review round 3, finding 2). The two used to be combined here
+ * because both bumps ride in Lane A's one implement commit, mirroring how
+ * P2a's `tests/execution/input-contract.test.ts` combined its own
+ * multi-group scope in one file — but combining them made
+ * `child-invocation.ts`'s not-yet-existing module a STATIC top-level import
+ * in THIS file too, which block-failed the whole file at load time and hid
+ * A-11's and A-12's own `hashVersion` 6 RED signal behind an unrelated
+ * "cannot find module" failure. This file now imports nothing from
+ * `child-invocation.ts`, loads normally, and every test below fails (today)
+ * on the real thing it exists to catch: the still-v5 hash prefix / still-5
+ * `hashVersion` field.
  *
- * Every child-workflow fixture funnels through the single `asFrozenTarget` cast
- * below, a *type-level* suppression only that has no effect on whether the file
- * LOADS at runtime.
+ * `FrozenChildWorkflowTarget` is likewise not yet a member of
+ * `FrozenWorkflowTarget` (schema-v4.ts) — every child-workflow fixture
+ * funnels through the single `asFrozenTarget` cast below (RED-PHASE TYPE
+ * PINS: "Implement removes ONE `@ts-expect-error` directive, not one per
+ * call site" — the exact convention `tests/workflows/task-input-bindings.test.ts`'s
+ * `frozenInputBindings` helper established for the mirror-image case, A-N7
+ * there vs A-N1's frozen-target union growth here). This cast is a
+ * *type-level* suppression only — unlike a missing module, it has no effect
+ * on whether the file LOADS at runtime, so it does not block A-11/A-12.
  *
- * `computeStepWorkList`'s per-unit resolution (`step-work.ts`, building
- * `StepWorkUnitContext`) has exactly one line that assumes every NON-command
- * frozen target carries an `.exec` spec — `target.kind === "command" ? … :
- * target.exec.timeoutMs` — true for `shell`/`script`, but
- * `FrozenChildWorkflowTarget` has no `exec` field at all; that ternary admits
- * `kind: "child-workflow"` → `timeoutMs: null`, which A-15 below needs.
+ * IMPORTANT for whoever lands `hashVersion` 6 (§3.3's field table says the
+ * preimage "otherwise byte-identical to head", but does not itself flag
+ * this): `computeStepWorkList`'s existing per-unit resolution
+ * (`step-work.ts`, building `StepWorkUnitContext`) has exactly one line that
+ * assumes every NON-command frozen target carries an `.exec` spec —
+ * `target.kind === "command" ? … : target.exec.timeoutMs` — true for
+ * `shell`/`script` today, but `FrozenChildWorkflowTarget` (§3.5) has no
+ * `exec` field at all. §3.1's file table now ALSO authorizes extending this
+ * one ternary to admit `kind: "child-workflow"` → `timeoutMs: null` (Review
+ * log R1, resolved test-review round 3): land it in the SAME commit as the
+ * `hashVersion` 6 bump, since A-15 below needs both.
+ *
+ * TEST-REVIEW HISTORY: at round 2, `hash-v6.test.ts` (this file, before the
+ * round-3 split) still combined A-11…A-19 behind the one static
+ * `child-invocation.ts` import, so A-11's and A-12's `hashVersion` 6
+ * mismatch was never actually observed — every test failed identically on
+ * "cannot find module". Round 2 fixed that for A-11 alone by moving it onto
+ * an ordinary, already-handled `shell` target (`buildOrdinaryShellTarget`,
+ * still used below) so it no longer NEEDED `child-workflow` support to be
+ * meaningful — but the file-level import still block-failed everything,
+ * A-15 specifically still could not go green under §3.1's THEN-authorization
+ * (Review log R1, then OPEN), and A-17…A-19 were untested for the same
+ * reason with no independent path to being fixed on their own. Round 3
+ * resolves both: R1 is now RESOLVED (see the `IMPORTANT` paragraph above),
+ * and A-17…A-19 moved out to their own file (see the top of this comment),
+ * so `hash-v6.test.ts` now loads cleanly and A-11 (`shell` target, no
+ * `child-workflow` dependency), A-15 (`child-workflow` target, exercises the
+ * now-authorized `:450` fix), and A-12 (gate hash) are each independently
+ * red on the `hashVersion` 6 bump today, for the reason each one names.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -66,8 +111,8 @@ interface ChildWorkflowTargetFixture {
 }
 
 /**
- * `FrozenChildWorkflowTarget` is a discriminated-union member of
- * `FrozenWorkflowTarget`. `ChildWorkflowTargetFixture.frozenPlan` stays
+ * §3.5: FrozenChildWorkflowTarget landed in Implement as a real
+ * discriminated-union member. `ChildWorkflowTargetFixture.frozenPlan` stays
  * `unknown` on purpose — this file only hashes the frozen target, it never
  * decodes it, so building a fully-valid `WorkflowPlan` fixture would
  * add weight nothing here reads — so the fixture is structurally a
@@ -148,10 +193,18 @@ function stepPlanWithTarget(target: FrozenWorkflowTarget, stepId = "spawn"): Wor
 }
 
 /**
- * An ORDINARY `shell` target. Unlike `buildChildTargetFixture`, this needs no
- * cast — `FrozenWorkflowShellTarget` is real schema. Used by the A-11 tests
- * below, which are claims about the preimage SHAPE and prefix in general — not
- * about child-workflow composition specifically.
+ * An ORDINARY, already-supported `shell` target (see the file header's
+ * TEST-REVIEW HISTORY paragraph). Unlike `buildChildTargetFixture`, this
+ * needs no `@ts-expect-error` cast — `FrozenWorkflowShellTarget` is real,
+ * landed schema — and `computeStepWorkList`'s `:450` timeoutMs ternary
+ * already handles `kind: "shell"` correctly today, so a fixture built from
+ * this function can never trip the `target.exec.timeoutMs`-on-`undefined`
+ * `TypeError` that a `child-workflow` fixture hits until Implement lands the
+ * now-authorized `:450` extension (Review log R1). Used by the A-11 tests
+ * below, which are claims about the preimage SHAPE and prefix in general —
+ * not about child-workflow composition specifically — so they do not need a
+ * child-workflow fixture to be meaningful, and stay independent of R1's
+ * resolution either way.
  */
 function buildOrdinaryShellTarget(options: { inputBindings?: readonly TaskInputBinding[] } = {}): FrozenWorkflowTarget {
   return {
@@ -175,9 +228,10 @@ function buildOrdinaryShellTarget(options: { inputBindings?: readonly TaskInputB
 /**
  * A minimal `command` target carrying a resolved persona snapshot
  * (`request.persona.content`) — the byte-exact persona text resolved at
- * freeze time. Persona snapshots ARE in the preimage, transitively and
- * wholesale. `ResolvedExecutionRequestV1`'s `command`/`persona` content types
- * carry private module-local brand symbols (`src/execution/resolved-request.ts`)
+ * freeze time (A-N9: "persona snapshots ARE in the preimage... transitively
+ * and wholesale", `docs/plans/specs/p3a-plan-v5-child-freeze.md`).
+ * `ResolvedExecutionRequestV1`'s `command`/`persona` content types carry
+ * private module-local brand symbols (`src/execution/resolved-request.ts`)
  * this test file has no access to construct directly, so this fixture routes
  * through the SAME `unknown` cast `asFrozenTarget` establishes above for the
  * mirror-image `child-workflow` case — this file only ever HASHES the frozen
@@ -209,11 +263,18 @@ function buildCommandTargetWithPersona(personaContent: string): FrozenWorkflowTa
 // ── A-11, A-15: computeUnitInputHash (via computeStepWorkList) ─────────────
 //
 // A-11 (the preimage shape/prefix in general) uses buildOrdinaryShellTarget,
-// with no dependency on child-workflow support. A-15 (a claim specifically
-// about embedded child planHash sensitivity) uses a child-workflow fixture.
+// so it is independently red on the hashVersion 6 bump alone, today, with no
+// dependency on the child-workflow ternary fix — see the file header's
+// TEST-REVIEW HISTORY note. A-15 (a claim specifically about embedded child
+// planHash sensitivity) keeps its child-workflow fixture; it fails via the
+// SAME TypeError today (step-work.ts:450 does not admit kind:
+// "child-workflow" yet — nothing in this file's own change set touches
+// source), and goes green in Implement's Lane A commit once BOTH the
+// hashVersion 6 bump and the now-authorized `:450` extension land together
+// (Review log R1, resolved test-review round 3).
 
-describe("hashVersion 7 — unit input hash", () => {
-  test("the preimage matches the documented field list exactly, under the akm.workflow.unit\\0v7\\0 prefix (an ordinary target — independent of child-workflow support)", () => {
+describe("hashVersion 7 — unit input hash (A-11, A-14, A-15)", () => {
+  test("the preimage matches §3.3's field list exactly, under the akm.workflow.unit\\0v7\\0 prefix (an ordinary target — independent of child-workflow support)", () => {
     const target = buildOrdinaryShellTarget();
     const stepPlan = stepPlanWithTarget(target);
     const input: WorkListInput = { runId: "run-1", params: { p: 1 }, stepOutputs: {} };
@@ -224,9 +285,12 @@ describe("hashVersion 7 — unit input hash", () => {
     const unit = result.list.units[0];
     if (!unit) throw new Error("expected exactly one unit");
 
-    // A unit whose target carries no `inputBindings` gains no preimage field from
-    // the `taskInputs` addition: this reconstruction has NO `taskInputs` key, so
-    // the exact-hash equality below proves it.
+    // CHARACTERIZATION (R-R15 fix is shape-preserving for binding-free
+    // units): this reconstruction is byte-for-byte the object this test
+    // pinned under hashVersion 6 (base e640a23a) apart from the prefix and
+    // the hashVersion field — in particular it has NO `taskInputs` key, so
+    // the exact-hash equality below proves a unit whose target carries no
+    // `inputBindings` gained no preimage field from the fix.
     const preimage = {
       hashVersion: 7,
       role: "unit",
@@ -250,7 +314,7 @@ describe("hashVersion 7 — unit input hash", () => {
     expect(unit.inputHash).toBe(expectedHash);
   });
 
-  test("a target WITH inputBindings adds exactly ONE preimage field — taskInputs, the RESOLVED values — in gateFeedback's conditional style", () => {
+  test("a target WITH inputBindings adds exactly ONE preimage field — taskInputs, the RESOLVED values — in gateFeedback's conditional style (R-R15)", () => {
     const target = buildOrdinaryShellTarget({
       inputBindings: [
         { kind: "literal", name: "ticket", value: "T-1" },
@@ -295,7 +359,7 @@ describe("hashVersion 7 — unit input hash", () => {
     expect(unit.inputHash).toBe(expectedHash);
   });
 
-  test("a changed embedded child planHash changes the unit's input hash", () => {
+  test("a changed embedded child planHash changes the unit's input hash (A-15)", () => {
     const childPlanA = { title: "child-a", irVersion: 5 };
     const childPlanB = { title: "child-b", irVersion: 5 };
     const targetA = asFrozenTarget(
@@ -319,7 +383,7 @@ describe("hashVersion 7 — unit input hash", () => {
     expect(hashA).not.toBe(hashB);
   });
 
-  test("a changed persona snapshot changes the unit's input hash (persona snapshots ARE in the preimage, transitively via frozenTarget.request.persona)", () => {
+  test("a changed persona snapshot changes the unit's input hash (A-N9: persona snapshots ARE in the preimage, transitively via frozenTarget.request.persona)", () => {
     const targetA = buildCommandTargetWithPersona("You are a careful reviewer, PERSONA-A.");
     const targetB = buildCommandTargetWithPersona("You are a careful reviewer, PERSONA-B.");
     const input: WorkListInput = { runId: "run-1", params: {}, stepOutputs: {} };
@@ -346,7 +410,7 @@ describe("hashVersion 7 — unit input hash", () => {
     expect(resultA2.list.units[0]?.inputHash).toBe(hashA);
   });
 
-  test("a changed inputBindings entry changes the unit's input hash, target kind held constant (the frozenTarget field)", () => {
+  test("a changed inputBindings entry changes the unit's input hash, target kind held constant (A-11's frozenTarget field)", () => {
     const withoutBindings = buildOrdinaryShellTarget();
     const withBindings = buildOrdinaryShellTarget({
       inputBindings: [{ kind: "literal", name: "x", value: "a" }],
@@ -388,7 +452,7 @@ const GATE_WF = [
   "",
 ].join("\n");
 
-describe("hashVersion 7 — the gate hash", () => {
+describe("hashVersion 7 — the gate hash (A-12)", () => {
   test("the gate hash prefix is akm.workflow.gate\\0v7\\0 with hashVersion 7 in the preimage — bumped in lockstep with the unit prefix — dispatch/invocation/prompt otherwise unchanged", async () => {
     writeProgram("gate-hash", GATE_WF);
     const started = await startWorkflowRun("workflows/gate-hash");

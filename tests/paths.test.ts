@@ -121,10 +121,10 @@ describe("getConfigDir", () => {
     expect(result).toBe("/override/config");
   });
 
-  // Regression: when the user (or a test harness) sets AKM_BUNDLE_DIR to a
-  // transient path, config writes must NOT target the user's host
-  // ~/.config/akm — they must route into the stash so saveConfig() can never
-  // silently clobber the host.
+  // Regression: the 2026-05-23 setup-clobbers-user-config incident. When the user (or a
+  // test harness) sets AKM_BUNDLE_DIR to a transient path, config writes
+  // must NOT target the user's host ~/.config/akm — they must route into
+  // the stash so saveConfig() can never silently clobber the host.
   test("AKM_BUNDLE_DIR=/tmp/X routes config to /tmp/X/.akm (isolation safety)", () => {
     const result = getConfigDir({ AKM_BUNDLE_DIR: "/tmp/test-stash", HOME: "/home/user" }, "linux");
     expect(result).toBe(path.join("/tmp/test-stash", ".akm"));
@@ -194,7 +194,7 @@ describe("getCacheDir", () => {
     delete process.env.XDG_CACHE_HOME;
     // Clear AKM_BUNDLE_DIR too — under CI, it can be inherited from outer
     // test isolation pointing at a transient dir, which would trigger the
-    // isolation rule and override this test's HOME-based expectation.
+    // new isolation rule and override this test's HOME-based expectation.
     delete process.env.AKM_BUNDLE_DIR;
     process.env.HOME = "/home/user";
     const result = getCacheDir();
@@ -222,9 +222,10 @@ describe("getCacheDir", () => {
     expect(result).toBe("/override/cache");
   });
 
-  // Regression: when AKM_BUNDLE_DIR is transient, cache (which holds
-  // config-backups/) must also isolate into the stash so saveConfig backup
-  // writes do not pollute the user's host ~/.cache/akm/config-backups/.
+  // Regression: the 2026-05-23 setup-clobbers-user-config incident companion fix. When
+  // AKM_BUNDLE_DIR is transient, cache (which holds config-backups/) must
+  // also isolate into the stash so saveConfig backup writes do not
+  // pollute the user's host ~/.cache/akm/config-backups/.
   test("AKM_BUNDLE_DIR=/tmp/X routes cache to /tmp/X/.akm/cache (isolation safety)", () => {
     delete process.env.AKM_CACHE_DIR;
     delete process.env.XDG_CACHE_HOME;
@@ -318,7 +319,8 @@ describe("getDataDir", () => {
   // getDataDir() must resolve through an explicit XDG_DATA_HOME or
   // AKM_DATA_DIR override. Falling through to the developer's real
   // ~/.local/share/akm silently writes SQLite databases, lockfiles, and
-  // snapshots into their personal data dir. The guard catches that by throwing
+  // snapshots into their personal data dir (observed: 4,183-row
+  // registry-cache pollution). The guard catches that by throwing
   // TEST_ISOLATION_MISSING regardless of whether AKM_BUNDLE_DIR is set.
 
   test("test-isolation guard fires when BUN_TEST=1 and XDG_DATA_HOME missing", () => {
@@ -386,6 +388,10 @@ describe("getDbPath", () => {
     expect(getDbPath({ XDG_DATA_HOME: "/injected-data" })).toBe(path.join("/injected-data", "akm", "index.db"));
   });
 });
+
+// getWorkflowDbPath removed in Chunk-8 WI-8.3 (workflow.db folded into state.db;
+// the physical path literal survives only in the migrator home,
+// scripts/akm-migrate/migrate/legacy/legacy-paths.ts).
 
 // ── getLockfilePath / getLockfileLockPath ───────────────────────────────────
 

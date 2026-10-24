@@ -37,7 +37,7 @@ afterEach(() => {
   stashCleanup = () => {};
 });
 
-describe("akm config — JSON envelope snapshot", () => {
+describe("akm config — JSON envelope snapshot (WS6)", () => {
   test("config list: success envelope carries config v2 engine/strategy semantics", async () => {
     const { stdout, status } = await runCli(["config", "list"]);
     expect(status).toBe(0);

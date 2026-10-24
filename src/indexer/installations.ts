@@ -3,26 +3,31 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `deriveInstallations` — bridges the `SearchSource[]` model (the live
- * indexer's source list, `search-source.ts`) onto the durable
- * `BundleInstallation[]` / `BundleComponent[]` model. Called from the indexer
+ * `deriveInstallations` — akm 0.9.0 Chunk 5, milestone M-a.
+ *
+ * Bridges the `SearchSource[]` model (the live indexer's source list,
+ * `search-source.ts`) onto the durable `BundleInstallation[]` /
+ * `BundleComponent[]` model (spec §1.1). LIVE: called from the indexer
  * (provenance derivation), the proposal repository, and written-asset
- * indexing.
+ * indexing. The originally-planned full "Step-3" `scanComponent`-driven scan
+ * swap was superseded by the narrower Chunk-5 F4a drain-dir engine swap; the
+ * shadow-parity scaffolding module (`scan/scan-installations.ts`) was deleted
+ * as dead in the 0.9.0 close-out.
  *
  * Per source → one installation:
  *   - `id`       = `source.registryId` ?? a deterministic slug of `source.path`
- *                  (the `<bundle>` prefix of every ref this installation emits).
- *                  Slugs are made unique WITHIN a derivation batch
+ *                  (the `<bundle>` prefix of every ref this installation emits,
+ *                  spec §1.3). Slugs are made unique WITHIN a derivation batch
  *                  by appending a short path-hash suffix on collision, so two
  *                  sources sharing a basename never mint the same bundle id.
- *   - `trusted`  = `source.writable === true`. There is no first-class trust
- *                  record; the writable
+ *   - `trusted`  = `source.writable === true`. 0.9.0 ships no first-class trust
+ *                  record (spec §1.3 — "no new trust machinery"); the writable
  *                  primary/config stashes are the user's own and count as
  *                  trusted, read-only registry caches do not. Nothing consumes
- *                  `trusted` in the live path yet (installation grants
- *                  nothing) — this is a placeholder mapping.
- *   - components = ONE component for the single-root akm layout:
- *                  `{ id, root: source.path, adapter }`. The
+ *                  `trusted` in the live path yet (installation grants nothing,
+ *                  History D8) — this is the Tier-A placeholder mapping.
+ *   - components = ONE component for the current single-root akm layout
+ *                  (spec §1.2 rule 5): `{ id, root: source.path, adapter }`. The
  *                  akm layout's type dirs (`knowledge/`, `skills/`, …) are NOT
  *                  separate components — they are type-derived leading path
  *                  segments of the conceptId within the one component.
@@ -38,12 +43,12 @@
  * from the installation) is a downstream contract refinement — nothing in the
  * live path reads `IndexDocument.component` as distinct from `bundle` today.
  *
- * ── Adapter selection (ordered probe) ──
+ * ── Adapter selection (spec §1.2 ordered probe) ──
  *
  * The adapter is chosen by the ordered `looksLikeRoot` probe over the built-in
- * adapters (`getAdapters()`), first match wins. The registry is a STATIC
- * FROZEN map populated at module load, so this probe runs with the full
- * built-in set — no registration call is required
+ * adapters (`getAdapters()`), first match wins. The registry is now a STATIC
+ * FROZEN map (normative §12.6) populated at module load, so this probe runs in
+ * production with the full 11-family set — no registration call is required
  * first. Array order (`BUILTIN_ADAPTERS`) is the probe precedence, most-specific
  * first, so a `.claude`/dotenv/wiki root is claimed by its tight probe before
  * the loose `akm` stash-shape probe.
@@ -66,16 +71,22 @@ export { deriveBundleId, deriveBundleIds, slugForPath };
 /**
  * The no-probe-match fallback adapter id.
  *
- * The AKM workspace root's own indexing MUST stay classified `akm`. That
- * depends on either explicit adapter configuration, `akm.looksLikeRoot`
- * firing (type dirs / `.stash` present), or this fallback. A genuinely empty
- * root fires no probe; `akm` keeps the implicit workspace root correct.
+ * The status-quo-preserving default from spec §1.2(3):
+ *
+ *  - Behavior discipline (spec line 267): the AKM workspace root's own indexing
+ *    MUST stay classified `akm`. In this transitional model there is no
+ *    depends on either explicit adapter configuration, `akm.looksLikeRoot`
+ *    firing (type dirs / `.stash` present), or this fallback. A genuinely empty
+ *    root fires no probe; `akm` keeps the implicit workspace root correct.
+ *  - Status quo: before the registry was wired, `getAdapters()` was empty in
+ *    production so EVERY source fell back here — this preserves that exact
+ *    fallback value while the probe now genuinely classifies the non-akm shapes.
  */
 const FALLBACK_ADAPTER_ID = "akm";
 
 /**
  * Resolve the adapter id for a component root via the ordered `looksLikeRoot`
- * probe, first match wins; falls back to `akm` when no probe fires.
+ * probe (spec §1.2), first match wins; falls back to `akm` when no probe fires.
  */
 export { detectAdapterId } from "../core/adapter/detect-adapter";
 
@@ -89,7 +100,7 @@ export function deriveInstallations(sources: SearchSource[]): BundleInstallation
   const installations: BundleInstallation[] = [];
 
   for (const [index, source] of sources.entries()) {
-    // When the source carries its config bundle key (a slug-legal
+    // D-R5 rule 1: when the source carries its config bundle key (a slug-legal
     // registryId), that key IS the installation id — equal by construction to
     // this derivation. A non-slug-legal registryId slugs from the path instead.
     const id = ids[index] as string;
@@ -126,13 +137,13 @@ export function deriveWritableBundleIds(sources: SearchSource[]): Set<string> {
 }
 
 /**
- * Derive the durable `EntryProvenance` for an indexed entry: `conceptId` is the
- * qualified `<stash-subdir>/<name>` spelling
+ * Derive the durable `EntryProvenance` for an indexed entry (Chunk-5 flip
+ * §14.4): `conceptId` is the D-R2 qualified `<stash-subdir>/<name>` spelling
  * (`stashDirFor(type)` prefix; a foreign type with no placement stash-subdir
  * keeps the bare name), and `item_ref` is `<bundle>//<conceptId>` — the exact
  * spelling `recognize` emits as `IndexDocument.ref`. Shared by the full-index
  * diff-persist writer and the write-path `indexWrittenAssets` fast path so both
- * populate item_ref identically (no NULL-item_ref rows).
+ * populate item_ref identically (F4a M-core-2 item 5 — no NULL-item_ref rows).
  */
 export function deriveEntryProvenance(
   bundle: { bundleId: string; componentId: string; adapterId: string },
@@ -142,7 +153,7 @@ export function deriveEntryProvenance(
    * The OWNING adapter's `doc.conceptId`, when the caller has it. Preferred
    * verbatim over the akm `stashDirFor` re-derivation so a non-akm adapter's
    * identity (`pages/foo`, snapshot paths, ...) survives into `item_ref`
-   * (identity comes from the resolved entry, not a re-derivation).
+   * (D-R3: identity comes from the resolved entry, not a re-derivation).
    */
   adapterConceptId?: string,
 ): EntryProvenance {

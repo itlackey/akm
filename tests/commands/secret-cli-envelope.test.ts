@@ -50,7 +50,7 @@ afterEach(() => {
   stashDir = "";
 });
 
-describe("akm secret — JSON envelope snapshot", () => {
+describe("akm secret — JSON envelope snapshot (WS6)", () => {
   test("secret list: envelope wraps refs under `secrets`; the value never appears", async () => {
     seedSecret("deploy-key");
     const { stdout, status } = await runCli(["secret", "list"]);

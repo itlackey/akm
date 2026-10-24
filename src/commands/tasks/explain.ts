@@ -3,7 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm task explain <ref> [input flags]` — read-only task introspection.
+ * `akm task explain <ref> [input flags]` — read-only task introspection
+ * (spec docs/plans/specs/p2b-input-bindings.md §4.5, §1.7 B-N4).
  *
  * Prints the task source path and owning bundle, its input declarations with
  * defaults, the supplied values WITH PROVENANCE (`default` | `flag` |
@@ -62,10 +63,11 @@
  * `redacted: true`, instead of the real value — applied uniformly across
  * every place a declared or supplied VALUE can appear in this envelope: a
  * declaration's own `default`, each entry of a declaration's own `enum`
- * list (checked per-entry, not as one blanked list), a `suppliedInputs`
- * entry regardless of provenance, and a `schedule[].inputs` entry (redacting
- * the declaration row alone would leave the identical value printed verbatim
- * one section over, in `suppliedInputs`). Do not paste this command's output into an untrusted
+ * list (checked per-entry, not as one blanked list — code-review finding,
+ * explain.ts:184), a `suppliedInputs` entry regardless of provenance, and a
+ * `schedule[].inputs` entry (code-review finding: the declaration row alone
+ * left the identical value printed verbatim one section over, in
+ * `suppliedInputs`). Do not paste this command's output into an untrusted
  * place on the assumption that it can never contain a credential.
  *
  * Field-level execution provenance is READ from `resolveExecution`'s own
@@ -159,13 +161,14 @@ function isSecretShapedValue(name: string, value: unknown): boolean {
 }
 
 /**
- * Redact a secret-shaped value. `buildInputDeclarations` redacts a
- * secret-shaped DEFAULT, and `buildSuppliedInputs` (and a v4 schedule entry's
- * own `inputs`, printed verbatim from the source) must not echo the identical
- * value unredacted in the same envelope. Applied to every
- * supplied/schedule-binding row regardless of provenance, so the same
- * best-effort redaction (see this file's header) applies uniformly across the
- * whole envelope, not just the declaration row.
+ * Code-review finding (explain.ts:175, B-N4): `buildInputDeclarations`
+ * already redacted a secret-shaped DEFAULT, but `buildSuppliedInputs` (and
+ * a v4 schedule entry's own `inputs`, printed verbatim from the source)
+ * echoed the identical value unredacted in the same envelope — a
+ * `sk-live-…` default appeared in full in both output formats. Applied to
+ * every supplied/schedule-binding row regardless of provenance, so the same
+ * best-effort redaction (see this file's header) applies uniformly across
+ * the whole envelope, not just the declaration row.
  */
 function redactIfSecretShaped(name: string, value: unknown): Readonly<{ value: unknown; redacted?: boolean }> {
   if (!isSecretShapedValue(name, value)) return { value };
@@ -181,17 +184,18 @@ function declarationEnum(schema: Readonly<Record<string, unknown>>): readonly un
 }
 
 /**
- * Redact a secret-shaped entry of a declaration's JSON-Schema `enum:` list.
- * `buildInputDeclarations` redacts a secret-shaped `default` via
- * {@link redactIfSecretShaped} applied to the WHOLE default value; the same
- * value appearing in that declaration's `enum:` list must not print
- * unredacted one key over. The SAME per-value check
- * ({@link isSecretShapedValue}) is applied to each entry independently,
- * replacing only the secret-shaped ones with `"<redacted>"` — deliberately
- * NOT collapsing the whole list to one `"<redacted>"` sentinel the way a
- * single `default` value is, since an `enum` list's non-secret alternatives
- * are useful provenance in their own right and dropping them would
- * over-redact.
+ * Code-review finding (explain.ts:184, B-N4): `buildInputDeclarations`
+ * already redacted a secret-shaped `default`, via {@link redactIfSecretShaped}
+ * applied to the WHOLE default value, but the identical value appearing in
+ * that same declaration's JSON-Schema `enum:` list printed unredacted one
+ * key over — an `enum: [..., "sk-live-…"]` list echoed the credential in
+ * full even though the matching `default:` on the same declaration was
+ * already redacted. Fixed by applying the SAME per-value check
+ * ({@link isSecretShapedValue}) to each entry independently, replacing only
+ * the secret-shaped ones with `"<redacted>"` — deliberately NOT collapsing
+ * the whole list to one `"<redacted>"` sentinel the way a single `default`
+ * value is, since an `enum` list's non-secret alternatives are useful
+ * provenance in their own right and dropping them would over-redact.
  */
 function redactEnum(
   name: string,
@@ -256,9 +260,9 @@ function isCommandTarget(document: PreparableTaskDocument): boolean {
 }
 
 /**
- * The task's own top-level execution overrides (`document.akm`, holding both
- * a v3 document's authored `akm.*` and a v4 document's projected `execution`
- * block) as a cascade "current" layer — the exact
+ * The task's own top-level execution overrides (`document.akm`, D2-N7's
+ * home for both a v3 document's authored `akm.*` and a v4 document's
+ * projected `execution` block) as a cascade "current" layer — the exact
  * non-secret subset `src/tasks/prepare/prepare-support.ts`'s
  * `currentExecutionValues` also forwards, minus `agent`/`workspace`/
  * `environment` (this module never loads a persona and never reads `env:`,
@@ -327,7 +331,7 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
   const parsed = parseTaskSource({ yaml, filePath: sourcePath, workspaceRoot: bundle.source.path });
 
   const inputContract: InputContract = parsed.v4.inputs ?? {};
-  // `akm task run`'s
+  // Code-review finding (explain.ts:299, B-N4): `akm task run`'s
   // load-task.ts copies this same materialize -> applyInputDefaults ->
   // validateInputs ladder, but its own trailing `validateInputs` +
   // `contractViolation` throw is load-task's OWN enforcement that a task
@@ -337,8 +341,8 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
   // input is exactly the fact `explain` exists to surface, not a condition
   // that should make the command refuse to print. Deliberately NOT calling
   // `validateInputs` here: `materializeInputFlags` above still runs its own
-  // per-flag validation (an unknown flag name still fails UNKNOWN_FLAG;
-  // a supplied value failing its own declared schema still fails
+  // per-flag validation (an unknown flag name still fails UNKNOWN_FLAG,
+  // B-55; a supplied value failing its own declared schema still fails
   // here), so only the "required and never supplied at all" case is left
   // unenforced. `buildSuppliedInputs` below naturally renders that case as a
   // declaration row (always present, carrying `required: true`) with no

@@ -375,7 +375,7 @@ describe("drainProposals — failed reporting (#921)", () => {
     expect(result.failed).toEqual([{ id: empty.id, reason: "reject-error", detail: "simulated reject failure" }]);
   });
 
-  test("a stale-target refusal is auto-rejected once, not left as a generic failure", async () => {
+  test("a stale-target refusal is auto-rejected once, not left as a generic failure (STALE, R20)", async () => {
     const stash = makeStashDir();
     const accepted = seedJudged(stash, "lessons/promote-stale", "extract", VALID_LESSON);
     const promoteFn = mock(async () => {
@@ -442,7 +442,7 @@ describe("drainProposals — failed reporting (#921)", () => {
     });
   });
 
-  test("a bookkeeping-only target rewrite stays normalized-fresh: dry-run predicts promotion, the real run promotes and keeps salience", async () => {
+  test("a bookkeeping-only target rewrite stays normalized-fresh: dry-run predicts promotion, the real run promotes and keeps salience (STALE, R20)", async () => {
     const stash = makeStashDir();
     const assetPath = path.join(stash, "lessons", "bookkeeping-fresh.md");
     fs.writeFileSync(assetPath, VALID_LESSON, "utf8");
@@ -487,7 +487,7 @@ describe("drainProposals — failed reporting (#921)", () => {
     expect(finalContent).toContain("salience:");
   });
 
-  test("a stale-target auto-reject records `failed` in the improve ledger — no rejection window", async () => {
+  test("a stale-target auto-reject records `failed` in the improve ledger — no rejection window (STALE, R20)", async () => {
     const stash = makeStashDir();
     const assetPath = path.join(stash, "lessons", "reproposable.md");
     fs.writeFileSync(assetPath, VALID_LESSON.replace("Prefer rg", "Original: prefer rg"), "utf8");
@@ -898,7 +898,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     expect(JSON.stringify(result)).not.toContain("PROVIDER-BODY-SENTINEL");
   });
 
-  test("a judged-accept promote that hits the stale-target guard is auto-rejected, not left deferred", async () => {
+  test("a judged-accept promote that hits the stale-target guard is auto-rejected, not left deferred (STALE, R20)", async () => {
     const stash = makeStashDir();
     const deferred = seed(stash, "lessons/judged-stale", "distill", VALID_LESSON);
     const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "valuable" }));

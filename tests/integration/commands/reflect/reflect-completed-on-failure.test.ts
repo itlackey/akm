@@ -1,10 +1,12 @@
 /**
- * `akm reflect` must emit `reflect_completed` on ALL exit paths — success AND
- * failure — so observers building closed-loop telemetry see balanced
- * invoke/complete pairs.
+ * Fix #3 (observability 0.8.0): `akm reflect` must emit `reflect_completed`
+ * on ALL exit paths — success AND failure — so observers building closed-loop
+ * telemetry see balanced invoke/complete pairs.
  *
- * These tests exercise each failure path (forced via the injected spawn seam or
- * by passing a non-existent / unsupported ref) and assert that exactly one
+ * Before this fix, multiple early-return failure sites emitted only
+ * `reflect_invoked` and left the loop dangling. These tests exercise each
+ * failure path (forced via the injected spawn seam or by passing a
+ * non-existent / unsupported ref) and assert that exactly one
  * `reflect_completed` event lands per invocation with the expected
  * `ok: false` and a useful `reason` / `subreason`.
  */
@@ -81,9 +83,9 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     expect(events.length).toBe(1);
     const meta = events[0]?.metadata as Record<string, unknown>;
     expect(meta.ok).toBe(false);
-    // Deterministic type-guard rejections route through the dedicated
-    // `unsupported_type` reason so the improve loop can map them to
-    // `reflect-skipped`.
+    // Reason changed 2026-05-26: deterministic type-guard rejections route
+    // through dedicated `unsupported_type` (was `parse_error`) so the improve
+    // loop can map them to `reflect-skipped`. See metrics-taxonomy-review §1a.
     expect(meta.reason).toBe("unsupported_type");
     expect(meta.subreason).toBe("unsupported_type");
     expect(meta.source).toBe("reflect");
