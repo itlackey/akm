@@ -5,6 +5,7 @@ import path from "node:path";
 import type { AkmConfig, BundleConfigEntry } from "../src/core/config/config";
 import { saveConfig } from "../src/core/config/config";
 import { getUnresolvedSourcesDir } from "../src/core/paths";
+import { _setWarnSinkForTests } from "../src/core/warn";
 import { resolveWritable } from "../src/core/write-source";
 import { buildDbHit } from "../src/indexer/search/db-search";
 import {
@@ -16,10 +17,11 @@ import {
 import type { InstallKind } from "../src/registry/types";
 import { seedLockEntries } from "./_helpers/lockfile";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
+import { withSeam } from "./_helpers/seams";
 
 /**
  * Seed a lock-backed registry-managed source (a git/npm `bundles` entry + its
- * §10.2 lock entry) the way `akm add` persists it.
+ * lock entry) the way `akm add` persists it.
  */
 function seedManagedBundle(
   key: string,
@@ -30,8 +32,11 @@ function seedManagedBundle(
   seedLockEntries([{ id: key, source: lock.source, ref: lock.ref, localRoot: lock.localRoot }]);
 }
 
+import { resolveSourceProviderFactory } from "../src/sources/provider-factory";
 import * as gitProvider from "../src/sources/providers/git";
+import * as gitInstall from "../src/sources/providers/git-install";
 import { NpmSourceProvider } from "../src/sources/providers/npm";
+import { createWebsiteProvider } from "../src/sources/providers/website";
 import * as websiteIngest from "../src/sources/snapshot-fetchers/website-ingest";
 
 let storage: IsolatedAkmStorage;
@@ -77,8 +82,8 @@ describe("resolveSourceEntries", () => {
       for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
         fs.mkdirSync(path.join(repoRoot, sub), { recursive: true });
       }
-      // 0.9.0 (spec §10.2): the resolved content root lives in the lock — the
-      // content/-subdir resolution happens at install time, not at resolve time.
+      // The resolved content root lives in the lock — the content/-subdir
+      // resolution happens at install time, not at resolve time.
       seedManagedBundle(
         "git-root",
         { git: "https://example.test/repo.git" },
@@ -255,7 +260,7 @@ describe("resolveSourceEntries", () => {
       const unresolved = sources.find((source) => source.registryId === "escaping");
       expect(sources[0]?.path).toBe(stashDir);
       expect(unresolved).toMatchObject({ unresolved: true, registryId: "escaping" });
-      // itlackey/akm#890: the placeholder now lives under $CACHE, keyed by the
+      // itlackey/akm#890: the placeholder lives under $CACHE, keyed by the
       // bundle root, never under the bundle root (or the escaped root) itself.
       expect(unresolved?.path.startsWith(`${getUnresolvedSourcesDir(bundleRoot)}${path.sep}`)).toBe(true);
       expect(unresolved?.path.startsWith(`${bundleRoot}${path.sep}`)).toBe(false);
@@ -560,17 +565,16 @@ describe("ensureSourceCaches", () => {
     // Mock the mirror (no network) and verify the current website bundle is
     // projected into a provider and synchronized.
     //
-    // RUNTIME-05: the URL must NOT be under the `.invalid` TLD. `.invalid` is
-    // rejected synchronously by assertWebsiteRequestUrl
-    // (src/sources/snapshot-fetchers/website-ingest.ts:677-679) inside the
-    // website provider FACTORY (src/sources/providers/website.ts:16-18) — i.e.
-    // before `sync()`/`ensureWebsiteMirror` is ever reached. With the old
-    // `example.invalid` URL, `ensureSourceCaches` caught that construction
-    // error and warned+continued (src/indexer/search/search-source.ts:362-371),
-    // so the mocked mirror below would never actually be called — this test
-    // would silently stop proving "website entries are processed" at all.
-    // `.test` (used by the neighbouring tests in this describe) is not
-    // special-cased there, so the mocked path is genuinely exercised.
+    // The URL must NOT be under the `.invalid` TLD. `.invalid` is rejected
+    // synchronously by assertWebsiteRequestUrl
+    // (src/sources/snapshot-fetchers/website-ingest.ts) inside the website
+    // provider FACTORY (src/sources/providers/website.ts) — i.e. before
+    // `sync()`/`ensureWebsiteMirror` is ever reached. `ensureSourceCaches` catches
+    // that construction error and warns+continues, so the mocked mirror below
+    // would never actually be called and this test would silently stop proving
+    // "website entries are processed" at all. `.test` (used by the neighbouring
+    // tests in this describe) is not special-cased there, so the mocked path is
+    // genuinely exercised.
     const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
       rootDir: "/tmp/root",
       stashDir: "/tmp/stash",
@@ -588,48 +592,81 @@ describe("ensureSourceCaches", () => {
     }
   });
 
-  // R2 bug fix: npm sources are cache-backed too, but the old type-gated loops
-  // only handled git-stash + website, so an npm source's cache was NEVER
-  // refreshed. After routing through the provider registry's polymorphic
-  // sync(), every cache-backed kind (including npm) must be refreshed.
-  test("npm sources are refreshed (R2: routes through provider sync())", async () => {
+  // A configured npm bundle with no lock entry is not walkable and nothing marks
+  // it materialized, so syncing it would hit the npm registry on every index run
+  // and still index nothing. It is skipped with one warning naming the remedy.
+  test("a lockless npm bundle is skipped with one warning naming `akm bundle update`", async () => {
     const npmSyncSpy = spyOn(NpmSourceProvider.prototype, "sync").mockResolvedValue(undefined);
-    // Avoid real git/website network in the same run.
-    const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
-    const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
-      rootDir: "/tmp/root",
-      stashDir: "/tmp/stash",
-      manifestPath: "/tmp/manifest.json",
-    });
     const config: AkmConfig = {
       semanticSearchMode: "off",
       bundles: { "npm-source": { npm: "npm:test-pkg@1.2.3" } },
     };
+    const warnings: string[] = [];
     try {
-      await ensureSourceCaches(config);
-      expect(npmSyncSpy).toHaveBeenCalledTimes(1);
+      await withSeam(
+        _setWarnSinkForTests,
+        (level: string, args: unknown[]) => {
+          if (level === "warn") warnings.push(args.map(String).join(" "));
+        },
+        () => ensureSourceCaches(config),
+      );
+      expect(npmSyncSpy).not.toHaveBeenCalled();
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('npm source "npm-source" is not installed');
+      expect(warnings[0]).toContain("akm bundle update npm-source");
     } finally {
       npmSyncSpy.mockRestore();
-      gitSpy.mockRestore();
-      websiteSpy.mockRestore();
+    }
+  });
+
+  test("an npm bundle with a lock entry is left to add/update and is never synced here", async () => {
+    const npmSyncSpy = spyOn(NpmSourceProvider.prototype, "sync").mockResolvedValue(undefined);
+    const lockedRoot = path.join(stashDir, "locked-npm-root");
+    fs.mkdirSync(lockedRoot, { recursive: true });
+    fs.writeFileSync(path.join(lockedRoot, "README.md"), "locked\n");
+    seedManagedBundle(
+      "npm-locked",
+      { npm: "npm:test-pkg@1.2.3" },
+      {
+        source: "npm",
+        ref: "npm:test-pkg@1.2.3",
+        localRoot: lockedRoot,
+      },
+    );
+    const warnings: string[] = [];
+    try {
+      await withSeam(
+        _setWarnSinkForTests,
+        (level: string, args: unknown[]) => {
+          if (level === "warn") warnings.push(args.map(String).join(" "));
+        },
+        () => ensureSourceCaches(),
+      );
+      expect(npmSyncSpy).not.toHaveBeenCalled();
+      expect(warnings).toEqual([]);
+    } finally {
+      npmSyncSpy.mockRestore();
     }
   });
 
   test("reports 'Hydrating source i/n' progress per source before its sync resolves (#954)", async () => {
     const delayed = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
-    const npmSyncSpy = spyOn(NpmSourceProvider.prototype, "sync").mockImplementation(delayed);
+    const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockImplementation(async () => {
+      await delayed();
+      return { rootDir: "/tmp/root", stashDir: "/tmp/stash", manifestPath: "/tmp/manifest.json" };
+    });
     const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockImplementation(delayed);
     const config: AkmConfig = {
       semanticSearchMode: "off",
       bundles: {
-        "npm-source": { npm: "npm:test-pkg@1.2.3" },
+        "website-source": { website: { url: "https://example.test/docs" } },
         "git-source": { git: "https://github.com/example/repo.git" },
       },
     };
     const messages: string[] = [];
     try {
       await ensureSourceCaches(config, { onProgress: (message) => messages.push(message) });
-      expect(npmSyncSpy).toHaveBeenCalledTimes(1);
+      expect(websiteSpy).toHaveBeenCalledTimes(1);
       expect(gitSpy).toHaveBeenCalledTimes(1);
       // One "Hydrating source i/2: <name>" event per source, fired BEFORE
       // that source's sync resolves — proving the caller sees progress
@@ -637,12 +674,12 @@ describe("ensureSourceCaches", () => {
       // returns.
       expect(messages.filter((m) => /^Hydrating source \d+\/2: /.test(m))).toHaveLength(2);
     } finally {
-      npmSyncSpy.mockRestore();
+      websiteSpy.mockRestore();
       gitSpy.mockRestore();
     }
   });
 
-  test("git and website sources are still refreshed via the consolidated loop (R2 characterization)", async () => {
+  test("git and website sources are still refreshed via the consolidated loop (characterization)", async () => {
     const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
     const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
       rootDir: "/tmp/root",
@@ -666,7 +703,7 @@ describe("ensureSourceCaches", () => {
     }
   });
 
-  test("force option propagates to cache-backed sources", async () => {
+  test("the index path never forces a sync", async () => {
     const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
     const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
       rootDir: "/tmp/root",
@@ -681,18 +718,89 @@ describe("ensureSourceCaches", () => {
       },
     };
 
-    await ensureSourceCaches(config, { force: true });
+    try {
+      await ensureSourceCaches(config);
 
-    expect(gitSpy).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
-      requireRepoDir: true,
-      writable: false,
-      force: true,
+      expect(gitSpy).toHaveBeenCalledTimes(1);
+      expect(gitSpy.mock.calls[0]?.[2]?.force).not.toBe(true);
+      expect(websiteSpy).toHaveBeenCalledTimes(1);
+      expect(websiteSpy.mock.calls[0]?.[1]?.force).not.toBe(true);
+    } finally {
+      gitSpy.mockRestore();
+      websiteSpy.mockRestore();
+    }
+  });
+
+  test("provider sync({ force: true }) (the `akm bundle update` path) forces the mirrors", async () => {
+    const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
+    const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
+      rootDir: "/tmp/root",
+      stashDir: "/tmp/stash",
+      manifestPath: "/tmp/manifest.json",
     });
-    expect(websiteSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "website-source" }), {
-      requireStashDir: true,
-      force: true,
+    try {
+      const git = resolveSourceProviderFactory("git")?.({
+        type: "git",
+        url: "https://github.com/example/repo",
+        name: "git-source",
+      });
+      await git?.sync?.({ force: true });
+      expect(gitSpy).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+        requireRepoDir: true,
+        writable: false,
+        force: true,
+      });
+
+      const website = createWebsiteProvider({
+        type: "website",
+        url: "https://example.com/docs",
+        name: "website-source",
+      });
+      await website.sync({ force: true, ensureWebsiteMirror: websiteIngest.ensureWebsiteMirror });
+      expect(websiteSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "website-source" }), {
+        requireStashDir: true,
+        force: true,
+      });
+    } finally {
+      gitSpy.mockRestore();
+      websiteSpy.mockRestore();
+    }
+  });
+
+  describe("git source materialization", () => {
+    const url = "https://github.com/example/aged-repo";
+    const config: AkmConfig = { semanticSearchMode: "off", bundles: { aged: { git: url } } };
+
+    function materialize(): ReturnType<typeof gitProvider.getCachePaths> {
+      const cachePaths = gitProvider.getCachePaths(gitProvider.parseGitRepoUrl(url).canonicalUrl);
+      fs.mkdirSync(path.join(cachePaths.repoDir, "content"), { recursive: true });
+      fs.writeFileSync(cachePaths.indexPath, "[]", "utf8");
+      return cachePaths;
+    }
+
+    test("a materialized source is not fetched on index, however old its marker is", async () => {
+      const cachePaths = materialize();
+      const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      fs.utimesSync(cachePaths.indexPath, longAgo, longAgo);
+      const cloneSpy = spyOn(gitInstall, "cloneRepo").mockImplementation(() => {});
+      try {
+        await ensureSourceCaches(config);
+        expect(cloneSpy).not.toHaveBeenCalled();
+      } finally {
+        cloneSpy.mockRestore();
+      }
     });
-    gitSpy.mockRestore();
-    websiteSpy.mockRestore();
+
+    test("a source that was never materialized is fetched on index", async () => {
+      const cachePaths = materialize();
+      fs.rmSync(cachePaths.rootDir, { recursive: true, force: true });
+      const cloneSpy = spyOn(gitInstall, "cloneRepo").mockImplementation(() => {});
+      try {
+        await ensureSourceCaches(config);
+        expect(cloneSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        cloneSpy.mockRestore();
+      }
+    });
   });
 });

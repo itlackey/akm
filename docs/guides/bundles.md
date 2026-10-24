@@ -59,7 +59,7 @@ akm bundle add github:owner/team-bundle --name team --before community
 | `filesystem` | local path | Indexed in place, writable by default |
 | `git` | `github:`, known git-host URL, or URL ending in `.git` | Cloned into `~/.cache/akm/registry/`, read-only by default |
 | `npm` | `@scope/pkg` | Installed into cache, read-only |
-| `website` | Other HTTP/HTTPS URL | Crawled, converted to markdown, refreshed every 12 hours |
+| `website` | Other HTTP/HTTPS URL | Crawled and converted to markdown when added; re-crawled by `akm bundle update` |
 
 `akm bundle add` materializes and indexes Git install refs before it reports
 success. A declarative `--provider git` add does the same, including writable
@@ -142,8 +142,8 @@ files, so a bundle that sets `PATH` in an env file installs and refreshes
 unattended with no flag. `akm bundle remove` disconnects a bundle and
 re-indexes without it.
 
-Bundle refresh is deliberately explicit: Git bundles do not poll upstream on
-their own. Consumers that want automatic refresh should schedule
+Bundle refresh is deliberately explicit: git, npm and website bundles do not
+poll upstream on their own, and `akm index` never re-fetches one. Consumers that want automatic refresh should schedule
 `akm bundle update <name>` or `akm bundle update --all`. Scheduled invocations
 should pass `--skip-if-locked` so concurrent index or improve activity becomes
 a successful skip instead of exit 75.

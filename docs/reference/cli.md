@@ -1256,8 +1256,9 @@ akm bundle add https://www.agentic-patterns.com/ --name agent-patterns
 akm bundle add https://docs.example.com/guide --name guide --max-pages 200
 ```
 
-Pages are cached locally and refreshed every 12 hours. The crawl stays within
-the same origin (hostname) and skips static assets (images, CSS, JS, etc.).
+Pages are cached locally when the bundle is added and re-crawled only by
+`akm bundle update`. The crawl stays within the same origin (hostname) and
+skips static assets (images, CSS, JS, etc.).
 
 Use `--max-pages` and `--max-depth` to control how many pages are fetched and
 how many link levels deep the crawler goes. These values are persisted in your

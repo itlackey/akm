@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Bundles are fetched when added and on `akm bundle update`. `akm index` no
+  longer re-fetches a git or website bundle after twelve hours, `--full` does
+  not force a fetch, and a failed forced refresh reports the failure instead of
+  serving the old copy for up to seven days (the previous copy stays on disk).
+  A configured npm bundle with no lock entry is skipped by `akm index` with one
+  warning naming `akm bundle update`, instead of hitting the npm registry on
+  every index run.
+
 ## [0.10.261013] - 2026-10-23
 
 ### Fixed
