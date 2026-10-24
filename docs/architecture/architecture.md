@@ -161,8 +161,8 @@ User-facing item refs are path-identified:
 - markdown-backed items strip `.md` from canonical names
 - `#fragment` is input-only and never stored, and `akm show` is the only command
   that accepts one: on markdown-document items the core resolves it as a
-  section selector (`knowledge/api-guide#authentication`); elsewhere it is an
-  adapter-owned selector opaque to the core
+  section selector (`knowledge/api-guide#authentication`); on any other item
+  `akm show` ignores the fragment, warns, and shows the whole item
 - refs embedded in prose must be fully qualified (`bundle//conceptId`) or a
   native adapter link form — a bare conceptId in prose is ordinary text, and no
   tool rewrites it

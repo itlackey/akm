@@ -84,7 +84,8 @@ touching a model means a slow local model on a single-threaded server: no
 loopback endpoint. Every default is overridable where it applies, per
 engine under `engines.<name>.*`, per workflow step, per command flag, and
 the override is honored as given. The tool never second-guesses a value
-the user set.
+the user set; the one place it still does, clamping a workflow fan-out width
+above 64, is debt rather than policy.
 
 Why: defaults that need tuning before the first useful result lose the
 user; overrides that are ignored or capped behind the user's back lose
