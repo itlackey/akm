@@ -3,10 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P2b Lane B — `akm task explain <ref> [input flags]` (spec
- * docs/plans/specs/p2b-input-bindings.md §4.5, §1.7 B-N4, rows B-52..B-59).
+ * `akm task explain <ref> [input flags]`.
  *
- * A NEW, read-only verb: it never prepares an execution that spawns
+ * A read-only verb: it never prepares an execution that spawns
  * anything, never writes history, never touches the scheduler. It prints
  * (text + `--format json`): the task source path and owning bundle, input
  * declarations with defaults, supplied values WITH PROVENANCE (`default` |
@@ -21,24 +20,14 @@
  * "secret-shaped VALUE redaction" describe block below for the coverage
  * that actually exercises that path.
  *
- * RED TODAY: `akm task explain` does not exist as a subcommand at all —
- * `taskCommand.subCommands` (`src/commands/tasks/tasks-cli.ts`) has no
- * `explain` key, so every invocation below fails with citty's own
- * unknown-subcommand error instead of the behavior pinned here.
+ * Every scenario is driven through the REAL `akm` CLI (`runCliCapture`) with
+ * plain string argv. The one other export this file touches
+ * (`isTaskRunWithId`, `src/cli.ts`) is asserted as a preservation canary.
  *
- * No `@ts-expect-error` type-suppression pins: every scenario is driven
- * through the REAL `akm` CLI (`runCliCapture`) with plain string argv — no
- * not-yet-existing TypeScript export is referenced directly. The one
- * existing, ALREADY-STABLE export this file touches (`isTaskRunWithId`,
- * `src/cli.ts`) is unaffected by P2b and is asserted as a preservation
- * canary (B-59), not a red assertion.
- *
- * Because the exact rendering layout is Implement's call (the spec pins the
- * CONTENT contract, not a literal template), this file's assertions are
- * deliberately CONTENT-presence checks — the same style
- * tests/integration/commands/tasks-input-flags.test.ts already uses for an
- * under-specified message shape ("check the whole serialized envelope, not
- * one specific field") — rather than a pin on exact text layout.
+ * The exact rendering layout is not pinned, only the CONTENT contract, so this
+ * file's assertions are deliberately CONTENT-presence checks ("check the whole
+ * serialized envelope, not one specific field") rather than a pin on exact
+ * text layout.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -111,13 +100,12 @@ function writeExplainDemoFixture(): void {
 /**
  * Structurally locate a field whose KEY matches `keyPattern` and whose value
  * is the exact string `expected`, anywhere in the JSON envelope — tolerant of
- * whichever concrete field name Implement picks (e.g. "bundle", "bundleName",
+ * whichever concrete field name is used (e.g. "bundle", "bundleName",
  * "owningBundle"), but still a TARGETED proof rather than a whole-envelope
  * substring probe. A whole-envelope probe for the bundle name "stash" would
  * also match unrelated appearances of that exact text — the source PATH
- * itself contains "/stash/" as a directory segment (P2b test-review finding
- * #3) — so this only counts a node that carries the value under a
- * bundle-shaped KEY.
+ * itself contains "/stash/" as a directory segment — so this only counts a
+ * node that carries the value under a bundle-shaped KEY.
  */
 function hasNamedField(json: unknown, keyPattern: RegExp, expected: string): boolean {
   function visit(node: unknown): boolean {
@@ -132,7 +120,7 @@ function hasNamedField(json: unknown, keyPattern: RegExp, expected: string): boo
   return visit(json);
 }
 
-/** As {@link hasNamedField}, but the value is the NUMBER `expected` — or its exact string spelling, since "the exact rendering layout is Implement's call" (this file's own header comment). */
+/** As {@link hasNamedField}, but the value is the NUMBER `expected` — or its exact string spelling, since the exact rendering layout is not pinned. */
 function hasNamedVersionField(json: unknown, keyPattern: RegExp, expected: number): boolean {
   function visit(node: unknown): boolean {
     if (Array.isArray(node)) return node.some(visit);
@@ -152,12 +140,11 @@ function hasNamedVersionField(json: unknown, keyPattern: RegExp, expected: numbe
  * `resolveExecution`'s `provenance` actually returns
  * (`src/integrations/agent/execution.ts`) —
  * structurally, not merely because the resolved engine NAME ("test-agent")
- * appears somewhere in the envelope (P2b test-review finding #3: a whole-
- * envelope substring probe for the engine name alone is satisfiable by an
- * envelope that prints the RESOLVED value with no provenance tracking at
- * all). Finding this shape is the direct, structural proof that `akm task
- * explain` REUSES resolveExecution's own provenance rather than writing
- * a second resolver (spec B-N4).
+ * appears somewhere in the envelope (a whole-envelope substring probe for the
+ * engine name alone is satisfiable by an envelope that prints the RESOLVED
+ * value with no provenance tracking at all). Finding this shape is the
+ * direct, structural proof that `akm task explain` REUSES resolveExecution's
+ * own provenance rather than writing a second resolver.
  */
 function hasExecutionFieldProvenance(json: unknown): boolean {
   function visit(node: unknown): boolean {
@@ -193,15 +180,14 @@ describe("akm task explain <ref> — text output (B-52)", () => {
     expect(text).toContain("strict");
     expect(text).toContain("ticket");
 
-    // Task source path (absolute) and owning bundle (P2b test-review finding
-    // #3: neither was pinned before). The path itself is not a secret
-    // (B-N4's own field table lists it explicitly), and "stash" is the
-    // owning-bundle name this exact sandbox resolves to whether Implement
-    // reuses akm task run's own DEFAULT_BUNDLE_NAME fallback
-    // (src/tasks/run/load-task.ts) or the working-stash write-target path
-    // (src/core/write-source.ts's deriveBundleId, which slugifies stashDir's
-    // OWN basename — withIsolatedAkmStorage's stash dir is literally named
-    // "stash") — the two independent resolution paths agree here.
+    // Task source path (absolute) and owning bundle. The path itself is not a
+    // secret, and "stash" is the owning-bundle name this exact sandbox
+    // resolves to whether the explain path reuses akm task run's own
+    // DEFAULT_BUNDLE_NAME fallback (src/tasks/run/load-task.ts) or the
+    // working-stash write-target path (src/core/write-source.ts's
+    // deriveBundleId, which slugifies stashDir's OWN basename —
+    // withIsolatedAkmStorage's stash dir is literally named "stash") — the
+    // two independent resolution paths agree here.
     expect(text).toContain(path.join(tasksDir, "explain-demo.yml"));
     expect(text).toContain("stash");
 
@@ -390,9 +376,7 @@ describe("akm task explain <ref> --format json (B-53)", () => {
     expect(rendered).toContain(SCHEDULE_CRON);
     expect(rendered).toContain("explain-note");
 
-    // (P2b test-review finding #3) B-N4's field table lists eight facts;
-    // these four were unpinned by every existing assertion in this
-    // describe: the absolute source path and owning bundle name, the source
+    // Also pins the absolute source path and owning bundle name, the source
     // version, and at least one FIELD-LEVEL execution-provenance object
     // proving `explain` reuses resolveExecution's own provenance rather
     // than writing a second resolver.
@@ -415,20 +399,19 @@ describe("akm task explain <ref> --format json (B-53)", () => {
 
 /**
  * Locate every "provenance" tag attached to a supplied-value row for
- * `inputName`, recursively, tolerant of whichever concrete JSON SHAPE
- * Implement picks for the envelope — the spec pins the CONTENT contract
- * (B-N4), never a literal layout (this file's own header comment). Two
- * shapes are considered, since either is a reasonable reading of "one row
- * per declared input" (§4.5 B-N4):
+ * `inputName`, recursively, tolerant of whichever concrete JSON SHAPE the
+ * envelope uses — the content contract is pinned, never a literal layout
+ * (this file's own header comment). Two shapes are considered, since either
+ * is a reasonable reading of "one row per declared input":
  *
  *   (a) an array of `{name: "scope", provenance: "default", ...}` rows;
  *   (b) a map keyed BY input name: `{scope: {provenance: "default", ...}}`.
  *
  * A candidate must carry an OWN `provenance` key to count — this is what
- * makes the search STRUCTURAL rather than a whole-envelope substring probe
- * (P2b test-review finding #7): the input DECLARATION section also has a
- * node named "scope" (with its OWN `default` key, per B-N4's field list),
- * but that node has no `provenance` key, so it is never matched here.
+ * makes the search STRUCTURAL rather than a whole-envelope substring probe:
+ * the input DECLARATION section also has a node named "scope" (with its OWN
+ * `default` key), but that node has no `provenance` key, so it is never
+ * matched here.
  */
 function suppliedValueProvenances(json: unknown, inputName: string): unknown[] {
   const found: unknown[] = [];
@@ -475,8 +458,8 @@ describe("akm task explain <ref> --<flag> — supplied-value provenance (B-54)",
     // envelope — the input DECLARATION for "scope" carries its OWN
     // `default: "changed"` key regardless of provenance tracking, so that
     // whole-envelope probe is satisfiable by an envelope with NO provenance
-    // at all (P2b test-review finding #7). Locate the SUPPLIED-VALUE row
-    // instead and read its provenance field directly.
+    // at all. Locate the SUPPLIED-VALUE row instead and read its provenance
+    // field directly.
     expect(suppliedValueProvenances(envelope, "scope")).toContain("default");
   });
 
@@ -500,7 +483,7 @@ describe("akm task explain <ref> --<flag> — supplied-value provenance (B-54)",
       (await runCliCapture(["task", "explain", "explain-demo", "--scope", "urgent", "--format", "json"])).stdout,
     );
 
-    // The fixture's ONE schedule entry supplies `scope: all` (line 96)
+    // The fixture's ONE schedule entry supplies `scope: all`
     // alongside the task's OWN `scope` declaration — an unflagged explain
     // call therefore carries TWO rows for the same input name "scope": the
     // CURRENT value (provenance "default") and the schedule entry's OWN
@@ -517,8 +500,8 @@ describe("akm task explain <ref> --<flag> — supplied-value provenance (B-54)",
     // reclassified to "flag", when --scope is supplied for this call.
     expect(suppliedValueProvenances(flagged, "scope")).toContain("schedule-binding");
 
-    // All three vocabulary values the spec names (B-N4: "default | flag |
-    // schedule-binding") are pairwise distinct, observed together across
+    // All three vocabulary values ("default | flag | schedule-binding") are
+    // pairwise distinct, observed together across
     // the unflagged + flagged calls above.
     const observed = new Set([
       ...unflaggedScopeProvenances.filter((p) => p === "default" || p === "schedule-binding"),
@@ -541,26 +524,22 @@ describe("akm task explain <ref> --<undeclared> — UNKNOWN_FLAG (B-55)", () => 
   });
 });
 
-// Regression (finding F7): `--scheduled` is `akm task run`'s own reserved
-// boolean flag (`../../../src/tasks/task-run-reserved-flags.ts`), so the
-// exact-name scanner `task explain` shares with `task run`
-// (`parseTaskInputFlags`) silently skipped it instead of ever surfacing it as
-// an input flag — and the generic pre-dispatch flag gate exempts `task
-// explain`'s whole dynamic namespace (`../../../src/cli/unknown-flags.ts`'s
-// `dynamicNamedFlagCommands`), so nothing else caught it either. `akm task
-// explain <ref> --scheduled` silently accepted and discarded the flag rather
-// than rejecting it, even though `scheduled` can never be a declared input
-// name (same reserved-name module) — so `--scheduled` can never be anything
-// but a mistake on `explain`. Same B-55 diagnostic shape: UNKNOWN_FLAG,
-// exit 2, `{ok:false,error,code}` on stderr.
+// `--scheduled` is `akm task run`'s own reserved boolean flag
+// (src/tasks/task-run-reserved-flags.ts), so the exact-name scanner
+// `task explain` shares with `task run` (`parseTaskInputFlags`) would silently
+// skip it instead of ever surfacing it as an input flag — and the generic
+// pre-dispatch flag gate exempts `task explain`'s whole dynamic namespace
+// (src/cli/unknown-flags.ts's `dynamicNamedFlagCommands`), so nothing else
+// would catch it either. `akm task explain <ref> --scheduled` must therefore
+// reject the flag rather than silently accept and discard it: `scheduled` can
+// never be a declared input name (same reserved-name module), so
+// `--scheduled` can never be anything but a mistake on `explain`. Diagnostic
+// shape: UNKNOWN_FLAG, exit 2, `{ok:false,error,code}` on stderr.
 //
 // The table below covers every spelling of the SAME flag NAME, not just the
-// bare token (review round 1): the first fix rejected only the two literal
-// tokens `--scheduled` and `--scheduled=true`, so `--scheduled=false` and
-// `--scheduled=1` still slipped through to the shared scanner — which splits
-// on `=` before its reserved-name check and therefore swallowed them exactly
-// as before. Rejection is now keyed on the name before the first `=`, the
-// same split `parseTaskInputFlags` itself performs.
+// bare token: rejection is keyed on the name before the first `=`, the same
+// split `parseTaskInputFlags` itself performs, so `--scheduled=false` and
+// `--scheduled=1` are rejected exactly like `--scheduled`.
 describe("akm task explain <ref> --scheduled — UNKNOWN_FLAG (F7)", () => {
   for (const token of ["--scheduled", "--scheduled=true", "--scheduled=false", "--scheduled=1"]) {
     test(`\`${token}\` (task run's own reserved flag) fails UNKNOWN_FLAG on explain instead of being silently discarded`, async () => {
@@ -605,21 +584,18 @@ describe("akm task explain <ref> — structural bans (B-56, B-N4): env:/prompt/r
   });
 });
 
-// Finding 1 (code review): a secret-shaped value survived unredacted when it
-// appeared in an input declaration's JSON-Schema `enum:` list, even though
-// the IDENTICAL value was already redacted under that same declaration's
-// `default:`, in `suppliedInputs`, and in `schedule[].inputs`. Finding 3: no
-// test in this file exercised ANY of those redaction paths at all — this
-// describe block is that missing coverage, for every place a declared or
-// supplied VALUE can appear. Each secret-shaped sentinel below is chosen to
-// trip `detectSecretShapedParams`'s VALUE-shape heuristic on its own (the
-// `sk-` prefix, `src/workflows/exec/param-secrets.ts`'s
-// `SECRET_VALUE_PREFIX`) — deliberately under an input NAME
-// (`scope`/`note`) that does not itself match the heuristic's KEY-name hint
-// list, so a passing test proves value-shape detection specifically, not
-// merely name-based detection. `apiKey` is the inverse case: a plainly
-// non-secret VALUE under a secret-suggesting NAME, proving the existing
-// (previously untested) `default:` redaction still fires on name alone.
+// A secret-shaped value must be redacted everywhere a declared or supplied
+// VALUE can appear: an input declaration's JSON-Schema `enum:` list, that same
+// declaration's `default:`, `suppliedInputs`, and `schedule[].inputs`. Each
+// secret-shaped sentinel below is chosen to trip `detectSecretShapedParams`'s
+// VALUE-shape heuristic on its own (the `sk-` prefix,
+// `src/workflows/exec/param-secrets.ts`'s `SECRET_VALUE_PREFIX`) —
+// deliberately under an input NAME (`scope`/`note`) that does not itself
+// match the heuristic's KEY-name hint list, so a passing test proves
+// value-shape detection specifically, not merely name-based detection.
+// `apiKey` is the inverse case: a plainly non-secret VALUE under a
+// secret-suggesting NAME, proving the `default:` redaction still fires on
+// name alone.
 const ENUM_SECRET_SENTINEL = "sk-EnumSecretSentinelValue1234567890";
 const SUPPLIED_SECRET_SENTINEL = "sk-SuppliedSecretSentinelValue1234567890";
 const SCHEDULE_SECRET_SENTINEL = "sk-ScheduleSecretSentinelValue1234567890";
@@ -770,15 +746,6 @@ describe("akm task explain <ref> — secret-shaped VALUE redaction (Finding 1: e
     }
   });
 });
-
-// P4 (docs/plans/specs/p4-deletions-closeout.md §3.2, row B-57) DELETES this
-// describe block, not flips it: task source v3 acceptance is retired from
-// `src` entirely, so "akm task explain resolves a genuine legacy-schema
-// (version:3) task" is no longer a claim any fixture can demonstrate — there
-// is no second version left to structurally distinguish the row-310 v4
-// case's `hasNamedVersionField(..., 4)` check against. B-57's underlying
-// claim (declared inputs/target/execution settings resolve for whatever
-// version a task actually is) stays covered by this file's v4 fixtures.
 
 describe("akm task explain — no ref / an unknown ref (B-58)", () => {
   test("no ref at all: usage error, exit 2", async () => {

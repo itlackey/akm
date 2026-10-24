@@ -62,7 +62,7 @@ afterEach(() => {
   envCleanup = () => {};
   // Some tests below call setQuiet() directly to exercise the readIndexStats
   // error path without going through the CLI's argv-parsing startup — reset
-  // it so quiet state never leaks into a later test (R-057).
+  // it so quiet state never leaks into a later test.
   resetQuiet();
 });
 
@@ -153,9 +153,8 @@ describe("assembleInfo", () => {
     expect(info.indexStats.lastBuiltAt).toBe("2026-03-17T00:00:00Z");
   });
 
-  // R-057(a): indexStats previously carried only an aggregate entryCount with
-  // no per-type breakdown. `byType` must sum back to entryCount and reflect
-  // the actual mix of indexed asset types.
+  // indexStats carries a per-type breakdown: `byType` must sum back to
+  // entryCount and reflect the actual mix of indexed asset types.
   test("indexStats.byType breaks entryCount down per asset type", () => {
     const stashDir = makeStashDir();
     const dbPath = path.join(tmpDir("db"), "test.db");
@@ -194,9 +193,8 @@ describe("assembleInfo", () => {
     expect(info.indexStats.byType).toEqual({});
   });
 
-  // R-057(a): akm info previously had no top-level bundleDir/defaultBundle,
-  // even though akm sources list resolves and reports both (SourceListResponse).
-  // akm info must agree with akm sources list on which stash/bundle is primary
+  // akm info reports top-level bundleDir/defaultBundle and must agree with
+  // `akm sources list` (SourceListResponse) on which stash/bundle is primary
   // — i.e. use the SAME resolution (resolveStashDir(), env override first).
   test("bundleDir matches resolveStashDir() and defaultBundle matches the configured bundle", () => {
     const config = loadConfig();
@@ -217,9 +215,9 @@ describe("assembleInfo", () => {
     expect(typeof info.bundleDir).toBe("string");
   });
 
-  // #951: scripts (e.g. a host-vs-container health script) previously had to
-  // hardcode akm's data/config/cache/state roots; assembleInfo now exposes
-  // the same resolvers `akm health`/paths.ts use, alongside bundleDir.
+  // #951: scripts (e.g. a host-vs-container health script) need not hardcode
+  // akm's data/config/cache/state roots; assembleInfo exposes the same
+  // resolvers `akm health`/paths.ts use, alongside bundleDir.
   test("exposes dataDir/configDir/cacheDir/stateDir alongside bundleDir", () => {
     const info = assembleInfo();
 
@@ -229,10 +227,9 @@ describe("assembleInfo", () => {
     expect(info.stateDir).toBe(getStateDir());
   });
 
-  // R-057(b): readIndexStats' error branch used to write straight to
-  // process.stderr, bypassing core/warn's setQuiet()-gated error() helper —
-  // the byte-identical stderr line was emitted with AND without --quiet. It
-  // must now route through error(), which IS gated by setQuiet().
+  // readIndexStats' error branch must route through core/warn's error(), which
+  // IS gated by setQuiet() — writing straight to process.stderr would emit the
+  // same stderr line with AND without --quiet.
   test("the corrupted-index error message is suppressed by setQuiet(true), emitted otherwise", () => {
     const dbPath = path.join(tmpDir("db"), "corrupt.db");
     fs.writeFileSync(dbPath, "not a sqlite database");
@@ -291,12 +288,9 @@ describe("assembleInfo", () => {
     expect(Array.isArray(info.sourceProviders)).toBe(true);
   });
 
-  // Precondition for consolidate-wave2-e.test.ts's D5 deletion (Phase 2
-  // triage): that file's "assembleInfo — sourceProviders populated" test only
-  // asserted `typeof assembleInfo === "function"`. This strengthens the real
-  // coverage: sourceProviders is empty with no configured bundle, and once a
+  // sourceProviders is empty with no configured bundle, and once a
   // bundle IS configured it projects the bundle → source shape assembleInfo
-  // actually emits (src/commands/sources/info.ts:47-56).
+  // actually emits (src/commands/sources/info.ts).
   test("sourceProviders is empty with no configured bundle, and reflects a configured bundle", () => {
     expect(assembleInfo().sourceProviders).toEqual([]);
 
@@ -321,11 +315,11 @@ describe("assembleInfo", () => {
     expect(parsed.indexStats).toEqual(info.indexStats);
   });
 
-  // Owner ruling 9 (R-039): the runtime default flipped from "auto" to "off",
-  // so a bare install never silently downloads the ~130 MB embedding model.
-  // `akm info` on a fresh install therefore reports mode "off" / status
-  // "disabled" rather than "auto" / "pending". The "auto" case is pinned
-  // separately below so the pending-status path keeps its coverage.
+  // The runtime default is "off", so a bare install never silently downloads
+  // the ~130 MB embedding model. `akm info` on a fresh install therefore
+  // reports mode "off" / status "disabled" rather than "auto" / "pending". The
+  // "auto" case is pinned separately below so the pending-status path keeps its
+  // coverage.
   test("reports semantic search off by default (R-039)", () => {
     const info = assembleInfo();
 
@@ -376,9 +370,9 @@ describe("assembleInfo", () => {
   });
 });
 
-// ── a10-info: akm info must behave like a help command — always exit 0 and
-// report, never refuse. These pin the per-section degrade cases the fix
-// covers on top of the pre-existing "absent"/"unreadable" ones above. ────────
+// ── akm info must behave like a help command — always exit 0 and
+// report, never refuse. These pin the per-section degrade cases on top of the
+// "absent"/"unreadable" ones above. ───────────────────────────────────────────
 describe("assembleInfo — index.db degrade cases never throw (a10-info)", () => {
   test("a newer index layout is reported in indexStats.unavailable, not thrown", () => {
     const stashDir = makeStashDir();
@@ -491,7 +485,7 @@ describe("assembleInfo — config degrade (a10-info)", () => {
     expect(info.configError).toBeUndefined();
   });
 
-  // R-057/a10-info follow-up: a bundle path that IS configured but doesn't
+  // A bundle path that IS configured but doesn't
   // resolve (STASH_DIR_UNREADABLE) is a genuine misconfiguration, not a
   // fresh install — bundleDir still falls back to the platform default (a
   // courtesy), but the real reason must not be silently dropped.
@@ -519,7 +513,7 @@ describe("assembleInfo — config degrade (a10-info)", () => {
   });
 });
 
-// ── WS2: info honors --format (already supported; regression guard) ───────────
+// ── info honors --format (regression guard) ──────────────────────────────────
 describe("akm info --format", () => {
   test("--format text differs from --format json (info honors --format)", async () => {
     resetConfigCache();

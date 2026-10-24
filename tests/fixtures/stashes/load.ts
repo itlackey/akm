@@ -5,8 +5,6 @@
  * and the standard akm stash layout. `loadFixtureStash(name)` copies the
  * fixture into a fresh tmp dir, sets `AKM_BUNDLE_DIR`, runs `akm index`, and
  * returns the materialised path plus a cleanup function.
- *
- * See the 2026-05 benchmark methodology §5.5 for the contract.
  */
 
 import { createHash } from "node:crypto";

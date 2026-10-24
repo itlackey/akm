@@ -7,7 +7,7 @@ import { insertUsageEvent, purgeOldUsageEvents, type UsageEventRow } from "../..
 import type { Database } from "../../src/storage/database";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
-/** Read back inserted rows directly — `getUsageEvents` was dropped as dead code (no production reader). */
+/** Read back inserted rows directly. */
 function readEvents(db: Database): UsageEventRow[] {
   return db.prepare("SELECT * FROM usage_events ORDER BY id ASC").all() as UsageEventRow[];
 }
@@ -49,8 +49,8 @@ afterEach(() => {
 });
 
 // ── Test 1: usage_events table exists in state.db (state migration 020) ───
-// Chunk-8 WI-8.3: usage_events is a state.db table now (folded by migration
-// 020), not an index.db one; these telemetry-function tests open state.db.
+// usage_events is a state.db table (folded by migration 020), not an index.db
+// one; these telemetry-function tests open state.db.
 
 describe("Usage Telemetry", () => {
   test("usage_events table exists in state.db (state migration 020)", () => {

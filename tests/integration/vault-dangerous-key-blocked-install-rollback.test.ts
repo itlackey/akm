@@ -12,21 +12,13 @@
  * blocked attempt LEFT BEHIND, because it never runs an install at all — it
  * hands the audit a bare temp dir as both stash root and rollback target.
  *
- * That was the open waiver in
- * `docs/architecture/testing/manual-testing-checklist.md` §24.2 ("Durability" →
- * "full source lifecycle rollback", waiver expiry 0.9.1): *"no test walks
- * add→blocked-install→rollback against a dangerous fixture"*, whose named
- * verification is *"asserting config.json/akm.lock parity"*. The waiver lists
- * the lifecycle surfaces as **config / lock / root / index / events**.
- *
  * These tests drive the REAL `akm bundle add` CLI end-to-end (`runCliCapture`)
  * so every step the production path takes runs in order — `akmAdd` →
  * config `bundles` upsert → `upsertLockEntry` → `akmIndex` → `appendEvent` →
  * the dangerous-key audit → `akmRemove` rollback → reindex. The only seam is
  * `syncFromRef`, spied so the "download" materializes a local copy of
- * `tests/fixtures/manual-qa/dangerous-bundle/` instead of hitting a registry
- * (the same seam `source-qa-fixes.test.ts` / `update-destructive-confirm.test.ts`
- * already use to drive registry installs offline). A LOCAL-path add is
+ * `tests/fixtures/manual-qa/dangerous-bundle/` instead of hitting a registry.
+ * A LOCAL-path add is
  * deliberately NOT used: `akmAdd` routes local refs to `addLocalSource`, which
  * writes no lock entry at all, so it cannot exercise lock parity.
  *
@@ -198,7 +190,7 @@ function expectBlockedByDangerousKeyGate(result: { code: number; stderr: string 
   expect(result.code).toBe(1);
   expect(result.stderr).toContain('"code": "DANGEROUS_ENV_KEY"');
   expect(result.stderr).toContain("NODE_OPTIONS");
-  // The success envelope must not also be printed (F4).
+  // The success envelope must not also be printed.
   expect(result.stderr).not.toContain('"ok": true');
 }
 
@@ -293,8 +285,8 @@ describe("dangerous-key blocked install — rollback leaves config.json/akm.lock
     const dangerousRoot = materializeDangerousBundle();
     expectBlockedByDangerousKeyGate(await addBundleNonInteractive(DANGEROUS_REF, dangerousRoot));
 
-    // Byte-level parity of BOTH lifecycle files — the assertion the §24.2
-    // waiver names. Byte-level, not "deep-equal after parsing": a rollback
+    // Byte-level parity of BOTH lifecycle files — the central assertion.
+    // Byte-level, not "deep-equal after parsing": a rollback
     // that rewrote the surviving bundle's entry into an equivalent-but-
     // different serialization would still be a rollback that touched records
     // it had no business touching.

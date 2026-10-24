@@ -20,7 +20,7 @@ import { type Cleanup, sandboxEnvDir } from "../../_helpers/sandbox";
 import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
 /**
- * R2: typed artifacts + artifact-judging gates + bounded gate loops.
+ * Typed artifacts + artifact-judging gates + bounded gate loops.
  *
  *   - `IrStepPlan.outputSchema` validates the PROMOTED artifact before the
  *     step can complete (fail-fast; errors in the summary).
@@ -39,8 +39,8 @@ import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow
  * AKM_DATA_DIR. Fixtures are unified workflow markdown (frontmatter graph +
  * body prose/rubric) frozen via `freezeWorkflow` — optional `max_loops`
  * configuration lives in frontmatter `gate:`, while the rubric lives in
- * the body under a "### gate" sub-heading (workflow-format-unification,
- * spec §2.4); the rubric's raw text becomes the ONE `gate.criteria` string.
+ * the body under a "### gate" sub-heading; the rubric's raw text becomes the
+ * ONE `gate.criteria` string.
  */
 
 let tmpDir = "";
@@ -443,12 +443,11 @@ describe("gate max_loops — evaluator-optimizer re-execution with feedback", ()
   });
 
   test("gate feedback containing ${{ … }} is appended as DATA — never re-parsed, but it still changes the input hash", async () => {
-    // The judge's feedback is threaded into loop 2's prompt as literal text
-    // (there is no upstream expression resolution any more — spec §2.3 — but
-    // the ANTI-INJECTION property this test pins is unchanged): a feedback
-    // value that itself spells an expression-looking string must appear
-    // VERBATIM and must never resolve against params or step outputs, while
-    // STILL changing the prompt (hence the input hash), so loop 2 re-dispatches.
+    // The judge's feedback is threaded into loop 2's prompt as literal text: a
+    // feedback value that itself spells an expression-looking string must
+    // appear VERBATIM and must never resolve against params or step outputs,
+    // while STILL changing the prompt (hence the input hash), so loop 2
+    // re-dispatches.
     seedRun({ steps: LOOPED_STEPS });
     const prompts: string[] = [];
     const dispatcher = async (req: UnitDispatchRequest): Promise<UnitDispatchResult> => {
@@ -714,7 +713,7 @@ describe("exec steps under a completion gate — judged once, never looped", () 
   });
 });
 
-// ── Crash-resume seeds the gate loop from the journal (Codex round-3 P1) ──────
+// ── Crash-resume seeds the gate loop from the journal ─────────────────────────
 //
 // The engine loop must SEED its per-step gate state from the journal exactly as
 // the brief/report surfaces do (`activeGateLoop` / `recoverGateFeedback`): a run
@@ -866,8 +865,8 @@ describe("gate max_loops — crash-resume seeds the loop from the journal", () =
     expect(prompts[0]).toContain("Add the frobnicator analysis.");
     expect(prompts[0]).toContain("- the work is thorough");
 
-    // The judge ran ONCE on resume — for loop 2 only. The buggy engine restarted
-    // at loop 1 and re-judged the stale artifact (a spurious extra judge call).
+    // The judge ran ONCE on resume — for loop 2 only. (A restart at loop 1
+    // would re-judge the stale artifact: a spurious extra judge call.)
     expect(judgeCalls).toBe(1);
 
     await withWorkflowRunsRepo((repo) => {
@@ -1028,19 +1027,18 @@ describe("gate max_loops — crash-resume seeds the loop from the journal", () =
   });
 });
 
-// ── Judge outage must not burn the gate budget (bug 3 regression) ────────────
+// ── Judge outage must not burn the gate budget ───────────────────────────────
 //
 // A THROWN judge call and a MALFORMED verdict are verifier INFRASTRUCTURE
-// failures, not verdicts. Pre-fix, validateStepSummary converted both into
-// `complete: false`, indistinguishable from an honest rejection — the bounded
-// gate loop then consumed a loop and re-dispatched the step's ENTIRE unit
-// subgraph with "The verification judge failed…" as feedback, burning
-// max_loops of real agent work on a transient outage. Now: no loop consumed,
-// no re-dispatch, the step (and run) block for `akm workflow resume`, and the
-// errored gate row journals NO verdict so resume's loop derivation
-// (activeGateLoop/recoverGateFeedback) starts at the SAME loop and reuses the
-// journaled units. Honest rejections keep looping exactly as before (the
-// max_loops suites above pin that).
+// failures, not verdicts. Converting them into `complete: false` would make
+// them indistinguishable from an honest rejection — the bounded gate loop would
+// consume a loop and re-dispatch the step's ENTIRE unit subgraph with "The
+// verification judge failed…" as feedback, burning max_loops of real agent work
+// on a transient outage. Instead: no loop consumed, no re-dispatch, the step
+// (and run) block for `akm workflow resume`, and the errored gate row journals
+// NO verdict so resume's loop derivation (activeGateLoop/recoverGateFeedback)
+// starts at the SAME loop and reuses the journaled units. Honest rejections
+// keep looping exactly as before (the max_loops suites above pin that).
 
 describe("judge outage — infrastructure failure blocks for resume instead of burning gate loops", () => {
   /** Drive LOOPED_WF once with a failing judge, then resume with a healthy one. */
@@ -1062,7 +1060,7 @@ describe("judge outage — infrastructure failure blocks for resume instead of b
     });
 
     // ONE dispatch of the work unit — the outage did NOT re-dispatch the
-    // subgraph with judge-failure feedback (the pre-fix behavior).
+    // subgraph with judge-failure feedback.
     expect(workPrompts).toHaveLength(1);
     expect(workPrompts[0]).not.toContain("Completion-gate feedback");
     expect(wrapUpDispatches).toBe(0);
@@ -1206,9 +1204,9 @@ describe("judge outage — infrastructure failure blocks for resume instead of b
   });
 });
 
-// ── Typed artifacts × gate loops (peer-review regression) ────────────────────
+// ── Typed artifacts × gate loops ─────────────────────────────────────────────
 //
-// Pinned R2 decision: a typed-artifact schema mismatch "fails the step
+// A typed-artifact schema mismatch "fails the step
 // (fail-fast — gate loops can re-run it)". The engine must feed the mismatch
 // into the bounded gate loop when attempts remain — regenerate with the
 // validation errors as feedback — and only kill the run when the FINAL loop's
@@ -1327,15 +1325,9 @@ describe("typed artifacts + gate max_loops — schema mismatches are retryable b
 
 // ── Body instructions are always verbatim (no interpolation, no param splicing) ──
 //
-// SEMANTIC CHANGE (workflow-format-unification, spec §2.3): the pre-unification
-// suite had TWO frontends — a templated YAML program and a byte-exact classic
-// linear markdown grammar (`# Workflow:` / `## Step:` / `Step ID:`) — and this
-// block proved the classic grammar's instructions passed through untouched.
-// That grammar is deleted outright (spec §3); there is only one frontend now,
-// and EVERY workflow's body instructions are byte-exact prose, never templated
-// (spec §2.3) — so the property this block pins is no longer "the classic
-// path's behavior" but the unified format's ONLY behavior, proved directly
-// against `parseWorkflow`/`freezeWorkflow`.
+// EVERY workflow's body instructions are byte-exact prose, never templated, so
+// this block pins the unified format's only behavior, proved directly against
+// `parseWorkflow`/`freezeWorkflow`.
 
 const VERBATIM_WF = `---
 type: workflow

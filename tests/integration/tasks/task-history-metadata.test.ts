@@ -53,10 +53,9 @@ describe("decodeTaskHistoryMetadata", () => {
     expect(() => decodeTaskHistoryMetadata({ metadataVersion: 2, durationMs: 1 })).not.toThrow();
   });
 
-  // Read-time compatibility shim (task-history legacy metadata issue, mirrors
-  // #858/#859's storedToChanges): 58% of a real install's task_history rows
-  // predate `metadataVersion` entirely. An absent metadataVersion is a LEGACY
-  // row, not corruption.
+  // Read-time compatibility shim (mirrors #858/#859's storedToChanges):
+  // task_history rows written before `metadataVersion` existed carry none. An
+  // absent metadataVersion is a LEGACY row, not corruption.
   test("decodes a legacy row with no metadataVersion at all (the 8,508-row live shape)", () => {
     expect(decodeTaskHistoryMetadata({ durationMs: 48557, detail: { exitCode: 0 } })).toEqual({
       metadataVersion: 2,
@@ -74,7 +73,7 @@ describe("decodeTaskHistoryMetadata", () => {
     expect(() => decodeTaskHistoryMetadata({})).toThrow(/durationMs must be a number/);
   });
 
-  // Additive fields written by prior releases (88 live rows) must never be
+  // Additive fields written by prior releases must never be
   // fatal — the strict allow-list, not just the version gate, was the hazard.
   test("decodes rows carrying additive `profile`/`repairReason` fields, dropping them harmlessly", () => {
     expect(decodeTaskHistoryMetadata({ durationMs: 1, detail: null, profile: "opencode" })).toEqual({
@@ -124,10 +123,9 @@ describe("decodeTaskHistoryMetadata", () => {
     ).toEqual({ metadataVersion: 2, durationMs: 1, detail: { exitCode: 0 } });
   });
 
-  // P1b (D8, spec §5.3/§6 F-2): the result-vocabulary marker rides the
-  // metadata as `targetVocab`, validated as 2 | undefined. RED until the
-  // Implement step teaches the decoder the field (today it rejects it as an
-  // unknown field); a later phase never widens the accepted values.
+  // The result-vocabulary marker rides the
+  // metadata as `targetVocab`, validated as 2 | undefined; the accepted
+  // values are never widened.
   test("accepts targetVocab 2 and metadata without targetVocab (P1b vocabulary marker)", () => {
     expect(decodeTaskHistoryMetadata({ metadataVersion: 2, durationMs: 1, detail: null, targetVocab: 2 })).toEqual({
       metadataVersion: 2,

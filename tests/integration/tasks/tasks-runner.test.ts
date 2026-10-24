@@ -247,10 +247,9 @@ describe("runTask — workflow target", () => {
     expect(rows[0]!.status).toBe("completed");
   });
 
-  // M4: mapWorkflowStatus is now an exhaustive switch over WorkflowRunStatus
+  // mapWorkflowStatus is an exhaustive switch over WorkflowRunStatus
   // with an assertNever default (no silent `default: "completed"`). Lock in the
-  // exact output for every runtime status so the explicit mapping provably
-  // reproduces the previous behaviour for all known statuses.
+  // exact output for every runtime status.
   const STATUS_CASES = [
     { wf: "completed", expected: "completed" },
     { wf: "blocked", expected: "blocked" },
@@ -286,14 +285,13 @@ describe("runTask — workflow target", () => {
     });
   }
 
-  // ── issue 11: whole-run timeout for unattended workflow tasks ─────────────
+  // ── whole-run timeout for unattended workflow tasks ───────────────────────
   //
-  // The runner used to call `runWorkflowSteps({ target, params })` with no
-  // signal, no maxSteps and no maxRetries: a scheduled run had no abort path
-  // at all, so one wedged agent unit hung the task indefinitely. It now wires
-  // an AbortController + timer exactly like `akm workflow run --timeout`
-  // (src/commands/workflow-cli.ts) and threads the run bounds the task file
-  // declares.
+  // The runner wires an AbortController + timer exactly like
+  // `akm workflow run --timeout` (src/commands/workflow-cli.ts) and threads the
+  // run bounds the task file declares; with no signal, maxSteps and maxRetries
+  // a scheduled run would have no abort path at all, so one wedged agent unit
+  // would hang the task indefinitely.
 
   /** Records what the runner passed to `runWorkflowSteps`. */
   interface CapturedRunOptions {
@@ -537,15 +535,10 @@ describe("runTask — workflow target", () => {
   });
 
   test("threads declared maxSteps / maxRetries into the orchestrator", async () => {
-    // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2, row B-28) retired
-    // this test's v3 fixture along with task source v3 acceptance itself —
-    // the `with:` -> child-run-params path it exercised on a
-    // `uses: workflows/<ref>` target is now UNREACHABLE (task source v4
-    // rejects `with:` on any target but `uses: akm/command`; R-R2 is
-    // resolved by deletion, spec §8). Converted to task source v4:
-    // maxSteps/maxRetries are top-level fields there, and `params` is now
-    // the task's defaulted declared inputs — `{}` here, since this fixture
-    // declares none (row B-28's new answer).
+    // maxSteps/maxRetries are top-level fields of a task source v4 file, and
+    // `params` is the task's defaulted declared inputs — `{}` here, since this
+    // fixture declares none (task source v4 rejects `with:` on any target but
+    // `uses: akm/command`).
     writeTask("wf-bounds", workflowTask({ maxSteps: 4, maxRetries: 2 }));
     const captured: CapturedRunOptions[] = [];
 
@@ -608,8 +601,7 @@ describe("runTask — command target", () => {
     // cmd.exe's `/S /C` reads its tail as one hand-quoted command line, not
     // standard argv — shellCommand() already builds and quotes it for that.
     // Default per-argument escaping would add an incompatible second layer of
-    // quoting on top and break any resolved path containing a space (#844
-    // gated-CI: the native scheduler suite's first real Windows run).
+    // quoting on top and break any resolved path containing a space (#844).
     writeTask("cmd-shell-task", shellTask("akm --version", { shell: "cmd" }));
     let capturedOptions: { windowsVerbatimArguments?: boolean } | undefined;
     const spawnFn: SpawnFn = (_cmd, options) => {
@@ -779,7 +771,7 @@ describe("runTask — command target", () => {
     const { timers, setTimeoutFn, clearTimeoutFn } = collectTimers();
     const signals: string[] = [];
     // A child that swallows SIGTERM: only SIGKILL resolves its exit. Proves the
-    // runner now escalates (old inline path signalled SIGTERM once and hung).
+    // runner escalates.
     const spawnFn: SpawnFn = () => {
       let resolveExit: (code: number) => void = () => {};
       const exited = new Promise<number>((resolve) => {
@@ -815,12 +807,11 @@ describe("runTask — command target", () => {
   });
 
   test("a SIGTERM to the task runner itself terminates the whole child process group (#956)", async () => {
-    // The runner's own process previously had no way to end its detached,
+    // When the RUNNER receives a signal it must end its detached,
     // own-process-group child (spawned by runManagedSubprocess for the
-    // group-kill guarantee) when the RUNNER received a signal — only a
-    // timeout tied into that ladder. A launcher-forwarded SIGTERM (#956)
-    // or a supervisor signalling `akm task run` directly used to
-    // leave the child running as an orphan.
+    // group-kill guarantee), not only on a timeout tied into that ladder.
+    // A launcher-forwarded SIGTERM (#956) or a supervisor signalling
+    // `akm task run` directly must not leave the child running as an orphan.
     writeTask("signaled", shellTask("hang-forever"));
 
     const signals: string[] = [];
@@ -1000,7 +991,7 @@ describe("runTask — command target", () => {
   });
 
   test("redacts regardless of which configured bundle the task came from", async () => {
-    // Acceptance criterion 3: the fixtures elsewhere in this suite use a single
+    // The fixtures elsewhere in this suite use a single
     // default bundle, so a per-bundle regression would go unnoticed.
     const secret = "meridian-thistle-vault";
     const secondaryStash = path.join(tmpRoot, "stash-secondary");
@@ -1111,9 +1102,7 @@ describe("runTask — prompt target", () => {
     });
 
     expect(result.status).toBe("completed");
-    // D8 (spec docs/plans/specs/p1b-model-extraction.md §5.3, §6 F-2)
-    // corollary: a prepared command (agent/LLM) run now reports "command",
-    // not the former inverted "prompt" string.
+    // A prepared command (agent/LLM) run reports "command".
     expect(result.target).toEqual({ kind: "command", engine: "fast" });
     expect(seen).toEqual({ model: "qwen3-small", prompt: "answer briefly" });
     expect(result.notices?.map((notice) => [notice.code, notice.field])).toEqual([
@@ -1158,9 +1147,9 @@ describe("runTask — prompt target", () => {
     });
 
     expect(result.status).toBe("completed");
-    // D8 (spec §5.3, §6 F-2) corollary: same flip as above, both for the
-    // freshly-returned result and the history round trip (this run's own row
-    // carries the new targetVocab: 2 marker, so it reads back unmapped).
+    // Same as above, both for the freshly-returned result and the history
+    // round trip (this run's own row carries the targetVocab: 2 marker, so it
+    // reads back unmapped).
     expect(result.target).toEqual({ kind: "command", engine: "opencode" });
     expect(fs.readFileSync(result.log, "utf8")).toContain("agent received: say hello");
 
@@ -1345,19 +1334,6 @@ describe("runTask — prompt target", () => {
   });
 });
 
-// P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, row B-22, F-A2.17)
-// DELETED src/tasks/run/run-task.ts's shouldSkipUnactivatedTask call and the
-// helper itself, along with prepare-support.ts's source-owned `enabled`
-// derivation — task source v4 has no enablement field. Host-local
-// `scheduler.enabled` is checked both while reconciling bindings and when a
-// scheduled invocation fires. The "runTask — disabled tasks" describe block this comment used to
-// introduce (manual dispatch of an intentionally disabled task; a
-// scheduler-generated invocation recorded but not dispatched, asserting
-// `result.status === "disabled"`) tested exactly that now-deleted runtime
-// skip — its two version: 3 fixtures are gone with it, not merely
-// unreachable: a version: 3 document now fails TASK_SCHEMA_VERSION_UNSUPPORTED
-// before runTask ever sees it (row B-14).
-
 describe("resolveAkmInvocation", () => {
   function packageLauncher(packageRoot: string): string {
     const fixtureDir = path.join(packageRoot, "dist");
@@ -1490,9 +1466,9 @@ describe("resolveAkmInvocation", () => {
     expect(r).toEqual({ argv: ["D:\\akm\\akm.exe"], via: "standalone" });
   });
 
-  // #901: resolving the scheduler invocation used to spawn `npm root --global`
-  // to decide eligibility, leaving an npm debug log behind on every sync. The
-  // stand-in `node` below counts its own invocations: it must never run.
+  // #901: resolving the scheduler invocation must not spawn `npm root --global`
+  // (it left an npm debug log behind on every sync). The stand-in `node` below
+  // counts its own invocations: it must never run.
   test.skipIf(process.platform === "win32")("resolveAkmInvocation never spawns npm (#901)", () => {
     const fakeBin = path.join(tmpRoot, "npm-probe", "bin");
     fs.mkdirSync(path.join(fakeBin, "node_modules", "npm", "bin"), { recursive: true });

@@ -3,17 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Q-07 (D11) — the ref-parser seam accepts opaque adapter conceptIds.
+ * The ref-parser seam accepts opaque adapter conceptIds.
  *
- * `parseRefInput` used to throw whenever a conceptId's leading path segment
- * was not one of AKM's OWN placement stash-subdirs (`resolve-ref.ts`'s
- * `typeNameFromConceptId` D-R2 reverse table). That rejected perfectly valid
- * adapter-emitted conceptIds — an OKF item under a bundle-owned directory
- * (`tables/customers`), a website page, a wiki pageKind, an adapter
- * `instruction` doc — in every ref-consuming command EXCEPT `show` (which
- * bypasses `parseRefInput` entirely via its indexed-projection path, landed
- * separately). D11 requires the ref-consuming commands (tasks, improve,
- * proposals, utility repo, indexer walk) to accept these refs too.
+ * `parseRefInput` must not reject a conceptId just because its leading path
+ * segment is not one of AKM's OWN placement stash-subdirs (`resolve-ref.ts`'s
+ * `typeNameFromConceptId` reverse table). Adapter-emitted conceptIds — an OKF
+ * item under a bundle-owned directory (`tables/customers`), a website page, a
+ * wiki pageKind, an adapter `instruction` doc — are valid in every
+ * ref-consuming command (tasks, improve, proposals, utility repo, indexer
+ * walk). `show` bypasses `parseRefInput` entirely via its indexed-projection
+ * path.
  *
  * This file drives each of those command-level surfaces (utility-repo
  * coverage lives in `tests/integration/get-retrieval-counts.test.ts`, next to
@@ -50,7 +49,7 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
     conceptPath = path.join(okfRoot, "tables", "customers.md");
     // `tables` is an OKF bundle directory that is NOT one of AKM's own
     // placement stash-subdirs (skills/, knowledge/, memories/, …) — exactly
-    // the "opaque adapter conceptId" shape D11 is about. The OKF frontmatter
+    // the "opaque adapter conceptId" shape. The OKF frontmatter
     // `type` ("table") is unrelated to the directory name, underscoring that
     // the conceptId identity comes from the PATH, not the semantic type.
     write(okfRoot, "tables/customers.md", "---\ntype: table\ntitle: Customers\n---\n\nCustomer records.\n");
@@ -93,10 +92,9 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
 
   test("improve: `--scope` recognizes an opaque conceptId as a REF, not a bogus type filter", async () => {
     await akmIndex({ stashDir: storage.stashDir, full: true });
-    // Before the fix this fell through to `{ mode: "type", value: "tables/customers" }`
-    // — a type-filter string that would silently match zero entries — because
-    // `parseRefInput` threw and the catch treated any non-colon value as a bare
-    // type filter attempt.
+    // Treating the value as a bare type filter
+    // (`{ mode: "type", value: "tables/customers" }`) would silently match
+    // zero entries.
     expect(resolveImproveScope("tables/customers")).toEqual({ mode: "ref", value: "tables/customers" });
     expect(resolveImproveScope("adversarial//tables/customers")).toEqual({
       mode: "ref",
@@ -120,9 +118,9 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
         changes: [{ path: "tables/customers.md", op: "update" }],
       }),
     };
-    // Pre-fix, `currentProposalRef` reconstructed `conceptIdFromTypeName("tables",
-    // "customers")` → the bare-name fallback "customers" (losing "tables/"),
-    // which no longer equalled the stored ref and threw "not canonical".
+    // `currentProposalRef` must keep the "tables/" prefix: reconstructing the
+    // bare name "customers" would no longer equal the stored ref and would
+    // throw "not canonical".
     const proposal = proposalRowToProposal(row);
     expect(proposal.ref).toBe("adversarial//tables/customers");
   });

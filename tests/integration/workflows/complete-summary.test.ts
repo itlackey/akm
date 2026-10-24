@@ -30,7 +30,7 @@ let cleanup: Cleanup;
 
 const RUN_ID = "11111111-1111-4111-8111-111111111111";
 // Unified format: the gate CONTROL fields (none needed here)
-// live in frontmatter; the rubric lives in the body under "### gate" (spec §2.4).
+// live in frontmatter; the rubric lives in the body under "### gate".
 const PLAN = freezeWorkflow(`---
 type: workflow
 steps:

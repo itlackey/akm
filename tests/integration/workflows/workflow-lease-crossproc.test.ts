@@ -94,7 +94,7 @@ describe.skipIf(!BUN)("multi-process run lock (single driver + crash reclaim)", 
       CHAOS_RUN_ID: runId,
       CHAOS_MARKER_DIR: markerDir,
       CHAOS_MAX_CONCURRENCY: "1",
-      // Instructions are never interpolated (spec §2.3): the item reaches the
+      // Instructions are never interpolated: the item reaches the
       // unit as attached JSON context, not spliced into the prose. Concurrency
       // 1 with `files: [a,b,c,d]` makes fan-out order deterministic, so c.ts
       // is always index 2 — match its own Item block, not a resolved phrase.

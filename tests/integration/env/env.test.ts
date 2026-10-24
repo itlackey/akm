@@ -190,7 +190,7 @@ describe("buildShellExportScript", () => {
 
   // NOTE: the real-bash sourcing test ("eval-ing the emitted script populates
   // env without executing payloads") lives in
-  // tests/integration/env-export-bash.test.ts — it requires a real subprocess.
+  // tests/integration/env/env-export-bash.test.ts — it requires a real subprocess.
 
   test("round-trips shell-metachar values through dotenv.parse", () => {
     const dir = tmpDir();
@@ -462,7 +462,6 @@ describe("env export / path (read-path safety)", () => {
     const result = await runCli(["env", "export", "env/prod"], { AKM_BUNDLE_DIR: stashDir });
 
     // Usage error (missing --out) -> exit 2 / MISSING_REQUIRED_ARGUMENT.
-    // Ground-truthed by probing the actual CLI output before pinning.
     expect(result.status).toBe(2);
     const json = JSON.parse(result.stderr) as { code?: string };
     expect(json.code).toBe("MISSING_REQUIRED_ARGUMENT");
@@ -515,7 +514,6 @@ describe("env create --from-file / --from-stdin", () => {
     const result = await runCli(["env", "create", "prod", "--from-file", srcFile], { AKM_BUNDLE_DIR: stashDir });
 
     // Usage error (env already exists) -> exit 2 / RESOURCE_ALREADY_EXISTS.
-    // Ground-truthed by probing the actual CLI output before pinning.
     expect(result.status).toBe(2);
     const json = JSON.parse(result.stderr) as { code?: string };
     expect(json.code).toBe("RESOURCE_ALREADY_EXISTS");
@@ -550,7 +548,6 @@ describe("env remove", () => {
     const result = await runCli(["env", "remove", "env/prod", "--yes"], { AKM_BUNDLE_DIR: stashDir });
 
     // NotFoundError (no env/ copy to remove) -> exit 1 / ASSET_NOT_FOUND.
-    // Ground-truthed by probing the actual CLI output before pinning.
     expect(result.status).toBe(1);
     const json = JSON.parse(result.stderr) as { code?: string };
     expect(json.code).toBe("ASSET_NOT_FOUND");
@@ -567,7 +564,6 @@ describe("vault removed in 0.9.0", () => {
     const result = await runCli(["vault", "list", "--format", "json"], { AKM_BUNDLE_DIR: stashDir });
 
     // Usage error (unknown top-level command) -> exit 2 / UNKNOWN_COMMAND.
-    // Ground-truthed by probing the actual CLI output before pinning.
     expect(result.status).toBe(2);
     const json = JSON.parse(result.stderr) as { code?: string };
     expect(json.code).toBe("UNKNOWN_COMMAND");
@@ -582,12 +578,11 @@ describe("vault removed in 0.9.0", () => {
     const result = await runCli(["env", "export", "vault:prod", "--out", outFile], { AKM_BUNDLE_DIR: stashDir });
 
     // Usage error (retired `vault:` prefix) -> exit 2 / INVALID_FLAG_VALUE.
-    // Ground-truthed by probing the actual CLI output before pinning.
     expect(result.status).toBe(2);
     const json = JSON.parse(result.stderr) as { code?: string };
     expect(json.code).toBe("INVALID_FLAG_VALUE");
     expect(result.stderr).toContain("was removed");
-    // Q-08: the vault-removal signpost points at the slash spelling, not the
+    // The vault-removal signpost points at the slash spelling, not the
     // retired `env:`/`secret:` colon grammar.
     expect(result.stderr).toContain("env/");
     expect(fs.existsSync(outFile)).toBe(false);

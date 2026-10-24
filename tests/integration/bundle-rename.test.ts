@@ -4,7 +4,7 @@
 // lockfile and config.
 
 /**
- * D6 — `akm bundle rename <old> <new>`: moves the config bundles key,
+ * `akm bundle rename <old> <new>`: moves the config bundles key,
  * defaultBundle/defaultWriteTarget, scheduler.enabled[].ref, the lockfile
  * entry, and the index/state rows this tool persisted under the old bundle
  * prefix; leaves bundle CONTENT refs alone and reports them; `--dry-run`

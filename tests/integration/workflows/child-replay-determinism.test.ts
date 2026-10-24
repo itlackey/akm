@@ -3,25 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Replay determinism for a composing parent (spec docs/plans/specs/
- * p3b-child-executor.md §5.4, rows C-05…C-07), the single-process,
+ * Replay determinism for a composing parent: the single-process,
  * deterministic-state companion to
- * tests/integration/workflow-child-crash-windows.test.ts — mirroring
- * tests/integration/workflows/chaos.test.ts's own patterns exactly: a
+ * tests/integration/workflows/workflow-child-crash-windows.test.ts — mirroring
+ * tests/integration/workflows/chaos.test.ts's own patterns: a
  * dispatcher-call-count spy proves reuse, and a directly-seeded completed
- * journal row proves resume skips a completed composing unit.
- *
- * RED phase: the child executor is not wired yet (see the crash-windows
- * sibling file's header for the exact mechanism), so C-05/C-06 fail today —
- * not because reuse is broken, but because there is no child run for a
- * composing step to promote in the first place; the run never reaches the
- * shape these assertions describe. C-07 seeds a completed composing-unit row
- * directly — no live child needed — and pins that resume reuses it. This file
- * references only already-existing, already-typed APIs (`runWorkflowSteps`,
- * `startWorkflowRun`, `resumeWorkflowRun`, `getWorkflowStatus`,
- * `withWorkflowRunsRepo`'s `childRunsOf`/`getUnitsForStep`,
- * `computeStepWorkList`, `decodeWorkflowPlan`), so no `@ts-expect-error`
- * directive is needed anywhere in it.
+ * journal row proves resume skips a completed composing unit. The first two
+ * tests run a composing parent through a mid-run failure and a resume; the
+ * third seeds a completed composing-unit row directly — no live child needed —
+ * and pins that resume reuses it.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -130,7 +120,7 @@ function writeComposingParentWithFollowup(name: string, childRef: string): void 
   );
 }
 
-/** A GitHub-shaped composing parent with ONLY the composing step (for C-07's tamper target). */
+/** A GitHub-shaped composing parent with ONLY the composing step (for the tamper target). */
 function writeSoloComposingParent(name: string, childRef: string): void {
   write(
     `workflows/${name}.yml`,
@@ -149,7 +139,7 @@ function writeSoloComposingParent(name: string, childRef: string): void {
   );
 }
 
-// ── C-05, C-06: a resumed parent replays a completed composing step ────────
+// ── a resumed parent replays a completed composing step ────────────────────
 // ── without re-driving the child ────────────────────────────────────────────
 
 describe("a resumed parent replays a completed composing step without re-driving the child (C-05, C-06)", () => {
@@ -186,10 +176,7 @@ describe("a resumed parent replays a completed composing step without re-driving
 
     // A REAL child run was published and driven for the composing step — not
     // merely an opaque unit that happens to target a workflow. This is what
-    // makes the reuse proven below a genuine test of row C-05 (no child ever
-    // exists today, since nothing yet routes a `child-workflow` target away
-    // from the plain unit dispatcher — spec §3.2 — so this line is the RED
-    // signal for this test).
+    // makes the reuse proven below a genuine test.
     const childrenAfterFirstRun = await withWorkflowRunsRepo((repo) => repo.childRunsOf(runId));
     expect(childrenAfterFirstRun).toHaveLength(1);
     const childRunId = childrenAfterFirstRun[0]!.id;
@@ -202,19 +189,19 @@ describe("a resumed parent replays a completed composing step without re-driving
     if (!finishUnitId) throw new Error("expected a journaled unit row for the finish step after invocation 1");
     expect(dispatched1.has(finishUnitId)).toBe(true);
     // At least one OTHER id was dispatched too — the child's own leaf unit,
-    // forwarded through the SAME injected dispatcher (spec row A-33).
+    // forwarded through the SAME injected dispatcher.
     expect(dispatched1.size).toBeGreaterThan(1);
 
     // The composing ("dispatch") unit's own journal row, snapshotted BEFORE
-    // resume — pins C-05's reuse claim directly on the journal rather than
+    // resume — pins the reuse claim directly on the journal rather than
     // only inferring it from the dispatcher call-count spy below, which is
-    // structurally blind to it: once the seam is wired, the composing unit
-    // never reaches UnitDispatcher in either invocation (row A-01), and a
-    // re-entered driveChildWorkflowUnit on an already-completed child
-    // republishes idempotently and drives nothing anyway (§3.3 step 6's
-    // completed arm is a documented no-op) — so an implementation with NO
-    // journal reuse at all for composing units would still pass every
-    // dispatcher-count assertion here.
+    // structurally blind to it: the composing unit never reaches
+    // UnitDispatcher in either invocation, and a re-entered
+    // driveChildWorkflowUnit on an already-completed child republishes
+    // idempotently and drives nothing anyway (the completed arm is a
+    // documented no-op) — so an implementation with NO journal reuse at all
+    // for composing units would still pass every dispatcher-count assertion
+    // here.
     const dispatchUnits = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "dispatch"));
     const composingUnitId = dispatchUnits[0]?.unit_id;
     if (!composingUnitId) throw new Error("expected a journaled unit row for the dispatch step after invocation 1");
@@ -245,14 +232,14 @@ describe("a resumed parent replays a completed composing step without re-driving
 
     // Only "finish" was retried; nothing dispatched during invocation 1
     // OTHER than "finish" appears again — proving driveChildWorkflowUnit was
-    // never re-entered for the composing unit (C-05).
+    // never re-entered for the composing unit.
     expect(dispatched2.has(finishUnitId)).toBe(true);
     for (const id of dispatched1) {
       if (id === finishUnitId) continue;
       expect(dispatched2.has(id)).toBe(false);
     }
 
-    // C-05, pinned directly on the composing unit's own journal row: a
+    // Pinned directly on the composing unit's own journal row: a
     // re-drive re-reserves the attempt (bumping `attempts` and moving
     // `started_at`/`finished_at`), so a byte-identical row is proof the
     // composing unit was REUSED from the journal (classifyUnitReuse ->
@@ -265,7 +252,7 @@ describe("a resumed parent replays a completed composing step without re-driving
     expect(composingUnitAfterResume?.finished_at).toBe(composingUnitBeforeResume.finished_at);
 
     // The composing step's promoted evidence is byte-identical across the
-    // crash + resume (C-06) — the child's exported result was never
+    // crash + resume — the child's exported result was never
     // recomputed, just re-read from the journal.
     const finalStatus = await getWorkflowStatus(runId);
     const dispatchEvidenceAfter = JSON.stringify(finalStatus.workflow.steps.find((s) => s.id === "dispatch")?.evidence);
@@ -278,7 +265,7 @@ describe("a resumed parent replays a completed composing step without re-driving
   });
 });
 
-// ── C-07: resume skips a completed composing unit ───────────────────────────
+// ── resume skips a completed composing unit ─────────────────────────────────
 
 describe("resume skips a completed composing unit whatever input_hash it recorded (C-07)", () => {
   test("the journaled child result is reused; no child is published or driven", async () => {

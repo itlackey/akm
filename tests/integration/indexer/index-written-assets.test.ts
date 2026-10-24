@@ -342,8 +342,8 @@ describe("indexWrittenAssets", () => {
     expect(indexedFileCount(filePath)).toBe(1);
 
     // Broken: no "steps" list at all — parseWorkflow rejects it, so a
-    // workflow-typed file (recognized by residence under workflows/,
-    // spec §2.5) becomes wholly unindexable rather than partially indexed.
+    // workflow-typed file (recognized by residence under workflows/)
+    // becomes wholly unindexable rather than partially indexed.
     fs.writeFileSync(
       filePath,
       "---\ntype: workflow\ndescription: Broken workflow\n---\n\nNo steps declared.\n",

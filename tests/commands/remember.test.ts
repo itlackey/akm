@@ -1,9 +1,8 @@
 /**
  * remember --bundle tests
  *
- * Verifies the write-destination flag added to `akm remember` per v1
- * implementation plan §6 decision 3 (renamed `--target` → `--bundle` in the
- * 0.9 CLI overhaul, S8). Resolution order is:
+ * Verifies the write-destination flag on `akm remember` (`--bundle`; the
+ * retired spelling was `--target`). Resolution order is:
  *   --bundle → defaultWriteTarget → defaultBundle → ConfigError
  *
  * These tests exercise the explicit-target path:
@@ -30,14 +29,12 @@ import {
   writeSandboxConfig,
 } from "../_helpers/sandbox";
 
-// Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
-// (tests/_helpers/cli.ts). None of these tests feed stdin, so there is no
-// harness gap. The spawn version wrote config via AKM_CONFIG_DIR and minted its
-// own stash/XDG dirs; in-process we sandbox AKM_BUNDLE_DIR via the allowlisted
-// sandboxStashDir helper in beforeEach and write config through
-// writeSandboxConfig (XDG_CONFIG_HOME/akm/config.json, which getConfigDir
-// resolves once the preload has cleared AKM_CONFIG_DIR). Extra `--target`
-// sources are isolated dirs from makeSandboxDir.
+// These tests run in-process (tests/_helpers/cli.ts) and feed no stdin.
+// AKM_BUNDLE_DIR is sandboxed via the allowlisted sandboxStashDir helper in
+// beforeEach, and config is written through writeSandboxConfig
+// (XDG_CONFIG_HOME/akm/config.json, which getConfigDir resolves once the
+// preload has cleared AKM_CONFIG_DIR). Extra `--target` sources are isolated
+// dirs from makeSandboxDir.
 
 const disposers: SandboxedDir[] = [];
 let stashCleanup: Cleanup = () => {};
@@ -162,7 +159,7 @@ describe("remember --bundle", () => {
     });
 
     const { result } = await runCli(["remember", "won't be written", "--bundle", "read-only"]);
-    // VALUE-17: pin the exact classified failure (ConfigError -> exit 78,
+    // Pin the exact classified failure (ConfigError -> exit 78,
     // code INVALID_CONFIG_FILE — see src/core/write-source.ts's
     // `resolveWriteTarget` non-writable-target branch and
     // src/cli/shared.ts's `classifyExitCode`), not merely "some failure".
@@ -195,13 +192,12 @@ describe("remember --bundle", () => {
   });
 });
 
-// R-062: `showSimilar` was renamed to the kebab-case `show-similar` for
-// consistency with every other multi-word flag in the CLI. citty registers
+// `show-similar` is the kebab-case spelling of the flag. citty registers
 // BOTH the camelCase and kebab-case spelling of any declared flag name
 // automatically (verified against the pinned citty@^0.2.2 dependency), so
-// this is a pure rename — `--showSimilar` is kept as an explicit, documented
-// alias rather than becoming a silent accident, and both spellings must
-// keep behaving identically.
+// `--showSimilar` is kept as an explicit, documented alias rather than
+// becoming a silent accident, and both spellings must keep behaving
+// identically.
 describe("remember --show-similar / --showSimilar (R-062 rename, both spellings work)", () => {
   test("--show-similar (canonical kebab-case spelling) includes a similar[] array", async () => {
     const { result } = await runCli(["remember", "pinned note about deploy pipelines", "--show-similar"]);

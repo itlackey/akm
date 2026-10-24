@@ -3,12 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Item 4 (alpha.9 plan §5.4/§8 step 8): the `memory-cleanup-archive` health
- * advisory reports a non-git bundle's archive size/count, since the purge
- * sweep never touches one. Round 3: a GIT-backed bundle is no longer silent
- * either — `.git` presence never proved a retirement was actually committed
- * (B1), so this now also reports how much of a git-backed archive the purge
- * sweep can never remove.
+ * The `memory-cleanup-archive` health advisory reports a non-git bundle's
+ * archive size/count, since the purge sweep never touches one. A GIT-backed
+ * bundle is not silent either — `.git` presence never proved a retirement
+ * was actually committed, so the advisory also reports how much of a
+ * git-backed archive the purge sweep can never remove.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -26,7 +25,7 @@ function markGitBacked(stashDir: string): void {
   fs.mkdirSync(path.join(stashDir, ".git"), { recursive: true });
 }
 
-/** A REAL git repo — `collectArchiveUsageAdvisory` now runs real `git status`/`ls-files` for a git-backed bundle, not just a `.git`-presence check. */
+/** A REAL git repo — `collectArchiveUsageAdvisory` runs real `git status`/`ls-files` for a git-backed bundle, not just a `.git`-presence check. */
 function git(stashDir: string, ...args: string[]): string {
   const result = spawnSync("git", ["-C", stashDir, ...args], { encoding: "utf8" });
   expect(result.status).toBe(0);
@@ -61,8 +60,8 @@ describe("collectArchiveUsageAdvisory", () => {
   });
 
   test("warns with byte/file counts when a git-backed bundle's archive has uncommitted bytes (round 3)", () => {
-    // The owner's own scenario (B1): a filesystem-kind bundle whose accepted
-    // retirements are never committed, even though `.git` exists.
+    // A filesystem-kind bundle whose accepted retirements are never
+    // committed, even though `.git` exists.
     const stashDir = sandbox();
     initGitRepo(stashDir);
     // Committed FIRST, and only THIS one path — `commitAll`'s `add -A`

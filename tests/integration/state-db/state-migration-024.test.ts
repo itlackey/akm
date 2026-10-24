@@ -3,22 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3b Lane B TESTS — migration `024-workflow-run-outputs`.
+ * Migration `024-workflow-run-outputs`.
  *
- * Spec: docs/plans/specs/p3b-child-executor.md §4.3 (binding SQL and registry
- * placement), §7 (the migration-registry preservation gate: "024-workflow-
- * run-outputs is the last entry of STATE_MIGRATIONS and the last key of
- * STATE_MIGRATION_SAFETY_BY_ID, classified additive"), §9 acceptance
- * criteria (same claim).
- *
- * Added by code-review finding 5 (Review log R5): the migration landed
- * (`c1dee6c4`) with no direct test of its own — `state-migration-023.test.ts`
- * was NARROWED (Review log R4 / §6 F-B6) to stop pinning finality the moment
- * 024 was authorized to land after it, and nothing replaced that finality
- * pin for the migration that actually owns "final" now. This file is that
- * replacement, mirroring `state-migration-023.test.ts`'s structure one
- * migration later — the same helpers, the same describe shape, adapted to
- * 024's own (smaller) schema surface: one additive column, no new index.
+ * Mirrors `state-migration-023.test.ts`'s structure one migration later — the
+ * same helpers, the same describe shape, adapted to 024's own (smaller) schema
+ * surface: one additive column, no new index.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -70,11 +59,9 @@ afterEach(() => {
 });
 
 describe("migration 024-workflow-run-outputs — registry position and safety classification", () => {
-  // Not asserted as the final entry: migration 025-task-history-vocabulary-
-  // backfill is authorized to append after this one (see
-  // state-migration-025.test.ts), so this test pins only 024's own position
-  // relative to its immediate predecessor, 023 — mirroring how
-  // state-migration-023.test.ts was narrowed when 024 landed.
+  // Not asserted as the final entry: later migrations append after this one
+  // (see state-migration-025.test.ts), so this test pins only 024's own
+  // position relative to its immediate predecessor, 023.
   test("appears in STATE_MIGRATIONS directly after 023-child-workflow-runs", () => {
     const ids = STATE_MIGRATIONS.map((migration) => migration.id);
     const index = ids.indexOf(MIGRATION_ID);

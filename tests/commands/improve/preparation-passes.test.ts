@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * WI-7.6 — focused unit coverage for the pure preparation-stage passes
- * extracted from `runImprovePreparationStage` (R31 decomposition, testability
- * requirement).
+ * Focused unit coverage for the pure preparation-stage passes extracted from
+ * `runImprovePreparationStage`.
  *
  * `partitionBySignalDelta` (the signal-delta partition read against the
  * improve ledger) is driven directly with in-memory feedback maps and ledger

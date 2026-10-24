@@ -232,7 +232,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
   });
 });
 
-// ── runMemoryInferencePass — orthogonal gating (§14 + #208) ─────────────────
+// ── runMemoryInferencePass — orthogonal gating (#208) ───────────────────────
 
 describe("runMemoryInferencePass — index pass gate and engine selection", () => {
   test("runs when the pass is enabled and its index engine resolves", async () => {
@@ -707,18 +707,18 @@ describe("runMemoryInferencePass — enabled", () => {
       skippedAborted: 0,
       unaccounted: 0,
       htmlErrorCount: 0,
-      // R78: derived child + rewritten parent, the two files
+      // The derived child + rewritten parent are the two files
       // indexWrittenAssets indexes afterwards instead of a full reindex.
       writtenPaths: [derivedPath, parentPath].sort(),
     });
 
     const derived = parseFrontmatter(fs.readFileSync(derivedPath, "utf8"));
     expect(derived.data.inferred).toBe(true);
-    // Phase 1B / Rec 7: derived memories must be tagged as background-captured
+    // Derived memories must be tagged as background-captured
     // so ranking does not give them the hot-capture boost reserved for the
     // user-driven `akm remember` write path.
     expect(derived.data.captureMode).toBe("background");
-    // Group-C item 2: the `source:` backref is written as the 0.9.0 conceptId.
+    // The `source:` backref is written as the 0.9.0 conceptId.
     expect(derived.data.source).toBe("memories/parent");
     expect(derived.data.description).toBe("A higher-signal summary of the parent.");
     expect(derived.data.tags).toEqual(["one", "two", "three"]);
@@ -818,8 +818,8 @@ describe("runMemoryInferencePass — enabled", () => {
     }
   });
 
-  // Regression guard for the 2026-05-26 yield-leak investigation: when a
-  // parent already has its `<parent>.derived.md` on disk but is NOT marked
+  // Regression guard: when a parent
+  // already has its `<parent>.derived.md` on disk but is NOT marked
   // `inferenceProcessed: true` (crash mid-write, manual edit, etc.), the
   // skip must surface as `skippedChildExists` rather than vanishing into
   // the `freshAttempts` denominator. Since #588 the existing child is
@@ -892,10 +892,10 @@ describe("runMemoryInferencePass — enabled", () => {
 
   // Regression for #550 + #588: when a parent already has its
   // `<parent>.derived.md` child on disk, the inference is complete, so the
-  // parent MUST be marked `inferenceProcessed: true` (#550 — pre-fix it was
+  // parent MUST be marked `inferenceProcessed: true` (#550 — otherwise it is
   // re-queued on every run forever) and the LLM must not be called at all
-  // (#588 — pre-fix the call was issued and only afterwards discovered the
-  // existing child, wasting ~55% of the pass's production LLM budget).
+  // (#588 — otherwise the call is issued and only afterwards the existing
+  // child is discovered, wasting LLM budget).
   test("#550/#588: marks parent processed, stops re-queue, and never calls the LLM when derived child already exists", async () => {
     const filePath = writeMemory("parent", { description: "keep me" }, "Body.");
     // Seed the derived child on disk so the pre-check short-circuits.

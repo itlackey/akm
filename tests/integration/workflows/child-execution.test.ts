@@ -3,52 +3,37 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3b Lane A TESTS — the child executor's publication, identity, driving, and
- * status-mapping contract (docs/plans/specs/p3b-child-executor.md §2.2 "
- * Publication and identity" + §2.3 "Driving and status mapping", rows
- * A-07…A-27; §3.3 "driveChildWorkflowUnit — the drive contract", §3.4
- * "Status mapping (exact)"). This file owns ONLY these 21 rows.
- *
- * GREEN: `src/workflows/exec/child-workflow.ts` now exists, so this file's
- * single import of `driveChildWorkflowUnit` resolves normally at both the
- * TypeScript layer and the bun:test runtime. Before Implement created the
- * module, every test below failed as a block at the bun:test *runtime* (the
- * established convention: `tests/execution/input-contract.test.ts`'s
- * docstring, `@ts-expect-error P1b red-phase`, commit `ddceaa9`), and one
- * `@ts-expect-error` directive on the import line suppressed the
- * unresolvable-module diagnostic at the TypeScript layer. Implement removed
- * that directive the moment the module was created; none remains here.
+ * The child executor's publication, identity, driving, and status-mapping
+ * contract (`driveChildWorkflowUnit` — the drive contract and its exact status
+ * mapping).
  *
  * Two testing levels are used deliberately:
  *
  *   - DIRECT `driveChildWorkflowUnit(input)` calls, for the publication
- *     contract (A-07…A-17) and the drive contract's exact call-shape
- *     (A-24, A-25) — precise control over `target`/`childParams`/`inputHash`,
- *     including deliberately CORRUPTED ones (A-11, A-12), that a real
- *     freeze/publish pipeline could never produce, plus a spy on the
- *     `runWorkflowSteps` reuse seam itself for the "what did we pass it"
- *     claims (B-N6, B-N7).
+ *     contract and the drive contract's exact call-shape — precise control
+ *     over `target`/`childParams`/`inputHash`, including deliberately
+ *     CORRUPTED ones, that a real freeze/publish pipeline could never produce,
+ *     plus a spy on the `runWorkflowSteps` reuse seam itself for the "what did
+ *     we pass it" claims.
  *   - The FULL top-level engine, `runWorkflowSteps({target: parentRunId,
- *     …})` (already real; the exported entry point `akm workflow run`
- *     itself calls), for the rows whose full observable behavior spans the
- *     unit AND the composing STEP AND the parent RUN (A-21's exact blocked
- *     notes, A-26's `stepsProcessed` accounting, A-19's persisted
- *     `evidence_json`/`result_json` byte contract, A-24's real-registry-drain
- *     call count) — `driveChildWorkflowUnit` alone only returns a
- *     `UnitOutcome`; it is `finalizeExecutedStep` (`run-workflow.ts`'s
+ *     …})` (the exported entry point `akm workflow run` itself calls), for the
+ *     cases whose full observable behavior spans the unit AND the composing
+ *     STEP AND the parent RUN (the exact blocked notes, the `stepsProcessed`
+ *     accounting, the persisted `evidence_json`/`result_json` byte contract,
+ *     the real-registry-drain call count) — `driveChildWorkflowUnit` alone only
+ *     returns a `UnitOutcome`; it is `finalizeExecutedStep` (`run-workflow.ts`'s
  *     `runStepGateLoop`, run on the PARENT's own spine) that turns a
  *     `childBlocked` unit outcome into a blocked STEP with notes, and only a
  *     full drive's own `finally` reaches the process-lifecycle dispatch
  *     drain. Both levels seed a run directly via the repository / the
  *     `tests/_helpers/workflow.ts` helpers — never through a live agent/LLM.
  *
- * A child's own frozen plan is built with the REAL, already-implemented
- * `freezeWorkflow` helper (`tests/_helpers/workflow.ts`) — a genuine,
- * dispatchable `WorkflowPlan` — then wrapped into a
- * `FrozenChildWorkflowTarget` by `buildChildTarget` below, mirroring
- * `tests/workflows/hash-v6.test.ts`'s established fixture-builder
- * convention for this exact target shape (kept local to this file per this
- * repo's test-file self-containment convention).
+ * A child's own frozen plan is built with the REAL `freezeWorkflow` helper
+ * (`tests/_helpers/workflow.ts`) — a genuine, dispatchable `WorkflowPlan` —
+ * then wrapped into a `FrozenChildWorkflowTarget` by `buildChildTarget` below,
+ * mirroring `tests/workflows/hash-v6.test.ts`'s fixture-builder convention for
+ * this exact target shape (kept local to this file per this repo's test-file
+ * self-containment convention).
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -136,7 +121,7 @@ function leafChildPlan(): WorkflowPlan {
   );
 }
 
-/** A 4-step child plan (for A-26's "the child runs all its steps" claim). */
+/** A 4-step child plan (for the "the child runs all its steps" claim). */
 function fourStepChildPlan(): WorkflowPlan {
   return freezeWorkflow(
     [
@@ -222,7 +207,7 @@ interface SeededParent {
   agentSessionId: string | null;
 }
 
-/** Seed a real `workflow_runs` + `workflow_run_steps` row-pair for the PARENT — the fields `driveChildWorkflowUnit` copies onto the child row (A-08). */
+/** Seed a real `workflow_runs` + `workflow_run_steps` row-pair for the PARENT — the fields `driveChildWorkflowUnit` copies onto the child row. */
 async function seedParentRun(overrides: Partial<SeededParent> = {}): Promise<SeededParent> {
   const parent: SeededParent = {
     runId: overrides.runId ?? randomUUID(),
@@ -260,12 +245,12 @@ async function seedParentRun(overrides: Partial<SeededParent> = {}): Promise<See
   return parent;
 }
 
-/** A `journalBaseId`-shaped unit id, mirroring `unitIdFor`'s `<nodeId>:solo` convention (B-N8). */
+/** A `journalBaseId`-shaped unit id, mirroring `unitIdFor`'s `<nodeId>:solo` convention. */
 function parentUnitId(stepId: string): string {
   return `${stepId}:solo`;
 }
 
-/** Assembles a `DriveChildWorkflowInput`-shaped object (spec §3.3) ready for `driveChildWorkflowUnit`. */
+/** Assembles a `DriveChildWorkflowInput`-shaped object ready for `driveChildWorkflowUnit`. */
 function buildDriveInput(input: {
   parent: SeededParent;
   target: FrozenChildWorkflowTarget;
@@ -324,7 +309,7 @@ function failureDispatcher(): (request: UnitDispatchRequest) => Promise<UnitDisp
   });
 }
 
-/** A dispatcher that answers unit dispatches `ok: true` but responds to the completion-criteria judge with a MALFORMED (non-JSON) verdict — the verifier-infrastructure-failure path that blocks the step (§3.4). */
+/** A dispatcher that answers unit dispatches `ok: true` but responds to the completion-criteria judge with a MALFORMED (non-JSON) verdict — the verifier-infrastructure-failure path that blocks the step. */
 function judgeInfrastructureFailureDispatcher(): (request: UnitDispatchRequest) => Promise<UnitDispatchResult> {
   return async (request: UnitDispatchRequest): Promise<UnitDispatchResult> => {
     if (request.nodeId.endsWith(".gate")) {
@@ -334,7 +319,7 @@ function judgeInfrastructureFailureDispatcher(): (request: UnitDispatchRequest) 
   };
 }
 
-/** Direct-SQL escape hatch — flips a run row's status without going through a real drive (constructing an "already blocked/failed from a previous attempt" fixture, A-22/A-23). */
+/** Direct-SQL escape hatch — flips a run row's status without going through a real drive (constructing an "already blocked/failed from a previous attempt" fixture). */
 function forceRunStatus(runId: string, status: "blocked" | "failed"): void {
   const db = openStateDatabase(getStateDbPath());
   try {
@@ -344,7 +329,7 @@ function forceRunStatus(runId: string, status: "blocked" | "failed"): void {
   }
 }
 
-// ── A-07…A-09: first publication ────────────────────────────────────────────
+// ── first publication ───────────────────────────────────────────────────────
 
 describe("A-07, A-08, A-09 — first publication of a child run", () => {
   test("A-07: derives the invocation key, publishes exactly one child row, one workflow_started event, one step set", async () => {
@@ -394,7 +379,7 @@ describe("A-07, A-08, A-09 — first publication of a child run", () => {
     expect(child?.parent_unit_id).toBe(parentUnitId(parent.stepId));
     expect(child?.scope_key).toBe(parent.scopeKey);
     expect(child?.plan_ir_version).toBe(6);
-    // B-N14: a child run's workflow_entry_id is NULL — the index lookup
+    // A child run's workflow_entry_id is NULL — the index lookup
     // publishChildWorkflowRun has no access to.
     expect(child?.workflow_entry_id).toBeNull();
     expect(child?.agent_harness).toBe(parent.agentHarness);
@@ -426,7 +411,7 @@ describe("A-07, A-08, A-09 — first publication of a child run", () => {
   });
 });
 
-// ── A-11, A-12: publication failures ────────────────────────────────────────
+// ── publication failures ────────────────────────────────────────────────────
 
 describe("A-11, A-12 — publication failures never publish a child row or event", () => {
   test("A-11: childParams violating the child plan's paramSchemas fails with child_workflow_publish_failed, carrying validateWorkflowParams' errors; no child row", async () => {
@@ -458,8 +443,8 @@ describe("A-11, A-12 — publication failures never publish a child row or event
     // PRIMARY KEY (run_id, step_id) — a duplicate stepId that a real freeze
     // pipeline could never produce, but this hand-built fixture can. This makes
     // publishChildWorkflowRun's own insertSteps() throw a raw SQLite error
-    // *inside* its transaction — the "any other reason" class row A-12 asks for
-    // — while params validation (step 1) still passes, since it does not
+    // *inside* its transaction — the "any other reason" failure class —
+    // while params validation (step 1) still passes, since it does not
     // inspect step-id uniqueness.
     const duplicateStepId = childPlan.steps[0]!.stepId;
     const corruptPlan: WorkflowPlan = {
@@ -480,7 +465,7 @@ describe("A-11, A-12 — publication failures never publish a child row or event
   });
 });
 
-// ── A-13…A-17: idempotency and per-invocation identity ──────────────────────
+// ── idempotency and per-invocation identity ─────────────────────────────────
 
 describe("A-13, A-14, A-15 — retry/resume reuses the same child", () => {
   test("A-13: calling the seam twice with the same three key inputs finds the SAME child both times", async () => {
@@ -504,7 +489,7 @@ describe("A-13, A-14, A-15 — retry/resume reuses the same child", () => {
     const first = await driveChildWorkflowUnit(buildDriveInput({ parent, target, dispatcher: successDispatcher() }));
     // A "resume" is nothing more than re-entering the seam with the SAME
     // (parentRunId, parentUnitId, unitInputHash) — journalBaseId is
-    // retry/resume-stable (B-N8) and the unit input hash is unchanged.
+    // retry/resume-stable and the unit input hash is unchanged.
     const resumed = await driveChildWorkflowUnit(buildDriveInput({ parent, target, dispatcher: successDispatcher() }));
 
     expect(resumed.childRun?.runId).toBe(first.childRun?.runId);
@@ -560,7 +545,7 @@ describe("A-16 — a gate loop's changed gateFeedback yields a NEW child", () =>
     const loopedHash = loopedResult.list.units[0]?.inputHash;
     expect(baseHash).toBeDefined();
     expect(loopedHash).toBeDefined();
-    // Asserted directly on the two hashes (P3a §3.3's gateFeedback preimage
+    // Asserted directly on the two hashes (the gateFeedback preimage
     // field), not on any id suffix.
     expect(loopedHash).not.toBe(baseHash);
 
@@ -593,7 +578,7 @@ describe("A-17 — two composing steps, same child ref, same bindings — two in
   });
 });
 
-// ── A-18…A-23, A-27: driving and status mapping ─────────────────────────────
+// ── driving and status mapping ──────────────────────────────────────────────
 
 describe("A-18, A-19 — an active child is driven to completion; the exported result is promoted", () => {
   test("A-18: runWorkflowSteps drives the newly-published (active) child", async () => {
@@ -616,13 +601,13 @@ describe("A-18, A-19 — an active child is driven to completion; the exported r
     expect(outcome.ok).toBe(true);
     const childRunId = outcome.childRun?.runId as string;
     expect(childRunId).toBeDefined();
-    // §4.4: a child with no `outputs:` declaration exports {runId, status}
+    // A child with no `outputs:` declaration exports {runId, status}
     // metadata only — synthesized, never stored.
     expect(outcome.result).toEqual({ runId: childRunId, status: "completed" });
   });
 
   test("A-19b: the composing step's persisted evidence_json and the unit's result_json both carry {runId, status}, with no childRun key", async () => {
-    // A direct driveChildWorkflowUnit call (as A-19 above uses) returns only a
+    // A direct driveChildWorkflowUnit call (as above) returns only a
     // UnitOutcome — it never touches workflow_run_steps/workflow_run_units. Only
     // a full parent drive (finalizeExecutedStep -> completeWorkflowStep, on the
     // PARENT's own spine) persists the composing step's evidence_json and the
@@ -699,12 +684,12 @@ describe("A-18, A-19 — an active child is driven to completion; the exported r
     const parentStep = await withWorkflowRunsRepo((repo) => repo.getStep(parentRunId, parentStepId));
     expect(parentStep?.evidence_json).not.toBeNull();
     const evidence = JSON.parse(parentStep?.evidence_json ?? "null") as Record<string, unknown>;
-    // §3.4: `evidence.output` for a solo step is the promoted unit result.
+    // `evidence.output` for a solo step is the promoted unit result.
     expect(evidence.output).toEqual(expectedArtifact);
-    // §3.4: `childRun` is a LIVE-ONLY UnitOutcome field, excluded from the
+    // `childRun` is a LIVE-ONLY UnitOutcome field, excluded from the
     // deterministic artifact graph by buildEvidence's closed whitelist — assert
     // it never leaks into the persisted evidence. A leak here would break
-    // artifact-hash determinism and Lane C's byte-identity replay checks.
+    // artifact-hash determinism and byte-identity replay checks.
     expect(parentStep?.evidence_json ?? "").not.toContain("childRun");
 
     const parentUnit = await withWorkflowRunsRepo((repo) => repo.getUnit(parentRunId, parentUnitId(parentStepId)));
@@ -727,7 +712,7 @@ describe("A-20 — a failed child fails the parent unit, naming the child run, r
     expect(childRunId).toBeDefined();
     const childRow = await withWorkflowRunsRepo((repo) => repo.getRunById(childRunId));
     expect(childRow?.status).toBe("failed");
-    // §3.4's exact `child_workflow_failed` error text, pinned verbatim — a
+    // The exact `child_workflow_failed` error text, pinned verbatim — a
     // substring match on the ref alone would pass even if the child's own
     // failed step id were omitted entirely ("workflows/failing-child" begins
     // with "work"). This also pins the parent-step sentence, which no prior
@@ -979,7 +964,7 @@ describe("A-27 — a child whose run lock is already held busies the parent unit
   });
 });
 
-// ── A-24, A-25: the exact reuse-seam call shape (B-N6, B-N7) ────────────────
+// ── the exact reuse-seam call shape ─────────────────────────────────────────
 
 describe("A-24, A-25 — the child drive passes a no-op disposeDispatchResources and no maxSteps/maxRetries", () => {
   test("A-24a: disposeDispatchResources is passed as a no-op — a DIFFERENT function object from the real registry drain", async () => {
@@ -988,8 +973,8 @@ describe("A-24, A-25 — the child drive passes a no-op disposeDispatchResources
     const spy = spyOn(runWorkflowModule, "runWorkflowSteps").mockImplementation(
       async (options: { disposeDispatchResources?: () => void | Promise<void> }) => {
         expect(typeof options.disposeDispatchResources).toBe("function");
-        // B-N6: forwarding the REAL registry drain here is the exact defect
-        // this row exists to catch — it would kill `opencode serve` processes
+        // Forwarding the REAL registry drain here is the exact defect
+        // this test exists to catch — it would kill `opencode serve` processes
         // a parent's sibling map units are still dispatching against.
         // Identity, not merely "it's a function", is what catches that.
         expect(options.disposeDispatchResources).not.toBe(disposeDispatchResources);
@@ -1136,7 +1121,7 @@ describe("A-24, A-25 — the child drive passes a no-op disposeDispatchResources
   });
 });
 
-// ── A-26: the parent's maxSteps counts ONE composing step, not the child's ──
+// ── the parent's maxSteps counts ONE composing step, not the child's ────────
 
 describe("A-26 — a composing step consumes exactly one parent maxSteps allowance", () => {
   test("A-26: --max-steps 1 on a workflow whose first step composes a 4-step child still runs all 4 child steps", async () => {

@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * WS-2 outcome loop. Opens a real SQLite state.db (openStateDatabase), which
- * is why this file lives in tests/integration/ (ORG-05, 0.9.8 stabilization;
- * see AGENTS.md's classification rule).
+ * Outcome loop. Opens a real SQLite state.db (openStateDatabase), which
+ * is why this file lives in tests/integration/.
  *
  * Covers:
  *   - `updateAssetOutcome`: warm-start, differential update.
@@ -14,10 +13,9 @@
  *   - `outcomeScoreToSalience`: normalisation + diversity floor.
  *   - Migration 010 creates asset_outcome table.
  *
- * `review_pressure` (#613) code/type was deleted in Chunk 7 (WI-7.2, R21) —
- * the DB column itself survives until Chunk 7's migration 018 (DEFAULT 0
- * tolerates omission from INSERT/UPDATE), so this suite's raw-SQL seed
- * helpers drop it from their column lists too.
+ * The `review_pressure` (#613) code/type no longer exists, but the DB column
+ * survives (DEFAULT 0 tolerates omission from INSERT/UPDATE), so this suite's
+ * raw-SQL seed helpers leave it out of their column lists too.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -422,7 +420,7 @@ describe("outcomeScoreToSalience — normalisation + diversity floor", () => {
   });
 });
 
-// ── Two-sided prediction error (fix task 1/5) ────────────────────────────────
+// ── Two-sided prediction error ────────────────────────────────────────────────
 
 describe("updateAssetOutcome — two-sided prediction error (EMA-over-delta)", () => {
   test("below-expected delta produces strictly negative predictionError and lowers score", () => {

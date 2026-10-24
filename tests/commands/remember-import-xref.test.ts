@@ -1,8 +1,7 @@
 /**
- * SPEC-3 (stash-conventions-code-spec.md): `--xref <ref>` on `akm remember`
- * and `akm import`.
+ * `--xref <ref>` on `akm remember` and `akm import`.
  *
- * Pins the write-time cross-reference surface the conventions mandate:
+ * Pins the write-time cross-reference surface:
  *   - `--xref <ref>` is repeatable and lands in the written asset's
  *     frontmatter `xrefs:` list (folded into FTS hints by the indexer).
  *   - An unresolvable ref is INPUT VALIDATION: UsageError → exit 2 with the
@@ -20,7 +19,7 @@
  *     lenient parser fallback; the AKM write boundary rejects the same malformed
  *     document without `--xref` because it cannot safely add required `type` metadata.
  *   - Type-root writes into a stash with convention facts emit the additive
- *     `hint` output key (spec test-plan item 6); nested/--path writes and
+ *     `hint` output key; nested/--path writes and
  *     convention-less stashes do not, and the canonical
  *     `facts/conventions/organization` pointer only appears when that fact
  *     actually exists.
@@ -112,7 +111,7 @@ describe("remember --xref", () => {
     const authFlowRef = stashRef("knowledge", "auth-flow");
 
     // No --tag: --xref counts as structured metadata but must NOT trigger the
-    // tags-required check (spec: provenance without tags is a valid write).
+    // tags-required check (provenance without tags is a valid write).
     const { code, stdout } = await runCliCapture([
       "remember",
       "Derived note about the auth flow",
@@ -280,13 +279,13 @@ describe("remember --xref", () => {
   });
 });
 
-// ── root set + resolver parity with lint (findings #6/#7) ───────────────────
+// ── root set + resolver parity with lint ────────────────────────────────────
 
 describe("--xref root set and resolver parity", () => {
   test("resolves working-stash refs when defaultWriteTarget routes the write to a named source", async () => {
     // The primary working stash (AKM_BUNDLE_DIR) is NOT in config.sources here,
     // and the write goes to the named "team" source — the root set must still
-    // include the working stash (--supersedes already did; --xref did not).
+    // include the working stash.
     const teamDir = makeDir("akm-xref-team-target");
     seedAsset(stashDir, "memories/local-note.md", "Working-stash note.\n");
     const localNoteRef = stashRef("memory", "local-note");
@@ -329,8 +328,8 @@ describe("--xref root set and resolver parity", () => {
   });
 
   test("workflow refs resolve against the stash roots, not the cwd", async () => {
-    // The cwd here is the repo root, NOT the stash root — the old cwd-relative
-    // `workflowSpec.toAssetPath` probe made this exit 2 from any other cwd.
+    // The cwd here is the repo root, NOT the stash root; resolution must not
+    // depend on the cwd.
     seedAsset(stashDir, "workflows/deploy.md", "---\ntype: workflow\nsteps:\n  - id: run\n---\n\n## run\n\necho hi\n");
     const deployRef = stashRef("workflow", "deploy");
 
@@ -356,13 +355,9 @@ describe("--xref root set and resolver parity", () => {
     expect(remoteJson.error).toContain("bundle slug");
     expect(remoteJson.error).not.toContain("did not resolve");
 
-    // Chunk 1.5 opened the type token: "notatype" is no longer rejected by
-    // parseAssetRef, so this xref reaches `isFailOpenRefType`
-    // (base-linter.ts's `refToRelPath` — "unknown type — skip", pre-existing
-    // Chunk-8: a `type:name` string is no longer a ref AT ALL — any colon-form
-    // spelling gets the same structured parse rejection (the D1.5-6 tool/vault
-    // deny-list distinction died with the type-token grammar; foreign types
-    // live in adapter frontmatter, never in ref syntax).
+    // A `type:name` string is no longer a ref AT ALL — any colon-form
+    // spelling gets the same structured parse rejection; foreign types live in
+    // adapter frontmatter, never in ref syntax.
     const badType = await runCliCapture(["remember", "x", "--xref", "notatype:foo"]);
     expect(badType.code).toBe(2);
     expect((JSON.parse(badType.stderr) as { code?: string }).code).toBe("INVALID_FLAG_VALUE");
@@ -409,7 +404,7 @@ describe("--xref root set and resolver parity", () => {
   });
 });
 
-// ── slug stability under --xref/--supersedes (finding #12) ───────────────────
+// ── slug stability under --xref/--supersedes ─────────────────────────────────
 
 describe("--xref/--supersedes do not change the inferred slug", () => {
   test("remember: the same content produces the same slug with and without --xref", async () => {
@@ -432,7 +427,7 @@ describe("--xref/--supersedes do not change the inferred slug", () => {
 
   // The stdin variant (`akm import -`) needs a REAL subprocess (stdin cannot
   // be injected into the in-process harness), so it lives in
-  // tests/integration/import-stdin-xref-slug.test.ts per the isolation lint.
+  // tests/integration/import-stdin-xref-slug.test.ts.
 });
 
 // ── import --xref ────────────────────────────────────────────────────────────

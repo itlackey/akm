@@ -3,12 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * WI-7.7 — focused unit coverage for the pure run units extracted from
- * `akmImprove` (R31 decomposition, testability requirement).
+ * Focused unit coverage for the pure run units extracted from `akmImprove`.
  *
- * The P2/P3 envelope builders are driven directly — no lock, no LLM, no stage
- * sequencing. The exit-path topology itself (P1–P8) stays pinned by the
- * akmImprove characterization suites (improve-skip-if-locked,
+ * The lock-skipped and dry-run envelope builders are driven directly — no
+ * lock, no LLM, no stage sequencing. The exit-path topology itself stays
+ * pinned by the akmImprove characterization suites (improve-skip-if-locked,
  * improve-dry-run-side-effects, improve-lock-invariants,
  * improve-budget-watchdog, ...).
  */

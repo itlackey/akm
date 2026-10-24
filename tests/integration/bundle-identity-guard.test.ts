@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * WI-8.4 — §11.5 bundle-rename startup guard: warn (never silently re-mint) when
+ * Bundle-rename startup guard: warn (never silently re-mint) when
  * a configured bundle id has no indexed rows but the index holds rows under a
  * bundle id that is no longer configured (the hand-rename signature).
  */

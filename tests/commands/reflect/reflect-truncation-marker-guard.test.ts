@@ -4,7 +4,7 @@
 
 /**
  * Unit tests for the accept-time `reflect-truncation-marker` ProposalValidator
- * (#952 Addendum, dev-team field review 2026-09-09).
+ * (#952).
  *
  * A reflect proposal whose body carries `REFLECT_TRUNCATION_MARKER` (the
  * notice a capped source is shown) is REJECTED at `proposal accept` / drain
@@ -27,7 +27,7 @@ import { makeProposal, payloadChanges } from "../../_helpers/factories";
 
 const ctx: ProposalValidationContext = {};
 
-/** Build a proposal fixture with `payload.content` and `changes[0].after` in sync (WI-6.2 invariant). */
+/** Build a proposal fixture with `payload.content` and `changes[0].after` in sync. */
 function withContent(ref: string, content: string, overrides: Partial<Proposal> = {}): Proposal {
   return {
     ...makeProposal(ref),

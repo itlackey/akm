@@ -7,17 +7,14 @@
  * must throw — never create a schema-less file (or its parent dir) as a side
  * effect.
  *
- * Regression for the curate→proposal shard failure (runbook §24.2 "Test
- * harness" gate): `akm curate`'s fire-and-forget usage-event telemetry ran
+ * Regression: `akm curate`'s fire-and-forget usage-event telemetry ran
  * `withIndexDb` → `openExistingDatabase` with no index present, which used to
  * create an empty, schema-less `index.db` at the shared data dir. Any later
  * proposal acceptance in the same process then found the file existing,
  * failed `getEntryCount` ("no such table: entries"), and
  * `indexWrittenAssets` returned false — turning proposal finalization into a
- * file-order-dependent hard failure. The two-file shard repro was
- * `tests/curate-logic.test.ts` before
- * `tests/commands/proposal/adapter-precommit-check.test.ts`; this suite pins
- * the same sequence in-process, order-independently.
+ * file-order-dependent hard failure. This suite pins that sequence
+ * in-process, order-independently.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

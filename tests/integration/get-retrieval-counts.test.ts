@@ -23,10 +23,10 @@ import { getRetrievalCounts, upsertUtilityScore } from "../../src/storage/reposi
  *   3. NULL entry_ref summary rows contribute nothing.
  *   4. Non-demand events (source = audit/improve/task/unknown) are EXCLUDED —
  *      this count feeds salience/ranking and pipeline probe traffic must not
- *      register as demand (meta-review 05 DRIFT-6).
+ *      register as demand.
  */
 describe("getRetrievalCounts", () => {
-  // Chunk-8 WI-8.3: usage_events lives in state.db; entries/utility_scores in
+  // usage_events lives in state.db; entries/utility_scores in
   // index.db. getRetrievalCounts takes both handles.
   let db: AkmDatabase;
   let stateDb: AkmDatabase;
@@ -85,9 +85,7 @@ describe("getRetrievalCounts", () => {
   test("matches an opaque adapter conceptId (Q-07/D11 — a leading segment outside AKM's own placement dirs)", () => {
     // "tables" is not an AKM placement stash-subdir (skills/, knowledge/, …),
     // so `bareRefCandidates` must reconstruct the FULL "tables/customers"
-    // conceptId — not just "customers" — to match these stored rows. Before
-    // the D11 parser-seam fix this silently under-counted (or, upstream in the
-    // proposals/tasks/graph/improve consumers, threw at the parser boundary).
+    // conceptId — not just "customers" — to match these stored rows.
     seed("search", "adversarial//tables/customers");
     seed("show", "adversarial//tables/customers");
 

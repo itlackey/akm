@@ -1,6 +1,5 @@
 /**
- * Regression tests for the consolidate-pipeline defects observed across 323
- * reviewed proposals on the `feature/improve-pipeline-fixes` branch:
+ * Regression tests for consolidate-pipeline defects:
  *
  *   1. Code-fence leakage — LLM wraps the merged asset in ```markdown ... ```
  *      or ```yaml ... ``` and the post-processor writes that verbatim.
@@ -14,8 +13,8 @@
  *   6. Minimal/missing frontmatter — only `inferenceProcessed: true` and
  *      `updated:` present, no `description`/`when_to_use`/`tags`.
  *
- * These tests cover the validation gates and dedup approach added in
- * `src/commands/consolidate.ts`.
+ * These tests cover the validation gates and dedup approach in
+ * `src/commands/improve/consolidate.ts`.
  */
 import { describe, expect, it } from "bun:test";
 import fs from "node:fs";
@@ -273,7 +272,7 @@ describe("normalizeUpdatedField — drains placeholder leaks from `updated:`", (
   });
 
   it("rewrites a map-shaped leak `{today: null}` to today's ISO date", () => {
-    // This is the literal shape observed on proposal 4136246b (2026-05-20):
+    // This is the literal shape an LLM produced:
     // `updated:\n  today: null` — the LLM treated `today` as a YAML key.
     const fm: Record<string, unknown> = { updated: { today: null } };
     normalizeUpdatedField(fm);
@@ -332,7 +331,7 @@ describe("sanitizeMergedContent — wires normalizeUpdatedField into the pipelin
   const todayIso = new Date().toISOString().slice(0, 10);
 
   it("normalises a `today: null` map leak in the output frontmatter", () => {
-    // Mirrors the exact pattern observed on proposal 4136246b (2026-05-20).
+    // Mirrors the exact pattern the LLM produced for `updated: today`.
     const raw = "---\ndescription: print-md disciplined workflow\nupdated:\n  today: null\n---\n\nBody.";
     const result = sanitizeMergedContent(raw);
     expect(result.ok).toBe(true);
@@ -364,9 +363,9 @@ describe("sanitizeMergedContent — wires normalizeUpdatedField into the pipelin
 // ── isHotCapturedMemory — user-explicit memory guard ────────────────────────
 
 describe("isHotCapturedMemory — protects user-captured memories from auto-delete/auto-merge", () => {
-  // Background: 14 user memories with `captureMode: hot` were silent-deleted
-  // by the consolidate LLM between 2026-05-19 and 2026-05-20. This guard
-  // refuses any delete/merge whose participants include hot-captured memories.
+  // Background: the consolidate LLM silently deleted user memories with
+  // `captureMode: hot`. This guard refuses any delete/merge whose
+  // participants include hot-captured memories.
 
   function writeMemory(content: string): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-hot-guard-test-"));
@@ -443,11 +442,10 @@ Body.
 // ── hasSupersededStatus — promote guard for superseded memories ─────────────
 
 describe("hasSupersededStatus — refuses consolidate promote of superseded memories", () => {
-  // Background: 5 of 7 pending consolidate promotes from 2026-05-20 were
-  // against source memories with `status: superseded`. The superseded
-  // frontmatter dragged through verbatim into the new knowledge asset
-  // (broken-on-arrival). This guard short-circuits the promote before any
-  // proposal is queued.
+  // Background: consolidate promotes against source memories with
+  // `status: superseded` dragged the superseded frontmatter through verbatim
+  // into the new knowledge asset (broken-on-arrival). This guard
+  // short-circuits the promote before any proposal is queued.
 
   it("returns true when status is exactly 'superseded'", () => {
     expect(hasSupersededStatus({ status: "superseded" })).toBe(true);
@@ -486,18 +484,16 @@ describe("hasSupersededStatus — refuses consolidate promote of superseded memo
 });
 
 describe("ConsolidateResult.skipReasons / judgedNoAction — emitter contract", () => {
-  // Regression for the 2026-05-26 tuning-reasons investigation. The
-  // consolidate envelope MUST surface judgedNoAction and skipReasons so
+  // The consolidate envelope MUST surface judgedNoAction and skipReasons so
   // health.ts can aggregate without regex-parsing the warnings bag, AND so
   // dashboards can disambiguate the consolidation.merged-vs-warnings desync
-  // documented in §Q2 (the warnings stream includes "Merge: merged content
-  // for X missing description" rejection lines that look like successes —
-  // they are NOT counted into `merged`, and now also appear in
+  // (the warnings stream includes "Merge: merged content for X missing
+  // description" rejection lines that look like successes — they are NOT
+  // counted into `merged`, and also appear in
   // skipReasons[].reason === "merge_missing_description").
   //
   // This is a shape contract; it validates the typed surface without driving
-  // the full LLM-backed runConsolidate. The aggregation behaviour is covered
-  // end-to-end in tests/health-command.test.ts.
+  // the full LLM-backed runConsolidate.
   it("envelope carries judgedNoAction and structured skipReasons", () => {
     type ConsolidateResultShape = {
       judgedNoAction?: number;
@@ -517,8 +513,8 @@ describe("ConsolidateResult.skipReasons / judgedNoAction — emitter contract", 
     };
 
     // merged == 0 is consistent with three Merge-op attempts that ALL hit a
-    // skip reason. The invariant the investigation report was probing: if
-    // every merge op recorded a skipReason, `merged` MUST be (mergeOpsAttempted - mergeSkips).
+    // skip reason. The invariant: if every merge op recorded a skipReason,
+    // `merged` MUST be (mergeOpsAttempted - mergeSkips).
     const mergeSkips = (sample.skipReasons ?? []).flatMap((e) => e.skips).filter((s) => s.op === "merge").length;
     const mergeOpsAttempted = 3; // all three got a skip reason
     expect(sample.merged).toBe(mergeOpsAttempted - mergeSkips);
@@ -576,12 +572,12 @@ describe("ConsolidateResult.skipReasons / judgedNoAction — emitter contract", 
 });
 
 describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () => {
-  // Regression for the accounting leak observed in run
-  // 2026-05-27T02-07-01-518Z-650b4b81: processed=117, actioned (promoted +
-  // merged + deleted + contradicted) = 5, judgedNoAction=69, skipReasons.length=32
-  // → 117 − 5 − 69 − 32 = 11 unaccounted memories.
+  // Regression for an accounting leak: memories went unaccounted for in the
+  // envelope (e.g. processed=117, actioned (promoted + merged + deleted +
+  // contradicted) = 5, judgedNoAction=69, skipReasons.length=32
+  // → 117 − 5 − 69 − 32 = 11 unaccounted memories).
   //
-  // Root causes (see commit message):
+  // Root causes:
   //   1. Multi-secondary merges: chunk loop adds primary+secondaries to
   //      targetRefs (excluding all from judgedNoAction) but only ONE
   //      counter increment occurs per merge op — `merged++` on success or
@@ -592,13 +588,13 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
   //   3. Three "not found in loaded memories" sites (merge primary, delete,
   //      promote, contradict.ref) emitted a warning but NO skipReason.
   //
-  // Fix introduces two additive envelope fields:
+  // The envelope therefore carries two additive fields:
   //   - mergedSecondaries: extras absorbed by successful merges
   //   - failedChunkMemories: memories in chunks whose LLM call failed
   // and emits per-participant skipReasons on failed merges, plus
   // skipReason entries at every "not found" continue site.
   //
-  // The invariant the fix MUST preserve:
+  // The invariant that MUST hold:
   //   processed
   //     == promoted.length + merged + mergedSecondaries + deleted + contradicted
   //      + judgedNoAction + Σ(skipReasons that reference loaded-memory refs)
@@ -635,22 +631,22 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
     e.skipReasons.filter((s) => loadedRefs.has(s.ref)).length;
 
   it("invariant holds for the 11-memory leak case once mergedSecondaries + failedChunkMemories are populated", () => {
-    // Reconstructed shape from the live run envelope (2026-05-27 02:07).
+    // Reconstructed shape from a live run envelope.
     // The 11 missing memories are modeled as 4 secondaries from two
     // multi-secondary failed merges and 7 additional in-chunk targets
     // that were excluded from judgedNoAction but never accounted for
     // because of "not found in loaded memories" warnings without
-    // skipReasons. Pre-fix accounted = 117 − 11 = 106; post-fix the
-    // expanded skipReasons close the gap exactly.
+    // skipReasons. Without the expanded skipReasons only 117 − 11 = 106 are
+    // accounted for; with them the gap closes exactly.
     const loadedRefs = new Set<string>([
-      // 32 originally counted via skipReasons (all in-chunk):
+      // 32 counted via skipReasons (all in-chunk):
       ...Array.from({ length: 32 }, (_, i) => `memories/s${i}`),
       // 4 additional secondaries from two multi-secondary failed merges:
       "memories/sec-a1",
       "memories/sec-a2",
       "memories/sec-b1",
       "memories/sec-b2",
-      // 7 from now-emitted "not found" / write-failed skipReasons that
+      // 7 from "not found" / write-failed skipReasons that
       // ARE in-chunk (modeled — in practice these were a mix of phantom
       // and in-chunk refs; only in-chunk ones impact the invariant):
       ...Array.from({ length: 7 }, (_, i) => `memories/in-chunk-not-found-${i}`),
@@ -665,24 +661,24 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
     ]);
     // Sanity: 32 + 4 + 7 + 5 + 69 = 117 = processed.
     const skipReasons: SkipEntry[] = [
-      // Original 32 from the run (pre-fix, but post-fix they remain):
+      // The original 32:
       ...Array.from({ length: 32 }, (_, i) => ({
         ref: `memories/s${i}`,
         skips: [{ op: "promote" as const, reason: "dedup_pending_proposal" }],
       })),
-      // Post-fix: 2 failed merges each emit primary + 2 secondaries.
-      // Replace the 2 single-primary entries with 6 total (3 each).
-      // NB: in real code the primary skipReason was already emitted by the
-      // sanitization/missing-description guard pre-fix; the fix adds the
-      // 4 secondaries. For invariant arithmetic only the unique-ref count
+      // 2 failed merges each emit primary + 2 secondaries.
+      // The 2 single-primary entries become 6 total (3 each).
+      // NB: the primary skipReason is emitted by the
+      // sanitization/missing-description guard; the 4 secondaries are the
+      // additional entries. For invariant arithmetic only the unique-ref count
       // matters, and each of these refs is distinct → one group entry each.
       { ref: "memories/merge-fail-a", skips: [{ op: "merge", reason: "merge_sanitization_failed" }] },
       { ref: "memories/sec-a1", skips: [{ op: "merge", reason: "merge_sanitization_failed" }] },
       { ref: "memories/sec-a2", skips: [{ op: "merge", reason: "merge_sanitization_failed" }] },
       { ref: "memories/sec-b1", skips: [{ op: "merge", reason: "merge_missing_description" }] },
       { ref: "memories/sec-b2", skips: [{ op: "merge", reason: "merge_missing_description" }] },
-      // 7 "not found" / failure sites that are in-chunk (post-fix all
-      // emit a skipReason; pre-fix only a freeform warning):
+      // 7 "not found" / failure sites that are in-chunk (all
+      // emit a skipReason):
       ...Array.from({ length: 7 }, (_, i) => ({
         ref: `memories/in-chunk-not-found-${i}`,
         skips: [{ op: "promote" as const, reason: "promote_ref_missing" }],
@@ -704,9 +700,9 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
 
   it("invariant credits mergedSecondaries for successful multi-secondary merges", () => {
     // Scenario: 1 chunk of 10 memories. LLM proposes 1 merge with primary +
-    // 3 secondaries. Merge succeeds. Pre-fix: merged=1, judgedNoAction=6,
-    // skipReasons=[] → 1 + 6 = 7, but processed=10 → 3 missing.
-    // Post-fix: mergedSecondaries=3 → 1 + 3 + 6 = 10. Closes the gap.
+    // 3 secondaries. Merge succeeds. Without mergedSecondaries: merged=1,
+    // judgedNoAction=6, skipReasons=[] → 1 + 6 = 7, but processed=10 → 3
+    // missing. With mergedSecondaries=3 → 1 + 3 + 6 = 10, closing the gap.
     const loadedRefs = new Set<string>([
       "memories/p",
       "memories/s1",
@@ -731,8 +727,9 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
   it("invariant credits failedChunkMemories when chunk LLM calls fail", () => {
     // Scenario: 3 chunks of 5 memories each = 15 input. Chunk 1 succeeds
     // with 1 successful contradict + 4 noAction. Chunks 2-3 fail.
-    // Pre-fix: failedChunks=2 (visible) but the 10 memories vanish from
-    // the invariant. Post-fix: failedChunkMemories=10 closes it.
+    // Without failedChunkMemories: failedChunks=2 (visible) but the 10
+    // memories vanish from the invariant. With failedChunkMemories=10 it
+    // closes.
     const loadedRefs = new Set<string>([
       "memories/c-1",
       ...Array.from({ length: 4 }, (_, i) => `memories/n${i}`),
@@ -752,18 +749,17 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
     expect(accountedTotal(envelope, loadedRefs)).toBe(envelope.processed);
   });
 
-  // Regression for the +1 overshoot observed in run
-  // 2026-05-27T05-07-02-093Z-8edc5b07: processed=117 vs accounted=118.
+  // Regression for a +1 overshoot: processed=117 vs accounted=118.
   //
   // Root cause: cross-chunk references. Chunk-X proposes "merge primary:A with
   // secondary:B" where B is a member of chunk-Y (a different chunk in the same
   // run). Chunk-Y's own LLM call did NOT propose any op for B, so B contributed
   // to chunk-Y's judgedNoAction. Later, when the merge op fails (e.g.
-  // merge_missing_description), emitMergeFailureSkips pushed a skipReason for
-  // B — double-counting it. The 2026-05-27 fix introduces judgedNoActionRefs:
-  // a Set tracking which refs contributed to judgedNoAction. pushSkipReason
-  // now decrements judgedNoAction and removes the ref from the set so the
-  // ref lands in exactly one bucket.
+  // merge_missing_description), emitMergeFailureSkips pushes a skipReason for
+  // B, which would double-count it. judgedNoActionRefs is a Set tracking which
+  // refs contributed to judgedNoAction; pushSkipReason decrements
+  // judgedNoAction and removes the ref from the set so the ref lands in
+  // exactly one bucket.
   //
   // This test mirrors the run-state arithmetic so a regression would surface
   // as an off-by-one in the invariant.
@@ -771,15 +767,15 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
     // 117 memories across 3 chunks of ~39 each. 5 contradicts succeed.
     // 8 merge ops fail (6 missing_description, 2 sanitization_failed). One of
     // those failed merges has a secondary B that lived in a different chunk
-    // and would have been counted in judgedNoAction. Pre-fix: judgedNoAction
-    // includes B and skipReasons also includes B → +1 overshoot. Post-fix:
-    // pushSkipReason removes B from judgedNoActionRefs and decrements the
-    // counter.
+    // and would have been counted in judgedNoAction. Without the set
+    // tracking, judgedNoAction includes B and skipReasons also includes B →
+    // +1 overshoot. With it, pushSkipReason removes B from judgedNoActionRefs
+    // and decrements the counter.
     //
     // Modeled directly: 117 = 5 contradicted + 77 judgedNoAction (pre-promote)
     //                       + 36 skipReasons (one of which double-counts B).
-    // Post-fix: judgedNoAction is decremented by 1 when B's skipReason is
-    // pushed → 76 + 36 = 112... 76 + 36 + 5 = 117. ✓
+    // judgedNoAction is decremented by 1 when B's skipReason is pushed:
+    // 76 + 36 + 5 = 117.
     const loadedRefs = new Set<string>([
       ...Array.from({ length: 5 }, (_, i) => `memories/c${i}`),
       ...Array.from({ length: 76 }, (_, i) => `memories/n${i}`),
@@ -793,7 +789,7 @@ describe("ConsolidateResult accounting invariant — 2026-05-26 leak fix", () =>
       mergedSecondaries: 0,
       deleted: 0,
       contradicted: 5,
-      judgedNoAction: 76, // 77 pre-promote, -1 after B is moved to skipReasons
+      judgedNoAction: 76, // 77 before B is moved to skipReasons, -1 after
       skipReasons: [
         ...Array.from({ length: 35 }, (_, i) => ({
           ref: `memories/s${i}`,

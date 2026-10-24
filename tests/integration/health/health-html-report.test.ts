@@ -113,8 +113,7 @@ describe("buildHealthHtmlReplacements", () => {
     const templateTokens = new Set(fs.readFileSync(resolveTemplatePath("health"), "utf8").match(/%%[A-Z_]+%%/g) ?? []);
     const replacementTokens = new Set(Object.keys(replacements));
 
-    // 18 tokens: COMMANDS_HTML was removed when the "Command Set Used" section
-    // was dropped from the report. Previously 19.
+    // 18 tokens (the report has no "Command Set Used" section / COMMANDS_HTML).
     expect(replacementTokens.size).toBe(18);
     expect([...replacementTokens].sort()).toEqual([...templateTokens].sort());
     expect(replacementTokens.has("%%OVERALL_STATUS%%")).toBe(false);
@@ -253,7 +252,7 @@ describe("buildHealthHtmlReplacements", () => {
     expect(replacements["%%PROPOSAL_ROWS_HTML%%"]).not.toContain("<script>alert");
     expect(replacements["%%PROPOSAL_ROWS_HTML%%"]).toContain("tag-extract");
     expect(replacements["%%PROPOSAL_ROWS_HTML%%"]).toContain("tag-consolidate");
-    // Advisories + what-to-watch are now merged into a single Action Items list.
+    // Advisories + what-to-watch are merged into a single Action Items list.
     expect(replacements["%%ACTION_ITEMS_HTML%%"]).toContain("Drain 2 pending proposals");
     expect(replacements["%%ACTION_ITEMS_HTML%%"]).toContain("akm proposal list");
   });

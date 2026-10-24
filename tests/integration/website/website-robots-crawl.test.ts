@@ -3,15 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P1 — robots.txt compliance: loopback-fixture crawl integration tests.
- *
- * Authoritative spec: docs/plans/specs/p1-robots.md §4.6/§4.7. Row IDs in test
- * names (C-xx) refer to that spec's crawl-behavior table.
+ * robots.txt compliance: loopback-fixture crawl integration tests.
  *
  * Follows the fixture patterns in add-website-source.test.ts (Bun.serve
  * loopback fixture) and website-ssrf.test.ts (no real network, private-host
  * hatch). `ensureWebsiteMirror` is called in-process (as in
- * tests/integration/source-source.test.ts) rather than spawning the CLI, and
+ * tests/source-source.test.ts) rather than spawning the CLI, and
  * loopback hosts are allowed via the `allowPrivateHosts` test escape hatch
  * (never a raw `globalThis.fetch` swap or CLI network — the fixture server IS
  * the network boundary).
@@ -125,7 +122,7 @@ afterEach(() => {
   for (const dir of cacheRoots.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// ── §4.6 crawlWebsite integration (via ensureWebsiteMirror) ─────────────────
+// ── crawlWebsite integration (via ensureWebsiteMirror) ──────────────────────
 
 describe("crawlWebsite robots.txt compliance", () => {
   test("C-02: a disallowed start URL throws UsageError before fetching any page", async () => {
@@ -216,16 +213,16 @@ describe("crawlWebsite robots.txt compliance", () => {
 
       const cachePaths = await ensureWebsiteMirror(websiteEntry(url), { allowPrivateHosts: true });
 
-      // C-04: disallowed page is skipped without erroring, and never fetched.
+      // Disallowed page is skipped without erroring, and never fetched.
       expect(stashContainsSourceUrl(cachePaths.stashDir, secretUrl)).toBe(false);
       expect(stashContainsSourceUrl(cachePaths.stashDir, publicUrl)).toBe(true);
       expect(requestLog.some((r) => r.pathname === "/secret")).toBe(false);
 
-      // C-06: exactly one robots.txt request for the whole crawl.
+      // Exactly one robots.txt request for the whole crawl.
       expect(requestLog.filter((r) => r.pathname === "/robots.txt")).toHaveLength(1);
       const robotsRequestsBeforeBypass = requestLog.filter((r) => r.pathname === "/robots.txt").length;
 
-      // C-05: respectRobots:false is a full bypass — force a re-crawl of the
+      // respectRobots:false is a full bypass — force a re-crawl of the
       // same origin (same cache key) and confirm it now includes the
       // previously-disallowed page, with zero additional /robots.txt requests.
       await ensureWebsiteMirror(websiteEntry(url, { respectRobots: false }), {
@@ -244,8 +241,8 @@ describe("crawlWebsite robots.txt compliance", () => {
     // the robots gate runs, so `Disallow: /secret/` never matched the
     // slash-less alias `/secret` the gate actually checked — even when the
     // server serves `/secret` directly with 200 and no redirect is ever
-    // involved. The 9d7581f post-redirect re-check only closed the 301
-    // variant of this gap.
+    // involved. (A post-redirect re-check only closes the 301 variant of this
+    // gap.)
     const { url, requestLog } = startFixtureServer({
       robots: { body: "User-agent: *\nDisallow: /secret/\n" },
       pages: {
@@ -278,9 +275,8 @@ describe("crawlWebsite robots.txt compliance", () => {
     // (an extremely common trailing-slash canonicalization), the redirect
     // target must be re-checked against robots.txt BEFORE it is fetched — not
     // merely re-checked after the fact to decide whether to store the body.
-    // (Earlier, this check ran only after the fetch, so the disallowed URL
-    // was still requested over the network; it is now gated before the
-    // recursive fetch in `fetchWebsiteResponse`, so no request reaches it.)
+    // (The check is gated before the recursive fetch in `fetchWebsiteResponse`,
+    // so no request reaches the disallowed URL.)
     const { url, requestLog } = startFixtureServer({
       robots: { body: "User-agent: *\nDisallow: /secret/\n" },
       pages: {
@@ -443,7 +439,7 @@ describe("crawlWebsite robots.txt compliance", () => {
     "non-http(s) redirect regression: an intermediate redirect Location with a non-http(s) scheme is refused " +
       "without aborting the crawl, and the remaining pages are still collected",
     async () => {
-      // Regression (a67412c): the intermediate-redirect robots gate computed
+      // Regression: the intermediate-redirect robots gate computed
       // `normalizeCrawlUrl(nextUrl) ?? nextUrl`, falling back to the raw
       // redirect target whenever it wasn't an http(s) URL (e.g. a `mailto:`
       // Location) and handing that opaque-origin URL straight to
@@ -549,7 +545,7 @@ describe("crawlWebsite robots.txt compliance", () => {
       // the delay in full instead of noticing upfront that doing so would
       // cross the deadline and breaking. This uses bun's own per-test
       // `timeout` rather than a manual `Date.now()` delta assertion, which
-      // `scripts/lint-tests-isolation.ts` bans as flake-prone.
+      // is flake-prone.
       const cachePaths = await ensureWebsiteMirror(websiteEntry(url), {
         allowPrivateHosts: true,
         wallClockCapMs: 400,
@@ -559,7 +555,7 @@ describe("crawlWebsite robots.txt compliance", () => {
       expect(stashContainsSourceUrl(cachePaths.stashDir, `${url}/`)).toBe(true);
       // ...but the delay-gated second page was never even fetched.
       expect(requestLog.some((r) => r.pathname === "/page-2")).toBe(false);
-      // A URL whose Crawl-delay does not fit the remaining budget is now
+      // A URL whose Crawl-delay does not fit the remaining budget is
       // deferred to the back of the queue rather than ending the crawl, and
       // is reported as unfetched once its deferral budget is spent — so a
       // rate-limited origin is visible instead of silently missing.
@@ -599,7 +595,7 @@ describe("crawlWebsite robots.txt compliance", () => {
       const gapMs = secondHit.at - firstHit.at;
       // One crawl-delay interval (~200ms), not two: the fetch-attempt counter
       // used for delay pacing must not increment on a robots-skipped URL
-      // (spec §4.6 C-11).
+      // (robots-skipped URLs never consume a pacing slot).
       expect(gapMs).toBeGreaterThanOrEqual(150);
       expect(gapMs).toBeLessThan(350);
     },
@@ -638,9 +634,8 @@ describe("crawlTimeoutMs: hard process cap", () => {
   test(
     "a huge Retry-After on /robots.txt cannot outlast the cap",
     async () => {
-      // Before this, fetchWithRetry honoured Retry-After with a bare
-      // setTimeout that ignored any signal, and the crawl deadline was only
-      // consulted between queue iterations — so a single 429 could park
+      // fetchWithRetry's Retry-After sleep must honor the signal and the crawl
+      // deadline; otherwise a single 429 could park
       // `bundle add` for as long as the server asked (hours), regardless of
       // the advertised wall-clock cap.
       const { url } = startFixtureServer({

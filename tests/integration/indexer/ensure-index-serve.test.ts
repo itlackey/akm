@@ -9,9 +9,9 @@
  * this stash AS-IS — content freshness is the writers' job
  * (`indexWrittenAssets`) plus full runs (improve cron / explicit `akm index`).
  * They rebuild inline only when the index cannot serve at all (missing DB,
- * zero rows, different stash). This replaced the stale-triggered background
- * reindex that made every read on an actively-written stash spawn a writer
- * (docs/design/read-path-reindex-contention-findings.md §7).
+ * zero rows, different stash). Serving as-is avoids a stale-triggered
+ * background reindex that would make every read on an actively-written stash
+ * spawn a writer.
  *
  * Blocking mode (improve) still treats content-staleness as a rebuild trigger.
  */
@@ -218,7 +218,7 @@ describe("ensureIndex blocking mode: per-file staleness (R6)", () => {
       await indexWrittenAssets(stashDir, [added]);
       expect(indexedPaths().has(added)).toBe(true);
 
-      // Acceptance test: without the R6 per-file staleness check this would
+      // Acceptance test: without the per-file staleness check this would
       // still report stale purely from mtime > builtAt, forcing a full
       // rescan on every subsequent call even though the content is current.
       expect(isIndexStale(stashDir)).toBe(false);

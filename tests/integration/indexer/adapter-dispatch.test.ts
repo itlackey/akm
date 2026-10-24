@@ -3,23 +3,22 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Adapter dispatch through the PRODUCTION index path (owner ruling 2026-07-21):
- * the live indexer's per-dir drain now resolves `adapterForId(component.adapter)`
- * per component instead of hardcoding the `akm` adapter (spec §4 / §14.2).
+ * Adapter dispatch through the PRODUCTION index path: the live indexer's
+ * per-dir drain resolves `adapterForId(component.adapter)` per component
+ * instead of hardcoding the `akm` adapter.
  *
  *   1. A component whose DETECTED adapter is `llm-wiki` gets recognized by the
  *      llm-wiki adapter — the persisted entries carry llm-wiki's OWN open types
  *      (`wiki-source`/`concept`/`entity`/…), which the `akm` adapter would NEVER
- *      emit. This is the regression the completion fixes: before dispatch, the
- *      wiki root was probed as `llm-wiki` (adapter_id provenance) but STILL
- *      recognized by `akm`.
+ *      emit. Without dispatch, the wiki root would be probed as `llm-wiki`
+ *      (adapter_id provenance) but STILL recognized by `akm`.
  *   2. The `akm` fixture stash still indexes unchanged (the full existing battery
  *      is the akm regression net; this pins the dispatch default stays `akm`).
- *   3. Unknown-adapter-id skip contract (§4): `adapterForId` returns `undefined`
+ *   3. Unknown-adapter-id skip contract: `adapterForId` returns `undefined`
  *      for an unknown id — the exact condition the production loop keys on to skip
  *      the component with a warning. (The condition is unreachable via the current
  *      probe-only `deriveInstallations`, which only ever yields a built-in id or
- *      the `akm` fallback; the branch is defensive for the future config-driven
+ *      the `akm` fallback; the branch is defensive for a future config-driven
  *      adapter id, so it is pinned at the `adapterForId` contract level.)
  */
 

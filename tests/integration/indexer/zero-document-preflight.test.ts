@@ -3,15 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #624-P1 regression (spec §4): a full-rebuild scan that produces ZERO
+ * #624 regression: a full-rebuild scan that produces ZERO
  * documents must NOT cascade-wipe the last-known-good index when the emptiness
  * is caused by an unreadable/missing source root (a transient scan failure) —
  * it must only wipe when the roots are genuinely readable-but-empty.
  *
- * Under the old truncate-then-rebuild path, `akm index --full` unconditionally
- * `DELETE FROM entries` (+ embeddings/utility/fts) as the first transaction
- * step, so a run that happened to see no files destroyed the entire index. The
- * zero-document preflight guards exactly that case.
+ * An unconditional `DELETE FROM entries` (+ embeddings/utility/fts) as the
+ * first transaction step of `akm index --full` would destroy the entire index
+ * on a run that happened to see no files. The zero-document preflight guards
+ * exactly that case.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

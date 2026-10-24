@@ -32,10 +32,9 @@ async function runEntrypoint(args: string[]): Promise<{ status: number; stdout: 
 // tests/integration/show-argv-entrypoint.test.ts — it needs the real
 // subprocess entry point, which the in-process harness intentionally skips.
 
-// D2: the `akm show <ref> toc|section|lines|frontmatter|full` view grammar is
-// gone. A trailing positional was previously rewritten into hidden `--akmView`
-// flags; it must now be a usage error that points at `#fragment`, and the
-// hidden flags themselves must no longer select anything.
+// The `akm show <ref> toc|section|lines|frontmatter|full` view grammar is
+// gone: a trailing positional must be a usage error that points at
+// `#fragment`, and the hidden `--akmView` flags must not select anything.
 describe("akm show view-mode grammar is removed", () => {
   const GUIDE = ["# Intro", "Welcome.", "", "## Setup", "Install things.", ""].join("\n");
 
@@ -81,29 +80,26 @@ describe("akm show view-mode grammar is removed", () => {
   });
 });
 
-// E-3: `akm show <ref> --scope ...` must fail LOUDLY (exit 2) for BOTH
+// `akm show <ref> --scope ...` must fail LOUDLY (exit 2) for BOTH
 // spellings of the removed `--scope` flag, and must diagnose the ACTUAL
 // mistake (stale --scope flag, use --filter) rather than blaming the
 // unrelated removed view-mode grammar.
 //
-// `--scope` is deliberately not a declared flag on `show` (R-047, guardrail
-// 6 — no alias, no re-acceptance), which means citty's default handling of an
-// undeclared flag applies, and that default is SILENT ACCEPTANCE — not a
-// uniform error — depending on spelling:
+// `--scope` is deliberately not a declared flag on `show` (no alias, no
+// re-acceptance), which means citty's default handling of an undeclared flag
+// applies, and that default is SILENT ACCEPTANCE — not a uniform error —
+// depending on spelling:
 //   - space form (`--scope user=x`): citty treats `--scope` as boolean and
 //     pushes `user=x` into `args._` as a stray positional, which incidentally
-//     trips the arity check and exits 2 — but (pre-fix) with the wrong
-//     diagnosis, blaming the unrelated retired
-//     toc|section|lines|frontmatter|full view-mode grammar.
+//     trips the arity check and exits 2 — but would blame the unrelated
+//     retired toc|section|lines|frontmatter|full view-mode grammar.
 //   - equals form (`--scope=user=x`): citty consumes it as the unknown flag's
-//     own inline value. It never reaches `args._`, so (pre-fix) NOTHING
-//     downstream ever noticed — the command ran to completion and exited 0,
+//     own inline value. It never reaches `args._`, so nothing downstream
+//     would notice — the command would run to completion and exit 0,
 //     silently ignoring the caller's scope request entirely. This is the
 //     dangerous case a caller could mistake for "my read was scoped" when it
-//     was not, and it directly violated guardrail 6's "must fail loudly, not
-//     silently".
-// Both spellings must now be rejected explicitly and identically, before
-// either could produce a different (or no) error.
+//     was not.
+// Both spellings must be rejected explicitly and identically.
 describe("akm show --scope fails loudly for both spellings, diagnosing the removed flag", () => {
   function seedGuide(): void {
     const storage = useStorage();
@@ -172,15 +168,10 @@ describe("entrypoint global --shape=summary ordering", () => {
   });
 });
 
-// F6/R-021: `show` must resolve `--detail` through ONE explicit path, and
-// (owner ruling) deliberately does NOT inherit `config.output.detail` the
-// way `search`/`curate` do — a bare `akm show <ref>` always returns the
-// FULL asset body, regardless of the config default. Before this fix,
-// `showCommand` read `--detail` via a raw argv scan
-// (`invocation.getFlagValue`) that happened to ignore config as a side
-// effect of not being config-aware at all; there was zero test coverage for
-// `--detail brief`, `--detail full`, or the config-default case at either
-// the CLI or `buildBriefResponse` layer.
+// `show` must resolve `--detail` through ONE explicit path, and
+// deliberately does NOT inherit `config.output.detail` the way
+// `search`/`curate` do — a bare `akm show <ref>` always returns the FULL
+// asset body, regardless of the config default.
 describe("akm show --detail resolution (F6/R-021)", () => {
   function seedCommand(storage: ReturnType<typeof useStorage>): void {
     writeFixture(

@@ -3,11 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * WS6 characterization test for the `akm task` command family. Pins the full
+ * Characterization test for the `akm task` command family. Pins the full
  * JSON envelope (stdout payload shape + the {ok:false,…} error envelope on
- * stderr / exit code) for representative subcommands, proving the extraction of
- * the family from cli.ts into src/commands/tasks-cli.ts and the migration of the
- * leaf handlers onto `defineJsonCommand` is byte-identical. Only the
+ * stderr / exit code) for representative subcommands. Only the
  * scheduler-free subcommands are exercised (`doctor`, the bare-group default,
  * and the `run` not-found error path) so the test never touches the host OS
  * scheduler. The CLI reads an isolated stash through AKM_BUNDLE_DIR via the
@@ -37,10 +35,9 @@ function makeStashDir(): string {
 }
 
 function writeLocallyDisabledCommandTask(stashDir: string): void {
-  // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, row B-22, F-A2.18)
-  // DELETED run-task.ts's shouldSkipUnactivatedTask entirely — task source v4
-  // has no document-level enabled/disabled concept. Scheduling activation is
-  // host-local config, and its absence must not prevent manual dispatch.
+  // Task source v4 has no document-level enabled/disabled concept. Scheduling
+  // activation is host-local config, and its absence must not prevent manual
+  // dispatch.
   fs.writeFileSync(
     path.join(stashDir, "tasks", "disabled-command.yml"),
     ["version: 4", "run: exit 0", "schedule:", "  - cron: '@daily'", ""].join("\n"),
@@ -48,9 +45,8 @@ function writeLocallyDisabledCommandTask(stashDir: string): void {
 }
 
 describe("akm task — JSON envelope snapshot (WS6)", () => {
-  // Owner ruling 12, canonical bare-group behavior: bare `akm task` used to
-  // run doctor implicitly. It is now a usage error naming the subcommands —
-  // the next test covers the explicit `akm task doctor` this replaces.
+  // Canonical bare-group behavior: bare `akm task` is a usage error naming the
+  // subcommands — the next test covers the explicit `akm task doctor`.
   test("bare `akm task` → usage-error envelope, exit 2", async () => {
     const stash = makeStashDir();
     const { stderr, status } = await runCli(["task"], stash);

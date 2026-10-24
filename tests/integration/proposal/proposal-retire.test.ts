@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * 0.9.17-alpha.9 — the consolidate pair pass's `retire` proposal effect
- * (plan §5.4, brief §B), O1 (a promotion retires its source), and the
- * review-round correctness fixes (B2/B3/S4/S5/S6).
+ * The consolidate pair pass's `retire` proposal effect, a promotion retiring
+ * its source, and the correctness guards around both.
  *
  * A `retire` proposal's primary `FileChange` deletes its target instead of
  * writing content: accepting it archives the asset (and its `.derived`
@@ -15,7 +14,7 @@
  * producers end-to-end (mint -> accept -> revert), not hand-built fixtures.
  *
  * `retirement()` computes REAL body hashes from files actually on disk (both
- * the retired side and the successor, which must exist) — B2's accept-time
+ * the retired side and the successor, which must exist) — the accept-time
  * check refuses a proposal whose recorded hashes do not match the current
  * files, so a fixture with a fabricated hash or a missing successor file
  * would only prove the guard works, not the happy path it is meant for.
@@ -128,7 +127,7 @@ function findArchiveEntry(originalRel: string): { dirAbs: string; originalAbs: s
   throw new Error(`no archive entry found for ${originalRel}`);
 }
 
-/** Real git plumbing (S5): `purgeGracedArchive` requires the archive to be git-tracked and clean (B1) — `withIsolatedAkmStorage` sets up no `.git` on its own. */
+/** Real git plumbing: `purgeGracedArchive` requires the archive to be git-tracked and clean — `withIsolatedAkmStorage` sets up no `.git` on its own. */
 function git(...args: string[]): string {
   const result = spawnSync("git", ["-C", storage.stashDir, ...args], { encoding: "utf8" });
   expect(result.status).toBe(0);
@@ -214,7 +213,7 @@ describe("akm proposal accept on a retire proposal", () => {
     expect(tombstone.originalPath).toBe("memories/old-note.md");
 
     // Ledger: the proposal's own decision is recorded under its own source
-    // (S6: consolidate-pair, not the promote pass's consolidate).
+    // (consolidate-pair, not the promote pass's consolidate).
     const db = openStateDatabase();
     try {
       const row = getImproveLedgerRow(db, storage.stashDir, archived.ref, "consolidate-pair");
@@ -445,8 +444,8 @@ describe("akm proposal accept on a retire proposal", () => {
           reason: "superseded",
         }),
       });
-      // Simulates the crash window 4a closes: intent recorded with the
-      // pre-edge bytes — exactly what the fixed ordering (record intent,
+      // Simulates the crash window: intent recorded with the
+      // pre-edge bytes — exactly what the ordering (record intent,
       // THEN write the edge) always captures — while the file on disk still
       // has no edge yet.
       const db = openStateDatabase();
@@ -861,14 +860,13 @@ describe("akm proposal revert on a retire proposal", () => {
 
       const entry = findArchiveEntry("memories/parent.md");
       const tombstonePath = path.join(entry.dirAbs, "cleanup.md");
-      // The REAL retiredAt string the accept path actually wrote (S5: "every
-      // retiredAt string form the code actually writes" — there is exactly
-      // one, `new Date().toISOString()`, read back here rather than
-      // hand-typed, so this test fails if that round-trip ever changes).
+      // The REAL retiredAt string the accept path actually wrote: there is
+      // exactly one form, `new Date().toISOString()`, read back here rather
+      // than hand-typed, so this test fails if that round-trip ever changes.
       const retiredAt = parseFrontmatter(fs.readFileSync(tombstonePath, "utf8")).data.retiredAt;
       expect(typeof retiredAt).toBe("string");
 
-      // B1: purgeGracedArchive only purges a git-tracked, clean archive —
+      // purgeGracedArchive only purges a git-tracked, clean archive —
       // `withIsolatedAkmStorage` has no `.git` of its own, so this test
       // makes one and commits the archive exactly as a real accept + sync
       // (or an owner's own commit) would.
@@ -1241,7 +1239,7 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
       generator: "consolidate-pair",
     });
     expect(sweep.count).toBe(0); // flagged: never swept, whatever the generator
-    expect(sweep.skippedForContinuityRisk).toBe(1); // S4: reported apart from an ordinary filter miss
+    expect(sweep.skippedForContinuityRisk).toBe(1); // reported apart from an ordinary filter miss
     expect(getProposal(storage.stashDir, riskyProposal.id).status).toBe("pending");
 
     // A person can still accept it directly, by id.
@@ -1273,7 +1271,7 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
       reason: "bulk reject sweep",
     });
     expect(rejectSweep.count).toBe(1);
-    expect(rejectSweep.skippedForContinuityRisk).toBe(0); // S4: only accept excludes for continuityRisk
+    expect(rejectSweep.skippedForContinuityRisk).toBe(0); // only accept excludes for continuityRisk
     expect(getProposal(storage.stashDir, riskyProposal.id).status).toBe("rejected");
   });
 
@@ -1504,7 +1502,7 @@ describe("revert by ref names a sibling retire proposal when refusing (nit, thir
     await akmProposalAccept({ stashDir: storage.stashDir, id: reflect.id, config });
 
     // A retire proposal for the SAME ref is minted and accepted afterwards —
-    // by-ref resolution skips it (should-fix 7), so a bare `revert
+    // by-ref resolution skips it, so a bare `revert
     // lessons/dup-target` lands on the reflect proposal instead, whose
     // target is now gone (archived by the retire).
     const newPath = writeAsset("lessons/dup-elsewhere.md", "description: elsewhere");

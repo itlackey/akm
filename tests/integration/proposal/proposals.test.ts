@@ -66,7 +66,7 @@ function makeStashDir(): string {
 }
 
 /**
- * The durable `proposals.ref` spelling WI-8.5a stores: the fully-qualified
+ * The durable `proposals.ref` spelling: the fully-qualified
  * `<bundle>//<conceptId>` item_ref bound by this suite's proposal helper.
  */
 function durableRef(stashDir: string, type: string, name: string): string {
@@ -96,7 +96,7 @@ afterEach(() => {
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 const VALID_LESSON = `---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg over grep when scanning large code repos.\n`;
-// A structurally-valid unified workflow (workflow-format-unification): the
+// A structurally-valid unified workflow: the
 // orchestration graph is closed-schema-validated (schemas/akm-workflow.json,
 // envelope ∪ workflow-keys), which is what makes it the interesting case for
 // #730's provenance stamping (see the workflow-stamping test below).
@@ -246,8 +246,8 @@ describe("createProposal / listProposals / getProposal", () => {
 
   // reflect writes a proposal's frontmatter through yaml.stringify, which wraps a
   // description past ~80 columns over indented lines. The first line here ends in
-  // "the", so on its own it looks like a truncated description. Accept used to
-  // "repair" that line (drop the "the", add a period) and leave the rest behind.
+  // "the", so on its own it looks like a truncated description. Accept must
+  // not "repair" that line (drop the "the", add a period) and leave the rest behind.
   test("accepts a reflect proposal with a long folded description exactly as proposed", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
@@ -581,7 +581,7 @@ describe("validation failure", () => {
     const original =
       "---\ntype: workflow\nsteps:\n  - id: validate\n---\n\n# Ship Feature From Spec\n\n## validate\n\nValidate the specification.\n";
     // A level-2 heading that does not exactly match a declared step id — the
-    // body-binder's rule 1 violation (workflow-format-unification).
+    // body-binder's rule 1 violation.
     const invalid = original.replace("## validate", "## Validate Inputs");
     fs.writeFileSync(workflowPath, original, "utf8");
     await akmIndex({ stashDir: stash });
@@ -610,7 +610,7 @@ describe("validation failure", () => {
   });
 });
 
-// ── #284 GAP-HIGH backfill ───────────────────────────────────────────────────
+// ── #284 backfill ────────────────────────────────────────────────────────────
 
 describe("akmProposalReject — non-pending status (#284 HIGH 4)", () => {
   test("rejecting an already-archived proposal → UsageError with .code INVALID_FLAG_VALUE", async () => {
@@ -778,7 +778,7 @@ describe("createProposal and proposal decisions record the improve ledger", () =
   });
 });
 
-// ── F-4 / #385 — source allow-list + sourceRun advisory ──────────────────────
+// ── #385 — source allow-list + sourceRun advisory ────────────────────────────
 
 describe("F-4: source allow-list validation and sourceRun advisory (#385)", () => {
   test("isValidProposalSource returns true for known source values", () => {
@@ -829,7 +829,7 @@ describe("F-4: source allow-list validation and sourceRun advisory (#385)", () =
   });
 });
 
-// ── Phase 6A — Confidence score (Advantage D6a) ─────────────────────────────
+// ── Confidence score ────────────────────────────────────────────────────────
 
 describe("Phase 6A: createProposal validates and round-trips confidence", () => {
   test("accepts a valid confidence in [0, 1] and persists it on the proposal", () => {
@@ -899,7 +899,7 @@ describe("Phase 6A: createProposal validates and round-trips confidence", () => 
   });
 });
 
-// ── Phase 6B — Proposal expiration (Advantage D6b) ──────────────────────────
+// ── Proposal expiration ─────────────────────────────────────────────────────
 
 describe("Phase 6B: expireStaleProposals archives proposals past retention", () => {
   test("expires only proposals older than archiveRetentionDays", () => {
@@ -1096,14 +1096,12 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
   });
 });
 
-// ── Phase 6C — Proposal reversion (Advantage D6c) ───────────────────────────
+// ── Proposal reversion ──────────────────────────────────────────────────────
 
 describe("Phase 6C: promoteProposal captures backup; revertProposal restores it", () => {
-  // RUNTIME-07(e): the three "waits for the shared asset-mutation lease"
-  // tests below used to burn a real `Bun.sleep(150)` between starting the
-  // mutation and asserting it hasn't completed yet. That sleep was not
-  // needed for correctness and was a source of narrow-margin timing risk on
-  // a loaded runner. `withAssetMutationLease` (src/indexer/index-writer-lock.ts,
+  // The three "waits for the shared asset-mutation lease" tests below need no
+  // sleep between starting the mutation and asserting it hasn't completed yet.
+  // `withAssetMutationLease` (src/indexer/index-writer-lock.ts,
   // `acquireAssetMutationLease`) makes its FIRST lock-acquisition attempt
   // (`tryAcquireLockSync` + `probeLock`,
   // src/core/file-lock.ts) entirely synchronously — none of those calls
@@ -1114,8 +1112,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
   // on disk before the call), and the loop is already parked on a real
   // `await delay(100)`. So the "not done yet" assertion is true the instant
   // the call returns — no sleep, real or fake, is required to observe it,
-  // and none of these three tests carry any margin-based flake risk (unlike
-  // the elapsed-vs-timeout percentage check in llm-client.test.ts).
+  // and none of these three tests carry any margin-based flake risk.
   test("accept waits for the shared asset-mutation lease", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
@@ -1380,7 +1377,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
       payload: { content: bContent },
     });
     await akmProposalAccept({ stashDir: stash, id: proposalB.id, config });
-    // D2 (#730): promotion stamps OKF v0.2 provenance (generated/verified) onto
+    // #730: promotion stamps OKF v0.2 provenance (generated/verified) onto
     // the written frontmatter, so the on-disk bytes are no longer expected to be
     // byte-identical to the pre-stamp `proposalB.payload.content` — snapshot what
     // accept ACTUALLY wrote and assert the refused revert leaves THAT untouched.
@@ -1408,7 +1405,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
       payload: { content: VALID_LESSON },
     });
     await akmProposalAccept({ stashDir: stash, id: created.id, config });
-    // D2 (#730): promotion stamps OKF v0.2 provenance onto the written
+    // #730: promotion stamps OKF v0.2 provenance onto the written
     // frontmatter — snapshot what accept ACTUALLY wrote (rather than assuming
     // byte-identity with the pre-stamp `created.payload.content`) and assert
     // the refused revert below leaves THAT untouched.
@@ -1526,9 +1523,9 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
   });
 });
 
-// ── D2 (#730) — promoteProposal stamps OKF v0.2 provenance on AKM-native writes ─
+// ── #730 — promoteProposal stamps OKF v0.2 provenance on AKM-native writes ──
 //
-// generated.by actor convention (documented judgment call, see PR body):
+// generated.by actor convention:
 //   - the SOURCE that produced the content decides `generated.by`: an
 //     AUTOMATED_PROPOSAL_SOURCES proposal (reflect/distill/consolidate/
 //     extract/improve/schema-repair) stamps `akm/<pkgVersion>`; a
@@ -1539,11 +1536,11 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
 //     automated drain/triage path) stamps `akm/<pkgVersion>`; its absence
 //     (a human explicitly ran `akm proposal accept`) stamps
 //     `human:<actorId>`.
-// `ctx.actorId` is a new ProposalsContext test seam (mirrors the existing
+// `ctx.actorId` is a ProposalsContext test seam (mirrors the existing
 // `now`/`randomUUID` seams) so these assertions never depend on the real
 // OS username of whatever machine runs the suite.
 describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native writes", () => {
-  // Reads the HYBRID on-disk shape settled by the #730 review: `generated:` and
+  // Reads the HYBRID on-disk shape (#730): `generated:` and
   // `verified:` are stamped BARE at the top level (OKF v0.2's own spelling, so a
   // third-party OKF reader sees conformant trust metadata), while `sources`
   // alone stays namespaced under `provenance:` because a bare top-level
@@ -1624,8 +1621,8 @@ describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native 
     });
 
     // `workflow` is the only type whose frontmatter is parsed against a closed
-    // allowlist. Before #730's allowlist update it was the sole type that
-    // promoted UNSTAMPED via the re-validation fallback — an undocumented hole.
+    // allowlist. Without the provenance keys on that allowlist it would be the
+    // sole type that promoted UNSTAMPED via the re-validation fallback.
     const provenance = readWrittenProvenance(result.assetPath);
     expect(provenance.generatedBy).toBe(`akm/${pkgVersion}`);
     expect(provenance.verified?.[0]?.by).toBe("human:test-human");
@@ -1740,12 +1737,11 @@ describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native 
     expect(provenance.verified).toHaveLength(1);
   });
 
-  // The stamp used to write the whole frontmatter out again, so a line the proposal
-  // never touched came out rewrapped, requoted or without its comment: 3 of 16
-  // accepted edits in a staging run. It now replaces only the blocks of the keys it
-  // sets and leaves every other byte as written. These notes carry `type` and
-  // `updated`, so minting adds no line of its own: what accept writes is the note
-  // plus the stamp.
+  // The stamp replaces only the blocks of the keys it sets and leaves every
+  // other byte as written (writing the whole frontmatter out again would
+  // rewrap or requote lines the proposal never touched, or drop their
+  // comments). These notes carry `type` and `updated`, so minting adds no line
+  // of its own: what accept writes is the note plus the stamp.
   describe("source preservation", () => {
     const STAMPED_AT = "2026-10-05T12:00:00.000Z";
     const LONG_LINE =
@@ -1893,7 +1889,7 @@ describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native 
   });
 });
 
-// ── WI-6.2 — FileChange[] envelope + mint-time beforeHash ───────────────────
+// ── FileChange[] envelope + mint-time beforeHash ────────────────────────────
 
 describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
   test("new target: single create change, after IS the payload content, no beforeHash", () => {
@@ -2077,7 +2073,7 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
   });
 });
 
-// ── #956 fix (fix-index item 1) — a rebuild-in-progress skip is fail-open ──
+// ── #956 — a rebuild-in-progress skip is fail-open ──────────────────────────
 
 describe("akmProposalAccept succeeds while a live index rebuild holds the lock (#956 fix)", () => {
   test("finalizes normally instead of throwing 'index finalization failed'", async () => {

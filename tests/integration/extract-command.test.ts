@@ -90,7 +90,7 @@ function configEnabled(stashDir: string): AkmConfig {
         // #561 — these tests assert the distillation chat-call count / schema.
         // Session indexing (default-on) would add a second chat call per session,
         // so disable it here; the session-indexing behaviour has dedicated
-        // coverage in tests/session-indexing.test.ts.
+        // coverage in tests/integration/session-indexing.test.ts.
         extract: {
           processes: { extract: { enabled: true, indexSessions: false, triage: { enabled: false } } },
         },
@@ -212,12 +212,12 @@ describe("akmExtract — input validation", () => {
 });
 
 describe("akmExtract — explicit command is not gated by the improve-stage toggle", () => {
-  // Bug fix: an explicit `akm extract` invocation (no `improveProfile` — the
+  // An explicit `akm extract` invocation (no `improveProfile` — the
   // standalone command / cron) must RUN even when the default improve profile
   // has `processes.extract.enabled: false`. The toggle gates extract as a STAGE
   // of `akm improve` (the active-profile path), NOT the dedicated command —
-  // previously dropping extract from the daily improve profile silently disabled
-  // the standalone command (and its LLM calls via the shared feature gate).
+  // otherwise dropping extract from the daily improve profile would silently
+  // disable the standalone command (and its LLM calls via the shared feature gate).
   test("standalone extract runs even when default.processes.extract.enabled is false", async () => {
     const stash = makeStashDir();
     let chatCalls = 0;
@@ -234,7 +234,7 @@ describe("akmExtract — explicit command is not gated by the improve-stage togg
     expect(result.ok).toBe(true);
     // The session is actually processed (not short-circuited as "disabled")...
     expect(result.sessionsProcessed).toBe(1);
-    // ...the extract LLM call fires (feature gate no longer blocks it)...
+    // ...the extract LLM call fires (feature gate does not block it)...
     expect(chatCalls).toBeGreaterThan(0);
     // ...and there is no "disabled" warning.
     expect(result.warnings.join(" ")).not.toMatch(/disabled/);
@@ -947,7 +947,7 @@ describe("akmExtract — candidate → proposal routing", () => {
 });
 
 describe("akmExtract — LLM call wiring", () => {
-  // The one corrective retry no longer depends on the engine's JSON Schema support.
+  // The one corrective retry does not depend on the engine's JSON Schema support.
   test.each([false, true])("repairs malformed output once (supportsJsonSchema: %p)", async (supportsJsonSchema) => {
     const stash = makeStashDir();
     const session = fakeSession("ses_repair", Date.now() - 60_000);
@@ -1787,8 +1787,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
       // minScore 2 (the default). This freeze test only needs the session to
       // clear triage so the frozen `process-model` is exercised on the LLM call;
       // it does not assert the threshold value. The shared `fakeSession` scores
-      // 2.0 on the kept toolDensity/editCommit/markers sub-scores — it cleared a
-      // minScore-3 bar only via the #641 proceduralAwareFloor, deleted in WI-7.3.
+      // 2.0 on the kept toolDensity/editCommit/markers sub-scores.
       triage: { enabled: true, minScore: 2 },
     });
     const strategy = config.improve?.strategies?.extract;

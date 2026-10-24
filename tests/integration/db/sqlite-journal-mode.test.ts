@@ -6,25 +6,17 @@
  * #628 — configurable SQLite journal mode (AKM_SQLITE_JOURNAL_MODE)
  * with optional network-filesystem auto-fallback (WAL → DELETE).
  *
- * These tests pin the contract for src/storage/sqlite-pragmas.ts (the new
+ * These tests pin the contract for src/storage/sqlite-pragmas.ts (the
  * resolver + unified pragma helper) and assert that ALL FOUR journal_mode exec
  * sites across THREE openers honor the env knob:
  *   - openStateDatabase()      (src/core/state-db.ts)
- *   - openLogsDatabase()       (src/core/logs-db.ts)   ← the opener the issue missed
- *   - openIndexDatabase()           (src/indexer/db/db.ts, main path)
- *   - openExistingDatabase()   (src/indexer/db/db.ts, 2nd path)
+ *   - openLogsDatabase()       (src/core/logs-db.ts)
+ *   - openIndexDatabase()           (src/storage/repositories/index-connection.ts, main path)
+ *   - openExistingDatabase()   (src/storage/repositories/index-connection.ts, 2nd path)
  *
- * (Chunk-8 WI-8.3: openWorkflowDatabase() is deleted with workflow.db; its rows
- * live in state.db, already covered by openStateDatabase() above.)
- *
- * Modeled on tests/db-busy-timeout.test.ts: mkdtempSync temp dirs + afterEach
- * cleanup, no host state. AKM_SQLITE_JOURNAL_MODE is isolated per-test via the
- * sandbox `withEnv` wrapper so it never leaks across tests.
- *
- * Maps to acceptance criteria a–f:
- *   AC-a all-5-openers honor env  AC-b default unchanged  AC-c invalid graceful
- *   AC-d DELETE roundtrip         AC-e network classifier + fallback wiring
- *   AC-f docs (verified by reading docs, see bottom)
+ * Modeled on tests/integration/db/db-busy-timeout.test.ts: mkdtempSync temp
+ * dirs + afterEach cleanup, no host state. AKM_SQLITE_JOURNAL_MODE is isolated
+ * per-test via the sandbox `withEnv` wrapper so it never leaks across tests.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -94,7 +86,7 @@ afterEach(() => {
   }
 });
 
-// ── AC-pure-resolver: case-insensitive + trimmed canonicalization ────────────
+// ── pure resolver: case-insensitive + trimmed canonicalization ───────────────
 describe("#628 AC-c: resolveJournalMode() pure resolver", () => {
   test("canonicalizes valid values (case-insensitive, trimmed)", () => {
     const cases: Array<[string, JournalMode]> = [
@@ -137,7 +129,7 @@ describe("#628 AC-c: resolveJournalMode() pure resolver", () => {
   });
 });
 
-// ── AC-e: pure network-filesystem classifier ────────────────────────────────
+// ── pure network-filesystem classifier ──────────────────────────────────────
 describe("#628 AC-e: isNetworkFilesystem() pure classifier", () => {
   test("known network magics classify as network", () => {
     expect(isNetworkFilesystem(0x6969)).toBe(true); // NFS
@@ -153,7 +145,7 @@ describe("#628 AC-e: isNetworkFilesystem() pure classifier", () => {
   });
 });
 
-// ── AC-a: every opener honors AKM_SQLITE_JOURNAL_MODE=DELETE ─────────────────
+// ── every opener honors AKM_SQLITE_JOURNAL_MODE=DELETE ───────────────────────
 describe("#628 AC-a: all 4 openers honor AKM_SQLITE_JOURNAL_MODE", () => {
   test("openStateDatabase() reports delete", async () => {
     await withEnv({ AKM_SQLITE_JOURNAL_MODE: "DELETE" }, () => {
@@ -204,7 +196,7 @@ describe("#628 AC-a: all 4 openers honor AKM_SQLITE_JOURNAL_MODE", () => {
   });
 });
 
-// ── AC-b: default (env unset) is byte-identical to today ─────────────────────
+// ── default (env unset) leaves the journal mode unchanged ────────────────────
 describe("#628 AC-b: default mode unchanged (WAL) when env unset", () => {
   test("all 4 openers report wal + busy_timeout=30000 + correct foreign_keys", async () => {
     await withEnv({ AKM_SQLITE_JOURNAL_MODE: undefined }, () => {
@@ -231,7 +223,7 @@ describe("#628 AC-b: default mode unchanged (WAL) when env unset", () => {
   });
 });
 
-// ── AC-d: DELETE roundtrip (data survives) + durability pragmas ──────────────
+// ── DELETE roundtrip (data survives) + durability pragmas ────────────────────
 describe("#628 AC-d: DELETE mode roundtrip", () => {
   test("CREATE/INSERT/SELECT roundtrip works in DELETE mode", async () => {
     await withEnv({ AKM_SQLITE_JOURNAL_MODE: "DELETE" }, () => {
@@ -251,7 +243,7 @@ describe("#628 AC-d: DELETE mode roundtrip", () => {
   });
 });
 
-// ── AC-e: applyStandardPragmas network-fallback wiring (injected probe) ──────
+// ── applyStandardPragmas network-fallback wiring (injected probe) ────────────
 describe("#628 AC-e: applyStandardPragmas() network-FS fallback wiring", () => {
   function makeRawDb(): { db: Database; dir: string } {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-journal-apply-"));
@@ -306,7 +298,7 @@ describe("#628 AC-e: applyStandardPragmas() network-FS fallback wiring", () => {
   });
 });
 
-// ── AC-f: docs carry the env-var row (assert on disk content) ────────────────
+// ── docs carry the env-var row (assert on disk content) ──────────────────────
 describe("#628 AC-f: docs document AKM_SQLITE_JOURNAL_MODE", () => {
   test("data-and-telemetry.md and configuration.md mention the env var", () => {
     const telemetry = fs.readFileSync(

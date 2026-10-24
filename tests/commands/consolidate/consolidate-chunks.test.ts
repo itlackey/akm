@@ -9,8 +9,7 @@
  * - Body truncation is applied at 500 chars
  *
  * Pure unit tests — no real DB, network, or spawned process — so this file
- * lives under tests/commands/ (unit target), not tests/integration/ (ORG-05,
- * 0.9.8 stabilization; see AGENTS.md's tests/integration/ classification rule).
+ * lives under tests/commands/ (unit target), not tests/integration/.
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import fs from "node:fs";
@@ -97,11 +96,10 @@ afterEach(() => {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("buildChunkPrompt annotations (2026-05-27)", () => {
-  // The annotations drive system-prompt rules 2 and 3. Pre-fix the LLM was
-  // proposing ~110 dedup_pending_proposal skips + ~60 captureMode_hot_refused
-  // skips per 4h on this user's stack — both deterministic post-LLM
-  // rejections of memories the model couldn't know were already off-limits.
-  // See /tmp/akm-health-investigations/tuning-reasons-investigation.md §Q3.
+  // The annotations drive system-prompt rules 2 and 3: without them the LLM
+  // proposes dedup_pending_proposal and captureMode_hot_refused skips — both
+  // deterministic post-LLM rejections of memories the model couldn't know
+  // were already off-limits.
 
   it("annotates memories with captureMode: hot frontmatter", () => {
     const filePath = path.join(tempDir, "hot-memory.md");
@@ -185,9 +183,8 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
   });
 
   it("does not emit a top-of-prompt protection block for hot refs (delete retired from the op set)", () => {
-    // The block used to warn against proposing `delete` for hot refs. `delete`
-    // is no longer a valid op, so hot refs need no protection — only the
-    // inline `(captureMode: hot)` annotation remains.
+    // `delete` is not a valid op, so hot refs need no protection block — only
+    // the inline `(captureMode: hot)` annotation is emitted.
     const f1 = path.join(tempDir, "hot-1.md");
     const f2 = path.join(tempDir, "hot-2.md");
     const f3 = path.join(tempDir, "plain.md");
@@ -240,8 +237,8 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
     };
     const prompt = buildChunkPrompt("/test/stash", [memory], 0, 1, 500);
 
-    // The line stays `[1] memory:vanilla` with no parens — preserves the
-    // pre-2026-05-27 shape so other tests that grep for ref names don't break.
+    // The line stays `[1] memory:vanilla` with no parens, so other tests that
+    // grep for ref names don't break.
     expect(prompt).toContain("[1] memories/vanilla\n");
     expect(prompt).not.toMatch(/memory:vanilla \(/);
   });
@@ -337,11 +334,9 @@ describe("computeSafeChunkSize — respects model context window", () => {
    * Regression test for the overflow bug:
    *   Error: "n_keep: 40755 >= n_ctx: 16128"
    *
-   * The old code used a hardcoded chunkSize=20 regardless of the model's
-   * context window. With a 16K context model, the prompt could easily exceed
-   * the context (especially when the agent adds its own system prompt on top).
-   *
-   * The fix: computeSafeChunkSize derives chunk size from contextLength,
+   * A hardcoded chunkSize=20 regardless of the model's context window can
+   * easily exceed a 16K context (especially when the agent adds its own system
+   * prompt on top). computeSafeChunkSize derives chunk size from contextLength,
    * ensuring no single chunk prompt can overflow the model's n_ctx.
    */
 
@@ -408,7 +403,7 @@ describe("computeSafeChunkSize — respects model context window", () => {
     const chunkSize = computeSafeChunkSize(DEFAULT_CONTEXT_LENGTH_TOKENS, 500);
     expect(chunkSize).toBeGreaterThan(0);
     // With 4096 - 2000 = 2096 usable tokens and ceil(500/3)=167 tokens/memory:
-    // chunk size = floor(2096/167) = 12 — well below the old hardcoded 20
+    // chunk size = floor(2096/167) = 12 — well below 20
     expect(chunkSize).toBeLessThanOrEqual(20);
   });
 
@@ -518,10 +513,9 @@ describe("body truncation", () => {
     expect(prompt).toContain("Z".repeat(500));
   });
 
-  // R5 (d): the excerpt truncates the BODY, not the raw file
-  // (frontmatter + body). Before the fix, `body.slice(0, bodyTruncation)`
-  // sliced the raw file, so a memory whose frontmatter alone exceeds
-  // bodyTruncation (~21% of the pool) was judged on metadata only.
+  // The excerpt truncates the BODY, not the raw file (frontmatter + body):
+  // slicing the raw file would judge a memory whose frontmatter alone exceeds
+  // bodyTruncation on metadata only.
   it("a memory whose frontmatter alone exceeds bodyTruncation still shows body text in the prompt (R5)", () => {
     const longFrontmatter = `---\ndescription: ${"F".repeat(600)}\n---\n`;
     const body = `${longFrontmatter}Actual body text that must appear.`;

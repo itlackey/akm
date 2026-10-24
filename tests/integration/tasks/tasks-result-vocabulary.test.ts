@@ -3,30 +3,20 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P1b Lane C — F-2 result-vocabulary re-code (D8) + F-4 attempt-error
- * allowlist widening, new coverage.
+ * Result-vocabulary re-code and attempt-error allowlist coverage.
  *
- * docs/plans/specs/p1b-model-extraction.md §5.3 (result vocabulary), §5.5 +
- * §5.6 (F-4 + the C-7 exit-78 rewire), §6 (the F-2 AUTHORIZED-FLIPS table).
- *
- * `tests/integration/tasks-legacy-vocabulary-characterization.test.ts` (the
- * flipped P0 file) pins the per-arm stored `target_kind` STRING and the
- * `readTaskHistory()` round-trip SHAPE, including legacy (unmarked) rows.
- * This file is genuinely new coverage that file does not carry:
+ * This file covers:
  *
  *  - the `targetVocab: 2` marker itself, inside the RAW `metadata_json`
- *    column, for every NEW row (§5.3's "NEW history rows store the new
- *    strings and set metadata vocab marker 2");
- *  - the §5.6 C-7 exit-78 rewire: `src/commands/tasks/tasks.ts`'s
- *    `result.target.kind === "command"` branch must become
- *    `"shell" || "script"`, in the SAME commit as the vocabulary re-code, or
- *    `akm task run` silently stops preserving configuration failures as
- *    exit 78;
- *  - F-4's advisory-authorized allowlist widening
- *    (`SAFE_TASK_ATTEMPT_ERROR_CODES` gains `TASK_SOURCE_INVALID` and
- *    `COMPOSITION_INVALID`), observed through `recordTaskAttemptFailure`'s
- *    only externally-visible effect (the stored `detail.error` code) since
- *    the allowlist itself is not exported.
+ *    column, for every NEW row;
+ *  - the exit-78 rewire: `src/commands/tasks/tasks.ts`'s
+ *    `result.target.kind === "command"` branch must be
+ *    `"shell" || "script"`, or `akm task run` silently stops preserving
+ *    configuration failures as exit 78;
+ *  - the attempt-error allowlist (`SAFE_TASK_ATTEMPT_ERROR_CODES` includes
+ *    `TASK_SOURCE_INVALID` and `COMPOSITION_INVALID`), observed through
+ *    `recordTaskAttemptFailure`'s only externally-visible effect (the stored
+ *    `detail.error` code) since the allowlist itself is not exported.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -82,7 +72,7 @@ function closedStream(): ReadableStream<Uint8Array> {
   });
 }
 
-/** Crib of tests/integration/tasks-runtime-v3-runner.test.ts's `completedSpawn`. */
+/** Crib of tests/tasks-runtime-v3-runner.test.ts's `completedSpawn`. */
 function completedSpawn(exitCode: number): ReturnType<SpawnFn> {
   return {
     exitCode,
@@ -180,20 +170,17 @@ describe("F-2 (D8) — every NEW history row carries the targetVocab: 2 marker",
 });
 
 describe("§5.6 C-7 — the exit-78 rewire survives the vocabulary re-code", () => {
-  // NEW test required by spec §5.6: "a shell task whose command exits 78 ->
-  // CLI exit 78" — pinned as a code path, not merely as prose (the existing
-  // documented-behavior prose pin is tests/cli/exit-code-hints.test.ts).
+  // A shell task whose command exits 78 -> CLI exit 78, pinned as a code path,
+  // not merely as prose (the documented-behavior prose pin is
+  // tests/cli/exit-code-hints.test.ts).
   //
-  // At head, src/commands/tasks/tasks.ts's exit-78 passthrough branch reads
-  // `result.target.kind === "command"`, which today (pre-F-2) IS the native
-  // shell/script arm's stored kind. After F-2, "command" means the
-  // agent/LLM arm and the native arm reports "shell"/"script" instead — so
-  // this branch MUST be rewired in the same commit to
-  // `(result.target.kind === "shell" || result.target.kind === "script")`,
-  // or `akm task run` silently stops preserving configuration failures as
-  // exit 78. This test pins BOTH halves at once: the NEW vocabulary in the
-  // JSON result AND the preserved exit-78 passthrough, so a vocabulary-only
-  // fix that forgets the tasks.ts rewire still fails it.
+  // src/commands/tasks/tasks.ts's exit-78 passthrough branch reads
+  // `(result.target.kind === "shell" || result.target.kind === "script")`:
+  // "command" means the agent/LLM arm and the native arm reports
+  // "shell"/"script", so a branch that still tested "command" would make
+  // `akm task run` silently stop preserving configuration failures as exit 78.
+  // This test pins BOTH halves at once: the vocabulary in the JSON result AND
+  // the preserved exit-78 passthrough.
   test("a shell task whose command exits 78 exits the CLI with 78, and its JSON result reports the new vocabulary", async () => {
     writeTask("vocab-exit-78", 'version: 4\nrun: "exit 78"\nshell: sh\n');
 
@@ -207,15 +194,13 @@ describe("§5.6 C-7 — the exit-78 rewire survives the vocabulary re-code", () 
 });
 
 describe("F-4 (P1a advisory) — SAFE_TASK_ATTEMPT_ERROR_CODES gains TASK_SOURCE_INVALID and COMPOSITION_INVALID", () => {
-  // The allowlist itself (runner.ts's SAFE_TASK_ATTEMPT_ERROR_CODES, moving
-  // to run/attempt-lifecycle.ts per spec §5.1) is not exported — its
-  // membership is observed the same way production code observes it: through
+  // The allowlist itself (SAFE_TASK_ATTEMPT_ERROR_CODES in
+  // src/tasks/run/attempt-lifecycle.ts) is not exported — its membership is
+  // observed the same way production code observes it: through
   // recordTaskAttemptFailure's only externally-visible effect, the stored
-  // history row's `detail.error` code (B-30). recordTaskAttemptFailure is
-  // called directly here (it is itself exported and part of the compat
-  // surface, unlike the allowlist) rather than via the workflow-arm dispatch
-  // path spec §5.5 traces reachability through — that path is Lane C
-  // implementation machinery (src/tasks/run/**), not this test's concern; the
+  // history row's `detail.error` code. recordTaskAttemptFailure is called
+  // directly here (it is itself exported and part of the compat surface,
+  // unlike the allowlist) rather than via the workflow-arm dispatch path; the
   // allowlist's OWN effect is exactly what this test pins.
   test.each([
     "TASK_SOURCE_INVALID",

@@ -3,33 +3,22 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3a Lane C TESTS — migration `023-child-workflow-runs`.
+ * Migration `023-child-workflow-runs`.
  *
- * Spec: docs/plans/specs/p3a-plan-v5-child-freeze.md §5.1 (binding SQL and
- * registry placement), §1.4(1) (Lane C design), §1.8 A-N3 (line references).
- * Behavior-table rows covered: C-01…C-06 (§2.8).
+ * This file does not touch src/core/state/migrations.ts. It follows the
+ * position/safety-classification test pattern in
+ * tests/integration/storage/state-db-migrations.test.ts ("every ordered
+ * migration ID has an explicit safety classification") and
+ * tests/integration/workflows/durable-attempt-journal-v4-red.test.ts ("creates
+ * the attempt table with a composite run/unit/attempt key…", the migration-022
+ * precedent this file mirrors one migration later).
  *
- * This lane owns ONLY this file and
- * tests/integration/storage/child-run-publication.test.ts. It does not touch
- * src/core/state/migrations.ts — that is Implement's job, mirrored here by
- * the position/safety-classification test pattern already established in
- * tests/storage/state-db-migrations.test.ts ("every ordered migration ID has
- * an explicit safety classification") and
- * tests/integration/workflows/durable-attempt-journal-v4-red.test.ts
- * ("creates the attempt table with a composite run/unit/attempt key…", the
- * migration-022 precedent this file mirrors one migration later).
- *
- * RED phase: `023-child-workflow-runs` does not exist in `STATE_MIGRATIONS`
- * or `STATE_MIGRATION_SAFETY_BY_ID` yet, and `workflow_runs` does not yet
- * carry `parent_run_id` / `parent_unit_id` / `invocation_key`. Every test
- * below references ONLY symbols that already exist today
- * (`STATE_MIGRATIONS`, `STATE_MIGRATION_SAFETY_BY_ID`,
- * `getStateMigrationSafety`, `openStateDatabase`, `openDatabase`,
- * `runMigrations`) — the RED signal is a plain assertion failure (the
- * migration id is simply absent, the columns simply do not exist), not a
- * TypeScript error, so no `@ts-expect-error` red-phase pin is needed
- * anywhere in this file. Implement turns every test here green by appending
- * the migration per §5.1 — no edit to this file is expected at that point.
+ * The tests check that `023-child-workflow-runs` is registered in
+ * `STATE_MIGRATIONS` and `STATE_MIGRATION_SAFETY_BY_ID` and that
+ * `workflow_runs` carries `parent_run_id` / `parent_unit_id` /
+ * `invocation_key`, using only existing symbols (`STATE_MIGRATIONS`,
+ * `STATE_MIGRATION_SAFETY_BY_ID`, `getStateMigrationSafety`,
+ * `openStateDatabase`, `openDatabase`, `runMigrations`).
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -56,7 +45,7 @@ function statePath(prefix = "akm-state-migration-023-"): string {
   return path.join(root, "state.db");
 }
 
-/** Index of a migration by id, mirroring tests/storage/state-db-migrations.test.ts's helper. */
+/** Index of a migration by id, mirroring tests/integration/storage/state-db-migrations.test.ts's helper. */
 function migrationIndex(id: string): number {
   const index = STATE_MIGRATIONS.findIndex((migration) => migration.id === id);
   if (index < 0) throw new Error(`Missing state migration fixture ${id}`);
@@ -91,10 +80,9 @@ afterEach(() => {
 });
 
 describe("migration 023-child-workflow-runs — registry position and safety classification (C-03)", () => {
-  // Not asserted as the final entry: P3b's migration 024-workflow-run-outputs
-  // (docs/plans/specs/p3b-child-executor.md §8 acceptance criteria) is
-  // authorized to append after this one, so this test pins only 023's own
-  // position relative to its immediate predecessor, 022.
+  // Not asserted as the final entry: later migrations append after this one,
+  // so this test pins only 023's own position relative to its immediate
+  // predecessor, 022.
   test("appears in STATE_MIGRATIONS directly after 022-workflow-unit-attempts", () => {
     const ids = STATE_MIGRATIONS.map((migration) => migration.id);
     const index = ids.indexOf(MIGRATION_ID);
@@ -113,7 +101,7 @@ describe("migration 023-child-workflow-runs — registry position and safety cla
   test("the safety-classification registry key order matches the migration registry order exactly", () => {
     // The module itself asserts this at load time (assertStateMigrationSafetyRegistry
     // in src/core/state/migrations.ts) — a mismatch would already have thrown before
-    // this test could run. This is the explicit, itemized re-assertion §5.1 asks for.
+    // this test could run. This is the explicit, itemized re-assertion.
     expect(Object.keys(STATE_MIGRATION_SAFETY_BY_ID)).toEqual(STATE_MIGRATIONS.map((migration) => migration.id));
   });
 
@@ -125,7 +113,7 @@ describe("migration 023-child-workflow-runs — registry position and safety cla
   });
 
   test("the migration comment disambiguates workflow_runs.parent_unit_id from workflow_run_units.parent_unit_id and names spawnedByUnitId", () => {
-    // §5.1: "The migration comment MUST disambiguate" — a human-facing note, so
+    // The migration comment must disambiguate — a human-facing note, so
     // it lives as source text near the migration entry rather than in the
     // executed SQL. Scanning the migrations.ts source itself (not the `up`
     // string) is the only way to assert on it.

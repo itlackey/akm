@@ -3,74 +3,58 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3a Lane C TESTS — `publishChildWorkflowRun` and its accessors.
+ * `publishChildWorkflowRun` and its accessors.
  *
- * Spec: docs/plans/specs/p3a-plan-v5-child-freeze.md §5.2-§5.5 (binding
- * design), §1.4(2-4) (Lane C design), §1.8 A-N12 (spawnedByUnitId naming).
- * Behavior-table rows covered: C-07…C-15 (§2.9). This lane owns ONLY this
- * file and tests/integration/state-migration-023.test.ts.
- *
- * RED phase: `WorkflowRunsRepository.publishChildWorkflowRun`, `childRunsOf`,
- * and `getRunByInvocationKey` do not exist yet. This file references them
- * ONLY through a locally-declared structural contract
- * (`ChildWorkflowRunsRepositoryV4`) intersected onto the real repository
- * instance, exactly the convention already established for this same
- * "repository gains a new method" situation by
+ * The repository's child-run methods (`publishChildWorkflowRun`,
+ * `childRunsOf`, `getRunByInvocationKey`) are reached through a locally-declared
+ * structural contract (`ChildWorkflowRunsRepositoryV4`) intersected onto the
+ * real repository instance, the same convention
  * tests/integration/workflows/v4-atomic-publication-red.test.ts
- * (`RepositoryWithV4Publisher`, `publishV4`) and
+ * (`RepositoryWithV4Publisher`) and
  * tests/integration/workflows/durable-attempt-journal-v4-red.test.ts
- * (`DurableAttemptRepositoryV4`, `durableAttempts`). `WorkflowRunsRepository &
- * Partial<ChildWorkflowRunsRepositoryV4>` is valid whether or not the class
- * already declares those members, so this produces no compile error to
- * suppress — no `@ts-expect-error` red-phase pin is needed anywhere in this
- * file. The RED signal is `expect(typeof candidate.X).toBe("function")`
- * failing at test time (the method is `undefined` today), exactly like the
- * two precedent files. `PublishChildWorkflowRunInput` and the three new
- * `workflow_runs` columns are likewise not imported — they are mirrored
- * locally (`PublishChildWorkflowRunInputContract`, `ChildWorkflowRunRow`) for
- * the same reason `PublishWorkflowRunV4InputContract` mirrors
- * `PublishWorkflowRunV4Input` in the sibling file above. Implement removes no
- * directive here (there is none) — it simply makes every `typeof` check, and
- * every behavioral assertion after it, true.
+ * (`DurableAttemptRepositoryV4`) use. `PublishChildWorkflowRunInput` and the
+ * three child-run `workflow_runs` columns are likewise mirrored locally
+ * (`PublishChildWorkflowRunInputContract`, `ChildWorkflowRunRow`) for the same
+ * reason `PublishWorkflowRunV4InputContract` mirrors `PublishWorkflowRunV4Input`
+ * in the sibling file.
  *
- * The C-09 concurrency test spawns a real `node:worker_threads` Worker with
+ * The concurrency test spawns a real `node:worker_threads` Worker with
  * its OWN `bun:sqlite` connection against the SAME state.db file — the same
  * "genuinely separate connection/thread, real file, real locking" technique
- * tests/storage/state-db-migrations.test.ts already uses for its
+ * tests/integration/storage/state-db-migrations.test.ts uses for its
  * writer-exclusion-window tests — so the partial unique index and SQLite's
  * own IMMEDIATE-transaction serialization are exercised for real, never a
- * mocked repository (§5.4).
+ * mocked repository.
  *
- * TEST-REVIEW FOLLOW-UP (round 3, finding 3): a file-polling handshake alone
- * (worker writes "ready", main notices it on its next ~5 ms poll tick) does
- * NOT force a genuine overlap — a synchronous, uncontended SQLite write on
- * an empty table is fast enough that the worker's whole
- * publishChildWorkflowRun call (BEGIN IMMEDIATE → SELECT → INSERT → COMMIT)
- * routinely finishes before main's poll even notices "ready", so main's own
- * call degenerates into an ordinary, uncontested SELECT-finds-a-committed-row
- * read — C-08's idempotency case again, just replayed across two
- * connections. An implementation that SELECTs outside its transaction, or
- * opens a DEFERRED transaction instead of an IMMEDIATE one, would still pass
- * that shape of test, because neither publisher's "not found yet" read is
- * ever forced to overlap with the other's write. C-09 now forces a REAL
- * overlap deterministically: the main connection takes a raw `BEGIN
- * IMMEDIATE` write lock BEFORE the worker is even spawned, so the worker's
- * own `BEGIN IMMEDIATE` (inside its publishChildWorkflowRun call) is
- * guaranteed to block against a real reserved lock; main then holds it for a
- * short, deterministic pause (the same 150 ms margin
- * tests/storage/state-db-migrations.test.ts's own writer-exclusion-window
- * tests use for the identical purpose) before releasing it and immediately
- * racing its OWN publishChildWorkflowRun call — issued on the very next
- * line, no I/O in between — against the worker's already-blocked,
+ * A file-polling handshake alone (worker writes "ready", main notices it on
+ * its next ~5 ms poll tick) does NOT force a genuine overlap — a synchronous,
+ * uncontended SQLite write on an empty table is fast enough that the worker's
+ * whole publishChildWorkflowRun call (BEGIN IMMEDIATE → SELECT → INSERT →
+ * COMMIT) routinely finishes before main's poll even notices "ready", so main's
+ * own call degenerates into an ordinary, uncontested SELECT-finds-a-committed-row
+ * read — the idempotency case again, just replayed across two connections. An
+ * implementation that SELECTs outside its transaction, or opens a DEFERRED
+ * transaction instead of an IMMEDIATE one, would still pass that shape of test,
+ * because neither publisher's "not found yet" read is ever forced to overlap
+ * with the other's write. The concurrency test forces a REAL overlap
+ * deterministically: the main connection takes a raw `BEGIN IMMEDIATE` write
+ * lock BEFORE the worker is even spawned, so the worker's own `BEGIN
+ * IMMEDIATE` (inside its publishChildWorkflowRun call) is guaranteed to block
+ * against a real reserved lock; main then holds it for a short, deterministic
+ * pause (the same 150 ms margin
+ * tests/integration/storage/state-db-migrations.test.ts's own
+ * writer-exclusion-window tests use for the identical purpose) before releasing
+ * it and immediately racing its OWN publishChildWorkflowRun call — issued on
+ * the very next line, no I/O in between — against the worker's already-blocked,
  * busy_timeout-driven retry for that same freshly-released lock. Whichever
  * wins, the loser's own SELECT (which can only run once it has actually
- * acquired the write lock in turn) is now forced to run AFTER the winner's
- * commit, never before it — exercising the real loser path instead of a
- * pre-decided sequential read. A second, fully deterministic test below
- * (no worker, no timing) covers the complementary half of the same
- * contract: a winner row inserted by raw SQL — never through
- * publishChildWorkflowRun — must still be recognized by the SELECT-first
- * branch, with no second insert and no second workflow_started event.
+ * acquired the write lock in turn) is forced to run AFTER the winner's commit,
+ * never before it — exercising the real loser path instead of a pre-decided
+ * sequential read. A second, fully deterministic test below (no worker, no
+ * timing) covers the complementary half of the same contract: a winner row
+ * inserted by raw SQL — never through publishChildWorkflowRun — must still be
+ * recognized by the SELECT-first branch, with no second insert and no second
+ * workflow_started event.
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -91,11 +75,11 @@ import { canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/pl
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 import { seedWorkflowRun } from "../../_helpers/workflow";
 
-// ── §5.2/§5.3 mirrored locally (see file header) ────────────────────────────
+// ── contracts mirrored locally (see file header) ────────────────────────────
 
 interface PublishChildWorkflowRunInputContract {
   readonly parentRunId: string;
-  /** Stored in workflow_runs.parent_unit_id — A-N12 naming. */
+  /** Stored in workflow_runs.parent_unit_id. */
   readonly spawnedByUnitId: string;
   readonly invocationKey: string;
   readonly run: InsertRunInput;
@@ -134,7 +118,7 @@ const PARENT_WORKFLOW_REF = "workflows/parent";
 const PARENT_SCOPE_KEY = "dir:v1:parent";
 const SPAWNING_UNIT_ID = "spawn.unit";
 
-/** A structurally-arbitrary "frozen child plan" — publishChildWorkflowRun stores it opaquely (C-11). */
+/** A structurally-arbitrary "frozen child plan" — publishChildWorkflowRun stores it opaquely. */
 function childPlanFixture(marker = "default"): { planJson: string; planHash: string } {
   const fakePlan = { irVersion: 5, title: "child", steps: [{ stepId: "spawn", title: "spawn" }], marker };
   return { planJson: canonicalPlanJson(fakePlan), planHash: computePlanHash(fakePlan) };
@@ -189,17 +173,11 @@ function publicationInput(options: {
 
 /**
  * Inserts a COMPLETE child run row directly via raw SQL — never through
- * publishChildWorkflowRun — so the deterministic loser-path test below
- * (test-review round 3, finding 3) can prove the SELECT-first branch
- * recognizes ANY existing (parent_run_id, invocation_key) match, not merely
- * a row it inserted itself. Column list mirrors workflow_runs' full schema
- * (migrations.ts:882-902) plus migration 023's three additive columns
- * (§5.1). Like every other reference to those three columns in this file,
- * this only ever executes once Implement lands the migration alongside
- * publishChildWorkflowRun — every caller reaches it through
- * childPublication(repo) first, which fails the same "not implemented" way
- * as every other test in this file (see file header) before this helper's
- * INSERT would ever run against today's pre-migration-023 schema.
+ * publishChildWorkflowRun — so the deterministic loser-path test below can
+ * prove the SELECT-first branch recognizes ANY existing (parent_run_id,
+ * invocation_key) match, not merely a row it inserted itself. Column list
+ * mirrors workflow_runs' full schema plus migration 023's three additive
+ * columns.
  */
 function rawInsertChildRun(db: Database, input: PublishChildWorkflowRunInputContract): void {
   db.prepare(
@@ -245,7 +223,7 @@ beforeEach(() => {
 
 afterEach(() => storage.cleanup());
 
-// ── C-07: one-transaction publication ───────────────────────────────────────
+// ── one-transaction publication ─────────────────────────────────────────────
 
 describe("publishChildWorkflowRun — atomic publication (C-07)", () => {
   test("inserts the child run row, its step, and one workflow_started event, and returns the inserted row", () => {
@@ -265,7 +243,7 @@ describe("publishChildWorkflowRun — atomic publication (C-07)", () => {
       expect(row.plan_hash).toBe(input.planHash);
       expect(row.plan_ir_version).toBe(6);
       expect(row.parent_run_id).toBe(PARENT_RUN_ID);
-      // C-15 / A-N12: the input field is spawnedByUnitId; it lands in parent_unit_id.
+      // The input field is spawnedByUnitId; it lands in parent_unit_id.
       expect(row.parent_unit_id).toBe(SPAWNING_UNIT_ID);
       expect(row.invocation_key).toBe("key-atomic");
 
@@ -337,7 +315,7 @@ describe("publishChildWorkflowRun — atomic publication (C-07)", () => {
   });
 });
 
-// ── C-08: idempotent second call ────────────────────────────────────────────
+// ── idempotent second call ──────────────────────────────────────────────────
 
 describe("publishChildWorkflowRun — idempotent second call (C-08)", () => {
   test("a second call with the same (parentRunId, invocationKey) returns the SAME child row — no second insert, event, or step set", () => {
@@ -381,7 +359,7 @@ describe("publishChildWorkflowRun — idempotent second call (C-08)", () => {
   });
 });
 
-// ── C-09: two concurrent publishers ─────────────────────────────────────────
+// ── two concurrent publishers ───────────────────────────────────────────────
 
 function waitForFile(file: string, timeoutMs = 8_000): void {
   const deadline = Date.now() + timeoutMs;
@@ -482,7 +460,7 @@ describe("publishChildWorkflowRun — two concurrent publishers (C-09)", () => {
       // test could hold anything open. This guarantees the worker's own
       // BEGIN IMMEDIATE (inside its publishChildWorkflowRun call, below)
       // blocks against a real reserved lock rather than racing on file-poll
-      // timing alone (file header, test-review round 3).
+      // timing alone (see file header).
       db.exec("BEGIN IMMEDIATE");
 
       const worker = new Worker(pathToFileURL(workerScript));
@@ -501,15 +479,15 @@ describe("publishChildWorkflowRun — two concurrent publishers (C-09)", () => {
       // Deterministic pause: give the worker's blocked BEGIN IMMEDIATE time
       // to actually register against the held lock before releasing it —
       // same technique and margin as
-      // tests/storage/state-db-migrations.test.ts's own
+      // tests/integration/storage/state-db-migrations.test.ts's own
       // writer-exclusion-window tests.
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
 
       // Release, then immediately race main's OWN publish attempt — issued
       // on the very next line, no I/O in between — against the worker's
       // already-blocked, busy_timeout-driven retry for the SAME
-      // freshly-released write lock. This is the genuine overlap C-09
-      // requires (§5.4): whichever wins, the loser's own SELECT can only run
+      // freshly-released write lock. This is the genuine overlap the test
+      // requires: whichever wins, the loser's own SELECT can only run
       // once it has acquired the lock in turn, i.e. strictly after the
       // winner's commit — never before it.
       db.exec("COMMIT");
@@ -556,15 +534,15 @@ describe("publishChildWorkflowRun — two concurrent publishers (C-09)", () => {
   }, 20_000);
 });
 
-// ── C-09 (deterministic loser path): a raw-SQL pre-inserted winner ─────────
+// ── deterministic loser path: a raw-SQL pre-inserted winner ─────────────────
 //
-// Test-review round 3, finding 3. The worker-thread test above exercises a
-// GENUINE race for the write lock; this test isolates the other half of
-// §5.4's contract fully deterministically, with no concurrency, no timing,
-// and no worker at all: the SELECT-first branch must recognize an existing
-// (parent_run_id, invocation_key) row regardless of WHO inserted it — even
-// a row publishChildWorkflowRun never itself wrote — and must perform no
-// second insert and no second workflow_started event when it finds one.
+// The worker-thread test above exercises a GENUINE race for the write lock;
+// this test isolates the other half of the contract fully deterministically,
+// with no concurrency, no timing, and no worker at all: the SELECT-first
+// branch must recognize an existing (parent_run_id, invocation_key) row
+// regardless of WHO inserted it — even a row publishChildWorkflowRun never
+// itself wrote — and must perform no second insert and no second
+// workflow_started event when it finds one.
 
 describe("publishChildWorkflowRun — deterministic loser path via a pre-inserted winner (C-09)", () => {
   test("recognizes a winner row it did not insert itself — no second insert, no second event", () => {
@@ -573,11 +551,9 @@ describe("publishChildWorkflowRun — deterministic loser path via a pre-inserte
       seedParentRun(db);
       const repo = new WorkflowRunsRepository(db);
       // Resolved FIRST, before the raw SQL below ever touches migration
-      // 023's columns — a not-yet-implemented method fails this test
-      // directly and clearly here, exactly like every other test in this
-      // file, rather than surfacing as an unrelated "no such column" error
-      // out of rawInsertChildRun (same convention as the C-07 atomicity
-      // table's own `const child = childPublication(repo);` above).
+      // 023's columns — a missing method fails this test directly and clearly
+      // here, rather than surfacing as an unrelated "no such column" error
+      // out of rawInsertChildRun.
       const child = childPublication(repo);
 
       const invocationKey = "key-preinserted-winner";
@@ -626,7 +602,7 @@ describe("publishChildWorkflowRun — deterministic loser path via a pre-inserte
   });
 });
 
-// ── C-11: never reads child source ──────────────────────────────────────────
+// ── never reads child source ────────────────────────────────────────────────
 
 describe("publishChildWorkflowRun — no child source access (C-11)", () => {
   test("succeeds with no workflow source file on disk, and never calls fs.readFileSync under the stash dir", () => {
@@ -664,7 +640,7 @@ describe("publishChildWorkflowRun — no child source access (C-11)", () => {
   });
 });
 
-// ── C-10: top-level scope-conflict rules do not apply ───────────────────────
+// ── top-level scope-conflict rules do not apply ─────────────────────────────
 
 describe("publishChildWorkflowRun — top-level scope-conflict rules do not apply (C-10)", () => {
   test("succeeds even when an active top-level run occupies the same (workflow_ref, scope_key) publishWorkflowRunV4 would reject", () => {
@@ -704,7 +680,7 @@ describe("publishChildWorkflowRun — top-level scope-conflict rules do not appl
   });
 });
 
-// ── C-13, C-14: accessors ────────────────────────────────────────────────────
+// ── accessors ───────────────────────────────────────────────────────────────
 
 describe("publishChildWorkflowRun accessors — childRunsOf, getRunByInvocationKey (C-13, C-14)", () => {
   test("childRunsOf returns [] for a childless parent, then every child in created_at, id order", () => {
@@ -765,7 +741,7 @@ describe("publishChildWorkflowRun accessors — childRunsOf, getRunByInvocationK
   });
 });
 
-// ── The outermost-transaction precondition (Review log R10) ────────────────
+// ── The outermost-transaction precondition ─────────────────────────────────
 //
 // publishChildWorkflowRun's method doc names an explicit precondition: its
 // SELECT-else-INSERT atomicity guarantee holds ONLY when it is the OUTERMOST
@@ -777,7 +753,8 @@ describe("publishChildWorkflowRun accessors — childRunsOf, getRunByInvocationK
 //
 // A genuine two-connection race that PROVES the corruption this precondition
 // guards against (two nested callers both missing each other's SELECT and
-// hitting a raw UNIQUE-constraint SQLiteError instead of C-09's graceful
+// hitting a raw UNIQUE-constraint SQLiteError instead of the concurrency
+// test's graceful
 // "loser reads the winner's row") would need to inject an artificial delay
 // between this method's own SELECT and INSERT — which means calling a
 // hand-rolled stand-in for the method's SQL, not the real method, undermining

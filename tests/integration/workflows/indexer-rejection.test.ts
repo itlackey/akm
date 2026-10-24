@@ -49,7 +49,7 @@ function writeWorkflow(stashDir: string, name: string, content: string): string 
   return file;
 }
 
-// Unified-format fixtures (frontmatter graph + `## <id>` body — spec §2.2).
+// Unified-format fixtures (frontmatter graph + `## <id>` body).
 const VALID_WORKFLOW = `---
 type: workflow
 description: Ship Release

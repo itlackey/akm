@@ -716,11 +716,10 @@ describe("performUpgrade", () => {
 
   // ── `akm upgrade` ends with `akm-migrate apply`, install or no install ────
   //
-  // `--state-only` (0.9.8) made migration 018 reachable, but only for a human
-  // who typed it; an image that ships akm has nothing to install and nobody in
-  // the loop (#895). So every upgrade runs the migrator on disk AFTER its
-  // install step -- the new one after a successful install, the current one
-  // when nothing installs -- and reports that plan as `migration`.
+  // An image that ships akm has nothing to install and nobody in the loop to
+  // run the migrator by hand (#895). So every upgrade runs the migrator on disk
+  // AFTER its install step -- the new one after a successful install, the
+  // current one when nothing installs -- and reports that plan as `migration`.
 
   function migrator(plan: Record<string, unknown> | Error, order?: string[]) {
     return mock(async (_args: readonly string[]) => {
@@ -783,7 +782,7 @@ describe("performUpgrade", () => {
 
   test("a package-local install never runs a package manager: the parent package owns the binary", async () => {
     // An `npm install -g` here reports success while the parent keeps
-    // executing its own node_modules copy (the databasin report on #895).
+    // executing its own node_modules copy (#895).
     const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: "",
@@ -960,11 +959,10 @@ describe("performUpgrade", () => {
     ).rejects.toThrow(/Checksum verification failed/);
   });
 
-  // C6: the checksum bypass is no longer a `--skip-checksum` CLI option
-  // threaded through `performUpgrade`'s opts — it is the internal
-  // AKM_UPGRADE_SKIP_CHECKSUM env var, read directly inside performUpgrade
-  // (src/commands/sources/self-update.ts), so it exercises the checksum step
-  // on the binary install path rather than being a no-op npm-path option.
+  // The checksum bypass is the internal AKM_UPGRADE_SKIP_CHECKSUM env var,
+  // read directly inside performUpgrade (src/commands/sources/self-update.ts),
+  // not a `--skip-checksum` CLI option, so it exercises the checksum step
+  // on the binary install path.
   test("AKM_UPGRADE_SKIP_CHECKSUM=1 bypasses checksum verification on the binary install path", async () => {
     const installDir = path.join(sandboxHome().dir, "self-update-skip-checksum");
     fs.mkdirSync(installDir, { recursive: true });
@@ -1147,7 +1145,7 @@ describe("streamResponseToFile body deadline", () => {
   });
 
   test("aborts a stalled body instead of hanging forever", async () => {
-    // Without a read deadline this call never settles — the pre-fix behavior,
+    // Without a read deadline this call never settles,
     // since fetchWithTimeout's timer only covers time-to-headers.
     const dest = destPath();
 

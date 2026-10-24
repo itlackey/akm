@@ -2,23 +2,18 @@
  * Regression test: improve must not dispatch unsupported asset types (script,
  * vault, task, …) to the reflect path.
  *
- * Before this fix, `src/commands/reflect.ts` contained an internal guard
- * (REFLECT_ALLOWED_TYPES) that rejected non-markdown-canonical types with a
- * `parse_error`, but the improve loop dispatched those refs unconditionally —
- * they burned a reflect slot and recorded `reflect-failed` actions. In the
- * 2026-05-22T05:10 run, 2 of 4 reflect-failed actions were script-type rejections.
- *
- * The fix exports REFLECT_ALLOWED_TYPES from reflect.ts and adds a pre-check
- * in the improve loop at the reflect dispatch site: refs whose type is NOT in
- * the set are short-circuited with mode `reflect-skipped` and reason
- * `"unsupported-type"` instead of calling akmReflect.
+ * `src/commands/improve/reflect.ts` has an internal guard (REFLECT_ALLOWED_TYPES) that
+ * rejects non-markdown-canonical types. An improve loop that dispatched those
+ * refs unconditionally would burn a reflect slot on each and record
+ * `reflect-failed` actions.
  *
  * This test pins the planner-side contract:
  *
  *   1. A stash containing a `scripts/*` ref that would otherwise be a reflect
  *      candidate never causes akmReflect to be called.
- *   2. The action for that ref is recorded as `reflect-skipped` with reason
- *      `"type-filter"` (not `reflect-failed`) so the run summary is not polluted.
+ *   2. The planner drops that ref before queueing: no per-ref action is
+ *      recorded (neither `reflect-failed` nor a skip), so the run summary is
+ *      not polluted; it appears only under `strategyFilteredRefs`.
  *   3. A co-located `skills/*` ref (an allowed type) IS reflected normally —
  *      the guard does not accidentally block allowed types.
  */
@@ -189,12 +184,11 @@ describe("improve loop: unsupported-type reflect pre-check", () => {
     const reflectedRefs = reflectCalls.map((c) => c.ref ?? "");
     expect(reflectedRefs.filter((r) => r.startsWith("scripts/"))).toEqual([]);
 
-    // Core assertion 2: 2026-05-27 planner pre-filter — scripts/* refs are
+    // Core assertion 2: planner pre-filter — scripts/* refs are
     // refused by BOTH reflect and distill on the default profile, so the
     // planner drops them before queueing. They MUST NOT appear in
     // `plannedRefs` and they MUST NOT produce any per-ref action (no
-    // reflect-skipped, no distill-skipped). Previously each such ref produced
-    // 2× synthetic skip actions per cron run; that audit trail is now a
+    // reflect-skipped, no distill-skipped). The audit trail is a
     // single `improve_skipped` event with reason `strategy_filtered_all_passes`
     // plus an envelope entry under `strategyFilteredRefs`.
     const scriptRefsInPlan = (result.plannedRefs ?? []).filter((p) => p.ref === "scripts/deploy.sh");
@@ -219,11 +213,9 @@ describe("improve loop: inner reflect type-guard fallback maps to reflect-skippe
     // This covers the residual case where the planner-side `shouldSkipRef`
     // pre-check is bypassed (e.g. an allowed-type ref is dispatched but
     // reflect's internal type guard still fires due to an out-of-band classify
-    // mismatch). Previously, reflect.ts returned `reason: "parse_error"` and
-    // the loop emitted `reflect-failed`, inflating the LLM-failure rate by
-    // ~9% on the user's stack. After the 2026-05-26 follow-up, reflect.ts
-    // returns `reason: "unsupported_type"` and the loop maps it to
-    // `reflect-skipped`. See metrics-taxonomy-review §1a.
+    // mismatch). reflect.ts returns `reason: "unsupported_type"` and the loop
+    // maps it to `reflect-skipped` rather than `reflect-failed`, which would
+    // inflate the LLM-failure rate.
     const stash = makeTempDir("akm-improve-reflect-typerefused-fallback-stash-");
     fs.mkdirSync(path.join(stash, "skills", "deploy-guide"), { recursive: true });
     fs.writeFileSync(
@@ -250,7 +242,7 @@ describe("improve loop: inner reflect type-guard fallback maps to reflect-skippe
         durationMs: 0,
       }),
       // Force the inner-guard return path: simulate reflect.ts refusing the
-      // ref with the new `unsupported_type` reason even though the planner
+      // ref with the `unsupported_type` reason even though the planner
       // dispatched it (an allowed-type skill ref).
       reflectFn: async (options): Promise<AkmReflectResult> => ({
         schemaVersion: 2,
@@ -275,12 +267,10 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
   test("memoryInferenceDurationMs surfaces on the result envelope when the pass runs", async () => {
     // The `health.ts#summarizeImproveRuns` `wallTime.byPhase` aggregator (and
     // the older `metrics.memoryInference.durationMs` rollup) reads this
-    // field directly off the top of the envelope.
-    // Until the 2026-05-26 follow-up they were captured locally in
-    // improve.ts and only emitted on the `improve_completed` event — never
-    // on the persisted result envelope — so every byPhase median came back
-    // as zero. This test pins the top-level surfacing so the aggregator
-    // has data to chew on.
+    // field directly off the top of the envelope. It must be emitted on the
+    // persisted result envelope, not only on the `improve_completed` event,
+    // otherwise every byPhase median comes back as zero. This test pins the
+    // top-level surfacing so the aggregator has data to chew on.
     const stash = makeTempDir("akm-improve-byphase-emission-stash-");
     fs.mkdirSync(path.join(stash, "skills", "byphase-fixture"), { recursive: true });
     fs.writeFileSync(

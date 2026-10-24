@@ -1,10 +1,8 @@
 /**
- * Parity regression for Phase 4 (spec §10 step 4 / §6.2).
- *
- * `akm show` consults `indexer.lookupBundleRef(ref)` first, then reads the file
- * from disk. The risk called out in the v1 implementation plan is that
- * bundle-qualified refs silently regress when the
- * indexer is consulted instead of the directory walker.
+ * Parity regression: `akm show` consults `indexer.lookupBundleRef(ref)`
+ * first, then reads the file from disk. The risk is that bundle-qualified refs
+ * silently regress when the indexer is consulted instead of the directory
+ * walker.
  *
  * This test pins both forms — bare ref and origin-prefixed ref — and asserts
  * that `indexer.lookupBundleRef` returns the same on-disk path that `akmShowUnified`

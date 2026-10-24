@@ -3,41 +3,24 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3b Lane B TESTS — workflow `outputs:` resolution at run completion and the
- * exported result (spec docs/plans/specs/p3b-child-executor.md §4.3, §4.4,
- * rows B-18…B-27; named in §7's new-suites table as this file). Source-level
- * parse/compile/freeze coverage (B-01…B-17) lives in
+ * Workflow `outputs:` resolution at run completion and the exported result.
+ * Source-level parse/compile/freeze coverage lives in
  * tests/workflows/workflow-outputs-source.test.ts.
- *
- * RED phase: `completeWorkflowStep` (`src/workflows/runtime/runs.ts`) does not
- * resolve or persist declared outputs at all today — `workflow_runs` has no
- * `outputs_json` column (migration `024-workflow-run-outputs` has not landed),
- * `WorkflowRunRow`/`WorkflowRunSummary` carry no such field, and
- * `src/workflows/runtime/run-outputs.ts` does not exist on disk.
  *
  * Technique: a plan is built with the existing pure `freezeWorkflow` test
  * helper, then a plain `outputs` value is spliced onto it (an intersection
- * type, never a not-yet-existing `WorkflowOutput` import — see
- * {@link planWithOutputs}) before seeding it directly into state.db with the
- * existing `seedWorkflowRun`/`storeFrozenWorkflowPlan` helpers — the same
- * technique `tests/integration/workflows/persistence-write-path.test.ts`
+ * type — see {@link planWithOutputs}) before seeding it directly into state.db
+ * with the existing `seedWorkflowRun`/`storeFrozenWorkflowPlan` helpers — the
+ * same technique `tests/integration/workflows/persistence-write-path.test.ts`
  * already uses for its own evidence-bound coverage. Steps are then completed
- * directly through the real, already-existing `completeWorkflowStep` — no
- * dispatcher, no engine, no config/index needed (this is exactly the
- * production write path the spec's B-N13 describes, exercised end to end
- * around ONE new column). `outputs_json` / `run.outputs` are read back
- * through a small structural view type (an intersection, not a cast through a
- * not-yet-existing field), so no `@ts-expect-error` is needed for those
- * reads either.
+ * directly through the real `completeWorkflowStep` — no dispatcher, no engine,
+ * no config/index needed (the production write path, exercised end to end
+ * around ONE column). `outputs_json` / `run.outputs` are read back through a
+ * small structural view type.
  *
- * The ONE pin in this file is `run-outputs.ts` itself (B-24, B-25): imported
- * as a namespace behind a single directly-preceding `@ts-expect-error`,
- * mirroring `tests/workflows/child-invocation-key.test.ts`'s precedent for a
- * whole not-yet-existing module. `workflowRunExportedResult` is always called
- * with a REAL row read back from `repo.getRunById` (never a hand-fabricated
- * partial), so once Implement lands the real `WorkflowRunRow.outputs_json`
- * field and the real function signature, these call sites are already
- * type-valid — nothing but the directive itself needs deleting.
+ * `workflowRunExportedResult` (`src/workflows/runtime/run-outputs.ts`) is
+ * always called with a REAL row read back from `repo.getRunById` (never a
+ * hand-fabricated partial).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -87,14 +70,14 @@ interface OutputDeclaration {
   readonly schema?: Record<string, unknown>;
 }
 
-/** A plain intersection over the plan — never a not-yet-existing `WorkflowOutput` import. See file header. */
+/** A plain intersection over the plan, in place of a `WorkflowOutput` import. */
 type PlanWithOutputs = WorkflowPlanFixture & { readonly outputs?: Record<string, OutputDeclaration> };
 
 function planWithOutputs(plan: WorkflowPlanFixture, outputs?: Record<string, OutputDeclaration>): PlanWithOutputs {
   return outputs ? { ...plan, outputs } : plan;
 }
 
-/** Structural view onto the not-yet-existing `outputs_json` column / `run.outputs` field. */
+/** Structural view onto the `outputs_json` column / `run.outputs` field. */
 interface OutputsColumnView {
   readonly outputs_json?: string | null;
 }
@@ -155,7 +138,7 @@ async function completeSummarize(
   });
 }
 
-// ── B-18, B-19: resolve + persist at completion ─────────────────────────────
+// ── resolve + persist at completion ─────────────────────────────────────────
 
 describe("run-completion output resolution (B-18, B-19)", () => {
   test("B-18: a run whose final step completes, with outputs: declared, persists the resolved map as outputs_json in the completion transaction", async () => {
@@ -188,7 +171,7 @@ describe("run-completion output resolution (B-18, B-19)", () => {
   });
 });
 
-// ── B-20, B-21, B-22: resolution failures roll back the completion ─────────
+// ── resolution failures roll back the completion ────────────────────────────
 
 describe("run-completion output resolution failures complete with a warning, never roll back (B-20…B-22, issue 5)", () => {
   test("B-20: an output whose from resolves to a missing property is dropped and warned about; the run still completes, and a SIBLING output that DID resolve is still stored", async () => {
@@ -207,7 +190,7 @@ describe("run-completion output resolution failures complete with a warning, nev
     expect(outcome.run.status).toBe("completed");
     expect(outcome.warnings?.some((w) => w.includes("report"))).toBe(true);
 
-    // Fail-before-mutation (B-N13): the step stays pending, the run stays
+    // Fail-before-mutation: the step stays pending, the run stays
     // active, and no event is appended for the failed completion attempt.
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(runId));
     expect(row?.status).toBe("completed");
@@ -265,7 +248,7 @@ describe("run-completion output resolution failures complete with a warning, nev
   });
 });
 
-// ── B-23: a failed/blocked run never resolves outputs ───────────────────────
+// ── a failed/blocked run never resolves outputs ─────────────────────────────
 
 describe("a failed or blocked run never resolves outputs (B-23)", () => {
   test("a run whose step fails leaves outputs_json NULL and throws nothing about the (unreachable) declared output", async () => {
@@ -289,7 +272,7 @@ describe("a failed or blocked run never resolves outputs (B-23)", () => {
   });
 });
 
-// ── B-24, B-25: workflowRunExportedResult ───────────────────────────────────
+// ── workflowRunExportedResult ───────────────────────────────────────────────
 
 describe("workflowRunExportedResult (B-24, B-25)", () => {
   test("B-24: a completed run with outputs_json returns the parsed map", async () => {
@@ -322,7 +305,7 @@ describe("workflowRunExportedResult (B-24, B-25)", () => {
   });
 });
 
-// ── B-26, B-27: akm workflow status envelope ────────────────────────────────
+// ── akm workflow status envelope ────────────────────────────────────────────
 
 describe("akm workflow status — run.outputs (B-26, B-27, PRESERVE)", () => {
   test("B-26: a run with outputs_json carries the resolved map under run.outputs", async () => {

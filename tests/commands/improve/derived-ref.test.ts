@@ -3,10 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * WI-7.4 — the single keyed-on-ref derived-memory helpers (R12).
+ * The single keyed-on-ref derived-memory helpers.
  *
- * Every reader resolves a derived memory's parent through this one impl
- * (plan §6): `derivedFrom`-keyed families and bundle-qualified `source:`
+ * Every reader resolves a derived memory's parent through this one
+ * implementation: `derivedFrom`-keyed families and bundle-qualified `source:`
  * values resolve consistently.
  */
 
@@ -44,8 +44,8 @@ describe("resolveParentRef — precedence source → derivedFrom → suffix", ()
   });
 
   test("(ii) derivedFrom: resolves the parent even without a suffix (producer widening)", () => {
-    // No .derived suffix, no source — the old producer copy returned undefined
-    // here and the family never reached contradiction detection.
+    // No .derived suffix, no source — `derivedFrom` alone still resolves the
+    // parent, so the family reaches contradiction detection.
     expect(resolveParentRef("child", { derivedFrom: "parent" })).toBe("memories/parent");
   });
 
@@ -60,9 +60,8 @@ describe("resolveParentRef — precedence source → derivedFrom → suffix", ()
   });
 
   test("derivedFrom wins over the suffix — the alignment that fixes producer/consumer disagreement", () => {
-    // The consumer already prioritised derivedFrom over the suffix; the old
-    // producer copy (suffix-only) would have resolved the `foo` parent here.
-    // Sharing one impl makes both resolve `memories/bar`.
+    // `derivedFrom` takes priority over the suffix: the parent here is
+    // `memories/bar`, not `memories/foo`.
     expect(resolveParentRef("foo.derived", { derivedFrom: "bar" })).toBe("memories/bar");
   });
 });
@@ -83,9 +82,9 @@ describe("parseMemoryName", () => {
   test("accepts the conceptId spelling the current writers actually persist", () => {
     // `akm remember --supersedes` / `akm import --supersedes` call
     // writeSupersededEdge with the write result's `ref`, which is a
-    // fully-qualified conceptId. Accepting only `memory:<name>` silently
-    // reduced every such edge to nothing, so a superseded memory read back as
-    // active during belief analysis.
+    // fully-qualified conceptId. Accepting only `memory:<name>` would silently
+    // reduce every such edge to nothing, so a superseded memory would read back
+    // as active during belief analysis.
     expect(parseMemoryName("stash//memories/corrected-note")).toBe("corrected-note");
     expect(parseMemoryName("memories/corrected-note")).toBe("corrected-note");
     expect(parseMemoryName("memories/sub/dir-note")).toBe("sub/dir-note");
