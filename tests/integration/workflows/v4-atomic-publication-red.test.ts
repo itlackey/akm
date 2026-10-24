@@ -22,6 +22,7 @@ import {
 } from "../../../src/storage/repositories/workflow-runs-repository";
 import { canonicalJson, canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import type { WorkflowPlan } from "../../../src/workflows/plan";
+import { WORKFLOW_PLAN_VERSION } from "../../../src/workflows/plan";
 import { decodeWorkflowPlan, frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
@@ -184,7 +185,7 @@ describe("workflow run atomic repository publication", () => {
       const row = repo.getRunById(RUN_ID);
       expect(row?.plan_json).toBe(canonicalPlanJson(plan));
       expect(row?.plan_hash).toBe(computePlanHash(plan));
-      expect(row?.plan_ir_version).toBe(7);
+      expect(row?.plan_ir_version).toBe(WORKFLOW_PLAN_VERSION);
       expect(repo.getStepsForRun(RUN_ID).map((step) => step.step_id)).toEqual(["prepare", "publish"]);
       const events = readStateEvents(db, {
         type: "workflow_started",
@@ -208,7 +209,7 @@ describe("workflow run atomic repository publication", () => {
     ],
     [
       "plan attachment",
-      `CREATE TRIGGER wp7_fail_plan AFTER UPDATE OF plan_json ON workflow_runs WHEN NEW.id = '${RUN_ID}' AND NEW.plan_ir_version = 7 BEGIN SELECT RAISE(ABORT, 'wp7-fail-plan'); END`,
+      `CREATE TRIGGER wp7_fail_plan AFTER UPDATE OF plan_json ON workflow_runs WHEN NEW.id = '${RUN_ID}' AND NEW.plan_ir_version = ${WORKFLOW_PLAN_VERSION} BEGIN SELECT RAISE(ABORT, 'wp7-fail-plan'); END`,
     ],
     [
       "workflow_started insert",
@@ -236,7 +237,7 @@ describe("workflow v4 start publication", () => {
     writeWorkflow("fresh-v4");
     const started = await startWorkflowRun("workflows/fresh-v4", {});
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    expect(row?.plan_ir_version).toBe(7);
+    expect(row?.plan_ir_version).toBe(WORKFLOW_PLAN_VERSION);
     expect(row?.plan_json).not.toBeNull();
     const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     expect(row?.plan_json).toBe(canonicalPlanJson(plan));

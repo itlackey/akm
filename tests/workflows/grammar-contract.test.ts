@@ -104,12 +104,12 @@ Run the direct command.
     }
   });
 
-  test("a Markdown agent unit carries its engine settings beside the built-in command action", () => {
+  test("a Markdown agent unit carries its harness settings beside the built-in command action", () => {
     const compiled = plan(readFixture("current/agent-unit.md"), "workflows/agent-unit.md");
     expect(compiled.steps[0]?.spec).toMatchObject({
       uses: "akm/command",
       with: { content: "Review the execution contract." },
-      unit: { engine: "fixture-agent", model: "fixture-exact-model", timeoutMs: 45_000 },
+      unit: { harness: "fixture-agent", model: "fixture-exact-model", timeoutMs: 45_000 },
     });
   });
 
@@ -118,7 +118,7 @@ Run the direct command.
       `---
 type: workflow
 description: Characterize every current dispatch form
-defaults: { engine: local }
+defaults: { connection: local }
 budget: { max_units: 9 }
 steps:
   - id: discover
@@ -166,7 +166,7 @@ Repair.
     );
     expect(compiled).toMatchObject({
       description: "Characterize every current dispatch form",
-      defaults: { engine: "local" },
+      defaults: { connection: "local" },
       budget: { maxUnits: 9 },
       preamble: "# Explicit semantics\n\nPreamble.",
     });

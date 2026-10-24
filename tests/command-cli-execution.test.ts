@@ -23,10 +23,9 @@ beforeEach(async () => {
         components: { main: { root: ".", adapter: "akm" } },
       },
     },
-    engines: {
-      reviewer: { kind: "agent", platform: "claude", bin: "/bin/echo", args: [] },
+    harnesses: {
+      reviewer: { platform: "claude", bin: "/bin/echo", args: [] },
     },
-    defaults: { engine: "reviewer" },
   });
   fs.writeFileSync(
     path.join(storage.stashDir, "commands", "review.md"),
@@ -82,15 +81,14 @@ async function installHostileInferenceKey(): Promise<void> {
 describe("command CLI execution convergence", () => {
   test("command run --dry-run authorizes and lowers without dispatch, credentials, usage, or persistent writes", async () => {
     writeSandboxConfig({
-      engines: {
+      harnesses: undefined, // only the connection: agent work would prefer a harness
+      connections: {
         direct: {
-          kind: "llm",
           endpoint: "https://DO-NOT-LEAK.invalid/v1/chat/completions",
-          model: "DO-NOT-LEAK-model",
+          models: { fast: "DO-NOT-LEAK-model" },
           apiKey: "$AKM_REQUIRED_DRY_RUN_SECRET",
         },
       },
-      defaults: { engine: "direct" },
     });
     delete process.env.AKM_REQUIRED_DRY_RUN_SECRET;
     const before = snapshotTree(storage.root);

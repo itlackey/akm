@@ -81,7 +81,7 @@ describe("adapter-rendered execution sources", () => {
     assertFixtureBytesUnchanged(NATIVE_ROOT, before);
   });
 
-  test("translates common defaults and retains only explicit owner-keyed native extensions", () => {
+  test("translates the native common defaults and keeps no adapter-owned extensions", () => {
     const akmCommand = renderCase("akm", "command");
     const akmPersona = renderCase("akm", "persona");
     const claudeCommand = renderCase("claude", "command");
@@ -92,13 +92,12 @@ describe("adapter-rendered execution sources", () => {
     expect(akmCommand.defaults).toEqual({ agent: "agents/contract-reviewer", model: "fixture-balanced" });
     expect(akmPersona.defaults).toEqual({ model: "fixture-balanced" });
     expect(claudeCommand.defaults).toEqual({
-      engine: "fixture-agent",
+      harness: "fixture-agent",
       model: "fixture-balanced",
       timeout: "45s",
     });
-    expect(claudeCommand.extensions).toEqual({ claude: { argumentHint: "<target>" } });
     expect(claudePersona.defaults).toEqual({
-      engine: "fixture-agent",
+      harness: "fixture-agent",
       model: "fixture-balanced",
       timeout: "45s",
     });
@@ -107,12 +106,11 @@ describe("adapter-rendered execution sources", () => {
       model: "fixture-balanced",
     });
     expect(opencodePersona.defaults).toEqual({
-      engine: "fixture-agent",
+      harness: "fixture-agent",
       model: "fixture-balanced",
       inference: { temperature: 0 },
       timeout: "45s",
     });
-    expect(opencodePersona.extensions).toEqual({ opencode: { mode: "subagent" } });
   });
 
   test("rendering rejects unterminated frontmatter", () => {
@@ -265,30 +263,6 @@ describe("adapter-rendered execution sources", () => {
     );
     expect(() => renderDefaults("workspace: here\nakm:\n  environment: false", "persona")).toThrow(
       /frontmatter\.workspace.*host-controlled/i,
-    );
-  });
-
-  test("rejects wrong types for recognized adapter-owned native metadata", () => {
-    const renderNative = (adapter: BundleAdapter, adapterId: "claude" | "opencode", raw: string) => {
-      const root = path.join(NATIVE_ROOT, adapterId);
-      const component: BundleComponent = {
-        id: `fixture-${adapterId}`,
-        adapter: adapterId,
-        root,
-        writable: false,
-      };
-      const file = buildFileContext(root, path.join(root, "commands/contract-review.md"));
-      return adapter.renderExecutionSource?.(component, {
-        ...file,
-        content: () => raw,
-      });
-    };
-
-    expect(() => renderNative(claudeAdapter, "claude", "---\nargument-hint: false\n---\nDo work.\n")).toThrow(
-      /argument-hint.*string/i,
-    );
-    expect(() => renderNative(opencodeAdapter, "opencode", "---\nmode: false\n---\nDo work.\n")).toThrow(
-      /mode.*string/i,
     );
   });
 

@@ -7,10 +7,9 @@ import {
   createResolvedExecutionRequest,
   createResolvedPersona,
   decodeResolvedExecutionRequest,
-  type ResolvedEngineSelection,
   type ResolvedExecutionRequestV1,
+  type ResolvedTargetSelection,
 } from "../../src/execution/resolved-request";
-import { createAdapterExtensions } from "../../src/execution/source";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import {
   canonicalResolvedRequestForTest,
@@ -62,23 +61,12 @@ function commonRequest(command: ReturnType<typeof createResolvedCommand>): Resol
     command,
     agent: "fixture//agents/reviewer",
     persona: createResolvedPersona(personaSource()),
-    engine: { name: "fixture-agent", kind: "agent", platform: "opencode" },
-    model: { input: "balanced", interpretation: "alias", resolved: "provider/exact-model" },
+    target: { name: "fixture-agent", kind: "harness", platform: "opencode" },
+    model: { model: "provider/exact-model", alias: "balanced" },
     inference: { temperature: 0, enableThinking: false, extraParams: {} },
     outputSchema: null,
-    authorization: { status: "not-required", policy: {} },
+    modelWork: false,
     runtime: { timeoutMs: 0, workspace: "", environment: {} },
-    notices: [
-      {
-        code: "PERSONA_PROMPT_COMPOSED",
-        severity: "warning",
-        adapter: "fixture-agent",
-        field: "persona.content",
-        message: "Persona was composed into the user prompt.",
-        details: { deterministic: true },
-      },
-    ],
-    extensions: createAdapterExtensions("fixture-agent", { transport: "stdio" }),
   });
 }
 
@@ -106,10 +94,9 @@ describe("resolved execution request v1", () => {
       createResolvedExecutionRequest({
         command,
         ...(conversation ? { conversation } : {}),
-        engine: { name: "fixture-llm", kind: "llm" },
-        authorization: { status: "not-required" },
+        target: { name: "fixture-lab", kind: "connection" },
+        modelWork: false,
         runtime: {},
-        notices: [],
       });
     const transcript = make([
       { role: "system", content: "Code-owned instruction, not a persona." },
@@ -137,10 +124,9 @@ describe("resolved execution request v1", () => {
         ...(agent === undefined ? {} : { agent }),
         persona:
           agent === undefined || agent === "fixture//agents/reviewer" ? createResolvedPersona(personaSource()) : null,
-        engine: { name: "fixture-agent", kind: "agent" },
-        authorization: { status: "not-required" },
+        target: { name: "fixture-agent", kind: "harness" },
+        modelWork: false,
         runtime: {},
-        notices: [],
       });
     const native = make("native-reviewer");
 
@@ -184,25 +170,60 @@ describe("resolved execution request v1", () => {
     expect(canonicalResolvedExecutionRequest(decodeResolvedExecutionRequest(withExtras))).toBe(
       canonicalResolvedExecutionRequest(decodeResolvedExecutionRequest(canonical)),
     );
-    expect(() => decodeResolvedExecutionRequest({ ...canonical, schemaVersion: 2 })).toThrow(/upgrade akm/);
+    expect(() => decodeResolvedExecutionRequest({ ...canonical, schemaVersion: 3 })).toThrow(/upgrade akm/);
   });
 
-  test("covers every runner transport kind without embedding a capability matrix", () => {
+  test("covers every runner kind without embedding a capability matrix", () => {
     const source = commandSource();
-    const runnerKinds = { agent: true, sdk: true, llm: true } satisfies Record<
-      RunnerSpec["kind"] | ResolvedEngineSelection["kind"],
+    const kinds = { connection: true, harness: true } satisfies Record<
+      RunnerSpec["kind"] | ResolvedTargetSelection["kind"],
       true
     >;
-    for (const kind of Object.keys(runnerKinds) as Array<keyof typeof runnerKinds>) {
+    for (const kind of Object.keys(kinds) as Array<keyof typeof kinds>) {
       const request = createResolvedExecutionRequest({
         command: createResolvedCommand({ source, content: source.content }),
-        engine: { name: `fixture-${kind}`, kind },
-        authorization: { status: "not-required" },
+        target: { name: `fixture-${kind}`, kind },
+        modelWork: false,
         runtime: {},
-        notices: [],
       });
-      expect(request.engine.kind).toBe(kind);
+      expect(request.target.kind).toBe(kind);
     }
+  });
+
+  test("reads a schemaVersion 1 request as the current one: its engine kind is the target kind, its authorization is modelWork, its model is the exact name and alias", () => {
+    const source = commandSource();
+    const v1 = (engine: Record<string, unknown>, authorization: Record<string, unknown>) => ({
+      schemaVersion: 1,
+      command: { template: source.content, content: source.content, source: null },
+      engine,
+      model: { input: "balanced", interpretation: "alias", resolved: "provider/exact-model" },
+      authorization,
+      runtime: { timeoutMs: 5 },
+      notices: [{ code: "ANY", severity: "info", adapter: "x", message: "dropped" }],
+    });
+
+    const llm = decodeResolvedExecutionRequest(
+      v1({ name: "lab", kind: "llm", platform: "openai-compatible" }, { status: "allowed" }),
+    );
+    expect(llm.target).toEqual({ name: "lab", kind: "connection", platform: "openai-compatible" });
+    expect(llm.modelWork).toBe(true);
+    expect(llm.model).toEqual({ model: "provider/exact-model", alias: "balanced" });
+    expect(llm).not.toHaveProperty("notices");
+    expect(llm).not.toHaveProperty("authorization");
+
+    const agent = decodeResolvedExecutionRequest(
+      v1({ name: "claude", kind: "agent", platform: "claude" }, { status: "not-required" }),
+    );
+    expect(agent.target).toEqual({ name: "claude", kind: "harness", platform: "claude" });
+    expect(agent.modelWork).toBe(false);
+
+    // A request read from schemaVersion 1 is written back as schemaVersion 2.
+    expect(JSON.parse(canonicalResolvedExecutionRequest(agent))).toMatchObject({ schemaVersion: 2 });
+    const exact = decodeResolvedExecutionRequest({
+      ...v1({ name: "lab", kind: "llm" }, { status: "not-required" }),
+      model: { input: "gpt-x", interpretation: "exact", resolved: "gpt-x" },
+    });
+    expect(exact.model).toEqual({ model: "gpt-x" });
   });
 
   test("supports explicit anonymous command content without pretending it came from a native file", () => {
@@ -210,11 +231,10 @@ describe("resolved execution request v1", () => {
     const request = createResolvedExecutionRequest({
       command,
       persona: null,
-      engine: { name: "fixture-llm", kind: "llm" },
+      target: { name: "fixture-lab", kind: "connection" },
       model: null,
-      authorization: { status: "not-required" },
+      modelWork: false,
       runtime: { timeoutMs: null, workspace: null, environment: null },
-      notices: [],
     });
 
     expect(request.command.source).toBeNull();

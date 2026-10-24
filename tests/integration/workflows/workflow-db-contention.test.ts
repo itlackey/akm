@@ -27,6 +27,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { enqueueUnitWrite } from "../../../src/workflows/exec/unit-writer";
+import { WORKFLOW_PLAN_VERSION } from "../../../src/workflows/plan";
 import { getWorkflowStatus, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 import { bunAvailable, spawnRunner, unitIds, writeProgram } from "../_helpers/workflow-crossproc";
@@ -40,8 +41,7 @@ beforeEach(() => {
   storage = withIsolatedAkmStorage();
   writeSandboxConfig({
     configVersion: "0.9.0",
-    engines: { "test-agent": { kind: "agent", platform: "opencode-sdk" } },
-    defaults: { engine: "test-agent" },
+    connections: { "test-agent": { endpoint: "http://127.0.0.1:1/v1", models: { fast: "test-model" } } },
   });
   markerDir = path.join(storage.root, "markers");
   fs.mkdirSync(markerDir, { recursive: true });
@@ -52,7 +52,7 @@ afterEach(() => storage.cleanup());
 const WIDE_FANOUT_WF = [
   "---",
   "type: workflow",
-  "defaults: { engine: test-agent }",
+  "defaults: { connection: test-agent }",
   "params:",
   "  files: { type: array, items: { type: string } }",
   "steps:",
@@ -73,7 +73,7 @@ describe.skipIf(!BUN)("cross-process reader vs fan-out writer", () => {
     const files = Array.from({ length: 40 }, (_, i) => `f${i}.ts`);
     writeProgram(storage.stashDir, "db-contention", WIDE_FANOUT_WF);
     const started = await startWorkflowRun("workflows/db-contention", { files });
-    expect(started.run.planIrVersion).toBe(7);
+    expect(started.run.planIrVersion).toBe(WORKFLOW_PLAN_VERSION);
     const runId = started.run.id;
 
     const driver = spawnRunner({ CHAOS_RUN_ID: runId, CHAOS_MARKER_DIR: markerDir });
@@ -138,7 +138,7 @@ describe("writer queue resilience (fault-injected write failure)", () => {
     writeProgram(storage.stashDir, "db-contention", WIDE_FANOUT_WF);
     const files = ["a.ts", "b.ts", "c.ts"];
     const started = await startWorkflowRun("workflows/db-contention", { files });
-    expect(started.run.planIrVersion).toBe(7);
+    expect(started.run.planIrVersion).toBe(WORKFLOW_PLAN_VERSION);
     const runId = started.run.id;
     const [ua, ub, uc] = await unitIds(runId, { files });
 

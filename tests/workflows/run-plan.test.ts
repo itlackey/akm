@@ -13,7 +13,7 @@
 import { describe, expect, test } from "bun:test";
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
 import { canonicalPlanJson } from "../../src/workflows/ir/plan-hash";
-import type { WorkflowPlanStep } from "../../src/workflows/plan";
+import { WORKFLOW_PLAN_VERSION, type WorkflowPlanStep } from "../../src/workflows/plan";
 import { readRunPlan } from "../../src/workflows/runtime/run-plan";
 import { freezeWorkflow } from "../_helpers/workflow";
 
@@ -190,13 +190,17 @@ describe("readRunPlan — a stored plan keeps its stored targets", () => {
 
 describe("readRunPlan — a newer akm's plan is refused", () => {
   test("a plan a newer akm froze is refused even when it decodes, naming the upgrade", () => {
-    const planJson = JSON.stringify({ ...JSON.parse(canonicalPlanJson(plan)), irVersion: 8 });
-    const read = readRunPlan({ id: "future-ok", plan_json: planJson, plan_ir_version: 8 });
+    const planJson = JSON.stringify({ ...JSON.parse(canonicalPlanJson(plan)), irVersion: WORKFLOW_PLAN_VERSION + 1 });
+    const read = readRunPlan({
+      id: "future-ok",
+      plan_json: planJson,
+      plan_ir_version: WORKFLOW_PLAN_VERSION + 1,
+    });
     expect(read.ok).toBe(false);
     if (read.ok) return;
     expect(read.newer).toBe(true);
     expect(read.problem).toContain("future-ok");
-    expect(read.problem).toContain("frozen by a newer akm (plan irVersion 8)");
+    expect(read.problem).toContain(`frozen by a newer akm (plan irVersion ${WORKFLOW_PLAN_VERSION + 1})`);
     expect(read.problem).toContain("Upgrade akm");
   });
 
@@ -232,11 +236,15 @@ describe("readRunPlan — an undecodable plan is a problem, not an exception", (
   });
 
   test("a newer akm's plan that does not decode names upgrading akm as the remedy", () => {
-    const read = readRunPlan({ id: "future-run", plan_json: '{"irVersion":8,"novel":true}', plan_ir_version: 8 });
+    const read = readRunPlan({
+      id: "future-run",
+      plan_json: `{"irVersion":${WORKFLOW_PLAN_VERSION + 1},"novel":true}`,
+      plan_ir_version: WORKFLOW_PLAN_VERSION + 1,
+    });
     expect(read.ok).toBe(false);
     if (read.ok) return;
     expect(read.newer).toBe(true);
-    expect(read.problem).toContain("frozen by a newer akm (plan irVersion 8)");
+    expect(read.problem).toContain(`frozen by a newer akm (plan irVersion ${WORKFLOW_PLAN_VERSION + 1})`);
     expect(read.problem).toContain("Upgrade akm");
   });
 });

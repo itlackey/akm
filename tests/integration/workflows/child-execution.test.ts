@@ -73,6 +73,7 @@ import type {
   WorkflowPlan,
   WorkflowPlanStep,
 } from "../../../src/workflows/plan";
+import { WORKFLOW_PLAN_VERSION } from "../../../src/workflows/plan";
 import { frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 import { freezeWorkflow, plantRunLock, runWorkflowSteps, WORKFLOW_FIXTURE_ROOT } from "../../_helpers/workflow";
@@ -389,7 +390,7 @@ describe("A-07, A-08, A-09 — first publication of a child run", () => {
     expect(child?.parent_run_id).toBe(parent.runId);
     expect(child?.parent_unit_id).toBe(parentUnitId(parent.stepId));
     expect(child?.scope_key).toBeNull();
-    expect(child?.plan_ir_version).toBe(7);
+    expect(child?.plan_ir_version).toBe(WORKFLOW_PLAN_VERSION);
     // B-N14: a child run's workflow_entry_id is NULL — the index lookup
     // publishChildWorkflowRun has no access to.
     expect(child?.workflow_entry_id).toBeNull();

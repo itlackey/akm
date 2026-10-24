@@ -86,16 +86,16 @@ describe("plan freezing at workflow start (migration 006)", () => {
 
     const plan = JSON.parse(row?.plan_json ?? "") as WorkflowPlan;
     expect(plan.steps.map((s) => s.stepId)).toEqual(["only-step"]);
-    expect(plan.irVersion).toBe(7);
-    expect(row?.plan_ir_version).toBe(7);
+    expect(plan.irVersion).toBe(8);
+    expect(row?.plan_ir_version).toBe(8);
     expect(plan.steps[0]!.root?.kind).toBe("unit");
     expect(plan.execution).toEqual({ maxConcurrency: expect.any(Number) });
     const root = plan.steps[0]!.root;
     if (!root || root.kind !== "unit") throw new Error("expected one current runtime unit");
     expect(root.frozenTarget.kind).toBe("command");
     if (root.frozenTarget.kind === "command") {
-      expect(root.frozenTarget.request.engine.name).toBe("test-agent");
-      expect(root.frozenTarget.runner.kind).toBe("sdk");
+      expect(root.frozenTarget.request.target).toEqual({ name: "test-llm", kind: "connection" });
+      expect(root.frozenTarget.runner.kind).toBe("connection");
     }
     expect(computePlanHash(plan)).toBe(row?.plan_hash ?? "");
   });
@@ -206,6 +206,112 @@ describe("plan freezing at workflow start (migration 006)", () => {
     });
     expect(result.run.status).toBe("completed");
     expect(dispatches).toBe(1);
+  });
+
+  /** Rewrite the stored plan's one unit target as an irVersion 7 release froze it, and run on it. */
+  async function runAsFrozenByIrVersion7(
+    name: string,
+    v7Runner: Record<string, unknown>,
+    v7Engine: Record<string, unknown>,
+  ) {
+    writeWorkflow(name, "Do work.");
+    const started = await startWorkflowRun(`workflows/${name}`, {});
+    const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
+    const plan = JSON.parse(row?.plan_json ?? "{}");
+    const target = plan.steps[0].root.frozenTarget;
+    const { target: _target, modelWork: _modelWork, ...request } = target.request;
+    target.request = {
+      ...request,
+      schemaVersion: 1,
+      engine: v7Engine,
+      authorization: { status: "not-required" },
+      notices: [],
+    };
+    target.runner = v7Runner;
+    plan.irVersion = 7;
+    execOnWorkflowDb(
+      "UPDATE workflow_runs SET plan_json = ?, plan_hash = NULL, plan_ir_version = 7 WHERE id = ?",
+      JSON.stringify(plan),
+      started.run.id,
+    );
+    let dispatches = 0;
+    const result = await runWorkflowSteps({
+      target: started.run.id,
+      dispatcher: async () => {
+        dispatches++;
+        return { ok: true, text: "done" };
+      },
+    });
+    return { result, dispatches, runId: started.run.id };
+  }
+
+  test("a run frozen as irVersion 7 on an llm or agent runner runs as the connection or harness it became", async () => {
+    const llm = await runAsFrozenByIrVersion7(
+      "v7-llm",
+      {
+        kind: "llm",
+        engine: "test-llm",
+        connection: { endpoint: "http://localhost:1/v1", model: "test-model" },
+        timeoutMs: null,
+      },
+      { name: "test-llm", kind: "llm", platform: "openai-compatible" },
+    );
+    expect(llm.result.run.status).toBe("completed");
+    expect(llm.dispatches).toBe(1);
+
+    const agent = await runAsFrozenByIrVersion7(
+      "v7-agent",
+      {
+        kind: "agent",
+        engine: "claude",
+        profile: { name: "claude", platform: "claude", bin: "claude" },
+        timeoutMs: null,
+      },
+      { name: "claude", kind: "agent", platform: "claude" },
+    );
+    expect(agent.result.run.status).toBe("completed");
+    expect(agent.dispatches).toBe(1);
+  });
+
+  test("a run frozen as irVersion 7 on OpenCode as an engine of its own, or on a key akm no longer reads, is abandoned: start afresh", async () => {
+    const refused: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
+      [
+        "v7-sdk",
+        { kind: "sdk", engine: "sdk", profile: { name: "sdk", bin: "opencode" }, timeoutMs: null },
+        { name: "sdk", kind: "sdk", platform: "opencode-sdk" },
+      ],
+      [
+        "v7-key-file",
+        {
+          kind: "llm",
+          engine: "test-llm",
+          connection: { endpoint: "http://localhost:1/v1", model: "test-model" },
+          apiKeyFile: "/run/key",
+          timeoutMs: null,
+        },
+        { name: "test-llm", kind: "llm" },
+      ],
+      [
+        "v7-engine-env",
+        {
+          kind: "llm",
+          engine: "test-llm",
+          connection: { endpoint: "http://localhost:1/v1", model: "test-model" },
+          credential: { names: ["AKM_ENGINE_TEST_LLM_API_KEY"] },
+          timeoutMs: null,
+        },
+        { name: "test-llm", kind: "llm" },
+      ],
+    ];
+    for (const [name, runner, engine] of refused) {
+      const { result, dispatches, runId } = await runAsFrozenByIrVersion7(name, runner, engine);
+      expect(dispatches).toBe(0);
+      expect(result.run.status).toBe("failed");
+      const message = result.warnings?.find((w) => w.includes("cannot decode"));
+      expect(message).toContain(runId);
+      expect(message).toContain("start the run afresh");
+      expect(message).toContain("The run was abandoned");
+    }
   });
 
   test("an undecodable plan is abandoned with a message naming how to start afresh", async () => {

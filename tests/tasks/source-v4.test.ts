@@ -211,6 +211,8 @@ describe("task source v4 — closed key-set constants (D2-N3, D2-N7)", () => {
         "working-directory",
         "schedule",
         "agent",
+        "connection",
+        "harness",
         "engine",
         "model",
         "inference",
@@ -1108,23 +1110,27 @@ describe("task source v4 — top-level execution controls", () => {
     expectTopLevelFieldPath(error.message, "timeout");
   });
 
-  test("engine/model/agent accept null and reject an empty string, each at its OWN top-level field path (not akm.<key>)", () => {
-    const ok = parseTaskSourceV4Document(v4Doc({ uses: "commands/review", engine: null, model: null, agent: null }), {
-      filePath: "/x.yml",
-    });
+  test("connection/harness/engine/model/agent accept null and reject an empty string, each at its OWN top-level field path (not akm.<key>)", () => {
+    const ok = parseTaskSourceV4Document(
+      v4Doc({ uses: "commands/review", connection: null, harness: null, engine: null, model: null, agent: null }),
+      { filePath: "/x.yml" },
+    );
+    expect(ok.execution.connection).toBeNull();
+    expect(ok.execution.harness).toBeNull();
     expect(ok.execution.engine).toBeNull();
     expect(ok.execution.model).toBeNull();
     expect(ok.execution.agent).toBeNull();
 
     // v3's nullableSelector hardcodes ["akm", key] (source-v3.ts:375) for
-    // every one of engine/model/agent — pin all three field paths
-    // individually, not just "engine" (test-review finding,
-    // tests/tasks/source-v4.test.ts:130).
-    const engineError = expectTaskSourceInvalid(
-      () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", engine: "" }), { filePath: "/x.yml" }),
-      /engine/i,
-    );
-    expectTopLevelFieldPath(engineError.message, "engine");
+    // every one of these selectors — pin each field path individually
+    // (test-review finding, tests/tasks/source-v4.test.ts:130).
+    for (const key of ["connection", "harness", "engine"]) {
+      const targetError = expectTaskSourceInvalid(
+        () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", [key]: "" }), { filePath: "/x.yml" }),
+        new RegExp(key, "i"),
+      );
+      expectTopLevelFieldPath(targetError.message, key);
+    }
 
     const modelError = expectTaskSourceInvalid(
       () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", model: "" }), { filePath: "/x.yml" }),

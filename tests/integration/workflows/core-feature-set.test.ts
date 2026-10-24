@@ -8,7 +8,7 @@
  *
  * "Core" is the subset the owner's scheduled workflows actually use (the #1091
  * audit): `params`, ordered `steps`, step `inputs:`, `output` / `unit.output`,
- * `defaults.engine`, and `### gate` rubrics judged by `workflow.judgeEngine`.
+ * `defaults.connection`, and `### gate` rubrics judged on the default connection.
  * Nothing else is exercised here on purpose; the unused features are tracked in
  * docs/plans/0.10-workflows.md.
  *
@@ -24,11 +24,11 @@
  *      owner's actual task shape), executed by the task runner as a REAL
  *      subprocess against a real `akm` on PATH.
  *
- * Agent/engine dispatch goes through the opencode-sdk harness against a fake
- * embedded OpenCode (`installFakeOpencodeHost`). The fake keys its reply on the
- * model the host was created with, so each assertion can say WHICH engine
- * served a call: `defaults.engine` for the units, `workflow.judgeEngine` for
- * the gate.
+ * Unit dispatch goes through akm's internal runtime against a fake embedded
+ * OpenCode (`installFakeOpencodeHost`); the gate judge is model work, a direct
+ * chat to a loopback endpoint. Both record the model they were asked for, so
+ * each assertion can say WHICH connection served a call: `defaults.connection`
+ * for the units, the default connection for the gate.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -42,24 +42,38 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } f
 
 const UNIT_MODEL = "fixture/unit-model";
 const JUDGE_MODEL = "fixture/judge-model";
-const OTHER_MODEL = "fixture/other-model";
 
 let storage: IsolatedAkmStorage;
+let judgeServer: ReturnType<typeof Bun.serve>;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
-  writeSandboxConfig({
-    engines: {
-      // The workflow names this one in `defaults.engine`.
-      "unit-engine": { kind: "agent", platform: "opencode-sdk", model: UNIT_MODEL },
-      // The workflow-level judge.
-      "judge-engine": { kind: "agent", platform: "opencode-sdk", model: JUDGE_MODEL },
-      // The install-wide default. A workflow that declares its own default
-      // engine must never fall through to this one.
-      "other-engine": { kind: "agent", platform: "opencode-sdk", model: OTHER_MODEL },
+  currentReply = () => "{}";
+  // The gate judge's direct chat: one loopback endpoint that answers through the test's current reply.
+  judgeServer = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(request) {
+      const body = (await request.json()) as { model?: string; messages?: Array<{ role: string; content: string }> };
+      const messages = body.messages ?? [];
+      const call: SdkCall = {
+        via: "chat",
+        model: body.model,
+        prompt: messages.filter((m) => m.role === "user").at(-1)?.content ?? "",
+        system: messages.find((m) => m.role === "system")?.content,
+      };
+      recordedCalls.push(call);
+      return Response.json({ choices: [{ message: { content: currentReply(call) } }] });
     },
-    defaults: { engine: "other-engine" },
-    workflow: { judgeEngine: "judge-engine" },
+  });
+  writeSandboxConfig({
+    connections: {
+      // The workflow names this one in `defaults.connection`.
+      "unit-conn": { endpoint: "http://127.0.0.1:1/v1", models: { fast: UNIT_MODEL } },
+      // The install-wide default, which is where model work (the gate judge) runs. A workflow that declares its
+      // own default connection must never run its units on this one.
+      default: { endpoint: `http://127.0.0.1:${judgeServer.port}/v1`, models: { fast: JUDGE_MODEL } },
+    },
     bundles: { fixture: { path: storage.stashDir, writable: true } },
     defaultBundle: "fixture",
   });
@@ -67,14 +81,18 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  judgeServer.stop(true);
+  recordedCalls = [];
   resetConfigCache();
   storage.cleanup();
 });
 
-// ── fake embedded OpenCode ────────────────────────────────────────────────
+// ── the fakes: the embedded OpenCode and the judge's endpoint ───────────────
 
 interface SdkCall {
-  /** The model the serving `opencode` instance was configured with. */
+  /** Which transport served it: the internal runtime, or a direct chat. */
+  via: "sdk" | "chat";
+  /** The model the call was configured with. */
   model: string | undefined;
   prompt: string;
   system: string | undefined;
@@ -82,25 +100,26 @@ interface SdkCall {
 
 type Reply = (call: SdkCall) => string;
 
-/** Install a fake embedded OpenCode; every prompt is recorded and answered by `reply`. */
+let currentReply: Reply = () => "{}";
+let recordedCalls: SdkCall[] = [];
+
+/** Answer every prompt, on either transport, with `reply`; every call is recorded. */
 function installFakeSdk(reply: Reply): SdkCall[] {
-  const calls: SdkCall[] = [];
+  currentReply = reply;
+  recordedCalls = [];
   installFakeOpencodeHost({
     reply: (call) => {
-      const sdkCall: SdkCall = {
-        model: typeof call.config?.model === "string" ? call.config.model : undefined,
-        prompt: call.prompt,
-        system: call.system,
-      };
-      calls.push(sdkCall);
+      const model = typeof call.config?.model === "string" ? call.config.model.replace(/^akm-custom\//, "") : undefined;
+      const sdkCall: SdkCall = { via: "sdk", model, prompt: call.prompt, system: call.system };
+      recordedCalls.push(sdkCall);
       return reply(sdkCall);
     },
   });
-  return calls;
+  return recordedCalls;
 }
 
-const unitCalls = (calls: SdkCall[]) => calls.filter((call) => call.model === UNIT_MODEL);
-const judgeCalls = (calls: SdkCall[]) => calls.filter((call) => call.model === JUDGE_MODEL);
+const unitCalls = (calls: SdkCall[]) => calls.filter((call) => call.via === "sdk" && call.model === UNIT_MODEL);
+const judgeCalls = (calls: SdkCall[]) => calls.filter((call) => call.via === "chat" && call.model === JUDGE_MODEL);
 
 // ── fixtures (neutral; shapes modelled on the real scheduled workflows) ─────
 
@@ -124,7 +143,7 @@ function agentWorkflow(options: { gate?: boolean } = {}): string {
     "  topic: { type: string, default: widgets, description: What to collect }",
     "  limit: { type: integer, default: 2, description: Maximum items }",
     "  dry_run: { type: boolean, default: false, description: Report only }",
-    "defaults: { engine: unit-engine }",
+    "defaults: { connection: unit-conn }",
     "steps:",
     "  - id: collect",
     "    unit:",
@@ -157,7 +176,7 @@ function collectReply(topic: string, items: string[]): string {
 
 /** A reply function that plays the whole happy path. */
 const happyReply: Reply = (call) => {
-  if (call.model === JUDGE_MODEL) return JSON.stringify({ complete: true, missing: [] });
+  if (call.via === "chat") return JSON.stringify({ complete: true, missing: [] });
   if (call.prompt.includes("STEP-COLLECT")) return collectReply("gadgets", ["alpha", "beta", "gamma"]);
   return JSON.stringify({ summary: "three gadgets", item_count: 3 });
 };
@@ -176,7 +195,7 @@ function parseEnvelope(stdout: string): RunEnvelope {
 // ── 1. `akm workflow run` ───────────────────────────────────────────────────
 
 describe("core feature set: akm workflow run", () => {
-  test("params, chained steps, typed outputs, defaults.engine and a judged gate run to completion", async () => {
+  test("params, chained steps, typed outputs, defaults.connection and a judged gate run to completion", async () => {
     write("workflows/core.md", agentWorkflow());
     const calls = installFakeSdk(happyReply);
 
@@ -192,9 +211,9 @@ describe("core feature set: akm workflow run", () => {
     expect(envelope.run.params).toEqual({ topic: "gadgets", limit: 3, dry_run: false });
     expect(envelope.executed.map((step) => step.stepId)).toEqual(["collect", "report"]);
 
-    // defaults.engine: both units ran on the workflow's own engine, never the install default.
+    // defaults.connection: both units ran on the workflow's own connection, never the install default.
     expect(unitCalls(calls)).toHaveLength(2);
-    expect(calls.some((call) => call.model === OTHER_MODEL)).toBe(false);
+    expect(calls.filter((call) => call.via === "sdk" && call.model !== UNIT_MODEL)).toEqual([]);
     // The run params reach the first unit.
     const collectPrompt = unitCalls(calls)[0]?.prompt ?? "";
     expect(collectPrompt).toContain("STEP-COLLECT");
@@ -205,8 +224,8 @@ describe("core feature set: akm workflow run", () => {
     expect(reportPrompt).toContain("alpha");
     expect(reportPrompt).toContain("gamma");
 
-    // gate + workflow.judgeEngine: exactly one judge call (only `collect` has a rubric), on the
-    // judge engine, with the rubric and the artifact it is judging.
+    // gate: exactly one judge call (only `collect` has a rubric), on the default connection, with the rubric
+    // and the artifact it is judging.
     const judged = judgeCalls(calls);
     expect(judged).toHaveLength(1);
     expect(`${judged[0]?.system}\n${judged[0]?.prompt}`).toContain("Every item is a non-empty string");
@@ -271,10 +290,10 @@ describe("core feature set: akm workflow run", () => {
     expect(calls.some((call) => call.prompt.includes("STEP-REPORT"))).toBe(false);
   }, 30_000);
 
-  test("a gate rejection from workflow.judgeEngine stops the run and surfaces the judge's feedback", async () => {
+  test("a gate rejection from the judge stops the run and surfaces the judge's feedback", async () => {
     write("workflows/core.md", agentWorkflow());
     const calls = installFakeSdk((call) => {
-      if (call.model === JUDGE_MODEL) {
+      if (call.via === "chat") {
         return JSON.stringify({
           complete: false,
           missing: ["count equals the number of items."],
@@ -299,7 +318,7 @@ describe("core feature set: akm workflow run", () => {
   test("a malformed judge verdict fails closed instead of advancing the step", async () => {
     write("workflows/core.md", agentWorkflow());
     const calls = installFakeSdk((call) => {
-      if (call.model === JUDGE_MODEL) return "looks fine to me";
+      if (call.via === "chat") return "looks fine to me";
       if (call.prompt.includes("STEP-COLLECT")) return collectReply("widgets", ["a"]);
       return JSON.stringify({ summary: "x", item_count: 1 });
     });
@@ -360,14 +379,14 @@ describe("core feature set: akm task run -> workflow target", () => {
     expect(core[0]?.params).toMatchObject({ topic: "gadgets", limit: 3 });
     expect(unitCalls(calls)).toHaveLength(2);
     expect(judgeCalls(calls)).toHaveLength(1);
-    expect(calls.some((call) => call.model === OTHER_MODEL)).toBe(false);
+    expect(calls.filter((call) => call.via === "sdk" && call.model !== UNIT_MODEL)).toEqual([]);
   }, 30_000);
 
   test("a gate rejection inside the workflow makes the task itself fail", async () => {
     write("workflows/core.md", agentWorkflow());
     write("tasks/core-daily.yml", ["version: 4", "name: Core daily", "uses: workflows/core", ""].join("\n"));
     installFakeSdk((call) => {
-      if (call.model === JUDGE_MODEL)
+      if (call.via === "chat")
         return JSON.stringify({ complete: false, missing: ["Every item is a non-empty string."] });
       if (call.prompt.includes("STEP-COLLECT")) return collectReply("widgets", ["a"]);
       return "{}";

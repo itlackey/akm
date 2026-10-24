@@ -4,7 +4,7 @@ mode: subagent
 model: fixture-balanced
 temperature: 0
 akm:
-  engine: fixture-agent
+  harness: fixture-agent
   timeout: 45s
 ---
 # Contract reviewer

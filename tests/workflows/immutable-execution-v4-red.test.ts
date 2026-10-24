@@ -182,7 +182,35 @@ describe("durable workflow v4 immutable executable schema", () => {
     expect(() => decodeWorkflowPlan(shell)).not.toThrow();
   });
 
-  test("keeps an in-process SDK target free of a host executable requirement", () => {
+  test("keeps a connection target, which akm's own runtime runs, free of a host executable requirement", () => {
+    const content = "Use the frozen runtime request.";
+    const runtime = commandPlan({
+      target: {
+        kind: "command",
+        ref: null,
+        contentHash: sha256(content),
+        request: {
+          schemaVersion: 2,
+          command: { template: content, content, source: null },
+          target: { name: "lab", kind: "connection" },
+          model: { model: "frozen-model" },
+          modelWork: false,
+          runtime: { timeoutMs: null },
+        },
+        runner: {
+          kind: "connection",
+          name: "lab",
+          endpoint: "https://example.invalid/v1",
+          model: "frozen-model",
+          request: {},
+          timeoutMs: null,
+        },
+      },
+    });
+    expect(() => decodeWorkflowPlan(runtime)).not.toThrow();
+  });
+
+  test("refuses a runner an earlier release froze to run OpenCode as an engine of its own: the run starts afresh", () => {
     const content = "Use the frozen SDK request.";
     const sdk = commandPlan({
       target: {
@@ -197,24 +225,10 @@ describe("durable workflow v4 immutable executable schema", () => {
           runtime: {},
           notices: [],
         },
-        runner: {
-          kind: "sdk",
-          engine: "sdk",
-          profile: {
-            name: "sdk",
-            platform: "opencode-sdk",
-            personaChannel: "native",
-            bin: "opencode",
-            args: [],
-            stdio: "captured",
-            envPassthrough: [],
-            parseOutput: "text",
-          },
-          timeoutMs: null,
-        },
+        runner: { kind: "sdk", engine: "sdk", profile: { name: "sdk", bin: "opencode" }, timeoutMs: null },
       },
     });
-    expect(() => decodeWorkflowPlan(sdk)).not.toThrow();
+    expect(() => decodeWorkflowPlan(sdk)).toThrow(/start the run afresh/);
   });
 
   test("keeps a direct LLM target free of a host executable requirement", () => {

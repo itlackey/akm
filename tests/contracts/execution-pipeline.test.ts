@@ -4,8 +4,8 @@
 
 /**
  * The execution pipeline end to end, through its observable edges: the argv a
- * harness receives, the connection a direct LLM call receives, and the
- * request/runner a workflow journals.
+ * harness receives, the connection a chat call or the internal runtime receives,
+ * and the request/runner a workflow journals.
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
@@ -14,6 +14,7 @@ import path from "node:path";
 import { renderMarkdownExecutionSource } from "../../src/core/adapter/execution-source";
 import type { AkmConfig } from "../../src/core/config/config";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { canonicalResolvedExecutionRequest, createResolvedPersona } from "../../src/execution/resolved-request";
 import {
   buildExecution,
@@ -21,10 +22,10 @@ import {
   type ResolveExecutionInput,
   resolveExecution,
 } from "../../src/integrations/agent/execution";
-import { userModelMapPath } from "../../src/integrations/agent/model-map";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
 import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { withEnv } from "../_helpers/sandbox";
+import { overrideSeam } from "../_helpers/seams";
 
 beforeEach(() => fakeOpencodeMajor(1));
 
@@ -69,13 +70,10 @@ function config(partial: Record<string, unknown>): AkmConfig {
   return { configVersion: "0.9.0", ...partial } as unknown as AkmConfig;
 }
 
-const LLM_ENGINE = {
-  kind: "llm",
-  provider: "openai-compatible",
+const LAB = {
   endpoint: "https://llm.invalid/v1/chat/completions",
-  model: "local/qwen",
   apiKey: "$AKM_PIPELINE_TEST_KEY",
-  supportsJsonSchema: true,
+  models: { fast: "local/qwen", balanced: "local/qwen" },
 };
 
 function reviewer() {
@@ -89,11 +87,11 @@ function reviewer() {
   );
 }
 
-describe("agent engines: config engine → argv", () => {
+describe("harnesses: config harness → argv", () => {
   test("claude gets the alias-resolved model, the persona as its system prompt, and the prompt", async () => {
     const { argv } = await spawnedFor({
       content: "Review the diff.",
-      config: config({ engines: { claude: { kind: "agent", platform: "claude" } }, defaults: { engine: "claude" } }),
+      config: config({ harnesses: { claude: {} } }),
       persona: reviewer(),
       current: { model: "fast" },
     });
@@ -112,23 +110,20 @@ describe("agent engines: config engine → argv", () => {
   test("opencode gets the persona composed into its prompt, since `opencode run` has no --system-prompt", async () => {
     const { argv, stdin } = await spawnedFor({
       content: "Review the diff.",
-      config: config({
-        engines: { oc: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "oc" },
-      }),
+      config: config({ harnesses: { oc: { platform: "opencode" } } }),
       persona: reviewer(),
     });
     expect(argv).toEqual(["opencode", "run"]);
     expect(stdin).toBe("<AKM_PERSONA>\nYou review carefully.\n</AKM_PERSONA>\n\nReview the diff.");
   });
 
-  test("opencode replaces its profile model flag with the resolved one", async () => {
+  test("opencode replaces its profile model flag with the harness's model for the alias", async () => {
     const { argv, stdin } = await spawnedFor({
       content: "Summarise.",
       config: config({
-        engines: { oc: { kind: "agent", platform: "opencode", model: "balanced" } },
-        defaults: { engine: "oc" },
+        harnesses: { oc: { platform: "opencode", models: { balanced: "opencode/claude-sonnet-4-6" } } },
       }),
+      current: { model: "balanced" },
     });
     expect(argv).toEqual(["opencode", "run", "--model", "opencode/claude-sonnet-4-6"]);
     expect(stdin).toBe("Summarise.");
@@ -137,51 +132,37 @@ describe("agent engines: config engine → argv", () => {
   test("pi passes an exact model through untouched and composes nothing it has no channel for", async () => {
     const { argv } = await spawnedFor({
       content: "Plan it.",
-      config: config({ engines: { pi: { kind: "agent", platform: "pi", model: "provider/exact" } } }),
-      current: { engine: "pi" },
+      config: config({ harnesses: { pi: {} } }),
+      current: { harness: "pi", model: "provider/exact" },
     });
     expect(argv).toEqual(["pi", "--model", "provider/exact", "-p", "--", "Plan it."]);
   });
 
-  test("an alias's inference applies under the selecting layer's own inference", () => {
+  test("a harness with no model for an alias passes none, and notes it once", () => {
+    const warnings: string[] = [];
+    _resetWarnOnceForTests();
+    overrideSeam(_setWarnSinkForTests, (level: string, args: unknown[]) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
     const resolved = resolveExecution({
       content: "Think.",
-      config: config({ engines: { claude: { kind: "agent", platform: "claude" } }, defaults: { engine: "claude" } }),
-      current: { model: "reasoning", inference: { temperature: 0.2 } },
+      config: config({ harnesses: { pi: {} } }),
+      current: { model: "reasoning" },
     });
-    expect(resolved.request.model).toEqual({
-      input: "reasoning",
-      interpretation: "alias",
-      resolved: "claude-opus-4-7",
-    });
-    expect(resolved.request.inference).toEqual({ reasoningEffort: "high", temperature: 0.2 });
-    expect(resolved.provenance["/inference/reasoningEffort"]).toEqual({
-      layer: "current-invocation",
-      kind: "current",
-      via: "model-alias",
-    });
+    expect(resolved.request.model).toBeUndefined();
+    expect(warnings.filter((w) => w.includes('Harness "pi" has no model for "reasoning"'))).toHaveLength(1);
   });
 
-  // `effort` (a models.json alias, `effort:` frontmatter) and `reasoningEffort`
-  // (an engine, opencode, the LLM request) are one setting, with one word in
-  // the request: the nearest layer wins whichever word it used.
+  // `effort` (`effort:` frontmatter) and `reasoningEffort` (OpenCode, the LLM request)
+  // are one setting, with one word in the request: the nearest layer wins
+  // whichever word it used.
   describe("one word for reasoning effort", () => {
-    const engine = { engines: { oc: { kind: "agent", platform: "opencode" } } };
-
-    test("an alias's effort is the request's reasoningEffort", () => {
-      const resolved = resolveExecution({
-        content: "Think.",
-        config: config({ ...engine, defaults: { engine: "oc" } }),
-        current: { model: "reasoning" },
-      });
-
-      expect(resolved.request.inference).toEqual({ reasoningEffort: "high" });
-    });
+    const harness = { harnesses: { oc: { platform: "opencode" } } };
 
     test("a nearer reasoningEffort overrides a farther effort", () => {
       const resolved = resolveExecution({
         content: "Think.",
-        config: config({ ...engine, defaults: { engine: "oc" } }),
+        config: config(harness),
         commandLayer: { id: "command", values: { inference: { effort: "high" } } },
         current: { inference: { reasoningEffort: "low" } },
       });
@@ -192,7 +173,7 @@ describe("agent engines: config engine → argv", () => {
     test("in one inference object reasoningEffort wins over effort", () => {
       const resolved = resolveExecution({
         content: "Think.",
-        config: config({ ...engine, defaults: { engine: "oc" } }),
+        config: config(harness),
         current: { inference: { effort: "high", reasoningEffort: "low" } },
       });
 
@@ -202,7 +183,7 @@ describe("agent engines: config engine → argv", () => {
     test("an explicit null effort is a null reasoningEffort", () => {
       const resolved = resolveExecution({
         content: "Think.",
-        config: config({ ...engine, defaults: { engine: "oc" } }),
+        config: config(harness),
         current: { inference: { effort: null } },
       });
 
@@ -212,7 +193,7 @@ describe("agent engines: config engine → argv", () => {
     test("the request never carries the other word", () => {
       const resolved = resolveExecution({
         content: "Think.",
-        config: config({ ...engine, defaults: { engine: "oc" } }),
+        config: config(harness),
         current: { inference: { effort: "high", temperature: 0 } },
       });
 
@@ -220,94 +201,44 @@ describe("agent engines: config engine → argv", () => {
       expect(Object.keys(resolved.provenance).filter((key) => key.endsWith("/effort"))).toEqual([]);
     });
   });
-
-  test("#946: a models.json column may borrow a configured engine's own model", async () => {
-    fs.mkdirSync(path.dirname(userModelMapPath()), { recursive: true });
-    fs.writeFileSync(
-      userModelMapPath(),
-      JSON.stringify({ version: 1, aliases: { fast: { opencode: { engine: "local-fast" } } } }),
-    );
-    try {
-      const resolved = resolveExecution({
-        content: "Go.",
-        config: config({
-          engines: { "local-fast": { kind: "agent", platform: "opencode", model: "krang/qwen3.5-9b" } },
-        }),
-        current: { engine: "local-fast", model: "fast" },
-      });
-      expect(resolved.request.model?.resolved).toBe("krang/qwen3.5-9b");
-      expect(resolved.runner.kind === "agent" && resolved.runner.profile.model).toBe("krang/qwen3.5-9b");
-    } finally {
-      fs.rmSync(userModelMapPath(), { force: true });
-    }
-  });
 });
 
-describe("opencode-sdk engines", () => {
-  test("without its own model an SDK engine runs its LLM fallback's model, timeout and credential", async () => {
+describe("a connection running agent work: akm's internal runtime", () => {
+  test("runs the connection's model, timeout and credential", async () => {
     const resolved = resolveExecution({
       content: "Draft it.",
-      config: config({
-        engines: {
-          sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "local" },
-          local: { ...LLM_ENGINE, timeoutMs: 90_000 },
-        },
-        defaults: { engine: "sdk" },
-      }),
+      config: config({ connections: { local: { ...LAB, timeoutMs: 90_000 } } }),
     });
-    expect(resolved.request.engine).toEqual({ name: "sdk", kind: "sdk", platform: "opencode-sdk" });
-    expect(resolved.request.model?.resolved).toBe("local/qwen");
+    expect(resolved.request.target).toEqual({ name: "local", kind: "connection" });
+    expect(resolved.request.model).toEqual({ model: "local/qwen" });
     expect(resolved.runner.timeoutMs).toBe(90_000);
 
-    await withEnv({ AKM_PIPELINE_TEST_KEY: "sk-sdk-fallback" }, async () => {
-      let seen: { model?: string; fallback?: { apiKey?: string; endpoint?: string } } = {};
+    await withEnv({ AKM_PIPELINE_TEST_KEY: "sk-runtime" }, async () => {
+      let seen: { model?: string; connection?: { apiKey?: string; endpoint?: string } } = {};
       const result = await runExecution(buildExecution(resolved.request, resolved.runner), {
-        runSdk: async (profile, _prompt, _opts, fallback) => {
-          seen = { model: profile.model, fallback };
-          return { ok: true, exitCode: 0, stdout: `used ${fallback?.apiKey}`, stderr: "", durationMs: 1 };
+        runSdk: async (profile, _prompt, _opts, connection) => {
+          seen = { model: profile.model, connection };
+          return { ok: true, exitCode: 0, stdout: `used ${connection?.apiKey}`, stderr: "", durationMs: 1 };
         },
       });
       expect(seen.model).toBe("local/qwen");
-      expect(seen.fallback).toMatchObject({ apiKey: "sk-sdk-fallback", endpoint: LLM_ENGINE.endpoint });
+      expect(seen.connection).toMatchObject({ apiKey: "sk-runtime", endpoint: LAB.endpoint });
       expect(result.stdout).toBe("used [REDACTED]");
     });
   });
 
-  test("an SDK engine with no llmEngine of its own borrows nothing from defaults.llmEngine", async () => {
+  test("a harness is preferred over a connection for agent work", () => {
     const resolved = resolveExecution({
       content: "Draft it.",
-      config: config({
-        engines: {
-          sdk: { kind: "agent", platform: "opencode-sdk" },
-          local: { ...LLM_ENGINE, timeoutMs: 90_000 },
-        },
-        defaults: { engine: "sdk", llmEngine: "local" },
-      }),
+      config: config({ connections: { local: LAB }, harnesses: { pi: {} } }),
     });
-    expect(resolved.request.engine).toEqual({ name: "sdk", kind: "sdk", platform: "opencode-sdk" });
-    // No model, no timeout and no connection: opencode picks its own.
-    expect(resolved.request.model).toBeUndefined();
-    expect(Object.hasOwn(resolved.request.runtime, "timeoutMs")).toBe(false);
-    expect(resolved.runner.timeoutMs).toBeUndefined();
-    expect(resolved.provenance.model).toBeUndefined();
-
-    await withEnv({ AKM_PIPELINE_TEST_KEY: "sk-must-not-reach-the-sdk" }, async () => {
-      let seen: { model?: string; fallback?: unknown } | undefined;
-      const result = await runExecution(buildExecution(resolved.request, resolved.runner), {
-        runSdk: async (profile, _prompt, _opts, fallback) => {
-          seen = { model: profile.model, fallback };
-          return { ok: true, exitCode: 0, stdout: "done", stderr: "", durationMs: 1 };
-        },
-      });
-      expect(result.ok).toBe(true);
-      expect(seen).toEqual({ model: undefined, fallback: undefined });
-    });
+    expect(resolved.request.target).toEqual({ name: "pi", kind: "harness", platform: "pi" });
   });
 
   test("a conversation prefix is composed into one prompt block for CLI harnesses", () => {
     const resolved = resolveExecution({
       content: "Now finish.",
-      config: config({ engines: { pi: { kind: "agent", platform: "pi" } }, defaults: { engine: "pi" } }),
+      config: config({ harnesses: { pi: {} } }),
       conversation: [{ role: "assistant", content: "First draft." }],
     });
     const built = buildExecution(resolved.request, resolved.runner);
@@ -317,52 +248,53 @@ describe("opencode-sdk engines", () => {
   });
 });
 
-describe("engine selection is an ordered list", () => {
-  const engines = {
-    claude: { kind: "agent", platform: "claude" },
-    pi: { kind: "agent", platform: "pi" },
-  };
+describe("target selection", () => {
+  const harnesses = { default: { platform: "claude" }, pi: {} };
 
-  test("the nearest layer that names an engine wins, then defaults.engine", () => {
-    const base = { content: "x", config: config({ engines, defaults: { engine: "claude" } }) };
-    expect(resolveExecution(base).request.engine.name).toBe("claude");
+  test("the nearest layer that names a target wins, then the default by name", () => {
+    const base = { content: "x", config: config({ harnesses }) };
+    expect(resolveExecution(base).request.target.name).toBe("default");
     expect(
-      resolveExecution({ ...base, commandLayer: { id: "cmd", values: { engine: "pi" } } }).request.engine.name,
+      resolveExecution({ ...base, commandLayer: { id: "cmd", values: { harness: "pi" } } }).request.target.name,
     ).toBe("pi");
-    expect(
-      resolveExecution({
-        ...base,
-        commandLayer: { id: "cmd", values: { engine: "pi" } },
-        current: { engine: "claude" },
-      }).provenance.engine,
-    ).toEqual({ layer: "current-invocation", kind: "current", via: "explicit" });
+    const nearest = resolveExecution({
+      ...base,
+      commandLayer: { id: "cmd", values: { harness: "pi" } },
+      current: { harness: "default" },
+    });
+    expect(nearest.request.target.name).toBe("default");
+    expect(nearest.provenance.target).toEqual({ layer: "current-invocation", kind: "current", via: "explicit" });
   });
 
-  test("a named but unconfigured engine is an error, never rescued by a fallback", () => {
-    expect(() => resolveExecution({ content: "x", config: config({ engines }), current: { engine: "codex" } })).toThrow(
-      'Engine "codex" is not configured.',
-    );
+  test("a named target that is not configured warns once and uses the default", () => {
+    const warnings: string[] = [];
+    _resetWarnOnceForTests();
+    overrideSeam(_setWarnSinkForTests, (level: string, args: unknown[]) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    const input = { content: "x", config: config({ harnesses }), current: { harness: "codex" } };
+    expect(resolveExecution(input).request.target.name).toBe("default");
+    expect(resolveExecution(input).request.target.name).toBe("default");
+    expect(warnings.filter((w) => w.includes('"codex" is not configured'))).toHaveLength(1);
   });
 
-  test("with no selection, opencode-sdk runs, whatever is on PATH", async () => {
+  test("with nothing configured there is nothing to run on, whatever is on PATH", async () => {
     await withEnv({ PATH: "" }, () => {
-      const resolved = resolveExecution({ content: "x", config: config({ engines }) });
-      expect(resolved.request.engine).toEqual({ name: "opencode-sdk", kind: "sdk", platform: "opencode-sdk" });
-      expect(resolved.fallbackEngineName).toBe("opencode-sdk");
-      expect(resolved.provenance.engine).toEqual({ layer: "opencode-sdk", kind: "fallback", via: "fallback" });
+      expect(() => resolveExecution({ content: "x", config: config({}) })).toThrow(/nothing to run agent work on/);
     });
   });
 });
 
-describe("direct LLM engines: config engine → chat call", () => {
+describe("connections: config connection → chat call", () => {
   test("the credential is read at dispatch, never frozen into the resolved runner", async () => {
     await withEnv({ AKM_PIPELINE_TEST_KEY: "sk-resolve-time" }, async () => {
       const resolved = resolveExecution({
         content: "Classify this.",
-        config: config({ engines: { local: LLM_ENGINE }, defaults: { llmEngine: "local" } }),
-        current: { engine: "local", outputSchema: { type: "object" }, timeout: "2m" },
+        config: config({ connections: { local: LAB } }),
+        current: { connection: "local", outputSchema: { type: "object" }, timeout: "2m" },
         conversation: [{ role: "assistant", content: "Earlier draft." }],
         persona: reviewer(),
+        modelWork: true,
       });
       expect(JSON.stringify(resolved)).not.toContain("sk-");
       const built = buildExecution(resolved.request, resolved.runner);
@@ -386,16 +318,50 @@ describe("direct LLM engines: config engine → chat call", () => {
     });
   });
 
-  test("a missing required credential fails at dispatch with the variable named", async () => {
+  test("a key variable that is unset is named once and the request goes without a key", async () => {
+    const warnings: string[] = [];
+    _resetWarnOnceForTests();
+    overrideSeam(_setWarnSinkForTests, (level: string, args: unknown[]) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
     await withEnv({ AKM_PIPELINE_TEST_KEY: undefined }, async () => {
       const resolved = resolveExecution({
         content: "x",
-        config: config({ engines: { local: LLM_ENGINE } }),
-        current: { engine: "local" },
+        config: config({ connections: { local: LAB } }),
+        modelWork: true,
       });
       const built = buildExecution(resolved.request, resolved.runner);
-      await expect(runExecution(built, { chat: async () => "unused" })).rejects.toThrow(/AKM_PIPELINE_TEST_KEY/);
+      let apiKey: string | undefined = "unset";
+      await runExecution(built, {
+        chat: async (connection) => {
+          apiKey = connection.apiKey;
+          return "ok";
+        },
+      });
+      expect(apiKey).toBeUndefined();
+      expect(warnings.filter((w) => w.includes("AKM_PIPELINE_TEST_KEY"))).toHaveLength(1);
     });
+  });
+
+  test("the connection's request fields reach the chat call as written, under the layers' inference", async () => {
+    const resolved = resolveExecution({
+      content: "x",
+      config: config({
+        connections: {
+          local: { ...LAB, top_p: 0.9, models: { fast: { model: "local/qwen", temperature: 0.1 } } },
+        },
+      }),
+      current: { inference: { temperature: 0 } },
+      modelWork: true,
+    });
+    let seen: { request?: unknown; temperature?: unknown } = {};
+    await runExecution(buildExecution(resolved.request, resolved.runner), {
+      chat: async (connection) => {
+        seen = { request: connection.request, temperature: connection.temperature };
+        return "ok";
+      },
+    });
+    expect(seen).toEqual({ request: { top_p: 0.9, temperature: 0 }, temperature: 0 });
   });
 });
 
@@ -403,19 +369,14 @@ describe("provenance and notices", () => {
   test("each field names the layer that set it", () => {
     const resolved = resolveExecution({
       content: "x",
-      config: config({
-        engines: { local: { ...LLM_ENGINE, timeoutMs: 1000, temperature: 0.5 } },
-        defaults: { engine: "local" },
-      }),
+      config: config({ connections: { local: { ...LAB, timeoutMs: 1000, temperature: 0.5 } } }),
       commandLayer: { id: "fixture//commands/review", values: { model: "exact/model" } },
       current: { timeout: 5000 },
     });
     expect(resolved.provenance).toMatchObject({
-      engine: { layer: "installation-defaults", kind: "installation", via: "explicit" },
+      target: { layer: "installation-defaults", kind: "installation", via: "explicit" },
       model: { layer: "fixture//commands/review", kind: "command", via: "explicit" },
       "runtime.timeoutMs": { layer: "current-invocation", kind: "current", via: "explicit" },
-      "/inference/temperature": { layer: "local", kind: "engine", via: "explicit" },
-      authorization: { layer: "not-required", kind: "authorization", via: "policy" },
     });
     expect(resolved.runner.timeoutMs).toBe(5000);
   });
@@ -423,7 +384,7 @@ describe("provenance and notices", () => {
   test("a field a transport cannot carry is noted, not refused", () => {
     const resolved = resolveExecution({
       content: "x",
-      config: config({ engines: { oc: { kind: "agent", platform: "opencode" } }, defaults: { engine: "oc" } }),
+      config: config({ harnesses: { oc: { platform: "opencode" } } }),
       current: { outputSchema: { type: "object" }, inference: { vendorKnob: 1 } },
     });
     const built = buildExecution(resolved.request, resolved.runner);
@@ -435,15 +396,9 @@ describe("provenance and notices", () => {
 describe("resume from the journaled wire form", () => {
   test("a config edit after the freeze does not change what a resumed unit runs", async () => {
     const live = config({
-      engines: {
-        oc: {
-          kind: "agent",
-          platform: "opencode",
-          model: "provider/frozen",
-          bin: "opencode-frozen",
-        },
+      harnesses: {
+        oc: { platform: "opencode", models: { fast: "provider/frozen" }, bin: "opencode-frozen" },
       },
-      defaults: { engine: "oc" },
     });
     const resolved = resolveExecution({ content: "Resume me.", config: live });
     const frozen = buildExecution(resolved.request, resolved.runner);
@@ -451,8 +406,8 @@ describe("resume from the journaled wire form", () => {
       JSON.stringify({ request: JSON.parse(canonicalResolvedExecutionRequest(frozen.request)), runner: frozen.runner }),
     );
 
-    // The operator repoints the engine after the freeze.
-    (live.engines as Record<string, unknown>).oc = { kind: "agent", platform: "claude", model: "provider/new" };
+    // The operator repoints the harness after the freeze.
+    (live.harnesses as Record<string, unknown>).oc = { platform: "claude", models: { fast: "provider/new" } };
 
     const resumed = buildExecutionFromWire(wire);
     let argv: string[] = [];
@@ -476,22 +431,19 @@ describe("resume from the journaled wire form", () => {
     expect(stdin).toBe("Resume me.");
   });
 
-  test("the wire decoder tolerates unknown keys and fills missing profile defaults", () => {
+  test("the wire decoder tolerates unknown keys and fills missing runner defaults", () => {
     const built = buildExecutionFromWire({
       request: {
         ...JSON.parse(
           canonicalResolvedExecutionRequest(
-            resolveExecution({
-              content: "x",
-              config: config({ engines: { pi: { kind: "agent", platform: "pi" } }, defaults: { engine: "pi" } }),
-            }).request,
+            resolveExecution({ content: "x", config: config({ harnesses: { pi: {} } }) }).request,
           ),
         ),
         addedByANewerRelease: true,
       },
-      runner: { kind: "agent", engine: "pi", profile: { name: "pi", platform: "pi", bin: "pi" }, legacyField: 1 },
+      runner: { kind: "harness", name: "pi", platform: "pi", bin: "pi", legacyField: 1 },
     });
-    expect(built.runner.kind === "agent" && built.runner.profile.envPassthrough).toEqual([]);
+    expect(built.runner).toMatchObject({ kind: "harness", name: "pi", platform: "pi", bin: "pi", args: [] });
     expect(built.prompt).toBe("x");
   });
 });
@@ -500,7 +452,7 @@ describe("dispatch options", () => {
   test("only operational run options apply; eventSource stamps AKM_EVENT_SOURCE", async () => {
     const resolved = resolveExecution({
       content: "x",
-      config: config({ engines: { pi: { kind: "agent", platform: "pi" } }, defaults: { engine: "pi" } }),
+      config: config({ harnesses: { pi: {} } }),
       current: { environment: { KEEP: "request-value" }, timeout: 1000 },
     });
     let env: Record<string, string> = {};
@@ -523,46 +475,45 @@ describe("dispatch options", () => {
   });
 });
 
-describe("an engine's default agent", () => {
-  const sdk = config({
-    engines: { sdk: { kind: "agent", platform: "opencode-sdk", agent: "akm-workflow" } },
-    defaults: { engine: "sdk" },
-  });
+describe("a harness's default agent", () => {
+  const oc = config({ harnesses: { oc: { platform: "opencode", agent: "akm-workflow" } } });
 
-  test("an SDK engine's agent reaches the prompt when the request names none", () => {
-    const resolved = resolveExecution({ content: "Who are you?", config: sdk });
+  test("its agent reaches the prompt when the request names none", () => {
+    const resolved = resolveExecution({ content: "Who are you?", config: oc });
     expect(resolved.request.agent).toBe("akm-workflow");
-    expect(resolved.provenance.agent).toEqual({ layer: "sdk", kind: "engine", via: "explicit" });
+    expect(resolved.provenance.agent).toEqual({ layer: "oc", kind: "installation", via: "explicit" });
     expect(buildExecution(resolved.request, resolved.runner).options.dispatch?.agent).toBe("akm-workflow");
   });
 
   test("a request's own agent wins", () => {
-    const resolved = resolveExecution({ content: "x", config: sdk, current: { agent: "reviewer" } });
+    const resolved = resolveExecution({ content: "x", config: oc, current: { agent: "reviewer" } });
     expect(buildExecution(resolved.request, resolved.runner).options.dispatch?.agent).toBe("reviewer");
   });
 
   test("an explicit null agent clears it", () => {
-    const resolved = resolveExecution({ content: "x", config: sdk, current: { agent: null } });
+    const resolved = resolveExecution({ content: "x", config: oc, current: { agent: null } });
     expect(buildExecution(resolved.request, resolved.runner).options.dispatch?.agent).toBeUndefined();
   });
 
-  test("a persona is kept, not replaced by the engine's agent", () => {
-    const resolved = resolveExecution({ content: "x", config: sdk, persona: reviewer() });
+  test("a persona is kept, not replaced by the harness's agent", () => {
+    const resolved = resolveExecution({ content: "x", config: oc, persona: reviewer() });
     const dispatch = buildExecution(resolved.request, resolved.runner).options.dispatch;
     expect(dispatch?.agent).toBeUndefined();
-    expect(dispatch?.systemPrompt).toBe("You review carefully.\n");
+    expect(dispatch?.systemPrompt).toBeUndefined();
+    expect(buildExecution(resolved.request, resolved.runner).prompt).toContain("You review carefully.");
   });
 
   test("model work keeps its confined agent", () => {
-    const resolved = resolveExecution({ content: "x", config: sdk, modelWork: true });
+    const claude = config({ harnesses: { claude: { agent: "akm-workflow" } } });
+    const resolved = resolveExecution({ content: "x", config: claude, modelWork: true });
     expect(resolved.request.agent).toBeUndefined();
     const dispatch = buildExecution(resolved.request, resolved.runner).options.dispatch;
     expect(dispatch?.agent).toBeUndefined();
     expect(dispatch?.modelWork).toBe(true);
   });
 
-  test("a pre-resolved runner carries the engine's agent too", () => {
-    const { runner } = resolveExecution({ content: "x", config: sdk });
+  test("a pre-resolved runner carries the harness's agent too", () => {
+    const { runner } = resolveExecution({ content: "x", config: oc });
     expect(resolveExecution({ content: "y", runner }).request.agent).toBe("akm-workflow");
   });
 
@@ -573,12 +524,7 @@ describe("an engine's default agent", () => {
     ] as const) {
       const { argv } = await spawnedFor({
         content: "Hi.",
-        config: config({
-          engines: {
-            e: { kind: "agent", platform, agent: "akm-workflow" },
-          },
-          defaults: { engine: "e" },
-        }),
+        config: config({ harnesses: { e: { platform, agent: "akm-workflow" } } }),
       });
       expect(argv[0]).toBe(bin);
       expect(argv.slice(argv.indexOf("--agent"), argv.indexOf("--agent") + 2)).toEqual(["--agent", "akm-workflow"]);
@@ -587,13 +533,12 @@ describe("an engine's default agent", () => {
 });
 
 describe("the model-work tool policy", () => {
-  const engines = { claude: { kind: "agent", platform: "claude", workspace: "/configured/workspace" } };
-  const modelWork = config({ engines, defaults: { engine: "claude" } });
+  const modelWork = config({ harnesses: { claude: { workspace: "/configured/workspace" } } });
 
   test("is akm's own: allowed on a runner-only resolution too", () => {
     const { runner } = resolveExecution({ content: "x", config: modelWork });
     const again = resolveExecution({ content: "y", runner, modelWork: true });
-    expect(again.request.authorization).toMatchObject({ status: "allowed", policy: { id: "model-work" } });
+    expect(again.request.modelWork).toBe(true);
     expect(() => buildExecution(again.request, again.runner)).not.toThrow();
   });
 
@@ -606,6 +551,13 @@ describe("the model-work tool policy", () => {
     });
     expect(() => buildExecution(resolved.request, resolved.runner)).toThrow(
       /native agent "reviewer" under the model-work tool policy/,
+    );
+  });
+
+  test("a harness that cannot confine model work cannot run it", () => {
+    const resolved = resolveExecution({ content: "x", config: config({ harnesses: { pi: {} } }), modelWork: true });
+    expect(() => buildExecution(resolved.request, resolved.runner)).toThrow(
+      /pi transport cannot enforce the model-work tool policy/,
     );
   });
 
@@ -624,7 +576,7 @@ describe("the model-work tool policy", () => {
     expect(seen).toHaveLength(2);
     expect(new Set(seen).size).toBe(2);
     for (const cwd of seen) {
-      // Not the engine's configured workspace, which could be the stash.
+      // Not the harness's configured workspace, which could be the stash.
       expect(path.basename(cwd)).toStartWith("akm-model-work-");
       expect(fs.existsSync(cwd)).toBe(false);
     }
@@ -640,25 +592,25 @@ describe("the model-work tool policy", () => {
     expect(await run(true)).toMatchObject({
       ok: false,
       reason: "parse_error",
-      error: 'Engine "claude" returned no answer.',
+      error: '"claude" returned no answer.',
     });
     expect(await run(false)).toMatchObject({ ok: true, stdout: "  \n" });
   });
 
-  // The owner's engines name their model only in `args`, which model work otherwise leaves out.
-  test("claude: a model named only in the engine's args reaches the model-work argv", async () => {
+  // The owner's harnesses name their model only in `args`, which model work otherwise leaves out.
+  test("claude: a model named only in the harness's args reaches the model-work argv", async () => {
     const model = "claude-args-model";
-    const engines = {
-      argsonly: { kind: "agent", platform: "claude", args: ["--verbose", "--model=claude-args-model"] },
+    const harnesses = {
+      argsonly: { platform: "claude", args: ["--verbose", "--model=claude-args-model"] },
     };
     const { argv } = await spawnedFor({
       content: "x",
-      config: config({ engines }),
-      current: { engine: "argsonly" },
+      config: config({ harnesses }),
+      current: { harness: "argsonly" },
       modelWork: true,
     });
     expect(argv[argv.indexOf("--model") + 1]).toBe(model);
-    // The rest of the engine's args stay out of model work.
+    // The rest of the harness's args stay out of model work.
     expect(argv).not.toContain("--verbose");
   });
 });

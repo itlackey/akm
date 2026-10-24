@@ -21,11 +21,9 @@ import { freezeWorkflow } from "../_helpers/workflow";
 const BASE_CONFIG = {
   configVersion: "0.9.0",
   semanticSearchMode: "off",
-  engines: {
-    remote: { kind: "llm", endpoint: "https://api.example.test/v1/chat/completions", model: "test-model" },
+  connections: {
+    remote: { endpoint: "https://api.example.test/v1/chat/completions", models: { fast: "test-model" } },
   },
-  defaults: { engine: "remote" },
-  workflow: { judgeEngine: "remote" },
 } as const satisfies AkmConfig;
 
 function mapWorkflow(concurrency?: number): string {

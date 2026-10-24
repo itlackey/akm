@@ -10,7 +10,7 @@ env:
   RETRIES: 3
   DRY_RUN: true
 agent: reviewer-agent
-engine: fixture-llm
+connection: fixture-llm
 model: fixture-exact-model
 inference:
   seed: 7

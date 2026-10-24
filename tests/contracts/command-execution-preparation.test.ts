@@ -19,45 +19,43 @@ import { type AdapterRenderedExecutionSource, createAdapterRenderedExecutionSour
 import type { AgentDispatchRequest } from "../../src/integrations/agent/builder-shared";
 import { getCommandBuilder } from "../../src/integrations/agent/builders";
 import { buildExecution } from "../../src/integrations/agent/execution";
-import { mergeModelMapLayers, parseModelMapLayer } from "../../src/integrations/agent/model-map";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { RunAgentOptions } from "../../src/integrations/agent/spawn";
+import type { ChatCompletionConfig } from "../../src/llm/client";
 import { withEnv } from "../_helpers/sandbox";
 
 const config: AkmConfig = {
   configVersion: "0.9.0",
   semanticSearchMode: "off",
-  defaults: { engine: "reviewer" },
-  engines: {
+  harnesses: {
     reviewer: {
-      kind: "agent",
       platform: "claude",
       bin: "/bin/true",
-      model: "engine-exact",
       timeoutMs: 60_000,
+      models: { fast: "engine-exact", balanced: "claude-balanced-exact", reasoning: "claude-reasoning-exact" },
     },
   },
 };
 
+/** A harness with no models of its own: an alias falls to the shipped map, and no request passes no model. */
 const valueStateConfig: AkmConfig = {
   ...config,
-  engines: {
-    reviewer: { kind: "agent", platform: "claude", bin: "/bin/true" },
+  harnesses: {
+    reviewer: { platform: "claude", bin: "/bin/true" },
   },
 };
 
-const modelMap = mergeModelMapLayers(
-  parseModelMapLayer(
-    JSON.stringify({
-      version: 1,
-      aliases: {
-        balanced: { claude: "claude-balanced-exact" },
-        reasoning: { claude: { model: "claude-reasoning-exact", inference: { effort: "high" } } },
-      },
-    }),
-    "command execution fixture",
-  ),
-);
+/** A connection only: agent work on it runs on akm's own runtime. */
+const connectionConfig: AkmConfig = {
+  configVersion: "0.9.0",
+  semanticSearchMode: "off",
+  connections: {
+    direct: {
+      endpoint: "https://fixture.invalid/v1/chat/completions",
+      models: { fast: "engine-model" },
+    },
+  },
+};
 
 function rendered(
   kind: "command" | "persona",
@@ -111,17 +109,17 @@ async function captureAgent(prepared: Awaited<ReturnType<typeof prepareCommandIn
   return { capture, result };
 }
 
-/** Dispatch through the chat seam and capture the connection a direct LLM call would receive. */
-async function captureChat(prepared: Awaited<ReturnType<typeof prepareCommandInvocation>>) {
-  let connection: Record<string, unknown> | undefined;
-  await dispatchPreparedCommandInvocation(prepared, {
-    chat: async (received) => {
-      connection = received as unknown as Record<string, unknown>;
-      return "";
+/** Dispatch through the internal runtime seam and capture the connection it would be given. */
+async function captureRuntime(prepared: Awaited<ReturnType<typeof prepareCommandInvocation>>) {
+  let capture: { prompt?: string; options?: RunAgentOptions; connection?: ChatCompletionConfig } = {};
+  const result = await dispatchPreparedCommandInvocation(prepared, {
+    runSdk: async (_profile, prompt, options, connection) => {
+      capture = { prompt, options, ...(connection ? { connection } : {}) };
+      return OK;
     },
   });
-  if (!connection) throw new Error("the chat transport was not called");
-  return connection;
+  if (!capture.connection) throw new Error("the internal runtime was not called with a connection");
+  return { capture, connection: capture.connection, result };
 }
 
 describe("common command invocation preparation", () => {
@@ -140,7 +138,6 @@ describe("common command invocation preparation", () => {
     await prepareCommandInvocation({
       action: { ref: "fixture//commands/review" },
       config,
-      modelMap,
       sourceLoader,
       sourceLookup,
     } as Parameters<typeof prepareCommandInvocation>[0] & { sourceLookup: ExecutionSourceLookup });
@@ -156,7 +153,6 @@ describe("common command invocation preparation", () => {
     const prepared = await prepareCommandInvocation({
       action: { ref: "fixture//commands/private" },
       config,
-      modelMap,
       sourceLoader: loaderFor(command).loader,
       current: { workspace: "/DO-NOT-LEAK/workspace" },
     });
@@ -206,9 +202,8 @@ describe("common command invocation preparation", () => {
     const prepared = await prepareCommandInvocation({
       action: { ref: "fixture//commands/review", arguments: "  exact\ninput  " },
       config,
-      modelMap,
       sourceLoader: loader,
-      current: { model: "reasoning" },
+      current: { model: "reasoning", inference: { effort: "high" } },
     });
 
     expect(calls).toEqual([
@@ -225,13 +220,9 @@ describe("common command invocation preparation", () => {
       content: "You are a reviewer.",
       source: { ref: "fixture//agents/reviewer" },
     });
-    expect(prepared.request.model).toEqual({
-      input: "reasoning",
-      interpretation: "alias",
-      resolved: "claude-reasoning-exact",
-    });
+    expect(prepared.request.model).toEqual({ model: "claude-reasoning-exact", alias: "reasoning" });
     expect(prepared.request.inference).toEqual({ reasoningEffort: "high" });
-    expect(prepared.request.authorization).toEqual({ status: "not-required" });
+    expect(prepared.request.modelWork).toBe(false);
   });
 
   test("stored and inline actions converge when effective inputs match apart from intentional source identity", async () => {
@@ -240,14 +231,12 @@ describe("common command invocation preparation", () => {
     const stored = await prepareCommandInvocation({
       action: { ref: "fixture//commands/plain", arguments: "this" },
       config,
-      modelMap,
       sourceLoader: loader,
       current: { model: "exact/model" },
     });
     const inline = await prepareCommandInvocation({
       action: { content: "Review $ARGUMENTS.", arguments: "this" },
       config,
-      modelMap,
       sourceLoader: loader,
       current: { model: "exact/model" },
     });
@@ -264,7 +253,6 @@ describe("common command invocation preparation", () => {
       prepareCommandInvocation({
         action: { content: "Review exactly." },
         config: valueStateConfig,
-        modelMap,
         current,
       });
     const wire = async (current: Record<string, unknown>) => {
@@ -277,14 +265,12 @@ describe("common command invocation preparation", () => {
     for (const field of ["agent", "persona", "model", "inference", "outputSchema"]) {
       expect(Object.hasOwn(omitted, field)).toBe(false);
     }
-    expect(await wire({ model: null, inference: null, outputSchema: null })).toMatchObject({
-      model: null,
-      inference: null,
-      outputSchema: null,
-    });
+    const cleared = await wire({ model: null, inference: null, outputSchema: null });
+    expect(cleared).toMatchObject({ inference: null, outputSchema: null });
+    expect(Object.hasOwn(cleared, "model")).toBe(false);
     expect(await wire({ inference: {} })).toMatchObject({ inference: {} });
-    expect(await wire({ model: "reasoning" })).toMatchObject({
-      model: { input: "reasoning", interpretation: "alias", resolved: "claude-reasoning-exact" },
+    expect(await wire({ model: "reasoning", inference: { effort: "high" } })).toMatchObject({
+      model: { model: "claude-opus-4-7", alias: "reasoning" },
       inference: { reasoningEffort: "high" },
     });
     const explicit = {
@@ -298,7 +284,7 @@ describe("common command invocation preparation", () => {
     expect(await wire(explicit)).toMatchObject({
       inference: { enabled: false, temperature: 0, extraParams: {} },
       outputSchema: {},
-      runtime: { timeoutMs: 0, workspace: "", environment: {}, settings: {} },
+      runtime: { timeoutMs: 0, workspace: "", environment: {} },
     });
     const prepared = await prepare(explicit);
     expect(buildExecution(prepared.request, prepared.runner).options).toMatchObject({ timeoutMs: 0, env: {} });
@@ -310,7 +296,6 @@ describe("common command invocation preparation", () => {
     const prepared = await prepareCommandInvocation({
       action: { ref: "fixture//commands/native" },
       config,
-      modelMap,
       sourceLoader: loader,
     });
     expect(calls).toEqual([{ ref: "fixture//commands/native", kind: "command" }]);
@@ -323,71 +308,41 @@ describe("common command invocation preparation", () => {
     const prepared = await prepareCommandInvocation({
       action: { ref: "fixture//commands/prose" },
       config,
-      modelMap,
       sourceLoader: loaderFor(prose).loader,
     });
     expect(prepared.request.command.content).toBe("Review $1.");
   });
 
-  test("dispatches direct LLM commands with final content and persona messages", async () => {
-    const llmConfig: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      defaults: { engine: "direct" },
-      engines: {
-        direct: {
-          kind: "llm",
-          endpoint: "https://fixture.invalid/v1/chat/completions",
-          model: "engine-model",
-        },
-      },
-    };
-    const command = rendered("command", "fixture//commands/llm", "Review $ARGUMENTS.", {
+  test("dispatches a connection command on the internal runtime with the connection's exact model and the final content", async () => {
+    const command = rendered("command", "fixture//commands/runtime", "Review $ARGUMENTS.", {
       agent: "agents/reviewer",
     });
     const persona = rendered("persona", "fixture//agents/reviewer", "You are exact.");
     const prepared = await prepareCommandInvocation({
-      action: { ref: "fixture//commands/llm", arguments: "the target" },
-      config: llmConfig,
-      modelMap,
+      action: { ref: "fixture//commands/runtime", arguments: "the target" },
+      config: connectionConfig,
       sourceLoader: loaderFor(command, persona).loader,
       current: { model: "provider/exact", timeout: 0 },
     });
-    const captures: unknown[] = [];
-    const result = await dispatchPreparedCommandInvocation(prepared, {
-      chat: async (connection, messages, options) => {
-        captures.push({ connection, messages, options });
-        return "reviewed";
-      },
-    });
+    const { capture, result } = await captureRuntime(prepared);
 
-    expect(result).toMatchObject({ ok: true, engine: "direct", stdout: "reviewed", exitCode: 0 });
-    expect(captures).toEqual([
-      {
-        connection: expect.objectContaining({
-          endpoint: "https://fixture.invalid/v1/chat/completions",
-          model: "provider/exact",
-        }),
-        messages: [
-          { role: "system", content: "You are exact." },
-          { role: "user", content: "Review the target." },
-        ],
-        options: { timeoutMs: 0 },
-      },
-    ]);
+    expect(result).toMatchObject({ ok: true, engine: "direct", exitCode: 0 });
+    expect(prepared.request.target).toEqual({ name: "direct", kind: "connection" });
+    expect(prepared.request.modelWork).toBe(false);
+    expect(capture.connection).toMatchObject({
+      endpoint: "https://fixture.invalid/v1/chat/completions",
+      model: "provider/exact",
+      request: {},
+      timeoutMs: 0,
+    });
+    expect(capture.prompt).toBe("Review the target.");
+    expect(capture.options?.dispatch).toMatchObject({ systemPrompt: "You are exact." });
   });
 
   test("the dispatch envelope carries the harness session id when the run reports one", async () => {
-    const configured: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      defaults: { engine: "reviewer" },
-      engines: { reviewer: { kind: "agent", platform: "claude", bin: "/bin/true" } },
-    };
     const prepared = await prepareCommandInvocation({
       action: { ref: "fixture//commands/session-id" },
-      config: configured,
-      modelMap,
+      config: valueStateConfig,
       sourceLoader: loaderFor(rendered("command", "fixture//commands/session-id", "Review this.")).loader,
     });
     const withId = await dispatchPreparedCommandInvocation(prepared, {
@@ -399,17 +354,15 @@ describe("common command invocation preparation", () => {
     expect(without).not.toHaveProperty("sessionId");
   });
 
-  test("explicit null clears a configured agent model and workspace", async () => {
+  test("explicit null clears a harness's first configured model and its workspace", async () => {
     const configured: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      defaults: { engine: "reviewer" },
-      engines: {
+      harnesses: {
         reviewer: {
-          kind: "agent",
           platform: "claude",
           bin: "/bin/true",
-          model: "configured-model",
+          models: { fast: "configured-model" },
           workspace: "/configured/workspace",
         },
       },
@@ -417,13 +370,12 @@ describe("common command invocation preparation", () => {
     const prepared = await prepareCommandInvocation({
       action: { ref: "fixture//commands/clear-agent" },
       config: configured,
-      modelMap,
       sourceLoader: loaderFor(rendered("command", "fixture//commands/clear-agent", "Review this.")).loader,
       current: { model: null, workspace: null },
     });
     const { capture } = await captureAgent(prepared);
 
-    expect(prepared.request.model).toBeNull();
+    expect(prepared.request.model).toBeUndefined();
     expect(prepared.request.runtime.workspace).toBeNull();
     expect(capture.profile?.name).toBe("reviewer");
     expect(capture.profile).not.toHaveProperty("model");
@@ -432,56 +384,10 @@ describe("common command invocation preparation", () => {
     expect(capture.options).not.toHaveProperty("cwd");
   });
 
-  test("explicit null clears a configured LLM model and inference", async () => {
-    const configured: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      defaults: { engine: "direct" },
-      engines: {
-        direct: {
-          kind: "llm",
-          endpoint: "https://fixture.invalid/v1/chat/completions",
-          model: "configured-model",
-          temperature: 0.7,
-          extraParams: { configured: true },
-        },
-      },
-    };
-    const prepared = await prepareCommandInvocation({
-      action: { ref: "fixture//commands/clear-llm" },
-      config: configured,
-      modelMap,
-      sourceLoader: loaderFor(rendered("command", "fixture//commands/clear-llm", "Review this.")).loader,
-      current: { model: null, inference: null },
-    });
-    const connection = await captureChat(prepared);
-
-    expect(prepared.request.model).toBeNull();
-    expect(prepared.request.inference).toBeNull();
-    expect(connection.endpoint).toBe("https://fixture.invalid/v1/chat/completions");
-    expect(connection).not.toHaveProperty("model");
-    expect(connection).not.toHaveProperty("temperature");
-    expect(connection).not.toHaveProperty("extraParams");
-  });
-
-  test("LLM inference cannot replace the selected model or transport identity", async () => {
-    const configured: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      defaults: { engine: "direct" },
-      engines: {
-        direct: {
-          kind: "llm",
-          provider: "openai-compatible",
-          endpoint: "https://fixture.invalid/v1/chat/completions",
-          model: "configured-model",
-        },
-      },
-    };
+  test("an asset's inference cannot replace the selected model or transport identity", async () => {
     const prepared = await prepareCommandInvocation({
       action: { ref: "fixture//commands/protected-llm" },
-      config: configured,
-      modelMap,
+      config: connectionConfig,
       sourceLoader: loaderFor(rendered("command", "fixture//commands/protected-llm", "Review this.")).loader,
       current: {
         model: "vendor/exact-model",
@@ -495,31 +401,28 @@ describe("common command invocation preparation", () => {
         },
       },
     });
-    const connection = await captureChat(prepared);
+    const { connection } = await captureRuntime(prepared);
 
     expect(prepared.request.inference).toMatchObject({ endpoint: "https://attacker.invalid/v1/chat/completions" });
     expect(connection).toMatchObject({
       endpoint: "https://fixture.invalid/v1/chat/completions",
-      provider: "openai-compatible",
       model: "vendor/exact-model",
       temperature: 0,
     });
     expect(connection).not.toHaveProperty("apiKey");
+    expect(connection).not.toHaveProperty("provider");
     expect(connection.timeoutMs).not.toBe(1);
   });
 
-  test("redacts a credential echoed by a direct LLM provider failure", async () => {
+  test("redacts a credential echoed by a connection's provider failure", async () => {
     const secret = "provider-command-secret-987654";
     const configured: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      defaults: { engine: "direct" },
-      engines: {
+      connections: {
         direct: {
-          kind: "llm",
-          provider: "openai-compatible",
-          endpoint: "https://fixture.invalid/v1/chat/completions",
-          model: "configured-model",
+          endpoint: "https://fixture.invalid/v1",
+          models: { fast: "configured-model" },
           apiKey: "$COMMAND_FAILURE_KEY",
         },
       },
@@ -527,19 +430,18 @@ describe("common command invocation preparation", () => {
     const prepared = await prepareCommandInvocation({
       action: { content: "Trigger the provider failure." },
       config: configured,
-      modelMap,
     });
 
     const result = await withEnv({ COMMAND_FAILURE_KEY: secret }, () =>
       dispatchPreparedCommandInvocation(prepared, {
-        chat: async (connection) => {
-          expect(connection.apiKey).toBe(secret);
-          throw new Error(`provider echoed ${secret}`);
+        runSdk: async (_profile, _prompt, _options, connection) => {
+          expect(connection?.apiKey).toBe(secret);
+          return { ...OK, ok: false, exitCode: 1, error: `provider echoed ${secret}`, reason: "non_zero_exit" };
         },
       }),
     );
 
-    expect(result).toMatchObject({ ok: false, reason: "spawn_failed", error: "provider echoed [REDACTED]" });
+    expect(result).toMatchObject({ ok: false, error: "provider echoed [REDACTED]" });
     expect(JSON.stringify(result)).not.toContain(secret);
   });
 
@@ -547,13 +449,10 @@ describe("common command invocation preparation", () => {
     const llmConfig: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      defaults: { engine: "direct" },
-      engines: {
+      connections: {
         direct: {
-          kind: "llm",
-          provider: "openai-compatible",
-          endpoint: "https://safe.invalid/v1/chat/completions",
-          model: "safe-model",
+          endpoint: "https://safe.invalid/v1",
+          models: { fast: "safe-model" },
           apiKey: "$SAFE_COMMAND_KEY",
         },
       },
@@ -561,36 +460,31 @@ describe("common command invocation preparation", () => {
     const prepared = await prepareCommandInvocation({
       action: { content: "Review this." },
       config: llmConfig,
-      modelMap,
     });
-    Object.assign(llmConfig.engines?.direct ?? {}, {
-      provider: "attacker",
-      endpoint: "https://attacker.invalid/v1/chat/completions",
+    Object.assign(llmConfig.connections?.direct ?? {}, {
+      endpoint: "https://attacker.invalid/v1",
       apiKey: "$ATTACKER_KEY",
     });
-    const connection = await withEnv({ SAFE_COMMAND_KEY: "safe-key", ATTACKER_KEY: "attacker-key" }, () =>
-      captureChat(prepared),
+    const { connection } = await withEnv({ SAFE_COMMAND_KEY: "safe-key", ATTACKER_KEY: "attacker-key" }, () =>
+      captureRuntime(prepared),
     );
     expect(connection).toMatchObject({
-      provider: "openai-compatible",
-      endpoint: "https://safe.invalid/v1/chat/completions",
+      endpoint: "https://safe.invalid/v1",
       apiKey: "safe-key",
     });
 
     const agentConfig: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      defaults: { engine: "reviewer" },
-      engines: {
-        reviewer: { kind: "agent", platform: "claude", bin: "/safe/claude", args: ["--safe"] },
+      harnesses: {
+        reviewer: { platform: "claude", bin: "/safe/claude", args: ["--safe"] },
       },
     };
     const preparedAgent = await prepareCommandInvocation({
       action: { content: "Review." },
       config: agentConfig,
-      modelMap,
     });
-    Object.assign(agentConfig.engines?.reviewer ?? {}, {
+    Object.assign(agentConfig.harnesses?.reviewer ?? {}, {
       platform: "aider",
       bin: "/attacker/aider",
       args: ["--attacker"],
@@ -609,14 +503,12 @@ describe("common command invocation preparation", () => {
       const configured: AkmConfig = {
         configVersion: "0.9.0",
         semanticSearchMode: "off",
-        defaults: { engine: "reviewer" },
-        engines: { reviewer: { kind: "agent", platform, bin: "/bin/true" } },
+        harnesses: { reviewer: { platform, bin: "/bin/true" } },
       };
       return captureAgent(
         await prepareCommandInvocation({
           action: { ref: "fixture//commands/persona-route" },
           config: configured,
-          modelMap,
           sourceLoader: loaderFor(command, persona).loader,
         }),
       );

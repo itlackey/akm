@@ -4,7 +4,7 @@
 
 /**
  * A workflow's `llm:` settings freeze into the request of every unit, whatever
- * its engine kind. `reasoning_effort` is the workflow's spelling of
+ * its target kind. `reasoning_effort` is the workflow's spelling of
  * `reasoningEffort`.
  */
 
@@ -15,16 +15,14 @@ import { freezeWorkflow } from "../_helpers/workflow";
 const CONFIG = {
   configVersion: "0.9.0",
   semanticSearchMode: "off",
-  engines: { oc: { kind: "agent", platform: "opencode", args: ["run", "--model", "krang/chat/qwen3.8-27b"] } },
-  defaults: { engine: "oc" },
-  workflow: { judgeEngine: "oc" },
+  harnesses: { oc: { platform: "opencode", args: ["run", "--model", "krang/chat/qwen3.8-27b"] } },
 } as const satisfies AkmConfig;
 
 const WORKFLOW = [
   "---",
   "type: workflow",
   "defaults:",
-  "  engine: oc",
+  "  harness: oc",
   "  llm:",
   "    temperature: 0.2",
   "    reasoning_effort: low",

@@ -354,7 +354,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     });
   });
 
-  test("gate evaluations are journaled as unit rows (node <stepId>.gate, unit <stepId>.gate:l<loop>, runner llm)", async () => {
+  test("gate evaluations are journaled as unit rows (node <stepId>.gate, unit <stepId>.gate:l<loop>, runner connection)", async () => {
     seedRun({ steps: [{ id: "extract", criteria: ["a fact was extracted"] }] });
     const judge: SummaryJudge = async () => '{"complete": true, "missing": []}';
     await runWorkflowSteps({
@@ -367,7 +367,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
       const gateRows = repo.getUnitsForStep(RUN_ID, "extract").filter((r) => r.node_id === "extract.gate");
       expect(gateRows).toHaveLength(1);
       expect(gateRows[0]!.unit_id).toBe("extract.gate:l1");
-      expect(gateRows[0]!.runner).toBe("llm");
+      expect(gateRows[0]!.runner).toBe("connection");
       expect(gateRows[0]!.status).toBe("completed");
       expect(JSON.parse(gateRows[0]!.result_json ?? "null")).toEqual({ complete: true, missing: [] });
     });

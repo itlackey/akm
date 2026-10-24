@@ -21,6 +21,7 @@ import { openStateDatabase } from "../../../src/core/state-db";
 import { resolveStorageLocations } from "../../../src/storage/locations";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
+import { WORKFLOW_PLAN_VERSION } from "../../../src/workflows/plan";
 import { resolveOrchestrationRefs } from "../../../src/workflows/renderer";
 import { getWorkflowStatus, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import {
@@ -107,7 +108,7 @@ function realpath(file: string): string {
 }
 
 describe("a frozen plan carries no location", () => {
-  test("irVersion 7: no frozen directory, no frozen workspace, and an env ref that is a bundle-qualified ref only", async () => {
+  test("irVersion 7 and later: no frozen directory, no frozen workspace, and an env ref that is a bundle-qualified ref only", async () => {
     const team = bundle("team");
     write(team, "env/prod.env", "REGION=east\nTOKEN=${secrets/t}\n");
     write(
@@ -121,8 +122,8 @@ describe("a frozen plan carries no location", () => {
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
     const plan = JSON.parse(row?.plan_json ?? "{}");
 
-    expect(plan.irVersion).toBe(7);
-    expect(row?.plan_ir_version).toBe(7);
+    expect(plan.irVersion).toBe(WORKFLOW_PLAN_VERSION);
+    expect(row?.plan_ir_version).toBe(WORKFLOW_PLAN_VERSION);
     const [run, ask] = plan.steps;
     expect(run.root.environment).toEqual([{ kind: "env-ref", ref: "team//env/prod", precedence: 0 }]);
     expect(run.root.frozenTarget.cwdIdentity).toBeUndefined();

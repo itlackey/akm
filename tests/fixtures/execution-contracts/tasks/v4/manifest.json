@@ -135,7 +135,7 @@
         "env": { "MODE": "safe", "RETRIES": 3, "DRY_RUN": true },
         "execution": {
           "agent": "reviewer-agent",
-          "engine": "fixture-llm",
+          "connection": "fixture-llm",
           "model": "fixture-exact-model",
           "inference": { "seed": 7 },
           "timeout": 45000,
