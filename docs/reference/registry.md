@@ -119,6 +119,7 @@ Each registry hit includes:
 | `id` | Unique identifier (e.g. `npm:@scope/bundle`) |
 | `description` | Summary from the registry |
 | `action` | Ready-to-run next step such as `akm bundle add ... -> then search again` |
+| `installRef` | The ref to pass to `akm bundle add` to install the bundle. Present at every `--detail` level |
 | `quality` | Optional provenance marker — `"generated"`, `"curated"`, or `"proposed"`. Replaces the legacy `curated` boolean removed in 0.7.0 |
 
 Use `--detail full` to include ranking metadata like `score`.

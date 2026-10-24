@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm search --assets` is removed. It asked registries for asset-level hits,
   but `akm search` never put them in its output, so the flag printed nothing; the
   registry providers' asset scoring and the `assetHits` response field go with it.
+- Registry hits from `akm search --from registry|all` carry `installRef` (the ref
+  for `akm bundle add`). The brief projection already listed it, but the hit was
+  built without it, so `--detail brief` showed only the name and score.
 
 ## [0.10.261013] - 2026-10-23
 
