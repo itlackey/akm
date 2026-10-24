@@ -91,7 +91,7 @@ Why: defaults that need tuning before the first useful result lose the
 user; overrides that are ignored or capped behind the user's back lose
 their trust.
 
-Enforced by: `tests/concurrency-defaults.test.ts` and
+Enforced by: `tests/workflows/concurrency-defaults.test.ts` and
 `tests/engine-resolution.test.ts`; the rest is review.
 
 ### 5. If it matters, a test or lint checks it
@@ -110,23 +110,33 @@ Enforced by: `bun run lint` (`scripts/lint-doc-examples.ts`,
 `scripts/lint-shipped-assets.ts`, `scripts/lint-secret-resolver-boundary.ts`),
 `tests/contracts/`, `tests/output-shapes-unit.test.ts`.
 
-### 6. The suite is green by default and isolated by construction
+### 6. The suite is green by default and sandboxed through the environment
 
 `test:unit` and `test:integration` report zero failures at all times. A
 red run is a real break, never noise to route around; a test that must be
 disabled is disabled explicitly with a linked issue. A test that opens a
 real database, touches the network, or spawns a process lives under
-`tests/integration/`; everything else lives under `tests/`. Tests never
-touch the developer's home: the preload sandboxes `HOME` and `XDG_*`,
-restores `cwd` and `fetch`, and throws when a test leaks any of them.
+`tests/integration/`; everything else lives under `tests/`.
+
+Both runner scripts start every shard with its own throwaway `HOME`. The
+preload then points `HOME`, the four `XDG_*_HOME` variables and
+`CODEX_HOME` at a sandbox and clears the `AKM_*_DIR` overrides, so code
+that resolves paths from environment variables, as `src/core/paths.ts`
+does, never reaches the developer's files. After each test it restores
+`cwd`, `fetch` and those variables, and it throws when a test leaked any of
+them. It cannot change `os.homedir()`: Bun ignores a runtime change to
+`HOME`, so under a bare `bun test <file>` a default built from
+`os.homedir()` reads the real home. Such a default needs its own override,
+as the Codex session reader has `CODEX_HOME`.
 
 Why: a suite that is "usually green" is a suite nobody trusts, and a test
 that reads a developer's real config passes on one machine and fails on
 the next.
 
-Enforced by: `tests/_preload.ts` (the tripwire), `scripts/test-unit.sh`
-and `scripts/test-integration.sh` (the split), `TEST_ISOLATION_MISSING` in
-`src/core/paths.ts`.
+Enforced by: `tests/_preload.ts` (the sandbox and the tripwire),
+`scripts/test-unit.sh` and `scripts/test-integration.sh` (the split and the
+per-shard `HOME`), `TEST_ISOLATION_MISSING` in `src/core/paths.ts`. Reads
+through `os.homedir()` outside the runner scripts are held by review.
 
 ### 7. Prose lives in files; comments say why
 
@@ -156,10 +166,9 @@ not existed, and a "normative" document the code ignores teaches
 contributors that documents do not matter.
 
 Enforced by: `scripts/lint-doc-examples.ts` (every command and flag in a
-doc exists), the npm pack check in
-`tests/integration/install/npm-pack-contents.test.ts` (no dead link ships),
-`tests/contracts/` (pinned sections of `architecture.md`, `cli.md` and
-`configuration.md`).
+doc exists) and the npm pack check in
+`tests/integration/install/npm-pack-contents.test.ts` (no dead link ships).
+The rest is held by review.
 
 ### 9. CLI-only, Bun-first
 
@@ -173,3 +182,15 @@ Why: an accidental API is a compatibility promise nobody agreed to make.
 
 Enforced by: `package.json` (no `exports` map, Bun scripts),
 `tests/contracts/module-boundaries.test.ts`.
+
+### 11. Agent harnesses are thin, replaceable internals
+
+akm is simple, lightweight tooling for agents and automated processes. A
+harness such as OpenCode (pi or another later) is an internal detail akm
+uses to enable agentic work. It sits behind one thin seam, is not woven into
+akm core, and can be replaced without touching the rest of akm.
+
+Why: heavy machinery and tight coupling are the opposite of akm's goals.
+
+Enforced by: review. The seam is `HARNESS_REGISTRY` (principle 2), which the
+opencode-sdk path still bypasses.
