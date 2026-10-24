@@ -3,24 +3,24 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `agent-skills` adapter — akm 0.9.0 format-family work item (#46).
+ * The `agent-skills` adapter.
  *
  * Recognizes a COLLECTION of standalone SKILL.md packages (like
  * github.com/anthropics/skills): each `<name>/SKILL.md` is one `skill` item
  * whose conceptId is the package DIRECTORY (`<name>`); bundled resources under
  * the package (`<name>/reference/FORMS.md`) are part of the item, not standalone
- * concepts (item-scoped incrementality, spec §4). The SKILL.md codec is shared
- * with claude/opencode as functions (spec §8); this adapter differs in that the
+ * concepts (item-scoped incrementality). The SKILL.md codec is shared
+ * with claude/opencode as functions; this adapter differs in that the
  * package dir sits directly under the component root (no `skills/` prefix) and
- * that `validate` enforces the FULL Agent Skills contract (spec §4.5).
+ * that `validate` enforces the FULL Agent Skills contract.
  *
  * RECOGNITION ≠ VALIDATION: an invalid skill (bad name charset, over-long
  * description) is still RECOGNIZED as `type: skill` (the raw invalid `name` is
  * projected so it is inspectable downstream); the violations surface only in
- * `validate` (spec §4.5). This mirrors how `okf` recognizes content and defers
+ * `validate`. This mirrors how `okf` recognizes content and defers
  * leniency to validate.
  *
- * ── validate (spec §4.5, APPROVED codes — maintainer resolution 2026-07) ──
+ * ── validate ──
  *
  *   - `skill-name-invalid` — name must be NFKC 1-64 chars matching
  *     `^[a-z0-9]+(-[a-z0-9]+)*$`, carry no reserved word, and equal the parent
@@ -33,8 +33,7 @@
  *     cannot reach it, because a change is always a file and a manifest-less
  *     package contributes no SKILL.md change (issue #774).
  *
- * The two field codes are APPROVED-BUT-NOT-YET-CODED elsewhere and are
- * implemented here. Base checks are NOT run:
+ * Base checks are NOT run:
  * a SKILL.md carries no `updated` field, so `missing-updated` would fire on
  * every conformant skill and contradict the lint golden.
  *
@@ -57,12 +56,12 @@ import { hashContent, nonEmptyString, readTags } from "./shared";
 const COMPONENT_ID = "main";
 /** The skill manifest basename (the item marker). */
 const SKILL_MANIFEST = "SKILL.md";
-/** Agent Skills hard limits (spec §4.5). */
+/** Agent Skills hard limits. */
 const NAME_MAX = 64;
 const DESCRIPTION_MAX = 1024;
-/** Agent Skills reserved words a name must not contain (real-world source). */
+/** Agent Skills reserved words a name must not contain. */
 const RESERVED_NAME_WORDS = ["anthropic", "claude"];
-/** name charset/shape rule (spec §4.5). */
+/** name charset/shape rule. */
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 /** conceptId + package-dir name for a `<name>/SKILL.md` file, or null when the file is not a skill manifest. */
@@ -108,7 +107,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   return doc;
 }
 
-/** The Agent Skills §4.5 hard-rule checks for one SKILL.md (name + description). */
+/** The Agent Skills hard-rule checks for one SKILL.md (name + description). */
 function skillFieldDiagnostics(relPath: string, dirName: string, data: Record<string, unknown>): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const name = typeof data.name === "string" ? data.name.normalize("NFKC") : "";
@@ -204,8 +203,8 @@ async function scanPackageCandidate(
  *
  * `validate` walks CHANGES, and a change is always a file — so a package
  * directory carrying resources but no manifest contributes nothing the
- * change-loop can see, and the check the spec (§4.5) and the lint golden's
- * `missingSkillMd` edge case both name was unreachable. This scans the
+ * change-loop can see, and the check the lint golden's `missingSkillMd` edge
+ * case names would be unreachable. This scans the
  * component root through {@link ValidateContext.list} instead, so the case is
  * actually reported.
  *
@@ -259,12 +258,12 @@ export const agentSkillsAdapter: BundleAdapter = {
     return [{ path: path.join(c.root, conceptId, SKILL_MANIFEST), conceptId }];
   },
 
-  /** A skill places to `<name>/SKILL.md`; the conceptId IS the package directory (spec §4.5). */
+  /** A skill places to `<name>/SKILL.md`; the conceptId IS the package directory. */
   placeNew(c: BundleComponent, conceptId: string): string {
     return path.join(c.root, conceptId, SKILL_MANIFEST);
   },
 
-  /** Install-time probe (§1.2): a root that directly contains one or more `<name>/SKILL.md` skill packages. */
+  /** Install-time probe: a root that directly contains one or more `<name>/SKILL.md` skill packages. */
   looksLikeRoot(root: string): boolean {
     let entries: fs.Dirent[];
     try {

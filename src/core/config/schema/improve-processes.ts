@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Improve profile + per-process (WI-9.6) discriminated schemas. Extracted
- * verbatim from the former `config-schema.ts` monolith — no behavior change.
+ * Improve profile + per-process discriminated schemas.
  */
 import { z } from "zod";
 import { IMPROVE_PROCESS_NAMES } from "../engine-semantics";
@@ -12,17 +11,15 @@ import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt }
 
 // ── Improve profile / process ──────────────────────────────────────────────
 //
-// WI-9.6 (§4.2/§10.2): each of the improve processes (reflect, distill,
-// consolidate, memoryInference, extract, validation, triage,
-// proactiveMaintenance — graphExtraction had one too, until the LLM
-// entity-graph it ran was retired in 0.9.17-alpha.9) gets its OWN schema
-// below — a shared base (engine, model, llm, enabled, timeoutMs) extended
-// with only the fields meaningful on that process — replacing the prior
-// single ImproveProcessConfigSchema reused via `.optional()` for all of them
-// (which accepted, and silently ignored, any field on any process). Field→process assignment is derived from each
-// field's original "only meaningful on X" doc comment, cross-checked against
-// its actual runtime consumers and the built-in strategy assets
-// (src/assets/improve-strategies/*.json).
+// Each of the improve processes (reflect, distill, consolidate,
+// memoryInference, extract, validation, triage, proactiveMaintenance) gets its
+// OWN schema below — a shared base (engine, model, llm, enabled, timeoutMs)
+// extended with only the fields meaningful on that process — rather than one
+// ImproveProcessConfigSchema reused via `.optional()` for all of them (which
+// would accept, and silently ignore, any field on any process).
+// Field→process assignment follows each field's "only meaningful on X" doc
+// comment, cross-checked against its actual runtime consumers and the built-in
+// strategy assets (src/assets/improve-strategies/*.json).
 //
 // `ImproveProcessConfigSchema` ITSELF STAYS (unnarrowed — the union of every
 // field across every process): it backs (a) the wide `ImproveProcessConfig`
@@ -35,7 +32,7 @@ import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt }
 // tests/config-triage-process.test.ts). Real per-config validation for
 // `processes.<name>` uses the NARROW per-process schemas via
 // {@link ImproveProfileProcessesSchema} below — setting a field on the wrong
-// process there is now rejected (the intended §4.2 improvement).
+// process there is rejected.
 
 const IMPROVE_PROCESS_BASE_FIELDS = {
   engine: engineName.optional(),
@@ -49,7 +46,7 @@ const IMPROVE_PROCESS_BASE_FIELDS = {
 const allowedTypesField = z.array(z.string().min(1)).optional();
 
 /**
- * Reflect only (R12): conceptId prefixes to exclude, matched after stripping
+ * Reflect only: conceptId prefixes to exclude, matched after stripping
  * an optional `bundle//` from both the ref and each prefix (see
  * improve-strategies.ts shouldSkipRef). `allowedTypes` is type-only and can't
  * exclude a subset of one type, e.g. raw wiki-ingest snapshots indexed as
@@ -85,7 +82,7 @@ const qualityGateField = z
   .optional();
 
 /**
- * WS-3b: CLS (Complementary Learning System) interleaving (step 9).
+ * CLS (Complementary Learning System) interleaving.
  * The distill prompt includes the lessons, knowledge notes and skills the library already holds near the
  * memory, so the writer answers NONE for a rule one of them states and does not overwrite a prior
  * generalization. Default ON; `enabled: false` turns it off. Only meaningful on the `distill` process.
@@ -100,7 +97,7 @@ const clsField = z
   .optional();
 
 /**
- * WS-3b: Distill→source fidelity check (step 10). After a distill proposal,
+ * Distill→source fidelity check. After a distill proposal,
  * check it against its cited source memories; a contradiction flag forces
  * human review. Default OFF. Distill process only.
  */
@@ -109,8 +106,8 @@ const fidelityCheckField = z.object({ enabled: z.boolean().optional() }).passthr
 /**
  * #639 — semantic value-floor filter for the `reflect` process. When
  * enabled, proposals classified as "low-value" by the deterministic noise
- * gate are deferred. DEFAULT OFF (absent / { enabled: false } = pre-#639
- * byte-identical behaviour). Reflect process only.
+ * gate are deferred. DEFAULT OFF (absent / { enabled: false } = filter off).
+ * Reflect process only.
  */
 const lowValueFilterField = z.object({ enabled: z.boolean().optional() }).passthrough().optional();
 
@@ -172,7 +169,7 @@ const triageJudgmentField = z
   .optional();
 
 /**
- * WS-3b: Anti-collapse guard (step 8), consolidate process only: a small
+ * Anti-collapse guard, consolidate process only: a small
  * random (non-similarity-driven) fraction of the pool is mixed into the
  * clustered order so consolidation is not purely rich-get-richer. Default ON
  * (opt out via `enabled: false`); `randomClusterFraction` defaults to 0.05.
@@ -273,7 +270,7 @@ const PROACTIVE_MAINTENANCE_PROCESS_FIELDS = {
   limit: processLimitField,
 };
 
-/** distill/consolidate are memory-only and never read `excludeRefPrefixes` (reflect only, R12). */
+/** distill/consolidate are memory-only and never read `excludeRefPrefixes` (reflect only). */
 function rejectExcludeRefPrefixesOutsideReflect(value: Record<string, unknown>, ctx: z.RefinementCtx): void {
   if ("excludeRefPrefixes" in value) {
     ctx.addIssue({
@@ -297,42 +294,42 @@ export const ImproveProcessConfigSchema = z
   })
   .passthrough();
 
-/** `processes.reflect` — narrow per-process schema (WI-9.6). */
+/** `processes.reflect` — narrow per-process schema. */
 export const ReflectProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...REFLECT_PROCESS_FIELDS })
   .passthrough();
 
-/** `processes.distill` — narrow per-process schema (WI-9.6). */
+/** `processes.distill` — narrow per-process schema. */
 export const DistillProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...DISTILL_PROCESS_FIELDS })
   .passthrough()
   .superRefine(rejectExcludeRefPrefixesOutsideReflect);
 
-/** `processes.consolidate` — narrow per-process schema (WI-9.6). */
+/** `processes.consolidate` — narrow per-process schema. */
 export const ConsolidateProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...CONSOLIDATE_PROCESS_FIELDS })
   .passthrough()
   .superRefine(rejectExcludeRefPrefixesOutsideReflect);
 
-/** `processes.memoryInference` — narrow per-process schema (WI-9.6). */
+/** `processes.memoryInference` — narrow per-process schema. */
 export const MemoryInferenceProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...MEMORY_INFERENCE_PROCESS_FIELDS })
   .passthrough();
 
-/** `processes.extract` — narrow per-process schema (WI-9.6). */
+/** `processes.extract` — narrow per-process schema. */
 export const ExtractProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...EXTRACT_PROCESS_FIELDS })
   .passthrough();
 
-/** `processes.validation` — narrow per-process schema (WI-9.6); no extra fields beyond the shared base. */
+/** `processes.validation` — narrow per-process schema; no extra fields beyond the shared base. */
 export const ValidationProcessConfigSchema = z.object({ ...IMPROVE_PROCESS_BASE_FIELDS }).passthrough();
 
-/** `processes.triage` — narrow per-process schema (WI-9.6). */
+/** `processes.triage` — narrow per-process schema. */
 export const TriageProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...TRIAGE_PROCESS_FIELDS })
   .passthrough();
 
-/** `processes.proactiveMaintenance` — narrow per-process schema (WI-9.6). */
+/** `processes.proactiveMaintenance` — narrow per-process schema. */
 export const ProactiveMaintenanceProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...PROACTIVE_MAINTENANCE_PROCESS_FIELDS })
   .passthrough();
@@ -342,7 +339,7 @@ export const ProactiveMaintenanceProcessConfigSchema = z
  * one, even with `enabled: true`, is tolerated rather than rejected by the
  * "unknown enabled process" check below — an old config must keep loading
  * (AGENTS.md "Reading persisted data"). `graphExtraction`: the LLM
- * entity-graph extraction it ran was retired in 0.9.17-alpha.9.
+ * entity-graph extraction it ran was retired.
  */
 const RETIRED_PROCESS_NAMES = new Set(["graphExtraction"]);
 
@@ -359,7 +356,7 @@ const ImproveProfileProcessesSchema = z
   })
   .passthrough()
   .superRefine((val, ctx) => {
-    // 0.8.0 removed the duplicated `feedbackDistillation` process key — it was
+    // The duplicated `feedbackDistillation` process key was removed — it was
     // a thin wrapper around `processes.distill.enabled`. Keep the migration
     // hint so a stale config gets an actionable message rather than silently
     // doing nothing. Other unknown process keys remain preserved for

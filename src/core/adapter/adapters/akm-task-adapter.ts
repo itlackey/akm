@@ -5,7 +5,7 @@
 /**
  * The `akm-task` adapter for task `.yml` sources.
  *
- * A native akm task-YAML bundle (spec §6/§7). A `.yml` file derives
+ * A native akm task-YAML bundle. A `.yml` file derives
  * `type: task`; conceptId strips the `.yml` extension. Tasks are AKM-native
  * YAML, NOT OKF markdown concepts. Recognition does NOT gate on validity — an
  * invalid task (e.g. `uses` plus `run`) is still RECOGNIZED; the `invalid-task-yaml`
@@ -15,7 +15,7 @@
  * is not a task spelling (nothing indexes or schedules it), so it is reported
  * as `invalid-task-yaml` rather than silently skipped (issue #760).
  *
- * ── validate (spec §6 task validation column) ──
+ * ── validate ──
  *
  * Validation enters the canonical task source parser (`parseTaskSource`,
  * which reads only task source v4 — a `version: 2` or `version: 3`
@@ -50,7 +50,7 @@ import { hashContent } from "./shared";
 
 /** A native task bundle is single-component; its one component is `main`. */
 const COMPONENT_ID = "main";
-/** The task YAML extension (spec §6 task row). */
+/** The task YAML extension. */
 const TASK_EXT = TASK_EXTENSION;
 
 function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
@@ -140,7 +140,7 @@ export const akmTaskAdapter: BundleAdapter = {
   },
 
   /**
-   * Install-time probe (§1.2): a root holding a top-level, valid task source
+   * Install-time probe: a root holding a top-level, valid task source
    * v4 `.yml` file, or a task v2/v3 file that `akm migrate apply` has yet to
    * convert (the runtime refuses those, so without this the migrator and
    * `akm task sync` would not find them in a bundle whose adapter config does

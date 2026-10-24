@@ -11,8 +11,8 @@ import { getConfigPath, getDefaultStashDir, getRegistryCacheDir, getRegistryInde
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-// Moved to the platform leaf so paths.ts can use it without a common↔paths
-// cycle (chunk-8 WI-8.6, DoD 11); re-exported here for the existing surface.
+// Lives in the platform leaf so paths.ts can use it without a common↔paths
+// cycle; re-exported here.
 export { IS_WINDOWS } from "./platform";
 export const MAX_LOCK_METADATA_BYTES = 64 * 1024;
 
@@ -23,7 +23,6 @@ export function isHttpUrl(value: string | undefined): boolean {
 /**
  * Returns `true` when `value` looks like a remote URL that a VCS or HTTP
  * fetch can access. Covers http/https, git@, ssh://, and git:// schemes.
- * Consolidates the repeated inline URL-detection pattern in source-manage.ts.
  */
 export function isRemoteUrl(value: string | undefined): boolean {
   if (!value) return false;
@@ -73,29 +72,6 @@ export function readTextFile(filePath: string, label = "File"): string {
   }
 }
 
-/**
- * Write content to a file atomically via a temp file + rename.
- * Prevents partial-write corruption on crash.
- * The temp file is opened with the target `mode` (default 0o600) from the
- * start, so it is never world-readable even briefly.
- *
- * `content` may be a string or a `Buffer`. Buffer callers (e.g. secrets, where
- * binary certs and CRLF/LF endings must round-trip byte-exact) get the same
- * fsync'd temp-file-plus-rename guarantees as string callers — there is a
- * single atomic-write implementation.
- *
- * Durability: fsync'd against the May 2026 config-clobber incident (#472).
- * On ext4 (data=ordered) and NVMe-with-TRIM, a power-loss inside the kernel
- * writeback window could leave the renamed file truncated to zero — defeating
- * the purpose of the atomic rename. We:
- *   1. fdatasync the temp fd before close, so the data is on disk before the
- *      rename observes it.
- *   2. fsync the parent directory after rename, so the directory entry change
- *      is durable too. Some filesystems (FAT, certain FUSE mounts) don't
- *      support directory fsync; we ignore EINVAL/ENOTSUP so atomic writes
- *      don't fail on those mounts. Windows does not support opening a
- *      directory for fsync, so the directory-sync step is skipped there.
- */
 /**
  * Strip JavaScript-style comments from a JSON string (JSONC support).
  * Handles `//` line comments and `/* *​/` block comments while preserving
@@ -163,6 +139,29 @@ export function existingFileMode(filePath: string): number {
   }
 }
 
+/**
+ * Write content to a file atomically via a temp file + rename.
+ * Prevents partial-write corruption on crash.
+ * The temp file is opened with the target `mode` (default 0o600) from the
+ * start, so it is never world-readable even briefly.
+ *
+ * `content` may be a string or a `Buffer`. Buffer callers (e.g. secrets, where
+ * binary certs and CRLF/LF endings must round-trip byte-exact) get the same
+ * fsync'd temp-file-plus-rename guarantees as string callers — there is a
+ * single atomic-write implementation.
+ *
+ * Durability: fsync'd against the May 2026 config-clobber incident (#472).
+ * On ext4 (data=ordered) and NVMe-with-TRIM, a power-loss inside the kernel
+ * writeback window could leave the renamed file truncated to zero — defeating
+ * the purpose of the atomic rename. We:
+ *   1. fdatasync the temp fd before close, so the data is on disk before the
+ *      rename observes it.
+ *   2. fsync the parent directory after rename, so the directory entry change
+ *      is durable too. Some filesystems (FAT, certain FUSE mounts) don't
+ *      support directory fsync; we ignore EINVAL/ENOTSUP so atomic writes
+ *      don't fail on those mounts. Windows does not support opening a
+ *      directory for fsync, so the directory-sync step is skipped there.
+ */
 export function writeFileAtomic(target: string, content: string | Buffer, mode?: number): void {
   const tmp = `${target}.tmp.${process.pid}.${crypto.randomBytes(8).toString("hex")}`;
   const data = typeof content === "string" ? Buffer.from(content) : content;
@@ -310,10 +309,8 @@ function readStashDirFromConfig(): string | undefined {
     const parsed = JSON.parse(stripJsonComments(text));
     if (typeof parsed !== "object" || parsed === null) return undefined;
     const raw = migrateLegacySourceShape(parsed as Record<string, unknown>, configPath);
-    // 0.9.0 config-shape cutover (spec §10.1): the primary stash is the
-    // `defaultBundle`'s filesystem `path`. Read it directly (no config module
-    // import) so the primary-stash location survives the stashDir → bundles
-    // migration without a runtime rewire.
+    // The primary stash is the `defaultBundle`'s filesystem `path`. Read it
+    // directly (no config module import).
     const bundles = raw.bundles as Record<string, { path?: string; components?: unknown }> | undefined;
     const defaultBundle = raw.defaultBundle;
     const selectedBundle = typeof defaultBundle === "string" ? bundles?.[defaultBundle] : undefined;
@@ -397,15 +394,12 @@ export function isWithin(candidate: string, root: string): boolean {
  * read-only installed-source/registry-index copies that lint (and `--fix`)
  * must never touch.
  *
- * This is the single source of truth for that exclusion — it replaces what
- * used to be three independent unanchored substring checks
- * (`posixPath.includes("/.cache/") || posixPath.includes("/registry/")`).
- * That check matched ANY path merely containing the literal text `.cache` or
- * `registry` anywhere in it — a normal XDG `~/.cache/...` user bundle, or a
- * CI workspace checked out under a `.cache`-named directory, tripped it and
- * silently got zero lint findings. Using {@link isWithin} (realpath +
- * containment, not a string search) fixes that while still excluding the
- * real cache content the check was meant to skip.
+ * This is the single source of truth for that exclusion. It uses
+ * {@link isWithin} (realpath + containment) rather than an unanchored
+ * substring check such as `posixPath.includes("/.cache/")`, which would match
+ * ANY path merely containing the literal text `.cache` or `registry` — a
+ * normal XDG `~/.cache/...` user bundle, or a CI workspace checked out under a
+ * `.cache`-named directory — and silently produce zero lint findings.
  */
 export function isAkmRegistryCachePath(filePath: string): boolean {
   return isWithin(filePath, getRegistryCacheDir()) || isWithin(filePath, getRegistryIndexCacheDir());
@@ -637,8 +631,8 @@ export async function fetchWithRetry(
  * Sleep, but wake immediately if `signal` aborts.
  *
  * A server-supplied `Retry-After` is honored verbatim and can be arbitrarily
- * large. Sleeping it out with a bare `setTimeout` ignored the caller's abort
- * signal entirely, so a single `429` could park an operation far past any
+ * large. Sleeping it out with a bare `setTimeout` would ignore the caller's
+ * abort signal entirely, so a single `429` could park an operation far past any
  * deadline its caller believed it had imposed — the request timeout bounds
  * only the request, never the wait between attempts. Callers using this for
  * a retry delay should pass a `maxDelayMs`-capped `ms` (see
@@ -879,8 +873,6 @@ export function toErrorMessage(error: unknown): string {
 
 /**
  * Return today's date in ISO-8601 format (`YYYY-MM-DD`).
- * Consolidates the `new Date().toISOString().slice(0, 10)` pattern that
- * appears at multiple call sites.
  */
 export function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -914,9 +906,6 @@ export function timestampForFilename(): string {
 
 /**
  * Return the trimmed string value if non-empty, otherwise `undefined`.
- * Consolidates `toStringOrUndefined` (frontmatter.ts), `asNonEmptyString`
- * (config.ts), and `firstString` (memory-improve.ts) — all had the same
- * "return a string or undefined" contract with minor semantic differences.
  */
 export function asNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -993,10 +982,6 @@ export function stringArray(value: unknown): string[] {
 }
 
 /**
- * Group an array of values by a string key derived from each element.
- * Returns a `Map` so insertion order within each group is preserved.
- */
-/**
  * Return true if a process with the given PID is currently alive.
  * Uses `process.kill(pid, 0)` which does not deliver a signal but
  * throws ESRCH when the process does not exist.
@@ -1022,8 +1007,7 @@ export function isProcessAlive(pid: unknown): boolean {
 }
 
 /**
- * Convert a number of days to milliseconds. Consolidates the
- * `N * 24 * 60 * 60 * 1000` pattern used throughout the cooldown logic.
+ * Convert a number of days to milliseconds.
  */
 export function daysToMs(days: number): number {
   return days * 86_400_000;

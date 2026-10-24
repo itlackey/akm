@@ -3,53 +3,46 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Per-`type` validate checks for the `akm` adapter — akm 0.9.0 chunk-2, WI-C,
- * implementing spec §6 (the per-`type` validation column) as a
- * behavior-preserving port of `src/commands/lint/*`'s type linters. The `akm`
- * adapter's `validate` = shared base checks (WI-A `shared.ts`) + these per-type
- * extra checks, keyed on the winning `type`, reproducing today's
- * `getLinterForType(subdir).lint(ctx)` dispatch. The FROZEN lint golden
+ * Per-`type` validate checks for the `akm` adapter. The `akm` adapter's
+ * `validate` = shared base checks (`shared.ts`) + these per-type extra checks,
+ * keyed on the winning `type`. The lint golden
  * (`tests/fixtures/goldens/lint/all-types.json`, `perType`) is the conformance
  * gate.
  *
- * ── type → linter mapping (registry.ts `getLinterForType`) ──
+ * ── type → check mapping ──
  *
- *   command → CommandLinter | agent → AgentLinter (missing-name-or-type +
- *   invalid `type` value); fact → FactLinter (missing-category); task →
- *   TaskLinter (invalid-task-yaml); workflow(.md) → WorkflowLinter
- *   (placeholder-stub READ-ONLY + invalid-workflow-structure); memory →
- *   MemoryLinter (orphaned-stub READ-ONLY); skill → SkillLinter directory check
- *   (missing-skill-md, see {@link skillDirectoryDiagnostics}); env/secret → the
- *   env dangerous-key scan (lint/index.ts:191-218, `.env`-suffix-narrow);
- *   knowledge/lesson/script/secret/wiki/session → DefaultLinter (base only).
+ *   command / agent → name/type check (missing-name-or-type + invalid `type`
+ *   value); fact → missing-category; task → invalid-task-yaml; workflow(.md) →
+ *   placeholder-stub READ-ONLY + invalid-workflow-structure; memory →
+ *   orphaned-stub READ-ONLY; skill → skill directory check (missing-skill-md,
+ *   see {@link skillDirectoryDiagnostics}); env/secret → the env dangerous-key
+ *   scan (`.env`-suffix-narrow); knowledge/lesson/script/wiki/session → base
+ *   checks only.
  *
  * ── READ-ONLY discipline ──
  *
- * `placeholder-stub` and `orphaned-stub` carry a `--fix` DELETE in the live
- * linters; `BundleAdapter.validate` MUST NOT write, so both are emitted as
+ * `placeholder-stub` and `orphaned-stub` carry a `--fix` DELETE in `akm lint`;
+ * `BundleAdapter.validate` MUST NOT write, so both are emitted as
  * non-fixable Diagnostics here (never delete). All reads route through
- * `ValidateContext` (the run snapshot + pending overlay) — the live linters'
- * `fs.existsSync` sibling/SKILL.md probes become `ctx.readFile` lookups.
+ * `ValidateContext` (the run snapshot + pending overlay) — sibling/SKILL.md
+ * probes are `ctx.readFile` lookups, not `fs.existsSync`.
  *
- * ── env/secret dangerous-key narrowness (PRESERVED, spec §6) ──
+ * ── env/secret dangerous-key narrowness ──
  *
- * Today's scan (`collectEnvFiles`) only visits `.env`-SUFFIXED files under
- * `env/` and `secrets/`, so `secrets/<bare-name>` is NOT scanned. This port
- * keeps that exact narrowness: {@link dangerousEnvKeyDiagnostics} runs only when
- * the path's basename ends in `.env`. NOT widened.
+ * The `akm lint` scan (`collectEnvFiles`) only visits `.env`-SUFFIXED files
+ * under `env/` and `secrets/`, so `secrets/<bare-name>` is NOT scanned.
+ * {@link dangerousEnvKeyDiagnostics} keeps that exact narrowness: it runs only
+ * when the path's basename ends in `.env`. NOT widened.
  *
- * ── Cycle-safety (chunk-2 ratchet, baseline 18) ──
+ * ── Layering ──
  *
- * Imported ONLY by `akm-adapter.ts` (no inbound `src/` edge) → can never join a
- * cycle. It VALUE-imports the one `compileWorkflowSource` frontend and the pure
- * predicate `isDangerousEnvKey`
- * from `commands/lint/env-key-rules` — the predicate is imported, not copied,
- * precisely so the 40+ security-sensitive dangerous-key names cannot drift from
- * the canonical set; importing it is ratchet-neutral (verified: 18). The small
- * key-scan / suppression-comment logic IS ported (content-based, reads the
- * overlay `raw`, not disk). `type` determination stays in `akm-adapter.ts`
- * (which owns `recognizeMatch`) so this leaf never imports back into the
- * adapter.
+ * It VALUE-imports the one `compileWorkflowSource` frontend and the pure
+ * predicate `isDangerousEnvKey` from `commands/lint/env-key-rules` — the
+ * predicate is imported, not copied, precisely so the 40+ security-sensitive
+ * dangerous-key names cannot drift from the canonical set. The small
+ * key-scan / suppression-comment logic is content-based (reads the overlay
+ * `raw`, not disk). `type` determination stays in `akm-adapter.ts` (which owns
+ * `recognizeMatch`) so this leaf never imports back into the adapter.
  */
 
 import path from "node:path";
@@ -61,18 +54,18 @@ import { conceptIdForStashFile } from "../../asset/resolve-ref";
 import { isAkmRegistryCachePath, scanEnvKeyNames } from "../../common";
 import type { BundleComponent, Diagnostic, ValidateContext } from "../types";
 
-/** Recommended `category` values for facts — `commands/lint/fact-linter.ts:9`. */
+/** Recommended `category` values for facts. */
 const KNOWN_CATEGORIES = new Set(["personal", "team", "project", "convention", "meta"]);
 
-/** Placeholder markers a workflow stub carries — `commands/lint/workflow-linter.ts:10`. */
+/** Placeholder markers a workflow stub carries. */
 const PLACEHOLDER_STRINGS = ["Describe what this workflow accomplishes", "Example Workflow"];
 
-/** Inline suppression token — `commands/lint/env-key-rules.ts:138` (not exported there; reproduced verbatim). */
+/** Inline suppression token (the same token `commands/lint/env-key-rules.ts` honors; not exported there). */
 const SUPPRESSION_COMMENT = "# akm-lint-ok: dangerous-env-key";
 
-// ── BaseLinter protected-method ports (base-linter.ts:520-551) ───────────────
+// ── name/type check helpers ──────────────────────────────────────────────────
 
-/** Port of `BaseLinter.checkMissingNameOrType` (`:520-527`). */
+/** Detail for missing `name`/`type` frontmatter fields, or `null`. */
 function checkMissingNameOrType(data: Record<string, unknown>, frontmatter: string | null): string | null {
   if (!frontmatter) return null;
   const missingFields: string[] = [];
@@ -82,7 +75,7 @@ function checkMissingNameOrType(data: Record<string, unknown>, frontmatter: stri
   return `missing fields: ${missingFields.join(", ")}`;
 }
 
-/** Port of `BaseLinter.checkInvalidTypeValue` (`:534-539`). */
+/** Detail for a `type` value outside `allowedTypes`, or `null`. */
 function checkInvalidTypeValue(data: Record<string, unknown>, allowedTypes: readonly string[]): string | null {
   if (!("type" in data) || !data.type) return null;
   const value = String(data.type);
@@ -90,7 +83,7 @@ function checkInvalidTypeValue(data: Record<string, unknown>, allowedTypes: read
   return `type field has invalid value '${value}'; expected one of: ${allowedTypes.join(", ")}`;
 }
 
-/** Port of `BaseLinter.suggestSlug` (`:544-551`). */
+/** A slug suggested from the file name. */
 function suggestSlug(filePath: string): string {
   return path
     .basename(filePath, ".md")
@@ -100,9 +93,9 @@ function suggestSlug(filePath: string): string {
     .replace(/^-|-$/g, "");
 }
 
-// ── name/type linter (CommandLinter / AgentLinter) ───────────────────────────
+// ── name/type check (command / agent) ────────────────────────────────────────
 
-/** Reproduce CommandLinter/AgentLinter's extra checks (`command-linter.ts` / `agent-linter.ts`). */
+/** The name/type extra checks for command and agent assets. */
 export function nameOrTypeDiagnostics(
   relPath: string,
   data: Record<string, unknown>,
@@ -128,9 +121,9 @@ export function nameOrTypeDiagnostics(
   return [];
 }
 
-// ── env dangerous-key scan (content-based port of env-key-rules.ts) ──────────
+// ── env dangerous-key scan (content-based counterpart of env-key-rules.ts) ───
 
-/** Port of `env-key-rules.ts#collectSuppressedKeys` (`:144-164`) — content-based. */
+/** Content-based counterpart of `env-key-rules.ts#collectSuppressedKeys`. */
 function collectSuppressedKeys(raw: string): Set<string> {
   const suppressed = new Set<string>();
   const lines = raw.split(/\r?\n/);
@@ -148,19 +141,20 @@ function collectSuppressedKeys(raw: string): Set<string> {
 }
 
 /**
- * env/secret dangerous-key scan (`lint/index.ts:191-218` + `env-key-rules.ts#checkEnvForDangerousKeys`),
- * keyed on `type` and preserving the `.env`-suffix narrowness (see file header).
- * Reads the overlay `raw`, not disk.
+ * env/secret dangerous-key scan (content-based counterpart of
+ * `env-key-rules.ts#checkEnvForDangerousKeys`), keyed on `type` and preserving
+ * the `.env`-suffix narrowness (see file header). Reads the overlay `raw`, not
+ * disk.
  *
  * The emitted `Ref:` comes from `conceptIdForStashFile` — the one place that
- * spells a diagnostic ref the way `akm show` accepts it. It used to be
- * hand-built as `env:<base>` / `secret:<base>`, a colon grammar the 0.9.0 ref
- * parser rejects outright — a dead-end ref on a *security* finding.
+ * spells a diagnostic ref the way `akm show` accepts it. A hand-built
+ * `env:<base>` / `secret:<base>` colon-grammar ref would be rejected outright
+ * by the ref parser — a dead-end ref on a *security* finding.
  */
 export function dangerousEnvKeyDiagnostics(type: string | undefined, relPath: string, raw: string): Diagnostic[] {
   if (type !== "env" && type !== "secret") return [];
   const baseNameWithExt = path.basename(relPath);
-  if (!baseNameWithExt.endsWith(".env")) return []; // NARROWNESS: collectEnvFiles only visits *.env
+  if (!baseNameWithExt.endsWith(".env")) return []; // NARROWNESS: `akm lint` only visits *.env
   // `relPath` is already stash-root-relative, so "." IS the stash root here.
   const ref = conceptIdForStashFile(type, ".", relPath);
 
@@ -180,18 +174,17 @@ export function dangerousEnvKeyDiagnostics(type: string | undefined, relPath: st
   return diagnostics;
 }
 
-// ── skill directory check (SkillLinter.lintDirectory) ────────────────────────
+// ── skill directory check ────────────────────────────────────────────────────
 
 /** The akm-native skill placement dir — the default gate for {@link skillDirectoryDiagnostics}. */
 const AKM_SKILL_DIRS: ReadonlySet<string> = new Set(["skills"]);
 
 /**
- * Reproduce `SkillLinter.lintDirectory` (`skill-linter.ts:31-45`) in the
- * change-set model: for a change under `<skillDir>/<name>/…`, emit
- * `missing-skill-md` when `<skillDir>/<name>/SKILL.md` is absent from the
- * overlay. `seen` dedups so a dir with multiple changed files reports once
- * (matching the per-subdir call). `file`/`detail` mirror the live check exactly
- * (relDir + `no SKILL.md in <relDir>/`).
+ * Skill directory check in the change-set model: for a change under
+ * `<skillDir>/<name>/…`, emit `missing-skill-md` when
+ * `<skillDir>/<name>/SKILL.md` is absent from the overlay. `seen` dedups so a
+ * dir with multiple changed files reports once. `file` is relDir and `detail`
+ * is `no SKILL.md in <relDir>/`.
  *
  * `skillDirs` defaults to the akm-native `skills/` placement dir. Tool-dir
  * adapters pass their own canonical placement directory.
@@ -215,7 +208,7 @@ export async function skillDirectoryDiagnostics(
   return [{ file: skillDir, issue: "missing-skill-md", detail: `no SKILL.md in ${skillDir}/`, fixed: false }];
 }
 
-// ── per-type dispatch (mirrors getLinterForType) ─────────────────────────────
+// ── per-type dispatch ────────────────────────────────────────────────────────
 
 export interface PerTypeCheckArgs {
   type: string | undefined;
@@ -264,7 +257,7 @@ export async function perTypeValidateChecks(args: PerTypeCheckArgs): Promise<Dia
   }
 }
 
-/** FactLinter extra check (`fact-linter.ts:23-44`). */
+/** Extra check for fact assets (`category`). */
 export function factDiagnostics(relPath: string, data: Record<string, unknown>): Diagnostic[] {
   const category = typeof data.category === "string" ? data.category.trim() : "";
   if (!category) {
@@ -292,10 +285,10 @@ export function factDiagnostics(relPath: string, data: Record<string, unknown>):
 
 /**
  * Task validation has one semantic owner: the version-routed task source
- * parser (spec docs/plans/specs/p2a-task-source-v4.md §3.6) — `version: 3`
- * through the strict task-v3 grammar, `version: 4` through task source v4.
- * Keeping raw YAML at this boundary preserves duplicate-key, alias/tag,
- * source-location, descriptor, resource-bound, and migration-hint behavior.
+ * parser — `version: 3` through the strict task-v3 grammar, `version: 4`
+ * through task source v4. Keeping raw YAML at this boundary preserves
+ * duplicate-key, alias/tag, source-location, descriptor, resource-bound, and
+ * migration-hint behavior.
  */
 export function taskDiagnostics(relPath: string, raw: string, workspaceRoot?: string): Diagnostic[] {
   try {
@@ -318,17 +311,17 @@ export function taskDiagnostics(relPath: string, raw: string, workspaceRoot?: st
 }
 
 /**
- * The first placeholder marker present in a workflow body, or `null`
- * (`workflow-linter.ts:80-85` `#checkPlaceholderStub`). Shared with the live
- * `akmLint --fix` path (`commands/lint/index.ts`) so the placeholder-stub RULE
- * has ONE home; the caller decides fixability (validate flags, the CLI deletes).
+ * The first placeholder marker present in a workflow body, or `null`. Shared
+ * with the `akmLint --fix` path (`commands/lint/index.ts`) so the
+ * placeholder-stub RULE has ONE home; the caller decides fixability (validate
+ * flags, the CLI deletes).
  */
 export function matchWorkflowPlaceholder(body: string): string | null {
   return PLACEHOLDER_STRINGS.find((p) => body.includes(p)) ?? null;
 }
 
 /**
- * WorkflowLinter's `invalid-workflow-structure` check (`workflow-linter.ts:48-77`):
+ * The `invalid-workflow-structure` check:
  * the ERROR half of {@link workflowFrontendDiagnostics}, for the read-only
  * adapter `validate` path. A caller that ALSO surfaces advisories must call
  * {@link workflowFrontendDiagnostics} once instead of pairing this with a
@@ -344,11 +337,11 @@ export function workflowStructureDiagnostics(
 
 /**
  * The `Diagnostic.line` fragment for a line-anchored workflow finding. Every
- * `WorkflowError` carries a 1-indexed `line`; this used to be DROPPED here, so
- * an author linting a 300-line workflow got a message with no location while
- * the same error rendered as `path:line — message` on the `workflow create`
- * path. Spread (`...lineOf(err)`) rather than assigned, so a nonsense line
- * never materializes the optional key on a whole-file finding.
+ * `WorkflowError` carries a 1-indexed `line`; carrying it through gives an
+ * author linting a 300-line workflow a location, matching the
+ * `path:line — message` rendering on the `workflow create` path. Spread
+ * (`...lineOf(err)`) rather than assigned, so a nonsense line never
+ * materializes the optional key on a whole-file finding.
  */
 function lineOf(err: { line?: number }): { line?: number } {
   return typeof err.line === "number" && Number.isFinite(err.line) && err.line > 0 ? { line: err.line } : {};
@@ -469,7 +462,7 @@ export function workflowFrontendDiagnostics(
 }
 
 /**
- * WorkflowLinter extra checks (`workflow-linter.ts:22-79`), READ-ONLY:
+ * Workflow extra checks, READ-ONLY:
  * `placeholder-stub` is NEVER deleted here (validate MUST NOT write) — emitted
  * as a non-fixable Diagnostic. `invalid-workflow-structure` parses and compiles
  * the whole `raw` through the unified workflow frontend.
@@ -489,12 +482,12 @@ function workflowDiagnostics(relPath: string, raw: string, body: string): Diagno
   return diagnostics;
 }
 
-/** The non-fixable orphaned-stub finding detail (`memory-linter.ts` no-fix branch). Shared with the live linter. */
+/** The non-fixable orphaned-stub finding detail. Shared with `akm lint`. */
 export const ORPHANED_STUB_DETAIL = "inferenceProcessed stub with no derived sibling";
 
 /**
- * The CONTENT half of MemoryLinter's orphaned-stub predicate
- * (`memory-linter.ts:67-73` `#isOrphanedStub`, minus the sibling probe):
+ * The CONTENT half of the memory orphaned-stub predicate (minus the sibling
+ * probe):
  * `inferenceProcessed: true` AND a body under 100 chars. The `.derived.md`
  * sibling existence is I/O and is checked by the caller (the CLI via
  * `fs.existsSync`, the adapter via `ctx.readFile`), so the RULE stays here while
@@ -505,10 +498,10 @@ export function memoryOrphanStubApplies(data: Record<string, unknown>, body: str
 }
 
 /**
- * MemoryLinter extra check (`memory-linter.ts:19-65`), READ-ONLY: the
- * `orphaned-stub` DELETE fix is dropped (validate MUST NOT write) — emitted as
- * a non-fixable Diagnostic. The `<name>.derived.md` sibling probe routes
- * through `ctx.readFile` (overlay), not `fs.existsSync`.
+ * Memory extra check, READ-ONLY: the `orphaned-stub` DELETE fix is not offered
+ * here (validate MUST NOT write) — emitted as a non-fixable Diagnostic. The
+ * `<name>.derived.md` sibling probe routes through `ctx.readFile` (overlay),
+ * not `fs.existsSync`.
  */
 async function memoryDiagnostics(
   relPath: string,

@@ -62,7 +62,7 @@ export function upsertEntry(
   // Hot path during indexing — cache prepared statements per database
   // connection so we don't pay the SQL parse/compile cost on every call.
   const stmts = getUpsertStmts(db);
-  // Phase 5A / Advantage D5: surface derived memory parent ref into the
+  // Surface derived memory parent ref into the
   // dedicated `derived_from` column so retrieval-time lookup (parent→child)
   // does not have to scan + JSON-decode every memory row.
   const derivedFrom =
@@ -153,9 +153,9 @@ function getUpsertStmts(db: Database): UpsertStmts {
 }
 
 /**
- * Phase 5A / Advantage D5: look up the derived-memory child row whose
- * `derived_from` column matches `parentRef` (the 0.9.0 conceptId, e.g.
- * `"memories/claude-prefs"` — Group-C item 2 flip).
+ * Look up the derived-memory child row whose
+ * `derived_from` column matches `parentRef` (a conceptId, e.g.
+ * `"memories/claude-prefs"`).
  *
  * Returns the most-recently-updated derived child when multiple exist (one
  * parent should yield exactly one `.derived` child in practice, but the
@@ -180,7 +180,7 @@ export function getDerivedForParent(db: Database, parentRef: string, bundleId?: 
 }
 
 /**
- * 03-R3: for the given derived-twin row ids, fetch each twin's BASE memory
+ * For the given derived-twin row ids, fetch each twin's BASE memory
  * `beliefState`, keyed by twin id.
  *
  * Used by the derived-twin belief inheritance in search ranking: a `.derived`
@@ -332,8 +332,8 @@ export function rekeyEntryInPlace(db: Database, opts: RekeyEntryOptions): number
     } else deleteFtsEntries(db, [row.id]);
   })();
 
-  // Re-point usage history at the new ref. Chunk-8 WI-8.3: usage_events lives in
-  // state.db now, so this is a SEPARATE cross-DB transaction (best-effort — the
+  // Re-point usage history at the new ref. usage_events lives in
+  // state.db, so this is a SEPARATE cross-DB transaction (best-effort — the
   // rename itself already committed above; on failure the next full index's
   // relinkUsageEvents re-attaches by ref). See the docstring for the spellings
   // and the live-asset-wins collision policy.
@@ -441,7 +441,7 @@ export function deleteEntriesByBundle(db: Database, bundleId: string): void {
 
 /**
  * The `file_path` of every entry indexed under one bundle — used by
- * `akm bundle rename` (D6) to find bundle CONTENT that still spells the old
+ * `akm bundle rename` to find bundle CONTENT that still spells the old
  * `<bundle>//` prefix (xrefs, `supersededBy`, task `uses:`), which the rename
  * reports rather than rewrites.
  */
@@ -454,7 +454,7 @@ export function getFilePathsByBundle(db: Database, bundleId: string): string[] {
 
 /**
  * Re-key every entry row's `bundle_id`/`item_ref` from `oldBundleId` to
- * `newBundleId` in place (`akm bundle rename`, D6). Unlike
+ * `newBundleId` in place (`akm bundle rename`). Unlike
  * {@link rekeyEntryInPlace} (one asset, `akm mv`), this is a bulk identity
  * change with no content move: `concept_id`/`file_path`/`document_json` are
  * untouched, so no FTS/vector rebuild is needed (FTS and `embeddings` key on
@@ -474,11 +474,10 @@ export function renameEntriesBundleId(db: Database, oldBundleId: string, newBund
  * Diff-persist orphan delete: remove every entry under `dirPath` whose durable
  * `item_ref` is not in `keepRefs`.
  *
- * Replaces the old per-dir `deleteEntriesByDir` + full re-insert: the caller
- * upserts the current file set first (ON CONFLICT preserving `entries.id`, so
- * embeddings / utility / usage stay attached to unchanged rows), then calls this
- * to prune only the departed rows. The net row-state for the directory is identical
- * to delete-then-reinsert; the win is that unchanged rows keep their id.
+ * The caller upserts the current file set first (ON CONFLICT preserving
+ * `entries.id`, so embeddings / utility / usage stay attached to unchanged
+ * rows), then calls this to prune only the departed rows; unchanged rows keep
+ * their id.
  *
  * Both directory- and bundle-scoped so overlapping physical roots cannot
  * prune one another's rows.
@@ -599,8 +598,8 @@ export function getAllEntries(db: Database, entryType?: string, excludeTypes?: s
 }
 
 /**
- * Resolve a single `entries.id` from a new-grammar `[bundle//]conceptId` ref,
- * keying on the canonical stored `item_ref` (ref-grammar decision D-R1/D-R4).
+ * Resolve a single `entries.id` from a `[bundle//]conceptId` ref,
+ * keying on the canonical stored `item_ref`.
  * The optional `bundleId` scopes the match to one indexed bundle.
  */
 export function findEntryIdByRef(db: Database, ref: string, bundleId?: string): number | undefined {
@@ -620,7 +619,7 @@ function findEntryIdByBundleRef(db: Database, ref: string, bundleId?: string): n
   const parsed = parseBundleRef(ref);
   const conceptVariants = withMdVariants(parsed.conceptId);
 
-  // item_ref is the canonical stored spelling post-flip.
+  // item_ref is the canonical stored spelling.
   for (const conceptId of conceptVariants) {
     const id = matchIdByItemRef(db, parsed.bundle, conceptId, bundleId);
     if (id !== undefined) return id;
@@ -638,8 +637,8 @@ function findEntryIdByBundleRef(db: Database, ref: string, bundleId?: string): n
  *
  * A SHORT ref can match one concept id across MULTIPLE bundles (e.g. the same
  * `knowledge/guide` in the primary stash and an installed source). The bare
- * `LIMIT 1` this replaced picked whichever row SQLite happened to visit first —
- * a nondeterministic winner when two bundles share a conceptId. We now impose a
+ * `LIMIT 1` would pick whichever row SQLite happened to visit first —
+ * a nondeterministic winner when two bundles share a conceptId. So we impose a
  * total order (`ORDER BY id ASC`) so the winner is STABLE across runs.
  *
  * `id ASC` is also the SENSIBLE choice, not just a stable tiebreak: a full index
@@ -687,7 +686,7 @@ export function getEntryCount(db: Database): number {
 /**
  * Per-asset-type entry counts (keyed by `type`, e.g. "skill",
  * "knowledge", "memory"). Used by `akm info` to break down the aggregate
- * `indexStats.entryCount` (R-057).
+ * `indexStats.entryCount`.
  */
 export function getEntryCountByType(db: Database): Record<string, number> {
   const rows = db.prepare("SELECT type, COUNT(*) AS cnt FROM entries GROUP BY type").all() as Array<{
@@ -793,9 +792,7 @@ export function getIndexedBundleIdsByDir(db: Database, dirPath: string): string[
  * Resolve a single `entries.id` by exact `file_path` (the canonical on-disk
  * path), or `undefined` if no row matches.
  *
- * Lifted verbatim (WS5) from the inline `SELECT id FROM entries WHERE
- * file_path = ? LIMIT 1` in commands/search.ts so all `entries` SQL lives in
- * this module. The result is a plain number materialised before return —
+ * The result is a plain number materialised before return —
  * nothing lazy crosses a connection boundary.
  */
 export function getEntryIdByFilePath(db: Database, filePath: string): number | undefined {
@@ -824,7 +821,7 @@ export function getIndexedFilePaths(db: Database): Set<string> {
 /**
  * `entries.file_path -> content_hash` for every currently-indexed file that
  * carries a stored hash. Used by per-file staleness detection
- * (`hasNewerIndexableFiles`, R6) to tell "edited after the last build" apart
+ * (`hasNewerIndexableFiles`) to tell "edited after the last build" apart
  * from "already re-indexed with this exact content after the last build" —
  * `indexWrittenAssets` upserts a fresh row (and its `content_hash`) without
  * bumping `builtAt`, so mtime alone cannot distinguish the two cases.
@@ -844,26 +841,23 @@ export function getIndexedFileHashes(db: Database): Map<string, string> {
  * Resolve a single `entries.file_path` by primary key, or `undefined` if no
  * row matches.
  *
- * Lifted verbatim (WS5) from the inline `SELECT file_path FROM entries WHERE
- * id = ?` in commands/feedback-cli.ts. Unlike {@link getEntryById}, this does
- * NOT parse `document_json`, so a row with corrupt JSON still yields its path —
- * preserving feedback-cli's pre-extraction behaviour byte-for-byte.
+ * Unlike {@link getEntryById}, this does NOT parse `document_json`, so a row
+ * with corrupt JSON still yields its path.
  */
 export function getEntryFilePathById(db: Database, id: number): string | undefined {
   const row = db.prepare("SELECT file_path FROM entries WHERE id = ?").get(id) as { file_path: string } | undefined;
   return row?.file_path;
 }
 
-// ── Indexer-phase helpers (moved from indexer.ts) ────────────────────────────
+// ── Indexer-phase helpers ────────────────────────────────────────────────────
 
 /**
  * Return distinct zero-result search queries from the `usage_events` table
  * within the given lookback window.
  *
  * Reads from `usage_events` (event_type = 'search') where the metadata JSON
- * blob contains `resultCount = 0`. The `search_events` table never existed;
- * all errors are caught and an empty array is returned so callers never need
- * to guard against DB schema differences.
+ * blob contains `resultCount = 0`. All errors are caught and an empty array is
+ * returned so callers never need to guard against DB schema differences.
  */
 export function getZeroResultSearches(db: Database, sinceDays = 30): string[] {
   const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
@@ -885,7 +879,7 @@ export function getZeroResultSearches(db: Database, sinceDays = 30): string[] {
 }
 
 /**
- * Look up an entry `id` by a new-grammar `[bundle//]conceptId` ref, resolving
+ * Look up an entry `id` by a `[bundle//]conceptId` ref, resolving
  * against the canonical stored `item_ref`. Returns `{ id }` or `null`.
  */
 export function getEntryByRef(db: Database, ref: string): { id: number } | null {
@@ -897,8 +891,8 @@ export function getEntryByRef(db: Database, ref: string): { id: number } | null 
  * A snapshot of every `item_ref` currently in `entries`, for batched liveness
  * checks against many candidate refs — one query instead of one
  * `getEntryByRef` round trip per candidate (the orphan-state GC pass,
- * `loop-stages.ts` `runOrphanStateGcPass`/`isStateRefLive`, used to probe each
- * pending row individually). `conceptIds` holds the part of each `item_ref`
+ * `loop-stages.ts` `runOrphanStateGcPass`/`isStateRefLive`). `conceptIds`
+ * holds the part of each `item_ref`
  * after its bundle prefix, for the bare-conceptId suffix match
  * `findEntryIdByBundleRef` does when a ref carries no bundle — bundle slugs
  * never contain `/` (`BUNDLE_SLUG_RE`), so an `item_ref` has exactly one
@@ -940,10 +934,10 @@ export function isRefLiveInSnapshot(snapshot: LiveRefSnapshot, ref: string): boo
 
 /**
  * The fully-qualified `item_ref` (`<bundle>//<conceptId>`, the durable stored
- * spelling — spec §11.1 D-R3) for an entry `id`, or `null` when the row is gone
+ * spelling) for an entry `id`, or `null` when the row is gone.
  * The usage-event / salience / feedback writers derive the durable
  * key from this so a stored key is always the resolved entry's canonical ref,
- * never raw input (D-R3: durable keys are never derived from input).
+ * never raw input (durable keys are never derived from input).
  */
 export function getItemRefById(db: Database, id: number): string | null {
   const row = db.prepare("SELECT item_ref FROM entries WHERE id = ?").get(id) as { item_ref: string } | undefined;
@@ -967,11 +961,10 @@ function resolveUsageEventEntryId(db: Database, ref: string): number | undefined
  * After a full rebuild, entry IDs change. This restores each event's link
  * using the stable `entry_ref` column so usage history survives a reindex.
  *
- * Cross-DB (Chunk-8 WI-8.3): `usage_events` lives in `stateDb` while `entries`
- * lives in `indexDb`. The stale-id null-out (formerly a single-DB
- * `NOT IN (SELECT id FROM entries)`) is done in two bounded passes — the set of
- * distinct linked entry_ids in usage_events is small — and the re-resolution
- * reads `entries` from `indexDb`.
+ * Cross-DB: `usage_events` lives in `stateDb` while `entries`
+ * lives in `indexDb`. The stale-id null-out is done in two bounded passes —
+ * the set of distinct linked entry_ids in usage_events is small — and the
+ * re-resolution reads `entries` from `indexDb`.
  */
 export function relinkUsageEvents(indexDb: Database, stateDb: Database): void {
   bestEffort(() => {

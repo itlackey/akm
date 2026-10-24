@@ -3,24 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The synchronous `recognizeMatch` arbitration — akm 0.9.0 Chunk 5, milestone
- * M-b, relocated here from `adapters/akm-adapter.ts` so it is a cycle-free LEAF
- * that BOTH the `akm` adapter AND the indexer metadata pass can import without
- * either importing the other.
+ * The synchronous `recognizeMatch` arbitration: a cycle-free LEAF that BOTH the
+ * `akm` adapter AND the indexer metadata pass import, so neither imports the
+ * other. An indexer→adapter import edge would close a metadata ↔ adapter cycle
+ * and keep the adapter's `recognize` from sharing the one metadata pipeline.
  *
- * Before this move `indexer/passes/metadata.ts` imported `recognizeMatch` FROM
- * `akm-adapter.ts`; that indexer→adapter edge is what prevented the adapter from
- * ever reusing the metadata assembly (`buildEntryFromFile`) — it would have
- * closed a metadata ↔ adapter cycle. Hoisting the pure arbitration into this
- * leaf (imported by both, importing neither) severs that edge, so the adapter's
- * `recognize` can share the one metadata pipeline (parity by construction).
- *
- * The logic is unchanged: a synchronous reproduction of
- * `file-context.ts#runMatchers` (`:242-265`) minus its
- * `ensureBuiltinsRegistered()` dynamic import. It runs every builtin matcher in
- * registration order, collects the non-null `MatchResult`s, and returns the
- * highest-specificity one (ties broken by the later-registered matcher — higher
- * index — winning). Returns null when no matcher claims the file.
+ * It runs every builtin matcher in registration order, collects the non-null
+ * `MatchResult`s, and returns the highest-specificity one (ties broken by the
+ * later-registered matcher — higher index — winning). Returns null when no
+ * matcher claims the file.
  */
 
 import type { AssetMatcher, FileContext, MatchResult } from "../../indexer/walk/file-context";
@@ -28,13 +19,12 @@ import { directoryMatcher, extensionMatcher, parentDirHintMatcher, smartMdMatche
 
 /**
  * The four builtin matchers, in registration order. The array index IS the
- * registration index `runMatchers` uses for tie-breaking. (The `wiki` matcher
- * was removed in chunk 4 — the wiki asset-type is retired; LLM Wiki content is
- * served by the first-class `llm-wiki` adapter, not the akm adapter. The old
- * YAML workflow-program matcher is also gone: peer Markdown and GitHub-shaped
- * `.yml` workflow sources are both path-owned by residence under `workflows/`
- * (with Markdown frontmatter as an additional signal), while source IR owns
- * their distinct parse/compile semantics.)
+ * registration index used for tie-breaking. There is no `wiki` or YAML
+ * workflow-program matcher: LLM Wiki content is served by the first-class
+ * `llm-wiki` adapter, not the akm adapter, and peer Markdown and
+ * GitHub-shaped `.yml` workflow sources are both path-owned by residence under
+ * `workflows/` (with Markdown frontmatter as an additional signal), while
+ * source IR owns their distinct parse/compile semantics.
  */
 const AKM_MATCHERS: readonly AssetMatcher[] = [
   extensionMatcher,
@@ -54,9 +44,7 @@ function winningMatch(hits: Array<{ result: MatchResult; index: number }>): Matc
 }
 
 /**
- * Synchronous reproduction of `file-context.ts#runMatchers`'s arbitration
- * (`:242-265`), minus its `ensureBuiltinsRegistered()` dynamic import. Runs
- * every builtin matcher in registration order, collects the non-null
+ * Runs every builtin matcher in registration order, collects the non-null
  * `MatchResult`s, and returns the highest-specificity one (ties broken by the
  * later-registered matcher — higher index — winning). Returns null when no
  * matcher claims the file.

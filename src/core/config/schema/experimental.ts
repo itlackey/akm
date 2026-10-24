@@ -4,7 +4,7 @@
 
 /**
  * `experimental` config section — explicit opt-ins for behaviour that is not
- * covered by the stability contract (D8).
+ * covered by the stability contract.
  *
  * An entry here exists so a user can turn something ON deliberately. Every key
  * defaults to OFF, and the runtime must treat "absent" and "false" identically:

@@ -16,9 +16,8 @@ import { insertEventOnce, insertEventStrict } from "./events-repository";
 /**
  * Row shapes for the `workflow_runs` / `workflow_run_steps` tables.
  *
- * These mirror the on-disk columns exactly and were lifted verbatim from
- * {@link ../../workflows/runs} when the raw SQL was consolidated behind this
- * repository (WS5). The repository owns ALL SQL that touches these two tables.
+ * These mirror the on-disk columns exactly. The repository owns ALL SQL that
+ * touches these two tables.
  */
 export type WorkflowRunRow = {
   id: string;
@@ -59,17 +58,16 @@ export type WorkflowRunRow = {
   /** This run's deterministic spawn identity (migration 023), unique per `parent_run_id`. NULL on a top-level run. */
   invocation_key: string | null;
   /**
-   * Resolved declared `outputs:` (migration 024, P3b §4.3): the run plan's
+   * Resolved declared `outputs:` (migration 024): the run plan's
    * canonical JSON export map, persisted once at run completion in the SAME
    * transaction as the final step's completion. NULL for every run whose
    * plan declares no `outputs:` and for every run that fails or blocks
    * before completing — never `{}`. `WorkflowRunsRepository.setRunOutputs`
    * is the only writer.
    *
-   * Optional (rather than required, unlike `parent_run_id` et al.) so a
-   * pre-existing hand-constructed `WorkflowRunRow` literal in a test this
-   * phase does not own stays type-valid without adding a key it never
-   * asserted on; every real row read via `SELECT *` still carries it
+   * Optional (rather than required, unlike `parent_run_id` et al.) so
+   * hand-constructed `WorkflowRunRow` literals in tests stay type-valid;
+   * every real row read via `SELECT *` still carries it
    * (`null` until a completion sets it).
    */
   outputs_json?: string | null;
@@ -109,7 +107,7 @@ export type WorkflowRunUnitRow = {
   result_json: string | null;
   tokens: number | null;
   failure_reason: string | null;
-  /** Harness-native session id revealed by the unit's result extractor (migration 005, plan P2). */
+  /** Harness-native session id revealed by the unit's result extractor (migration 005). */
   session_id: string | null;
   worktree_path: string | null;
   started_at: string | null;
@@ -250,7 +248,7 @@ export interface PublishWorkflowRunV4Input {
  */
 export interface PublishChildWorkflowRunInput {
   readonly parentRunId: string;
-  /** The parent run's unit that spawned this child — stored in workflow_runs.parent_unit_id (A-N12). */
+  /** The parent run's unit that spawned this child — stored in workflow_runs.parent_unit_id. */
   readonly spawnedByUnitId: string;
   /** This spawn's deterministic identity — {@link WorkflowRunsRepository.publishChildWorkflowRun} is idempotent on (parentRunId, invocationKey). */
   readonly invocationKey: string;
@@ -277,11 +275,11 @@ export interface ListRunsFilter {
    */
   activeOnly?: boolean;
   /**
-   * Include child workflow runs (P3b, B-N10). Default `false`: a child run
+   * Include child workflow runs. Default `false`: a child run
    * is invisible to this query unless explicitly opted in — surfaced as
    * `akm workflow list --children`. For any database with no child rows —
-   * every pre-P3b database and every non-composing workflow — the result set
-   * is byte-identical regardless of this flag.
+   * every non-composing workflow — the result set
+   * is identical regardless of this flag.
    */
   includeChildren?: boolean;
 }
@@ -292,7 +290,7 @@ export interface ListRunsFilter {
  * {@link withWorkflowRunsRepo} binds it to {@link StorageLocations.stateDb}, so
  * a future storage move changes only `locations.ts`.
  *
- * ## Connection-lifetime contract (WS5)
+ * ## Connection-lifetime contract
  *
  * Every read method fully materialises its result set (`.all()` / `.get()` into
  * plain values/arrays) before returning. The repository NEVER hands a live
@@ -303,9 +301,9 @@ export interface ListRunsFilter {
 export class WorkflowRunsRepository {
   constructor(private readonly db: Database) {}
 
-  /** Escape hatch for the transaction-bounded write paths still orchestrated
+  /** Escape hatch for the transaction-bounded write paths orchestrated
    * in runs.ts. The repository owns the SQL; the caller owns the transaction
-   * boundary (unchanged from the pre-extraction `db.transaction(() => …)`). */
+   * boundary. */
   transaction<T>(fn: () => T): T {
     return this.db.transaction(fn)();
   }
@@ -319,17 +317,16 @@ export class WorkflowRunsRepository {
   /**
    * The top-level start guard `publishWorkflowRunV4` uses to refuse starting
    * a SECOND active run of the same ref in the same scope. `AND
-   * parent_run_id IS NULL` (B-N10's FOURTH site, code-review round 4 finding
-   * 2 / Review log R2): a child run carries the PARENT's `scope_key` (P3a
-   * §5.2), so once a parent publishes a child of some ref, starting a
+   * parent_run_id IS NULL`: a child run carries the PARENT's `scope_key`, so
+   * once a parent publishes a child of some ref, starting a
    * TOP-LEVEL run of that same ref in that scope must never resolve to the
    * child — the child is not "already an active run in this scope" from a
    * fresh top-level invocation's point of view; the PARENT, if anything, is.
-   * Before this filter, `publishWorkflowRunV4` refused with
+   * Without this filter, `publishWorkflowRunV4` would refuse with
    * `RESOURCE_ALREADY_EXISTS` naming the CHILD's own run id, instructing the
    * operator to `akm workflow abandon` a child a parent is actively driving.
-   * For any database with no child rows the result is byte-identical, same
-   * as the other three B-N10 sites below.
+   * For any database with no child rows the result is unaffected, same
+   * as the other `parent_run_id IS NULL` filters below.
    *
    * Always scope-local: `scopeKey` is a real scope, never "every scope" — see
    * {@link findActiveRunOutsideScope} for the cross-scope warning's query.
@@ -381,7 +378,7 @@ export class WorkflowRunsRepository {
   /**
    * The scope-attach lookup `akm workflow run <ref>` uses to find an
    * in-progress top-level run to resume instead of starting a new one.
-   * `AND parent_run_id IS NULL` (B-N10): a child run must never be attached
+   * `AND parent_run_id IS NULL`: a child run must never be attached
    * to directly through this path — a parent-driven child would then have
    * TWO drivers. For any database with no child rows the result is
    * byte-identical.
@@ -446,7 +443,7 @@ export class WorkflowRunsRepository {
       // executable. A `blocked` run is NOT active (it is parked awaiting a
       // human `resume`), so it must never appear under `--active`, or a script
       // treating `--active` output as executable work would pick up a blocked
-      // run (owner manual-validation finding 1). Blocked runs stay visible in
+      // run. Blocked runs stay visible in
       // plain `list` (all statuses) with their `blocked` status. The
       // active-OR-blocked scope semantics some call sites want (the `akm show`
       // scope guard, which surfaces a blocked run as the scope's occupant) live
@@ -454,7 +451,7 @@ export class WorkflowRunsRepository {
       // into this shared list filter.
       filters.push("status = 'active'");
     }
-    // B-N10: a child run is invisible to this scope query unless the caller
+    // A child run is invisible to this scope query unless the caller
     // explicitly opts in (`akm workflow list --children`). For any database
     // with no child rows the result set is byte-identical either way.
     if (!filter.includeChildren) {
@@ -480,7 +477,7 @@ export class WorkflowRunsRepository {
 
   /**
    * The `akm show` active-run guard: which run (if any) currently occupies
-   * this scope. `AND parent_run_id IS NULL` (B-N10) — a child a parent is
+   * this scope. `AND parent_run_id IS NULL` — a child a parent is
    * driving must never be reported as "the" active run; the PARENT is. For
    * any database with no child rows the result is byte-identical.
    */
@@ -499,13 +496,10 @@ export class WorkflowRunsRepository {
   // ── writes ─────────────────────────────────────────────────────────────────
 
   insertRun(input: InsertRunInput): void {
-    // R-R3 (P3a Review log; docs/plans/specs/p4-deletions-closeout.md §8):
-    // this 12-column list is hand-duplicated by publishChildWorkflowRun's own
+    // This 12-column list is hand-duplicated by publishChildWorkflowRun's own
     // INSERT below, which extends it with parent_run_id/parent_unit_id/
-    // invocation_key. A signature refactor to share one INSERT builder was
-    // considered and deliberately deferred — see
-    // docs/architecture/decisions/0009-child-run-publication-column-parity.md.
-    // Keep both column lists in sync by hand.
+    // invocation_key. Sharing one INSERT builder was considered and
+    // deliberately deferred. Keep both column lists in sync by hand.
     this.db
       .prepare(
         `INSERT INTO workflow_runs (
@@ -650,10 +644,7 @@ export class WorkflowRunsRepository {
     });
   }
 
-  // ── child workflow run publication (migration 023, P3a §5.2-§5.3) ─────────
-  //
-  // No production caller exists in P3a (§5.5) — dispatch is P3b's. These
-  // three methods are reachable only from tests until then.
+  // ── child workflow run publication (migration 023) ─────────────────────────
 
   /**
    * Idempotently publish a child workflow run underneath the parent unit
@@ -669,14 +660,13 @@ export class WorkflowRunsRepository {
    * a child), and reads no source: the child plan was frozen into the parent's.
    *
    * This method's serialization guarantee holds only when it is the
-   * OUTERMOST transaction on the connection (spec Review log R10,
-   * docs/plans/specs/p3a-plan-v5-child-freeze.md). `withImmediateTransaction`
+   * OUTERMOST transaction on the connection. `withImmediateTransaction`
    * (src/core/state-db.ts) has a re-entrancy guard: if a transaction is
    * already open on the connection, it SILENTLY JOINS that transaction
    * instead of issuing its own `BEGIN IMMEDIATE`.
    * `WorkflowRunsRepository.transaction()` is DEFERRED (`db.transaction(fn)()`)
-   * and is already used in production at `resumeWorkflowRun`
-   * (src/workflows/runtime/runs.ts:506) and `completeWorkflowStep` (:782) —
+   * and is used in production by `resumeWorkflowRun` and
+   * `completeWorkflowStep` (src/workflows/runtime/runs.ts) —
    * a caller that wires this call inside one of those outer transactions
    * loses the guarantee below: the SELECT can read a stale snapshot, both
    * publishers can miss the existing row, and the loser's INSERT hits
@@ -689,10 +679,9 @@ export class WorkflowRunsRepository {
    * first to acquire it inserts and commits, and the second's own SELECT —
    * which can only run once it has acquired the lock in turn — finds and
    * returns the first's row rather than inserting a duplicate or throwing
-   * (C-09). Calling this twice with the same key, including across a crash
+   * Calling this twice with the same key, including across a crash
    * between publish and parent-side recording, is therefore safe and returns
-   * the same child both times, with exactly one event and one step set
-   * (C-08).
+   * the same child both times, with exactly one event and one step set.
    */
   publishChildWorkflowRun(input: PublishChildWorkflowRunInput): WorkflowRunRow {
     return this.immediateTransaction((db) => {
@@ -701,10 +690,8 @@ export class WorkflowRunsRepository {
         .get(input.parentRunId, input.invocationKey) as WorkflowRunRow | undefined;
       if (existing) return existing;
 
-      // R-R3 (P3a Review log; docs/plans/specs/p4-deletions-closeout.md §8):
-      // the first 12 columns here must stay byte-identical to insertRun's own
-      // column list above (hand-duplicated, not shared, by deliberate choice
-      // — see docs/architecture/decisions/0009-child-run-publication-column-parity.md).
+      // The first 12 columns here must stay byte-identical to insertRun's own
+      // column list above (hand-duplicated, not shared, by deliberate choice).
       // Keep both column lists in sync by hand.
       db.prepare(
         `INSERT INTO workflow_runs (
@@ -748,7 +735,7 @@ export class WorkflowRunsRepository {
   }
 
   /**
-   * Persist a run's resolved declared `outputs:` (migration 024, P3b §4.3).
+   * Persist a run's resolved declared `outputs:` (migration 024).
    * Called from INSIDE `completeWorkflowStep`'s own write transaction — this
    * method opens none of its own, matching `updateStepCompletion` /
    * `updateRunState` immediately above.
@@ -1050,7 +1037,7 @@ export class WorkflowRunsRepository {
 
 /**
  * Run `fn` against a {@link WorkflowRunsRepository} bound to state.db
- * ({@link StorageLocations.stateDb}, the post-cutover home of the
+ * ({@link StorageLocations.stateDb}, the home of the
  * `workflow_runs` / `workflow_run_steps` / `workflow_run_units` tables).
  *
  * Connection lifetime — BORROW-OR-OWN (mirrors `withStateDb`'s `borrowed`
@@ -1065,7 +1052,7 @@ export class WorkflowRunsRepository {
  *     `fn`, close it in a `finally`.
  *
  * Repository read methods fully materialise their results, so closing an owned
- * handle here never truncates lazy iteration (WS5 connection-lifetime rule).
+ * handle here never truncates lazy iteration (connection-lifetime rule).
  * The signature and semantics are identical in both modes — reuse is purely an
  * internal optimisation and no caller needs to know which mode it is in.
  */

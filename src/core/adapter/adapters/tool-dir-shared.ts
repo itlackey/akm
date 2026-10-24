@@ -4,48 +4,46 @@
 
 /**
  * Shared recognition / placement / validation for the two AGENT TOOL-DIRECTORY
- * adapters — `claude` (`.claude`) and `opencode` (`.opencode`) — akm 0.9.0
- * format-family work item (#46). Both translate a foreign tool layout into the
- * open AKM `type` vocabulary (spec §6/§7): a root instruction file
- * (CLAUDE.md / AGENTS.md) → `instruction`, `commands/*.md` → `command`,
+ * adapters — `claude` (`.claude`) and `opencode` (`.opencode`). Both translate a
+ * foreign tool layout into the open AKM `type` vocabulary: a root instruction
+ * file (CLAUDE.md / AGENTS.md) → `instruction`, `commands/*.md` → `command`,
  * `agents/*.md` → `agent`, `skills/<name>/SKILL.md` → `skill` (item = the dir).
  * They differ only in two parameters carried on {@link ToolDirLayout}:
  *   - the instruction basename + its concept id,
  *   - the adapter id + component id.
  *
- * The SKILL.md codec is shared with the `agent-skills` adapter as functions
- * (spec §8): a skill's conceptId is its DIRECTORY, and its `name` is the
- * frontmatter `name` (== the dir name per the Agent Skills §4.5 hard rule).
+ * The SKILL.md codec is shared with the `agent-skills` adapter as functions:
+ * a skill's conceptId is its DIRECTORY, and its `name` is the frontmatter
+ * `name` (== the dir name per the Agent Skills hard rule).
  *
- * ── D-R6 (reserved files) ──
+ * ── Reserved files ──
  *
  * `index.md` / `log.md` are OKF structural files at EVERY depth — never a
  * concept. `classify` excludes them up front so a stray `commands/index.md`
  * never becomes a `command` (mirrors okf/akm/llm-wiki `RESERVED_FILES`).
  *
- * ── validate leniency (spec §6 skill row) ──
+ * ── validate leniency ──
  *
  * The tool-dir adapters TOLERATE the tools' native frontmatter (argument-hint,
  * allowed-tools, tools, model, mode, temperature, agent, …) — the strict
  * unknown-frontmatter behavior belongs to `agent-skills`, not here. So `command`
- * / `agent` get a LENIENT name-or-signal check (never the akm `CommandLinter`'s
- * frontmatter `name`+`type` requirement, which these tool files do not carry),
- * `skill` gets the coded `missing-skill-md` directory check
- * ({@link skillDirectoryDiagnostics}), and `instruction` runs the shared base
- * checks (a no-op on a frontmatter-free CLAUDE.md/AGENTS.md). Notably NO base
- * checks run on command/agent/skill: their tool frontmatter carries no `updated`
- * field, so `missing-updated` would fire on every file and contradict the lint
- * golden's clean result.
+ * / `agent` get a LENIENT name-or-signal check (never the akm adapter's
+ * `nameOrTypeDiagnostics` frontmatter `name`+`type` requirement, which these
+ * tool files do not carry), `skill` gets the coded `missing-skill-md`
+ * directory check ({@link skillDirectoryDiagnostics}), and `instruction` runs
+ * the shared base checks (a no-op on a frontmatter-free CLAUDE.md/AGENTS.md).
+ * Notably NO base checks run on command/agent/skill: their tool frontmatter
+ * carries no `updated` field, so `missing-updated` would fire on every file and
+ * contradict the lint golden's clean result.
  *
  * ── Cycle-safety ──
  *
  * Imported only by `claude-adapter.ts` / `opencode-adapter.ts` (themselves
- * imported by the `adapters/index.ts` barrel — NOT test-only: `core/adapter/
- * registry.ts:33` imports it in production for the frozen `BUILTIN_ADAPTERS`
- * list). This leaf still can never gain an inbound edge from a cycle
- * participant, since nothing on that import chain imports back into it. It
- * value-imports only pure leaves (`shared`, `akm-lint`, `frontmatter`) plus
- * Node builtins.
+ * imported by the `adapters/index.ts` barrel, which `core/adapter/registry.ts`
+ * imports in production for the frozen `BUILTIN_ADAPTERS` list). This leaf
+ * can never gain an inbound edge from a cycle participant, since nothing on
+ * that import chain imports back into it. It value-imports only pure leaves
+ * (`shared`, `akm-lint`, `frontmatter`) plus Node builtins.
  */
 
 import path from "node:path";
@@ -64,7 +62,7 @@ import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from
 import { skillDirectoryDiagnostics } from "./akm-lint";
 import { hashContent, nonEmptyString, RESERVED_FILES, readTags, runBaseValidateChecks } from "./shared";
 
-/** The canonical (plural) subdir spellings writes normalize to (open-question-6). */
+/** The canonical (plural) subdir spellings writes normalize to. */
 const CANONICAL_COMMAND_DIR = "commands";
 const CANONICAL_AGENT_DIR = "agents";
 const CANONICAL_SKILL_DIR = "skills";
@@ -167,9 +165,9 @@ export function recognizeToolDir(layout: ToolDirLayout, c: BundleComponent, file
 }
 
 /**
- * placeNew() for a tool-dir adapter (spec §7: "AKM workspace layout IS the tool
- * dir minus the prefix"). Writes NORMALIZE to the canonical plural subdir
- * (open-question-6): a `command/foo` concept still places at `commands/foo.md`.
+ * placeNew() for a tool-dir adapter (the AKM workspace layout IS the tool
+ * dir minus the prefix). Writes NORMALIZE to the canonical plural subdir:
+ * a `command/foo` concept still places at `commands/foo.md`.
  * The instruction file is fixed at the component root.
  */
 export function placeNewToolDir(layout: ToolDirLayout, c: BundleComponent, conceptId: string): string {
@@ -215,7 +213,7 @@ function nameOrSignalDiagnostics(
   body: string,
 ): Diagnostic[] {
   if (nonEmptyString(data.name) !== undefined || nonEmptyString(data.description) !== undefined) return [];
-  // command-shaped body/frontmatter signals (spec §6 command row): $ARGUMENTS / $1 / an `agent` frontmatter key.
+  // command-shaped body/frontmatter signals: $ARGUMENTS / $1 / an `agent` frontmatter key.
   if (
     type === "command" &&
     (/\$ARGUMENTS\b/.test(body) || /\$\d/.test(body) || nonEmptyString(data.agent) !== undefined)
@@ -249,8 +247,7 @@ export async function validateToolDir(
     const relPath = toPosix(change.path);
     // The one coded skill check (missing-skill-md) fires on ANY change under a
     // `<skillDir>/<name>/…` package (self-gated + deduped), even a bundled
-    // resource — mirrors the akm adapter's per-change SkillLinter.lintDirectory
-    // pass.
+    // resource — mirrors the akm adapter's per-change skill directory pass.
     diagnostics.push(...(await skillDirectoryDiagnostics(relPath, seenSkillDirs, ctx, layout.skillDirs)));
 
     const cls = classify(change.path, layout);

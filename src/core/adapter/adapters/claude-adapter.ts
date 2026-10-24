@@ -3,10 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `claude` tool-directory adapter — akm 0.9.0 format-family work item (#46).
+ * The `claude` tool-directory adapter.
  *
- * Recognizes a Claude Code `.claude` layout (spec §6/§7, real-world:
- * https://code.claude.com/docs/en/claude-directory): a root `CLAUDE.md` →
+ * Recognizes a Claude Code `.claude` layout
+ * (https://code.claude.com/docs/en/claude-directory): a root `CLAUDE.md` →
  * `instruction`, `commands/*.md` → `command`, `agents/*.md` → `agent`,
  * `skills/<name>/SKILL.md` → `skill` (item = the dir; bundled resources abstain),
  * and ABSTAINS on runtime config (`settings.json`, `.mcp.json`). The component
@@ -45,7 +45,7 @@ function dirExists(p: string): boolean {
 }
 
 /**
- * Install-time probe (§1.2): a root is a `.claude` tool dir when it carries a
+ * Install-time probe: a root is a `.claude` tool dir when it carries a
  * root `CLAUDE.md` AND at least one of the `commands/`/`agents/`/`skills/` tool
  * dirs. The tool-dir requirement keeps a bare project `CLAUDE.md` (no `.claude`
  * structure) from being mistaken for a claude bundle, and — because it demands

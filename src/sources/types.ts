@@ -61,12 +61,12 @@ export interface SourceSearchHit {
   estimatedTokens?: number;
   /**
    * Non-fatal hit-level warnings surfaced by the indexer or a registry provider
-   * (v1 spec §4.2). Optional; absent when there is nothing to surface. Adding
+   * Optional; absent when there is nothing to surface. Adding
    * a value here MUST NOT change ranking — warnings are informational only.
    */
   warnings?: string[];
   /**
-   * Optional asset quality marker (v1 spec §4.2). One of `generated`,
+   * Optional asset quality marker. One of `generated`,
    * `curated`, `proposed`, or any other string the source emits. Surfaced
    * verbatim from the underlying entry. Absent when the entry has no
    * `quality` field.
@@ -75,11 +75,11 @@ export interface SourceSearchHit {
   beliefState?: string;
   currentBeliefRefs?: string[];
   /**
-   * Phase 5A / Advantage D5 — derived-memory pointer.
+   * Derived-memory pointer.
    *
    * When a parent memory has a derived child indexed, the parent's search hit
    * is enriched with `expandTo` set to the child's ref (e.g.
-   * `"memory:claude-prefs.derived"`). Clients can fetch the child via
+   * `"memories/claude-prefs.derived"`). Clients can fetch the child via
    * `akm show <expandTo>` to retrieve the distilled lesson surface while the
    * parent itself remains the primary retrieval result.
    *
@@ -102,8 +102,8 @@ export interface RegistrySearchResultHit {
   /** Name of the registry that provided this hit (provenance tracking) */
   registryName?: string;
   /**
-   * Non-fatal hit-level warnings surfaced by the registry provider (v1 spec
-   * §4.2). Optional; absent when there is nothing to surface. Adding a value
+   * Non-fatal hit-level warnings surfaced by the registry provider.
+   * Optional; absent when there is nothing to surface. Adding a value
    * here MUST NOT change ranking — warnings are informational only.
    */
   warnings?: string[];
@@ -204,14 +204,14 @@ export interface WorkflowRunSummary {
   /** Frozen workflow plan format on this row (informational); null for historical rows. */
   planIrVersion?: number | null;
   /**
-   * Resolved declared `outputs:` (P3b), present only on a completed run
+   * Resolved declared `outputs:`, present only on a completed run
    * whose plan declared any. Absent, never `null` — every pre-existing
    * envelope stays byte-identical (Stable tier).
    */
   outputs?: Record<string, unknown>;
-  /** The parent run this run was spawned under (P3b); present only on a child run. */
+  /** The parent run this run was spawned under; present only on a child run. */
   parentRunId?: string;
-  /** The parent run's unit that spawned this run (P3b); present only on a child run. */
+  /** The parent run's unit that spawned this run; present only on a child run. */
   spawnedByUnitId?: string;
 }
 
@@ -378,7 +378,7 @@ export interface UpdatePlainSyncedItem {
  * A configured source this update call did NOT process, with a human-
  * readable reason. Exists so `akm update --all` accounts for every configured
  * source instead of silently omitting the ones it cannot or does not sync
- * (R-015) — e.g. website sources (`--all` re-crawl not yet implemented) and
+ * — e.g. website sources (`--all` re-crawl not yet implemented) and
  * filesystem sources (no remote to sync).
  */
 export interface UpdateSkippedItem {
@@ -399,7 +399,7 @@ export interface UpdateResponse {
   processed: UpdateResultItem[];
   /** Plain sources freshly hydrated/reconciled by this call. Omitted when empty. */
   plainSynced?: UpdatePlainSyncedItem[];
-  /** Configured sources this call did not process, with why (R-015). Omitted when empty. */
+  /** Configured sources this call did not process, with why. Omitted when empty. */
   skipped?: UpdateSkippedItem[];
   config: {
     sourceCount: number;
@@ -587,9 +587,9 @@ export interface UpgradeResponse {
 export interface InfoResponse {
   schemaVersion: number;
   version: string;
-  /** Primary bundle directory (spec §10.1), same resolution `akm sources list` uses (R-057). */
+  /** Primary bundle directory, same resolution `akm sources list` uses. */
   bundleDir: string;
-  /** Name of the primary bundle from config, or `null` when none is configured (R-057). */
+  /** Name of the primary bundle from config, or `null` when none is configured. */
   defaultBundle: string | null;
   /**
    * Set only when config.json exists but could not be loaded (parse or
@@ -631,7 +631,7 @@ export interface InfoResponse {
   sourceProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
   indexStats: {
     entryCount: number;
-    /** Per-asset-type breakdown of `entryCount`, keyed by asset type (e.g. "skill", "knowledge") (R-057). */
+    /** Per-asset-type breakdown of `entryCount`, keyed by asset type (e.g. "skill", "knowledge"). */
     byType: Record<string, number>;
     /**
      * Declared links (#935) per kind, with how many name a target that is not

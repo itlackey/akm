@@ -3,33 +3,29 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Chunk 1.5 (WI-1.5.1, D1.5-4) — the §2.3 "compile-time safety mitigation"
- * table for AKM's own presentation metadata. EXTENDED by chunk-2 WI-C
- * (`docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §2) to carry the per-`type`
- * renderer NAME + action builder, so this table becomes the `TYPE_PRESENTATION`
- * data table §2 mandates ("Renderer/action = data table keyed on the open
- * `type`, pointing at a named-function core module").
+ * The compile-time safety table for AKM's own presentation metadata. It
+ * carries the per-`type` renderer NAME + action builder as the
+ * `TYPE_PRESENTATION` data table: renderer/action is a data table keyed on
+ * the open `type`, pointing at a named-function core module.
  *
- * The open type token (chunk 1.5) trades the deleted closed asset-type
- * union's exhaustiveness checking for a runtime lookup. `TYPE_PRESENTATION`
- * restores that exhaustiveness for AKM's OWN known types (the compiler
- * demands an entry whenever {@link KnownType} gains a member), while
- * {@link presentationFor} stays open over `string` so foreign/adapter types
- * still resolve to a sane generic fallback instead of `undefined`/a throw.
+ * The open type token trades a closed asset-type union's exhaustiveness
+ * checking for a runtime lookup. `TYPE_PRESENTATION` restores that
+ * exhaustiveness for AKM's OWN known types (the compiler demands an entry
+ * whenever {@link KnownType} gains a member), while {@link presentationFor}
+ * stays open over `string` so foreign/adapter types still resolve to a sane
+ * generic fallback instead of `undefined`/a throw.
  *
- * ── renderer/action provenance (WI-C, §2) ──
+ * ── renderer/action provenance ──
  *
  * The `renderer` NAMES and `action` builders below are the SINGLE SOURCE OF
- * TRUTH for search-hit rendering — chunk-3 folded the old mutable renderer/
- * action registry singleton into this static table (reached via
- * {@link presentationFor}). They cover all built-in types — INCLUDING
- * the 15th type `instruction` (a read-like-knowledge markdown doc added for the
- * format-family adapters) and the 6 "static-only" mappings
- * (script/skill/command/agent/knowledge/memory) — §6 "6 renderer mappings".
+ * TRUTH for search-hit rendering (reached via {@link presentationFor}). They
+ * cover all built-in types — INCLUDING `instruction` (a read-like-knowledge
+ * markdown doc added for the format-family adapters) and the 6 "static-only"
+ * mappings (script/skill/command/agent/knowledge/memory).
  * The workflow action is the one function-valued builder; its
  * `buildWorkflowAction` body (`output/renderers.ts` — a cycle-sensitive module)
  * is reproduced inline here rather than imported, to keep this leaf import-free
- * (only `recognition-util`, D1-5's pure sink); `tests/core/adapter/
+ * (only `recognition-util`, a pure sink); `tests/core/adapter/
  * akm-presentation.test.ts` pins the renderer/action values against drift.
  */
 
@@ -39,13 +35,13 @@ export interface Presentation {
   /** Human-readable label for this asset type (e.g. "Skill", "Knowledge"). */
   label: string;
   /**
-   * Primary renderer NAME for this `type` (§2; ← `TYPE_TO_RENDERER`). Optional
+   * Primary renderer NAME for this `type`. Optional
    * so a foreign/adapter `type` resolves to the generic fallback (no renderer)
    * instead of being forced onto one AKM owns.
    */
   renderer?: string;
   /**
-   * Action-hint builder for search results (§2; ← `ACTION_BUILDERS`). Takes the
+   * Action-hint builder for search results. Takes the
    * item ref, returns the one-line "what to do with this hit" string.
    */
   action?: (ref: string) => string;
@@ -71,11 +67,10 @@ function buildWorkflowAction(ref: string): string {
  * Exhaustive over {@link KnownType} — a HAND-WRITTEN literal, not derived
  * from `KNOWN_TYPES` programmatically, so the compiler rejects this object
  * if a `KNOWN_TYPES` member is added without a corresponding entry here
- * (TypeScript's version of the `§7.3 shipped-assets lint` cross-check the
- * plan describes for later — "adding a KNOWN_TYPE forces a decision").
+ * — adding a KNOWN_TYPE forces a decision.
  *
- * `renderer`/`action` are the built-in search-hit rendering data (WI-C, §2) —
- * see the file header.
+ * `renderer`/`action` are the built-in search-hit rendering data — see the
+ * file header.
  */
 export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
   skill: {
@@ -150,7 +145,7 @@ export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
     action: (ref) => `akm show ${ref} -> read the stash fact and apply it as durable context`,
   },
   // `instruction` (CLAUDE.md / AGENTS.md) is a read-like-knowledge markdown
-  // doc (spec §6/§7 instruction row, maintainer resolution 2026-07): it REUSES
+  // doc: it REUSES
   // the `knowledge-md` renderer and mirrors knowledge's read action, so an
   // instruction hit renders exactly like knowledge instead of the generic
   // fallback (the parity guard in akm-presentation.test.ts pins this).
@@ -166,7 +161,7 @@ export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
 const DEFAULT_PRESENTATION: Presentation = { label: "Asset" };
 
 /**
- * Open-string lookup with a generic, non-`undefined` fallback (plan §2.3).
+ * Open-string lookup with a generic, non-`undefined` fallback.
  * `undefined` (no type known yet) and any foreign/adapter type both resolve
  * to {@link DEFAULT_PRESENTATION}; only AKM's own {@link KNOWN_TYPES} get a
  * type-specific presentation.

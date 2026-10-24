@@ -3,30 +3,27 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The reference `okf` adapter — akm 0.9.0 chunk-2, WI-A.
+ * The reference `okf` adapter. This is pure OKF: `type` from frontmatter,
+ * identity from path, no directory routing anywhere (`okf` reads `type` FROM
+ * FRONTMATTER, with NO directory gate).
  *
- * Implements `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §5 (the reference
- * OKF adapter) + §5.1 (BINDING: `okf` reads `type` FROM FRONTMATTER, with NO
- * directory gate) EXACTLY. This is pure OKF: `type` from frontmatter, identity
- * from path, no directory routing anywhere.
- *
- *  - recognize (§5): any `.md` NOT named `index.md`/`log.md` (case-insensitive,
+ *  - recognize: any `.md` NOT named `index.md`/`log.md` (case-insensitive,
  *    reserved) → one concept. `type` = frontmatter `type` when a non-empty
  *    string, else the `knowledge` default. conceptId = the concept's path
- *    within the component root minus `.md`. The OKF field projection (§0.1/§3):
+ *    within the component root minus `.md`. The OKF field projection:
  *    name ← title (fallback: last path segment), description ← description,
  *    tags ← tags, updated ← timestamp. The directory a file sits in NEVER
  *    affects `type`.
- *  - links (§9): BOTH OKF link forms — `/`-rooted bundle-relative and standard
+ *  - links: BOTH OKF link forms — `/`-rooted bundle-relative and standard
  *    relative — resolve deterministically into target conceptIds, stored on
  *    `IndexDocument.links`. Unresolvable / out-of-component links are dropped
  *    (tolerant).
- *  - validate (§5, LENIENT): base checks only; unknown frontmatter never fails;
+ *  - validate (LENIENT): base checks only; unknown frontmatter never fails;
  *    `missing-type` is INFO; `missing-ref` on OKF links is a non-blocking
  *    WARNING (consumers tolerate broken links). Reads go through
  *    `ctx.readFile`; ref existence via `ctx.resolveRef`. Never touches the live
  *    filesystem.
- *  - directoryList / looksLikeRoot per §5 / §1.2. Authoring is deliberately
+ *  - directoryList / looksLikeRoot. Authoring is deliberately
  *    absent; AKM-native writers fail before mutating an OKF bundle.
  */
 
@@ -47,7 +44,7 @@ import type {
 } from "../types";
 import { hashContent, nonEmptyString, RESERVED_FILES, readTags, runBaseValidateChecks } from "./shared";
 
-/** v0.2 frontmatter keys consumed into first-class fields below (§0.1) — excluded from the generic `documentJson` extras fold alongside the v0.1 five, so nothing is duplicated between a first-class field and the opaque extras bag. */
+/** v0.2 frontmatter keys consumed into first-class fields below — excluded from the generic `documentJson` extras fold alongside the v0.1 five, so nothing is duplicated between a first-class field and the opaque extras bag. */
 const CONSUMED_FRONTMATTER_KEYS = [
   "type",
   "title",
@@ -130,14 +127,13 @@ function parseLifecycleStatus(value: unknown): "draft" | "stable" | "deprecated"
   return value === "draft" || value === "stable" || value === "deprecated" ? value : undefined;
 }
 
-/** True when `name` (a bare file name) is a reserved OKF file, case-insensitively (§5, OKF §1.4). */
+/** True when `name` (a bare file name) is a reserved OKF file, case-insensitively (OKF §1.4). */
 function isReservedFileName(name: string): boolean {
   return RESERVED_FILES.has(name.toLowerCase());
 }
 
 /**
- * Resolve BOTH OKF link forms found in a concept body into target conceptIds
- * (§9, §5):
+ * Resolve BOTH OKF link forms found in a concept body into target conceptIds:
  *   - `/`-rooted bundle-relative — `[x](/tables/customers.md)` — resolved from
  *     the component root;
  *   - standard relative — `[y](./other.md)`, `[z](../a/b.md)` — resolved
@@ -146,7 +142,7 @@ function isReservedFileName(name: string): boolean {
  * component-root-relative conceptId (matching how `recognize` derives the
  * target file's own conceptId). Deterministic string/path work — no LLM, no
  * I/O. Non-`.md` targets, external schemes (`http:`…), in-page anchors, and any
- * link that escapes the component root are dropped (tolerant, §5). Order of
+ * link that escapes the component root are dropped (tolerant). Order of
  * first appearance is preserved; duplicates collapse.
  */
 export function resolveOkfLinks(body: string, fileRelPath: string): string[] {
@@ -214,16 +210,16 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   const data = parsed.data;
   const body = parsed.content;
 
-  // §5.1 BINDING: `type` from FRONTMATTER; default `knowledge` when absent.
+  // `type` from FRONTMATTER; default `knowledge` when absent.
   const type = nonEmptyString(data.type) ?? "knowledge";
-  // §0.1/§3 OKF field projection.
+  // OKF field projection.
   const lastSegment = conceptId.split("/").pop() ?? conceptId;
   const name = nonEmptyString(data.title) ?? lastSegment;
   const description = nonEmptyString(data.description);
   const tags = readTags(data.tags);
   const links = resolveOkfLinks(body, file.relPath);
 
-  // v0.2 trust/provenance/lifecycle families (§0.1, okf-support.md v0.2 note).
+  // v0.2 trust/provenance/lifecycle families (okf-support.md v0.2 note).
   // `generated.at` — v0.2's replacement for `timestamp` — takes precedence;
   // `timestamp` remains a fully valid fallback (the v0.2-permitted legacy
   // reading, not merely tolerated). Both stay fully optional (never rejects).
@@ -247,7 +243,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   const lifecycleStatus = parseLifecycleStatus(data.status);
   const staleAfter = nonEmptyString(data.stale_after);
   // `okf_version` is upstream-declared only on a bundle-root `index.md` (never
-  // indexed as a concept, §5) — read defensively from any concept anyway
+  // indexed as a concept) — read defensively from any concept anyway
   // (best-effort, conformance Rule 9); a producer that also tags ordinary
   // concepts with it is neither rejected nor silently ignored.
   const okfVersion = nonEmptyString(data.okf_version);
@@ -302,7 +298,7 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
 
     if (reserved) continue; // reserved files are not concepts — no type / link checks
 
-    // §5: `missing-type` is INFO (not an error) — never blocks.
+    // `missing-type` is INFO (not an error) — never blocks.
     if (nonEmptyString(parsed.data.type) === undefined) {
       diagnostics.push({
         file: relPath,
@@ -312,7 +308,7 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
       });
     }
 
-    // §5/§9: broken OKF links are a non-blocking WARNING — consumers tolerate them.
+    // Broken OKF links are a non-blocking WARNING — consumers tolerate them.
     for (const conceptId of resolveOkfLinks(parsed.content, relPath)) {
       const { exists } = await ctx.resolveRef(conceptId);
       if (!exists) {
@@ -341,7 +337,7 @@ export const okfAdapter: BundleAdapter = {
     return [{ path: path.join(c.root, `${canonical}.md`), conceptId: canonical }];
   },
 
-  /** OKF concepts live anywhere under the component root (§5). */
+  /** OKF concepts live anywhere under the component root. */
   directoryList(_c: BundleComponent): string[] {
     return ["."];
   },

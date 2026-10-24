@@ -31,20 +31,20 @@ function normalizeName(name: string): string {
   return path.posix.normalize(name.replace(/\\/g, "/"));
 }
 
-// ── Bundle-scoped ref grammar (0.9.0, spec §11.1 / §3.4) ─────────────────────
+// ── Bundle-scoped ref grammar ────────────────────────────────────────────────
 //
 // The identity is `[<bundle>//]<concept-id>[#<fragment>]` (path identity;
 // `type` is not part of identity). This is the only ref grammar.
 //
 //   - `bundle`   — workspace bundle slug; the OPTIONAL prefix. Short refs
-//                  (no `bundle//`) resolve to the containing bundle (§11.1).
+//                  (no `bundle//`) resolve to the containing bundle.
 //                  Charset excludes `:`/`.`/`#`/`/` and whitespace so a
 //                  `bundle//conceptId` token is lexically distinct from a URL
-//                  (whose scheme carries a `:` before `//`, §3.4) and so the
+//                  (whose scheme carries a `:` before `//`) and so the
 //                  first `//` unambiguously bounds the bundle.
 //   - `conceptId`— OKF concept id = path within the bundle − ext;
-//                  `/`-separated, NFC-normalized, byte-wise case-sensitive
-//                  (§11.1). Reuses `validateName`'s traversal/null-byte/
+//                  `/`-separated, NFC-normalized, byte-wise case-sensitive.
+//                  Reuses `validateName`'s traversal/null-byte/
 //                  drive-letter guards. `#` is reserved for the fragment.
 //   - `fragment` — the export `#fragment` selector (optional).
 
@@ -58,7 +58,7 @@ export interface BundleRef {
 }
 
 /**
- * Bundle slug charset (spec §3.4): non-empty, and excluding `:`/`.`/`#`/`/`
+ * Bundle slug charset: non-empty, and excluding `:`/`.`/`#`/`/`
  * plus whitespace. Excluding `:`/`.` is what keeps `bundle//conceptId` lexically
  * distinguishable from a URL in prose; excluding `/` is what makes the first
  * `//` an unambiguous bundle boundary; excluding `#` reserves it for fragments.
@@ -66,7 +66,7 @@ export interface BundleRef {
 const BUNDLE_SLUG_RE = /^[^\s:.#/]+$/;
 
 /**
- * True when `s` is a legal bundle slug (spec §11.1 / D-R5 charset: non-empty,
+ * True when `s` is a legal bundle slug (charset: non-empty,
  * no `:`/`.`/`#`/`/` or whitespace). Exported for input boundaries that need
  * to distinguish bundle-qualified refs from source locators.
  */
@@ -76,7 +76,7 @@ export function isBundleSlug(s: string): boolean {
 
 /**
  * Body-ref recognition (prose): the FULLY-QUALIFIED anchored form ONLY
- * (`<bundle>//<concept-id>[#<fragment>]`, spec §11.1 — the short form is never
+ * (`<bundle>//<concept-id>[#<fragment>]` — the short form is never
  * recognized in prose). `g`/`m` for scanning; group 1 = the whole ref token.
  *
  * The leading `//` must be preceded by a bundle slug, so a URL (`https://…`,
@@ -128,7 +128,7 @@ export function makeBundleRef(bundle: string | undefined, conceptId: string, fra
 /**
  * Serialize a parsed {@link BundleRef} back to its canonical
  * `[bundle//]conceptId[#fragment]` string form — the single formatter for the
- * 0.9.0 grammar (call this instead of hand-building `${bundle}//${conceptId}`).
+ * grammar (call this instead of hand-building `${bundle}//${conceptId}`).
  * `bundleRefToString(parseBundleRef(s))` round-trips for any `s` that
  * `parseBundleRef` accepts.
  */
@@ -137,10 +137,10 @@ export function bundleRefToString(ref: BundleRef): string {
 }
 
 /**
- * Parse a ref string in the 0.9.0 format `[<bundle>//]<concept-id>[#<fragment>]`.
+ * Parse a ref string in the format `[<bundle>//]<concept-id>[#<fragment>]`.
  * The bundle prefix and the export fragment are both optional; the short form
  * (no `bundle//`) leaves `bundle` undefined for the caller to resolve against
- * the containing bundle (§11.1).
+ * the containing bundle.
  */
 export function parseBundleRef(ref: string): BundleRef {
   const trimmed = ref.trim();

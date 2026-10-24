@@ -4,14 +4,14 @@
 
 /**
  * The util home for recognition/grammar constants shared across the asset,
- * indexer, and workflow layers (chunk 1, D1-4).
+ * indexer, and workflow layers.
  *
- * INVARIANT (D1-5, cycle-safety): this module MUST import NOTHING from
- * `src/` (no relative `./`/`../` imports into the tree). All four symbols
- * below are self-contained literals/pure functions today, so this file is a
+ * INVARIANT (cycle-safety): this module MUST import NOTHING from
+ * `src/` (no relative `./`/`../` imports into the tree). Everything below is
+ * a self-contained literal/pure function, so this file is a
  * pure sink — everything imports FROM it, it imports from nothing internal.
  * The import-cycle ratchet (`scripts/lint-import-cycles.ts`) is shrink-only:
- * a 29th cycle participant is a hard failure, so this file must never gain
+ * a new cycle participant is a hard failure, so this file must never gain
  * an internal import that could pull it into an existing knot. Enforced
  * mechanically by `tests/core/recognition-util.test.ts`.
  */
@@ -64,27 +64,23 @@ export function canonicalizeWorkflowName(name: string): string {
 /** Structural marker suffix for a derived (inferred) memory's canonical name. */
 export const DERIVED_SUFFIX = ".derived";
 
-// ── Known-type taxonomy (chunk 1.5, D1.5-4) ─────────────────────────────────
+// ── Known-type taxonomy ─────────────────────────────────────────────────────
 //
-// `KNOWN_TYPES` replaces the deleted `common.ts` closed asset-type union.
-// It is a HINT/exhaustiveness tuple, NOT a validation gate: unknown/foreign
-// `type` strings are still valid `IndexDocument`/`IndexDocument`/`AssetRef` DATA
-// (plan §2.3/§15.4) — this tuple only anchors compile-time completeness for
+// `KNOWN_TYPES` is a HINT/exhaustiveness tuple, NOT a validation gate:
+// unknown/foreign `type` strings are still valid `IndexDocument`/`AssetRef`
+// DATA — this tuple only anchors compile-time completeness for
 // AKM's OWN presentation/ranking tables (`Record<KnownType, X>` fails to
 // compile if a key is missing). A plain `as const` literal tuple adds no
-// import, so it lives here without breaking the D1-5 import-free invariant.
+// import, so it lives here without breaking the import-free invariant.
 
 /**
- * The AKM-owned built-in asset type keys — the deleted `common.ts` `ASSET_TYPES`
- * set (same order) minus the retired `wiki` type (chunk 4); `instruction`
- * (CLAUDE.md / AGENTS.md project-instruction files) is the newest, added for the
- * format-family adapters (spec §6/§7 instruction row, maintainer resolution
- * 2026-07). An instruction file is a read-like-knowledge markdown document, so
- * it reuses knowledge's presentation shape (label "Instruction", `knowledge-md`
+ * The AKM-owned built-in asset type keys. `instruction` (CLAUDE.md / AGENTS.md
+ * project-instruction files) is a read-like-knowledge markdown document, so it
+ * reuses knowledge's presentation shape (label "Instruction", `knowledge-md`
  * renderer, a "read the project instructions" action) rather than the generic
- * fallback. `wiki` was removed here in chunk 4 ("the wiki ASSET-TYPE dies", plan
- * §11 Chunk 4 / §7.4): the LLM Wiki structure now lives in the first-class
- * `llm-wiki` adapter whose page kinds are open (foreign) types, not AKM-owned.
+ * fallback. There is no `wiki` type: the LLM Wiki structure lives in the
+ * first-class `llm-wiki` adapter whose page kinds are open (foreign) types, not
+ * AKM-owned.
  */
 export const KNOWN_TYPES = [
   "skill",
@@ -107,19 +103,18 @@ export type KnownType = (typeof KNOWN_TYPES)[number];
 
 /**
  * Returns true when `type` is one of AKM's own known type keys
- * ({@link KNOWN_TYPES}). Unlike the deleted `isAssetType`, this is NOT a
+ * ({@link KNOWN_TYPES}). This is NOT a
  * validation gate — a `false` result does not mean `type` is invalid data,
  * only that it is not AKM-owned (a foreign/adapter type is still a valid
  * ref/entry). Used to index `Record<KnownType, X>` tables safely from an
- * open `string` and, later, for cross-surface known-type spelling checks.
+ * open `string`.
  */
 export function isKnownType(type: string): type is KnownType {
   return (KNOWN_TYPES as readonly string[]).includes(type);
 }
 
 /**
- * Type keys deliberately REMOVED from AKM (chunk 1.5, D1.5-6 — the key
- * correctness call in the open-token change). The open type token accepts
+ * Type keys deliberately REMOVED from AKM. The open type token accepts
  * any non-empty string as valid ref/entry DATA except this set: silently
  * re-admitting a retired type as an ordinary "foreign" type would defeat the
  * guard that removed it in the first place.
@@ -133,6 +128,6 @@ export function isKnownType(type: string): type is KnownType {
  *
  * Consulted by the ref parser and `metadata.ts`'s
  * `validateStashEntry` gate (and the `akm` adapter's `recognize`) so the
- * rejection lives in one place instead of three closed-union-shaped copies.
+ * rejection lives in one place.
  */
 export const DEPRECATED_REJECTED_TYPES: ReadonlySet<string> = new Set(["tool", "vault"]);

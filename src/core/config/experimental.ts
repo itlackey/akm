@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Readers for the `experimental` config section (D8).
+ * Readers for the `experimental` config section.
  *
  * These exist so no call site writes `config.experimental?.improveAutonomy ===
  * true` by hand. The distinction that matters is that **absent and `false` are

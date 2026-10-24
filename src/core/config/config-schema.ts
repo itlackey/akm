@@ -10,15 +10,13 @@
  * bundles, index, search, output, feedback, workflow, setup, plus shared
  * `primitives`). This file assembles them into the top-level {@link AkmConfigShape}
  * / {@link AkmConfigSchema}, owns the cross-field {@link AkmConfigSchema.superRefine},
- * and RE-EXPORTS every section schema so all existing `./config-schema` imports
- * keep working unchanged. The decomposition is a pure structural refactor — the
- * generated `schemas/akm-config.json` is byte-identical.
+ * and RE-EXPORTS every section schema so `./config-schema` stays the one
+ * import path.
  *
  * Two responsibilities:
  * 1. **Validate + transform** the raw JSON-parsed config object into the runtime
- *    `AkmConfig` shape consumed by the rest of the codebase. Replaces the
- *    ~1.4k LOC of legacy per-shape parsers (parseLlmConfig, parseEmbeddingConfig,
- *    parseIndexConfig, etc.) — see `loadConfig` in `./config.ts`.
+ *    `AkmConfig` shape consumed by the rest of the codebase. See `loadConfig`
+ *    in `./config.ts`.
  * 2. **Reject hard-errored values** (openviking source type, legacy
  *    `stashes[]` key) at load time via `superRefine`.
  *
@@ -107,9 +105,9 @@ export const DefaultsSchema = z
  * truth for {@link listTopLevelConfigKeys}. {@link AkmConfigSchema} wraps this
  * with cross-field refinements (`.superRefine()`).
  *
- * All fields validate loudly — typos and shape errors throw at load time. The
- * the removed parser's warn-and-drop tolerance was a source of silent
- * configuration loss. There is no pre-schema compatibility transform.
+ * All fields validate loudly — typos and shape errors throw at load time;
+ * warn-and-drop tolerance is a source of silent configuration loss. There is
+ * no pre-schema compatibility transform.
  */
 export const AkmConfigShape = {
   configVersion: z.literal(CURRENT_CONFIG_VERSION),
@@ -152,7 +150,7 @@ export const AkmConfigShape = {
   // `resolveExtendsChain`; bundle-provided config never activates code.
   scheduler: SchedulerConfigSchema.optional(),
   setup: SetupConfigSchema.optional(),
-  // D8 — explicit opt-ins for behaviour outside the stability contract. Every
+  // Explicit opt-ins for behaviour outside the stability contract. Every
   // key defaults to OFF; see `src/core/config/experimental.ts` for the readers.
   experimental: ExperimentalConfigSchema.optional(),
 } as const;
@@ -324,10 +322,10 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       modelWorkEngine(processConfig.qualityGate?.engine, [...processPath, "qualityGate", "engine"]);
     }
   }
-  // #464.a: defaultWriteTarget must name a configured source. 0.9.0 (spec
-  // §10.1): sources are `bundles` keys, so it must name a bundle. With no
+  // #464.a: defaultWriteTarget must name a configured source. Sources are
+  // `bundles` keys, so it must name a bundle. With no
   // bundles configured, error out instead of silently accepting (no implicit
-  // "first writable" fallback — see locked decision 3).
+  // "first writable" fallback).
   if (config.defaultWriteTarget !== undefined) {
     const knownNames = Object.keys(config.bundles ?? {});
     if (knownNames.length === 0) {

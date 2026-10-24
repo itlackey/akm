@@ -3,14 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The first-class `llm-wiki` adapter — akm 0.9.0 chunk-4 (DEV-7 restore).
+ * The first-class `llm-wiki` adapter.
  *
- * The `wiki` ASSET-TYPE dies in chunk 4 (plan §11 Chunk 4 / §7.4), but the LLM
- * Wiki structure stays first-class as its OWN adapter. This relocates the
- * native wiki semantics from the retired `src/wiki/` module into a
- * `BundleAdapter` implementing `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §7
- * (llm-wiki row), §6 (wiki-page row), §0.2 (the `wiki` asset-type is retired;
- * the adapter is first-class), §1.2 (probe = schema.md + pages/), §9 (links).
+ * There is no `wiki` asset type; the LLM Wiki structure is first-class as its
+ * OWN adapter, a `BundleAdapter` implementing the native wiki semantics
+ * (probe = schema.md + pages/).
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/llm-wiki/` + goldens
@@ -18,12 +15,12 @@
  * The adapter is built to MATCH those goldens (driven by
  * `tests/core/adapter/llm-wiki-adapter.test.ts`).
  *
- * ── Structure (spec §7, wiki.ts canonical-content contract) ──
+ * ── Structure ──
  *
  *   - `schema.md` / `index.md` / `log.md` at the wiki ROOT are RESERVED
  *     (recognized, never indexed as concepts) — analogous to OKF's index.md/log.md.
  *   - `raw/<slug>.md` are immutable ingested sources → the adapter's own `type`
- *     = `wiki-source` (RESOLVED, reading A: recognition golden). First-class
+ *     = `wiki-source` (recognition golden). First-class
  *     addressable + searchable; lint tracks whether each is cited.
  *   - `pages/**.md` are agent-authored pages → open `type` = frontmatter
  *     `pageKind` (concept/entity/note/<custom>). None of concept/entity/note/
@@ -32,43 +29,40 @@
  *   - Anything else (root README, stray root `.md`, other dirs) is NOT a wiki
  *     asset (`recognize` abstains) — pages live under `pages/`.
  *
- * ── Links / citations (spec §9) ──
+ * ── Links / citations ──
  *
  * A page's `IndexDocument.links` = its resolved `xrefs:` frontmatter (the
  * `wiki:<name>/<conceptId>` form, stripped to the target conceptId) PLUS its
  * body bundle-relative markdown links, deduped, first-appearance order. Its
  * `sources:` frontmatter resolves to the cited raw conceptIds (citation edges),
- * carried on `documentJson` (adapter extras — plan §4.3) and consumed by the
+ * carried on `documentJson` (adapter extras) and consumed by the
  * uncited-raw lint check.
  *
- * ── validate (spec §6/§7, §9) — native wiki checks ONLY ──
+ * ── validate — native wiki checks ONLY ──
  *
- * The native structural checks ported from the retired `src/wiki/` module's
- * `lintWiki`: `broken-xref`
+ * The native structural checks: `broken-xref`
  * (an xref target that does not resolve to an existing page), `uncited-raw`
  * (a `raw/` source not cited by any page's `sources:`), `missing-description`
  * (a page with no description), and `broken-source` (a page `sources:` entry
- * with no matching raw file). Broken xrefs are TOLERATED (warning, non-blocking,
- * spec §9). The shared `runBaseValidateChecks` (unquoted-colon / missing-updated
+ * with no matching raw file). Broken xrefs are TOLERATED (warning, non-blocking).
+ * The shared `runBaseValidateChecks` (unquoted-colon / missing-updated
  * / stale-path / missing-ref) is NOT run: wiki files never carry an `updated`
  * field, so `missing-updated` would fire on every page/reserved file and
  * contradict the lint golden's clean result — the native checks are the wiki's
  * complete validation surface. The `orphan` issue CODE is APPROVED but the
- * recorded chunk-4 behavior (lint golden edgeCases) is to emit `broken-xref`
+ * recorded behavior (lint golden edgeCases) is to emit `broken-xref`
  * only (the actionable finding) and surface `orphan` after the xref is fixed —
  * so no `orphan` finding is emitted here.
  *
  * ── Cycle-safety ──
  *
- * Imported by the `adapters/index.ts` barrel, which is NOT test-only: `core/
- * adapter/registry.ts:33` imports it in production for the frozen
- * `BUILTIN_ADAPTERS` list (`installations.ts#detectAdapterId`,
- * `provider-utils.ts#detectStashRoot`). This still can never gain an inbound
- * edge from a cycle participant, since neither the barrel nor the registry
- * import anything that imports back into this file. It value-imports only
- * pure leaves (`frontmatter`, `shared`) plus Node builtins + `yaml` (already a
- * runtime dep). Verified: `bun scripts/lint-import-cycles.ts` reports 0 cycle
- * participants with this file present.
+ * Imported by the `adapters/index.ts` barrel, which `core/adapter/registry.ts`
+ * imports in production for the frozen `BUILTIN_ADAPTERS` list
+ * (`installations.ts#detectAdapterId`, `provider-utils.ts#detectStashRoot`).
+ * This can never gain an inbound edge from a cycle participant, since neither
+ * the barrel nor the registry import anything that imports back into this
+ * file. It value-imports only pure leaves (`frontmatter`, `shared`) plus Node
+ * builtins + `yaml` (already a runtime dep).
  */
 
 import fs from "node:fs";
@@ -91,7 +85,7 @@ const WIKI_SOURCE_TYPE = "wiki-source";
 /** Default open `type` for a `pages/` file whose frontmatter carries no `pageKind`. */
 const DEFAULT_PAGE_KIND = "note";
 
-/** Reserved wiki files (case-insensitive) at the wiki ROOT — recognized, never indexed as concepts (spec §7). */
+/** Reserved wiki files (case-insensitive) at the wiki ROOT — recognized, never indexed as concepts. */
 const RESERVED_ROOT_FILES = new Set(["schema.md", "index.md", "log.md"]);
 
 /** Content subdirectory holding immutable ingested sources. */
@@ -99,7 +93,6 @@ const RAW_SUBDIR = "raw";
 /** Content subdirectory holding agent-authored pages. */
 const PAGES_SUBDIR = "pages";
 
-/** POSIX-normalize separators. */
 /** conceptId = component-root-relative path minus `.md`. */
 function conceptIdOf(relPath: string): string {
   return toPosix(relPath).replace(/\.md$/i, "");
@@ -117,7 +110,7 @@ interface WikiPageFrontmatter {
 /**
  * Parse a wiki page's frontmatter with a real YAML parser so list-valued keys
  * (`xrefs:`, `sources:`) round-trip (the project's hand-rolled `parseFrontmatter`
- * deliberately drops YAML lists — see `wiki.ts#parsePageFrontmatterYaml`).
+ * deliberately drops YAML lists).
  * Tolerant: malformed YAML / no frontmatter yields empty fields.
  */
 function parseWikiFrontmatter(raw: string): WikiPageFrontmatter {
@@ -173,7 +166,7 @@ function firstSegment(relPath: string): string {
  * Resolve one xref token (`wiki:<bundleId>/<conceptId>`) to a same-wiki target
  * conceptId, or `null` when it points at another wiki / is not a wiki xref.
  * `bundleId` is the bundle id (`c.id`); cross-wiki xrefs are left alone
- * (wiki.ts#lintWiki: "a cross-wiki link is a feature, not a defect").
+ * (a cross-wiki link is a feature, not a defect).
  */
 function resolveXref(xref: string, bundleId: string): string | null {
   const prefix = `wiki:${bundleId}/`;
@@ -187,7 +180,7 @@ function resolveXref(xref: string, bundleId: string): string | null {
  * conceptIds. `/`-rooted links resolve from the component root; standard relative
  * links resolve against the linking page's own directory. External schemes,
  * anchors, non-`.md` targets, and links escaping the component root are dropped
- * (tolerant, §9). First-appearance order; duplicates collapse.
+ * (tolerant). First-appearance order; duplicates collapse.
  */
 function resolveBodyLinks(body: string, fileRelPath: string): string[] {
   const dir = path.posix.dirname(toPosix(fileRelPath));
@@ -225,7 +218,7 @@ function resolveBodyLinks(body: string, fileRelPath: string): string[] {
   return out;
 }
 
-/** Resolve a page's `xrefs` + body links into deduped target conceptIds (links = relationships, §9). */
+/** Resolve a page's `xrefs` + body links into deduped target conceptIds (links = relationships). */
 function resolvePageLinks(fm: WikiPageFrontmatter, body: string, fileRelPath: string, bundleId: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -298,7 +291,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
     const links = resolvePageLinks(fm, body, relPath, c.id);
     if (links.length > 0) doc.links = links;
     const sources = resolveSources(fm);
-    // wiki page extras (adapter-owned; plan §4.3 — wikiRole/pageKind + citations).
+    // wiki page extras (adapter-owned — wikiRole/pageKind + citations).
     const extras: Record<string, unknown> = { pageKind: fm.pageKind ?? DEFAULT_PAGE_KIND, sources };
     if (fm.wikiRole !== undefined) extras.wikiRole = fm.wikiRole;
     doc.documentJson = extras;
@@ -430,7 +423,7 @@ export const llmWikiAdapter: BundleAdapter = {
     return ["."];
   },
 
-  /** Install-time probe (§1.2): a root is an LLM Wiki when it has a root `schema.md` AND a `pages/` directory. */
+  /** Install-time probe: a root is an LLM Wiki when it has a root `schema.md` AND a `pages/` directory. */
   looksLikeRoot(root: string): boolean {
     try {
       if (!fs.existsSync(path.join(root, "schema.md"))) return false;

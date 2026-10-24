@@ -12,10 +12,9 @@
  * Writers maintain the index (`indexWrittenAssets` for `remember`/extract
  * session assets; the mutation commands run `akmIndex()` themselves), and the
  * improve cron / explicit `akm index` do full refreshes. Reads serve whatever
- * populated index exists. The previous design — a staleness walk plus a
- * detached background reindex per read — made every read on an actively
- * written stash spawn a writer that the read's own telemetry then queued
- * behind (the 2026-07 read-path reindex-contention findings).
+ * populated index exists. Reads never run a staleness walk or a detached
+ * background reindex: on an actively written stash that would make every read
+ * spawn a writer that the read's own telemetry then queues behind.
  *
  * `mode: "blocking"` (improve) still checks staleness and rebuilds inline,
  * because its planning logic needs a current `entries` table in-process.
@@ -44,7 +43,7 @@ export interface EnsureIndexOptions {
   mode?: "background" | "blocking";
   signal?: AbortSignal;
   /**
-   * R6: called with the inline reindex's timing when `ensureIndex` actually
+   * Called with the inline reindex's timing when `ensureIndex` actually
    * runs one, so a blocking caller (improve) can surface the implicit
    * reindex's cost instead of it being silently discarded. Never called when
    * no rebuild was needed.
@@ -97,8 +96,8 @@ function getIndexableFiles(root: string, spec: AssetSpec): string[] {
  *      millisecond-truncated), so the mtime test alone silently misses
  *      additions made within ~a millisecond of the previous build.
  *
- * A file whose mtime is newer than `builtAt` is NOT automatically stale
- * (R6): `indexWrittenAssets` upserts a fresh `content_hash` without bumping
+ * A file whose mtime is newer than `builtAt` is NOT automatically stale:
+ * `indexWrittenAssets` upserts a fresh `content_hash` without bumping
  * `builtAt`, so a file `ensureIndex` itself just incrementally re-indexed
  * (for example a proposal triage just promoted into `knowledge/`) would
  * otherwise keep tripping this check on every subsequent call, forcing the
@@ -225,7 +224,7 @@ function indexCanServeStash(stashDir: string, options: { requireFresh?: boolean 
  * the caller rather than silently proceeding with a stale/missing index.
  */
 export async function ensureIndex(stashDir: string, options: EnsureIndexOptions = {}): Promise<boolean> {
-  // §11.5: warn (once) if the configured bundle ids drifted from the persisted
+  // Warn (once) if the configured bundle ids drifted from the persisted
   // index prefixes (hand-renamed bundle key) BEFORE any rebuild could re-mint.
   warnOnBundleRenameDrift();
   const blocking = options.mode === "blocking";
@@ -240,14 +239,13 @@ export async function ensureIndex(stashDir: string, options: EnsureIndexOptions 
     // Blocking callers (improve's planning preflight) are a sanctioned
     // materialization point and hydrate cache-backed sources as usual. The
     // background READ path (`show` auto-index) must never clone/pull/fetch at
-    // query time (spec §14.3 / D11): it builds from already-materialized
+    // query time: it builds from already-materialized
     // content, and absent source caches are skipped with a warning.
     ...(blocking ? {} : { hydrateSources: false }),
   });
-  // R6: the implicit reindex's cost was previously discarded entirely
-  // (`await akmIndex(...)` and nothing else), making a 27-minute blocking
-  // rebuild invisible to both the operator and the improve result. Fall back
-  // to a wall-clock measurement when the response carries no `timing` block.
+  // Report the implicit reindex's cost so a blocking caller can surface it.
+  // Fall back to a wall-clock measurement when the response carries no
+  // `timing` block.
   const durationMs = response.timing?.totalMs ?? Date.now() - startedMs;
   const timing = response.timing;
   warnVerbose(

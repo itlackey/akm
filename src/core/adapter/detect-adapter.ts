@@ -31,7 +31,7 @@ const SHADOWABLE_ADAPTER_IDS = new Set(["agent-skills", "claude", "opencode"]);
 /**
  * True when `root` — already claimed by `winnerId` (one of
  * {@link SHADOWABLE_ADAPTER_IDS}) — ALSO carries a top-level directory the
- * `akm` adapter's own probe recognizes as its workspace shape (spec §1.2) and
+ * `akm` adapter's own probe recognizes as its workspace shape and
  * that `winnerId` does not own (its `directoryList()`, or — for `agent-skills`,
  * which owns no fixed directory names — a root-level `<name>/SKILL.md`
  * package) but which holds at least one real file. Cheap by design: only

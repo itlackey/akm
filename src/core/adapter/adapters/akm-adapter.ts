@@ -3,39 +3,28 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The AKM workspace's own `akm` adapter — akm 0.9.0 chunk-2, WI-B.
- *
- * Implements `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §5.1 (BINDING) +
- * §6 + §7 (the `akm` row) EXACTLY: a BEHAVIOR-PRESERVING PORT that reproduces
- * TODAY'S classification and placement VERBATIM by REUSING the existing matcher
- * stack. It is NOT re-derived onto frontmatter `type` (that is the sibling
- * `okf` adapter's job, §5), NOT split per-`type` (the 14 AKM formats are `type`
- * VALUES the single `akm` adapter emits, §6/§0.2), and introduces NO new
+ * The AKM workspace's own `akm` adapter. Classification and placement reuse
+ * the existing matcher stack. It is NOT re-derived onto frontmatter `type`
+ * (that is the sibling `okf` adapter's job), NOT split per-`type` (the 14 AKM
+ * formats are `type` VALUES the single `akm` adapter emits), and introduces NO
  * positional/directory heuristics of its own.
  *
- * ── recognize (§5.1): the sync `runMatchers` reproduction ──
+ * ── recognize: the synchronous matcher arbitration ──
  *
- * `file-context.ts#runMatchers` (`:242-265`) is async ONLY because of its lazy
- * `ensureBuiltinsRegistered()` dynamic import; its ARBITRATION is pure and
- * synchronous. We reproduce it here by importing the SAME four builtin matcher
- * functions (`matchers.ts` `extensionMatcher` / `directoryMatcher` /
- * `parentDirHintMatcher` / `smartMdMatcher`) in the
- * SAME order they are registered, collecting every non-null
- * `MatchResult` and picking the winner by **specificity descending, ties broken
- * by later-registered (higher index) winning** — byte-identical to
- * `runMatchers`'s `b.specificity - a.specificity` then `b.index - a.index`.
- * Because the matcher functions (which resolve renderer names via the static
- * `TYPE_PRESENTATION` table in `type-presentation.ts`, all built-in types
- * present at load) are the exact ones `runMatchers` uses, {@link recognizeMatch}
- * agrees with the async `runMatchers` on `type` / `specificity` / `renderer` for
- * every input. This is "use the existing matchers" literally — same functions,
- * same arbitration.
+ * Classification is {@link recognizeMatch}, which runs the four builtin
+ * matcher functions (`matchers.ts` `extensionMatcher` / `directoryMatcher` /
+ * `parentDirHintMatcher` / `smartMdMatcher`) in registration order, collects
+ * every non-null `MatchResult` and picks the winner by **specificity
+ * descending, ties broken by later-registered (higher index) winning**.
+ * The matcher functions resolve renderer names via the static
+ * `TYPE_PRESENTATION` table in `type-presentation.ts` (all built-in types
+ * present at load).
  *
  * The winning `MatchResult.renderer` is carried on `documentJson.renderer` so
- * WI-C can wire presentation via `TYPE_PRESENTATION` without a new
- * `IndexDocument` field (WI-C owns presentation).
+ * presentation can be wired via `TYPE_PRESENTATION` without a new
+ * `IndexDocument` field.
  *
- * ── conceptId (§5.1 + ref-grammar decision D-R2): the QUALIFIED spelling ──
+ * ── conceptId: the QUALIFIED spelling ──
  *
  * conceptId = `<stash-subdir>/<canonical-name>` — the placement stash-subdir
  * (`stashDirFor(type)`) followed by the winning type's canonical name
@@ -43,42 +32,40 @@
  * extension, Markdown strips `.md`, workflow strips its peer `.md`/`.yml`
  * extension, env/task strip their ext, and secret/session keep the natural
  * path). For Markdown types this IS the OKF concept ID (path − `.md`); it is
- * the same spelling {@link placeNew} consumes, so
- * recognize/place share one identity (D-R2 resolved the earlier split). The
- * `type` is carried separately on `IndexDocument.type`, per §0.2 (type ≠
- * identity), and `entry.name` keeps the BARE canonical name for FTS parity.
+ * the same spelling {@link placeNew} consumes, so recognize/place share one
+ * identity. The `type` is carried separately on `IndexDocument.type`
+ * (type ≠ identity), and `entry.name` keeps the BARE canonical name for FTS.
  *
  * ── placeNew / directoryList / looksLikeRoot: type-driven placement ──
  *
  * Placement is type-driven (`path-resolver.ts#buildDiskCandidates`: the primary
  * candidate is `assetPathForName(ref.type, join(root, stashDirFor(ref.type)),
- * ref.name)`). §5.1 removes `type` from the ref, so {@link placeNew} recovers
- * it from the conceptId's LEADING path segment — the qualified `<stash-subdir>/
- * <name>` form of §1.3 — reverse-mapping that segment against the placement
- * stash-subdir map and then delegating to `assetPathForName`. See the method
- * doc for the recognize/place conceptId-spelling note.
+ * ref.name)`). The ref carries no `type`, so {@link placeNew} recovers it from
+ * the conceptId's LEADING path segment — the qualified `<stash-subdir>/<name>`
+ * form — reverse-mapping that segment against the placement stash-subdir map
+ * and then delegating to `assetPathForName`. See the method doc for the
+ * recognize/place conceptId-spelling note.
  *
- * ── validate: base checks only (WI-B) ──
+ * ── validate ──
  *
- * Base validate checks only for this WI (shared `validateChangesWithBaseChecks`
- * — the ported unquoted-colon / missing-updated / stale-path / missing-ref).
- * The per-type linters (SkillLinter/WorkflowLinter/TaskLinter/…) are WI-C.
+ * Shared base checks (`validateChangesWithBaseChecks` — the unquoted-colon /
+ * missing-updated / stale-path / missing-ref checks) plus the winning type's
+ * per-type linters (SkillLinter/WorkflowLinter/TaskLinter/…).
  *
- * ── Cycle-safety (chunk-3 cutover, baseline 18) ──
+ * ── Cycle-safety ──
  *
- * This module VALUE-imports `matchers.ts` (indexer/walk) for classification and
+ * This module VALUE-imports `recognize-match.ts` (which wraps `matchers.ts` in
+ * indexer/walk) for classification and
  * `asset-placement.ts` (core/asset) for placement — delegating to the existing
  * logic, not re-implementing it. Neither is a taxonomy import-cycle (SCC)
  * participant: `matchers.ts` resolves renderers via `type-presentation.ts`, and
  * `asset-placement.ts` is a pure leaf (only Node builtins + `recognition-util`).
  * Nothing in `src/` imports this adapter back except the `adapters/index.ts`
- * barrel — which is NOT test-only: `core/adapter/registry.ts:33` imports it
- * in production for the frozen `BUILTIN_ADAPTERS` list
- * (`installations.ts#detectAdapterId`, `provider-utils.ts#detectStashRoot`).
- * The adapter is still itself a leaf, since neither the barrel nor the
- * registry import anything that imports back into this file — verified: `bun
- * scripts/lint-import-cycles.ts` reports 0 cycle participants and this module
- * is NOT one.
+ * barrel, which `core/adapter/registry.ts` imports in production for the
+ * frozen `BUILTIN_ADAPTERS` list (`installations.ts#detectAdapterId`,
+ * `provider-utils.ts#detectStashRoot`). The adapter is still itself a leaf,
+ * since neither the barrel nor the registry import anything that imports back
+ * into this file.
  */
 
 import fs from "node:fs";
@@ -111,33 +98,30 @@ import { perTypeValidateChecks, skillDirectoryDiagnostics, workflowYamlSourceDia
 import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
 import { hashContent, type ParsedForValidate, RESERVED_FILES, runBaseValidateChecks } from "./shared";
 
-// `recognizeMatch` + the builtin matcher list moved to the cycle-free leaf
-// `../recognize-match` (Chunk 5 M-b) so both this adapter AND the indexer
-// metadata pass import it without closing a metadata ↔ adapter cycle. Re-exported
-// here so existing `akm-adapter` importers (tests, sibling modules) are
-// unaffected.
+// `recognizeMatch` + the builtin matcher list live in the cycle-free leaf
+// `../recognize-match` so both this adapter AND the indexer metadata pass can
+// import it without closing a metadata ↔ adapter cycle. Re-exported here for
+// `akm-adapter` importers.
 export { recognizeMatch } from "../recognize-match";
 
 /**
- * OKF reserved structural files (ref-grammar decision D-R6, spec §5.1 /
- * adapter-spec §5.1/§6): `index.md` (directory listing) and `log.md` (update
- * history) are bundle structure at EVERY depth — never a concept document. The
- * `okf` / `llm-wiki` adapters already exclude them (`shared.ts`'s
- * `RESERVED_FILES`); this brings the `akm` adapter into conformance so a
- * `knowledge/index.md` never classifies as a `knowledge` item. Case-insensitive,
- * matched on the bare filename so the exclusion holds at any depth.
+ * OKF reserved structural files: `index.md` (directory listing) and `log.md`
+ * (update history) are bundle structure at EVERY depth — never a concept
+ * document. The `okf` / `llm-wiki` adapters also exclude them (`shared.ts`'s
+ * `RESERVED_FILES`), so a `knowledge/index.md` never classifies as a
+ * `knowledge` item. Case-insensitive, matched on the bare filename so the
+ * exclusion holds at any depth.
  */
-/** True when `name` (a bare file name) is an OKF reserved file, case-insensitively (D-R6). */
+/** True when `name` (a bare file name) is an OKF reserved file, case-insensitively. */
 function isReservedFileName(name: string): boolean {
   return RESERVED_FILES.has(name.toLowerCase());
 }
 
-/** Wiki-directory infrastructure files excluded at a `wikis/<name>/` root (ported from the retired `shouldIndexStashFile`). */
+/** Wiki-directory infrastructure files excluded at a `wikis/<name>/` root. */
 const WIKI_INFRA_FILES = new Set(["schema.md", "index.md", "log.md"]);
 
 /**
- * AKM-stash indexing policy, moved here from the indexer's `shouldIndexStashFile`
- * pre-filter (owner ruling 2026-07-21 — adapter-owned filtering). Each adapter
+ * AKM-stash indexing policy. Each adapter
  * abstains on its own bundle's files; the core walk keeps only universal hygiene.
  *
  * PATH/STAT-based ONLY — never reads `file.content()`, so the bytes-never-read
@@ -191,11 +175,11 @@ function stashDirToType(stashDir: string): string | undefined {
 
 /**
  * The search-surface `IndexDocument` fields that have NO first-class `IndexDocument`
- * home (spec §3) and therefore ride `documentJson` so the persist-time fold
- * (`search-fields.ts:28-33`) can still reach them — the exact set
+ * home and therefore ride `documentJson` so the persist-time fold
+ * (`search-fields.ts`) can still reach them — the exact set
  * `buildSearchFields` folds into the `hints`/`content` FTS columns beyond the
- * first-class name/description/tags/aliases/searchHints, plus the provenance the
- * WI-C tests read (renderer/source). Kept as a named list so the fold surface and
+ * first-class name/description/tags/aliases/searchHints, plus the provenance
+ * (renderer/source). Kept as a named list so the fold surface and
  * the mapping stay in lockstep.
  */
 const DOCUMENT_JSON_CARRIED_FIELDS = [
@@ -219,7 +203,7 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
   "evidenceSources",
   // #935: a workflow's step targets and a task's target, read as declared links.
   "uses",
-  // D2 (#730): the OKF v0.2 provenance `promoteProposal` stamps onto AKM-native
+  // #730: the OKF v0.2 provenance `promoteProposal` stamps onto AKM-native
   // writes (generated/verified/sources, namespaced — see `types.ts`'s
   // `OkfProvenance` doc). Carried so the akm adapter rereads what it wrote and
   // `akm show` surfaces it, exactly like every other field in this list.
@@ -228,11 +212,11 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
 
 /**
  * Map the fully-assembled `IndexDocument` (produced by the shared metadata
- * pipeline) onto an `IndexDocument` (spec §3). First-class ranking/embedding
+ * pipeline) onto an `IndexDocument`. First-class ranking/embedding
  * fields land on named IndexDocument fields; every other search-surface or
  * signal field rides `documentJson` (opaque adapter extras) so nothing the
- * ranking/embedding/filter inputs read is lost — the M-b shadow-parity gate.
- * The winning renderer name is carried on `documentJson.renderer` (WI-C contract).
+ * ranking/embedding/filter inputs read is lost.
+ * The winning renderer name is carried on `documentJson.renderer`.
  */
 function indexDocumentFromEntry(
   entry: IndexDocument,
@@ -279,24 +263,23 @@ function conceptIdForRecognizedType(root: string, filePath: string, type: string
 }
 
 function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
-  // D-R6 (spec §5.1): `index.md` / `log.md` are OKF reserved structural files at
+  // `index.md` / `log.md` are OKF reserved structural files at
   // every depth — never items. Excluded BEFORE classification so a directory
   // listing or update log never becomes a `knowledge` (or other) concept.
   if (isReservedFileName(file.fileName)) return null;
-  // Adapter-owned filtering (owner ruling 2026-07-21): AKM-stash policy that used
-  // to live in the indexer's `shouldIndexStashFile` pre-filter. Path/stat-based —
+  // Adapter-owned filtering: AKM-stash policy. Path/stat-based —
   // `file.content()` is never read to reach this abstention.
   if (akmStashAbstains(c.root, file.absPath)) return null;
   const match = recognizeMatch(file);
   if (match === null) return null;
-  // Canonical name = the winning type's per-type canonical name (§5.1).
+  // Canonical name = the winning type's per-type canonical name.
   // Invalid placements are not projected onto a different identity.
   const conceptId = conceptIdForRecognizedType(c.root, file.absPath, match.type);
   if (conceptId === undefined) return null;
   const stashDir = stashDirFor(match.type);
   const canonicalName = stashDir !== undefined ? conceptId.slice(stashDir.length + 1) : conceptId;
-  // conceptId = the QUALIFIED `<stash-subdir>/<canonical-name>` spelling
-  // (ref-grammar decision D-R2): the same form `placeNew` consumes; Markdown
+  // conceptId = the QUALIFIED `<stash-subdir>/<canonical-name>` spelling: the
+  // same form `placeNew` consumes; Markdown
   // types use the OKF concept ID (path − .md), while workflows strip either
   // peer source extension. Both branches feed a
   // BARE canonicalName (the abstain fallback is the basename, above), so the
@@ -306,16 +289,14 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   // identity ≠ search text.
   const dirPath = path.dirname(file.absPath);
 
-  // Chunk 5 M-b: recognize now carries the FULL index-time metadata surface
-  // (spec §2/§3), reproducing `buildEntryFromFile`'s flat-walk metadata
-  // output by SHARING its P1/P2/P4 assembly and substituting the synchronous
+  // recognize carries the FULL index-time metadata surface by SHARING the
+  // P1/P2/P4 assembly (`applyPreContributorFields` /
+  // `applyPostContributorFields`) and substituting the synchronous
   // `foldRecognizedMetadata` (+ `applyFoldedMetadata`, which replicates the
   // in-place contributor precedence) for the async P3 renderer contributors.
-  // `entry.name` = the BARE canonical name (conceptId minus the D-R2 stash-subdir
-  // prefix) so the FTS `name` column
-  // matches the pre-0.9.0 indexer (search-behavior parity), NOT the frontmatter
-  // title. Parity is by construction — the two paths differ only in the P3 step,
-  // pinned equal by the akm-adapter fold-parity test.
+  // `entry.name` = the BARE canonical name (conceptId minus the stash-subdir
+  // prefix), NOT the frontmatter title, so the FTS `name` column holds the
+  // canonical name.
   const entry: IndexDocument = {
     name: canonicalName,
     type: match.type,
@@ -372,8 +353,8 @@ function renderExecutionSource(c: BundleComponent, file: FileContext): AdapterRe
 /**
  * A read-only {@link FileContext} backed by an OVERLAY string (a pending
  * change's content) instead of the live filesystem — the `validate` contract
- * ({@link BundleAdapter.validate} doc comment / adapter-spec §12.1) forbids
- * reading the live FS. It mirrors `buildFileContext`'s eager path-field
+ * ({@link BundleAdapter.validate} doc comment) forbids reading the live FS. It
+ * mirrors `buildFileContext`'s eager path-field
  * derivation exactly (so the matchers classify identically) and serves the
  * overlay bytes from `content()`/`frontmatter()`. `stat()` throws: no matcher
  * calls it, and there is no snapshot mtime to serve.
@@ -416,9 +397,8 @@ function buildOverlayContext(root: string, relPathInput: string, raw: string): F
 }
 
 /**
- * `validate` (spec §6) = shared base checks + the winning `type`'s per-type
- * extra checks, reproducing today's `akmLint`/`getLinterForType` dispatch
- * byte-for-byte (the FROZEN `lint/all-types.json` `perType` golden is the gate).
+ * `validate` = shared base checks + the winning `type`'s per-type extra
+ * checks (the `akmLint`/`getLinterForType` dispatch).
  *
  * Per change (non-delete, readable): the `type` is recovered by running the
  * SAME sync matcher arbitration ({@link recognizeMatch}) over an OVERLAY
@@ -486,7 +466,7 @@ export const akmAdapter: BundleAdapter = {
   // those rows (#1063). 0.9.1: a skill's resource is never retyped by a `$1`.
   // 0.9.2: a skill's resource is never retyped by a `$ARGUMENTS` (#1084).
   version: "0.9.2",
-  // Recognized-extension HINT, derived from what the matchers accept (§6):
+  // Recognized-extension HINT, derived from what the matchers accept:
   // `.md` (Markdown types + workflow peer), `.yml` (task and workflow YAML),
   // `.yaml` (task near-miss diagnostics), `.env` (env files), and the 16
   // SCRIPT_EXTENSIONS. This is a
@@ -548,12 +528,12 @@ export const akmAdapter: BundleAdapter = {
   },
 
   /**
-   * Type-driven placement (§5.1), reproducing `path-resolver.ts#buildDiskCandidates`:
-   * the primary candidate is
-   * `assetPathForName(type, join(root, stashDirFor(type)), name)`.
+   * Type-driven placement: the primary candidate is
+   * `assetPathForName(type, join(root, stashDirFor(type)), name)`
+   * (the same primary candidate as `path-resolver.ts#buildDiskCandidates`).
    *
-   * §5.1 removes `type` from the ref, so the winning type is recovered from the
-   * conceptId's LEADING path segment — the §1.3 qualified `<stash-subdir>/<name>`
+   * The ref carries no `type`, so the winning type is recovered from the
+   * conceptId's LEADING path segment — the qualified `<stash-subdir>/<name>`
    * form (e.g. `knowledge/http-caching`, `workflows/release`, `skills/<dir>`).
    * The leading segment is reverse-mapped against the placement stash-subdir map;
    * the remainder is the per-type name handed to `assetPathForName`. An
@@ -561,9 +541,8 @@ export const akmAdapter: BundleAdapter = {
    * direct `<root>/<conceptId>.md` — the same `${name}.md` fallback
    * `buildDiskCandidates` carries (`preserveDirectNameFallback`).
    *
-   * `recognize()` emits the SAME qualified spelling (ref-grammar decision
-   * D-R2), so recognize/place share one canonical identity — the earlier
-   * bare-vs-qualified split is resolved.
+   * `recognize()` emits the SAME qualified spelling, so recognize/place share
+   * one canonical identity.
    */
   placeNew(c: BundleComponent, conceptId: string): string {
     const posix = conceptId.replace(/\\/g, "/");
@@ -580,19 +559,18 @@ export const akmAdapter: BundleAdapter = {
     return path.join(c.root, `${posix}.md`);
   },
 
-  /** The AKM workspace's owned stash subdirs (§7): the placement stash-subdir names, feeding git exact-path staging. */
+  /** The AKM workspace's owned stash subdirs: the placement stash-subdir names, feeding git exact-path staging. */
   directoryList(_c: BundleComponent): string[] {
     return [...new Set(stashDirNames())];
   },
 
   /**
-   * Install-time probe (§1.2), reproducing today's stash-root detection
-   * (`provider-utils.ts#detectStashRoot`/`hasStashDirs`): a root is an AKM
-   * workspace root when it carries a `.stash` marker, multiple native placement
-   * directories, or one native directory whose Markdown is absent or
-   * declares the matching AKM type. The final check prevents an OKF bundle with
-   * an unrelated open type under (for example) `knowledge/` from being claimed
-   * by AKM merely because the directory name overlaps.
+   * Install-time probe (consulted by `provider-utils.ts#detectStashRoot`): a
+   * root is an AKM workspace root when it carries a `.stash` marker, multiple
+   * native placement directories, or one native directory whose Markdown is
+   * absent or declares the matching AKM type. The final check prevents an OKF
+   * bundle with an unrelated open type under (for example) `knowledge/` from
+   * being claimed by AKM merely because the directory name overlaps.
    */
   looksLikeRoot(root: string): boolean {
     try {

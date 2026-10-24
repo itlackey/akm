@@ -28,7 +28,7 @@ export function isExpired(mtimeMs: number, maxAgeMs: number): boolean {
 
 /**
  * True when ANY built-in adapter's install-time `looksLikeRoot` probe claims
- * `root` — the spec §1.2 ordered probe reduced to "is this the root of a bundle
+ * `root` — the ordered probe reduced to "is this the root of a bundle
  * of some format family?". A probe that throws (unreadable dir, race) does not
  * claim the root.
  */
@@ -45,23 +45,17 @@ function looksLikeAnyBundleRoot(root: string): boolean {
 
 /**
  * Find the directory inside `extractedDir` that should be treated as the
- * bundle/stash root. Probes the top-level dir via the ordered §1.2 registry
+ * bundle/stash root. Probes the top-level dir via the ordered registry
  * probe; if nothing claims it, BFS for the shallowest nested candidate.
  */
 export function detectStashRoot(extractedDir: string): string {
   const root = path.resolve(extractedDir);
 
-  // WI-3.1 → wired to the static registry: the top-level root check now routes
-  // through the ordered §1.2 `looksLikeRoot` probe over ALL built-in adapters
-  // (`registry.getAdapters()`), not the single hardcoded `akm` probe. This is
-  // BEHAVIOR-IDENTICAL for akm roots — `akm.looksLikeRoot` reproduces the former
-  // `.stash`-marker + immediate-stash-subdir (`hasStashDirs`) checks VERBATIM
-  // (akm-adapter.looksLikeRoot) and `akm` is in the probe set — so those two
-  // local checks are now subsumed and were removed. It additionally recognizes
-  // NON-akm bundle roots (okf root index / llm-wiki / `.claude` / …) at the top
-  // level, which the single-adapter probe missed but the old final `return root`
-  // fallback also happened to yield. The shallowest-BFS nested-layout discovery
-  // is unchanged.
+  // The top-level root check routes through the ordered `looksLikeRoot` probe
+  // over ALL built-in adapters (`registry.getAdapters()`). `akm.looksLikeRoot`
+  // covers the `.stash` marker and immediate stash subdirs; the other adapters
+  // recognize NON-akm bundle roots (okf root index / llm-wiki / `.claude` / …).
+  // Otherwise fall through to the shallowest-BFS nested-layout discovery.
   if (looksLikeAnyBundleRoot(root)) {
     return root;
   }
@@ -177,7 +171,8 @@ function countStashDirs(dirPath: string): number {
  * (scripts/, skills/, etc.), so nested layouts like `project/my-stash/scripts/`
  * are discovered even without a `.stash` marker.
  *
- * Skips `root` itself since the caller already checked it via `hasStashDirs`.
+ * Skips `root` itself since the caller already checked it via
+ * `looksLikeAnyBundleRoot`.
  */
 const BFS_MAX_DEPTH = 5;
 

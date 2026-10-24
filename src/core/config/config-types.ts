@@ -7,11 +7,7 @@
  *
  * The Zod schema in `./config-schema.ts` is the SINGLE SOURCE OF TRUTH: every
  * type here is DERIVED from a schema via `z.infer` / `z.output`, so the type
- * and the runtime validator cannot drift. (This finished a migration that had
- * only converted the improve/agent process shapes; the hand-written
- * connection/source/index/top-level interfaces that mirrored the schema — and
- * silently dropped new nested keys when someone forgot to update both — are
- * gone.)
+ * and the runtime validator cannot drift.
  *
  * The schema values are referenced via inline `typeof import("./config-schema")`
  * type queries rather than an `import type {...}`: this is unambiguously
@@ -24,7 +20,7 @@
  */
 import type { z } from "zod";
 // VALID_HARNESS_IDS / HARNESS_AGENT_DISPATCH_IDS derive from the dependency-free
-// harnesses/ids.ts leaf (WI-9.8 KILL 3), NOT the full HARNESS_REGISTRY barrel
+// harnesses/ids.ts leaf, NOT the full HARNESS_REGISTRY barrel
 // (`../../integrations/harnesses`) — that barrel transitively pulls in every
 // harness's agent-builder and the agent runtime, which is what fused config
 // into the same import-cycle SCC as `integrations/agent/*`. `harnesses/index.ts`
@@ -36,7 +32,7 @@ import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "../../integration
 
 /**
  * Canonical list of valid agent harness / platform ids. Derived from the
- * dependency-free harness-id leaf (#562/WI-9.8) so the Zod `AgentPlatformSchema`
+ * dependency-free harness-id leaf (#562) so the Zod `AgentPlatformSchema`
  * enum, the agent-engine platform union, and setup's `DetectedHarness` union
  * all derive from one place and cannot drift. Add a harness in
  * `src/integrations/harnesses/index.ts` (and its `ids.ts` mirror entry).

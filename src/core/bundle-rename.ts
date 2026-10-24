@@ -3,14 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm bundle rename <old> <new>` (D6) — the one command allowed to change a
+ * `akm bundle rename <old> <new>` — the one command allowed to change a
  * bundle's key. A bundle id is a mass identity prefix: every durable ref this
  * tool minted (`entries.item_ref`/`bundle_id`, `proposals.ref`, a pending
  * proposal's `proposedTarget.source`, a workflow task_history row's
  * `target_ref`, `scheduler.enabled[].ref`) carries it, and a hand-edited
- * `bundles` key strands all of it (see `src/indexer/bundle-identity-guard.ts`
- * §11.5). This module is the rekey transaction that guard's docstring points
- * to.
+ * `bundles` key strands all of it (see `src/indexer/bundle-identity-guard.ts`).
+ * This module is the rekey transaction that guard's docstring points to.
  *
  * Rewritten: the config `bundles` key, `defaultBundle`/`defaultWriteTarget`
  * when they name the old id, every `scheduler.enabled[].ref` with the old
@@ -24,7 +23,7 @@
  *
  * Left behind on purpose: `usage_events`/`asset_salience`/`asset_outcome`
  * keyed by the old bundle prefix (learned utility/outcome history) — outside
- * this item's scope; `warnOnBundleRenameDrift` already documents this class
+ * this command's scope; `warnOnBundleRenameDrift` already documents this class
  * of gap and `akm index --full` re-mints under the new id.
  */
 

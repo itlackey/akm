@@ -3,57 +3,49 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Index-time metadata fold for the `akm` adapter's `recognize` — akm 0.9.0
- * chunk-2, WI-C, implementing spec §2 ("the nine index-time metadata
- * contributors move into recognize") + the workflow contributor.
+ * Index-time metadata fold for the `akm` adapter's `recognize`: the metadata
+ * contributors that apply per winning RENDERER name, plus the workflow
+ * contributor.
  *
- * This leaf reproduces the 11 `registerMetadataContributor` sites keyed on the
- * winning RENDERER name (exactly how each contributor's `appliesTo({ rendererName })`
- * selects):
+ * Contributors folded, keyed on the winning RENDERER name:
  *
- *   - `output/renderers.ts` (9): toc-metadata (knowledge-md),
- *     lesson-frontmatter-metadata, memory-frontmatter-metadata,
- *     script-comment-metadata, env-file-metadata, secret-file-metadata,
- *     task-yaml-metadata, session-md-metadata, fact-md-metadata;
- *   - `workflows/renderer.ts` (1): workflow-document-metadata (the historical
- *     `workflow-md` renderer id now presents both peer workflow sources).
+ *   - toc-metadata (knowledge-md), lesson-frontmatter-metadata,
+ *     memory-frontmatter-metadata, script-comment-metadata, env-file-metadata,
+ *     secret-file-metadata, task-yaml-metadata, session-md-metadata,
+ *     fact-md-metadata;
+ *   - workflow-document-metadata (the historical `workflow-md` renderer id now
+ *     presents both peer workflow sources).
  *
- * ── Cycle-safety (chunk-2 ratchet, baseline 18) ──
+ * ── Cycle-safety ──
  *
- * Imported ONLY by `akm-adapter.ts` (itself imported by nothing in `src/` — see
- * that file's header), so this leaf can never gain an inbound edge from a cycle
- * participant and therefore can never JOIN a cycle. It VALUE-imports the pure
- * parsers each contributor already uses so the fold cannot drift from them:
- * `parseFrontmatter`, `parseMarkdownToc`, the peer-source
- * `compileWorkflowSource` frontend/projection, and env key-name scanning.
- * `output/renderers.ts` / `workflows/renderer.ts` are the
- * cycle-sensitive modules whose contributor bodies live in this port — their
- * ONE non-importable helper (`metadata.ts#extractDescriptionFromComments`, a
- * heavy cycle-participant module) is copied verbatim below as
- * {@link extractDescriptionFromComments} rather than imported. Verified:
- * `bun scripts/lint-import-cycles.ts` stays at 18.
+ * Imported ONLY by `akm-adapter.ts` (itself a leaf — see that file's header),
+ * so this leaf can never gain an inbound edge from a cycle participant and
+ * therefore can never JOIN a cycle. It VALUE-imports the pure parsers each
+ * contributor uses so the fold cannot drift from them: `parseFrontmatter`,
+ * `parseMarkdownToc`, the peer-source `compileWorkflowSource`
+ * frontend/projection, and env key-name scanning. Its ONE non-importable
+ * helper (`metadata.ts#extractDescriptionFromComments`, a heavy
+ * cycle-participant module) is copied below as
+ * {@link extractDescriptionFromComments} rather than imported.
  *
  * ── What is folded, and where it lands on the IndexDocument ──
  *
- * The contributors mutate a `IndexDocument`; {@link foldRecognizedMetadata} returns
- * the same fields as a plain {@link FoldedMetadata}, which `recognize` maps onto
- * `IndexDocument` first-class fields (`tags`/`searchHints`/`description`/
- * `confidence`) and, for the fields without a first-class home
- * (`toc`/`parameters`/`source`), onto `documentJson` (opaque adapter extras).
- * The seed is a MINIMAL entry (name+type only): this isolates exactly what the
- * contributors add, which is what the parity test compares against
- * `applyMetadataContributors` run on the same minimal seed.
+ * {@link foldRecognizedMetadata} returns the contributor-produced fields as a
+ * plain {@link FoldedMetadata}, which `recognize` maps onto `IndexDocument`
+ * first-class fields (`tags`/`searchHints`/`description`/`confidence`) and, for
+ * the fields without a first-class home (`toc`/`parameters`/`source`), onto
+ * `documentJson` (opaque adapter extras). The seed is a MINIMAL entry
+ * (name+type only): this isolates exactly what the contributors add, which is
+ * what the parity test compares.
  *
  * ── Tolerance note ──
  *
- * Every contributor that reads/parses content is reproduced with the SAME
- * try/catch tolerance it has today (toc/memory/session/fact/task swallow parse
- * errors). Workflow source compilation fails closed in the drain (a broken
- * workflow is dropped); here the compile/projection is wrapped
- * so a broken workflow yields no folded metadata instead of throwing out of the
- * synchronous `recognize` — the drop-the-entry behavior is an index-drain
- * concern (Chunk 4/5), not recognition's. On the valid Chunk-0b fixture this
- * distinction never triggers.
+ * Every contributor that reads/parses content has try/catch tolerance
+ * (toc/memory/session/fact/task swallow parse errors). Workflow source
+ * compilation fails closed in the drain (a broken workflow is dropped); here
+ * the compile/projection is wrapped so a broken workflow yields no folded
+ * metadata instead of throwing out of the synchronous `recognize` — the
+ * drop-the-entry behavior is an index-drain concern, not recognition's.
  */
 
 import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../../commands/command/builtin-action";
@@ -68,7 +60,7 @@ import type { TocHeading } from "../../asset/markdown";
 import { parseMarkdownToc } from "../../asset/markdown";
 import { nonEmptyString } from "./shared";
 
-/** The contributor-produced metadata fields, mirrored from the `IndexDocument` fields the 11 contributors mutate. */
+/** The contributor-produced metadata fields, mirrored from the `IndexDocument` fields the contributors mutate. */
 export interface FoldedMetadata {
   tags?: string[];
   searchHints?: string[];
@@ -82,8 +74,8 @@ export interface FoldedMetadata {
 }
 
 /**
- * Verbatim copy of `indexer/passes/metadata.ts#extractDescriptionFromComments`
- * (`:1510-1552`) — `metadata.ts` is a heavy cycle-participant module, so the
+ * Copy of `indexer/passes/metadata.ts#extractDescriptionFromComments` —
+ * `metadata.ts` is a heavy cycle-participant module, so the
  * one non-importable helper `applyScriptMetadata` needs is copied here (the
  * others are imported). Reads a leading JSDoc block or hash-comment run from the
  * script file; returns `null` on read/parse miss.
@@ -124,10 +116,9 @@ function extractDescriptionFromComments(content: string): string | null {
 }
 
 /**
- * Reproduce `applyFrontmatterDescriptionAndTags` (`output/renderers.ts:668-684`):
- * set description/source/confidence from frontmatter (only when not already set)
- * and merge frontmatter `tags:` onto the folded tags. Returns nothing — mutates
- * `out`.
+ * Set description/source/confidence from frontmatter (only when not already
+ * set) and merge frontmatter `tags:` onto the folded tags. Returns nothing —
+ * mutates `out`.
  */
 function applyFrontmatterDescriptionAndTags(fm: Record<string, unknown>, out: FoldedMetadata): void {
   const desc = nonEmptyString(fm.description);
@@ -168,7 +159,7 @@ function finalizeHints(out: FoldedMetadata, hints: Set<string>): void {
 
 /**
  * The metadata fold, keyed on the winning renderer NAME. Returns the fields the
- * 11 contributors would add to a MINIMAL (name+type) `IndexDocument`. `recognize`
+ * contributors would add to a MINIMAL (name+type) `IndexDocument`. `recognize`
  * maps the result onto the `IndexDocument`. Reads the live file (index-time, so
  * disk reads are legitimate — unlike `validate`).
  */
@@ -375,11 +366,11 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
 
 /**
  * Apply {@link foldRecognizedMetadata}'s output onto a `IndexDocument` with the
- * SAME precedence the live in-place renderer contributors use (Chunk 5 M-b), so
+ * SAME precedence the in-place renderer contributors use, so
  * `entry.applyPreContributorFields → applyFoldedMetadata → applyPostContributorFields`
- * reproduces `buildEntryFromFile`'s `P1/P2 → contributors → P4` byte-for-byte.
+ * yields the `P1/P2 → contributors → P4` result.
  *
- * Precedence, verified against every case in {@link foldRecognizedMetadata}:
+ * Precedence (see every case in {@link foldRecognizedMetadata}):
  *  - description/source/confidence travel together and only when the entry has
  *    no description yet (contributors gate on `!entry.description`); a
  *    contributor that sets description WITHOUT source/confidence leaves those
@@ -403,12 +394,12 @@ export function applyFoldedMetadata(entry: IndexDocument, folded: FoldedMetadata
   if (folded.tags && folded.tags.length > 0) {
     entry.tags = Array.from(new Set([...(entry.tags ?? []), ...folded.tags]));
   }
-  // searchHints MERGE (not overwrite): every live contributor seeds its hints
+  // searchHints MERGE (not overwrite): the contributors seed their hints
   // from `new Set(entry.searchHints ?? [])` before adding, so a frontmatter
   // `searchHints:` set by P2 (applyCuratedFrontmatter) survives and the
   // contributor's hints append to it. The fold computes only the contributor's
   // additions (from an empty seed), so unioning them onto the existing set —
-  // existing first, deduped, truthy-filtered — reproduces the live merge exactly.
+  // existing first, deduped, truthy-filtered — reproduces that merge exactly.
   if (folded.searchHints) {
     entry.searchHints = Array.from(new Set([...(entry.searchHints ?? []), ...folded.searchHints])).filter(Boolean);
   }

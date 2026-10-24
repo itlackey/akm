@@ -3,18 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Built-in `BundleAdapter` barrel + the static, frozen `BUILTIN_ADAPTERS` list
- * (normative §12.6) — akm 0.9.0 chunk-2 (WI-A) + the format-family work item
- * (#46).
+ * Built-in `BundleAdapter` barrel + the static, frozen `BUILTIN_ADAPTERS` list.
  *
  * `BUILTIN_ADAPTERS` is the ordered built-in adapter set the registry
  * (`../registry`) exposes via `getAdapters()` / `adapterForId()`. It is a
  * plain frozen array populated at MODULE LOAD — there is no mutable
  * registration step and no load-order dependency, so no production call site
  * (`installations.ts#detectAdapterId`, `provider-utils.ts#detectStashRoot`)
- * depends on anyone first calling a registration function (normative §12.6 —
- * "static frozen `BUILTIN_ADAPTERS` map"). The earlier mutable
- * `registerAdapter` singleton that this replaced is retired.
+ * depends on anyone first calling a registration function.
  */
 
 import { ADAPTER_ID_TABLE } from "../adapter-ids";
@@ -44,14 +40,13 @@ export { opencodeAdapter } from "./opencode-adapter";
 export { websiteSnapshotAdapter } from "./website-snapshot-adapter";
 
 /**
- * Every built-in adapter, frozen in the §1.2 install-time probe order: the first
+ * Every built-in adapter, frozen in install-time probe order: the first
  * adapter whose `looksLikeRoot` fires claims a root, so MORE-SPECIFIC probes
  * come FIRST. This ARRAY ORDER is the executable probe order (`getAdapters()`
  * returns it verbatim) and is pinned by the conformance suite's ordered-owner
- * matrix — it, not the spec §1.2(3) 5-adapter prose listing, is authoritative
- * for the implemented 11-family set.
+ * matrix.
  *
- * Probe-precedence rationale (grounds "cannot shadow the existing three"):
+ * Probe-precedence rationale:
  *
  *  - The three loosest probes — `llm-wiki`, `akm`, and `okf` — stay LAST.
  *    Native AKM evidence wins before OKF because AKM Markdown is an OKF
@@ -68,7 +63,7 @@ export { websiteSnapshotAdapter } from "./website-snapshot-adapter";
  *    package), `akm-workflow` (a workflow-shaped top-level file), and `akm-task`
  *    (a schedule-bearing top-level `.yml`) carry disjoint, specific markers that
  *    fire on none of the other roots; they come at the front for clarity.
- *  - `generic-files` is EXPLICIT-CONFIG ONLY (§1.2) — its `looksLikeRoot` never
+ *  - `generic-files` is EXPLICIT-CONFIG ONLY — its `looksLikeRoot` never
  *    fires — so it is LAST and can never shadow anything.
  */
 export const BUILTIN_ADAPTERS: readonly BundleAdapter[] = Object.freeze([

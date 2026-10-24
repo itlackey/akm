@@ -58,8 +58,8 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
     test: (ext) => ext === ".md",
   },
   {
-    // R-045 / Q-18 second half (owner ruling 11) — stash-resident `instruction`
-    // assets live under `instructions/`, mirroring the `knowledge` rule. This
+    // Stash-resident `instruction` assets live under `instructions/`,
+    // mirroring the `knowledge` rule. This
     // is a walker discovery rule for FILES ON DISK under a stash's
     // `instructions/` dir; it is unrelated to the adapter-emitted root
     // CLAUDE.md/AGENTS.md instruction docs (`tool-dir-shared.ts`), which are
@@ -100,9 +100,6 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
   {
     dir: "tasks",
     type: "task",
-    // Tasks migrated from `.md` to `.yml` in 0.8.0 (commit 031c659f updated
-    // the placement specs, renderers, and the task-linter, but missed this
-    // matcher — tasks/*.yml were unrecognized until this fix).
     test: (ext) => ext === ".yml",
   },
   {
@@ -252,7 +249,7 @@ function classifyBySmartMd(ctx: FileContext): MatchFact | null {
   const fm = ctx.frontmatter();
 
   // Recognition is frontmatter `type: workflow` or residence under `workflows/`
-  // (workflow-format-unification, spec §2.5) — no content sniffing. The
+  // — no content sniffing. The
   // directory rule is `classifyByDirectory`/`classifyByParentDirHint`'s job;
   // this only catches a workflow living OUTSIDE `workflows/` that still
   // declares its type explicitly.
@@ -309,7 +306,7 @@ function toMatchResult(ctx: FileContext, classify: (ctx: FileContext) => MatchFa
 
 function matchResultForFact(fact: MatchFact): MatchResult | null {
   // Renderer name resolved via TYPE_PRESENTATION (core leaf), so matchers.ts
-  // carries no edge into the taxonomy SCC (chunk-3 cutover enabler).
+  // carries no edge into the taxonomy SCC.
   // TYPE_PRESENTATION.renderer is the single source of truth for renderer names.
   const renderer = presentationFor(fact.type).renderer;
   if (!renderer) return null;
@@ -322,7 +319,7 @@ function matchResultForFact(fact: MatchFact): MatchResult | null {
 }
 
 // ---------------------------------------------------------------------------
-// Public matchers (API unchanged)
+// Public matchers
 // ---------------------------------------------------------------------------
 
 export function extensionMatcher(ctx: FileContext): MatchResult | null {
@@ -343,6 +340,4 @@ export function smartMdMatcher(ctx: FileContext): MatchResult | null {
 
 // The four matcher functions above are consumed directly by the akm adapter's
 // synchronous `recognizeMatch()` (`core/adapter/adapters/akm-adapter.ts`, which
-// holds the same registration-order array for tie-breaking). The chunk-3 cutover
-// removed the file-context matcher registry, so there is no `registerBuiltinMatchers`
-// glue any more — recognition is adapter-driven, not registry-driven.
+// holds the same registration-order array for tie-breaking).

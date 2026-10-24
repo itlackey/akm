@@ -9,12 +9,9 @@
  *
  * One row per `(stash_dir, ref, source)`. Every stage writes it when it
  * proposes, judges, rejects, accepts, expires or skips a ref; every stage's
- * candidate selection reads it before any LLM call. It replaces the
- * projections the stages used to re-derive the same invariant from — rejected
- * proposal rows, the `proposal_fingerprints` table, `proposal_rejected` /
- * `reflect_invoked` / `distill_invoked` / `consolidate_completed` events, the
- * `$STATE/improve/distill-rejected` files and the per-stage cooldown
- * constants — none of which agreed with each other.
+ * candidate selection reads it before any LLM call. It is the single source
+ * of truth for this invariant: stages do not re-derive it from rejected
+ * proposal rows, events, or per-stage cooldown constants.
  *
  * `next_eligible_at` is computed in exactly one place, {@link nextEligibleAt},
  * from `(source, outcome)` — and, for the two content-driven cases (the
@@ -57,7 +54,7 @@ export interface ImproveLedgerRow {
   /**
    * Body content hash (`contentHash(_, "body")`) of the attempted ref at
    * `lastAttemptAt`, when the source's eligibility is content-driven rather
-   * than time-driven: the consolidate pair pass (alpha.9 — see
+   * than time-driven: the consolidate pair pass (see
    * {@link PAIR_PASS_LEDGER_SOURCE}) and a decided consolidate promotion (see
    * {@link isContentDrivenDecision}). `null` for every other row.
    */
@@ -69,7 +66,7 @@ const DETAIL_MAX_CHARS = 500;
 
 /**
  * Post-rejection windows by source: reflect 14 d, distill 30 d, every other
- * source 7 d — the constants the rejection backoff always used.
+ * source 7 d.
  */
 export const LEDGER_REJECTION_WINDOW_DAYS: Readonly<Record<string, number>> = Object.freeze({
   reflect: 14,
@@ -82,7 +79,7 @@ export const LEDGER_EXPIRED_GRACE_DAYS = 1;
 export const LEDGER_REVISIT_CADENCE_DAYS = 7;
 
 /**
- * The consolidate pair pass's own ledger source (alpha.9): kept apart from
+ * The consolidate pair pass's own ledger source: kept apart from
  * the promote pass's `consolidate` rows so the two candidate-selection
  * cadences never collide on the same `(stash, ref, source)` key. Its
  * eligibility is entirely content-driven (`content_hash` above, compared by
@@ -104,8 +101,8 @@ export const CONSOLIDATE_LEDGER_SOURCE = "consolidate";
  * Whether a decision on `(source, outcome)` leaves the ref's next attempt to
  * its content instead of a clock (#998). An accepted or rejected consolidate
  * promotion is a verdict on that memory's text; asking the model about the
- * same text again can only reproduce the proposal (accepted used to be
- * eligible at once, rejected after 7 days), so the memory waits for an edit.
+ * same text again can only reproduce the proposal, so the memory waits for an
+ * edit.
  * So does a memory the model judged and left alone (`judged_no_action`):
  * the same text would be judged weekly with the same answer.
  * The clock stays for a row with no recorded hash — one decided before the
@@ -373,7 +370,7 @@ export function forgetImproveLedgerDecision(db: Database, stashDir: string, prop
 }
 
 /**
- * Should-fix 6 (second review round): a read-only or dry-run open never
+ * A read-only or dry-run open never
  * migrates, so it can land on a state.db from before migration 029 added
  * `content_hash` — reading it there threw "no such column", which
  * `loadRetrievalScope`'s own catch then reported as "usage history
