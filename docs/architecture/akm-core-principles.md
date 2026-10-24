@@ -115,6 +115,14 @@ The hard parts should stay inside indexing, source resolution, registry
 install, and provider plumbing, not in the hot path from `search`/`curate`
 to `show`/`use`.
 
+### 11. Agent harnesses are thin, replaceable internals
+
+akm is simple, lightweight tooling for agents and automated processes. A harness
+such as OpenCode (pi or another later) is an internal detail akm uses to enable
+agentic work. It sits behind one thin seam, is not woven into akm core, and can
+be replaced without touching the rest of akm. Heavy machinery and tight
+coupling are the opposite of akm's goals.
+
 ## What akm Does Not Do
 
 - blindly execute arbitrary indexed content just because it appears in
