@@ -3099,6 +3099,15 @@ directory). It lists a person's sessions, `codex exec` runs included, and
 leaves out the rollouts Codex writes for subagents and its other internal agents:
 those are not sessions of their own.
 
+The `opencode` harness reads two OpenCode databases: OpenCode's own
+`opencode.db` (under `~/.local/share/opencode`, or
+`~/Library/Application Support/opencode` on macOS) and akm's
+`<akm data dir>/opencode.db`, where the embedded OpenCode keeps akm's agent
+runs (`--location` points at a directory holding another `opencode.db`). An
+OpenCode 2 database is read through the embedded OpenCode, which lists only
+top-level sessions and leaves out subagent sessions and akm's own model work;
+an OpenCode 1 database is read directly, read-only.
+
 There is no `akm proposal extract --watch`/`--debounce-ms` either (0.9.0:
 dropped — a foreground polling daemon in a one-shot CLI); the shipped
 `core/extract.yml` cron template (`akm proposal extract --auto` on a

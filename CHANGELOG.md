@@ -26,6 +26,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Inference reaches every `opencode-sdk` dispatch, not only model work. On a
     model from the user's OpenCode config it is laid over that model, best
     effort, with a one-time warning.
+- `akm proposal extract --type opencode` reads OpenCode 2 history through the
+  embedded OpenCode, from OpenCode's database and akm's own: top-level sessions
+  only, without subagent sessions or akm's model work. OpenCode 1 databases are
+  still read directly, read-only.
 - `platform: "opencode"` is the OpenCode 1 CLI only. It sends the prompt on
   stdin, refuses an OpenCode 2 binary with a message naming `opencode-sdk`, and
   no longer runs model work: a config that names an `opencode` engine for model
