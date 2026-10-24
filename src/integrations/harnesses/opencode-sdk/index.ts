@@ -10,9 +10,9 @@
  */
 
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
-import { MODEL_WORK_AGENT_INFERENCE } from "../opencode/model-config";
 import { caps } from "../shared";
 import { BaseHarness } from "../types";
+import { OPENCODE_INFERENCE } from "./model-entry";
 
 /**
  * OpenCode SDK (embedded-SDK dispatch path).
@@ -30,7 +30,7 @@ export class OpencodeSdkHarness extends BaseHarness {
       adapter: "opencode-sdk",
       personaChannel: "native",
       tools: "sdk",
-      inference: MODEL_WORK_AGENT_INFERENCE,
+      inference: OPENCODE_INFERENCE,
     }),
   };
   // No flag-shaped resume: session reuse is programmatic — the SDK session id is

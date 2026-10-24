@@ -652,9 +652,16 @@ export async function runManagedSubprocess(
     const stdinStream = proc.stdin;
     const stdinDone = (async () => {
       try {
-        const writer = stdinStream.getWriter();
-        await writer.write(new TextEncoder().encode(stdinPayload));
-        await writer.close();
+        // Bun.spawn's pipe is a FileSink (write/end), not a WritableStream.
+        const sink = stdinStream as unknown as { write?: (data: string) => unknown; end?: () => unknown };
+        if (typeof sink.write === "function" && typeof sink.end === "function" && !("getWriter" in stdinStream)) {
+          sink.write(stdinPayload);
+          await sink.end();
+        } else {
+          const writer = stdinStream.getWriter();
+          await writer.write(new TextEncoder().encode(stdinPayload));
+          await writer.close();
+        }
       } catch {
         // Best-effort: ignore stdin write failures, the child will get EOF.
       }

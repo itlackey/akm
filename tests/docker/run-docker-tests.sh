@@ -68,7 +68,7 @@ if [ "$NEED_BINARY" = true ]; then
 		exit 1
 	fi
 
-	bun build ./scripts/akm-standalone.ts --compile --target=bun-linux-x64 --outfile "$SCRIPT_DIR/.build/akm"
+	bun scripts/build-standalone.ts --target bun-linux-x64 --outfile "$SCRIPT_DIR/.build/akm"
 	echo "Binary built: $SCRIPT_DIR/.build/akm"
 	echo ""
 fi

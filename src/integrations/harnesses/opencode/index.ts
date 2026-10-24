@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * OpenCode harness (#564).
+ * OpenCode 1 CLI harness (#564, #1244): legacy, like the Claude and Codex CLIs.
  *
  * Per-harness barrel that gathers the OpenCode integration surfaces previously
  * scattered across the codebase:
@@ -53,7 +53,6 @@ export class OpencodeHarness extends BaseHarness {
     sessionLogs: true,
     agentDispatch: true,
     detection: true,
-    modelWork: true,
     nativeAgent: true,
     configImport: true,
   });

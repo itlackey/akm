@@ -34,7 +34,7 @@ import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
 import type { AgentProfile } from "../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, AgentTokenUsage, RunAgentOptions } from "../../agent/spawn";
 import { openCodeImporter } from "../opencode/config-import";
-import { opencodeInferenceConfig } from "../opencode/model-config";
+import { opencodeModelEntry } from "./model-entry";
 
 type Host = OpenCode.Interface;
 type CreateOptions = OpenCode.CreateOptions;
@@ -107,7 +107,7 @@ export function modelConfig(
   inference: ExecutionJsonObject | null | undefined,
 ): Record<string, unknown> {
   const merged = inference === null ? undefined : { ...fallbackInference(llm), ...inference };
-  const { entry } = opencodeInferenceConfig(merged, false);
+  const entry = opencodeModelEntry(merged);
   if (llm?.endpoint || llm?.apiKey) {
     const modelId = model?.startsWith("akm-custom/") ? model.slice("akm-custom/".length) : model;
     return {

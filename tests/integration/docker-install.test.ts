@@ -54,14 +54,7 @@ function buildBinary(): boolean {
   spawnSync("mkdir", ["-p", BUILD_DIR]);
   const r = spawnSync(
     "bun",
-    [
-      "build",
-      "./scripts/akm-standalone.ts",
-      "--compile",
-      "--target=bun-linux-x64",
-      "--outfile",
-      path.join(BUILD_DIR, "akm"),
-    ],
+    ["scripts/build-standalone.ts", "--target", "bun-linux-x64", "--outfile", path.join(BUILD_DIR, "akm")],
     {
       cwd: PROJECT_ROOT,
       encoding: "utf8",

@@ -123,10 +123,9 @@ jobs:
           candidate_version="$(node -p "require('./package.json').version")"
           candidate_arch="$(node -p 'process.arch')"
           binary="$RUNNER_TEMP/akm-linux-$GITHUB_RUN_ID"
-          bun build ./scripts/akm-standalone.ts \
-            --compile \
+          bun scripts/build-standalone.ts \
             --outfile "$binary" \
-            --define "AKM_VERSION='$candidate_version'"
+            --version "$candidate_version"
           chmod +x "$binary"
           env \
             AKM_STANDALONE_SCHEDULER_TESTS=1 \
@@ -143,10 +142,9 @@ jobs:
           candidate_arch="$(node -p 'process.arch')"
           binary="$RUNNER_TEMP/akm-darwin-$GITHUB_RUN_ID"
           gate_dir="$RUNNER_TEMP/akm-native-darwin-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          bun build ./scripts/akm-standalone.ts \
-            --compile \
+          bun scripts/build-standalone.ts \
             --outfile "$binary" \
-            --define "AKM_VERSION='$candidate_version'"
+            --version "$candidate_version"
           chmod +x "$binary"
           env \
             AKM_NATIVE_SCHEDULER_TESTS=1 \
@@ -174,10 +172,9 @@ jobs:
           $candidateVersion = node -p "require('./package.json').version"
           if ($LASTEXITCODE -ne 0) { throw "Could not read candidate version" }
           $binary = Join-Path $env:RUNNER_TEMP "akm-windows-$env:GITHUB_RUN_ID.exe"
-          bun build ./scripts/akm-standalone.ts `
-            --compile `
+          bun scripts/build-standalone.ts `
             --outfile $binary `
-            --define "AKM_VERSION='$candidateVersion'"
+            --version $candidateVersion
           if ($LASTEXITCODE -ne 0) { throw "Standalone candidate build failed" }
 
           bun run build

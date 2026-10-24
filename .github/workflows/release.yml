@@ -100,11 +100,10 @@ jobs:
           bun run build
           mkdir artifacts
           while read -r target output; do
-            bun build ./scripts/akm-standalone.ts \
-              --compile \
-              --target="$target" \
+            bun scripts/build-standalone.ts \
+              --target "$target" \
               --outfile "artifacts/$output" \
-              --define "AKM_VERSION='$CANDIDATE_VERSION'"
+              --version "$CANDIDATE_VERSION"
           done <<'EOF'
           bun-linux-x64 akm-linux-x64
           bun-linux-arm64 akm-linux-arm64

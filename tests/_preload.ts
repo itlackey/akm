@@ -50,7 +50,7 @@ import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-writer-lock";
 import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";
-import { closeServer } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { closeOpencodeSdk } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { resetAllSeams } from "./_helpers/seams";
 
@@ -412,13 +412,10 @@ afterEach(() => {
 });
 
 // `bun test` does not emit `process.on("exit")` when a run ends normally (bun
-// 1.4.1), so the SDK runner's own exit backstop never closes the `opencode
-// serve` children it caches: a test that dispatched through the real runner
-// leaves its server running, reparented to init, long after the run. Close them
-// once the whole run is done, then remove the suite sandbox they use as HOME —
-// for the same reason the `exit` listener above never removes it at the end of a
-// normal run, so every run left its `akm-test-suite-*` root behind.
+// 1.4.1). Close the embedded OpenCode hosts a test opened through the real
+// runner, then remove the suite sandbox they use as HOME: the `exit` listener
+// above never removes it at the end of a normal run.
 afterAll(async () => {
-  await closeServer();
+  await closeOpencodeSdk();
   removeSuiteRoot();
 });
