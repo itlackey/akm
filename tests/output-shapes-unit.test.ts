@@ -10,7 +10,6 @@ import {
   shapeProposalListOutput,
   shapeProposalRejectOutput,
   shapeProposalShowOutput,
-  shapeRegistrySearchOutput,
   shapeSearchHit,
   shapeSearchHitForAgent,
   shapeSearchOutput,
@@ -549,27 +548,6 @@ describe("curate agent access projection", () => {
   });
 });
 
-describe("shapeRegistrySearchOutput", () => {
-  test("shapes registry hits at the requested detail level", () => {
-    const result = {
-      hits: [
-        {
-          name: "azure-ops",
-          description: "Azure ops kit",
-          action: "akm bundle add npm:azure-ops",
-          // no `curated` key
-          score: 0.5,
-          id: "npm:azure-ops",
-        },
-      ],
-      registryHits: [],
-    };
-    const brief = shapeRegistrySearchOutput(result, "brief") as { hits: Record<string, unknown>[] };
-    // brief projects name + score at minimum (not just name/action)
-    expect(brief.hits[0]).toMatchObject({ name: "azure-ops", score: 0.5 });
-  });
-});
-
 // ── Output-shape registry exhaustiveness (#274) ─────────────────────────────
 
 describe("shapeForCommand: unknown command", () => {
@@ -590,7 +568,6 @@ describe("shapeForCommand — `results` collection alias (#922)", () => {
   const LIST_COMMANDS: Array<[string, string, Record<string, unknown>]> = [
     ["search", "hits", { hits: [{ type: "skill", name: "x", action: "a" }], registryHits: [] }],
     ["curate", "items", { items: [{ type: "skill", name: "x" }], query: "q", summary: "s" }],
-    ["registry-search", "hits", { hits: [{ name: "x", installRef: "x" }] }],
     ["proposal-list", "proposals", { totalCount: 1, proposals: [{ id: "p1", ref: "lessons/x", status: "pending" }] }],
     ["list", "sources", { sources: [{ name: "b1" }] }],
     ["env-list", "envs", { envs: [{ name: "e1" }] }],

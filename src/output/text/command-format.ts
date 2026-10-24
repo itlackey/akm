@@ -10,9 +10,7 @@
  *
  * Unlike `show`/`workflow`/`proposal` (each a stateful,
  * multi-branch renderer with its own module), these are flat
- * field-extraction formatters with no shared state beyond
- * `formatRegistrySearchPlain` delegating to `formatSearchPlain` in this
- * same file.
+ * field-extraction formatters with no shared state.
  */
 
 import { formatRegistryUrl } from "../../core/registry-url";
@@ -170,11 +168,6 @@ export function formatRegistryRemovePlain(r: Record<string, unknown>): string {
   const entry = r.entry as Record<string, unknown> | undefined;
   const url = entry ? (typeof entry.url === "string" ? formatRegistryUrl(entry.url) : String(entry.name ?? "?")) : "?";
   return `Removed registry ${url}`;
-}
-
-export function formatRegistrySearchPlain(r: Record<string, unknown>, detail: DetailLevel): string {
-  // Reuse the same renderer as `search` — both share `hits` / `registryHits`.
-  return formatSearchPlain(r, detail);
 }
 
 export function formatEnvListPlain(r: Record<string, unknown>): string {

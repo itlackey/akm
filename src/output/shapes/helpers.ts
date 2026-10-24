@@ -300,27 +300,6 @@ export function shapeSearchOutput(
   };
 }
 
-export function shapeRegistrySearchOutput(
-  result: Record<string, unknown>,
-  detail: DetailLevel,
-): Record<string, unknown> {
-  const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
-
-  // Shape stash hits as registry type
-  const shapedKitHits = hits.map((hit) => shapeSearchHit({ ...hit, type: "registry" }, detail));
-
-  const shaped: Record<string, unknown> = {
-    hits: shapedKitHits,
-    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
-  };
-
-  if (detail === "full") {
-    shaped.query = result.query;
-  }
-
-  return shaped;
-}
-
 export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   if (hit.type === "registry") {
     if (detail === "brief") {

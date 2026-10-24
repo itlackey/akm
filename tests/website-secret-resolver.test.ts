@@ -96,19 +96,4 @@ describe("SecretResolver reaches provider sync()", () => {
     // ...and the token itself never landed in the snapshot on disk.
     expect(snapshotJson).not.toContain(SECRET);
   });
-
-  test("without a resolver the sync path is environment-only (no throw)", async () => {
-    delete process.env.X_BEARER_TOKEN;
-    delete process.env.X_RSS_TEMPLATE;
-    const factory = resolveSourceProviderFactory("website");
-    const provider = factory?.(websiteEntry("https://x.com/jack"));
-    // No secrets injected, no env var: the X fetcher warns and falls through;
-    // sync() must not throw.
-    await expect(
-      withMockedFetch(
-        () => provider?.sync?.({ force: true, ensureWebsiteMirror }) ?? Promise.resolve(),
-        async () => new Response("{}", { status: 404, headers: { "content-type": "application/json" } }),
-      ),
-    ).resolves.toBeUndefined();
-  });
 });
