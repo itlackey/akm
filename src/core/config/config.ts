@@ -41,11 +41,12 @@ import type {
   SourceConfigEntry,
 } from "./config-types";
 import { isOpaqueSchema, resolveSchemaAt } from "./config-walker";
+import { convertEngineConfig } from "./convert-engines";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
 
 export { stripJsonComments } from "./config-io";
 
-import { getConfigPath } from "../paths";
+import { getConfigDir, getConfigPath } from "../paths";
 import { warn, warnOnce } from "../warn";
 
 // Re-export type surface from config-types.ts so call sites don't need to
@@ -159,8 +160,9 @@ export function loadUserConfig(): AkmConfig {
 /**
  * Run the per-file config pipeline every raw config object goes through
  * before it is either validated (the local/top-level file) or merged in as
- * an `extends` base: JSONC parse already done by the caller, then the
- * `configVersion` read ({@link readConfigVersion}). Unknown keys are not an
+ * an `extends` base: JSONC parse already done by the caller, then the retired
+ * `engines` form read as `connections`/`harnesses` ({@link readRetiredEngines})
+ * and the `configVersion` read ({@link readConfigVersion}). Unknown keys are not an
  * error: the schema drops them in memory. A shape older than 0.9.15 is not
  * converted here; it fails validation with a message naming `akm migrate
  * apply` under akm 0.9.x. Shared by {@link parseAndValidateConfigText} (the
@@ -170,7 +172,33 @@ export function loadUserConfig(): AkmConfig {
  */
 function runConfigFilePipeline(text: string, sourcePath?: string): Record<string, unknown> {
   const raw = parseConfigText(text, sourcePath);
-  return readConfigVersion(readRetiredSecretRefs(raw, [], sourcePath) as Record<string, unknown>, sourcePath);
+  const lifted = readRetiredSecretRefs(raw, [], sourcePath) as Record<string, unknown>;
+  return readConfigVersion(readRetiredEngines(lifted, sourcePath), sourcePath);
+}
+
+/** The user's `models.json` (retired), parsed; absent or unreadable is no overlay. */
+function readModelsOverlay(): unknown {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(getConfigDir(), "models.json"), "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `engines` / `defaults` are retired in favour of `connections` / `harnesses`.
+ * A config in the old form is read as the new one, in memory, with one warning;
+ * `akm migrate apply` writes it back (it runs {@link convertEngineConfig} too,
+ * through this pipeline, before it deletes the keys the schema does not know).
+ */
+function readRetiredEngines(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
+  const { config, notes, changed } = convertEngineConfig(raw, { modelsOverlay: readModelsOverlay() });
+  if (!changed) return raw;
+  warnOnce(
+    `config:retired-engines:${sourcePath ?? "inline"}`,
+    `${sourcePath ?? "config.json"} uses the retired engines/defaults form; reading it as connections/harnesses. \`akm migrate apply\` rewrites config.json.${notes.map((note) => `\n  - ${note}`).join("")}`,
+  );
+  return config;
 }
 
 /** The retired `secret://<name>` credential form; it survives only in {@link readRetiredSecretRefs}. */
@@ -923,6 +951,9 @@ export function normalizeConfigFile(configPath: string, options: { apply: boolea
     const text = readConfigText(configPath);
     if (text === undefined) return { keys: [], changed: false, applied: false };
     const raw = parseConfigText(text, configPath);
+    // The retired-engines conversion (`readRetiredEngines`) runs inside this
+    // pipeline, so it has already happened by the time the unknown-key sweep
+    // below deletes what the schema does not know.
     const localRaw = runConfigFilePipeline(text, configPath);
     const current = buildEffectiveConfig(localRaw, configPath);
     const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });

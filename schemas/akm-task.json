@@ -68,6 +68,8 @@
       ]
     },
     "agent": { "$ref": "#/definitions/nullableSelector" },
+    "connection": { "$ref": "#/definitions/nullableSelector" },
+    "harness": { "$ref": "#/definitions/nullableSelector" },
     "engine": { "$ref": "#/definitions/nullableSelector" },
     "model": { "$ref": "#/definitions/nullableSelector" },
     "inference": {

@@ -70,6 +70,8 @@ export interface TaskV3AkmOptions {
   readonly when_to_use?: string;
   readonly tags?: readonly string[];
   readonly agent?: string | null;
+  readonly connection?: string | null;
+  readonly harness?: string | null;
   readonly engine?: string | null;
   readonly model?: string | null;
   readonly inference?: ExecutionJsonObject | null;

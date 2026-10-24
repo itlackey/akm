@@ -13,8 +13,8 @@ import path from "node:path";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   AkmConfigSchema,
-  CURRENT_CONFIG_VERSION,
   ConnectionSchema,
+  CURRENT_CONFIG_VERSION,
   EmbeddingConnectionConfigSchema,
   ImproveProcessConfigSchema,
   ImproveProfileConfigSchema,

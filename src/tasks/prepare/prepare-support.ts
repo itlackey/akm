@@ -94,6 +94,8 @@ export function currentExecutionValues(
               : agent,
         }
       : {}),
+    ...(own(akm, "connection") ? { connection: akm?.connection } : {}),
+    ...(own(akm, "harness") ? { harness: akm?.harness } : {}),
     ...(own(akm, "engine") ? { engine: akm?.engine } : {}),
     ...(own(akm, "model") ? { model: akm?.model } : {}),
     ...(own(akm, "inference") ? { inference: akm?.inference } : {}),

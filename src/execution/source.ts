@@ -36,6 +36,9 @@ export const MODEL_WORK_POLICY_ID = "model-work";
 /** Ordinary defaults contributed by one command or persona source layer. */
 export interface UnresolvedExecutionDefaults {
   readonly agent?: string | null;
+  readonly connection?: string | null;
+  readonly harness?: string | null;
+  /** The retired spelling of `connection` / `harness`: a connection by this name, else a harness. */
   readonly engine?: string | null;
   readonly model?: string | null;
   readonly inference?: ExecutionJsonObject | null;
@@ -152,7 +155,7 @@ export function cloneUnresolvedExecutionDefaults(
   const record = requireRecord(input, path);
   const present = (key: string): boolean => Object.hasOwn(record, key) && record[key] !== undefined;
   const out: Record<string, unknown> = {};
-  for (const key of ["agent", "engine", "model", "workspace"] as const) {
+  for (const key of ["agent", "connection", "harness", "engine", "model", "workspace"] as const) {
     if (!present(key)) continue;
     const value = record[key];
     if (value !== null && typeof value !== "string") throw new TypeError(`${path}.${key} must be a string or null`);

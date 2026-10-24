@@ -96,6 +96,8 @@ export const TASK_SOURCE_V4_TOP_LEVEL_KEYS = [
   "working-directory",
   "schedule",
   "agent",
+  "connection",
+  "harness",
   "engine",
   "model",
   "inference",
@@ -154,6 +156,9 @@ export interface TaskSourceV4ScheduleBinding {
 
 export interface TaskSourceV4Execution {
   readonly agent?: string | null;
+  readonly connection?: string | null;
+  readonly harness?: string | null;
+  /** The retired spelling of `connection` / `harness`. */
   readonly engine?: string | null;
   readonly model?: string | null;
   readonly inference?: ExecutionJsonObject | null;
@@ -381,7 +386,7 @@ function parseTarget(input: ExecutionJsonObject, ctx: BoundedDocumentContext): T
 
 function parseExecutionControls(input: ExecutionJsonObject, ctx: BoundedDocumentContext): TaskSourceV4Execution {
   const out: Record<string, unknown> = {};
-  for (const key of ["agent", "engine", "model"] as const) {
+  for (const key of ["agent", "connection", "harness", "engine", "model"] as const) {
     if (own(input, key)) out[key] = nullableSelectorTopLevel(input[key], ctx, key);
   }
   if (own(input, "inference")) {
@@ -679,7 +684,7 @@ function checkTopLevelKeys(input: ExecutionJsonObject, ctx: BoundedDocumentConte
     sourceError(
       ctx,
       ["akm"],
-      "is removed in task source v4; its members are top-level keys now (schedule, timeout, engine, model, redact, " +
+      "is removed in task source v4; its members are top-level keys now (schedule, timeout, connection, harness, model, redact, " +
         "maxSteps, maxRetries, description, when_to_use, tags, agent, inference, and output for outputSchema) " +
         "— see docs/reference/tasks.md.",
     );

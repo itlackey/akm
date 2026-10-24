@@ -192,7 +192,7 @@ export function executionDefaultsFromFrontmatter(
         : undefined;
     if (location) {
       throw new TypeError(
-        `${location} is host-controlled and cannot be declared by an executable asset; configure the selected engine or workflow execution environment instead`,
+        `${location} is host-controlled and cannot be declared by an executable asset; configure the selected harness or workflow execution environment instead`,
       );
     }
   }
@@ -200,15 +200,14 @@ export function executionDefaultsFromFrontmatter(
   if (kind === "command" && own(frontmatter, "agent")) {
     out.agent = nullableString(frontmatter.agent, "frontmatter.agent");
   }
-  const namespacedEngine = own(namespace, "engine")
-    ? nullableString(namespace.engine, "frontmatter.akm.engine")
-    : undefined;
-  const topLevelEngine =
-    allowTopLevelEngine && own(frontmatter, "engine")
-      ? nullableString(frontmatter.engine, "frontmatter.engine")
-      : undefined;
-  if (topLevelEngine !== undefined) out.engine = topLevelEngine;
-  else if (namespacedEngine !== undefined) out.engine = namespacedEngine;
+  // `engine` is the retired spelling of `connection` / `harness`; the resolver reads it as whichever it names.
+  for (const key of ["connection", "harness", "engine"] as const) {
+    const topLevel =
+      allowTopLevelEngine && own(frontmatter, key) ? nullableString(frontmatter[key], `frontmatter.${key}`) : undefined;
+    const namespaced = own(namespace, key) ? nullableString(namespace[key], `frontmatter.akm.${key}`) : undefined;
+    if (topLevel !== undefined) out[key] = topLevel;
+    else if (namespaced !== undefined) out[key] = namespaced;
+  }
   if (own(frontmatter, "model")) {
     out.model = nullableString(frontmatter.model, "frontmatter.model");
   }

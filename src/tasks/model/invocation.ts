@@ -35,6 +35,8 @@ export type TaskInvocationCaller =
 
 /** Execution-default overrides a caller may supply on top of a TaskDefinition. */
 export interface TaskInvocationOverrides {
+  readonly connection?: string | null;
+  readonly harness?: string | null;
   readonly engine?: string | null;
   readonly model?: string | null;
   readonly timeout?: string | number | null;

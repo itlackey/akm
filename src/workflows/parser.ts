@@ -151,13 +151,15 @@ const ENVELOPE_KEYS = [
 ];
 const WORKFLOW_KEYS = ["params", "defaults", "budget", "steps"];
 const TOP_LEVEL_KEYS = [...ENVELOPE_KEYS, ...WORKFLOW_KEYS];
-const DEFAULTS_KEYS = ["engine", "model", "timeout", "on_error", "llm"];
+const DEFAULTS_KEYS = ["connection", "harness", "engine", "model", "timeout", "on_error", "llm"];
 const BUDGET_KEYS = ["max_tokens", "max_units"];
 const STEP_KEYS = ["id", "unit", "map", "inputs", "output", "gate"];
 const UNIT_KEYS = [
   "exec",
   "workflow",
   "with",
+  "connection",
+  "harness",
   "engine",
   "model",
   "llm",
@@ -168,8 +170,8 @@ const UNIT_KEYS = [
   "env",
 ];
 const EXEC_KEYS = ["command", "cwd", "pass_env"];
-/** Unit keys that name an ENGINE dispatch and therefore cannot appear beside `exec:`. */
-const UNIT_ENGINE_KEYS = ["engine", "model", "llm"] as const;
+/** Unit keys that name a model or agent dispatch and therefore cannot appear beside `exec:`. `engine` is the retired spelling of `connection` / `harness`. */
+const UNIT_ENGINE_KEYS = ["connection", "harness", "engine", "model", "llm"] as const;
 const MAP_KEYS = ["over", "concurrency", "reducer", "unit"];
 const RETRY_KEYS = ["max", "on"];
 const GATE_KEYS = ["max_loops"];
@@ -665,9 +667,10 @@ function parseDefaults(ctx: Ctx, raw: unknown): ProgramDefaults | undefined {
   }
   checkUnknownKeys(ctx, raw, path, DEFAULTS_KEYS, `"defaults"`);
   const defaults: ProgramDefaults = {};
-  if (raw.engine !== undefined) {
-    const engine = parseEngineName(ctx, raw.engine, [...path, "engine"], `"defaults.engine"`);
-    if (engine !== undefined) defaults.engine = engine;
+  for (const key of ["connection", "harness", "engine"] as const) {
+    if (raw[key] === undefined) continue;
+    const name = parseEngineName(ctx, raw[key], [...path, key], `"defaults.${key}"`);
+    if (name !== undefined) defaults[key] = name;
   }
   if (raw.model !== undefined) {
     if (typeof raw.model === "string" && raw.model.trim() !== "") defaults.model = raw.model.trim();
@@ -858,9 +861,10 @@ function parseUnit(
     }
   }
 
-  if (raw.engine !== undefined) {
-    const engine = parseEngineName(ctx, raw.engine, [...path, "engine"], `${stepLabel} "engine"`);
-    if (engine !== undefined) unit.engine = engine;
+  for (const key of ["connection", "harness", "engine"] as const) {
+    if (raw[key] === undefined) continue;
+    const name = parseEngineName(ctx, raw[key], [...path, key], `${stepLabel} "${key}"`);
+    if (name !== undefined) unit[key] = name;
   }
   if (raw.model !== undefined) {
     if (typeof raw.model === "string" && raw.model.trim() !== "") unit.model = raw.model.trim();
@@ -1109,21 +1113,21 @@ function parseGate(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
 // ---------------------------------------------------------------------------
 
 /**
- * Engine names must already satisfy the frozen-plan grammar
+ * Connection and harness names must already satisfy the frozen-plan grammar
  * (`WORKFLOW_ENGINE_NAME_PATTERN`, max 63 chars) at parse time — the decoder
  * enforces the same bound on persisted plans, and a name that only fails there
  * surfaces as an unlocated "Invalid frozen workflow plan" at `workflow run`.
  */
 function parseEngineName(ctx: Ctx, raw: unknown, path: Path, label: string): string | undefined {
   if (typeof raw !== "string" || raw.trim() === "") {
-    ctx.err(path, `${label} must be a non-empty engine name.`);
+    ctx.err(path, `${label} must be a non-empty name.`);
     return undefined;
   }
   const name = raw.trim();
   if (!WORKFLOW_ENGINE_NAME_PATTERN.test(name) || name.length > WORKFLOW_MAX_ENGINE_NAME_LENGTH) {
     ctx.err(
       path,
-      `${label} has an invalid engine name ${JSON.stringify(name)}. Engine names are lowercase words of letters ` +
+      `${label} has an invalid name ${JSON.stringify(name)}. Names are lowercase words of letters ` +
         `and digits separated by single dashes, starting with a letter (e.g. "code-review-llm"), at most ` +
         `${WORKFLOW_MAX_ENGINE_NAME_LENGTH} characters.`,
     );

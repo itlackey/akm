@@ -59,8 +59,11 @@ export interface WorkflowBudget {
   maxUnits?: number;
 }
 
-/** Authored engine/timeout settings shared by a step's unit and the document `defaults`. */
+/** Authored connection/harness/timeout settings shared by a step's unit and the document `defaults`. */
 export interface WorkflowUnitSettings {
+  connection?: string;
+  harness?: string;
+  /** The retired spelling of `connection` / `harness`. */
   engine?: string;
   model?: string;
   llm?: LlmInvocationOverrides;
