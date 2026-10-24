@@ -40,7 +40,6 @@ export {
   formatRegistryAddPlain,
   formatRegistryListPlain,
   formatRegistryRemovePlain,
-  formatRegistrySearchPlain,
   formatRememberPlain,
   formatRemovePlain,
   formatSearchPlain,

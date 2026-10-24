@@ -300,62 +300,20 @@ export function shapeSearchOutput(
   };
 }
 
-export function shapeRegistrySearchOutput(
-  result: Record<string, unknown>,
-  detail: DetailLevel,
-): Record<string, unknown> {
-  const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
-  const assetHits = Array.isArray(result.assetHits) ? (result.assetHits as Record<string, unknown>[]) : [];
-
-  // Shape stash hits as registry type
-  const shapedKitHits = hits.map((hit) => shapeSearchHit({ ...hit, type: "registry" }, detail));
-
-  // Shape asset hits by detail level
-  const shapedAssetHits = assetHits.map((hit) => shapeAssetHit(hit, detail));
-
-  const shaped: Record<string, unknown> = {
-    hits: shapedKitHits,
-    ...(shapedAssetHits.length > 0 ? { assetHits: shapedAssetHits } : {}),
-    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
-  };
-
-  if (detail === "full") {
-    shaped.query = result.query;
-  }
-
-  return shaped;
-}
-
-export function shapeAssetHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  if (detail === "brief") return pickFields(hit, ["assetName", "assetType", "action", "estimatedTokens"]);
-  if (detail === "normal") {
-    return capDescription(
-      pickFields(hit, ["assetName", "assetType", "description", "stash", "action", "estimatedTokens"]),
-      NORMAL_DESCRIPTION_LIMIT,
-    );
-  }
-  return hit;
-}
-
 export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   if (hit.type === "registry") {
     if (detail === "brief") {
-      // RegistrySearchHit uses `title` (not `name`); always project installRef
-      // and score so callers can use the result without --detail full (QA #28).
-      const out = pickFields(hit, ["title", "name", "installRef", "score"]);
-      // Normalise: if only title exists, expose it as `name` for consistency
-      if (out.title && !out.name) out.name = out.title;
-      return out;
+      // Always project installRef and score so callers can use the result
+      // without --detail full (QA #28).
+      return pickFields(hit, ["name", "installRef", "score"]);
     }
     if (detail === "normal") {
-      // `curated` was removed in v1 (spec §4.2). Renderers project optional
-      // hit-level `warnings` instead so providers can surface non-fatal issues.
-      const out = capDescription(
-        pickFields(hit, ["title", "name", "description", "action", "installRef", "score", "warnings"]),
+      // Renderers project optional hit-level `warnings` so providers can
+      // surface non-fatal issues.
+      return capDescription(
+        pickFields(hit, ["name", "description", "action", "installRef", "score", "warnings"]),
         NORMAL_DESCRIPTION_LIMIT,
       );
-      if (out.title && !out.name) out.name = out.title;
-      return out;
     }
     return hit;
   }

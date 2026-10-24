@@ -5,14 +5,12 @@ import { shapeForCommand } from "../src/output/shapes";
 import {
   capDescription,
   pickFields,
-  shapeAssetHit,
   shapeProposalAcceptOutput,
   shapeProposalDiffOutput,
   shapeProposalEntry,
   shapeProposalListOutput,
   shapeProposalRejectOutput,
   shapeProposalShowOutput,
-  shapeRegistrySearchOutput,
   shapeSearchHit,
   shapeSearchHitForAgent,
   shapeSearchOutput,
@@ -235,35 +233,6 @@ describe("shapeSearchHitForAgent", () => {
       editHint: "akm clone team//skills/deploy",
     });
     expect(readOnly.editHint).toBe("akm clone team//skills/deploy");
-  });
-});
-
-describe("shapeAssetHit", () => {
-  const asset = {
-    assetName: "deploy",
-    assetType: "skill",
-    description: "Deploy the app",
-    stash: { id: "x", name: "x" },
-    action: "akm show skills/deploy",
-    estimatedTokens: 120,
-  };
-
-  test("brief drops description", () => {
-    expect(shapeAssetHit(asset, "brief")).toEqual({
-      assetName: "deploy",
-      assetType: "skill",
-      action: "akm show skills/deploy",
-      estimatedTokens: 120,
-    });
-  });
-
-  test("normal includes description + stash", () => {
-    expect(shapeAssetHit(asset, "normal")).toMatchObject({
-      assetName: "deploy",
-      assetType: "skill",
-      description: "Deploy the app",
-      stash: { id: "x", name: "x" },
-    });
   });
 });
 
@@ -543,27 +512,6 @@ describe("curate agent access projection", () => {
   });
 });
 
-describe("shapeRegistrySearchOutput", () => {
-  test("shapes registry hits at the requested detail level", () => {
-    const result = {
-      hits: [
-        {
-          name: "azure-ops",
-          description: "Azure ops kit",
-          action: "akm bundle add npm:azure-ops",
-          // v1 §4.2: no more `curated` key.
-          score: 0.5,
-          id: "npm:azure-ops",
-        },
-      ],
-      registryHits: [],
-    };
-    const brief = shapeRegistrySearchOutput(result, "brief") as { hits: Record<string, unknown>[] };
-    // QA #28: brief now projects name + score at minimum (not just name/action)
-    expect(brief.hits[0]).toMatchObject({ name: "azure-ops", score: 0.5 });
-  });
-});
-
 // ── Output-shape registry exhaustiveness (#274) ─────────────────────────────
 
 describe("shapeForCommand: unknown command", () => {
@@ -585,7 +533,6 @@ describe("shapeForCommand — `results` collection alias (#922)", () => {
   const LIST_COMMANDS: Array<[string, string, Record<string, unknown>]> = [
     ["search", "hits", { hits: [{ type: "skill", name: "x", action: "a" }], registryHits: [] }],
     ["curate", "items", { items: [{ type: "skill", name: "x" }], query: "q", summary: "s" }],
-    ["registry-search", "hits", { hits: [{ name: "x", installRef: "x" }], assetHits: [] }],
     ["proposal-list", "proposals", { totalCount: 1, proposals: [{ id: "p1", ref: "lessons/x", status: "pending" }] }],
     ["list", "sources", { sources: [{ name: "b1" }] }],
     ["env-list", "envs", { envs: [{ name: "e1" }] }],
