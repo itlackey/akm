@@ -682,7 +682,7 @@ function assembleDistilledContent(
       "MISSING_REQUIRED_ARGUMENT",
       kind === "knowledge"
         ? "Knowledge proposals require a non-empty markdown body."
-        : "Lessons require non-empty `description` and `when_to_use` frontmatter fields. See v1 spec §13.",
+        : "Lessons require non-empty `description` and `when_to_use` frontmatter fields.",
     );
   }
   // Heuristic quality findings go to a human, not the bin.

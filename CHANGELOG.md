@@ -35,6 +35,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   version-range check still runs.
 - `akm task doctor` no longer reports `historyDir`. It named `$CACHE/tasks/history`,
   which does not exist now that task run history lives in `state.db`.
+- Four user-facing messages no longer cite deleted spec sections: the lesson
+  frontmatter error from `akm distill` ("See v1 spec §13"), the two `agent-skills`
+  lint details ("spec §4.5"), the bundle-identity-drift warning ("spec §11.5") and
+  the unknown-`quality` warning ("v1 spec §4.2").
 
 ## [0.10.261013] - 2026-10-23
 
