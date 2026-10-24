@@ -34,6 +34,10 @@ source) and `crawlTimeoutMs` (a wall-clock cap on the whole crawl, default 10
 minutes; `0` disables it). `akm bundle add --max-pages` and `--max-depth` set
 the first two.
 
+A website bundle is crawled when you add it and when you run `akm bundle
+update`. `akm index` crawls it only if it has never been crawled on this host;
+nothing re-crawls on a timer.
+
 ## Why
 
 Some sites need custom extraction logic that the generic HTML-to-markdown path

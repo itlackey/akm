@@ -121,8 +121,7 @@ Any number of agent harnesses may exist. Each registers once in `HARNESS_REGISTR
 (`src/integrations/harnesses/index.ts`), and core code imports the registry, not a harness. That
 is a goal not yet reached: today the opencode-sdk path is still special-cased in the config
 schema, setup, health, the implicit engine fallback and workflow teardown, setup's config import
-reads two harnesses directly, and the SDK is a hard dependency; closing that gap is the 0.10
-harness rework.
+reads two harnesses directly, and the SDK is a hard dependency; closing that gap is open work.
 
 Cost: A new harness has to fit the shared registry shape, which a one-off integration would not.
 

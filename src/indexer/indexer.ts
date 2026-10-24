@@ -650,7 +650,6 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
   // path. `secret-seam` is imported here, never from inside the cycle.
   const { storeSecretResolver } = await import("../sources/snapshot-fetchers/secret-seam.js");
   await ensureSourceCaches(config, {
-    force: full,
     materialize: options.hydrateSources !== false,
     secrets: storeSecretResolver,
     // Same progress channel as every other phase (#954) — a

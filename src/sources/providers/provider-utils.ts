@@ -21,9 +21,9 @@ export function sanitizeString(value: unknown, maxLength = 255): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, maxLength);
 }
 
-/** Check whether a cached timestamp has exceeded its TTL. */
-export function isExpired(mtimeMs: number, ttlMs: number): boolean {
-  return Date.now() - mtimeMs > ttlMs;
+/** Check whether a cached timestamp is older than `maxAgeMs`. */
+export function isExpired(mtimeMs: number, maxAgeMs: number): boolean {
+  return Date.now() - mtimeMs > maxAgeMs;
 }
 
 /**

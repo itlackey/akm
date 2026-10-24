@@ -207,7 +207,7 @@ describe("GitSourceProvider", () => {
     expect(content).toContain("# Chat API");
   });
 
-  test("cache mirror respects TTL and skips re-clone when fresh", async () => {
+  test("a materialized mirror is not re-cloned however old it is; force re-clones it", async () => {
     const localRepoPath = createLocalGitRepo();
     const repo = { cloneUrl: localRepoPath, ref: null as string | null, canonicalUrl: localRepoPath };
     const cachePaths = getCachePaths(repo.canonicalUrl);
@@ -215,14 +215,37 @@ describe("GitSourceProvider", () => {
     // Prime the cache
     await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
 
-    // Remove the content to verify it is NOT re-cloned (cache is still fresh)
+    // Age the freshness marker far past any former refresh interval.
+    const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(cachePaths.indexPath, longAgo, longAgo);
+
+    // Remove the content to verify it is NOT re-cloned: age never triggers a fetch.
     const docPath = path.join(cachePaths.repoDir, "content", "openai", "docs", "chat-api", "python", "DOC.md");
     fs.rmSync(docPath);
 
-    await ensureGitMirror(repo, cachePaths, { requireRepoDir: false });
-
-    // File should still be absent — clone was skipped due to fresh cache
+    await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
     expect(fs.existsSync(docPath)).toBe(false);
+
+    // `akm bundle update` forces a sync regardless of age.
+    await ensureGitMirror(repo, cachePaths, { requireRepoDir: true, force: true });
+    expect(fs.existsSync(docPath)).toBe(true);
+  });
+
+  test("a mirror that was never materialized is cloned", async () => {
+    const localRepoPath = createLocalGitRepo();
+    const repo = { cloneUrl: localRepoPath, ref: null as string | null, canonicalUrl: localRepoPath };
+    const cachePaths = getCachePaths(repo.canonicalUrl);
+    const docPath = path.join(cachePaths.repoDir, "content", "openai", "docs", "chat-api", "python", "DOC.md");
+
+    // No marker, no repo directory: first sync clones.
+    expect(fs.existsSync(cachePaths.indexPath)).toBe(false);
+    await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
+    expect(fs.existsSync(docPath)).toBe(true);
+
+    // A marker whose repo directory is gone is not a materialization: clone again.
+    fs.rmSync(cachePaths.repoDir, { recursive: true, force: true });
+    await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
+    expect(fs.existsSync(docPath)).toBe(true);
   });
 
   test("cache mirror treats repo-root stash layouts as fresh extracted repos", async () => {

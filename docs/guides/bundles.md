@@ -125,14 +125,15 @@ Valid `--kind` values are the four bundle providers: `filesystem`, `git`,
 directory, then publishes and indexes the result. `akm bundle remove`
 disconnects a bundle and re-indexes without it.
 
-Nothing polls in the background. `akm bundle add` fetches a bundle once, and
-`akm bundle update` fetches it again. `akm index` also re-fetches a website
-bundle, or a git bundle added with `--provider git`, when its cached copy is
-more than 12 hours old; git, GitHub and npm installs change only on
-`akm bundle update`. To refresh on a schedule, schedule
-`akm bundle update --all --skip-if-locked`, where `--skip-if-locked` turns
-database contention with a concurrent index or improve run into a successful
-skip instead of exit 75.
+Nothing refreshes on a timer. A bundle is fetched when you add it and when you
+run `akm bundle update`. `akm index` fetches a bundle only if it has never been
+materialized on this host, such as a website or a `--provider git` bundle in a
+config you copied to a new machine; it does not re-fetch a bundle that is
+already there, however old. For a git, GitHub or npm install whose files are
+missing, `akm index` warns and names `akm bundle update` instead of fetching.
+To refresh on a schedule, schedule `akm bundle update --all --skip-if-locked`,
+where `--skip-if-locked` turns database contention with a concurrent index or
+improve run into a successful skip instead of exit 75.
 
 ```sh
 # Update

@@ -10,9 +10,9 @@
  * with no staging directory and no atomic rename. A process killed anywhere in
  * that loop left the mirror empty or holding an arbitrary SUBSET of the new
  * pages, with the previous snapshot already destroyed — and because the
- * freshness marker is only rewritten on success, the marker still looked
- * recent, so the next non-forced `sync()` could serve the wreckage for up to
- * the 12-hour refresh interval instead of rebuilding it.
+ * freshness marker is only rewritten on success, the marker still existed, so
+ * the next non-forced `sync()` could serve the wreckage instead of rebuilding
+ * it.
  *
  * `scrapeWebsiteToStash` / `writeSnapshotToStash` now build into a sibling
  * staging directory and swap it in with renames. These tests interrupt a
@@ -183,7 +183,7 @@ test("an interrupted refresh keeps the previous snapshot whole and is recovered 
 
 test("a plain (non-forced) run after an interruption never serves a partial mirror", async () => {
   // The freshness marker is only rewritten on success, so after an interrupted
-  // FORCED refresh the marker still looks recent and a plain `sync()` skips the
+  // FORCED refresh the marker still exists and a plain `sync()` skips the
   // refresh entirely. With the in-place write that meant serving whatever
   // subset of pages happened to have landed; with staging the skipped refresh
   // serves the previous COMPLETE snapshot instead.

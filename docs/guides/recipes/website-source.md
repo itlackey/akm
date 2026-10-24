@@ -19,7 +19,9 @@ akm bundle add https://www.agentic-patterns.com/ --name agent-patterns --max-pag
 ```
 
 `akm bundle add` indexes the crawl when it finishes, so you can search right
-away. `akm bundle update agent-patterns` crawls the site again.
+away. `akm bundle update agent-patterns` crawls the site again. Nothing
+re-crawls on its own: `akm index` crawls a website bundle only if it has never
+been crawled on this host.
 
 ```sh
 akm search "agent" --type knowledge

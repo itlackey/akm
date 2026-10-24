@@ -41,9 +41,6 @@ import {
 } from "./robots";
 import type { FetcherContext, SecretResolveFn, WikiSnapshotResult } from "./types";
 
-/** Refresh website snapshots every 12 hours to balance freshness with scraping load. */
-const CACHE_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
-
 /** Allow up to 7 days of stale snapshots when refresh fails so search remains available during outages. */
 const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 /** Allow limited breadth-first expansion without letting the crawl queue grow unbounded. */
@@ -183,7 +180,6 @@ export async function ensureWebsiteMirror(
 
   await withFreshnessCache({
     markerPath: cachePaths.manifestPath,
-    ttlMs: CACHE_REFRESH_INTERVAL_MS,
     staleMs: CACHE_STALE_MS,
     force: options?.force === true,
     isUsable: () => !requireStashDir || hasExtractedSite(cachePaths.stashDir),

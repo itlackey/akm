@@ -322,13 +322,17 @@ function isSuspiciousStashRoot(dir: string): boolean {
  * `resolveSourceEntries()` so the content directories pass the
  * `isValidDirectory()` check.
  *
+ * Sources are never refreshed here: `sync()` is called without `force`, so a
+ * source is fetched only when it has never been materialized on this host.
+ * `akm bundle update` is what refreshes one.
+ *
  * `materialize` (default `true`) is the query-time safety valve (spec §14.3 /
  * D11): the sanctioned materialization callers (`akm index`, source
  * add/update/sync, improve's blocking preflight) pass it truthy and clone/pull/
  * fetch as needed. A READ command's inline auto-index passes `materialize:
  * false` — network is FORBIDDEN at query time, so instead of `sync()` we only
  * check whether each cache-backed source is already materialized: a present
- * cache is served as-is (last-known-good; no TTL pull either), while an absent
+ * cache is served as-is (last-known-good), while an absent
  * or partially-staged cache makes that source UNAVAILABLE for the read and is
  * skipped with one warning naming the remedy. The rest of the command still
  * resolves.
@@ -336,7 +340,6 @@ function isSuspiciousStashRoot(dir: string): boolean {
 export async function ensureSourceCaches(
   config?: AkmConfig,
   options?: {
-    force?: boolean;
     materialize?: boolean;
     secrets?: import("../../sources/provider").SecretResolver;
     /**
@@ -350,7 +353,6 @@ export async function ensureSourceCaches(
   },
 ): Promise<void> {
   const cfg = config ?? loadConfig();
-  const force = options?.force === true;
   const materialize = options?.materialize !== false;
   const onProgress = options?.onProgress ?? (() => {});
   // Polymorphic refresh: walk every enabled source through its registered
@@ -422,7 +424,7 @@ export async function ensureSourceCaches(
       // `toSync` only ever holds providers whose `.sync` passed the check
       // above; the optional-chain here is just to satisfy the type (the
       // narrowing does not survive the array round-trip).
-      await provider.sync?.({ force, secrets: options?.secrets, ensureWebsiteMirror });
+      await provider.sync?.({ secrets: options?.secrets, ensureWebsiteMirror });
     } catch (err) {
       warn(
         `Warning: failed to refresh ${provider.kind} source "${provider.name}": ${err instanceof Error ? err.message : String(err)}`,

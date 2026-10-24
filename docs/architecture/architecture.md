@@ -66,6 +66,13 @@ rules.
 indexing pipeline as filesystem sources. There is no parallel scoring system
 for "remote" content.
 
+A cache-backed source is fetched when it is added and when `akm bundle update`
+forces a sync. `akm index` calls `sync()` without `force`, so it fetches a
+source only if it has never been materialized on this host; nothing refreshes
+on a timer. A git or npm install recorded in the lockfile whose files are
+missing is reported with a warning that names `akm bundle update`; index does
+not fetch it.
+
 `akm index` indexes each source through its bundle's adapter. A source that
 could not be walked completely keeps its previously indexed rows and the index
 run warns; a bundle whose adapter id is unknown is skipped with a warning.

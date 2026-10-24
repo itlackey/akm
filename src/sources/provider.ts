@@ -62,7 +62,11 @@ export type EnsureWebsiteMirror = (config: SourceConfigEntry, options?: WebsiteM
 
 /** Options accepted by {@link SourceProvider.sync}. */
 export interface SyncOptions {
-  /** Bypass the cache-freshness TTL and re-fetch unconditionally. */
+  /**
+   * Re-fetch even when the source is already materialized. Without it, `sync()`
+   * fetches only a source that has never been materialized on this host; age
+   * never triggers a fetch.
+   */
   force?: boolean;
   /**
    * Secret resolver for provider kinds whose refresh needs credentials
@@ -90,7 +94,8 @@ export interface SourceProvider {
   path(): string;
 
   /**
-   * Refresh the directory from upstream. No-op for filesystem.
+   * Materialize the directory from upstream when it is missing; refresh it
+   * only with `force`. No-op for filesystem.
    */
   sync?(options?: SyncOptions): Promise<void>;
 }

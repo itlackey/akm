@@ -30,8 +30,11 @@ function seedManagedBundle(
   seedLockEntries([{ id: key, source: lock.source, ref: lock.ref, localRoot: lock.localRoot }]);
 }
 
+import { resolveSourceProviderFactory } from "../src/sources/provider-factory";
 import * as gitProvider from "../src/sources/providers/git";
+import * as gitInstall from "../src/sources/providers/git-install";
 import { NpmSourceProvider } from "../src/sources/providers/npm";
+import { createWebsiteProvider } from "../src/sources/providers/website";
 import * as websiteIngest from "../src/sources/snapshot-fetchers/website-ingest";
 
 let storage: IsolatedAkmStorage;
@@ -666,7 +669,7 @@ describe("ensureSourceCaches", () => {
     }
   });
 
-  test("force option propagates to cache-backed sources", async () => {
+  test("the index path never forces a sync", async () => {
     const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
     const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
       rootDir: "/tmp/root",
@@ -681,18 +684,89 @@ describe("ensureSourceCaches", () => {
       },
     };
 
-    await ensureSourceCaches(config, { force: true });
+    try {
+      await ensureSourceCaches(config);
 
-    expect(gitSpy).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
-      requireRepoDir: true,
-      writable: false,
-      force: true,
+      expect(gitSpy).toHaveBeenCalledTimes(1);
+      expect(gitSpy.mock.calls[0]?.[2]?.force).not.toBe(true);
+      expect(websiteSpy).toHaveBeenCalledTimes(1);
+      expect(websiteSpy.mock.calls[0]?.[1]?.force).not.toBe(true);
+    } finally {
+      gitSpy.mockRestore();
+      websiteSpy.mockRestore();
+    }
+  });
+
+  test("provider sync({ force: true }) (the `akm bundle update` path) forces the mirrors", async () => {
+    const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
+    const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
+      rootDir: "/tmp/root",
+      stashDir: "/tmp/stash",
+      manifestPath: "/tmp/manifest.json",
     });
-    expect(websiteSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "website-source" }), {
-      requireStashDir: true,
-      force: true,
+    try {
+      const git = resolveSourceProviderFactory("git")?.({
+        type: "git",
+        url: "https://github.com/example/repo",
+        name: "git-source",
+      });
+      await git?.sync?.({ force: true });
+      expect(gitSpy).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+        requireRepoDir: true,
+        writable: false,
+        force: true,
+      });
+
+      const website = createWebsiteProvider({
+        type: "website",
+        url: "https://example.com/docs",
+        name: "website-source",
+      });
+      await website.sync({ force: true, ensureWebsiteMirror: websiteIngest.ensureWebsiteMirror });
+      expect(websiteSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "website-source" }), {
+        requireStashDir: true,
+        force: true,
+      });
+    } finally {
+      gitSpy.mockRestore();
+      websiteSpy.mockRestore();
+    }
+  });
+
+  describe("git source materialization", () => {
+    const url = "https://github.com/example/aged-repo";
+    const config: AkmConfig = { semanticSearchMode: "off", bundles: { aged: { git: url } } };
+
+    function materialize(): ReturnType<typeof gitProvider.getCachePaths> {
+      const cachePaths = gitProvider.getCachePaths(gitProvider.parseGitRepoUrl(url).canonicalUrl);
+      fs.mkdirSync(path.join(cachePaths.repoDir, "content"), { recursive: true });
+      fs.writeFileSync(cachePaths.indexPath, "[]", "utf8");
+      return cachePaths;
+    }
+
+    test("a materialized source is not fetched on index, however old its marker is", async () => {
+      const cachePaths = materialize();
+      const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      fs.utimesSync(cachePaths.indexPath, longAgo, longAgo);
+      const cloneSpy = spyOn(gitInstall, "cloneRepo").mockImplementation(() => {});
+      try {
+        await ensureSourceCaches(config);
+        expect(cloneSpy).not.toHaveBeenCalled();
+      } finally {
+        cloneSpy.mockRestore();
+      }
     });
-    gitSpy.mockRestore();
-    websiteSpy.mockRestore();
+
+    test("a source that was never materialized is fetched on index", async () => {
+      const cachePaths = materialize();
+      fs.rmSync(cachePaths.rootDir, { recursive: true, force: true });
+      const cloneSpy = spyOn(gitInstall, "cloneRepo").mockImplementation(() => {});
+      try {
+        await ensureSourceCaches(config);
+        expect(cloneSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        cloneSpy.mockRestore();
+      }
+    });
   });
 });
