@@ -13,10 +13,10 @@ curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh |
 # 2. Initialize the bundle directory and accept all defaults (no prompts)
 akm setup --yes
 
-# 3. Don't rely on the implicit semantic-search default in an unattended
-#    script — the default can vary by release and by install path. Set it
-#    explicitly so this script's behavior is deterministic. `auto` uses local
-#    embeddings (downloaded on first index run); `off` skips them entirely.
+# 3. Semantic search is off by default. Set the mode explicitly so the script
+#    behaves the same on every host. `auto` uses local embeddings (the model
+#    is downloaded from Hugging Face on the first index run unless you
+#    configure a remote embedding endpoint); `off` skips them entirely.
 akm config set semanticSearchMode auto
 
 # 4. Add sources (adjust paths as needed)
@@ -64,10 +64,10 @@ akm setup --config '{
 For the full set of accepted top-level `--config` keys and their meaning,
 see [configuration.md](../../reference/configuration.md).
 
-**Semantic search.** Headless setups (`--yes` or `--config`, no wizard
-prompts) defer the embedding-model download to the first `akm index` run,
-unlike the interactive wizard which downloads immediately during `akm
-setup`. Set the mode explicitly rather than relying on the implicit default:
+**Semantic search.** `semanticSearchMode` defaults to `off`. Headless setups
+(`--yes` or `--config`, no wizard prompts) defer the embedding-model download
+to the first `akm index` run, unlike the interactive wizard which downloads
+immediately during `akm setup`. Set the mode explicitly:
 
 ```sh
 akm config set semanticSearchMode auto   # local embeddings, downloaded on first index

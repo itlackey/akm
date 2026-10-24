@@ -8,7 +8,7 @@ How akm is built.
 - [Core Principles](akm-core-principles.md) -- Eleven design principles and the precedence rule for when they collide
 - [Adapters](adapters.md) -- The `BundleAdapter` contract: how a bundle's files are recognized, indexed, linted, and written
 - [The Workflow Engine](workflow-engine.md) -- How a workflow compiles to a frozen plan, persists run and unit state, dispatches work, and resumes without replaying completed steps
-- [The Improvement Loop](improvement.md) -- How feedback becomes ranking changes and reviewable proposals, and which writes happen without review
+- [The Improvement Loop](improvement.md) -- How feedback becomes a utility signal and reviewable proposals, and which writes happen without review
 - [Persisted-Data Compatibility](persisted-data-compat.md) -- What a reader owes data an earlier release wrote, per persisted format
 
 ## Specs

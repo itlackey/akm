@@ -34,10 +34,10 @@ In order, every run applies (or, under `status`/`--dry-run`, plans):
    legacy `stashDir`/`sources[]`/`installed` layout converted to
    `bundles`/`defaultBundle`. Config loading already does all of this in
    memory; this persists it under a backup.
-2. **Pending `state.db` migrations**, historical-destructive ones included
-   (`stateMigrations`). This is the only path (besides `akm upgrade`, which
-   calls the same code) that is allowed to apply a destructive migration to an
-   existing, unversioned or behind-generation `state.db` — see
+2. **Pending `state.db` migrations** (`stateMigrations`). Any command that opens
+   `state.db` applies them; this step does it up front and reports what ran. A
+   migration that drops schema first copies the file to
+   `state.db.pre-<migrationId>.bak`. See
    [One-way state.db](#one-way-note-statedb-migrations-are-one-way) below.
 3. **Task files**: every task file at version 2 or 3, and every version 4
    file still carrying the retired `schedule[].enabled` key, rewritten as
@@ -47,9 +47,6 @@ In order, every run applies (or, under `status`/`--dry-run`, plans):
 4. **Residue sweep**: superseded pre-0.9.0 `.akm` files in the stash and the
    transaction-journal, maintenance-barrier, lock-mutex and version-stamp
    files older releases kept under `$DATA`/`$STATE`/`$CONFIG` (`deadResidue`).
-
-The step list in [`docs/reference/cli.md`](../reference/cli.md#migrate) is the
-authoritative one; the two must agree.
 
 ### The plan JSON
 
@@ -66,7 +63,8 @@ same step names):
   "configFile": { "keys": [], "changed": false, "applied": false },
   "stateMigrations": { "pending": [] },
   "taskFiles": { "schemaVersion": 1, "changed": 0, "skipped": 0, "blocked": 0, "files": [] },
-  "deadResidue": { "pending": [] }
+  "deadResidue": { "pending": [] },
+  "ok": true
 }
 ```
 
@@ -119,19 +117,18 @@ Key fields:
 | `stateMigrations` | `{ pending: string[] }` under `status`/`--dry-run`; `{ applied: string[], safetyCopyPath?: string }` after a real `apply`. `safetyCopyPath` is present only when a historical-destructive migration ran — see below. |
 | `taskFiles` | `changed`/`skipped`/`blocked` counts and a `files[]` array with each file's `status` and `reason`. |
 | `backupPath` / `applied` | Present after a real apply that rewrote at least one task file: the run's backup directory and how many files it rewrote. |
-| `deadResidue` | `{ pending: [...] }` under a read-only run, `{ removed: [...] }` / `{ recovered: [...], quarantined: [...], deferred: [...] }` after apply. An untrusted journal (unreadable `journal.json`, or a fence violation) is quarantined to `$DATA/txn-quarantine`; a trusted, fenced journal whose `rollback`/`finalize` throws is deferred, left in place under `$DATA/txn/<rootNs>/`. Neither is thrown, and neither sets `status` to `blocked`. `staleTxns.pending` entries carry `wouldQuarantine: { reason }` when the journal's read-only fence check alone (not a `rollback`/`finalize` run) already shows it would be quarantined by a real apply. |
+| `deadResidue` | `{ pending: [...] }` under a read-only run, `{ removed: [...] }` after apply. Each entry carries `relativePath` and `sizeBytes`; a removal entry adds `removed` (a boolean) and an `error` when the delete failed. A failed delete does not set `status` to `blocked`. |
 
 **Backups and their retention:**
 
 - Task-file backups go to `<dataDir>/backups/tasks/<timestamp>-<uuid>/`,
   one directory per apply run that rewrote a file; nothing prunes them.
-- Config backups go to `<cacheDir>/config-backups/config-<ISO-ts>.json`,
-  also capped at **5**.
-- A `state.db` historical-destructive migration writes a verified sibling
-  snapshot next to `state.db` itself:
-  `state.db.pre-<migrationId>.<UTC-digits>.<UUID>.bak`. This one is **never
-  auto-pruned** — it is a one-time, rare event (a single destructive ledger
-  boundary), so clean it up yourself once you've confirmed the upgrade, if
+- Config backups go to `<cacheDir>/config-backups/config-<ISO-ts>.json`; akm
+  keeps the newest **5** and prunes older ones.
+- A `state.db` migration that drops schema writes a sibling copy next to
+  `state.db` itself: `state.db.pre-<migrationId>.bak`, where `<migrationId>` is
+  the first such pending migration. akm does not prune it. It is a rare,
+  one-time event, so clean it up yourself once you've confirmed the upgrade, if
   disk space matters to your image.
 
 **Exit codes:**
@@ -188,8 +185,7 @@ already-current install with nothing pending it is a fast no-op that exits 0.
 
 After the install step it also updates the akm plugin of each agent harness
 present in the image (Claude Code, Codex, OpenCode), reported under `plugins`;
-see [`akm upgrade`](../reference/cli.md#upgrade) for the rules, the OpenCode
-version lockstep and the Codex hook-trust entries a headless image needs.
+see [`akm upgrade`](../reference/cli.md#upgrade) for the flags.
 
 **`--check`** skips the migration step entirely — it only compares versions
 and reports `updateAvailable` (plus the pending per-harness plugin updates). Use it for a version-drift alert, not as your
@@ -262,16 +258,15 @@ akm health --format json      # read this JSON; act on ok/status, never on messa
 ### Environment variables
 
 A bundler that controls the filesystem layout should set these explicitly
-rather than rely on `$HOME`-derived defaults (names verified against
-`src/core/paths.ts` and `src/tasks/scheduler-invocation.ts`):
+rather than rely on `$HOME`-derived defaults:
 
 | Variable | What it points at |
 | --- | --- |
 | `AKM_BUNDLE_DIR` | The content bundle (`$STASH`) — assets akm indexes and serves. |
 | `AKM_CONFIG_DIR` | `config.json`'s directory. |
 | `AKM_DATA_DIR` | Durable, non-regenerable data: **`index.db` and `state.db` live here.** This is the directory a migration snapshot's safety copy sits beside. |
-| `AKM_CACHE_DIR` | Regenerable cache: registry downloads, config backups, task logs. Safe to discard between image builds (not between boots of the same running install). |
-| `AKM_STATE_DIR` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds scheduled-task invocation context, companion-plugin hook state (Claude Code / OpenCode hook logs), and, per stash, `akm improve`'s whole-run lock (`locks/`) — see [Storage locations](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/storage-locations.md). Set it anyway if you schedule akm tasks inside the image, so that context is captured consistently rather than falling back to `$HOME/.local/state/akm`. |
+| `AKM_CACHE_DIR` | Regenerable cache: installed git, npm and website bundles, config backups, task logs. If it is discarded, `akm bundle update --all` restores the bundles. |
+| `AKM_STATE_DIR` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds the scheduler lock, per bundle `akm improve`'s whole-run lock (`locks/`), and a scratch directory for OpenCode model work — see [Storage locations](../architecture/internals/storage-locations.md). Set it too, so those locks sit on the same persistent volume as the rest of akm's state rather than under `$HOME/.local/state/akm`. |
 
 Set all five to paths that persist across container restarts (a mounted
 volume), or `akm migrate apply` will see an empty `state.db` on every boot
@@ -279,10 +274,10 @@ and never actually converge.
 
 ## One-way note: `state.db` migrations are one-way
 
-Once a migration has run against `state.db`, an **older** akm binary that
-later opens the same file refuses it outright — the migration ledger moved
-forward, and there is no downgrade path. If you need the ability to roll
-back a bundled akm version, take your own backup of the whole data directory
-(`$AKM_DATA_DIR`) before running `akm upgrade`/`akm migrate apply` — the
-per-migration safety copy described above exists to protect that one
-destructive step, not as a general rollback mechanism for your deployment.
+Once a migration has run against `state.db`, there is no downgrade path. An
+**older** akm that later opens the same file continues with the schema it knows
+and warns once that the database is newer; upgrade akm if its output looks
+incomplete. If you need the ability to roll back a bundled akm version, take
+your own backup of the whole data directory (`$AKM_DATA_DIR`) before running
+`akm upgrade`/`akm migrate apply`. The `state.db.pre-<migrationId>.bak` copy
+described above covers the one schema-dropping step, not a general rollback.

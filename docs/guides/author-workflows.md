@@ -28,7 +28,7 @@ akm workflow create my-release --from ./my-release.md
 akm lint --type workflows                # Check for structural errors before using it
 ```
 
-Both formats compile to source IR version 1. Choose Markdown for maps, routes,
+Both formats compile to the same workflow plan. Choose Markdown for maps, routes,
 gates, typed artifacts, and prose-rich agent instructions. Choose the bounded
 YAML subset for a single local self-hosted job made of token-safe `run` and
 supported local `uses` steps.
@@ -183,10 +183,9 @@ Widen it only by naming what the unit needs:
 Secrets and fixed values belong in exact named `env:` bindings: those values
 are redacted out of everything journaled, and `pass_env:` values are not.
 
-Workflow starts freeze the durable plan v4 family's current executable format
-(`irVersion: 5`), which rejects `inherit_env` instead of persisting an
-unbounded ambient environment. Pre-`irVersion`-5 stored plans do not execute;
-start a new run after updating the source.
+A new run freezes its plan at `irVersion: 6`. A run keeps the plan it was
+frozen with: a plan stored by an earlier release still runs on the current
+engine, with a warning.
 
 Named bindings and `pass_env:` are part of the unit's input hash, so changing
 either re-runs the command instead of reusing a row recorded under another
@@ -198,9 +197,8 @@ Full list of allowlisted names:
 ### Things to get right
 
 - **`command:` is an argv array, not a shell string.** `["bun", "run", "test"]`,
-  never `"bun run test"`. Nothing is shell-parsed, which is what makes it safe;
-  if you truly need a pipeline, write `["bash", "-lc", "a | b"]` and own that
-  choice explicitly.
+  never `"bun run test"`. Nothing is shell-parsed; if you truly need a pipeline,
+  write `["bash", "-lc", "a | b"]` and own that choice explicitly.
 - **No interpolation.** The argv is frozen. A `map` step's item reaches the
   command as `AKM_ITEM` (canonical JSON) and the run params as `AKM_PARAMS` —
   read them from the environment, do not try to splice them into `command:`.
@@ -213,8 +211,8 @@ Full list of allowlisted names:
 - **Don't assume your shell's environment.** The child gets an allowlist, not
   an inheritance. If a command fails with "not found" or reads a missing
   toolchain variable, name it in `pass_env:`; use a named `env:` binding for a
-  fixed or secret value. The durable v4 family (`irVersion: 5`) deliberately
-  has no whole-process fallback.
+  fixed or secret value. There is no option to inherit the whole process
+  environment.
 - **A very chatty command still passes; its artifact just says so.** akm retains
   8 MiB of stdout and 8 MiB of stderr. Past that it keeps draining and discards,
   so the command runs to completion and its exit code decides the step. The
@@ -266,8 +264,7 @@ Full reference: [Workflow Schema: Exec (shell) units](../reference/workflow-sche
   allowlist (`PATH`, `HOME`, locale/temp/identity, the Windows essentials) plus
   your `env:` bindings and the `AKM_*` context — nothing else. Widen it with
   `exec.pass_env:` (a few non-secret names). `pass_env` lives inside `exec:`;
-  the unit-level `env:` key is a list of exact env asset binding refs. A new v4
-  start rejects `inherit_env`.
+  the unit-level `env:` key is a list of exact env asset binding refs.
 - **Asking a model to do deterministic work.** "Run the test suite and tell me
   if it passed" is an [exec step](#deterministic-steps-run-a-command-gate-on-it),
   not a prompt.
@@ -332,12 +329,10 @@ per-item reviewer, `balanced` as the run default for everything else.
 
 ## Fan-out width
 
-**A `map` step runs its items in parallel by default — 4 at a time as of
-0.9.1.** (Earlier versions defaulted to 1, so a fan-out over 500 items crawled
-through them one by one unless you said otherwise.) Map units are independent
-by construction, so parallel is the honest default; the number is a modest 4
-rather than "whatever the machine can take" so it stays predictable across the
-machines a workflow gets shared with.
+**A `map` step runs its items in parallel by default, 4 at a time.** Map
+units are independent by construction, so parallel is the default; the number
+is a modest 4 rather than "whatever the machine can take" so it stays
+predictable across the machines a workflow gets shared with.
 
 Say so explicitly when the default is wrong for a step:
 
@@ -351,8 +346,8 @@ Say so explicitly when the default is wrong for a step:
 `concurrency: 1` is a genuine opt-out and always wins. Reach for it when the
 units touch a shared resource, when their side effects must happen in list
 order, or when they hit an external service you must not burst. To change the
-default for every workflow on a machine instead — including restoring the old
-serial behavior wholesale — set
+default for every workflow on a machine instead, including making fan-out
+serial wholesale, set
 `akm config set workflow.defaultMapConcurrency 1`.
 
 The declared width is a **ceiling, not a promise**. Three other limits clamp it
@@ -369,13 +364,9 @@ for the full table.
 All of it is frozen into the run when it starts, so an in-flight or resumed run
 keeps the widths it began with even if you edit config or upgrade akm.
 
-A workflow that fans out is authorizing **N parallel agents**, not one — the
-same trust model described in
-[Running Workflows: workflow sources are executed code](run-workflows.md#security-workflow-sources-are-executed-code)
-applies with multiplied blast radius. Give the workflow explicit safety and
-parameter metadata (document every `params` entry, keep destructive steps
-described plainly in the body) so a reader — human or agent — can judge that
-blast radius before running it.
+A fan-out runs N agents at once, not one. Document every `params` entry and
+describe destructive steps plainly in the body, so a reader (human or agent)
+can see what a run will do before starting it.
 
 ## Verify before you publish
 
@@ -412,8 +403,8 @@ blast radius before running it.
 
 4. **Deliberately break a gate once.** Run the workflow with params you
    expect to fail validation, and confirm the gate actually rejects rather
-   than silently passing — a missing `workflow.judgeEngine` or a malformed
-   verdict rejects the gate rather than bypassing it (see
+   than silently passing. A malformed verdict, or a step with no judge
+   available, does not pass the gate (see
    [Workflow Schema: Gates and verification](../reference/workflow-schema.md#gates-and-verification)),
    so this is worth confirming once per workflow rather than assuming.
 
@@ -493,9 +484,10 @@ package is an HTTP client only and spawns `opencode serve` to have something
 to talk to, so installing the npm package alone is not enough. With no
 binary, freezing fails with `INVALID_CONFIG_FILE` and exit 78.
 
-A workflow with a non-empty `### gate` additionally requires
-`workflow.judgeEngine` to name a configured LLM or agent engine — the gate
-judge is not covered by the fallback.
+A step with a non-empty `### gate` is judged by the engine named in
+`workflow.judgeEngine`, else by the default engine. If neither resolves, akm
+warns when it freezes the run, and the step blocks for `akm workflow resume`
+when it reaches the gate rather than passing unjudged.
 
 `akm setup` normally selects a default execution engine. On a bare container
 or CI image, either install opencode and let the fallback apply, or choose an

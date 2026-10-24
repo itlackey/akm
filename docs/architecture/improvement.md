@@ -2,9 +2,9 @@
 
 ## Purpose and boundary
 
-The improvement loop turns outcomes into ranking changes and reviewable proposals. This page is the
+The improvement loop turns outcomes into a utility signal and reviewable proposals. This page is the
 architecture-level reference for that loop — how a feedback signal becomes a
-ranking change, how ranking and usage evidence become a proposal, and the
+utility score, how utility and usage evidence become a proposal, and the
 boundary around what AKM is allowed to write without a human or policy
 reviewing the diff first.
 
@@ -78,7 +78,7 @@ diff are these:
    `--replace`/`--with`/`--source` attach an exact fix of its text once the
    agent has verified the correct fact, which akm checks at once and queues as
    a `feedback` proposal.
-   `--positive` records that the asset helped (it raises its ranking) and does
+   `--positive` records that the asset helped (it raises its utility score) and does
    not trigger a rewrite.
 2. The feedback event is appended to `state.db`, and the asset's utility
    score is updated immediately via the bounded-step formula (below) — no

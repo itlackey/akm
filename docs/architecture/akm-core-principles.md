@@ -68,13 +68,13 @@ Enforced by: `tests/asset-ref.test.ts` and `tests/resolve-ref.test.ts` (grammar,
 
 akm runs code only through: workflow runs, tasks (including scheduled ones), agent and command
 dispatch, `env run` and `secret run` (read a value and inject it into a child process), the
-improve and proposal processes, index passes, and bundle-shipped fetcher modules that are imported
-during website sync. `search` and `show` never execute anything. A script runs only as a task or
+improve and proposal processes, index passes, and fetcher modules placed in the working bundle's `scripts/wiki-fetchers/`
+directory, which are imported during any website sync. `search` and `show` never execute anything. A script runs only as a task or
 workflow target, and `show` returns its run hint as text. The `upgrade`, `health` and
 source-sync commands also invoke external tools of akm's choosing, which is not indexed content
 running.
 
-Cost: Running anything new means adding a named surface here, and a fetcher module in a bundle runs when its website source syncs, with no separate approval.
+Cost: Running anything new means adding a named surface here, and a fetcher module in the working bundle runs whenever a website source syncs, with no separate approval.
 
 Enforced by: not enforced; relies on review.
 

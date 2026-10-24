@@ -113,7 +113,7 @@ Examples:
 - `team//commands/deploy`
 
 URI schemes are **not** asset refs. Install locators like `github:owner/repo`,
-`git+https://...`, `npm:@scope/pkg`, `skills.sh:slug`, and `./local/path` are a
+`git+https://...`, `npm:@scope/pkg`, and `./local/path` are a
 separate grammar parsed by `parseRegistryRef` in `src/registry/resolve.ts` and
 consumed by `akm bundle add` and `akm clone`.
 
@@ -382,7 +382,7 @@ ordinary `NotFoundError` (exit 1).
 Direct commands, task execution, workflows, improve, proposals, and index
 passes all execute through one engine boundary. The other places akm runs code
 are `env run` and `secret run` (a child process that receives the injected
-values) and bundle-shipped fetcher modules imported during website sync
+values) and fetcher modules from the working bundle's `scripts/wiki-fetchers/` directory, imported during website sync
 (`src/sources/snapshot-fetchers/registry.ts`); `search` and `show` execute
 nothing.
 

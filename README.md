@@ -24,12 +24,12 @@ Search or curate a shortlist, then load full content by ref. No giant startup pr
 Install and share bundles containing skills, scripts, workflows, agents, instructions, memories, and knowledge — not just prompt snippets.
 
 ### Improve through evidence, with review
-Feedback re-ranks assets right away. A negative report can carry an exact text fix, and `akm improve` repairs metadata; every edit lands as a diffable proposal you accept, reject or revert, and only writable bundles are changed.
+Feedback is recorded against each asset and feeds `akm improve`. A negative report can carry an exact text fix, and `akm improve` repairs metadata. Edits land as diffable proposals you accept, reject or revert, unless you opt in to automatic acceptance (`experimental.improveAutonomy`). Only writable bundles are changed.
 
 ### Turn knowledge into repeatable work
-Run persisted workflows with dispatch, gates, retries, budgets, and resume instead of reconstructing a process from prose every session.
+Run persisted workflows with dispatch, gates, retries, budgets, and resume instead of reconstructing a process from prose every session. Workflows are Experimental.
 
-AKM retrieves every supported capability type. It directly orchestrates defined execution surfaces such as workflows, agent dispatch, tasks, and guarded subprocess injection. It does not blindly execute arbitrary indexed content merely because that content appears in search results.
+Search and show only return content; running a workflow, task, script, or agent is a separate command. See [Core Principles](docs/architecture/akm-core-principles.md).
 
 ## Install
 
@@ -60,7 +60,7 @@ akm setup --yes                          # guided first-time setup, non-interact
 akm bundle add github:itlackey/akm-stash # install the official onboarding capability bundle
 akm index                                # build the search index
 akm curate "deploy a Bun app"            # get a curated shortlist
-akm show workflows/deploy                # load the best match by ref
+akm show <ref>                           # load a match by the ref curate printed
 ```
 
 Each step, with its success check, is in [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/). Then tell your agent AKM exists:
@@ -91,14 +91,14 @@ See [Supported Formats](https://akm.fwdslsh.dev/docs/reference/supported-formats
 - Turn feedback and usage into reviewable proposals — [Improve the Library](https://akm.fwdslsh.dev/docs/guides/improve-the-library/)
 - Run resumable, multi-step procedures — [Workflows](https://akm.fwdslsh.dev/docs/reference/workflows/)
 - Author strict scheduled automation — [Tasks](https://akm.fwdslsh.dev/docs/reference/tasks/)
-- Upgrading from 0.9.1 — [0.9.2 migration guide](https://akm.fwdslsh.dev/docs/migration/v0.9.1-to-v0.9.2/)
+- Upgrading from an older release — [Migration guides](docs/migration/README.md)
 - Wire akm into Claude Code, OpenCode, Cursor, and other assistants — [Use AKM With Any Agent](https://akm.fwdslsh.dev/docs/guides/use-with-any-agent/)
 
 Scheduling background tasks (like `akm improve`) involves reviewing and activating OS scheduler entries — see [Scheduling](https://akm.fwdslsh.dev/docs/guides/scheduling/) for the full walkthrough.
 
 ## Local-first and privacy
 
-AKM is local-first: it stores its index and state on disk and has no telemetry. It adds no network destinations of its own: it reaches only the endpoints you configure or invoke — Git, npm, website sources, registries, your own model endpoints, and GitHub when you run `akm upgrade`. See [Data & Telemetry](https://akm.fwdslsh.dev/docs/reference/data-and-telemetry/) for the complete on-disk inventory and how to inspect or clear local data.
+AKM is local-first: it stores its index and state on disk and has no telemetry. It makes network requests only to the endpoints you configure or the commands you run: Git, npm, website sources, registries, your own model endpoints, the Hugging Face Hub when it downloads a local embedding model, and GitHub when you run `akm upgrade` or `akm health`. See [Data & Telemetry](https://akm.fwdslsh.dev/docs/reference/data-and-telemetry/) for the complete list of destinations and the on-disk inventory.
 
 ## Documentation and project status
 
@@ -109,7 +109,7 @@ The full documentation is published at **[akm.fwdslsh.dev](https://akm.fwdslsh.d
 | [Documentation index](https://akm.fwdslsh.dev/docs/README/) | Full guide and reference index |
 | [Product surface](https://akm.fwdslsh.dev/docs/product-surface/) | Every feature and its status |
 | [Stability policy](STABILITY.md) | Which CLI surfaces are stable, evolving, or experimental |
-| [Security policy](SECURITY.md) | Threat model and how to report vulnerabilities |
+| [Security policy](SECURITY.md) | Supported versions and how to report a vulnerability |
 | [Changelog](CHANGELOG.md) | Per-release behavior changes |
 
 ## Ecosystem

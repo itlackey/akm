@@ -85,14 +85,9 @@ sqlite3 -readonly ~/.local/share/akm/state.db ".backup /tmp/state-snapshot.db"
 ```
 
 Do not open a live akm database with a plain (read-write) `sqlite3`
-connection, even just to run `.backup`. Through 0.9.17 an akm process could
-silently lose its SQLite file locks (copying the database file inside a
-process that holds it open drops them). An older `sqlite3` (< 3.51, and
-Python's `sqlite3` module on many hosts) opened read-write at that moment
-sees no other reader, takes an exclusive lock when it closes, and deletes the
-`-wal`/`-shm` files akm is still using: that produced a `state.db` with
-colliding rowids and stale index entries. `-readonly` avoids the whole class
-of risk by never taking a write connection.
+connection, even just to run `.backup`: a read-write connection can delete the
+`-wal`/`-shm` files akm is still using. `-readonly` never takes a write
+connection.
 
 ## Verification
 

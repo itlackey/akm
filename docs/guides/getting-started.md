@@ -1,7 +1,7 @@
 # Getting Started
 
 Install akm, connect a capability source, and pull a curated shortlist for a
-real task. This path takes about five to seven minutes end to end.
+real task.
 
 ## Runtime Requirement
 
@@ -48,11 +48,11 @@ Guided, interactive setup is the default:
 akm setup
 ```
 
-`akm setup` walks through bundle location, embedding/LLM settings, semantic
-search asset preparation, registries, sources, and task definitions. It also
-reviews your scheduled task definitions and asks whether to activate them in
-the OS scheduler — that part of the flow, plus how to migrate or repair
-scheduler bindings later, is covered in [Scheduling](scheduling.md).
+`akm setup` walks through bundle location, model connections, semantic
+search, registries, sources, and agent detection. It then reviews your
+scheduled task definitions and asks whether to activate them in the OS
+scheduler; that part of the flow, plus how to migrate or repair scheduler
+bindings later, is covered in [Scheduling](scheduling.md).
 
 For non-interactive use — scripting, CI, or when you just want a working
 bundle fast — use `--yes`:
@@ -67,7 +67,7 @@ working bundle, the primary directory where your personal assets live — with
 subdirectories for each asset type: `scripts/`, `skills/`, `commands/`,
 `agents/`, `knowledge/`, `instructions/`, `workflows/`, `memories/`, `env/`,
 `secrets/`, `facts/`, `lessons/`, `tasks/`, and `sessions/`. See
-[Filesystem Layout](../architecture/internals/storage-locations.md) for
+[Storage Locations](../architecture/internals/storage-locations.md) for
 platform-specific paths and environment variable overrides.
 
 ## Isolated sandbox workflow
@@ -115,13 +115,14 @@ lists the source you just added.
 akm index
 ```
 
-`akm index` scans every configured source, then builds the search database.
-Run it again whenever you add or change assets. Use `akm index --full` to
-force a complete rebuild instead of an incremental update.
+`akm bundle add` indexes the source it adds. Run `akm index` after you add or
+edit files by hand; it scans every configured source and updates the search
+database. Use `akm index --full` to force a complete rebuild instead of an
+incremental update.
 
-**Success check:** the command reports how many assets it indexed. If a
-workflow file is malformed, akm skips that one asset, continues indexing the
-rest of the bundle, and reports the skipped file in `warnings`.
+**Success check:** the result reports `totalEntries`, the number of assets in
+the index. If a workflow file is malformed, akm skips that one asset, continues
+indexing the rest of the bundle, and names the skipped file in `warnings`.
 
 ## 5. Curate for a real task
 
@@ -132,20 +133,21 @@ exact asset name:
 akm curate "deploy a Bun app"
 ```
 
-Unlike `akm search`, `akm curate` attaches a preview and run details per hit,
-adds related support refs, and summarizes the set — it's the usual starting
-point for an agent.
+Unlike `akm search`, `akm curate` returns a short list, each entry with a
+`reason` and a ready-to-run `followUp` command, and adds related support refs;
+`--detail normal` also attaches a preview and run details per hit. It's the
+usual starting point for an agent.
 
 **Success check:** the response includes a small shortlist; each entry
-carries a `ref` field and a direct follow-up command such as `akm show <ref>`
-or `akm bundle add <ref>`.
+carries a `ref` and a `followUp` command such as `akm show <ref>` (registry
+hits, with `--from registry`, carry `akm bundle add <id>` instead).
 
 ## 6. Show one of the results
 
 Pick a `ref` from your curate output and load its full payload:
 
 ```sh
-akm show <ref>            # e.g. akm show workflows/deploy
+akm show <ref>            # e.g. akm show akm-stash//skills/install-akm-stash
 ```
 
 **Success check:** structured JSON with everything an agent needs to use the
@@ -153,11 +155,8 @@ asset — a `run` command plus optional `cwd` and `setup` for scripts, a
 `prompt` payload for agents, or the document `content` for knowledge (append
 `#<heading-slug>` to a ref for one section).
 
-AKM retrieves every supported capability type. It directly orchestrates
-defined execution surfaces such as workflows, agent dispatch, tasks, and
-guarded subprocess injection. It does not blindly execute arbitrary indexed
-content merely because that content appears in search results — `show` hands
-your agent the payload; running it is a deliberate next step.
+`show` hands your agent the payload; running it is a separate step. See
+[Core Principles](../architecture/akm-core-principles.md).
 
 ## 7. Tell your agent about akm
 
@@ -187,11 +186,11 @@ akm show scripts/hello.sh
 
 Any file with a known extension (`.sh`, `.ts`, `.py`, etc.) placed in your
 working bundle is automatically recognized — the `scripts/` directory isn't
-required, it just increases classification confidence. Assets use inline
-metadata, not `.stash.json` sidecars: markdown assets use frontmatter, and
-scripts use structured header comments (a short leading description,
-`@param`, and execution hints like `@run` / `@setup` / `@cwd` when needed).
-See [Concepts](concepts.md) for how classification works.
+required, it just increases classification confidence. Metadata lives in the
+asset itself: markdown assets use frontmatter, and scripts use structured
+header comments (a short leading description, `@param`, and execution hints
+like `@run` / `@setup` / `@cwd` when needed). See [Concepts](concepts.md) for
+how classification works.
 
 ## What just happened?
 

@@ -188,7 +188,7 @@ install-ref := github-ref | git-url | npm-pkg | https-url | skills-sh-slug | loc
 ```
 
 Examples: `github:owner/repo#v1.2.3`, `git+https://gitlab.com/org/kit`,
-`@scope/kit`, `https://docs.example.com`, `skills.sh:code-review`,
+`@scope/kit`, `https://docs.example.com`,
 `./path/to/kit`.
 
 The two parsers are intentionally distinct — each rejects the other's inputs.

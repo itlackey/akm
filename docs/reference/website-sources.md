@@ -53,10 +53,10 @@ Drop fetcher modules into:
 <stashDir>/scripts/wiki-fetchers/
 ```
 
-`<stashDir>` is the active bundle for the current operation. When a command has a
-resolved write target (for example `akm import --target ...`), akm loads
-fetchers from that target bundle before falling back to the built-in website
-scraper.
+`<stashDir>` is your working bundle. When a command has an explicit write target
+(for example `akm import --target ...`), akm loads fetchers from that target
+bundle instead. A website bundle's own `scripts/wiki-fetchers/` is never loaded
+when it syncs. Bundle fetchers run before the built-in ones.
 
 Files ending in `.ts`, `.js`, or `.mjs` are imported and run inside the akm
 process, in alphabetical order, when a website source syncs or `akm import

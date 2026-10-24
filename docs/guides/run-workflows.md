@@ -19,9 +19,13 @@ current project directory (nearest `.akm/config.json`, git root, bundle root,
 or current directory), so the same workflow can run independently in separate
 projects.
 
-Every new run/start compiles source IR v1 and freezes the durable plan v4
-family's current executable format (`irVersion: 5`) before publishing the run.
-Markdown `.md` and GitHub-shaped `.yml` refs use the same freeze path.
+Every new run compiles its source and freezes the plan (`irVersion: 6`) before
+publishing the run. Markdown `.md` and GitHub-shaped `.yml` refs use the same
+freeze path. Steps run as your user, with your user's file and network access,
+and a step that fans out runs N agents at once. Read a workflow before you run
+it (`akm show workflows/<name>`). An `exec` step starts with an allowlisted
+environment plus its declared `env:` bindings; see
+[Author's Guide](author-workflows.md#what-the-command-can-see).
 
 ```sh
 akm workflow run workflows/ship-release --version 1.2.3
@@ -38,7 +42,7 @@ active run rejects parameter flags.
 
 `--max-steps <n>` leaves a partial run active after at most `n` steps.
 `--max-retries <n>` retries a failed step on the same run up to `n` additional
-times (0 through 100). `--timeout <duration>` bounds the whole invocation and
+times. `--timeout <duration>` bounds the whole invocation and
 accepts `N`, `Nms`, `Ns`, or `Nm`; bare `N` is milliseconds. A timeout or
 signal abort releases the run's lock without advancing the active step, so the
 run remains resumable. Failed, gate-rejected, timed-out, and interrupted runs
@@ -190,8 +194,9 @@ completed are skipped, not re-run (see
 A resume consumes the frozen plan and journaled attempts; it does not re-read
 configuration or the index, and reads the authored workflow only to warn once
 when it changed since the run was frozen (the run continues on the frozen
-plan; `akm workflow run <ref> --new` picks up the edit). A stored plan this akm
-cannot decode is abandoned with a message naming how to start a new run.
+plan; `akm workflow run <ref> --new` picks up the edit). A plan frozen by an
+earlier release still runs, with a warning. A stored plan this akm cannot decode
+stops with an error that names how to abandon the run and start a new one.
 
 ## Abandon a run
 
@@ -204,11 +209,10 @@ run's status — `resume` can still reopen it later if you change your mind.
 
 ## Follow a run's events
 
-There is no `akm workflow watch` (0.9.0: dropped — a foreground polling
-daemon in a one-shot CLI). `akm log --run <run-id>` reads the same
+There is no `akm workflow watch`. `akm log --run <run-id>` reads the
 `workflow_*` / `workflow_unit_*` events from the general append-only events
 stream: `--since '@offset:<id>'` gives a durable row-id cursor a cooperating
-process can poll from, in place of `watch --stream`'s in-process loop.
+process can poll from.
 
 ```sh
 akm workflow run <run-id> &                                  # engine in one shell
@@ -216,54 +220,7 @@ akm log --run <run-id> --since '@offset:0'                   # backlog so far
 akm log --run <run-id> --since '@offset:<nextOffset>'        # poll for more, from the prior call's nextOffset
 ```
 
-Event metadata is ids/status/enums only — never workflow-authored content —
-so following a run's events is safe to pipe into logs or dashboards.
-
-## Security: workflow sources are executed code
-
-Workflow steps that include shell commands run with **the full filesystem and
-network access of the user invoking `akm workflow run`** — same as if the user
-had typed those commands in their shell. There is no sandbox and no separation
-between trusted and untrusted workflows. An `exec` unit's *environment* is
-narrowed to an allowlist by default
-([Workflow Schema](../reference/workflow-schema.md#the-childs-environment-is-an-allowlist)),
-which bounds accidental exposure of unrelated credentials — but a command that
-runs at all can still read those credentials off disk, so it is a hygiene
-boundary, not a containment one. AKM
-directly orchestrates workflows as a defined execution surface — it does not
-blindly execute arbitrary indexed content — but that orchestration still runs
-the workflow's own declared shell commands with your full access once you
-choose to run it.
-
-This is by design: a workflow is a runbook authored by you or by a bundle
-maintainer you trust. The flexibility of "run any shell command, read any
-file, hit any network" is what makes workflows useful as automation.
-
-The consequence is that **you should treat workflow sources the same way you
-treat package dependencies**:
-
-- **Only add workflow sources you trust.** `akm bundle add github:<some-user>/<bundle-repo>`
-  followed by `akm workflow run workflows/<their-thing>` is functionally
-  equivalent to piping a stranger's bash script into your shell. Read the
-  workflow file first (`akm show workflows/<name>`) before running it.
-- **Audit before run** for any workflow that touches secrets, deploys to
-  production, or writes outside the project tree. Read the `env:` bindings a
-  workflow declares, and read its `exec.pass_env` lines.
-  The durable v4 family (`irVersion: 5`) rejects `inherit_env`. Authors must
-  use exact named bindings and `pass_env` names.
-- **Pin known-good versions** when adding workflow sources from a registry
-  or git remote (`akm bundle add github:owner/repo#v1.2.3`), and update
-  deliberately rather than via `akm bundle update --all`. A trusted workflow
-  source can become hostile if its upstream is compromised.
-- **Workflow steps cannot escape this trust model** by being labeled
-  `dryRun` or `interactive` — those flags affect bookkeeping, not execution.
-  `akm workflow status` is read-only; `akm workflow run` executes configured
-  units with your process's access.
-
-If you operate a CI runner or shared host where untrusted workflows might be
-executed, scope the process: a dedicated user account with no secrets in its
-environment, ephemeral working directory, and a network/filesystem allowlist
-enforced outside akm.
+Event metadata carries ids, statuses and counts, not step text.
 
 ## See also
 
