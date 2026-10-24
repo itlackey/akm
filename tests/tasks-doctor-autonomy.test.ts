@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { akmTasksDoctor } from "../src/commands/tasks/tasks";
 import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { IMPROVE_AUTONOMY_CONFIG_KEY } from "../src/core/config/experimental";
+import { getTaskLogDir } from "../src/core/paths";
 import {
   type Cleanup,
   sandboxStashDir,
@@ -61,6 +62,16 @@ describe("tasks doctor autonomy reporting", () => {
     expect(result.improveAutonomy?.configKey).toBe(IMPROVE_AUTONOMY_CONFIG_KEY);
     expect(result.improveAutonomy?.gatedLanes.map((lane) => lane.lane)).toEqual(["memoryCleanup"]);
     expect(result.improveAutonomy?.gatedLanes.every((lane) => lane.reason.length > 0)).toBe(true);
+  });
+
+  test("reports the task log directory and no history directory (run history lives in state.db)", async () => {
+    saveConfig({ semanticSearchMode: "off", defaults: { improveStrategy: "consolidate" } });
+    resetConfigCache();
+
+    const result = await akmTasksDoctor();
+
+    expect(result.logDir).toBe(getTaskLogDir());
+    expect(result).not.toHaveProperty("historyDir");
   });
 
   test("does not report advisory consolidation operations as gated writers", async () => {

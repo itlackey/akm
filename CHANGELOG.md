@@ -33,6 +33,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `git ls-remote` against the plugin marketplace). With probing off the row
   reports `unknown` ("not probed") instead of "up to date", and the local
   version-range check still runs.
+- `akm task doctor` no longer reports `historyDir`. It named `$CACHE/tasks/history`,
+  which does not exist now that task run history lives in `state.db`.
 
 ## [0.10.261013] - 2026-10-23
 
