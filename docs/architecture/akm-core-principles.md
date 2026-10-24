@@ -55,18 +55,21 @@ are held by review; the opencode-sdk path still bypasses the second one in
 the config schema, setup, health, the engine fallback and workflow
 teardown, which is open work.
 
-### 3. Upgrades never strand a user's data
+### 3. One current shape per format, migrated forward in one place
 
-New code reads whatever an older release wrote. If the shape is old, convert
-it in memory, warn once, and keep going; `akm migrate apply` rewrites files
-on disk when the user asks, and is never required before a command will
-run. The only thing a reader refuses is data written by a newer release,
-and the error says to upgrade. Config is never strict: an unknown key is
-kept and named once, not rejected.
+Each stored format has exactly one shape in code: the current one. Readers
+never carry compatibility shims for old shapes. akm's own stores
+(`state.db`, `index.db`, the lock and cache files) are migrated to the
+current shape automatically when opened, in the migrations module, with a
+backup written before any destructive step. Files the user owns, such as
+task sources inside a bundle, are never rewritten without being asked: the
+command stops and names `akm migrate apply`, which rewrites them with a
+backup. Data written by a newer release is refused, and the error says to
+upgrade.
 
-Why: an upgrade that fails on the first command, or that silently drops
-what the user had, costs more than any inconsistency it was guarding
-against.
+Why: tolerant readers scatter one format into many, and shims for shapes
+nobody can delete accumulate in the hot path. A single migration path is
+tested once, runs once, and leaves one shape behind.
 
 Enforced by: `tests/integration/upgrade-rehearsal/`, which installs the
 previous release, builds real state and runs the current build against it.

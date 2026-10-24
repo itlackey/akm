@@ -8,20 +8,18 @@ close each format is to that contract today.
 
 ## The contract
 
-A reader must tolerate anything an earlier release wrote: convert the old
-shape in memory, warn once, and name `akm migrate apply` as the on-disk
-cleanup path — the migrator is where an explicit, backed-up rewrite happens,
-never a precondition for reading. The only refusal a reader is allowed is data
-written by a release *newer* than itself, and that refusal must name the
-remedy (upgrade akm). One format is a named exception: task sources
-(`tasks/*.yml`) are read only in the current grammar, and an older file is
-refused on its own, naming `akm migrate apply` (see the Task source
-row). Bundle content is never rewritten just to make it
-readable again by an older or current binary. Every format-version bump must
-ship with its old shape covered by the upgrade rehearsal gate
-(`tests/integration/upgrade-rehearsal/`). No config object is strict: an unknown key at any depth is kept in memory
-and named once, round-trips through ordinary writes, and is dropped by
-`akm migrate apply`.
+Each format has one shape in code, the current one, and readers carry no
+shims for older shapes. akm's own stores (`state.db`, `index.db`, locks and
+caches) are migrated to the current shape automatically when opened, with a
+backup written before any destructive step (`state.db.pre-<id>.bak`). Files
+the user owns, such as task sources (`tasks/*.yml`) and other bundle
+content, are never rewritten without being asked: an older file stops the
+command with an error naming `akm migrate apply`, which rewrites it with a
+backup. Data written by a release newer than the running one is refused,
+and the error names the upgrade. Unknown config keys are kept in memory and
+named once; `akm migrate apply` writes config back in the current shape.
+Every format change ships with its old shape covered by the upgrade
+rehearsal (`tests/integration/upgrade-rehearsal/`).
 
 ## Formats
 
