@@ -255,14 +255,18 @@ function connectionRunner(
   };
 }
 
-/** The harness model a request names, or `undefined` when the harness is left to pick its own. */
+/**
+ * The harness model a request names, or `undefined` when the harness is left to pick
+ * its own: a layer that sets `model: null` asks for exactly that.
+ */
 function harnessModel(
   name: string,
   platform: string,
   harness: HarnessConfig,
-  requested: string | undefined,
+  requested: string | null | undefined,
   aliases: ReadonlySet<string>,
 ): string | undefined {
+  if (requested === null) return undefined;
   const own: Readonly<Record<string, ModelEntry>> = harness.models ?? {};
   const shipped = getHarness(platform)?.models ?? {};
   if (requested === undefined) {
@@ -282,7 +286,7 @@ function harnessModel(
 function harnessRunner(
   name: string,
   harness: HarnessConfig,
-  requested: string | undefined,
+  requested: string | null | undefined,
   aliases: ReadonlySet<string>,
   layers: readonly UnresolvedExecutionDefaults[],
   modelWork: boolean,
@@ -318,5 +322,12 @@ export function resolveTarget(input: ResolveTargetInput): RunnerSpec {
   const aliases = knownAliases(input.config);
   return target.kind === "connection"
     ? connectionRunner(target.name, target.connection, requested, aliases, input.layers)
-    : harnessRunner(target.name, target.harness, requested, aliases, input.layers, input.modelWork === true);
+    : harnessRunner(
+        target.name,
+        target.harness,
+        requestedModel === null ? null : requested,
+        aliases,
+        input.layers,
+        input.modelWork === true,
+      );
 }

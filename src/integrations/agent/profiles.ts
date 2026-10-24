@@ -122,14 +122,13 @@ export function harnessProfile(runner: HarnessRunner): AgentProfile {
     ...(builtin?.env ? { env: builtin.env } : {}),
     envPassthrough: builtin?.envPassthrough ?? [],
     parseOutput: "text",
-    ...(runner.workspace ? { workspace: runner.workspace } : {}),
     ...(runner.model ? { model: runner.model } : {}),
     ...(runner.agent ? { agent: runner.agent } : {}),
   };
 }
 
 /** The profile of akm's own runtime, the embedded OpenCode that runs agent work over a connection. It spawns nothing. */
-export function runtimeProfile(connection: ConnectionRunner, workspace?: string): AgentProfile {
+export function runtimeProfile(connection: ConnectionRunner): AgentProfile {
   return {
     name: connection.name,
     platform: INTERNAL_RUNTIME_ID,
@@ -140,6 +139,5 @@ export function runtimeProfile(connection: ConnectionRunner, workspace?: string)
     envPassthrough: [],
     parseOutput: "text",
     model: connection.model,
-    ...(workspace ? { workspace } : {}),
   };
 }

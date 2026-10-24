@@ -15,6 +15,29 @@ import type { LlmInvocationOverridesSchema } from "./config/schema/primitives";
 
 export type LlmInference = z.infer<typeof LlmInvocationOverridesSchema>;
 
+const PORTABLE_KEYS = [
+  "temperature",
+  "maxTokens",
+  "supportsJsonSchema",
+  "extraParams",
+  "contextLength",
+  "enableThinking",
+  "reasoningEffort",
+] as const;
+
+/**
+ * The portable settings of `inference` and nothing else. A request's inference is
+ * free-form JSON (an asset may write any key), so what reaches a connection is
+ * picked from it: an `endpoint`, `apiKey` or `model` an asset wrote is not a setting.
+ */
+export function portableInference(inference: LlmInference | null | undefined): LlmInference {
+  const portable: Record<string, unknown> = {};
+  for (const key of PORTABLE_KEYS) {
+    if (inference?.[key] !== undefined) portable[key] = inference[key];
+  }
+  return portable as LlmInference;
+}
+
 /** Whether a request's fields turn thinking on or off, in either of the two spellings an endpoint reads; `undefined` when they say nothing. */
 export function thinkingSetting(request: Readonly<Record<string, unknown>>): boolean | undefined {
   const kwargs = request.chat_template_kwargs;

@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import type { AkmConfig } from "../../core/config/config";
 import { resolveApiKey } from "../../core/config/credentials";
-import type { LlmInference } from "../../core/llm-inference";
+import { type LlmInference, portableInference } from "../../core/llm-inference";
 import {
   collectSensitiveValues,
   isEnvPassthroughValueSafeToExpose,
@@ -166,7 +166,7 @@ export function materializeConnection(
 ): ChatCompletionConfig {
   const apiKey = resolveApiKey(runner.apiKey, runner.name, envSource);
   return {
-    ...inference,
+    ...portableInference(inference),
     endpoint: runner.endpoint,
     model: runner.model,
     request: runner.request,
