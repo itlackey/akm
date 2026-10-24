@@ -6,10 +6,10 @@ rename semantics, and namespacing conventions.
 ## Contract
 
 A **ref** is a compact handle identifying one capability. Agents should
-treat refs as opaque tokens — get them from search or curate, pass them to
-show. The structured `conceptId` and `bundle` fields in search results
-provide the same information in parseable form; never parse a ref string by
-hand.
+treat refs as opaque tokens: get them from search or curate, pass them to
+show. At `--detail full`, each search hit also carries `itemRef`, `bundleId`
+and `conceptId` as separate fields; they are absent at `brief` and `normal`.
+Read those fields instead of parsing a ref string by hand.
 
 ## Grammar
 
@@ -21,21 +21,18 @@ hand.
 | --- | --- | --- |
 | `bundle` | no | Narrows lookup to one installed bundle, separated from the rest of the ref by `//`. Omit it and the ref resolves against the workspace `defaultBundle`, then the remaining bundles in installation-priority order. |
 | `conceptId` | yes | Subdir-qualified within its bundle: the placement subdirectory followed by the item's canonical name (extension stripped for markdown-like types; scripts and secrets keep their natural filename). `type` is not part of a ref — the subdirectory carries that signal. |
-| `fragment` | no | A selector for part of the item. Input-only — never stored. |
+| `fragment` | no | A selector for part of the item, such as a markdown heading. `akm show` is the only command that accepts it; every other command rejects a ref that carries one. Input-only, never stored. |
 
 Examples: `scripts/deploy.sh`, `agents/reviewer`, `knowledge/api-guide`,
 `workflows/ship-release`, `team-catalog//scripts/deploy.sh`,
 `personal//knowledge/guide`, `knowledge/api-guide#authentication`.
 
 Source locators like `github:owner/repo` and `npm:@scope/pkg` are **install
-refs**, a distinct grammar accepted only by `akm bundle add` and `akm
-clone`. They are not asset refs and are never addressable through `akm
-show`.
+refs**, a distinct grammar for `akm bundle add` and `akm clone`. They are not
+asset refs and `akm show` does not accept them.
 
-This reference page is deliberately non-normative prose over the same
-grammar; [`docs/architecture/specs/ref.md`](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/ref.md)
-is the normative spec, including the `parseBundleRef` grammar, fragment
-resolution rules, and reserved-name handling.
+The full grammar, fragment resolution rules and reserved names are in
+[`docs/architecture/specs/ref.md`](../architecture/specs/ref.md).
 
 ## Namespacing
 
@@ -51,8 +48,8 @@ knowledge/clientX/api-guide.md   →  knowledge/clientX/api-guide
 ```
 
 This works for **any** asset type. The subpath segments become part of the
-conceptId, so `akm search "projectA" --type memory` narrows results to that
-subtree, and `akm show memories/projectA/auth-tip` resolves the full ref.
+conceptId, so `akm search "memories/projectA/"` lists that subtree and
+`akm show memories/projectA/auth-tip` resolves the full ref.
 
 There is also a **ref-prefix query syntax** — a query that is a conceptId
 prefix ending in `/` enumerates that subtree instead of keyword-matching:
@@ -72,8 +69,7 @@ output and paste it back as a query. A complete ref
 (`memories/projectA/auth-tip`, no trailing `/`) stays an ordinary keyword
 search — resolving a single ref is `akm show`'s job.
 
-**Recommendation:** use physical subdirectories now to organize multi-project
-or multi-team bundles. They sort cleanly on disk and require no
+Use physical subdirectories to organize multi-project or multi-team bundles. They sort cleanly on disk and require no
 configuration.
 
 **Which subdirectory?** Choose the partition axis by asset **type**:
@@ -84,22 +80,7 @@ current **project/client** slug; reuse-born types (`knowledge`, `skill`,
 limits, no-volatile-facets, off-axis facets as tags, and how to cross-link
 for retrieval — ship as the `facts/conventions/organization`,
 `facts/conventions/backlinks`, and `facts/conventions/domains` convention
-facts in the bundle skeleton, and are surfaced to agents automatically at
-authoring time.
-
-### Planned
-
-Not part of the current stability contract; see
-[ROADMAP.md](../../ROADMAP.md) for what's committed:
-
-- A `--namespace <ns>` flag to provide a thin name-prefix normalizer on
-  `search`, `remember`, `improve`, and `feedback` so the same prefix doesn't
-  have to be typed every time.
-- A `::` delimiter (for example `projectA::memories/auth-tip`) to provide
-  strict isolation so refs from different namespaces never collide in
-  ranking or recall.
-
-Until those land, physical subdirectories remain the recommended pattern.
+facts in the bundle skeleton.
 
 ## Renames and moves
 
@@ -116,17 +97,13 @@ akm lint          # confirms nothing dangles
 ```
 
 Moving an item between bundles is copy/import followed by deletion from the
-source — both the bundle and the concept identity change. `akm mv`, which
-promised identity-preserving renames, was removed in 0.9.0: its inbound-ref
-rewriting targeted bare conceptIds rather than the anchored
-`bundle//conceptId` prose form, so it could rewrite non-refs while leaving
-real refs dangling. The procedure above is the only supported path today.
+source; both the bundle and the concept identity change. There is no
+`akm mv`.
 
-To carry an asset's earned signal (feedback, usage, salience/outcome
-history) across a rename, the maintainer script `scripts/rekey-asset-ref.ts`
-re-keys those rows onto the new ref before `akm index` runs; it is Internal
-tooling, not a supported command surface. See
-[the decision record](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/0.9.0-decisions.md#d3--renames-are-delete--create-akm-mv-ships-experimental).
+To carry an asset's earned signal (feedback, usage, salience/outcome history)
+across a rename, the maintainer script `scripts/rekey-asset-ref.ts` re-keys
+those rows onto the new ref before `akm index` runs. It is internal tooling,
+not a supported command.
 
 ## Refs in prose
 
@@ -137,20 +114,14 @@ conceptId in prose is ordinary text, not a ref, and no akm tool rewrites it.
 
 ## Stability
 
-Per `STABILITY.md`, this is **Stable** surface: the
-`[bundle//]conceptId[#fragment]` grammar (durable state always stores the
-fully-qualified `bundle//conceptId`; the short form is accepted input only),
-conceptId-prefix enumeration, and the rename-is-delete-plus-create procedure
-are all named explicitly in the Stable tier, and the ref grammar is called
-out as frozen at 1.0 alongside the supported source model, search behavior,
-and write-target rules. The `--namespace` flag and `::` delimiter above are
-On the horizon, not yet part of the contract. See `STABILITY.md` for the
-full command- and surface-level tier index.
+The `[bundle//]conceptId[#fragment]` grammar, conceptId-prefix enumeration and
+the rename procedure are Stable per [STABILITY.md](../../STABILITY.md). Durable
+state always stores the fully-qualified `bundle//conceptId`; the short form is
+accepted input only.
 
 ## See also
 
 - [Concepts](../guides/concepts.md) — where refs fit in the retrieval loop
 - [Asset Types](asset-types.md) — how a conceptId's subdirectory maps to an asset type
 - [Memory](memory.md) — parent/derived-memory provenance backrefs
-- [`docs/architecture/specs/ref.md`](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/ref.md) — the normative ref grammar spec
-- [ROADMAP.md](../../ROADMAP.md) — planned ref-syntax additions
+- [`docs/architecture/specs/ref.md`](../architecture/specs/ref.md) — the ref grammar spec

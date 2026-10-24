@@ -3,9 +3,10 @@
 `akm import <url>` and every other URL-based knowledge read path pass through
 a pluggable fetcher seam before the built-in website scraper.
 
-akm ships five built-in fetchers, probed in this order (host-specific
-fetchers before the deliberately loose path-shaped RSS matcher; any fetcher
-returning `null` falls through to the generic website crawler):
+Fetchers are probed in this order: the bundle's own fetchers first (see
+[Discovery](#discovery)), then the five built-ins below (host-specific fetchers
+before the deliberately loose path-shaped RSS matcher). A fetcher that returns
+`null` falls through to the next one, and then to the generic website crawler.
 
 | Fetcher | Handles | What it extracts |
 | --- | --- | --- |
@@ -13,7 +14,7 @@ returning `null` falls through to the generic website crawler):
 | `youtube-transcript` | YouTube watch/short URLs | The video description and transcript when captions are available |
 | `bluesky-profile` | `bsky.app` profile URLs | Public profile and recent posts via the unauthenticated AT Protocol API |
 | `x` | `x.com`/`twitter.com` profiles, posts, and articles | Post/article content; profile timelines need a bearer token (below) |
-| `rss-feed` | Feed-shaped paths (`.rss`/`.atom`/`.xml`, `?feed=`) | Feed items as markdown sections |
+| `rss-feed` | Feed-shaped paths (`.rss`, `.atom`, `.xml`, or a trailing `/feed`, `/rss`, `/atom`), confirmed by reading the response | Feed items as markdown sections |
 
 ## X credentials
 
@@ -27,9 +28,11 @@ to an RSS-bridge URL containing `{username}` to fetch profiles through the
 ## Crawl options
 
 When no fetcher claims a URL, the generic crawler applies the `website`
-source descriptor's knobs (see the config schema): `maxPages` (default 50),
-`maxDepth` (default 3), `respectRobots` (default `true`; set `false` to
-bypass robots.txt for that source), and `crawlTimeoutMs` per request.
+source descriptor's options: `maxPages` (default 50), `maxDepth` (default 3),
+`respectRobots` (default `true`; set `false` to skip robots.txt for that
+source) and `crawlTimeoutMs` (a wall-clock cap on the whole crawl, default 10
+minutes; `0` disables it). `akm bundle add --max-pages` and `--max-depth` set
+the first two.
 
 ## Why
 
@@ -55,9 +58,10 @@ resolved write target (for example `akm import --target ...`), akm loads
 fetchers from that target bundle before falling back to the built-in website
 scraper.
 
-Files ending in `.ts`, `.js`, or `.mjs` are loaded in alphabetical order.
-The first fetcher whose `matches()` returns `true` gets a chance to handle the
-URL.
+Files ending in `.ts`, `.js`, or `.mjs` are imported and run inside the akm
+process, in alphabetical order, when a website source syncs or `akm import
+<url>` runs. The first fetcher whose `matches()` returns `true` gets a chance
+to handle the URL.
 
 If a fetcher:
 
@@ -84,7 +88,7 @@ export interface FetcherContext {
   /**
    * Resolve a secret by ref (e.g. `secrets/x-bearer-token`) from akm's
    * secret store, or null when absent. Injected rather than imported so
-   * fetchers stay leaves in the import graph; never log the returned value.
+   * fetchers stay leaves in the import graph; do not log the returned value.
    */
   resolveSecret?: (ref: string) => string | null;
 }
