@@ -8,7 +8,7 @@ import embeddedChangelog from "../../../CHANGELOG.md" with { type: "text" };
 import { getDirname } from "../../runtime";
 
 const CHANGELOG_URL = "https://github.com/itlackey/akm/blob/main/CHANGELOG.md";
-const MIGRATION_DOC_URL = "https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md";
+const MIGRATION_DOC_URL = "https://github.com/itlackey/akm/blob/main/docs/migration/README.md";
 
 /**
  * Directory containing per-version release notes. Resolved relative to
