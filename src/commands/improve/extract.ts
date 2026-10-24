@@ -1014,7 +1014,6 @@ function resolveExtractRun(
   options: AkmExtractOptions,
   config: AkmConfig,
   process: Readonly<ImproveProcessConfig> | undefined,
-  activeProfile: ImproveProfileConfig | undefined,
 ): Omit<ExtractRun, "options" | "harness" | "stashDir" | "config" | "sourceRun" | "dryRun" | "standardsContext"> {
   const notices = noticeSet();
   let llmRunner: RunnerSpec | null | undefined;
@@ -1177,7 +1176,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       startMs,
     });
   }
-  const resolved = resolveExtractRun(options, config, process, activeProfile);
+  const resolved = resolveExtractRun(options, config, process);
   const { llmRunner, notices } = resolved;
   const harness = (options.harnesses ?? getAvailableHarnesses()).find((h) => h.name === options.type);
   const unavailable = !harness

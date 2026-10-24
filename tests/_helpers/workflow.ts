@@ -12,14 +12,8 @@ import {
 } from "../../src/execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../../src/execution/source";
 import { buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
-import { MODEL_MAP_VERSION, type ResolvedModelMapV1 } from "../../src/integrations/agent/model-map";
-import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { checkWorkflowPlan, compileWorkflowSource, workflowStepInstructions } from "../../src/workflows/compile";
-import {
-  defaultLlmEngineConcurrency,
-  defaultMapConcurrency,
-  workflowMaxConcurrency,
-} from "../../src/workflows/concurrency-policy";
+import { defaultMapConcurrency, workflowMaxConcurrency } from "../../src/workflows/concurrency-policy";
 import {
   executeStepPlan as executeStepPlanInRoot,
   type StepExecutionContext,
@@ -31,6 +25,7 @@ import {
   runWorkflowSteps as runWorkflowStepsInRoot,
   workflowRunLockPath,
 } from "../../src/workflows/exec/run-workflow";
+import { targetConcurrency } from "../../src/workflows/freeze/step-values";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import { parseWorkflow } from "../../src/workflows/parser";
 import {
@@ -52,22 +47,13 @@ import { decodeWorkflowPlan, frozenStepRows } from "../../src/workflows/runtime/
 export const WORKFLOW_TEST_CONFIG = {
   configVersion: "0.9.0",
   semanticSearchMode: "off",
-  engines: {
-    "test-agent": { kind: "agent", platform: "opencode-sdk", llmEngine: "test-llm" },
+  connections: {
     "test-llm": {
-      kind: "llm",
-      endpoint: "http://localhost:1/v1/chat/completions",
-      model: "test-model",
+      endpoint: "http://localhost:1/v1",
+      models: { fast: "test-model", balanced: "test-model", reasoning: "test-model" },
     },
   },
-  defaults: { engine: "test-agent", llmEngine: "test-llm" },
-  workflow: { judgeEngine: "test-llm" },
 } as const satisfies AkmConfig;
-
-const WORKFLOW_TEST_MODEL_MAP: ResolvedModelMapV1 = Object.freeze({
-  version: MODEL_MAP_VERSION,
-  aliases: Object.freeze(Object.create(null)) as ResolvedModelMapV1["aliases"],
-});
 
 /**
  * The directory units and the gate judge work in for a test whose run is seeded without a bundle: its workflow ref
@@ -122,7 +108,7 @@ export function freezeWorkflow(
     const root = spec ? freezeRoot(step, config, defaults) : undefined;
     const frozenJudge =
       step.gate.criteria.length > 0
-        ? freezeCommandTarget(step.gate.criteria.join("\n"), { engine: config.workflow?.judgeEngine }, config)
+        ? freezeCommandTarget(step.gate.criteria.join("\n"), {}, config, undefined, true)
         : null;
     return { ...base, ...(root ? { root } : {}), gate: { ...step.gate, frozenJudge } };
   });
@@ -138,10 +124,14 @@ export function freezeWorkflow(
   });
 }
 
-type ExecutionUnitLike = Partial<Pick<WorkflowUnitSettings, "engine" | "model" | "llm" | "timeoutMs" | "output">>;
+type ExecutionUnitLike = Partial<
+  Pick<WorkflowUnitSettings, "connection" | "harness" | "engine" | "model" | "llm" | "timeoutMs" | "output">
+>;
 
 function executionValues(unit: ExecutionUnitLike | undefined): UnresolvedExecutionDefaults {
   return {
+    ...(unit && Object.hasOwn(unit, "connection") ? { connection: unit.connection } : {}),
+    ...(unit && Object.hasOwn(unit, "harness") ? { harness: unit.harness } : {}),
     ...(unit && Object.hasOwn(unit, "engine") ? { engine: unit.engine } : {}),
     ...(unit && Object.hasOwn(unit, "model") ? { model: unit.model } : {}),
     ...(unit && Object.hasOwn(unit, "llm") ? { inference: unit.llm as ExecutionJsonObject } : {}),
@@ -163,13 +153,14 @@ function freezeCommandTarget(
   current: UnresolvedExecutionDefaults,
   config: AkmConfig,
   invocationDefaults?: UnresolvedExecutionDefaults,
+  modelWork = false,
 ): FrozenWorkflowCommandTarget {
   const prepared = resolveExecution({
     content: instructions,
     config,
-    modelMap: WORKFLOW_TEST_MODEL_MAP,
     ...(invocationDefaults ? { invocationDefaults } : {}),
     current,
+    modelWork,
   });
   const resolved = durableRequest(prepared.request);
   const runner = buildExecution(resolved, prepared.runner).runner;
@@ -180,26 +171,8 @@ function freezeCommandTarget(
     contentHash: createHash("sha256").update(request.command.content).digest("hex"),
     request,
     runner,
-    ...(targetConcurrency(runner, config) ? { concurrency: targetConcurrency(runner, config) } : {}),
+    ...(targetConcurrency(runner) ? { concurrency: targetConcurrency(runner) } : {}),
   });
-}
-
-function targetConcurrency(runner: RunnerSpec, config: AkmConfig): number | undefined {
-  if (runner.kind === "llm") {
-    const configured = typeof runner.engine === "string" ? config.engines?.[runner.engine] : undefined;
-    return defaultLlmEngineConcurrency(
-      runner.connection.endpoint,
-      configured?.kind === "llm" ? configured.concurrency : undefined,
-    );
-  }
-  if (runner.kind !== "sdk" || !runner.fallbackConnection) return undefined;
-  const selected = typeof runner.engine === "string" ? config.engines?.[runner.engine] : undefined;
-  const fallbackName = selected?.kind === "agent" ? selected.llmEngine : undefined;
-  const fallback = fallbackName ? config.engines?.[fallbackName] : undefined;
-  return defaultLlmEngineConcurrency(
-    runner.fallbackConnection.endpoint,
-    fallback?.kind === "llm" ? fallback.concurrency : undefined,
-  );
 }
 
 function frozenEnvironment(exec: WorkflowExec | undefined) {

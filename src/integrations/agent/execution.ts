@@ -24,7 +24,6 @@
 
 import type { AkmConfig } from "../../core/config/config-types";
 import { ConfigError } from "../../core/errors";
-import type { ExecutionJsonObject } from "../../execution/json";
 import {
   createInlineResolvedCommand,
   createResolvedExecutionRequest,

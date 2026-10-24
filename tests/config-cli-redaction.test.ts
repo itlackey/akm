@@ -44,22 +44,20 @@ describe("config command apiKey redaction", () => {
           model: "embed-model",
           apiKey: "$AKM_EMBED_API_KEY",
         },
-        engines: {
+        connections: {
           default: {
-            kind: "llm",
-            endpoint: "https://llm.example.test/v1/chat/completions",
-            model: "chat-model",
+            endpoint: "https://llm.example.test/v1",
+            models: { fast: "chat-model" },
             apiKey: "$AKM_LLM_API_KEY",
           },
         },
-        defaults: { llmEngine: "default" },
       });
 
       const list = await runCliCapture(["config", "list"]);
       const embedding = await runCliCapture(["config", "get", "embedding"]);
-      const llm = await runCliCapture(["config", "get", "engines.default"]);
-      const engines = await runCliCapture(["config", "get", "engines"]);
-      const llmApiKey = await runCliCapture(["config", "get", "engines.default.apiKey"]);
+      const llm = await runCliCapture(["config", "get", "connections.default"]);
+      const engines = await runCliCapture(["config", "get", "connections"]);
+      const llmApiKey = await runCliCapture(["config", "get", "connections.default.apiKey"]);
 
       return { list, embedding, llm, engines, llmApiKey };
     });
@@ -185,7 +183,7 @@ describe("config unset against an extends-inherited key", () => {
 // ── `config diff` (#945) ─────────────────────────────────────────────────────
 
 describe("config diff", () => {
-  test("lists differing leaves with a redacted literal apiKey on both sides", async () => {
+  test("lists differing leaves, with a literal apiKey on either side never read, never shown", async () => {
     const env = freshEnv();
 
     const outputs = await withEnv(env, async () => {
@@ -195,11 +193,10 @@ describe("config diff", () => {
         path.join(configDir, "other.json"),
         JSON.stringify({
           configVersion: "0.9.0",
-          engines: {
+          connections: {
             fast: {
-              kind: "llm",
-              endpoint: "https://api.example.test/v1/chat/completions",
-              model: "other-model",
+              endpoint: "https://api.example.test/v1",
+              models: { fast: "other-model" },
               apiKey: "sk-literal-secret-other",
             },
           },
@@ -207,11 +204,10 @@ describe("config diff", () => {
       );
       writeSandboxConfig({
         configVersion: "0.9.0",
-        engines: {
+        connections: {
           fast: {
-            kind: "llm",
-            endpoint: "https://api.example.test/v1/chat/completions",
-            model: "local-model",
+            endpoint: "https://api.example.test/v1",
+            models: { fast: "local-model" },
             apiKey: "sk-literal-secret-local",
           },
         },
@@ -225,11 +221,10 @@ describe("config diff", () => {
     expect(outputs.stdout).not.toContain("sk-literal-secret-other");
 
     const parsed = JSON.parse(outputs.stdout) as { rows: Array<{ path: string; local: unknown; other: unknown }> };
-    const modelRow = parsed.rows.find((row) => row.path === "engines.fast.model");
-    expect(modelRow).toEqual({ path: "engines.fast.model", local: "local-model", other: "other-model" });
-    // The literal apiKey field is dropped by redaction on both sides, so it
-    // never appears as its own diff row.
-    expect(parsed.rows.some((row) => row.path === "engines.fast.apiKey")).toBe(false);
+    const modelRow = parsed.rows.find((row) => row.path === "connections.fast.models.fast");
+    expect(modelRow).toEqual({ path: "connections.fast.models.fast", local: "local-model", other: "other-model" });
+    // A literal apiKey is read as absent on both sides, so it never appears as its own diff row.
+    expect(parsed.rows.some((row) => row.path === "connections.fast.apiKey")).toBe(false);
     expect(parsed.rows).toEqual(parsed.rows.slice().sort((a, b) => a.path.localeCompare(b.path)));
   });
 

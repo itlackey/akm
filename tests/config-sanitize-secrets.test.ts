@@ -2,11 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Regression suite for #474 — `akm setup --from --yes` silently strips
-// API keys. The pre-fix sanitizeConfigForWrite dropped every apiKey
-// (literal AND $\{VAR} reference) on every save without warning. The fix:
-//   1. Preserve $\{VAR} / $VAR references — not secrets.
-//   2. Strip literal values, but warn() so the user knows.
+// Regression suite for #474 — `akm setup --from --yes` silently stripped API
+// keys. A `$VAR` / `${VAR}` reference is not a secret and is kept; a literal key
+// is read as absent (warned about once) and so never reaches the file.
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import fs from "node:fs";
@@ -53,8 +51,8 @@ afterEach(() => {
   storage.cleanup();
 });
 
-describe("sanitizeConfigForWrite — secret handling (#474)", () => {
-  it("strips a literal embedding.apiKey at the write-time sanitizer, warning instead of rejecting the whole save", () => {
+describe("config writes — secret handling (#474)", () => {
+  it("never writes a literal embedding.apiKey, warning instead of rejecting the whole save", () => {
     const warnings = captureWarnings(() => {
       saveConfig(
         makeConfig({
@@ -68,7 +66,7 @@ describe("sanitizeConfigForWrite — secret handling (#474)", () => {
     });
     const persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
     expect(persisted).not.toContain("sk-LITERAL-SECRET");
-    expect(warnings.some((w) => w.includes("embedding.apiKey"))).toBe(true);
+    expect(warnings.some((w) => w.includes("literal apiKey"))).toBe(true);
   });
 
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference syntax under test
@@ -88,18 +86,22 @@ describe("sanitizeConfigForWrite — secret handling (#474)", () => {
     expect(persisted).toContain("${OPENAI_API_KEY}");
   });
 
-  it("preserves a secrets ref store reference", () => {
-    saveConfig(
-      makeConfig({
-        embedding: {
-          endpoint: "https://example.com",
-          model: "x",
-          apiKey: "${secrets/embed-key}",
-        },
-      }),
-    );
+  it("does not keep a secrets ref as a key: akm reads keys from $VAR or credentials.json only", () => {
+    const warnings = captureWarnings(() => {
+      saveConfig(
+        makeConfig({
+          embedding: {
+            endpoint: "https://example.com",
+            model: "x",
+            // biome-ignore lint/suspicious/noTemplateCurlyInString: literal secret reference under test
+            apiKey: "${secrets/embed-key}",
+          },
+        }),
+      );
+    });
     const persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
-    expect(persisted).toContain("${secrets/embed-key}");
+    expect(persisted).not.toContain("embed-key");
+    expect(warnings.some((w) => w.includes("apiKey"))).toBe(true);
   });
 
   it("preserves $VAR (no braces) reference", () => {
@@ -117,7 +119,7 @@ describe("sanitizeConfigForWrite — secret handling (#474)", () => {
   });
 
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference syntax under test
-  it("treats unsupported ${VAR:-default} syntax as a literal and strips it at the sanitizer", () => {
+  it("treats unsupported ${VAR:-default} syntax as a literal and drops it", () => {
     const warnings = captureWarnings(() => {
       saveConfig(
         makeConfig({
@@ -131,19 +133,18 @@ describe("sanitizeConfigForWrite — secret handling (#474)", () => {
       );
     });
     const persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
-    expect(persisted).not.toContain("${OPENAI_API_KEY:-fallback}");
-    expect(warnings.some((w) => w.includes("embedding.apiKey"))).toBe(true);
+    expect(persisted).not.toContain("OPENAI_API_KEY:-fallback");
+    expect(warnings.some((w) => w.includes("apiKey"))).toBe(true);
   });
 
-  it("strips a literal engine apiKey at the sanitizer and preserves references across llm engines", () => {
+  it("drops a literal connection apiKey and preserves references across connections", () => {
     const warnings = captureWarnings(() => {
       saveConfig(
         makeConfig({
-          engines: {
+          connections: {
             openai: {
-              kind: "llm",
-              endpoint: "https://api.openai.com/v1/chat/completions",
-              model: "gpt-4",
+              endpoint: "https://api.openai.com/v1",
+              models: { fast: "gpt-4" },
               apiKey: "sk-openai-literal",
             },
           },
@@ -152,21 +153,15 @@ describe("sanitizeConfigForWrite — secret handling (#474)", () => {
     });
     let persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
     expect(persisted).not.toContain("sk-openai-literal");
-    expect(warnings.some((w) => w.includes("engines.openai.apiKey"))).toBe(true);
+    expect(warnings.some((w) => w.includes("literal apiKey"))).toBe(true);
 
     saveConfig(
       makeConfig({
-        engines: {
-          openai: {
-            kind: "llm",
-            endpoint: "https://api.openai.com/v1/chat/completions",
-            model: "gpt-4",
-            apiKey: "$OPENAI_API_KEY",
-          },
+        connections: {
+          openai: { endpoint: "https://api.openai.com/v1", models: { fast: "gpt-4" }, apiKey: "$OPENAI_API_KEY" },
           anthropic: {
-            kind: "llm",
-            endpoint: "https://api.anthropic.com/v1/chat/completions",
-            model: "claude-opus-4-7",
+            endpoint: "https://api.anthropic.com/v1",
+            models: { fast: "claude-opus-4-7" },
             // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference under test
             apiKey: "${ANTHROPIC_API_KEY}",
           },

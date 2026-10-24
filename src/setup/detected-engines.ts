@@ -2,13 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import {
-  type AkmConfig,
-  type ConnectionConfig,
-  defaultConnection,
-  type HarnessConfig,
-  type HarnessId,
-} from "../core/config/config";
+import type { AkmConfig, ConnectionConfig, HarnessConfig, HarnessId } from "../core/config/config";
 
 const CHAT_SUFFIX = "/chat/completions";
 

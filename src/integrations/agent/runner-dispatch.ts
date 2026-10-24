@@ -13,7 +13,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { assertNever } from "../../core/assert";
 import type { AkmConfig } from "../../core/config/config";
 import { resolveApiKey } from "../../core/config/credentials";
 import type { LlmInference } from "../../core/llm-inference";

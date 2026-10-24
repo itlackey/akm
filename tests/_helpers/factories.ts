@@ -24,18 +24,18 @@ import type { AgentProfile } from "../../src/integrations/agent/profiles";
  * focused on reflect/distill mechanics. The dedicated fail-closed behavior is
  * covered by `tests/commands/improve/quality-gate-fail-closed.test.ts`.
  *
- * The fixture includes a named agent engine because reflect resolves through
- * the same strict engine boundary in tests and production.
+ * The fixture includes a harness because reflect resolves through the same
+ * strict boundary in tests and production.
  */
 export function quietQualityGateConfig(): AkmConfig {
   return {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
-    engines: {
-      "fake-agent": { kind: "agent", platform: "claude", bin: "fake-agent" },
+    harnesses: {
+      "fake-agent": { platform: "claude", bin: "fake-agent" },
     },
-    defaults: { engine: "fake-agent", improveStrategy: "default" },
     improve: {
+      strategy: "default",
       strategies: {
         default: {
           processes: { distill: { qualityGate: { enabled: false } }, reflect: { qualityGate: { enabled: false } } },

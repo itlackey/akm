@@ -10,27 +10,28 @@ import {
   retiredExecutionExamples,
 } from "./contract-helpers";
 
-describe("current engine and strategy configuration contract", () => {
+describe("current connection, harness and strategy configuration contract", () => {
   const docs = readDoc(CONFIG_DOC_PATH);
   const repoRoot = path.resolve(import.meta.dir, "..", "..");
 
-  test("accepts named LLM/agent engines and improve strategies", () => {
+  test("accepts connections, harnesses and improve strategies", () => {
     expect(() =>
       AkmConfigSchema.parse({
         configVersion: "0.9.0",
-        engines: {
-          fast: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "qwen3" },
-          reviewer: { kind: "agent", platform: "opencode" },
+        connections: { fast: { endpoint: "https://example.test/v1", models: { fast: "qwen3" } } },
+        harnesses: { opencode: {} },
+        improve: {
+          strategy: "nightly",
+          connection: "fast",
+          strategies: { nightly: { processes: { reflect: {} } } },
         },
-        defaults: { engine: "reviewer", llmEngine: "fast", improveStrategy: "nightly" },
-        improve: { strategies: { nightly: { engine: "fast", processes: { reflect: {} } } } },
       }),
     ).not.toThrow();
   });
 
-  test("rejects retired profile-based execution configuration", () => {
-    expect(AkmConfigSchema.safeParse({ profiles: { llm: {} } }).success).toBe(false);
-    expect(AkmConfigSchema.safeParse({ defaults: { agent: "reviewer" } }).success).toBe(false);
+  test("retired profile-based execution configuration is an unknown key", () => {
+    // `profiles` is an unknown key: warned about by the loader and ignored, never a schema error.
+    expect(AkmConfigSchema.safeParse({ configVersion: "0.9.0", profiles: { llm: {} } }).success).toBe(true);
   });
 
   test("rejects writable cache-backed website and npm bundles (#37: sources key itself is retired)", () => {
@@ -46,8 +47,7 @@ describe("current engine and strategy configuration contract", () => {
     expect(AkmConfigSchema.safeParse({ installed: [] }).success).toBe(false);
   });
 
-  test("current docs define engines, strategies, and retired profile keys", () => {
-    expect(extractSection(docs, "## Engines")).toContain("`engines` is the only public execution map");
+  test("current docs define strategies and retired profile keys", () => {
     expect(extractSection(docs, "## Strategies")).toContain("improve.strategies");
     expect(extractSection(docs, "## Retired Configuration")).toContain("`profiles`");
   });

@@ -43,7 +43,14 @@ describe("config schema drift pins", () => {
     const extraParams = llmOverrides.properties?.extraParams as { additionalProperties?: unknown };
 
     expect(booleanArm).toBeDefined();
-    expect(Object.keys(objectArm?.properties ?? {}).sort()).toEqual(["enabled", "engine", "llm", "model", "timeoutMs"]);
+    expect(Object.keys(objectArm?.properties ?? {}).sort()).toEqual([
+      "connection",
+      "enabled",
+      "harness",
+      "llm",
+      "model",
+      "timeoutMs",
+    ]);
     expect(objectArm?.additionalProperties).toBe(true);
     expect(Object.keys(llmOverrides.properties ?? {}).sort()).toEqual([
       "contextLength",
@@ -134,10 +141,11 @@ describe("config schema drift pins", () => {
     expect(props.features).toBeUndefined();
   });
 
-  test("engine and improve-strategy property names match runtime grammar and reserved prefixes", () => {
+  test("connection, harness and improve-strategy property names match runtime grammar and reserved prefixes", () => {
     const schema = readSchema();
     const properties = schema.properties as Record<string, Record<string, unknown>>;
-    const engineNames = properties.engines!.propertyNames as { maxLength?: number; pattern?: string };
+    const engineNames = properties.connections!.propertyNames as { maxLength?: number; pattern?: string };
+    expect(properties.harnesses!.propertyNames).toEqual(engineNames);
     const improve = properties.improve as { properties?: Record<string, Record<string, unknown>> };
     const strategyNames = improve.properties?.strategies?.propertyNames as { maxLength?: number; pattern?: string };
     expect(engineNames).toEqual({ maxLength: 63, pattern: ENGINE_NAME_PATTERN_SOURCE });

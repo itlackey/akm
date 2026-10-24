@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_CONFIG,
+  defaultConnection,
+  defaultHarness,
   getConfigValueSource,
   getImproveProcessConfig,
   type ImproveProfileConfig,
@@ -520,101 +522,79 @@ describe("embedding config", () => {
   });
 });
 
-// ── LLM engine config ───────────────────────────────────────────────────────
+// ── Connections ──────────────────────────────────────────────────────────────
 
-describe("LLM engine config", () => {
-  test("loads a symbolic LLM engine apiKey", () => {
+describe("connections", () => {
+  test("loads a $VAR apiKey", () => {
     writeCurrentConfig({
-      engines: {
-        cloud: {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4",
-          apiKey: "$OPENAI_API_KEY",
-        },
+      connections: {
+        cloud: { endpoint: "https://api.openai.com/v1", models: { fast: "gpt-4" }, apiKey: "$OPENAI_API_KEY" },
       },
     });
-    expect(loadConfig().engines?.cloud?.apiKey).toBe("$OPENAI_API_KEY");
+    expect(loadConfig().connections?.cloud?.apiKey).toBe("$OPENAI_API_KEY");
   });
 
-  test("loads a file-backed LLM engine apiKeyFile (#905)", () => {
+  test("a literal apiKey is warned about once and ignored, never a load error", () => {
     writeCurrentConfig({
-      engines: {
-        cloud: {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4",
-          apiKeyFile: "/run/secrets/cloud-api-key",
-        },
-      },
+      connections: { cloud: { endpoint: "https://api.openai.com/v1", models: { fast: "gpt-4" }, apiKey: "sk-secret" } },
     });
-    expect(loadConfig().engines?.cloud?.apiKeyFile).toBe("/run/secrets/cloud-api-key");
-    expect(loadConfig().engines?.cloud?.apiKey).toBeUndefined();
+    const warnings = captureWarnings(() => {
+      expect(loadConfig().connections?.cloud?.apiKey).toBeUndefined();
+    });
+    expect(warnings.some((w) => w.includes("literal apiKey") && w.includes("credentials.json"))).toBe(true);
   });
 
-  // Neither field is required at the schema level: an engine that sets
-  // neither still resolves its credential through the pre-existing implicit
-  // `AKM_ENGINE_<NAME>_API_KEY` convention (see engine-resolution.test.ts).
-  // apiKeyFile is an alternative to apiKey, not a narrowing of what was
-  // already valid.
-  test("allows an LLM engine with neither apiKey nor apiKeyFile set (#905)", () => {
+  test("a ${secrets/...} reference is not a key akm reads: ignored with the same warning", () => {
     writeCurrentConfig({
-      engines: {
-        cloud: { kind: "llm", endpoint: "https://api.openai.com/v1/chat/completions", model: "gpt-4" },
-      },
+      connections: { cloud: { endpoint: "https://x.test/v1", models: { fast: "m" }, apiKey: "${secrets/openai}" } },
+    });
+    const warnings = captureWarnings(() => {
+      expect(loadConfig().connections?.cloud?.apiKey).toBeUndefined();
+    });
+    expect(warnings.some((w) => w.includes("apiKey"))).toBe(true);
+  });
+
+  test("allows a connection with no apiKey (the key may live in credentials.json)", () => {
+    writeCurrentConfig({
+      connections: { cloud: { endpoint: "https://api.openai.com/v1", models: { fast: "gpt-4" } } },
     });
     expect(() => loadConfig()).not.toThrow();
-    expect(loadConfig().engines?.cloud?.apiKey).toBeUndefined();
-    expect(loadConfig().engines?.cloud?.apiKeyFile).toBeUndefined();
+    expect(loadConfig().connections?.cloud?.apiKey).toBeUndefined();
   });
 
-  test("rejects an LLM engine with both apiKey and apiKeyFile set (#905)", () => {
+  test("requires an endpoint", () => {
+    writeCurrentConfig({ connections: { cloud: { models: { fast: "gpt-4" } } } });
+    expect(() => loadConfig()).toThrow(/connections\.cloud\.endpoint/);
+  });
+
+  test("keeps request fields on the connection and on a model entry as written, without warning", () => {
     writeCurrentConfig({
-      engines: {
-        cloud: {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4",
-          apiKey: "$OPENAI_API_KEY",
-          apiKeyFile: "/run/secrets/cloud-api-key",
+      connections: {
+        lab: {
+          endpoint: "http://lab:8080/v1",
+          timeoutMs: 900000,
+          chat_template_kwargs: { enable_thinking: false },
+          models: {
+            fast: "qwen3-8b",
+            reasoning: { model: "glm-5", reasoning_effort: "high", chat_template_kwargs: { thinking_budget: 8192 } },
+          },
         },
       },
     });
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/apiKey and apiKeyFile cannot both be set/);
+    const warnings = captureWarnings(() => {
+      expect(loadConfig().connections?.lab).toMatchObject({
+        timeoutMs: 900000,
+        chat_template_kwargs: { enable_thinking: false },
+        models: { reasoning: { model: "glm-5", reasoning_effort: "high" } },
+      });
+    });
+    expect(warnings).toEqual([]);
   });
 
-  test("loads an LLM engine with provider, temperature, and maxTokens", () => {
-    writeCurrentConfig({
-      engines: {
-        cloud: {
-          kind: "llm",
-          provider: "openai",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4o-mini",
-          temperature: 0.6,
-          maxTokens: 256,
-        },
-      },
-    });
-    expect(loadConfig().engines?.cloud).toMatchObject({
-      kind: "llm",
-      provider: "openai",
-      endpoint: "https://api.openai.com/v1/chat/completions",
-      model: "gpt-4o-mini",
-      temperature: 0.6,
-      maxTokens: 256,
-    });
-  });
-
-  test("roundtrips an LLM engine via updateConfig", () => {
-    const engine = {
-      kind: "llm" as const,
-      endpoint: "http://localhost:11434/v1/chat/completions",
-      model: "llama3.2",
-    };
-    updateConfig({ engines: { local: engine }, defaults: { llmEngine: "local" } });
-    expect(loadConfig().engines?.local).toMatchObject(engine);
+  test("roundtrips a connection via updateConfig", () => {
+    const connection = { endpoint: "http://localhost:11434/v1", models: { fast: "llama3.2" } };
+    updateConfig({ connections: { local: connection } });
+    expect(loadConfig().connections?.local).toMatchObject(connection);
   });
 });
 
@@ -814,82 +794,86 @@ describe("0.9 config shape parsing", () => {
     expect(loaded.configVersion).toBe("0.9.0");
   });
 
-  test("parses an LLM engine with supportsJsonSchema", () => {
+  test("parses harnesses by platform name, with platform for a second install", () => {
     writeCurrentConfig({
-      engines: {
-        "openai-mini": {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4o-mini",
-          temperature: 0.3,
-          supportsJsonSchema: true,
+      harnesses: {
+        opencode: { bin: "opencode", args: ["run"] },
+        "claude-work": {
+          platform: "claude",
+          bin: "/opt/claude-work/bin/claude",
+          workspace: "/tmp",
+          models: { fast: "m" },
         },
       },
     });
     const loaded = loadConfig();
-    expect(loaded.engines?.["openai-mini"]?.model).toBe("gpt-4o-mini");
-    expect(loaded.engines?.["openai-mini"]?.supportsJsonSchema).toBe(true);
+    expect(loaded.harnesses?.opencode?.args).toEqual(["run"]);
+    expect(loaded.harnesses?.["claude-work"]?.platform).toBe("claude");
+    expect(loaded.harnesses?.["claude-work"]?.models).toEqual({ fast: "m" });
   });
 
-  test("parses agent engines with platform fields", () => {
-    writeCurrentConfig({
-      engines: {
-        "opencode-default": { kind: "agent", platform: "opencode", bin: "opencode", args: ["run"] },
-        "opencode-sdk": { kind: "agent", platform: "opencode-sdk", workspace: "/tmp", model: "claude-3" },
-      },
-    });
-    const loaded = loadConfig();
-    expect(loaded.engines?.["opencode-default"]?.platform).toBe("opencode");
-    expect(loaded.engines?.["opencode-sdk"]?.platform).toBe("opencode-sdk");
-    expect(loaded.engines?.["opencode-sdk"]?.model).toBe("claude-3");
-  });
-
-  test("rejects an agent engine with invalid platform (no silent drop)", () => {
-    writeCurrentConfig({ engines: { bad: { kind: "agent", platform: "invalid-platform" } } });
+  test("rejects a harness with an invalid platform, or one named for no platform (no silent drop)", () => {
+    writeCurrentConfig({ harnesses: { bad: { platform: "invalid-platform" } } });
     expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/engines\.bad/);
+    expect(() => loadConfig()).toThrow(/harnesses\.bad/);
+    writeCurrentConfig({ harnesses: { mine: {} } });
+    expect(() => loadConfig()).toThrow(/harness "mine" is not a platform name/);
   });
 
-  test("parses canonical engine and improve strategy defaults", () => {
+  test("opencode-sdk is akm's own runtime, not a platform a harness can name", () => {
+    writeCurrentConfig({ harnesses: { runtime: { platform: "opencode-sdk" } } });
+    expect(() => loadConfig()).toThrow(/harnesses\.runtime\.platform/);
+  });
+
+  test("a key a harness does not read warns once and is ignored", () => {
+    writeCurrentConfig({ harnesses: { claude: { colour: "blue" } } });
+    const warnings = captureWarnings(() => {
+      expect(() => loadConfig()).not.toThrow();
+    });
+    expect(warnings.some((w) => w.includes("harnesses.claude.colour") && w.includes("ignored"))).toBe(true);
+  });
+
+  test("parses the default connection, default harness and improve strategy by name", () => {
     writeCurrentConfig({
-      engines: {
-        "openai-mini": {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4o-mini",
-        },
-        "opencode-default": { kind: "agent", platform: "opencode" },
+      connections: {
+        default: { endpoint: "https://api.openai.com/v1", models: { fast: "gpt-4o-mini" } },
+        other: { endpoint: "https://other.test/v1", models: { fast: "m" } },
       },
-      defaults: {
-        llmEngine: "openai-mini",
-        engine: "opencode-default",
-        improveStrategy: "my-custom-strategy",
-      },
-      improve: { strategies: { "my-custom-strategy": {} } },
+      harnesses: { opencode: {}, claude: {} },
+      improve: { strategy: "my-custom-strategy", strategies: { "my-custom-strategy": {} } },
     });
     const loaded = loadConfig();
-    expect(loaded.defaults?.llmEngine).toBe("openai-mini");
-    expect(loaded.defaults?.engine).toBe("opencode-default");
-    expect(loaded.defaults?.improveStrategy).toBe("my-custom-strategy");
+    expect(defaultConnection(loaded)?.name).toBe("default");
+    expect(defaultHarness(loaded)).toBeUndefined();
+    expect(loaded.improve?.strategy).toBe("my-custom-strategy");
   });
 
-  test("defaults.improveStrategy: graph-refresh loads (retirement is refused lazily by resolveImproveStrategy, not eagerly at config load)", () => {
+  test("the lone connection, and the lone harness, are the defaults whatever they are called", () => {
+    writeCurrentConfig({
+      connections: { lab: { endpoint: "http://lab/v1", models: { fast: "m" } } },
+      harnesses: { claude: {} },
+    });
+    const loaded = loadConfig();
+    expect(defaultConnection(loaded)?.name).toBe("lab");
+    expect(defaultHarness(loaded)?.name).toBe("claude");
+  });
+
+  test("improve.strategy: graph-refresh loads (retirement is refused lazily by resolveImproveStrategy, not eagerly at config load)", () => {
     // Eagerly refusing this here would fail every command's config load,
     // including `akm migrate apply` — the one command that would let an
     // owner fix a stale default. resolveImproveStrategy
     // (src/commands/improve/improve-strategies.ts) is the one place that
     // refuses "graph-refresh", at improve-invocation time.
-    writeCurrentConfig({ defaults: { improveStrategy: "graph-refresh" } });
-    const loaded = loadConfig();
-    expect(loaded.defaults?.improveStrategy).toBe("graph-refresh");
+    writeCurrentConfig({ improve: { strategy: "graph-refresh" } });
+    expect(loadConfig().improve?.strategy).toBe("graph-refresh");
   });
 
-  test("defaults.improveStrategy: proactive-maintenance (a built-in until 0.10) still loads, with or without a strategy block (#1129)", () => {
-    writeCurrentConfig({ defaults: { improveStrategy: "proactive-maintenance" } });
-    expect(loadConfig().defaults?.improveStrategy).toBe("proactive-maintenance");
+  test("improve.strategy: proactive-maintenance (a built-in until 0.10) still loads, with or without a strategy block (#1129)", () => {
+    writeCurrentConfig({ improve: { strategy: "proactive-maintenance" } });
+    expect(loadConfig().improve?.strategy).toBe("proactive-maintenance");
     writeCurrentConfig({
-      defaults: { improveStrategy: "proactive-maintenance" },
       improve: {
+        strategy: "proactive-maintenance",
         strategies: {
           "proactive-maintenance": { processes: { proactiveMaintenance: { enabled: true, maxPerRun: 100 } } },
         },
@@ -897,6 +881,11 @@ describe("0.9 config shape parsing", () => {
     });
     const loaded = loadConfig();
     expect(loaded.improve?.strategies?.["proactive-maintenance"]?.processes?.proactiveMaintenance?.maxPerRun).toBe(100);
+  });
+
+  test("improve.strategy must name a built-in or configured strategy", () => {
+    writeCurrentConfig({ improve: { strategy: "nonexistent" } });
+    expect(() => loadConfig()).toThrow(/improve\.strategy/);
   });
 
   test("a leftover improve.salience.salienceThreshold (the removed high-salience lane's key) still loads (#1129)", () => {
@@ -919,52 +908,6 @@ describe("0.9 config shape parsing", () => {
     });
     expect(warnings.some((w) => w.includes("features") && w.includes("retired"))).toBe(true);
   });
-
-  test("loads a literal engine apiKey, warning instead of failing", () => {
-    writeCurrentConfig({
-      engines: {
-        cloud: {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4o",
-          apiKey: "sk-secret",
-        },
-      },
-    });
-    const warnings = captureWarnings(() => {
-      const config = loadConfig();
-      expect(config.engines?.cloud?.apiKey).toBe("sk-secret");
-    });
-    expect(warnings.some((w) => w.includes("engines.<name>.apiKey"))).toBe(true);
-  });
-
-  test("loads a secrets/ ref as an engine apiKey, bundle-qualified or not", () => {
-    writeCurrentConfig({
-      engines: {
-        cloud: {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4o",
-          apiKey: "${team//secrets/openai}",
-        },
-      },
-    });
-    expect(loadConfig().engines?.cloud?.apiKey).toBe("${team//secrets/openai}");
-  });
-
-  test("rejects a non-secrets asset ref as an engine apiKey at load", () => {
-    writeCurrentConfig({
-      engines: {
-        cloud: {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4o",
-          apiKey: "${scripts/key.sh}",
-        },
-      },
-    });
-    expect(() => loadConfig()).toThrow(/accepts only a \$\{secrets\/<name>\} ref/);
-  });
 });
 
 // ── `extends` inheritance (#945) ────────────────────────────────────────────
@@ -977,8 +920,8 @@ describe("extends inheritance (#945)", () => {
       path.join(dir, "shared", "shared.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: {
-          fast: { kind: "llm", endpoint: "https://api.example.test/v1/chat/completions", model: "base-model" },
+        connections: {
+          fast: { endpoint: "https://api.example.test/v1", models: { fast: "base-model" } },
         },
         output: { format: "text", detail: "full" },
       }),
@@ -993,7 +936,7 @@ describe("extends inheritance (#945)", () => {
     );
 
     const config = loadConfig();
-    expect(config.engines?.fast?.model).toBe("base-model");
+    expect(config.connections?.fast?.models).toEqual({ fast: "base-model" });
     // Local wins: output.detail overridden, output.format inherited.
     expect(config.output).toEqual({ format: "text", detail: "brief" });
   });
@@ -1056,7 +999,8 @@ describe("extends inheritance (#945)", () => {
 
   test("a base config declaring a foreign configVersion is still merged underneath", () => {
     // The base gets the same per-file pipeline as the local file: its
-    // `configVersion` is read as current rather than gating the merge.
+    // `configVersion` is read as current rather than gating the merge, and the retired
+    // engines/defaults form it is written in is read as connections.
     const dir = path.dirname(getConfigPath());
     writeRawConfig(
       path.join(dir, "old-base.json"),
@@ -1070,7 +1014,7 @@ describe("extends inheritance (#945)", () => {
 
     const config = loadConfig();
     expect(config.configVersion).toBe("0.9.0");
-    expect(config.defaults?.llmEngine).toBe("legacy");
+    expect(config.connections?.default).toMatchObject({ endpoint: "https://api.example.test/v1/chat/completions" });
   });
 
   test("extends by a filesystem bundle asset ref (bundle//<path>), no index involved", () => {
@@ -1171,17 +1115,23 @@ describe("extends inheritance (#945)", () => {
     }
   });
 
-  test("strips inherited host authority while retaining portable engine settings", () => {
+  test("strips inherited host authority while retaining portable connection and harness settings", () => {
     const dir = path.dirname(getConfigPath());
     writeRawConfig(
       path.join(dir, "base.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: {
+        connections: {
+          cloud: {
+            endpoint: "https://api.example.test/v1",
+            apiKey: "$INHERITED_KEY",
+            models: { fast: "portable-model" },
+          },
+        },
+        harnesses: {
           inherited: {
-            kind: "agent",
             platform: "claude",
-            model: "portable-model",
+            models: { fast: "portable-model" },
             bin: "/untrusted/bin",
             args: ["--dangerous"],
             workspace: "/untrusted/workspace",
@@ -1193,13 +1143,15 @@ describe("extends inheritance (#945)", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
 
     const config = loadConfig();
-    expect(config.engines?.inherited).toMatchObject({ kind: "agent", platform: "claude", model: "portable-model" });
-    expect(config.engines?.inherited).not.toHaveProperty("bin");
-    expect(config.engines?.inherited).not.toHaveProperty("args");
-    expect(config.engines?.inherited).not.toHaveProperty("workspace");
+    expect(config.harnesses?.inherited).toMatchObject({ platform: "claude", models: { fast: "portable-model" } });
+    expect(config.harnesses?.inherited).not.toHaveProperty("bin");
+    expect(config.harnesses?.inherited).not.toHaveProperty("args");
+    expect(config.harnesses?.inherited).not.toHaveProperty("workspace");
+    expect(config.connections?.cloud).toMatchObject({ endpoint: "https://api.example.test/v1" });
+    expect(config.connections?.cloud).not.toHaveProperty("apiKey");
     expect(config.experimental).toBeUndefined();
-    expect(getConfigValueSource("engines.inherited.model")).toBe("extends:./base.json");
-    expect(getConfigValueSource("engines.inherited.bin")).toBe("default");
+    expect(getConfigValueSource("harnesses.inherited.models")).toBe("extends:./base.json");
+    expect(getConfigValueSource("harnesses.inherited.bin")).toBe("default");
   });
 
   test("config get extends returns the locally configured ref (not silently dropped)", () => {
@@ -1265,7 +1217,7 @@ describe("extends inheritance (#945)", () => {
   test("config set on an unrelated key after adopting extends does not duplicate the base's fields into the local file", () => {
     // Round-1 review finding: mutateConfig used to write the entire
     // extends-merged EFFECTIVE config back to the local file on any
-    // `config set`/`unset`, baking every inherited field (engines,
+    // `config set`/`unset`, baking every inherited field (connections,
     // improve.strategies, ...) into the local file on the very next
     // ordinary write — defeating the whole point of `extends`.
     const dir = path.dirname(getConfigPath());
@@ -1273,10 +1225,10 @@ describe("extends inheritance (#945)", () => {
       path.join(dir, "base.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: {
-          fast: { kind: "llm", endpoint: "https://api.example.test/v1/chat/completions", model: "base-model" },
+        connections: {
+          fast: { endpoint: "https://api.example.test/v1", models: { fast: "base-model" } },
         },
-        improve: { strategies: { nightly: { engine: "fast" } } },
+        improve: { connection: "fast" },
         archiveRetentionDays: 30,
       }),
     );
@@ -1290,13 +1242,13 @@ describe("extends inheritance (#945)", () => {
     expect(raw.extends).toBe("./base.json");
     expect(raw.output).toEqual({ detail: "full" });
     // The base's fields must NOT have been duplicated into the local file.
-    expect(raw.engines).toBeUndefined();
+    expect(raw.connections).toBeUndefined();
     expect(raw.improve).toBeUndefined();
     expect(raw.archiveRetentionDays).toBeUndefined();
 
     // The effective (loaded) config is unaffected: still inherited.
     const config = loadConfig();
-    expect(config.engines?.fast?.model).toBe("base-model");
+    expect(config.connections?.fast?.models).toEqual({ fast: "base-model" });
     expect(config.archiveRetentionDays).toBe(30);
     expect(config.output).toEqual({ format: "json", detail: "full" });
   });
