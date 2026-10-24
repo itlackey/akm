@@ -1,3 +1,0 @@
-$ bash scripts/test-integration.sh
-── integration: 8 shards over 340 files; live logs: /tmp/akm-integration-shards.ZIBKpq/shard-N.log
-── integration: 3802 pass / 81 skip / 0 fail across 8 process-shards (340/340 files)

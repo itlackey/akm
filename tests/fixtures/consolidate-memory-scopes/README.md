@@ -24,7 +24,7 @@ pool is a separate regression collection. Deterministic and real embedding
 results are separate treatments. The model and all shipped prompts/defaults
 remain unchanged for this code-only fix.
 
-See [saved results](../../../docs/evaluations/1197/verification.json), the existing
+See the saved results in the akm-eval repository, the existing
 complete-evidence fixtures, and the PR linked to #1197 for the single change
 record, acceptance decision, budget, and rollout status. Tests in AKM pin exact
 live scopes, eligible neighbor slots, promotion output, manual/staged/resumed
