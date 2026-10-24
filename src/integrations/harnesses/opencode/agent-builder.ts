@@ -43,8 +43,9 @@ export const opencodeBuilder: AgentCommandBuilder = {
   personaChannel: "prompt",
   lower: createAgentRequestLowerer({ adapter: "opencode", personaChannel: "prompt", tools: "none" }),
   build(profile, req): BuiltCommand {
-    const { major, version } = detectOpencodeMajor(profile.bin);
-    if (major === 2) {
+    // Refuse only a binary that reports OpenCode 2 or later; one whose version cannot be read is run as given.
+    const { reportedMajor, version } = detectOpencodeMajor(profile.bin);
+    if (reportedMajor !== undefined && reportedMajor >= 2) {
       throw new Error(
         `${profile.bin} is OpenCode ${version || "2"}. The opencode harness runs OpenCode 1 only; OpenCode 2 runs embedded through an engine with platform "opencode-sdk".`,
       );

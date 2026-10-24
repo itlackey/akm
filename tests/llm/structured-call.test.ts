@@ -524,14 +524,14 @@ describe("callStructured contract", () => {
   });
 
   test("(13b) an agent dispatch gets the caller's environment and spawn seam, and its failure keeps the dispatch's own result", async () => {
-    const opencode: RunnerSpec = {
+    const claude: RunnerSpec = {
       kind: "agent",
-      engine: "structured-opencode",
+      engine: "structured-claude",
       profile: {
-        name: "structured-opencode",
-        platform: "opencode",
+        name: "structured-claude",
+        platform: "claude",
         // Never run: the spawn seam stands in for it.
-        bin: "/nonexistent/structured-opencode",
+        bin: "/nonexistent/structured-claude",
         args: [],
         stdio: "captured",
         envPassthrough: [],
@@ -560,7 +560,7 @@ describe("callStructured contract", () => {
 
     const thrown = await callStructured<string>({
       feature: "memory_inference",
-      runner: opencode,
+      runner: claude,
       current: { environment: { AKM_EVENT_SOURCE: "improve" } },
       messages: [{ role: "user", content: "judge this" }],
       request: { runOptions: { spawn } },

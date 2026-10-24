@@ -31,6 +31,7 @@ import {
 import { FALLBACK_ANNOUNCEMENT } from "../../../../src/integrations/agent/engine-fallback";
 import { durableItemRef } from "../../../_helpers/durable-ref";
 import { quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
+import { installFakeOpencodeHost } from "../../../_helpers/fake-opencode-host";
 import {
   type Cleanup,
   sandboxXdgCacheHome,
@@ -258,7 +259,7 @@ describe("akm reflect", () => {
     const sentinel = "REFLECT-ECHO-SENTINEL";
     const stash = makeStashDir();
     const echoed = reflectReply({ description: `Use ripgrep before grep ${sentinel}` });
-    const result = await withEnv({ OPENCODE_API_KEY: sentinel }, () =>
+    const result = await withEnv({ ANTHROPIC_API_KEY: sentinel }, () =>
       akmReflect({
         ref: "lessons/rg-over-grep",
         stashDir: stash,
@@ -572,7 +573,7 @@ describe("akm propose", () => {
     const sentinel = "PROPOSE-ECHO-SENTINEL";
     const stash = makeStashDir();
     const echoed = VALID_SKILL_PAYLOAD.replace("Say hi politely.", `Say hi politely. ${sentinel}`);
-    const result = await withEnv({ OPENCODE_API_KEY: sentinel }, () =>
+    const result = await withEnv({ ANTHROPIC_API_KEY: sentinel }, () =>
       akmPropose({
         type: "skill",
         name: "hello",
@@ -810,19 +811,13 @@ describe("akm propose", () => {
 // ── implicit engine fallback announcement (announced, never silent) ────────
 
 /**
- * A config with NO `defaults.engine` so `withEngineFallback` must select the
- * `opencode-sdk` entry. Operator-configured wins over synthesis, and its
- * pinned absolute bin keeps the probe off the real opencode binary and PATH;
- * the injected fake spawn keeps the dispatch off the bin entirely.
+ * A config with NO `defaults.engine` so `withEngineFallback` must synthesize the
+ * `opencode-sdk` entry. It needs no binary; a scripted embedded OpenCode answers.
  */
 function fallbackEligibleConfig(): AkmConfig {
   return {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
-    engines: {
-      // Reflect is model work, so the fallback engine must confine the model-work tool policy.
-      "opencode-sdk": { kind: "agent", platform: "opencode", bin: "/bin/true" },
-    },
     improve: {
       strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } },
     },
@@ -841,13 +836,13 @@ describe("engine fallback announcement on propose/reflect", () => {
   test("propose announces the fallback engine via warn()", async () => {
     const stash = makeStashDir();
     const warned = captureWarnings();
+    installFakeOpencodeHost({ reply: () => VALID_SKILL_PAYLOAD });
     const result = await akmPropose({
       type: "skill",
       name: "hello",
       task: "Say hi politely",
       stashDir: stash,
       agentConfig: fallbackEligibleConfig(),
-      runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
     });
     expect(result.engine).toBe("opencode-sdk");
     expect(warned).toContain(FALLBACK_ANNOUNCEMENT);
@@ -870,12 +865,12 @@ describe("engine fallback announcement on propose/reflect", () => {
   test("reflect announces the fallback engine via warn()", async () => {
     const stash = makeStashDir();
     const warned = captureWarnings();
+    installFakeOpencodeHost({ reply: () => VALID_LESSON_PAYLOAD });
     const result = await akmReflect({
       ref: "lessons/rg-over-grep",
       assetContent: LESSON_SOURCE,
       stashDir: stash,
       config: fallbackEligibleConfig(),
-      runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
     });
     expect(result.ok).toBe(true);
     expect(warned).toContain(FALLBACK_ANNOUNCEMENT);

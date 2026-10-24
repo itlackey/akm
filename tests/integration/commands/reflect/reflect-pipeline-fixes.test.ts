@@ -395,7 +395,7 @@ describe("Reflect quality gate — source context", () => {
     const config = {
       ...quietQualityGateConfig(),
       engines: {
-        "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+        "fake-agent": { kind: "agent", platform: "claude", bin: "fake-agent" },
         judge: {
           kind: "llm",
           endpoint: "http://localhost:11434/v1/chat/completions",
@@ -477,7 +477,7 @@ describe("Reflect quality gate — source context", () => {
     const config = {
       ...quietQualityGateConfig(),
       engines: {
-        "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+        "fake-agent": { kind: "agent", platform: "claude", bin: "fake-agent" },
         judge: {
           kind: "llm",
           endpoint: "http://localhost:11434/v1/chat/completions",
@@ -586,7 +586,7 @@ describe("Reflect quality gate — source context", () => {
     const config = {
       ...quietQualityGateConfig(),
       engines: {
-        "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+        "fake-agent": { kind: "agent", platform: "claude", bin: "fake-agent" },
         judge: {
           kind: "llm",
           endpoint: "http://localhost:11434/v1/chat/completions",
@@ -649,7 +649,7 @@ describe("Reflect quality gate — source context", () => {
         config: {
           ...quietQualityGateConfig(),
           engines: {
-            "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+            "fake-agent": { kind: "agent", platform: "claude", bin: "fake-agent" },
             judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
           },
           defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
@@ -675,7 +675,7 @@ describe("Reflect quality gate — source context", () => {
     const config = {
       ...quietQualityGateConfig(),
       engines: {
-        "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+        "fake-agent": { kind: "agent", platform: "claude", bin: "fake-agent" },
         general: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "general-model" },
         judge: { kind: "llm", endpoint: "http://localhost:11435/v1/chat/completions", model: "judge-model" },
       },
@@ -709,13 +709,13 @@ describe("Reflect quality gate — source context", () => {
     const argvLog = path.join(stash, "judge-argv.log");
     fs.writeFileSync(
       judgeBin,
-      `#!/bin/sh\n[ "$1" = "--version" ] && { echo "opencode v2.0.26"; exit 0; }\necho "$@" >> "${argvLog}"\necho '${JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "ok" })}'\n`,
+      `#!/bin/sh\necho "$@" >> "${argvLog}"\necho '${JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "ok" })}'\n`,
       { mode: 0o755 },
     );
     const config = {
       ...quietQualityGateConfig(),
       engines: {
-        "fake-agent": { kind: "agent", platform: "opencode", bin: judgeBin },
+        "fake-agent": { kind: "agent", platform: "claude", bin: judgeBin },
         general: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "general-model" },
       },
       defaults: { engine: "fake-agent", llmEngine: "general", improveStrategy: "default" },
@@ -746,7 +746,7 @@ describe("Reflect quality gate — source context", () => {
     if (!result.ok) throw new Error("expected a proposal");
     expect(chatRan).toBe(false);
     // The agent judged it, under the model-work policy, and its scores reach the stamp.
-    expect(fs.readFileSync(argvLog, "utf8")).toStartWith("run --standalone --agent akm-model-work");
+    expect(fs.readFileSync(argvLog, "utf8")).toStartWith("--restricted --strict-mcp-config");
     expect(result.proposal.gateDecision).toMatchObject({
       outcome: "staged",
       scores: { need: 5, preservation: 5, quality: 5 },
@@ -765,7 +765,7 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
       config: {
         ...quietQualityGateConfig(),
         engines: {
-          "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+          "fake-agent": { kind: "agent", platform: "claude", bin: "fake-agent" },
           judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
         },
         defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
@@ -917,7 +917,7 @@ describe("Reflect routing — a judged patch is staged for the drain", () => {
       config: {
         ...quietQualityGateConfig(),
         engines: {
-          "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+          "fake-agent": { kind: "agent", platform: "claude", bin: "fake-agent" },
           judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
         },
         defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },

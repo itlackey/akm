@@ -540,12 +540,9 @@ for blocked-child recovery and the limits.
 
 **Every workflow run needs a selected engine.** Freezing resolves an engine
 for each unit. With no `defaults.engine`, akm falls back to a config-free
-`opencode-sdk` engine — provider, model, and auth come from opencode's own
-configuration — and announces it once in the run's `warnings`. The fallback
-needs the **`opencode` binary on PATH**: the bundled `@opencode-ai/sdk`
-package is an HTTP client only and spawns `opencode serve` to have something
-to talk to, so installing the npm package alone is not enough. With no
-binary, freezing fails with `INVALID_CONFIG_FILE` and exit 78.
+`opencode-sdk` engine, the OpenCode embedded in akm — provider, model, and auth
+come from OpenCode's own configuration — and announces it once in the run's
+`warnings`. The fallback needs nothing installed beyond akm.
 
 A workflow with a non-empty `### gate` additionally requires
 `workflow.judgeEngine` to name a configured LLM or agent engine — the gate

@@ -13,15 +13,15 @@
  *     the real argv builder and runAgent run. A harness reports a provider
  *     error by exiting non-zero; claude 2.1.283 and opencode 1.18.25 do so
  *     against a stub that answers 400.
- *   - opencode-sdk: the runner's __setTestServer seam supplies a fake client.
+ *   - opencode-sdk: a scripted embedded OpenCode (`installFakeOpencodeHost`).
  *
  * The contract:
  *   C1  Success means the transport succeeded: a provider or harness error is
  *       ok:false, never ok with empty output.
  *   C2  Structured output arrives through a native channel or one uniform
  *       prompt fallback, and is validated with one repair.
- *   C3  The model-work tool policy is confined, visibly in argv, the injected
- *       config or the prompt body, or refused at build.
+ *   C3  The model-work tool policy is confined, visibly in argv or the
+ *       session's permissions, or refused at build.
  *   C4  Failures and timeouts are reported the same way on every transport.
  *   C5  Credentials akm owns are checked before dispatch.
  *   C6  Every dispatch leaves one usage record.
@@ -31,25 +31,20 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { callStage } from "../../src/commands/improve/stage";
 import type { AkmConfig } from "../../src/core/config/config";
 import type { UnresolvedExecutionDefaults } from "../../src/execution/source";
+import { MODEL_WORK_CAPABILITIES } from "../../src/integrations/agent/capabilities";
 import { buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../src/integrations/agent/spawn";
 import { HARNESS_REGISTRY } from "../../src/integrations/harnesses";
-import { MODEL_WORK_OPENCODE_AGENT } from "../../src/integrations/harnesses/opencode/model-work-agent";
-import {
-  __setServerFactory,
-  __setTestServer,
-  closeServer,
-} from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
-import type { V1Client } from "../../src/integrations/harnesses/opencode-sdk/v1-adapter";
+import { capabilityPermissions, closeOpencodeSdk } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink, withLlmStage } from "../../src/llm/usage-telemetry";
 import { serveLlmStub } from "../_helpers/engine-stubs";
+import { type FakeOpencodeCall, type FakeOpencodeReply, installFakeOpencodeHost } from "../_helpers/fake-opencode-host";
 import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { makeSandboxDir, type SandboxedDir, sandboxStashDir } from "../_helpers/sandbox";
 
@@ -86,8 +81,8 @@ const LLM_REPLIES: Record<string, (req: Request) => Response | Promise<Response>
 /** The fake binaries, one per scenario, shared by every CLI harness. */
 const CLI_SCRIPTS: Record<string, string> = {
   "exit-1": `#!/bin/sh\necho "${PROVIDER_MESSAGE}" >&2\nexit 1\n`,
-  // Prints the argv it was given, so a row can see what reached the harness.
-  reply: `#!${process.execPath}\nconsole.log(JSON.stringify(process.argv.slice(2)));\n`,
+  // Prints the argv it was given, then its stdin when it got one, so a row can see what reached the harness.
+  reply: `#!${process.execPath}\nconst input = require("node:fs").readFileSync(0, "utf8");\nconsole.log(JSON.stringify([...process.argv.slice(2), ...(input ? [input] : [])]));\n`,
   // Prints what reached it: argv, working directory and the injected opencode config.
   probe: `#!${process.execPath}\nconsole.log(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), config: process.env.OPENCODE_CONFIG_CONTENT ?? null }));\n`,
   // Claude Code's --output-format json result envelope around the reply.
@@ -99,29 +94,22 @@ const CLI_SCRIPTS: Record<string, string> = {
   repair: `#!/bin/sh\n${COUNT_CALL}if [ "$n" -eq 1 ]; then echo 'not json'; else echo '${REPLY}'; fi\n`,
 };
 
-/** A prompt call that never settles. */
-const SDK_HANG = Symbol("sdk-hang");
-
-const sdkText = (text: string) => ({ data: { info: {}, parts: [{ type: "text", text }] } });
-
-/** What the fake SDK client's prompt call resolves to, per scenario; a function gets the call's number. */
-const SDK_REPLIES: Record<string, unknown> = {
-  reply: { data: { info: { tokens: { input: 3, output: 5 } }, parts: [{ type: "text", text: REPLY }] } },
-  valid: sdkText(REPLY),
-  repair: (call: number) => sdkText(call === 1 ? "not json" : REPLY),
-  hang: SDK_HANG,
-  // An HTTP error: without throwOnError the client resolves to `{ error }`.
-  "client-error": { error: { name: "UnknownError", data: { message: PROVIDER_MESSAGE } } },
-  // A provider rejection: HTTP 200 with the error on the assistant message.
-  "info-error": {
-    data: { info: { error: { name: "APIError", data: { message: PROVIDER_MESSAGE, isRetryable: false } } }, parts: [] },
-  },
+/** What the scripted OpenCode answers, per scenario; a function gets the call's number. A promise that never settles hangs. */
+const SDK_REPLIES: Record<string, FakeOpencodeReply | ((call: number) => FakeOpencodeReply | Promise<never>)> = {
+  reply: { text: REPLY, tokens: { input: 3, output: 5 } },
+  valid: { text: REPLY },
+  repair: (call) => ({ text: call === 1 ? "not json" : REPLY }),
+  hang: () => new Promise<never>(() => {}),
+  // A provider rejection on the assistant message.
+  "assistant-error": { error: { type: "provider.api", message: PROVIDER_MESSAGE } },
+  // A failure OpenCode reports on the turn.
+  "turn-error": { error: { type: "provider.api", message: PROVIDER_MESSAGE }, onTurn: true },
 };
 
-/** The request bodies the LLM stub received, and the prompt bodies the fake SDK client did, in order. */
+/** The request bodies the LLM stub received, and the prompts the scripted OpenCode did, in order. */
 const { server: llmStub, bodies: llmBodies } = serveLlmStub(LLM_REPLIES);
 let bins: SandboxedDir;
-let sdkBodies: Record<string, unknown>[] = [];
+let sdkCalls: FakeOpencodeCall[] = [];
 
 beforeAll(() => {
   bins = makeSandboxDir("akm-engine-interchange-bin");
@@ -136,11 +124,9 @@ afterAll(() => {
 });
 
 afterEach(async () => {
-  __setTestServer(null);
-  __setServerFactory(null);
-  await closeServer();
+  await closeOpencodeSdk();
   llmBodies.length = 0;
-  sdkBodies = [];
+  sdkCalls = [];
 });
 
 /** What one dispatch delivered to its transport. */
@@ -198,28 +184,15 @@ const OPENCODE_SDK: Transport = {
   engine: () => ({ kind: "agent", platform: "opencode-sdk" }),
   arrange: (scenario) => {
     const reply = SDK_REPLIES[scenario];
-    __setTestServer({
-      client: {
-        session: {
-          create: async () => ({ data: { id: "contract-session" } }),
-          prompt: async (args: Parameters<V1Client["session"]["prompt"]>[0]) => {
-            sdkBodies.push(args.body as Record<string, unknown>);
-            if (reply === SDK_HANG) return new Promise<never>(() => {});
-            return (typeof reply === "function" ? reply(sdkBodies.length) : reply) as never;
-          },
-        },
-      },
-      server: { close() {} },
-    });
+    sdkCalls = installFakeOpencodeHost({
+      reply: () => (typeof reply === "function" ? reply(sdkCalls.length) : (reply ?? REPLY)),
+    }).calls;
   },
   delivered: () => {
-    const body = sdkBodies.at(-1) as { system?: string; parts: { text: string }[] };
-    return { prompt: [body.system ?? "", ...body.parts.map((part) => part.text)].join("\n") };
+    const call = sdkCalls.at(-1) as FakeOpencodeCall;
+    return { prompt: [call.system ?? "", call.prompt].join("\n") };
   },
 };
-
-/** The SDK transport without its fake client, for a row that inspects the server config. */
-const OPENCODE_SDK_UNARRANGED: Transport = { ...OPENCODE_SDK, arrange: undefined };
 
 /** The resolved runner that runs `scenario` on `transport`. */
 function runnerFor(transport: Transport, scenario: string): RunnerSpec {
@@ -258,7 +231,7 @@ const MODEL_WORK_TRANSPORTS = ALL_TRANSPORTS.filter(
 /** How many times `transport` was called for `scenario` in this test. */
 function calls(transport: Transport, scenario: string): number {
   if (transport === LLM) return llmBodies.length;
-  if (transport === OPENCODE_SDK) return sdkBodies.length;
+  if (transport === OPENCODE_SDK) return sdkCalls.length;
   return Number(fs.readFileSync(path.join(bins.dir, `${scenario}.count`), "utf8").trim());
 }
 
@@ -276,8 +249,8 @@ describe("C1: a provider or harness error is ok:false, never ok with empty outpu
     [LLM.name, "http-500", LLM],
     [LLM.name, "http-200-error-body", LLM],
     ...CLI_HARNESSES.map((harness): [string, string, Transport] => [harness.name, "exit-1", harness]),
-    [OPENCODE_SDK.name, "client-error", OPENCODE_SDK],
-    [OPENCODE_SDK.name, "info-error", OPENCODE_SDK],
+    [OPENCODE_SDK.name, "assistant-error", OPENCODE_SDK],
+    [OPENCODE_SDK.name, "turn-error", OPENCODE_SDK],
   ];
 
   test.each(rows)("%s: %s", async (_name, scenario, transport) => {
@@ -348,35 +321,6 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
   });
   afterEach(() => stash.cleanup());
 
-  /**
-   * The permission block the injected opencode agent must carry, checked against opencode 1.18.25. Its order is part
-   * of the rule, since opencode lets the last match win, so rows compare it as JSON.
-   */
-  const opencodeRules = () =>
-    JSON.stringify({
-      "*": "deny",
-      read: "allow",
-      grep: "allow",
-      glob: "allow",
-      edit: { "*": "allow", [`${stash.dir.slice(1)}/*`]: "deny" },
-      external_directory: { [`${stash.dir}/*`]: "allow", "~/.local/share/opencode/tool-output/*": "deny" },
-      akm_search: "allow",
-      akm_show: "allow",
-      akm_feedback: "deny",
-      akm_remember: "deny",
-      akm_curate: "deny",
-      bash: "deny",
-      doom_loop: "deny",
-      list: "deny",
-      lsp: "deny",
-      question: "deny",
-      skill: "deny",
-      task: "deny",
-      todowrite: "deny",
-      webfetch: "deny",
-      websearch: "deny",
-    });
-
   /** What the fake `probe` binary saw of one model-work dispatch on the CLI harness `name`. */
   async function probeModelWork(name: string) {
     const transport = CLI_HARNESSES.find((harness) => harness.name === name) as Transport;
@@ -407,17 +351,6 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
     expect(argv).toContain("--strict-mcp-config");
   });
 
-  test("opencode: the confined agent is the one selected, with the stash readable and nothing writable but its working directory", async () => {
-    const { argv, config } = await probeModelWork("opencode");
-
-    expect(argv.slice(argv.indexOf("--agent"), argv.indexOf("--agent") + 2)).toEqual([
-      "--agent",
-      MODEL_WORK_OPENCODE_AGENT,
-    ]);
-    expect(JSON.stringify(config.permission)).toBe(opencodeRules());
-    expect(JSON.stringify(config.agent[MODEL_WORK_OPENCODE_AGENT].permission)).toBe(opencodeRules());
-  });
-
   // Model work, a stage call for one, runs only where the policy is confined.
   test.each(
     ALL_TRANSPORTS.filter((row) => !MODEL_WORK_TRANSPORTS.includes(row)),
@@ -440,45 +373,16 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
     expect(outcome).toEqual({ ok: true, raw: REPLY });
   });
 
-  test("opencode-sdk: the server defines the confined agent and the prompt selects it", async () => {
-    let started: { config?: Record<string, unknown> } | undefined;
-    const queries: unknown[] = [];
-    __setServerFactory(async (options) => {
-      started = options;
-      return {
-        client: {
-          session: {
-            create: async (args: Parameters<V1Client["session"]["create"]>[0]) => {
-              queries.push(args.query);
-              return { data: { id: "contract-session" } };
-            },
-            prompt: async (args: Parameters<V1Client["session"]["prompt"]>[0]) => {
-              sdkBodies.push(args.body as Record<string, unknown>);
-              return sdkText(REPLY) as never;
-            },
-          },
-        },
-        server: { close() {} },
-      };
-    });
-    // Not dispatch(): its arrange installs a test server, which bypasses the server config.
-    const config = {
-      configVersion: "0.9.0",
-      engines: { contract: OPENCODE_SDK.engine("valid") },
-    } as unknown as AkmConfig;
-    const resolved = resolveExecution({ content: PROMPT, config, current: { engine: "contract" }, modelWork: true });
-    const result = await runExecution(buildExecution(resolved.request, resolved.runner));
+  test("opencode-sdk: the session denies every tool but read and akm's, in a scratch working directory", async () => {
+    const result = await dispatch(OPENCODE_SDK, "valid", modelWork);
 
     expect(result.ok).toBe(true);
-    const serverConfig = started?.config as { permission: unknown; agent: Record<string, { permission: unknown }> };
-    expect(JSON.stringify(serverConfig.permission)).toBe(opencodeRules());
-    expect(JSON.stringify(serverConfig.agent[MODEL_WORK_OPENCODE_AGENT]?.permission)).toBe(opencodeRules());
-    expect(sdkBodies.at(-1)).toMatchObject({ agent: MODEL_WORK_OPENCODE_AGENT });
-    expect(sdkBodies.at(-1)).not.toHaveProperty("tools");
-    const directory = (queries[0] as { directory: string }).directory;
-    expect(path.basename(directory)).toStartWith("akm-model-work-");
-    expect(directory.startsWith(fs.realpathSync(os.tmpdir())) || directory.startsWith(os.tmpdir())).toBe(true);
-    expect(fs.existsSync(directory)).toBe(false);
+    const call = sdkCalls.at(-1) as FakeOpencodeCall;
+    expect(call.permissions).toEqual(capabilityPermissions(MODEL_WORK_CAPABILITIES));
+    expect(call.agent).toBeUndefined();
+    expect(call.metadata).toEqual({ akm: "model-work" });
+    expect(path.basename(call.directory ?? "")).toStartWith("akm-model-work-");
+    expect(fs.existsSync(call.directory ?? "")).toBe(false);
   });
 });
 
@@ -528,7 +432,7 @@ describe("C4: failures and timeouts", () => {
     llm: "http-500",
     claude: "exit-1",
     opencode: "exit-1",
-    "opencode-sdk": "client-error",
+    "opencode-sdk": "turn-error",
   };
 
   test.each(
@@ -607,52 +511,16 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
     });
   });
 
-  // opencode makes a title call of its own on the model and applies the
-  // model's options to it; the model-work agent is akm's, so its options reach
-  // only the work. The model itself is the user's, in the user's opencode config.
-  test("opencode: model work puts the options on the confined agent, and nothing on the model", async () => {
-    const opencode = CLI_HARNESSES.find((harness) => harness.name === "opencode") as Transport;
-    const { result, untranslated } = await dispatchBuilt(opencode, "probe", {
-      model: MODEL,
-      inference: INFERENCE,
-      modelWork: true,
-    });
-    const config = JSON.parse(probed(result).config ?? "null");
-
-    // The limit is the model's, which akm does not write for a CLI dispatch.
-    expect(untranslated).toEqual(["contextLength", "maxTokens"]);
-    expect(config.agent[MODEL_WORK_OPENCODE_AGENT].options).toEqual({
-      temperature: 0.2,
-      reasoningEffort: "high",
-      chat_template_kwargs: { enable_thinking: false },
-      enable_thinking: false,
-    });
-    expect(config).not.toHaveProperty("provider");
-  });
-
-  test("opencode-sdk: the server config gives the llmEngine fallback's model every field", async () => {
-    let started: { config?: Record<string, unknown> } | undefined;
-    __setServerFactory(async (options) => {
-      started = options;
-      return {
-        client: {
-          session: {
-            create: async () => ({ data: { id: "contract-session" } }),
-            prompt: async () => sdkText(REPLY) as never,
-          },
-        },
-        server: { close() {} },
-      };
-    });
+  test("opencode-sdk: akm's config gives the llmEngine fallback's model every field", async () => {
     const engines = {
       contract: { kind: "agent", platform: "opencode-sdk", llmEngine: "backing" },
       backing: { kind: "llm", endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "stub-model" },
     };
-    // Not the arranged transport: its fake client bypasses the server config.
-    const { result } = await dispatchBuilt(OPENCODE_SDK_UNARRANGED, "valid", { inference: INFERENCE }, engines);
+    const { result, untranslated } = await dispatchBuilt(OPENCODE_SDK, "valid", { inference: INFERENCE }, engines);
 
     expect(result.ok).toBe(true);
-    const provider = started?.config?.provider as Record<string, { models: Record<string, unknown> }>;
+    expect(untranslated).toEqual([]);
+    const provider = sdkCalls.at(-1)?.config?.provider as Record<string, { models: Record<string, unknown> }>;
     expect(provider["akm-custom"]?.models).toEqual({
       "stub-model": {
         options: {
@@ -683,18 +551,21 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
 
   // `effort` (a models.json alias, `effort:` frontmatter) and `reasoningEffort`
   // (an LLM request, opencode's options) are one setting.
-  test("an alias's `effort` is reasoningEffort on an LLM and on model work's agent", async () => {
+  test("an alias's `effort` is reasoningEffort on an LLM and on OpenCode's model", async () => {
     await dispatchBuilt(LLM, "reply", { inference: { effort: "high" } });
-    const opencode = await dispatchBuilt(
-      CLI_HARNESSES.find((harness) => harness.name === "opencode") as Transport,
-      "probe",
-      { inference: { effort: "high" }, modelWork: true },
+    await dispatchBuilt(
+      OPENCODE_SDK,
+      "valid",
+      { inference: { effort: "high" } },
+      {
+        contract: { kind: "agent", platform: "opencode-sdk", llmEngine: "backing" },
+        backing: { kind: "llm", endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "stub-model" },
+      },
     );
 
     expect(llmBodies.at(-1)).toMatchObject({ reasoning_effort: "high" });
-    expect(JSON.parse(probed(opencode.result).config ?? "null").agent[MODEL_WORK_OPENCODE_AGENT].options).toEqual({
-      reasoningEffort: "high",
-    });
+    const provider = sdkCalls.at(-1)?.config?.provider as Record<string, { models: Record<string, unknown> }>;
+    expect(provider["akm-custom"]?.models["stub-model"]).toEqual({ options: { reasoningEffort: "high" } });
   });
 });
 

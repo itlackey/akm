@@ -19,7 +19,7 @@
  * Claude Code's 'claude' vs 'claude'), so no alias bridge is needed.
  */
 
-import { OPENCODE_ENV_PASSTHROUGH } from "../../../core/spawn-env";
+import { XDG_BASE_DIR_ENV_PASSTHROUGH } from "../../../core/spawn-env";
 import type { SessionLogHarness } from "../../session-logs/types";
 import { caps } from "../shared";
 import { BaseHarness } from "../types";
@@ -30,6 +30,13 @@ import { OpenCodeProvider } from "./session-log";
 export { opencodeBuilder } from "./agent-builder";
 export { openCodeImporter } from "./config-import";
 export { OpenCodeProvider } from "./session-log";
+
+/**
+ * The names an `opencode` process reads beyond the common baseline: its API key
+ * (OpenCode Go and Zen read `OPENCODE_API_KEY`), the config file it is pointed
+ * at, and the XDG base directories.
+ */
+const OPENCODE_ENV_PASSTHROUGH = ["OPENCODE_API_KEY", "OPENCODE_CONFIG", ...XDG_BASE_DIR_ENV_PASSTHROUGH] as const;
 
 /**
  * OpenCode.

@@ -33,6 +33,8 @@ export interface FakeModelRequest {
   readonly system: string;
   readonly lastUser: string;
   readonly toolResult?: string;
+  /** The request's other fields: sampling and limits. */
+  readonly params: Record<string, unknown>;
   /** The request asked the model to summarize the conversation (a compaction). */
   readonly summarize: boolean;
 }
@@ -52,6 +54,7 @@ export function startFakeModel(): FakeModelServer {
     async fetch(req) {
       if (req.method === "GET") return Response.json({ object: "list", data: [{ id: "fake-model", object: "model" }] });
       const body = (await req.json()) as { messages?: Message[]; tools?: { function?: { name?: string } }[] };
+      const { messages: _messages, tools: _tools, ...params } = body as Record<string, unknown>;
       n += 1;
       const messages = body.messages ?? [];
       const users = messages.filter((m) => m.role === "user").map((m) => text(m.content));
@@ -70,6 +73,7 @@ export function startFakeModel(): FakeModelServer {
         mode,
         tools,
         system,
+        params,
         summarize: /MUST summarize the conversation|MUST use this format/.test(all),
         lastUser: users.at(-1) ?? "",
         ...(afterTool ? { toolResult: text(last?.content) } : {}),

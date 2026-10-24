@@ -89,8 +89,8 @@ export interface RunWorkflowOptions {
    */
   summaryJudge?: SummaryJudge | null;
   /**
-   * Drains cached `opencode serve` child processes on every exit path — a live
-   * child keeps the event loop open and would hang the CLI. Defaults to
+   * Closes the embedded OpenCode instances on every exit path — an open one
+   * keeps the event loop open and would hang the CLI. Defaults to
    * {@link disposeDispatchResources}; injected by tests.
    */
   disposeDispatchResources?: () => void | Promise<void>;

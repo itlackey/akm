@@ -10,7 +10,6 @@ import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/c
 import { validateConfigShape } from "../../../src/core/config/config-schema";
 import { ConfigError } from "../../../src/core/errors";
 import { resolveEngine } from "../../../src/integrations/agent/engine-resolution";
-import { __setTestServer } from "../../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { compressMemoryToDerivedMemory } from "../../../src/llm/memory-infer";
 import {
   clearLlmUsageSink,
@@ -18,6 +17,7 @@ import {
   setLlmUsageSink,
   withLlmStage,
 } from "../../../src/llm/usage-telemetry";
+import { installFakeOpencodeHost } from "../../_helpers/fake-opencode-host";
 import { asLlmRunner } from "../../_helpers/llm-runner";
 import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
 
@@ -37,7 +37,7 @@ function config(engines: Record<string, unknown> = {}): AkmConfig {
         model: "judge-model",
         enableThinking: true,
       },
-      agent: { kind: "agent", platform: "opencode", bin: "fake-agent" },
+      agent: { kind: "agent", platform: "claude", bin: "fake-agent" },
       ...engines,
     },
     defaults: { llmEngine: "default" },
@@ -136,7 +136,7 @@ describe("qualityGate.engine is checked when the config loads", () => {
   test("an agent that cannot confine the policy, or a missing engine, is rejected", () => {
     const path = "improve.strategies.custom.processes.reflect.qualityGate.engine";
     expect(gateEngineErrors("reviewer")).toEqual([
-      `${path}: engine "reviewer" (platform pi) cannot confine the model-work tool policy, which unattended model work requires. Use an LLM engine, or an agent engine on opencode, claude or opencode-sdk.`,
+      `${path}: engine "reviewer" (platform pi) cannot confine the model-work tool policy, which unattended model work requires. Use an LLM engine, or an agent engine on claude or opencode-sdk.`,
     ]);
     expect(gateEngineErrors("missing")).toEqual([`${path}: engine does not name a configured engine`]);
   });
@@ -169,50 +169,23 @@ describe("the judge thinks only when its own engine enables thinking", () => {
     const cfg = config({
       "sdk-judge": { kind: "agent", platform: "opencode-sdk", llmEngine: "judge" },
     });
-    __setTestServer({
-      client: {
-        session: {
-          create: async () => ({ data: { id: "judge-session" } }),
-          prompt: async () => ({ data: { info: {}, parts: [{ type: "text", text: PASSING_VERDICT }] } }) as never,
-        },
-      },
-      server: { close() {} },
+    installFakeOpencodeHost({ reply: () => PASSING_VERDICT });
+    const result = await runReflectQualityJudge(cfg, "candidate", "source", [], undefined, {
+      llmRunner: resolveEngine("sdk-judge", cfg),
     });
-    try {
-      const result = await runReflectQualityJudge(cfg, "candidate", "source", [], undefined, {
-        llmRunner: resolveEngine("sdk-judge", cfg),
-      });
-      expect(result.pass).toBe(true);
-    } finally {
-      __setTestServer(null);
-    }
+    expect(result.pass).toBe(true);
   });
 
   test("a judge on an agent engine gets the asset's ref and the tool rules; the plain judge gets neither", async () => {
     const cfg = config({
       "sdk-judge": { kind: "agent", platform: "opencode-sdk", llmEngine: "judge" },
     });
-    let sent = "";
-    __setTestServer({
-      client: {
-        session: {
-          create: async () => ({ data: { id: "judge-session" } }),
-          prompt: (async (args: { body: { parts: { text: string }[] } }) => {
-            sent = args.body.parts.map((p) => p.text).join("\n");
-            return { data: { info: {}, parts: [{ type: "text", text: PASSING_VERDICT }] } };
-          }) as never,
-        },
-      },
-      server: { close() {} },
+    const { calls } = installFakeOpencodeHost({ reply: () => PASSING_VERDICT });
+    await runReflectQualityJudge(cfg, "candidate", "source", [], undefined, {
+      llmRunner: resolveEngine("sdk-judge", cfg),
+      ref: "knowledge/x",
     });
-    try {
-      await runReflectQualityJudge(cfg, "candidate", "source", [], undefined, {
-        llmRunner: resolveEngine("sdk-judge", cfg),
-        ref: "knowledge/x",
-      });
-    } finally {
-      __setTestServer(null);
-    }
+    const sent = calls.map((call) => call.prompt).join("\n");
     expect(sent).toContain("Tools: The asset is `knowledge/x`: read it with akm_show");
     let plain = "";
     await runReflectQualityJudge(config(), "candidate", "source", [], async (_connection, messages) => {

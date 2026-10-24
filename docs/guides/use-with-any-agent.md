@@ -156,12 +156,10 @@ config to follow prereleases. The exact rules are in the
 [`akm upgrade` reference](../reference/cli.md#harness-plugins). `akm health`
 warns when either plugin's bundled `akm-cli` differs from the running CLI.
 
-**Which OpenCode akm drives** is detected, not configured: an `opencode` or
-`opencode-sdk` agent engine runs the most recent OpenCode on `PATH` (or its own
-`bin`) and uses the adapters for the major that binary reports; OpenCode 1 logs a
-warning recommending OpenCode 2 (see
-[Configuration](../reference/configuration.md#engines)). It does not change
-which plugin you install, and the plugin choice does not change it.
+**Which OpenCode akm runs** does not depend on the plugin: an `opencode-sdk`
+agent engine runs OpenCode 2 embedded in akm, and an `opencode` engine runs your
+OpenCode 1 CLI (see [Configuration](../reference/configuration.md#engines)).
+Install the plugin for the OpenCode you use yourself.
 
 ## See also
 

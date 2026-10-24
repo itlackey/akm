@@ -3,47 +3,21 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * OpenCode 2 session-store adapter. V2 keeps one `session_v2` row per session
- * and the ordered conversation as `session_message` rows (`type` + JSON `data`
- * minus `id`/`type`, shapes from `@opencode/client` `SessionMessageInfo`).
- * Read-only: the database is never migrated; V1 rows a native upgrade copied
- * here arrive as the same shapes under the same session id.
+ * OpenCode 2 session messages into the session-log contract. The messages come
+ * from the embedded OpenCode (`../opencode-sdk/sdk-runner.ts`
+ * `readOpencodeSession`), oldest first, in `@opencode/sdk`'s
+ * `SessionMessageInfo` shapes.
  *
- * Mapping into the session-log contract follows the Codex reader: user and
- * assistant text become events of that role, a tool call becomes
- * `[tool:<name>] <input>` and its outcome a `tool` event
- * `[tool_result] <output>`, so the inline-ref scanner sees shell commands.
- * Reasoning, compaction, synthetic/system and bookkeeping messages are skipped.
+ * Mapping follows the Codex reader: user and assistant text become events of
+ * that role, a tool call becomes `[tool:<name>] <input>` and its outcome a
+ * `tool` event `[tool_result] <output>`, so the inline-ref scanner sees shell
+ * commands. Reasoning, compaction, synthetic/system and bookkeeping messages
+ * are skipped.
  */
 
-import { asRecord, tryParseJson } from "../../../core/common";
-import { warnOnce } from "../../../core/warn";
-import type { Database } from "../../../storage/database";
+import { asRecord } from "../../../core/common";
 import { extractInlineRefMentions } from "../../session-logs/inline-refs";
 import type { InlineRefMention, SessionEvent } from "../../session-logs/types";
-import { type OpenCodeSessionMeta, type OpenCodeSessionRead, type SessionRow, toMeta } from "./session-log-types";
-
-export const V2_TABLES = ["session_v2", "session_message"] as const;
-
-/** Every V2 session updated at or after `sinceMs`, newest first. Throws on an incompatible schema. */
-export function listV2Sessions(db: Database, sinceMs: number): OpenCodeSessionMeta[] {
-  const rows = db
-    .prepare<SessionRow>(
-      "SELECT id, title, directory, time_created, time_updated FROM session_v2 WHERE time_updated >= ? ORDER BY time_updated DESC",
-    )
-    .all(sinceMs);
-  return rows.map((r) => toMeta(r, r.id));
-}
-
-/** Whether `sessionId` has a `session_v2` row, and how many `session_message` rows it owns. */
-export function v2SessionState(db: Database, sessionId: string): { exists: boolean; messages: number } {
-  const row = db
-    .prepare<{ n: number }>(
-      "SELECT (SELECT COUNT(*) FROM session_message WHERE session_id = s.id) AS n FROM session_v2 s WHERE s.id = ?",
-    )
-    .get(sessionId);
-  return row ? { exists: true, messages: row.n } : { exists: false, messages: 0 };
-}
 
 type Json = Record<string, unknown>;
 const asObject = asRecord;
@@ -80,20 +54,13 @@ function structuredErrorText(err: unknown): string {
   return typeof e?.type === "string" ? e.type : "error";
 }
 
-/**
- * Rebuild one session's events in `seq` order. Throws on an incompatible
- * schema; a message whose JSON cannot be read is skipped with one warning.
- */
-export function readV2Session(db: Database, harness: string, sessionId: string, filePath: string): OpenCodeSessionRead {
-  const meta = db
-    .prepare<Omit<SessionRow, "id">>("SELECT title, directory, time_created, time_updated FROM session_v2 WHERE id = ?")
-    .get(sessionId);
-  const rows = db
-    .prepare<{ id: string; type: string; data: string; time_created: number | null }>(
-      "SELECT id, type, data, time_created FROM session_message WHERE session_id = ? ORDER BY seq ASC, time_created ASC, id ASC",
-    )
-    .all(sessionId);
-
+/** One session's events and inline refs, from its messages oldest first. A message that is not an object is skipped. */
+export function opencodeMessageEvents(
+  messages: readonly unknown[],
+  harness: string,
+  sessionId: string,
+  filePath: string,
+): { events: SessionEvent[]; inlineRefs: InlineRefMention[] } {
   const events: SessionEvent[] = [];
   const inlineRefs: InlineRefMention[] = [];
   const push = (role: SessionEvent["role"], text: string, ts: number | undefined) => {
@@ -103,20 +70,14 @@ export function readV2Session(db: Database, harness: string, sessionId: string, 
     inlineRefs.push(...extractInlineRefMentions(trimmed, ts));
   };
 
-  for (const row of rows) {
-    const data = asObject(tryParseJson(row.data));
-    if (!data) {
-      warnOnce(
-        `opencode-v2-message:${filePath}:${row.id}`,
-        `OpenCode 2 history: skipped unreadable message ${row.id} in session ${sessionId} (${filePath}).`,
-      );
-      continue;
-    }
-    const ts = asNumber(asObject(data.time)?.created) ?? asNumber(row.time_created);
+  for (const message of messages) {
+    const data = asObject(message);
+    if (!data) continue;
+    const ts = asNumber(asObject(data.time)?.created);
 
-    if (row.type === "user") {
+    if (data.type === "user") {
       if (typeof data.text === "string") push("user", data.text, ts);
-    } else if (row.type === "assistant") {
+    } else if (data.type === "assistant") {
       const content = Array.isArray(data.content) ? data.content : [];
       const text = content
         .map((c) => asObject(c))
@@ -141,12 +102,12 @@ export function readV2Session(db: Database, harness: string, sessionId: string, 
           push("tool", `[tool_result] ${body}`, doneTs);
         }
       }
-    } else if (row.type === "shell") {
+    } else if (data.type === "shell") {
       if (typeof data.command === "string") push("assistant", `[tool:shell] ${data.command}`, ts);
       const out = asObject(data.output)?.output;
       if (typeof out === "string") push("tool", `[tool_result] ${out}`, ts);
     }
   }
 
-  return { meta: meta ? toMeta(meta, sessionId) : { sessionId }, events, inlineRefs };
+  return { events, inlineRefs };
 }

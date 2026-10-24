@@ -2,13 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
-import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { freezeWorkflow } from "../../../src/workflows/freeze/freeze";
-import { getWorkflowStatus, startWorkflowRun } from "../../../src/workflows/runtime/runs";
+import { startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../../src/workflows/runtime/workflow-asset-loader";
-import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
-import { withSeam } from "../../_helpers/seams";
+import { installFakeOpencodeHost } from "../../_helpers/fake-opencode-host";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 
@@ -63,10 +62,6 @@ const GATED_EXEC_WORKFLOW = [
   "",
 ].join("\n");
 
-// Keep the workflow's `true` executable resolvable while deliberately hiding
-// ambient agent CLIs such as opencode. These cases assert the no-engine path.
-const NO_AGENT_PATH = path.dirname(Bun.which("true") ?? process.execPath);
-
 describe("resolveJudge falls back to the default engine when workflow.judgeEngine is unset", () => {
   test("a configured defaults.engine is used for the gate's judge", async () => {
     writeSandboxConfig({
@@ -85,53 +80,37 @@ describe("resolveJudge falls back to the default engine when workflow.judgeEngin
   });
 });
 
-describe("resolveJudge freezes frozenJudge: null (never refuses) when no engine resolves anywhere", () => {
-  test("freezing a gated workflow succeeds and warns instead of throwing", async () => {
+describe("resolveJudge falls back to the opencode-sdk engine when no engine resolves anywhere", () => {
+  test("freezing a gated workflow freezes the opencode-sdk judge", async () => {
     writeSandboxConfig({});
     resetConfigCache();
     write("workflows/gated.md", GATED_EXEC_WORKFLOW);
 
-    const warnCalls: string[] = [];
     const asset = await loadWorkflowAsset("workflows/gated");
-    const frozen = await withEnv({ PATH: NO_AGENT_PATH }, () =>
-      withSeam(
-        _setWarnSinkForTests,
-        (level, args) => {
-          if (level !== "warn") return;
-          warnCalls.push(args.map((value) => (typeof value === "string" ? value : JSON.stringify(value))).join(" "));
-        },
-        () => freezeWorkflow(asset, loadConfig()),
-      ),
-    );
+    const frozen = await freezeWorkflow(asset, loadConfig());
 
     const step = frozen.plan.steps.find((s) => s.stepId === "work");
     expect(step?.gate.criteria.length).toBeGreaterThan(0);
-    expect(step?.gate.frozenJudge).toBeNull();
-    expect(warnCalls.some((w) => w.includes("no verification engine is available"))).toBe(true);
+    expect(step?.gate.frozenJudge?.request.engine).toEqual({
+      name: "opencode-sdk",
+      kind: "sdk",
+      platform: "opencode-sdk",
+    });
   });
 
-  test("end to end: `workflow create` + `workflow run` no longer fails outright on a default install — the run blocks gracefully at the gate instead", async () => {
+  test("end to end: `workflow create` + `workflow run` on a default install judges the gate on the embedded OpenCode", async () => {
     writeSandboxConfig({});
     resetConfigCache();
     write("workflows/gated.md", GATED_EXEC_WORKFLOW);
+    const host = installFakeOpencodeHost({ reply: () => '{"complete": true, "missing": []}' });
 
-    await withEnv({ PATH: NO_AGENT_PATH }, async () => {
-      const started = await startWorkflowRun("workflows/gated");
-      expect(started.run.status).toBe("active");
+    const started = await startWorkflowRun("workflows/gated");
+    expect(started.run.status).toBe("active");
 
-      const result = await runWorkflowSteps({
-        target: started.run.id,
-        dispatcher: async () => ({ ok: true, text: "did the work" }),
-        summaryJudge: null,
-      });
+    const result = await runWorkflowSteps({ target: started.run.id });
 
-      expect(result.run.status).toBe("blocked");
-      expect(result.judgeFailure?.stepId).toBe("work");
-      expect(result.judgeFailure?.message).toContain("no verification judge is available");
-      const status = await getWorkflowStatus(started.run.id);
-      expect(status.run.status).toBe("blocked");
-      expect(status.workflow.steps[0]?.status).toBe("blocked");
-      expect(status.workflow.steps[0]?.evidence?.output).toBe("did the work");
-    });
+    expect(result.judgeFailure).toBeUndefined();
+    expect(result.run.status).toBe("completed");
+    expect(host.calls.length).toBeGreaterThan(0);
   }, 30_000);
 });

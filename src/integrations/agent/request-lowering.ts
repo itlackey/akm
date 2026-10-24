@@ -19,7 +19,7 @@ export interface AgentLowererOptions {
   readonly adapter: string;
   readonly personaChannel: "native" | "prompt";
   readonly tools: ToolTranslation;
-  /** Inference keys this harness's model-work dispatch carries; a dispatch of any other kind reports every key. */
+  /** Inference keys this harness carries; any other key is reported untranslated. */
   readonly inference?: readonly string[];
 }
 
@@ -113,7 +113,7 @@ export function createAgentRequestLowerer(
     if (Object.hasOwn(request, "inference")) {
       dispatch.inference = request.inference ?? null;
       for (const key of Object.keys(request.inference ?? {}).sort()) {
-        if (!(modelWork && supportedInference.has(key))) skip(`inference.${key}`);
+        if (!supportedInference.has(key)) skip(`inference.${key}`);
       }
     }
     if (modelWork) {

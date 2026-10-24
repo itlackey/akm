@@ -17,12 +17,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../../core/config/config";
-import {
-  type AgentProfile,
-  getBuiltinAgentProfile,
-  listBuiltinAgentProfiles,
-  OPENCODE_SDK_SERVER_BIN,
-} from "./profiles";
+import { type AgentProfile, getBuiltinAgentProfile, listBuiltinAgentProfiles } from "./profiles";
 
 /** Function signature for a binary lookup probe. */
 export type WhichFn = (bin: string) => string | undefined;
@@ -142,13 +137,13 @@ export function detectAgentCliProfiles(agent?: AkmConfig, whichFn: WhichFn = def
   if (detectOverrides?.detectAgentCliProfiles) return detectOverrides.detectAgentCliProfiles(agent, whichFn);
   const profilesByName = new Map(Object.values(listBuiltinAgentProfiles()).map((profile) => [profile.name, profile]));
   for (const [name, engine] of Object.entries(agent?.engines ?? {})) {
-    if (engine.kind !== "agent") continue;
+    // The embedded OpenCode has no CLI to find.
+    if (engine.kind !== "agent" || engine.platform === "opencode-sdk") continue;
     const builtin = getBuiltinAgentProfile(engine.platform);
     profilesByName.set(name, {
       name,
       platform: engine.platform,
-      bin:
-        engine.bin ?? builtin?.bin ?? (engine.platform === "opencode-sdk" ? OPENCODE_SDK_SERVER_BIN : engine.platform),
+      bin: engine.bin ?? builtin?.bin ?? engine.platform,
       args: engine.args ?? builtin?.args ?? [],
       stdio: "captured",
       envPassthrough: builtin?.envPassthrough ?? [],

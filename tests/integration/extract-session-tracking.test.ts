@@ -864,7 +864,7 @@ describe("countNewExtractCandidates — row-presence approximation", () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_new", Date.now());
     const db = openStateDatabase(":memory:");
-    const n = countNewExtractCandidates(configEnabled(stash), {
+    const n = await countNewExtractCandidates(configEnabled(stash), {
       harnesses: [makeHarness([session])],
       stateDb: db,
     });
@@ -886,7 +886,7 @@ describe("countNewExtractCandidates — row-presence approximation", () => {
       proposalCount: 0,
       contentHash: null,
     });
-    const n = countNewExtractCandidates(configEnabled(stash), {
+    const n = await countNewExtractCandidates(configEnabled(stash), {
       harnesses: [makeHarness([session])],
       stateDb: db,
     });
@@ -908,7 +908,7 @@ describe("countNewExtractCandidates — row-presence approximation", () => {
       proposalCount: 0,
       contentHash: "some-non-null-hash",
     });
-    const n = countNewExtractCandidates(configEnabled(stash), {
+    const n = await countNewExtractCandidates(configEnabled(stash), {
       harnesses: [makeHarness([session])],
       stateDb: db,
     });

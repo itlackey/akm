@@ -6,14 +6,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { toErrorMessage } from "../../../core/common";
+import { getDataDir } from "../../../core/paths";
 import { warnOnce } from "../../../core/warn";
 import { type Database, openDatabase } from "../../../storage/database";
-import { openSqliteReadSnapshot } from "../../../storage/sqlite-read-snapshot";
+import { copySqliteSnapshot, openSqliteReadSnapshot } from "../../../storage/sqlite-read-snapshot";
 import { AbstractSessionLogProvider } from "../../session-logs/provider-base";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../session-logs/types";
-import type { OpenCodeSessionMeta } from "./session-log-types";
-import { hasV1Session, listV1Sessions, readV1Session, V1_TABLES } from "./session-log-v1";
-import { listV2Sessions, readV2Session, V2_TABLES, v2SessionState } from "./session-log-v2";
+import { listV1Sessions, readV1Session, V1_TABLES } from "./session-log-v1";
+import { opencodeMessageEvents } from "./session-log-v2";
 
 function getOpenCodeBaseDir(): string {
   if (process.platform === "darwin") {
@@ -23,39 +23,29 @@ function getOpenCodeBaseDir(): string {
 }
 
 /**
- * OpenCode session storage: one SQLite file, `<base>/opencode.db`, whose
- * layout decides the reader, never the installed binary or its version:
+ * OpenCode session history, from two SQLite files: the user's
+ * `<opencode data dir>/opencode.db`, and akm's own `<akm data dir>/opencode.db`,
+ * where the embedded OpenCode stores akm's agent runs. The file's layout
+ * decides the reader:
  *
- *   - V1: `session` table, with `message` / `part` for content (`session-log-v1.ts`).
- *   - V2: `session_v2` / `session_message` tables (`session-log-v2.ts`).
- *   - Both: a natively upgraded V1 file keeps its V1 tables and gains the V2
- *     ones. Sessions are merged by id, V2 winning, V1-only ones kept.
+ *   - OpenCode 2 (`session_v2` table): read through the embedded OpenCode
+ *     (`../opencode-sdk`), which knows its own schema. Only top-level sessions;
+ *     akm's model-work sessions are left out.
+ *   - OpenCode 1 only (`session` table): read-only SQLite (`session-log-v1.ts`).
  *   - Neither: an unsupported layout, reported, never presented as empty.
- *
- * The file is opened read-only and never migrated or written.
  */
 
-/** Filename of opencode's SQLite session store, relative to its base dir. */
+/** Filename of OpenCode's SQLite session store, in OpenCode's and in akm's data dir. */
 const OPENCODE_DB_FILENAME = "opencode.db";
+const V2_TABLE = "session_v2";
 
-/** What a session store holds, from its actual tables. */
-export type OpenCodeStoreStatus =
-  | { kind: "missing" }
-  | { kind: "ok"; v1: boolean; v2: boolean }
-  /** Readable SQLite file with neither supported layout. */
-  | { kind: "unsupported"; tables: string[] }
-  /** Present but not openable or queryable as SQLite. */
-  | { kind: "unreadable"; reason: string };
+type Layout = "v2" | "v1" | "unsupported";
 
-function tableNames(db: Database): Set<string> {
+function layoutOf(db: Database): Layout {
   const rows = db.prepare<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").all();
-  return new Set(rows.map((r) => r.name));
-}
-
-function classify(tables: Set<string>): OpenCodeStoreStatus {
-  const v1 = V1_TABLES.every((t) => tables.has(t));
-  const v2 = V2_TABLES.every((t) => tables.has(t));
-  return v1 || v2 ? { kind: "ok", v1, v2 } : { kind: "unsupported", tables: [...tables].sort() };
+  const tables = new Set(rows.map((r) => r.name));
+  if (tables.has(V2_TABLE)) return "v2";
+  return V1_TABLES.every((t) => tables.has(t)) ? "v1" : "unsupported";
 }
 
 export class OpenCodeProvider extends AbstractSessionLogProvider implements SessionLogHarness {
@@ -63,115 +53,127 @@ export class OpenCodeProvider extends AbstractSessionLogProvider implements Sess
   readonly #baseDir = getOpenCodeBaseDir();
 
   protected availabilityRoot(): string {
-    return this.#dbPath(this.#baseDir);
+    return path.join(this.#baseDir, OPENCODE_DB_FILENAME);
   }
 
-  /** Absolute path to opencode's SQLite store under `base`. */
-  #dbPath(base: string): string {
-    return path.join(base, OPENCODE_DB_FILENAME);
+  /** The user's OpenCode history, or akm's own. */
+  override isAvailable(): boolean {
+    return super.isAvailable() || fs.existsSync(path.join(getDataDir(), OPENCODE_DB_FILENAME));
   }
 
-  /** Classify the store under `location` (default: opencode's data dir) without listing anything. */
-  inspectStore(location?: string): OpenCodeStoreStatus {
-    const dbPath = this.#dbPath(location ?? this.#baseDir);
-    if (!fs.existsSync(dbPath)) return { kind: "missing" };
-    let db: Database;
-    try {
-      db = openDatabase(dbPath, { readonly: true, create: false });
-    } catch (error) {
-      return { kind: "unreadable", reason: toErrorMessage(error) };
-    }
-    try {
-      return classify(tableNames(db));
-    } catch (error) {
-      return { kind: "unreadable", reason: toErrorMessage(error) };
-    } finally {
-      db.close();
-    }
+  /** The stores to read: the one under `location`, else the user's and akm's. */
+  #stores(location?: string): string[] {
+    if (location) return [path.join(location, OPENCODE_DB_FILENAME)];
+    return [path.join(this.#baseDir, OPENCODE_DB_FILENAME), path.join(getDataDir(), OPENCODE_DB_FILENAME)];
   }
 
-  listSessions(input: { sinceMs?: number; location?: string; isolatedSnapshot?: boolean } = {}): SessionSummary[] {
-    const dbPath = this.#dbPath(input.location ?? this.#baseDir);
-    if (!fs.existsSync(dbPath)) return [];
-    let db: Database | undefined;
-    try {
-      db = input.isolatedSnapshot
-        ? openSqliteReadSnapshot(dbPath)
-        : openDatabase(dbPath, { readonly: true, create: false });
-    } catch (error) {
-      this.#warnUnavailable(dbPath, `cannot open it (${toErrorMessage(error)})`);
-      return [];
-    }
-    if (!db) return [];
-    try {
-      const status = classify(tableNames(db));
-      if (status.kind !== "ok") {
-        this.#warnUnavailable(
-          dbPath,
-          `it has neither the OpenCode 1 (${V1_TABLES.join("/")}) nor the OpenCode 2 (${V2_TABLES.join("/")}) tables`,
-        );
-        return [];
+  async listSessions(
+    input: { sinceMs?: number; location?: string; isolatedSnapshot?: boolean } = {},
+  ): Promise<SessionSummary[]> {
+    const sinceMs = input.sinceMs ?? 0;
+    const listed: SessionSummary[] = [];
+    for (const dbPath of this.#stores(input.location)) {
+      if (!fs.existsSync(dbPath)) continue;
+      try {
+        listed.push(...(await this.#listStore(dbPath, sinceMs, input.isolatedSnapshot === true)));
+      } catch (error) {
+        this.#warnUnavailable(dbPath, `cannot list it (${toErrorMessage(error)})`);
       }
-      return this.#listFromDb(db, dbPath, input.sinceMs ?? 0, status.v1, status.v2);
-    } catch (error) {
-      this.#warnUnavailable(dbPath, `cannot query it (${toErrorMessage(error)})`);
-      return [];
-    } finally {
-      db.close();
     }
+    return listed.sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
   }
 
-  readSession(ref: SessionRef): SessionData {
-    const emptyRef = this.sessionRef({ sessionId: ref.sessionId, filePath: ref.filePath });
-    const empty: SessionData = { ref: emptyRef, events: [], inlineRefs: [] };
-    let db: Database;
+  async readSession(ref: SessionRef): Promise<SessionData> {
+    const empty: SessionData = {
+      ref: this.sessionRef({ sessionId: ref.sessionId, filePath: ref.filePath }),
+      events: [],
+      inlineRefs: [],
+    };
     try {
-      db = openDatabase(ref.filePath, { readonly: true, create: false });
-    } catch (error) {
-      this.#warnUnavailable(ref.filePath, `cannot open it (${toErrorMessage(error)})`);
-      return empty;
-    }
-    try {
-      const status = classify(tableNames(db));
-      if (status.kind !== "ok") {
+      const layout = this.#withDb(ref.filePath, false, layoutOf);
+      if (layout === "v1") {
+        const read = this.#withDb(ref.filePath, false, (db) =>
+          readV1Session(db, this.name, ref.sessionId, ref.filePath),
+        );
+        return {
+          ref: this.sessionRef({ ...read.meta, filePath: ref.filePath }),
+          events: read.events,
+          inlineRefs: read.inlineRefs,
+        };
+      }
+      if (layout !== "v2") {
         this.#warnUnavailable(ref.filePath, "it has no supported OpenCode 1 or OpenCode 2 session tables");
         return empty;
       }
-      // V2 owns a session that has messages there; otherwise a retained V1 copy (a
-      // session the upgrade has not copied, or copied without messages) is the history.
-      const v2 = status.v2 ? v2SessionState(db, ref.sessionId) : { exists: false, messages: 0 };
-      const useV2 = v2.exists && (v2.messages > 0 || !status.v1 || !hasV1Session(db, ref.sessionId));
-      const read = useV2
-        ? readV2Session(db, this.name, ref.sessionId, ref.filePath)
-        : readV1Session(db, this.name, ref.sessionId, ref.filePath);
+      const { readOpencodeSession } = await import("../opencode-sdk/sdk-runner");
+      const read = await readOpencodeSession(ref.filePath, ref.sessionId);
+      if (!read) return empty;
+      const { events, inlineRefs } = opencodeMessageEvents(read.messages, this.name, ref.sessionId, ref.filePath);
       return {
-        ref: this.sessionRef({ ...read.meta, filePath: ref.filePath }),
-        events: read.events,
-        inlineRefs: read.inlineRefs,
+        ref: this.sessionRef({
+          sessionId: ref.sessionId,
+          filePath: ref.filePath,
+          startedAt: read.session.created,
+          endedAt: read.session.updated,
+          ...(read.session.directory ? { projectHint: read.session.directory } : {}),
+          ...(read.session.title ? { title: read.session.title } : {}),
+        }),
+        events,
+        inlineRefs,
       };
     } catch (error) {
       this.#warnUnavailable(ref.filePath, `cannot read session ${ref.sessionId} (${toErrorMessage(error)})`);
       return empty;
-    } finally {
-      db.close();
     }
   }
 
-  /** List each present layout; one failing layout is reported and the other still listed. */
-  #listFromDb(db: Database, dbPath: string, sinceMs: number, v1: boolean, v2: boolean): SessionSummary[] {
-    const merged = new Map<string, OpenCodeSessionMeta>();
-    const attempt = (label: string, list: () => OpenCodeSessionMeta[]) => {
-      try {
-        for (const meta of list()) if (!merged.has(meta.sessionId)) merged.set(meta.sessionId, meta);
-      } catch (error) {
-        this.#warnUnavailable(dbPath, `its ${label} session tables cannot be queried (${toErrorMessage(error)})`);
+  async #listStore(dbPath: string, sinceMs: number, isolated: boolean): Promise<SessionSummary[]> {
+    const layout = this.#withDb(dbPath, isolated, layoutOf);
+    if (layout === "v1") {
+      return this.#withDb(dbPath, isolated, (db) => listV1Sessions(db, sinceMs)).map((meta) =>
+        this.sessionRef({ ...meta, filePath: dbPath }),
+      );
+    }
+    if (layout !== "v2") {
+      this.#warnUnavailable(dbPath, `it has neither the OpenCode 1 (${V1_TABLES.join("/")}) nor the OpenCode 2 tables`);
+      return [];
+    }
+    const sdk = await import("../opencode-sdk/sdk-runner");
+    // A planning caller must not attach to the live database: the embedded OpenCode reads a private copy.
+    const copyDir = isolated ? fs.mkdtempSync(path.join(os.tmpdir(), "akm-opencode-sessions-")) : undefined;
+    const source = copyDir ? path.join(copyDir, OPENCODE_DB_FILENAME) : dbPath;
+    try {
+      if (copyDir) copySqliteSnapshot(dbPath, source);
+      const sessions = await sdk.listOpencodeSessions(source);
+      return sessions
+        .filter((session) => session.updated >= sinceMs)
+        .map((session) =>
+          this.sessionRef({
+            sessionId: session.id,
+            filePath: dbPath,
+            startedAt: session.created,
+            endedAt: session.updated,
+            ...(session.directory ? { projectHint: session.directory } : {}),
+            ...(session.title ? { title: session.title } : {}),
+          }),
+        );
+    } finally {
+      if (copyDir) {
+        await sdk.closeOpencodeSessionStore(source);
+        fs.rmSync(copyDir, { recursive: true, force: true });
       }
-    };
-    if (v2) attempt("OpenCode 2", () => listV2Sessions(db, sinceMs));
-    if (v1) attempt("OpenCode 1", () => listV1Sessions(db, sinceMs));
-    return [...merged.values()]
-      .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))
-      .map((meta) => this.sessionRef({ ...meta, filePath: dbPath }));
+    }
+  }
+
+  /** Run `use` on the SQLite file at `dbPath`, read-only (a private copy when `isolated`). */
+  #withDb<T>(dbPath: string, isolated: boolean, use: (db: Database) => T): T {
+    const db = isolated ? openSqliteReadSnapshot(dbPath) : openDatabase(dbPath, { readonly: true, create: false });
+    if (!db) throw new Error("the file disappeared");
+    try {
+      return use(db);
+    } finally {
+      db.close();
+    }
   }
 
   #warnUnavailable(dbPath: string, why: string): void {

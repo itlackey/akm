@@ -9,12 +9,12 @@ import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError, UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
 import { openStateDatabase } from "../../../src/core/state-db";
-import { __setTestServer } from "../../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import {
   completeWorkflowStep,
   getWorkflowStatus,
   type SummaryValidationFailure,
 } from "../../../src/workflows/runtime/runs";
+import { installFakeOpencodeHost } from "../../_helpers/fake-opencode-host";
 import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
 import { type Cleanup, sandboxEnvDir, sandboxXdgConfigHome, withEnv } from "../../_helpers/sandbox";
 import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
@@ -115,7 +115,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  __setTestServer(null);
   cleanup();
 });
 
@@ -192,25 +191,9 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
         workflow: { judgeEngine: "reviewer" },
       }),
     );
-    __setTestServer({
-      client: {
-        session: {
-          create: async () => ({ data: { id: "manual-judge-session" } }),
-          prompt: async () => ({
-            data: {
-              parts: [
-                {
-                  type: "text",
-                  text: `{"complete":false,"missing":["Tests pass"],"feedback":"provider echoed ${secret}"}`,
-                },
-              ],
-            },
-          }),
-          delete: async () => ({}),
-        },
-      },
-      server: { close() {} },
-    } as never);
+    installFakeOpencodeHost({
+      reply: () => `{"complete":false,"missing":["Tests pass"],"feedback":"provider echoed ${secret}"}`,
+    });
 
     await withEnv({ [credentialName]: secret }, async () => {
       const result = (await completeWorkflowStep({
@@ -236,16 +219,7 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
         workflow: { judgeEngine: "reviewer" },
       }),
     );
-    __setTestServer({
-      client: {
-        session: {
-          create: async () => ({ data: { id: "manual-cancel-session" } }),
-          prompt: async () => new Promise(() => {}),
-          delete: async () => ({}),
-        },
-      },
-      server: { close() {} },
-    } as never);
+    installFakeOpencodeHost({ reply: () => new Promise<string>(() => {}) });
     const controller = new AbortController();
     const completing = completeWorkflowStep({
       runId: RUN_ID,

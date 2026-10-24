@@ -60,33 +60,17 @@ export const COMMON_SPAWN_ENV_PASSTHROUGH = [
  * list) and, through profile `envPassthrough`, frozen into workflow plans.
  * codex, gemini and pi keep their own dotdirs under `$HOME`, and handing the
  * names to a shell command would redirect the `git` and `gh` config it reads. A
- * harness that reads them asks for them by name: the opencode profile's list,
- * and the opencode-sdk server's allowlist (`opencodeSdkServerEnvironmentNames`).
+ * harness that reads them asks for them by name, as the opencode profile does.
  *
  * A name added to a profile's list changes the plans frozen after it (their
  * bytes, so their `plan_hash`); a stored plan keeps the list it was frozen with
- * and still resumes, because nothing gates on that hash. The SDK server's
- * allowlist is not part of a plan, so it takes the names by code.
+ * and still resumes, because nothing gates on that hash.
  */
 export const XDG_BASE_DIR_ENV_PASSTHROUGH = [
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
   "XDG_CACHE_HOME",
   "XDG_STATE_HOME",
-] as const;
-
-/**
- * The names an `opencode` process reads beyond the common baseline: its API key
- * (OpenCode Go and Zen read `OPENCODE_API_KEY`), the config file it is pointed
- * at, and the {@link XDG_BASE_DIR_ENV_PASSTHROUGH} directories. ONE list for
- * both ways akm starts opencode: the `opencode` CLI profile's `envPassthrough`
- * and the `opencode-sdk` server's allowlist
- * (`opencodeSdkServerEnvironmentNames`), so the two cannot drift.
- */
-export const OPENCODE_ENV_PASSTHROUGH = [
-  "OPENCODE_API_KEY",
-  "OPENCODE_CONFIG",
-  ...XDG_BASE_DIR_ENV_PASSTHROUGH,
 ] as const;
 
 /**

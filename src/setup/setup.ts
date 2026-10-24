@@ -27,7 +27,6 @@ import type {
   AkmConfig,
   BundleConfigEntry,
   EmbeddingConnectionConfig,
-  HarnessId,
   LlmConnectionConfig,
   SourceConfigEntry,
 } from "../core/config/config";
@@ -47,13 +46,13 @@ import { ConfigError, UsageError } from "../core/errors";
 import { getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn, warnOnce } from "../core/warn";
 import { akmIndex } from "../indexer/indexer";
-import { detectAgentCliProfiles, pickDefaultAgentProfile } from "../integrations/agent";
 import { defaultProfileName } from "../integrations/harnesses";
 import { readLockfile } from "../integrations/lockfile";
 import { probeLlmReachable } from "../llm/client";
 import {
   type DetectedEnvironment,
   detectEnvironment,
+  detectHarness,
   detectLMStudio,
   type LMStudioDetectionResult,
   renderDetectionSummary,
@@ -826,18 +825,9 @@ export async function runSetupWithDefaults(opts: {
     }
   }
 
-  // Auto-detect agent CLI if not already configured
-  if (!ctx.config.defaults?.engine) {
-    let defaultProfile: string | undefined;
-    if (env.harness !== "none") {
-      defaultProfile = env.harness;
-    } else {
-      const detected = detectAgentCliProfiles(undefined);
-      defaultProfile = pickDefaultAgentProfile(detected, undefined);
-    }
-    if (defaultProfile) {
-      ctx.apply(upsertDetectedAgentEngine(ctx.config as AkmConfig, defaultProfile as HarnessId).config);
-    }
+  // Auto-detect the agent harness if not already configured
+  if (!ctx.config.defaults?.engine && env.harness !== "none") {
+    ctx.apply(upsertDetectedAgentEngine(ctx.config as AkmConfig, env.harness).config);
   }
 
   const finalConfig = finalizeSetupDraft(ctx.config);
@@ -1104,11 +1094,8 @@ export async function runSetupFromConfig(opts: {
     await runSetupSteps(steps, ctx);
     if (!ctx.config.primaryPath) ctx.apply({ primaryPath: stashDir });
     if (!ctx.config.defaults?.engine) {
-      const detected = detectAgentCliProfiles(undefined);
-      const defaultProfile = pickDefaultAgentProfile(detected, undefined);
-      if (defaultProfile) {
-        ctx.apply(upsertDetectedAgentEngine(ctx.config as AkmConfig, defaultProfile as HarnessId).config);
-      }
+      const harness = await detectHarness();
+      if (harness !== "none") ctx.apply(upsertDetectedAgentEngine(ctx.config as AkmConfig, harness).config);
     }
     merged = ctx.config;
   }

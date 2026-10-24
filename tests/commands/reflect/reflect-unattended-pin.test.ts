@@ -20,10 +20,7 @@ import { akmReflect } from "../../../src/commands/improve/reflect";
 import type { AkmConfig, LlmConnectionConfig } from "../../../src/core/config/config";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/core/subprocess";
 import { reflectReply } from "../../_helpers/factories";
-import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
-
-beforeEach(() => fakeOpencodeMajor(1));
 
 let storage: IsolatedAkmStorage;
 
@@ -65,7 +62,7 @@ function agentModeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
     defaults: { llmEngine: "pin-target", engine: "fake-agent", improveStrategy: "default" },
     engines: {
       "pin-target": { kind: "llm", endpoint: "http://127.0.0.1:9", model: "pin-model" },
-      "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+      "fake-agent": { kind: "agent", platform: "claude", bin: "fake-agent" },
     },
     improve: {
       strategies: {
@@ -105,13 +102,10 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
     });
 
     expect(result.ok).toBe(true);
-    // opencode runs the injected, confined agent in its own scratch directory, not the stash.
-    expect(seen?.cmd.slice(1, 4)).toEqual(["run", "--agent", "akm-model-work"]);
-    expect(JSON.parse(seen?.env.OPENCODE_CONFIG_CONTENT ?? "{}").agent["akm-model-work"].permission).toMatchObject({
-      "*": "deny",
-      bash: "deny",
-      akm_feedback: "deny",
-    });
+    // claude runs confined to the model-work tools, in its own scratch directory, not the stash.
+    expect(seen?.cmd.slice(1, 3)).toEqual(["--restricted", "--strict-mcp-config"]);
+    expect(seen?.cmd).toContain("--permission-mode");
+    expect(seen?.cmd).toContain("Read,Edit,Bash(akm search *),Bash(akm show *)");
     expect(path.basename(seen?.cwd ?? "")).toStartWith("akm-model-work-");
     // The proposal comes back as the JSON reply of the output schema, which the prompt ends with.
     expect(seen?.cmd.at(-1)).toContain("Respond with ONLY a JSON value matching this JSON Schema");

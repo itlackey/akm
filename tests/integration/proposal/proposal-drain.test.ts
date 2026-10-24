@@ -559,7 +559,7 @@ const FAKE_AGENT_RUNNER: RunnerSpec = {
   timeoutMs: 1_234,
   profile: {
     name: "fake-judge",
-    platform: "opencode",
+    platform: "claude",
     bin: "fake-judge",
     args: [],
     stdio: "captured",

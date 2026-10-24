@@ -5,11 +5,9 @@
 /**
  * OpenCode 1 session-store adapter: the Drizzle `session` / `message` / `part`
  * tables. Message text lives in `part` rows (`data` JSON, `type: "text"`);
- * `message.data` holds role and timing. A natively upgraded OpenCode 2 file
- * keeps these tables, so retained history stays readable from it.
- *
- * Isolated from the OpenCode 2 reader (`session-log-v2.ts`): the two never
- * share SQL. Both are chosen by the provider from the database's actual tables.
+ * `message.data` holds role and timing. Read only for a database with no
+ * OpenCode 2 tables; an OpenCode 2 database is read through the embedded
+ * OpenCode (`session-log.ts`).
  */
 
 import type { Database } from "../../../storage/database";

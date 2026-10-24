@@ -138,7 +138,7 @@ from a clean `git status`.
 
 ### 2.2 Prerequisites
 
-**[CORE]** and **[LOCAL]** require Bash, Bun, Node.js 22+, Git, `jq`, standard
+**[CORE]** and **[LOCAL]** require Bash, Bun, Node.js 24+, Git, `jq`, standard
 POSIX filesystem tools, and the repository checkout.
 
 | Gate | Additional prerequisite |
@@ -2760,8 +2760,8 @@ release are different subjects and require separate evidence.
 
 | Surface | Current support/constraint |
 | --- | --- |
-| npm package | Node `>=22` bootstrap; Bun `>=1.0` preferred, Node fallback supported |
-| Node fallback | Test Node 22 and 24; requires built dist and usable SQLite dependency |
+| npm package | Node `>=24` bootstrap; Bun `>=1.0` preferred, Node fallback supported |
+| Node fallback | Test Node 24 and 26; requires built dist and usable SQLite dependency |
 | Standalone | Linux x64/arm64 glibc, macOS x64/arm64, Windows x64 |
 | Unsupported standalone | Alpine/musl, 32-bit, native Windows ARM64 |
 | POSIX installer | Linux/macOS x64/arm64; `AKM_INSTALL_DIR` override |
@@ -2821,11 +2821,11 @@ AKM_SMOKE_NODE=node bun run test:node-compat
 
 - [ ] **[RELEASE]** Test-package packs and installs under a temporary prefix,
       verifies package/version/bin ownership, runs both launchers, and cleans up.
-- [ ] **[PLATFORM]** Repeat Node smoke/compat on Node 22 and 24. Every gated test
+- [ ] **[PLATFORM]** Repeat Node smoke/compat on Node 24 and 26. Every gated test
       runs rather than skips; no Bun global leaks into the forced Node path.
 - [ ] **[PLATFORM]** Missing/failed/pre-1.0 Bun probe falls back to Node; current
       Bun is selected. Paths with spaces and Windows `%*` preserve argv.
-- [ ] **[PLATFORM]** Node 20 package install fails at preinstall with the Node 22
+- [ ] **[PLATFORM]** Node 22 package install fails at preinstall with the Node 24
       diagnostic and leaves no usable bins.
 - [ ] **[RELEASE]** Packed payload contains required dist/docs/schemas and omits
       source, tests, repository scripts, `.git`, `.akm`, and `node_modules`.
@@ -2964,7 +2964,7 @@ bun run release:check
       version and targets the tested SHA. Stable uses npm `latest`; prerelease
       uses `next` and GitHub prerelease.
 - [ ] **[RELEASE]** After publication, download every asset, verify checksums,
-      compare GitHub/npm tarballs, install under fresh Node 22/24, and run native
+      compare GitHub/npm tarballs, install under fresh Node 24/26, and run native
       binaries/installers on supported targets.
 - [ ] **[RELEASE]** npm version is immutable. Existing GitHub assets may be
       clobbered by rerun, so rerun only identical commit/bytes and compare hashes.
@@ -3044,7 +3044,7 @@ and not a substitute for the full check.
 | Task/scheduler | task suites, Linux standalone; native macOS/Windows for backend/quoting/binding; published upgrade for schema changes |
 | Env/secret/security path/archive/network | env/secret plus traversal/SSRF/archive/redaction/dangerous-key suites, section 20 |
 | Agent/LLM/improve/proposal | family suites and fake-service AI pass; live bounded provider only for changed external dispatch |
-| Package/runtime/build dependencies | build/package/bin, Node 22/24, Bun launcher, standalone, Docker, release check |
+| Package/runtime/build dependencies | build/package/bin, Node 24/26, Bun launcher, standalone, Docker, release check |
 | Installers/self-update/standalone | installer/update suites, exact checksum/artifact tests, native install/upgrade, full release gate |
 | Workflows/release-check/Docker | workflow syntax/contract, actual Docker matrix, complete artifact inventory |
 | Test preload/helpers/runners | lint isolation, both sharded targets, multiple shard counts, leaked temp/log review |
@@ -3070,7 +3070,7 @@ fixed.
 
 ### 24.1 Supported constraints
 
-1. npm bootstrap requires Node `>=22`; Bun does not remove that requirement.
+1. npm bootstrap requires Node `>=24`; Bun does not remove that requirement.
 2. No Alpine/musl standalone, native Windows ARM64, 32-bit, or non-listed target.
 3. Standalone binaries cannot load the externalized local transformer model.
 4. macOS/Windows schedules are per-user interactive; schedule grammar is narrower

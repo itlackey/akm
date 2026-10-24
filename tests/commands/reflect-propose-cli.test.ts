@@ -22,7 +22,8 @@ import { akmPropose } from "../../src/commands/proposal/propose";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
 import { durableItemRef } from "../_helpers/durable-ref";
 import { quietQualityGateConfig, reflectReply } from "../_helpers/factories";
-import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, withEnv } from "../_helpers/sandbox";
+import { installFakeOpencodeHost } from "../_helpers/fake-opencode-host";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 const fixtureDirs: string[] = [];
 
@@ -263,24 +264,17 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
     expect(result.reason).toBe("timeout");
   });
 
-  test("missing engine config → ConfigError surfaces with .code", async () => {
+  test("missing engine config → the opencode-sdk fallback engine runs", async () => {
     const stash = makeStashDir();
-    const thrown = await withEnv({ PATH: "" }, async () => {
-      try {
-        await akmReflect({
-          ref: "lessons/rg-over-grep",
-          stashDir: stash,
-          // No config file exists under the sandboxed XDG_CONFIG_HOME.
-        });
-      } catch (err) {
-        return err;
-      }
+    const host = installFakeOpencodeHost({ reply: () => VALID_LESSON_PAYLOAD });
+    const result = await akmReflect({
+      ref: "lessons/rg-over-grep",
+      stashDir: stash,
+      assetContent: LESSON_SOURCE,
+      // No config file exists under the sandboxed XDG_CONFIG_HOME.
     });
-    expect(thrown).toBeInstanceOf(Error);
-    const e = thrown as Error & { code?: string };
-    expect(e.name).toBe("ConfigError");
-    expect(e.code).toBe("INVALID_CONFIG_FILE");
-    expect(e.message).toContain("engine");
+    expect(result.engine).toBe("opencode-sdk");
+    expect(host.calls).toHaveLength(1);
   });
 });
 
@@ -315,25 +309,18 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
     expect(result.reason).toBe("parse_error");
   });
 
-  test("missing config: no agent block → ConfigError when resolveProfile runs", async () => {
+  test("missing config: no agent block → the opencode-sdk fallback engine runs", async () => {
     const stash = makeStashDir();
-    const thrown = await withEnv({ PATH: "" }, async () => {
-      try {
-        await akmPropose({
-          type: "skill",
-          name: "hello",
-          task: "Say hi",
-          stashDir: stash,
-          // Do not pass agentConfig: the sandbox has no defaults.engine.
-        });
-      } catch (err) {
-        return err;
-      }
+    const host = installFakeOpencodeHost({ reply: () => VALID_SKILL_PAYLOAD });
+    const result = await akmPropose({
+      type: "skill",
+      name: "hello",
+      task: "Say hi",
+      stashDir: stash,
+      // Do not pass agentConfig: the sandbox has no defaults.engine.
     });
-    expect(thrown).toBeInstanceOf(Error);
-    const e = thrown as Error & { code?: string };
-    expect(e.name).toBe("ConfigError");
-    expect(e.code).toBe("INVALID_CONFIG_FILE");
+    expect(result.engine).toBe("opencode-sdk");
+    expect(host.calls).toHaveLength(1);
   });
 
   test("missing --task surfaces UsageError (matches CLI contract for empty positional)", async () => {

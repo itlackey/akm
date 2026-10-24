@@ -103,16 +103,16 @@ const LLM: Transport = {
   nativeSchema: () => llmBodies[0]?.response_format?.json_schema?.schema,
 };
 
-/** The calls the fake opencode binary recorded for `scenario`. */
-const opencodeCalls = (scenario: string): HarnessCall[] => harnessCalls(path.join(bins.dir, scenario));
+/** The calls the fake claude binary recorded for `scenario`. */
+const claudeCalls = (scenario: string): HarnessCall[] => harnessCalls(path.join(bins.dir, scenario));
 
-const OPENCODE: Transport = {
-  name: "opencode",
-  engine: (scenario) => ({ kind: "agent", platform: "opencode", bin: path.join(bins.dir, scenario) }),
-  prompts: (scenario) => opencodeCalls(scenario).map((call) => call.argv.at(-1) ?? ""),
+const CLAUDE: Transport = {
+  name: "claude",
+  engine: (scenario) => ({ kind: "agent", platform: "claude", bin: path.join(bins.dir, scenario) }),
+  prompts: (scenario) => claudeCalls(scenario).map((call) => call.argv.at(-1) ?? ""),
 };
 
-const TRANSPORTS: [string, Transport][] = [LLM, OPENCODE].map((transport) => [transport.name, transport]);
+const TRANSPORTS: [string, Transport][] = [LLM, CLAUDE].map((transport) => [transport.name, transport]);
 
 /** Reflect `REF` on `transport`'s engine for `scenario`, with the quality gate off. */
 function reflect(transport: Transport, scenario: string, options: Parameters<typeof akmReflect>[0] = {}) {
@@ -238,9 +238,9 @@ describe("reflect's repair is spent once across refine passes, on every engine k
 
 describe("a harness's environment", () => {
   test("model work runs in a scratch directory with the improve event source", async () => {
-    await reflect(OPENCODE, "valid", { eventSource: "improve" });
+    await reflect(CLAUDE, "valid", { eventSource: "improve" });
 
-    const [call] = opencodeCalls("valid");
+    const [call] = claudeCalls("valid");
     expect(call?.eventSource).toBe("improve");
     expect(path.basename(call?.cwd ?? "")).toStartWith("akm-model-work-");
   });

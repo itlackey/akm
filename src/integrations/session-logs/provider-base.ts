@@ -24,8 +24,12 @@ export abstract class AbstractSessionLogProvider implements SessionLogHarness {
   /** Root whose existence signals this harness has logs on this machine. */
   protected abstract availabilityRoot(): string;
 
-  abstract listSessions(input?: { sinceMs?: number; location?: string; isolatedSnapshot?: boolean }): SessionSummary[];
-  abstract readSession(ref: SessionRef): SessionData;
+  abstract listSessions(input?: {
+    sinceMs?: number;
+    location?: string;
+    isolatedSnapshot?: boolean;
+  }): SessionSummary[] | Promise<SessionSummary[]>;
+  abstract readSession(ref: SessionRef): SessionData | Promise<SessionData>;
 
   isAvailable(): boolean {
     return fs.existsSync(this.availabilityRoot());

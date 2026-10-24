@@ -144,7 +144,7 @@ function config(gate: boolean): AkmConfig {
   return {
     ...quietQualityGateConfig(),
     engines: {
-      "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+      "fake-agent": { kind: "agent", platform: "claude", bin: "fake-agent" },
       judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "judge-model" },
     },
     defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },

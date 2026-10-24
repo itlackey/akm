@@ -215,7 +215,7 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     expect(outcomes[0]?.latencyMs).toBe(outcomes[1]?.latencyMs);
   });
 
-  test("an agent engine is checked by its binary, an SDK engine by its binary and its LLM fallback", async () => {
+  test("an agent engine is checked by its binary, an SDK engine by its LLM fallback only", async () => {
     const profile = (name: string, bin: string) => ({
       name,
       bin,
@@ -237,7 +237,7 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
           runner: {
             kind: "sdk",
             engine: "sdk",
-            profile: profile("sdk", "opencode"),
+            profile: profile("sdk", ""),
             fallbackConnection: { endpoint: "https://fallback.example.test/v1", model: "fallback-model" },
           },
         },
@@ -245,7 +245,8 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
       triageJudgment: null,
     } as unknown as ResolvedImprovePlan;
     const probeReachable = mock(async () => ({ reachable: true }));
-    const onPath = new Set(["claude", "opencode"]);
+    // The SDK engine runs embedded: no binary is looked up for it.
+    const onPath = new Set(["claude"]);
     const which = (bin: string) => (onPath.has(bin) ? `/usr/bin/${bin}` : undefined);
 
     const outcomes = await assertRequiredEnginesReachable(plan, probeReachable, which);

@@ -72,8 +72,8 @@ function assertRequiredEnginesAvailable(plan: ResolvedImprovePlan): void {
 /**
  * One engine `--require-engines` must prove usable, in the way its kind
  * allows: an LLM connection gets one short completion, and an agent harness
- * must resolve on PATH. An `opencode-sdk` engine needs both, its binary and
- * its LLM fallback, when it has one.
+ * must resolve on PATH. An `opencode-sdk` engine runs embedded, so only its
+ * LLM fallback is probed, when it has one.
  */
 interface RequiredEngineTarget {
   process: EngineUnavailableProcessName;
@@ -103,7 +103,7 @@ function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngine
     return {
       process: processName,
       engine: runner.engine,
-      ...(runner.kind === "llm" ? {} : { bin: runner.profile.bin }),
+      ...(runner.kind === "agent" ? { bin: runner.profile.bin } : {}),
       ...(use ? probeConnection(use) : {}),
     };
   });

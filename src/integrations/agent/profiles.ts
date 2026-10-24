@@ -90,22 +90,11 @@ function builtinProfiles(): Record<string, AgentProfile> {
 }
 
 /**
- * Binary the `opencode-sdk` harness needs on PATH.
- *
- * The embedded client is not self-contained, and that is the SDK's own design
- * rather than a consequence of how akm drives it: `@opencode-ai/sdk` (OpenCode 1)
- * ships with `"dependencies": {}` and its `createOpencodeServer` is itself a
- * `spawn("opencode", ["serve", ...])`; `@opencode/client` (OpenCode 2, the
- * default) is an HTTP client only and starts nothing. akm's runner spawns a
- * private `opencode serve` of the engine's detected major (
- * never the v2 background service) and talks HTTP to it through that major's
- * adapter (see `harnesses/opencode-sdk/sdk-runner.ts`, `v1-adapter.ts`, `v2-adapter.ts`),
- * so the `opencode` binary gates the SDK path exactly as it gates the CLI
- * path — a host with the npm package but no binary can dispatch neither.
- * `opencode-sdk` deliberately declares no `profile` — it dispatches
- * without argv construction — so this is the one place that pairing lives.
+ * The OpenCode CLI binary: the legacy OpenCode 1 harness runs it, and plugin
+ * upgrades refresh OpenCode's plugin caches with it. The `opencode-sdk`
+ * engine runs OpenCode embedded and needs no binary.
  */
-export const OPENCODE_SDK_SERVER_BIN = "opencode";
+export const OPENCODE_BIN = "opencode";
 
 /** Returns the built-in descriptor for a canonical harness id. */
 export function getBuiltinAgentProfile(name: string): AgentProfile | undefined {

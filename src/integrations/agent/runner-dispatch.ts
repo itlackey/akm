@@ -26,7 +26,7 @@ import { MODEL_WORK_POLICY_ID } from "../../execution/source";
 import { chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { getHarness } from "../harnesses";
-import { closeOpencodeSdk as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
+import { closeOpencodeSdk, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
 import { type AgentResultExtraction, modelFromArgs } from "./builder-shared";
 import {
   lookupApiKeyFileValue,
@@ -342,13 +342,12 @@ export async function executeInteractiveAgentInvocation(
 }
 
 /**
- * Close the `opencode serve` children the SDK runner keeps for reuse. Its own
- * teardown hangs off `process.once("exit")`, which never fires while a child
- * holds the event loop open, so the CLI and workflow engine call this in
- * `finally` blocks. A no-op when no SDK server was started.
+ * Close the embedded OpenCode instances the SDK runner keeps for reuse. An
+ * open one holds the event loop open, so the CLI and workflow engine call this
+ * in `finally` blocks. A no-op when none was started.
  */
 export async function disposeDispatchResources(): Promise<void> {
-  await disposeOpencodeSdkServers();
+  await closeOpencodeSdk();
 }
 
 /**

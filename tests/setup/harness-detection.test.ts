@@ -3,20 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Harness auto-detection and PATH probing.
- *
- * `detectHarness` used to return `opencode-sdk` whenever `import(
- * '@opencode-ai/sdk')` resolved — but the SDK is a hard dependency of akm-cli
- * itself, so that import ALWAYS resolves and every machine was reported as
- * opencode-sdk (its CLI fallbacks were unreachable). Headless setup then wrote
- * that engine everywhere and the first agentic command died with spawn ENOENT
- * on machines with no `opencode` binary. These tests pin the corrected
- * contract: in-process/SDK dispatch is preferred, but only when the server
- * binary it spawns is actually present; otherwise CLI harnesses are probed in
- * registry order.
+ * Harness auto-detection for a non-interactive setup, and PATH probing. The
+ * embedded OpenCode needs no binary, so it is picked when OpenCode is set up
+ * for the user; otherwise the first agent CLI on PATH; otherwise OpenCode.
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,31 +21,43 @@ const whichFor = (...available: string[]): WhichFn => {
   return (bin: string) => (set.has(bin) ? `/usr/local/bin/${bin}` : undefined);
 };
 
+const configFile = () => path.join(process.env.XDG_CONFIG_HOME ?? "", "opencode", "opencode.json");
+const authFile = () => path.join(process.env.XDG_DATA_HOME ?? "", "opencode", "auth.json");
+const write = (file: string, content: unknown) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(content));
+};
+
+afterEach(() => {
+  fs.rmSync(configFile(), { force: true });
+  fs.rmSync(authFile(), { force: true });
+});
+
 describe("detectHarness", () => {
-  test("prefers the SDK when the opencode server binary is on PATH", async () => {
-    expect(await detectHarness(whichFor("opencode"))).toBe("opencode-sdk");
+  test("picks the embedded OpenCode when the user's OpenCode config selects a model", async () => {
+    write(configFile(), {
+      model: "lab/m",
+      provider: { lab: { options: { baseURL: "http://127.0.0.1:1/v1" }, models: { m: {} } } },
+    });
+    expect(await detectHarness(whichFor("claude"))).toBe("opencode-sdk");
   });
 
-  test("prefers the SDK over any other installed CLI", async () => {
-    expect(await detectHarness(whichFor("opencode", "claude", "codex"))).toBe("opencode-sdk");
+  test("picks the embedded OpenCode when the user has logged in to OpenCode", async () => {
+    write(authFile(), {});
+    expect(await detectHarness(whichFor("claude"))).toBe("opencode-sdk");
   });
 
-  test("does NOT report opencode-sdk when its server binary is absent", async () => {
-    // The regression: the bundled SDK import resolves in this very process, so
-    // an import-only check would answer "opencode-sdk" here.
-    expect(await detectHarness(whichFor("claude"))).toBe("claude");
-  });
-
-  test("falls back to CLI subprocess harnesses in registry order", async () => {
-    expect(await detectHarness(whichFor("claude", "codex"))).toBe("claude");
+  test("otherwise picks the first agent CLI on PATH, in registry order, never the OpenCode 1 CLI", async () => {
+    expect(await detectHarness(whichFor("opencode", "claude", "codex"))).toBe("claude");
     expect(await detectHarness(whichFor("codex", "gemini"))).toBe("codex");
     expect(await detectHarness(whichFor("gemini"))).toBe("gemini");
     // `q` is amazonq's binary — detection reports the harness id, not the bin.
     expect(await detectHarness(whichFor("q"))).toBe("amazonq");
   });
 
-  test("returns none when no harness binary is installed", async () => {
-    expect(await detectHarness(whichFor())).toBe("none");
+  test("picks the embedded OpenCode when nothing else is installed", async () => {
+    expect(await detectHarness(whichFor())).toBe("opencode-sdk");
+    expect(await detectHarness(whichFor("opencode"))).toBe("opencode-sdk");
   });
 });
 

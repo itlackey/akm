@@ -3,22 +3,20 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Killing a dispatching `akm` command must not leave the `opencode serve` child
- * it started running. A command with no SIGINT/SIGTERM handler of its own dies
- * on the signal without running `exit` hooks, so the SDK runner's exit backstop
- * never closed the server it had cached: a scheduler timeout or a plain
- * `kill <pid>` orphaned `opencode serve`. This runs the real CLI
- * (`akm agent --prompt`) against a fake server that never answers, signals the
- * CLI while it is blocked in dispatch, and proves the server is gone and the
- * CLI still ended by the signal itself.
+ * Killing a dispatching `akm` command must end it by the signal, however busy
+ * the embedded OpenCode is. A command with no SIGINT/SIGTERM handler of its
+ * own dies on the signal without running `exit` hooks, so an embedded host
+ * that was never closed must not keep the command alive or change how it ends.
+ * This runs the real CLI (`akm agent --prompt`) on the real SDK against a
+ * loopback model that never answers, signals the CLI while it is blocked in
+ * dispatch, and proves it still ended by the signal itself.
  *
- * Integration-scoped (ORG-03/06): spawns the real CLI and its child.
+ * Integration-scoped (ORG-03/06): spawns the real CLI.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import net from "node:net";
 import path from "node:path";
 import {
   type IsolatedAkmStorage,
@@ -51,67 +49,45 @@ async function waitFor(what: string, check: () => boolean | Promise<boolean>, ti
   }
 }
 
-/** True while something accepts connections on `port`; a killed server's socket is closed, a zombie's too. */
-function listening(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = net.connect(port, "127.0.0.1");
-    socket.once("connect", () => {
-      socket.destroy();
-      resolve(true);
-    });
-    socket.once("error", () => resolve(false));
-  });
-}
-
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   test.skipIf(process.platform === "win32")(
-    `a dispatching command killed by ${signal} closes the opencode server it started`,
+    `a dispatching command killed by ${signal} ends by the signal with its embedded OpenCode open`,
     async () => {
-      const pidFile = path.join(fakeDir.dir, "serve.pid");
-      const portFile = path.join(fakeDir.dir, "serve.port");
-      const requestedFile = path.join(fakeDir.dir, "serve.requested");
-      const serve = path.join(fakeDir.dir, "serve.js");
-      const bin = path.join(fakeDir.dir, "opencode");
-      // A minimal `opencode serve`: speaks the handshake, then never answers a request, so the CLI stays blocked in
-      // dispatch until it is signalled. Its first request proves the CLI is past server startup.
+      // A model that accepts a request and never answers, so the CLI stays blocked in dispatch until it is signalled.
+      let requested = false;
+      const model = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(req) {
+          if (req.method === "GET") return Response.json({ object: "list", data: [{ id: "fake-model" }] });
+          requested = true;
+          return new Promise<Response>(() => {});
+        },
+      });
+      // The CLI as `bun src/cli.ts` runs it, with the embedded OpenCode kept off the network (no model catalog fetch).
+      const entry = path.join(fakeDir.dir, "entry.ts");
       fs.writeFileSync(
-        serve,
+        entry,
         [
-          `const fs = require("node:fs");`,
-          `const arg = (name) => process.argv.find((a) => a.startsWith("--" + name + "=")).split("=")[1];`,
-          `const server = Bun.serve({`,
-          `  hostname: arg("hostname"),`,
-          `  port: Number(arg("port")),`,
-          `  fetch() {`,
-          `    fs.writeFileSync(${JSON.stringify(requestedFile)}, "1");`,
-          `    return new Promise(() => {});`,
-          `  },`,
-          `});`,
-          `fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
-          `fs.writeFileSync(${JSON.stringify(portFile)}, String(server.port));`,
-          `console.log("opencode server listening on http://127.0.0.1:" + server.port);`,
+          `import { OpenCode } from ${JSON.stringify(Bun.resolveSync("@opencode/sdk", REPO_ROOT))};`,
+          `import { runCli } from ${JSON.stringify(path.join(REPO_ROOT, "src/cli.ts"))};`,
+          `import { _setOpencodeHostFactoryForTests } from ${JSON.stringify(path.join(REPO_ROOT, "src/integrations/harnesses/opencode-sdk/sdk-runner.ts"))};`,
+          `_setOpencodeHostFactoryForTests((options) => OpenCode.create({ ...options, models: { fetch: false } }));`,
+          `await runCli();`,
         ].join("\n"),
       );
-      fs.writeFileSync(
-        bin,
-        `#!/bin/sh\n[ "$1" = "--version" ] && { echo 1.18.34; exit 0; }\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(serve)} "$@"\n`,
-        {
-          mode: 0o755,
-        },
-      );
       writeSandboxConfig({
-        engines: { fake: { kind: "agent", platform: "opencode-sdk", bin } },
+        engines: {
+          local: { kind: "llm", endpoint: `http://127.0.0.1:${model.port}/v1/chat/completions`, model: "fake-model" },
+          fake: { kind: "agent", platform: "opencode-sdk", llmEngine: "local" },
+        },
         defaults: { engine: "fake" },
       });
 
-      const cli = spawn(
-        process.execPath,
-        [path.join(REPO_ROOT, "src/cli.ts"), "agent", "--engine", "fake", "--prompt", "hi"],
-        {
-          cwd: REPO_ROOT,
-          stdio: ["ignore", "pipe", "pipe"],
-        },
-      );
+      const cli = spawn(process.execPath, [entry, "agent", "--engine", "fake", "--prompt", "hi"], {
+        cwd: REPO_ROOT,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       let output = "";
       cli.stdout.on("data", (chunk: Buffer) => {
         output += chunk.toString("utf8");
@@ -125,34 +101,24 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
 
       try {
         await waitFor(
-          "the CLI to dispatch to the fake server",
+          "the CLI to dispatch to the model",
           () => {
             if (cli.exitCode !== null) throw new Error(`the CLI exited ${cli.exitCode} before dispatching\n${output}`);
-            return fs.existsSync(requestedFile);
+            return requested;
           },
           30_000,
         );
-        const port = Number(fs.readFileSync(portFile, "utf8"));
-        expect(await listening(port)).toBe(true);
 
         cli.kill(signal);
         const outcome = await Promise.race([
           ended,
           new Promise((resolve) => setTimeout(() => resolve("still running"), 10_000)),
         ]);
-        // Closing the server must not change how the command ends: it still dies by the signal itself.
+        // The open host must not change how the command ends: it still dies by the signal itself.
         expect(outcome).toBe(signal);
-        await waitFor("the fake server to be gone", async () => !(await listening(port)));
       } finally {
         if (cli.exitCode === null && cli.signalCode === null) cli.kill("SIGKILL");
-        // A server that still accepts connections is still running, so its pid is safe to kill.
-        if (fs.existsSync(portFile) && (await listening(Number(fs.readFileSync(portFile, "utf8"))))) {
-          try {
-            process.kill(Number(fs.readFileSync(pidFile, "utf8")), "SIGKILL");
-          } catch {
-            // already gone
-          }
-        }
+        model.stop(true);
       }
     },
     90_000,

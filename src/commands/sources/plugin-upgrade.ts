@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { IS_WINDOWS, parseJsonc } from "../../core/common";
 import { moveToTrash } from "../../core/trash";
-import { OPENCODE_SDK_SERVER_BIN } from "../../integrations/agent/profiles";
+import { OPENCODE_BIN } from "../../integrations/agent/profiles";
 import {
   OPENCODE_V1,
   OPENCODE_V2,
@@ -384,7 +384,7 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
   // OpenCode must be runnable before anything changes: only the major that owns this plugin's cache can
   // refresh it. akm never installs or replaces the binary.
   // OpenCode 2 may sit beside an OpenCode 1 `opencode` as `opencode2`; OpenCode 1 is only ever `opencode`.
-  const bin = flavor.major === 2 ? resolveOpencodeBin() : OPENCODE_SDK_SERVER_BIN;
+  const bin = flavor.major === 2 ? resolveOpencodeBin() : OPENCODE_BIN;
   const detected = detectOpencodeMajor(bin);
   if (!detected.runnable) return skipped(harness, `${bin} is not on PATH or \`${bin} --version\` failed`);
   const major = detected.reportedMajor;

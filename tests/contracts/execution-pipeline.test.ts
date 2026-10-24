@@ -10,7 +10,6 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { renderMarkdownExecutionSource } from "../../src/core/adapter/execution-source";
 import type { AkmConfig } from "../../src/core/config/config";
@@ -29,7 +28,7 @@ import { withEnv } from "../_helpers/sandbox";
 
 beforeEach(() => fakeOpencodeMajor(1));
 
-function exitedWith(stdout: string): SpawnedSubprocess {
+function exitedWith(stdout: string, stdin?: WritableStream<Uint8Array>): SpawnedSubprocess {
   const stream = (text: string) =>
     new ReadableStream<Uint8Array>({
       start(controller) {
@@ -37,22 +36,33 @@ function exitedWith(stdout: string): SpawnedSubprocess {
         controller.close();
       },
     });
-  return { exitCode: 0, exited: Promise.resolve(0), stdout: stream(stdout), stderr: stream(""), kill() {} };
+  return { exitCode: 0, exited: Promise.resolve(0), stdout: stream(stdout), stderr: stream(""), stdin, kill() {} };
 }
 
-/** Resolve, build and run one execution, returning the argv and env the child would get. */
-async function spawnedFor(input: ResolveExecutionInput): Promise<{ argv: string[]; env: Record<string, string> }> {
+/** Resolve, build and run one execution, returning the argv, env and stdin the child would get. */
+async function spawnedFor(
+  input: ResolveExecutionInput,
+): Promise<{ argv: string[]; env: Record<string, string>; stdin: string }> {
   const resolved = resolveExecution(input);
   let argv: string[] = [];
   let env: Record<string, string> = {};
+  let stdin = "";
+  const decoder = new TextDecoder();
   const spawn: SpawnFn = (cmd, options) => {
     argv = cmd;
     env = options.env ?? {};
-    return exitedWith("done");
+    return exitedWith(
+      "done",
+      new WritableStream<Uint8Array>({
+        write(chunk) {
+          stdin += decoder.decode(chunk, { stream: true });
+        },
+      }),
+    );
   };
   const result = await runExecution(buildExecution(resolved.request, resolved.runner), { runOptions: { spawn } });
   expect(result.ok).toBe(true);
-  return { argv, env };
+  return { argv, env, stdin };
 }
 
 function config(partial: Record<string, unknown>): AkmConfig {
@@ -100,7 +110,7 @@ describe("agent engines: config engine → argv", () => {
   });
 
   test("opencode gets the persona composed into its prompt, since `opencode run` has no --system-prompt", async () => {
-    const { argv } = await spawnedFor({
+    const { argv, stdin } = await spawnedFor({
       content: "Review the diff.",
       config: config({
         engines: { oc: { kind: "agent", platform: "opencode" } },
@@ -108,59 +118,20 @@ describe("agent engines: config engine → argv", () => {
       }),
       persona: reviewer(),
     });
-    expect(argv).toEqual([
-      "opencode",
-      "run",
-      "--",
-      "<AKM_PERSONA>\nYou review carefully.\n</AKM_PERSONA>\n\nReview the diff.",
-    ]);
-  });
-
-  test("opencode 2 runs standalone, with the persona composed into its prompt", async () => {
-    fakeOpencodeMajor(2);
-    const { argv } = await spawnedFor({
-      content: "Review the diff.",
-      config: config({ engines: { oc: { kind: "agent", platform: "opencode" } }, defaults: { engine: "oc" } }),
-      persona: reviewer(),
-    });
-    expect(argv).toEqual([
-      "opencode",
-      "run",
-      "--standalone",
-      "--",
-      "<AKM_PERSONA>\nYou review carefully.\n</AKM_PERSONA>\n\nReview the diff.",
-    ]);
+    expect(argv).toEqual(["opencode", "run"]);
+    expect(stdin).toBe("<AKM_PERSONA>\nYou review carefully.\n</AKM_PERSONA>\n\nReview the diff.");
   });
 
   test("opencode replaces its profile model flag with the resolved one", async () => {
-    const { argv } = await spawnedFor({
+    const { argv, stdin } = await spawnedFor({
       content: "Summarise.",
       config: config({
         engines: { oc: { kind: "agent", platform: "opencode", model: "balanced" } },
         defaults: { engine: "oc" },
       }),
     });
-    expect(argv).toEqual(["opencode", "run", "--model", "opencode/claude-sonnet-4-6", "--", "Summarise."]);
-  });
-
-  test("opencode 2 replaces its profile model flag with the resolved one and runs standalone", async () => {
-    fakeOpencodeMajor(2);
-    const { argv } = await spawnedFor({
-      content: "Summarise.",
-      config: config({
-        engines: { oc: { kind: "agent", platform: "opencode", model: "balanced" } },
-        defaults: { engine: "oc" },
-      }),
-    });
-    expect(argv).toEqual([
-      "opencode",
-      "run",
-      "--model",
-      "opencode/claude-sonnet-4-6",
-      "--standalone",
-      "--",
-      "Summarise.",
-    ]);
+    expect(argv).toEqual(["opencode", "run", "--model", "opencode/claude-sonnet-4-6"]);
+    expect(stdin).toBe("Summarise.");
   });
 
   test("pi passes an exact model through untouched and composes nothing it has no channel for", async () => {
@@ -373,24 +344,13 @@ describe("engine selection is an ordered list", () => {
     );
   });
 
-  test("with no selection, opencode-sdk runs when its binary is present", async () => {
-    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "akm-opencode-bin-"));
-    fs.writeFileSync(path.join(bin, "opencode"), "#!/bin/sh\n", { mode: 0o755 });
-    try {
-      await withEnv({ PATH: bin }, () => {
-        const resolved = resolveExecution({ content: "x", config: config({ engines }) });
-        expect(resolved.request.engine).toEqual({ name: "opencode-sdk", kind: "sdk", platform: "opencode-sdk" });
-        expect(resolved.fallbackEngineName).toBe("opencode-sdk");
-        expect(resolved.provenance.engine).toEqual({ layer: "opencode-sdk", kind: "fallback", via: "fallback" });
-      });
-      await withEnv({ PATH: path.join(bin, "missing") }, () => {
-        expect(() => resolveExecution({ content: "x", config: config({ engines }) })).toThrow(
-          /no usable `opencode` binary/,
-        );
-      });
-    } finally {
-      fs.rmSync(bin, { recursive: true, force: true });
-    }
+  test("with no selection, opencode-sdk runs, whatever is on PATH", async () => {
+    await withEnv({ PATH: "" }, () => {
+      const resolved = resolveExecution({ content: "x", config: config({ engines }) });
+      expect(resolved.request.engine).toEqual({ name: "opencode-sdk", kind: "sdk", platform: "opencode-sdk" });
+      expect(resolved.fallbackEngineName).toBe("opencode-sdk");
+      expect(resolved.provenance.engine).toEqual({ layer: "opencode-sdk", kind: "fallback", via: "fallback" });
+    });
   });
 });
 
@@ -529,15 +489,24 @@ describe("resume from the journaled wire form", () => {
 
     const resumed = buildExecutionFromWire(wire);
     let argv: string[] = [];
+    let stdin = "";
     await runExecution(resumed, {
       runOptions: {
         spawn: (cmd) => {
           argv = cmd;
-          return exitedWith("ok");
+          return exitedWith(
+            "ok",
+            new WritableStream<Uint8Array>({
+              write(chunk) {
+                stdin += new TextDecoder().decode(chunk);
+              },
+            }),
+          );
         },
       },
     });
-    expect(argv).toEqual(["opencode-frozen", "run", "--model", "provider/frozen", "--", "Resume me."]);
+    expect(argv).toEqual(["opencode-frozen", "run", "--model", "provider/frozen"]);
+    expect(stdin).toBe("Resume me.");
   });
 
   test("the wire decoder tolerates unknown keys and fills missing profile defaults", () => {
@@ -630,13 +599,11 @@ describe("an engine's default agent", () => {
     expect(resolveExecution({ content: "y", runner }).request.agent).toBe("akm-workflow");
   });
 
-  test("the opencode (both majors) and claude CLIs pass it as --agent", async () => {
-    for (const [platform, bin, major] of [
-      ["opencode", "opencode", 1],
-      ["opencode", "opencode", 2],
-      ["claude", "claude", 2],
+  test("the opencode and claude CLIs pass it as --agent", async () => {
+    for (const [platform, bin] of [
+      ["opencode", "opencode"],
+      ["claude", "claude"],
     ] as const) {
-      fakeOpencodeMajor(major);
       const { argv } = await spawnedFor({
         content: "Hi.",
         config: config({
@@ -730,12 +697,12 @@ describe("the model-work tool policy", () => {
     expect(await run(false)).toMatchObject({ ok: true, stdout: "  \n" });
   });
 
-  // The owner's opencode engines name their model only in `args`, which model work otherwise leaves out.
-  test.each([
-    ["opencode", ["run", "--model", "openai/gpt-5.6-terra"], "openai/gpt-5.6-terra"],
-    ["claude", ["--verbose", "--model=claude-args-model"], "claude-args-model"],
-  ])("%s: a model named only in the engine's args reaches the model-work argv", async (platform, args, model) => {
-    const engines = { argsonly: { kind: "agent", platform, args } };
+  // The owner's engines name their model only in `args`, which model work otherwise leaves out.
+  test("claude: a model named only in the engine's args reaches the model-work argv", async () => {
+    const model = "claude-args-model";
+    const engines = {
+      argsonly: { kind: "agent", platform: "claude", args: ["--verbose", "--model=claude-args-model"] },
+    };
     const { argv } = await spawnedFor({
       content: "x",
       config: config({ engines }),

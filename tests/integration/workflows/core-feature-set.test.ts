@@ -25,20 +25,19 @@
  *      subprocess against a real `akm` on PATH.
  *
  * Agent/engine dispatch goes through the opencode-sdk harness against a fake
- * `createOpencode` server (`__setServerFactory`), the repo's existing pattern
- * from tests/opencode-sdk-runner.test.ts. The fake keys its reply on the model
- * the server was started with, so each assertion can say WHICH engine served
- * a call: `defaults.engine` for the units, `workflow.judgeEngine` for the gate.
+ * embedded OpenCode (`installFakeOpencodeHost`). The fake keys its reply on the
+ * model the host was created with, so each assertion can say WHICH engine
+ * served a call: `defaults.engine` for the units, `workflow.judgeEngine` for
+ * the gate.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../../../src/core/config/config";
-import { __setServerFactory, closeServer } from "../../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { listWorkflowRuns } from "../../../src/workflows/runtime/runs";
 import { runCliCapture } from "../../_helpers/cli";
-import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
+import { installFakeOpencodeHost } from "../../_helpers/fake-opencode-host";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const UNIT_MODEL = "fixture/unit-model";
@@ -48,7 +47,6 @@ const OTHER_MODEL = "fixture/other-model";
 let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
-  fakeOpencodeMajor(1);
   storage = withIsolatedAkmStorage();
   writeSandboxConfig({
     engines: {
@@ -68,14 +66,12 @@ beforeEach(() => {
   resetConfigCache();
 });
 
-afterEach(async () => {
-  __setServerFactory(null);
-  await closeServer();
+afterEach(() => {
   resetConfigCache();
   storage.cleanup();
 });
 
-// ── fake OpenCode SDK server ────────────────────────────────────────────────
+// ── fake embedded OpenCode ────────────────────────────────────────────────
 
 interface SdkCall {
   /** The model the serving `opencode` instance was configured with. */
@@ -86,30 +82,20 @@ interface SdkCall {
 
 type Reply = (call: SdkCall) => string;
 
-/** Install a fake server factory; every prompt is recorded and answered by `reply`. */
+/** Install a fake embedded OpenCode; every prompt is recorded and answered by `reply`. */
 function installFakeSdk(reply: Reply): SdkCall[] {
   const calls: SdkCall[] = [];
-  __setServerFactory((async (options: { config?: { model?: string } }) => {
-    const model = options.config?.model;
-    return {
-      client: {
-        session: {
-          create: async () => ({ data: { id: `session-${calls.length + 1}` } }),
-          prompt: async (args: { body: { parts: { text: string }[]; system?: string } }) => {
-            const call: SdkCall = {
-              model,
-              prompt: args.body.parts.map((part) => part.text).join("\n"),
-              system: args.body.system,
-            };
-            calls.push(call);
-            return { data: { parts: [{ type: "text", text: reply(call) }] } };
-          },
-          abort: async () => ({}),
-        },
-      },
-      server: { close() {} },
-    };
-  }) as never);
+  installFakeOpencodeHost({
+    reply: (call) => {
+      const sdkCall: SdkCall = {
+        model: typeof call.config?.model === "string" ? call.config.model : undefined,
+        prompt: call.prompt,
+        system: call.system,
+      };
+      calls.push(sdkCall);
+      return reply(sdkCall);
+    },
+  });
   return calls;
 }
 

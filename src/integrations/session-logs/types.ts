@@ -79,12 +79,16 @@ export interface SessionLogHarness {
    * `isolatedSnapshot` so database-backed providers never attach SQLite to a
    * live operator-owned WAL/SHM pair merely to count sessions.
    */
-  listSessions(input?: { sinceMs?: number; location?: string; isolatedSnapshot?: boolean }): SessionSummary[];
+  listSessions(input?: {
+    sinceMs?: number;
+    location?: string;
+    isolatedSnapshot?: boolean;
+  }): SessionSummary[] | Promise<SessionSummary[]>;
   /**
    * Read a single session's full event stream + the inline `akm remember`/
    * `akm feedback` invocations the agent made during it. `ref.filePath` must
    * point at a file this harness can parse — call {@link listSessions} first
    * to obtain a valid ref.
    */
-  readSession(ref: SessionRef): SessionData;
+  readSession(ref: SessionRef): SessionData | Promise<SessionData>;
 }

@@ -1,8 +1,7 @@
 /**
- * Which OpenCode major a binary is: parsing `--version`, choosing the binary
- * (`opencode2` preferred unless the engine names one), choosing the adapter, and
- * the once-per-binary warnings. A fake probe stands in for the binary; the real
- * 1.18.34 / 2.0.26 binaries are in tests/integration/opencode-sdk-real-binary.test.ts.
+ * Which OpenCode major an installed binary is: parsing `--version`, choosing
+ * the binary, the once-per-binary warning, and the OpenCode 1 CLI builder's
+ * refusal of OpenCode 2. A fake probe stands in for the binary.
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
@@ -52,6 +51,10 @@ describe("parseOpencodeMajor", () => {
     expect(parseOpencodeMajor("")).toBeUndefined();
     expect(parseOpencodeMajor("no version here")).toBeUndefined();
   });
+
+  test("is undefined for another program's --version", () => {
+    expect(parseOpencodeMajor("true (GNU coreutils) 9.7\nPackaged by Ubuntu (9.7-3ubuntu2.1)")).toBeUndefined();
+  });
 });
 
 describe("resolveOpencodeBin", () => {
@@ -69,14 +72,10 @@ describe("resolveOpencodeBin", () => {
 });
 
 describe("detectOpencodeMajor", () => {
-  test("OpenCode 1 selects the V1 adapters and warns once, naming version and path", () => {
+  test("OpenCode 1 warns once, naming version and path", () => {
     fakeBinaries({ "/usr/bin/opencode": "1.18.34" });
     const which = onPath("opencode");
-    expect(detectOpencodeMajor("opencode", { which })).toMatchObject({
-      major: 1,
-      reportedMajor: 1,
-      version: "1.18.34",
-    });
+    expect(detectOpencodeMajor("opencode", { which })).toMatchObject({ reportedMajor: 1, version: "1.18.34" });
     detectOpencodeMajor("opencode", { which });
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("1.18.34");
@@ -85,9 +84,12 @@ describe("detectOpencodeMajor", () => {
     expect(warnings[0]).toContain("upgrading to OpenCode 2 is recommended");
   });
 
-  test("OpenCode 2 selects the V2 adapters without a warning", () => {
+  test("OpenCode 2 is reported without a warning", () => {
     fakeBinaries({ "/usr/bin/opencode": "opencode v2.0.26" });
-    expect(detectOpencodeMajor("opencode", { which: onPath("opencode") })).toMatchObject({ major: 2, runnable: true });
+    expect(detectOpencodeMajor("opencode", { which: onPath("opencode") })).toMatchObject({
+      reportedMajor: 2,
+      runnable: true,
+    });
     expect(warnings).toEqual([]);
   });
 
@@ -99,34 +101,19 @@ describe("detectOpencodeMajor", () => {
     expect(probed).toEqual(["/usr/bin/opencode", "/usr/bin/opencode2"]);
   });
 
-  test("unparseable output gets the V2 adapters and one warning with the raw output", () => {
+  test("output that is not an OpenCode version reports no major", () => {
     fakeBinaries({ "/usr/bin/opencode": "something odd" });
-    const which = onPath("opencode");
-    expect(detectOpencodeMajor("opencode", { which })).toMatchObject({ major: 2, version: "something odd" });
-    detectOpencodeMajor("opencode", { which });
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain('"something odd"');
-  });
-
-  test("an unknown major gets the V2 adapters and one warning", () => {
-    fakeBinaries({ "/usr/bin/opencode": "opencode v3.0.1" });
-    expect(detectOpencodeMajor("opencode", { which: onPath("opencode") })).toMatchObject({
-      major: 2,
-      reportedMajor: 3,
-    });
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain("opencode v3.0.1");
-  });
-
-  test("a --version that fails gets the V2 adapters and one warning, and is not runnable", () => {
-    fakeBinaries({});
     const info = detectOpencodeMajor("opencode", { which: onPath("opencode") });
-    expect(info).toMatchObject({ major: 2, runnable: false, version: "" });
-    expect(warnings).toHaveLength(1);
+    expect(info).toEqual({ version: "something odd", runnable: true });
+  });
+
+  test("a --version that fails is not runnable", () => {
+    fakeBinaries({});
+    expect(detectOpencodeMajor("opencode", { which: onPath("opencode") })).toEqual({ version: "", runnable: false });
   });
 });
 
-describe("adapter selection", () => {
+describe("the OpenCode 1 CLI harness", () => {
   const profile = (bin: string) => ({
     name: "opencode",
     bin,
@@ -136,13 +123,14 @@ describe("adapter selection", () => {
     parseOutput: "text" as const,
   });
 
-  test("the CLI argv builder follows each binary's own major", () => {
-    fakeBinaries({ "oc-old": "1.18.34", "oc-new": "opencode v2.0.26" });
-    expect(opencodeBuilder.build(profile("oc-old"), { prompt: "p" }).argv).not.toContain("--standalone");
-    expect(opencodeBuilder.build(profile("oc-new"), { prompt: "p" }).argv).toContain("--standalone");
+  test("runs an OpenCode 1 binary, or one that reports no OpenCode version, and refuses OpenCode 2", () => {
+    fakeBinaries({ "oc-old": "1.18.34", "not-oc": "true (GNU coreutils) 9.7", "oc-new": "opencode v2.0.26" });
+    expect(opencodeBuilder.build(profile("oc-old"), { prompt: "p" }).argv).toEqual(["oc-old", "run"]);
+    expect(opencodeBuilder.build(profile("not-oc"), { prompt: "p" }).argv).toEqual(["not-oc", "run"]);
+    expect(() => opencodeBuilder.build(profile("oc-new"), { prompt: "p" })).toThrow(/opencode-sdk/);
   });
 
-  test("an engine with no bin runs the builtin opencode; one with a bin keeps it", () => {
+  test("an engine with no bin runs opencode; one with a bin keeps it", () => {
     const config = {
       engines: {
         plain: { kind: "agent", platform: "opencode" },
@@ -152,7 +140,7 @@ describe("adapter selection", () => {
     const plain = resolveEngine("plain", config);
     const pinned = resolveEngine("pinned", config);
     if (plain.kind !== "agent" || pinned.kind !== "agent") throw new Error("expected agent runners");
-    expect(["opencode", "opencode2"]).toContain(plain.profile.bin);
+    expect(plain.profile.bin).toBe("opencode");
     expect(pinned.profile.bin).toBe("/opt/oc1/opencode");
   });
 });

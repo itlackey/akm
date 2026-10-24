@@ -40,7 +40,7 @@ echo "akm setup complete"
 
 **Install.** The standalone binary (step 1) is runtime-free. The npm package
 (`npm install -g akm-cli`, or one-shot via `npx akm-cli <command>`) requires
-Node.js >= 22; a working Bun >= 1.0 is optional and preferred for execution
+Node.js >= 24; a working Bun >= 1.0 is optional and preferred for execution
 after Node starts the package launcher.
 
 **Setup.** `akm setup --yes` accepts every default with no prompts. To

@@ -1469,9 +1469,9 @@ for in OpenCode 1's cache and `plugin` key, `akm-opencode-v2` only in OpenCode
 --version` and skips the plugin when the `opencode` on `PATH` is the other
 major, since only the matching major can re-create that cache; akm never
 installs or replaces `opencode`. A spec that appears only under the legacy
-`plugin` key for OpenCode 2 is skipped with a note (move it to `plugins`). Which OpenCode major akm itself drives is
-[detected from the engine's binary](configuration.md#engines), independent of this
-step.
+`plugin` key for OpenCode 2 is skipped with a note (move it to `plugins`). akm's own
+engines do not depend on this step: `opencode-sdk` runs OpenCode embedded (see
+[Configuration](configuration.md#engines)).
 
 OpenCode 2 has its own updater, `opencode plugin check` and `opencode plugin update`,
 which akm uses for `akm-opencode-v2`. Two things to know when you run them by
@@ -2795,7 +2795,7 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
-| `--require-engines` | Abort (exit 78, before any indexing, lock, or log side effect) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe — the same probe `akm health`'s `default-llm-engine`/`configured-engines` checks run, once per distinct endpoint. An agent engine's check is that its binary is on PATH, and an `opencode-sdk` engine's is both its binary and, when it sets `llmEngine`, that LLM fallback's endpoint. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
+| `--require-engines` | Abort (exit 78, before any indexing, lock, or log side effect) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe — the same probe `akm health`'s `default-llm-engine`/`configured-engines` checks run, once per distinct endpoint. An agent engine's check is that its binary is on PATH; an `opencode-sdk` engine runs embedded, so its only check is its `llmEngine` fallback's endpoint, when it sets one. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
 | `--show-prompt` | Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or engine dispatch. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside the resolved `engine`/`engineKind`; pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
 | `--sync` / `--no-sync` | Sync the git-backed primary bundle like `akm sync` (fetch and merge the upstream, commit, push) before the run, and commit (and optionally push) when it finishes. A conflict or fetch failure before the run only warns; the run continues on the local state. Default: on for git-backed bundles (per profile config). |
 | `--push` / `--no-push` | Push after the pre-run and end-of-run sync commits when writable with a remote configured. `--no-push` commits only, skipping the push. Default: per profile config (`true`). `sync.push` stays outside the autonomy gate — this is a per-run opt-out, not a default change. |
@@ -3083,7 +3083,7 @@ akm proposal extract --type claude --location /custom/path --session-id <id>
 | `--dry-run` | Show candidates without queuing proposals. |
 | `--force` | Re-process sessions even if they were already extracted and have no new events. Default: skip already-seen sessions. |
 | `--timeout-ms <ms>` | Per-session LLM timeout in ms (default `600000`). |
-| `--engine <name>` | Named engine for this invocation: an LLM engine, or a `claude`, `opencode` or `opencode-sdk` agent engine. Mutually exclusive with `--strategy`. |
+| `--engine <name>` | Named engine for this invocation: an LLM engine, or a `claude` or `opencode-sdk` agent engine. Mutually exclusive with `--strategy`. |
 | `--strategy <name>` | Improve strategy supplying extract behavior and engine. Mutually exclusive with `--engine`. |
 
 `--type` and `--auto` are mutually exclusive; one of them is required.
@@ -3105,7 +3105,7 @@ dropped — a foreground polling daemon in a one-shot CLI); the shipped
 schedule) is the answer.
 
 Requires an engine that can run unattended model work (an LLM engine, or a
-`claude`, `opencode` or `opencode-sdk` agent): pass `--engine`, select a
+`claude` or `opencode-sdk` agent): pass `--engine`, select a
 `--strategy` whose `processes.extract.engine` is set, or configure
 `defaults.llmEngine`.
 

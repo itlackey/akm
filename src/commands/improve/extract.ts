@@ -422,19 +422,20 @@ interface SessionGateOptions {
  * `--force` overrides it, even for `--session-id`), the raw-size floor and the
  * triage score. Returns a skip, or what the prompt needs.
  */
-function runPreLlmSessionGates(
+async function runPreLlmSessionGates(
   harness: SessionLogHarness,
   sessionRef: SessionRef,
   prior: ExtractedSessionRow | undefined,
   force: boolean,
   gates: SessionGateOptions,
-):
+): Promise<
   | { skip: ExtractSessionOutcome }
-  | { data: SessionData; filtered: ReturnType<typeof preFilterSession>; contentHash: string } {
+  | { data: SessionData; filtered: ReturnType<typeof preFilterSession>; contentHash: string }
+> {
   const { sessionId } = sessionRef;
   let data: SessionData;
   try {
-    data = harness.readSession(sessionRef);
+    data = await harness.readSession(sessionRef);
   } catch (err) {
     return {
       skip: sessionOutcome(sessionId, harness.name, {
@@ -482,7 +483,7 @@ function runPreLlmSessionGates(
   return { data, filtered, contentHash: hash };
 }
 
-type ExtractEligibleGate = Exclude<ReturnType<typeof runPreLlmSessionGates>, { skip: ExtractSessionOutcome }>;
+type ExtractEligibleGate = Exclude<Awaited<ReturnType<typeof runPreLlmSessionGates>>, { skip: ExtractSessionOutcome }>;
 
 type ExtractSessionPlan =
   | { kind: "skip"; summary: SessionSummary; result: ExtractSessionOutcome }
@@ -500,7 +501,7 @@ function lockedConcurrentResult(harness: string, summary: SessionSummary): Extra
  * Classify candidates read-only, up to `maxSessionsPerRun` model sessions
  * (explicit `--session-id` and `--force` are uncapped); the rest are deferred.
  */
-function planExtractSessions(args: {
+async function planExtractSessions(args: {
   candidates: SessionSummary[];
   options: AkmExtractOptions;
   harness: SessionLogHarness;
@@ -508,7 +509,7 @@ function planExtractSessions(args: {
   gates: SessionGateOptions;
   maxSessionsPerRun: number;
   locking: boolean;
-}): { plans: ExtractSessionPlan[]; deferredCandidates: SessionSummary[] } {
+}): Promise<{ plans: ExtractSessionPlan[]; deferredCandidates: SessionSummary[] }> {
   const { candidates, options, harness, maxSessionsPerRun, locking } = args;
   const lockUnavailable = (summary: SessionSummary) =>
     locking &&
@@ -525,7 +526,7 @@ function planExtractSessions(args: {
       continue;
     }
     const prior = args.seenMap.get(summary.sessionId);
-    const gate = runPreLlmSessionGates(harness, summary, prior, options.force === true, args.gates);
+    const gate = await runPreLlmSessionGates(harness, summary, prior, options.force === true, args.gates);
     if ("skip" in gate) {
       plans.push({ kind: "skip", summary, result: gate.skip });
       continue;
@@ -880,9 +881,9 @@ async function runExtractSessionLoop(
 
   const workPlans = [...planned.plans];
   let remaining = planned.deferredCandidates;
-  const refillModelSlot = (): void => {
+  const refillModelSlot = async (): Promise<void> => {
     if (remaining.length === 0 || options.signal?.aborted) return;
-    const refill = planExtractSessions({
+    const refill = await planExtractSessions({
       candidates: remaining,
       options,
       harness,
@@ -909,7 +910,7 @@ async function runExtractSessionLoop(
       );
       if (!lock.proceed) {
         account(lockedConcurrentResult(harness.name, summary));
-        refillModelSlot();
+        await refillModelSlot();
         continue;
       }
       lockOwnership = lock.ownership;
@@ -918,10 +919,10 @@ async function runExtractSessionLoop(
       const prior = stateDb
         ? getExtractedSessionsMap(stateDb, harness.name, [summary.sessionId]).get(summary.sessionId)
         : seenMap.get(summary.sessionId);
-      const gate = runPreLlmSessionGates(harness, summary, prior, options.force === true, gates);
+      const gate = await runPreLlmSessionGates(harness, summary, prior, options.force === true, gates);
       if ("skip" in gate) {
         accountAndRecord(summary, gate.skip);
-        refillModelSlot();
+        await refillModelSlot();
         continue;
       }
       const result = await processSession(run, summary, gate);
@@ -1093,17 +1094,17 @@ function resolveExtractRun(
 }
 
 /** The sessions to process: the `--session-id` target (or a not-found envelope) or the discovery window. */
-function discoverExtractCandidates(
+async function discoverExtractCandidates(
   options: AkmExtractOptions,
   harness: SessionLogHarness,
   effectiveSince: string | undefined,
   startMs: number,
   dryRun: boolean,
   llmRunner: RunnerSpec,
-): { candidates: SessionSummary[] } | { notFound: AkmExtractResult } {
+): Promise<{ candidates: SessionSummary[] } | { notFound: AkmExtractResult }> {
   const location = options.location ? { location: options.location } : {};
   if (options.sessionId) {
-    const target = harness.listSessions(location).find((s) => s.sessionId === options.sessionId);
+    const target = (await harness.listSessions(location)).find((s) => s.sessionId === options.sessionId);
     if (target) return { candidates: [target] };
     return {
       notFound: emptyExtractResult({
@@ -1123,7 +1124,7 @@ function discoverExtractCandidates(
         ...(options.stateDbPath ? { stateDbPath: options.stateDbPath } : {}),
         ...(options.skipTracking ? { skipTracking: options.skipTracking } : {}),
       });
-  return { candidates: harness.listSessions({ sinceMs, ...location }) };
+  return { candidates: await harness.listSessions({ sinceMs, ...location }) };
 }
 
 function loadSeenMapReadOnly(
@@ -1198,13 +1199,20 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       llmRunner,
     });
   }
-  const discovery = discoverExtractCandidates(options, harness, resolved.effectiveSince, startMs, dryRun, llmRunner);
+  const discovery = await discoverExtractCandidates(
+    options,
+    harness,
+    resolved.effectiveSince,
+    startMs,
+    dryRun,
+    llmRunner,
+  );
   if ("notFound" in discovery) return discovery.notFound;
 
   const topLevelWarnings: string[] = [];
   const tracking = options.skipTracking !== true;
   const seenMap = loadSeenMapReadOnly(options, harness.name, discovery.candidates, topLevelWarnings);
-  const planned = planExtractSessions({
+  const planned = await planExtractSessions({
     candidates: discovery.candidates,
     options,
     harness,
@@ -1323,7 +1331,10 @@ export interface CountNewExtractCandidatesOptions {
  * so a session counts as new when it has no seen row or a row without a
  * content hash; the exact hash check happens at extraction.
  */
-export function countNewExtractCandidates(_config: AkmConfig, options: CountNewExtractCandidatesOptions = {}): number {
+export async function countNewExtractCandidates(
+  _config: AkmConfig,
+  options: CountNewExtractCandidatesOptions = {},
+): Promise<number> {
   const effectiveSince = options.since ?? getImproveProcessConfig("extract", options.improveProfile)?.defaultSince;
   const explicitSinceMs = effectiveSince ? parseSinceArg(effectiveSince) : undefined;
   const harnesses = (options.harnesses ?? getAvailableHarnesses()).filter((h) => h.isAvailable());
@@ -1339,7 +1350,10 @@ export function countNewExtractCandidates(_config: AkmConfig, options: CountNewE
           ...(options.stateDbPath ? { stateDbPath: options.stateDbPath } : {}),
           ...(options.readOnly && !options.stateDb ? { skipTracking: true } : {}),
         });
-      const candidates = harness.listSessions({ sinceMs, ...(options.readOnly ? { isolatedSnapshot: true } : {}) });
+      const candidates = await harness.listSessions({
+        sinceMs,
+        ...(options.readOnly ? { isolatedSnapshot: true } : {}),
+      });
       if (candidates.length === 0) continue;
       // A dry planner without state.db has no seen-session ledger by definition.
       if (options.readOnly && !stateDb) {

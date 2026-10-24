@@ -172,9 +172,6 @@ const AgentEngineSchema = z
         message: `agent is not valid on ${value.platform}: it has no native agent selector`,
       });
     }
-    if (value.platform === "opencode-sdk" && value.args !== undefined) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["args"], message: "args is not valid on opencode-sdk" });
-    }
   });
 
 export const EngineConfigSchema = z.union([LlmEngineSchema, AgentEngineSchema]);

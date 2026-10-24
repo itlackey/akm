@@ -417,7 +417,7 @@ adapter-rendered or anonymous work
 
 `resolveExecution` picks the engine from an ordered list — the nearest layer
 that names one, then `defaults.engine`, then the implicit `opencode-sdk`
-fallback when its binary is present — and merges one set of defaults, nearest
+fallback, which needs nothing installed — and merges one set of defaults, nearest
 wins: the selected engine's own model/inference/timeout/workspace, then the
 persona, the command, the invocation defaults, and the current call. Omitted,
 explicit `null`, zero, and empty values stay distinct. A recognized
@@ -494,17 +494,22 @@ External coding agents are reachable via two execution paths:
 
 **SDK path** (`src/integrations/harnesses/opencode-sdk/sdk-runner.ts`):
 
-- `runOpencodeSdk(profile, prompt, opts, llmConfig?)` uses the embedded
-  `@opencode-ai/sdk` instead of `Bun.spawn`. No agent CLI binary is required.
+- `runOpencodeSdk(profile, prompt, opts, llmConfig?)` runs OpenCode 2 embedded
+  in akm's process through `@opencode/sdk` (`OpenCode.create()`, an in-memory
+  router): no binary, no server, no port. Only this folder imports
+  `@opencode/*`, and only lazily, so the harness stays replaceable.
 - Selected by an agent engine whose `platform` is `"opencode-sdk"`. Its optional
   `llmEngine` supplies the LLM fallback connection. With none, there is no
-  fallback and opencode uses its own configuration; `defaults.llmEngine` is not
+  fallback and OpenCode uses its own configuration; `defaults.llmEngine` is not
   borrowed.
-- Manages a single per-process singleton server, creating one fresh session
-  per call to avoid history accumulation and unbounded token growth.
-- Concurrent calls share startup by server material, but each call races that
-  startup against its own deadline (including `null`); no caller's timeout is
-  stored in the shared lifecycle.
+- Keeps one embedded instance per distinct configuration for the life of the
+  process (closed by `disposeDispatchResources()`), and creates one fresh
+  session per call. Agent runs load the user's OpenCode config; model work runs
+  on an empty akm-owned config with only the `read` and `akm` capabilities, and
+  akm's read tools run in-process. Every session is stored in akm's own
+  OpenCode database (`<akm data dir>/opencode.db`).
+- Nobody can answer an akm run: questions are cancelled and permission requests
+  rejected, each with a message, and the model carries on.
 
 New tasks are task source v4 `.yml` assets. Normal execution rejects v2 and v3
 and directs operators to the explicit preview/apply migrator. Task source v4
@@ -564,7 +569,7 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 | `src/llm/memory-infer.ts` | atomic-fact split helper (selected through `improve.strategies.<name>.processes.memoryInference`) |
 | `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
 | `src/integrations/agent/spawn.ts` | agent CLI shell-out entry point (`runAgent`) |
-| `src/integrations/harnesses/opencode-sdk/sdk-runner.ts` | embedded SDK runner selected by an SDK `RunnerSpec` |
+| `src/integrations/harnesses/opencode-sdk/sdk-runner.ts` | embedded OpenCode runner selected by an SDK `RunnerSpec` |
 | `src/integrations/agent/runner-dispatch.ts` | low-level exhaustive `RunnerSpec` transport dispatch and dispatch-time credential redaction |
 | `src/integrations/agent/profiles.ts` | internal spawn descriptors used after agent-engine lowering |
 | `src/integrations/agent/engine-resolution.ts` | named engine and symbolic transport-material resolution; exact request model projection happens in execution lowering |

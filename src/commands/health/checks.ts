@@ -8,7 +8,6 @@ import { listEnvsRecursive } from "../../core/env-secret-ref";
 import { ConfigError } from "../../core/errors";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
 import { listPendingStateMigrations, type StateDatabaseMigrationReport } from "../../core/state-db";
-import type { WhichFn } from "../../integrations/agent/detect";
 import { withEngineFallback } from "../../integrations/agent/engine-fallback";
 import {
   type CredentialDescriptor,
@@ -175,7 +174,6 @@ export interface DefaultEngineProbeDependencies {
   loadConfig?: () => AkmConfig;
   resolveEngine?: (name: string, config: AkmConfig) => RunnerSpec;
   spawnSync?: typeof spawnSync;
-  which?: WhichFn;
   env?: NodeJS.ProcessEnv;
   /**
    * #914: reachability seam for a `kind: "llm"` runner's connection and an

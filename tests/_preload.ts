@@ -50,7 +50,10 @@ import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-writer-lock";
 import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";
-import { closeOpencodeSdk } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import {
+  _setOpencodeHostFactoryForTests,
+  closeOpencodeSdk,
+} from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { resetAllSeams } from "./_helpers/seams";
 
@@ -318,6 +321,14 @@ function resetSingletons(): void {
   resetLocalEmbedder();
   _setAssetMutationLeaseSyncTimingForTests(undefined);
   _setOpencodeVersionProbeForTests(undefined);
+  // The embedded OpenCode with no fake would reach a real provider (OpenCode's
+  // own free tier at opencode.ai). A test installs `installFakeOpencodeHost` or
+  // a loopback model through `overrideSeam`, which replaces this refusal.
+  _setOpencodeHostFactoryForTests(async () => {
+    throw new Error(
+      "[harness-safety] this test reached the real embedded OpenCode; install installFakeOpencodeHost (tests/_helpers/fake-opencode-host.ts) or a loopback model",
+    );
+  });
   // A test that ran `src/cli.ts`'s entry in-process minted the argv singleton; the in-process harness
   // (tests/_helpers/cli.ts) and every leaf-command test read process.argv through its fallback instead.
   _resetParsedInvocationForTests();

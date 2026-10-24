@@ -27,6 +27,7 @@ import type { OpenCode } from "@opencode/sdk";
 import { isRecord, toErrorMessage } from "../../../core/common";
 import type { LlmConnectionConfig } from "../../../core/config/config";
 import { getCacheDir, getDataDir } from "../../../core/paths";
+import { warnOnce } from "../../../core/warn";
 import type { ExecutionJsonObject } from "../../../execution/json";
 import { AKM_READ_TOOLS } from "../../agent/akm-read-tools";
 import { type Capability, MODEL_WORK_CAPABILITIES } from "../../agent/capabilities";
@@ -100,12 +101,17 @@ function fallbackInference(llm: LlmConnectionConfig | undefined): ExecutionJsonO
  * The config content akm adds for one run: the model, and a provider for it
  * when akm supplies the endpoint. Empty when akm names no model, so the user's
  * OpenCode config decides.
+ *
+ * Inference reaches a model akm supplies in full. On a `provider/model` from
+ * the user's OpenCode config it is laid over that model, best effort: OpenCode
+ * merges some fields and not others, so akm warns once.
  */
 export function modelConfig(
-  model: string | undefined,
+  named: string | undefined,
   llm: LlmConnectionConfig | undefined,
   inference: ExecutionJsonObject | null | undefined,
 ): Record<string, unknown> {
+  const model = named ?? llm?.model;
   const merged = inference === null ? undefined : { ...fallbackInference(llm), ...inference };
   const entry = opencodeModelEntry(merged);
   if (llm?.endpoint || llm?.apiKey) {
@@ -124,7 +130,14 @@ export function modelConfig(
       },
     };
   }
-  return model ? { model } : {};
+  if (!model) return {};
+  const slash = model.indexOf("/");
+  if (slash <= 0 || Object.keys(entry).length === 0) return { model };
+  warnOnce(
+    `opencode-sdk-inference-overlay:${model}`,
+    `[akm] OpenCode model ${JSON.stringify(model)} comes from your OpenCode config, so akm applies its inference settings (${Object.keys(merged ?? {}).join(", ")}) best effort, and OpenCode may ignore some. Give the engine an llmEngine, or set them in your OpenCode config, to apply them reliably.`,
+  );
+  return { model, provider: { [model.slice(0, slash)]: { models: { [model.slice(slash + 1)]: entry } } } };
 }
 
 /**
@@ -157,12 +170,16 @@ function userOpencodeModel(): Record<string, unknown> {
 
 /** One embedded OpenCode per distinct configuration, for the life of the process. */
 const hosts = new Map<string, Promise<Host>>();
-let createHost: (options: CreateOptions) => Promise<Host> = async (options) =>
+const createEmbedded = async (options: CreateOptions): Promise<Host> =>
   (await import("@opencode/sdk")).OpenCode.create(options);
+let createHost = createEmbedded;
 
-/** Test seam: replace `OpenCode.create`. Pass null to restore it. */
-export function __setHostFactory(factory: ((options: CreateOptions) => Promise<Host>) | null): void {
-  createHost = factory ?? (async (options) => (await import("@opencode/sdk")).OpenCode.create(options));
+/** Test seam: replace `OpenCode.create`; undefined restores it. Hosts already open are closed. */
+export function _setOpencodeHostFactoryForTests(
+  factory: ((options: CreateOptions) => Promise<Host>) | undefined,
+): void {
+  createHost = factory ?? createEmbedded;
+  void closeOpencodeSdk();
 }
 
 /** akm's read tools as an OpenCode plugin. */
@@ -253,6 +270,95 @@ function modelWorkHost(content: Record<string, unknown>): Promise<Host> {
   } as CreateOptions);
 }
 
+// ── Session history ────────────────────────────────────────────────────────
+
+/** A top-level session in an OpenCode 2 database. */
+export interface OpencodeStoredSession {
+  readonly id: string;
+  readonly title?: string;
+  readonly directory?: string;
+  readonly created: number;
+  readonly updated: number;
+}
+
+/**
+ * An embedded OpenCode that only reads the database at `dbPath`: an empty
+ * config (no plugins, MCP servers or agents) and no model catalog fetch.
+ */
+function sessionStoreHost(dbPath: string): Promise<Host> {
+  const directory = path.join(getCacheDir(), "opencode-session-store");
+  fs.mkdirSync(directory, { recursive: true });
+  return hostFor(`store:${dbPath}`, {
+    database: { path: dbPath },
+    config: { directory, project: false, claude: false },
+    models: { fetch: false },
+  } as CreateOptions);
+}
+
+/** Close the session-store host for `dbPath`, for a database copy that is about to be removed. */
+export async function closeOpencodeSessionStore(dbPath: string): Promise<void> {
+  const key = `store:${dbPath}`;
+  const host = hosts.get(key);
+  hosts.delete(key);
+  await (await host?.catch(() => undefined))?.close().catch(() => {});
+}
+
+/** The top-level sessions in the OpenCode 2 database at `dbPath`, newest first, without akm's model-work sessions. */
+export async function listOpencodeSessions(dbPath: string): Promise<OpencodeStoredSession[]> {
+  const host = await sessionStoreHost(dbPath);
+  const sessions: OpencodeStoredSession[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const page = (await host.sessions.list({
+      limit: 200,
+      ...(cursor ? { cursor } : { parentID: null, order: "desc" }),
+    } as never)) as { data: unknown[]; cursor?: { next?: string | null } };
+    for (const session of page.data) {
+      if (!isRecord(session) || typeof session.id !== "string") continue;
+      if (isRecord(session.metadata) && session.metadata.akm === "model-work") continue;
+      sessions.push(storedSession(session));
+    }
+    if (!page.cursor?.next || page.data.length === 0) break;
+    cursor = page.cursor.next;
+  }
+  return sessions.sort((a, b) => b.updated - a.updated);
+}
+
+/** One session and its messages, oldest first; undefined when the database has no such session. */
+export async function readOpencodeSession(
+  dbPath: string,
+  sessionId: string,
+): Promise<{ session: OpencodeStoredSession; messages: unknown[] } | undefined> {
+  const host = await sessionStoreHost(dbPath);
+  const session = await host.sessions.get({ sessionID: sessionId } as never).catch(() => undefined);
+  if (!isRecord(session) || typeof session.id !== "string") return undefined;
+  const messages: unknown[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const page = (await host.message.list({
+      sessionID: sessionId,
+      limit: 200,
+      ...(cursor ? { cursor } : { order: "asc" }),
+    } as never)) as { data: unknown[]; cursor?: { next?: string | null } };
+    messages.push(...page.data);
+    if (!page.cursor?.next || page.data.length === 0) break;
+    cursor = page.cursor.next;
+  }
+  return { session: storedSession(session), messages };
+}
+
+function storedSession(session: Record<string, unknown>): OpencodeStoredSession {
+  const time = isRecord(session.time) ? session.time : {};
+  const location = isRecord(session.location) ? session.location : {};
+  return {
+    id: session.id as string,
+    ...(typeof session.title === "string" && session.title ? { title: session.title } : {}),
+    ...(typeof location.directory === "string" && location.directory ? { directory: location.directory } : {}),
+    created: typeof time.created === "number" ? time.created : 0,
+    updated: typeof time.updated === "number" ? time.updated : 0,
+  };
+}
+
 /** Close every embedded OpenCode this process started. */
 export async function closeOpencodeSdk(): Promise<void> {
   const open = [...hosts.values()];
@@ -280,11 +386,11 @@ async function messagesAfter(host: Host, sessionID: string, userId: string): Pro
   const newestFirst: unknown[] = [];
   let cursor: string | undefined;
   for (;;) {
+    // A cursor carries its page's order; OpenCode refuses one combined with `order`.
     const page = (await host.message.list({
       sessionID,
-      order: "desc",
       limit: 200,
-      ...(cursor ? { cursor } : {}),
+      ...(cursor ? { cursor } : { order: "desc" }),
     } as never)) as {
       data: unknown[];
       cursor?: { next?: string | null };
@@ -446,8 +552,7 @@ export async function runOpencodeSdk(
 
   const dispatch = opts.dispatch;
   const modelWork = dispatch?.modelWork === true;
-  const model = dispatch?.model ?? profile.model ?? llm?.model;
-  let content = modelConfig(model, llm, dispatch?.inference);
+  let content = modelConfig(dispatch?.model ?? profile.model, llm, dispatch?.inference);
   if (modelWork && !content.model) content = { ...userOpencodeModel(), ...content };
   const capabilities = modelWork ? MODEL_WORK_CAPABILITIES : dispatch?.permissions;
 

@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { deepMergeConfig } from "../src/core/config/deep-merge";
 import { ConfigError } from "../src/core/errors";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { resolveDispatchModel } from "../src/integrations/agent/builder-shared";
 import {
   type AgentEngineConfig,
@@ -21,7 +22,8 @@ import {
   resolveLlmCredentialValue,
   resolveLlmEngineUse,
 } from "../src/integrations/agent/engine-resolution";
-import { buildSdkConfig } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { modelConfig } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { overrideSeam } from "./_helpers/seams";
 
 const config = {
   configVersion: "0.9.0",
@@ -192,7 +194,24 @@ describe("engine resolution", () => {
       // The fallback's timeout is not borrowed either.
       expect(Object.hasOwn(lowered, "timeoutMs")).toBe(false);
       // Nothing of akm's is mirrored into the server config: opencode keeps its own provider and model.
-      expect(buildSdkConfig(lowered.profile, lowered.fallbackConnection)).toEqual({});
+      expect(modelConfig(lowered.profile.model, lowered.fallbackConnection, undefined)).toEqual({});
+    });
+
+    test("bin and args do nothing on the embedded OpenCode: ignored, with one warning", () => {
+      const warnings: string[] = [];
+      _resetWarnOnceForTests();
+      overrideSeam(_setWarnSinkForTests, (level, args) => {
+        if (level === "warn") warnings.push(args.map(String).join(" "));
+      });
+      const engines = withSdk({ kind: "agent", platform: "opencode-sdk", bin: "/opt/opencode", args: ["run"] });
+      const lowered = resolveEngine("sdk", engines);
+      resolveEngine("sdk", engines);
+      if (lowered.kind !== "sdk") throw new Error("fixture must lower to SDK");
+      expect(lowered.profile.bin).toBe("");
+      expect(lowered.profile.args).toEqual([]);
+      expect(warnings).toEqual([
+        '[akm] Engine "sdk": bin and args do nothing on opencode-sdk, which runs OpenCode embedded; ignoring them.',
+      ]);
     });
 
     test("with its own llmEngine, that engine is the fallback, not defaults.llmEngine's", () => {
@@ -208,7 +227,7 @@ describe("engine resolution", () => {
       if (lowered.kind !== "sdk") throw new Error("fixture must lower to SDK");
       expect(lowered.fallbackConnection).toMatchObject({ endpoint: other.endpoint, model: "other" });
       expect(lowered.fallbackCredential?.names).toEqual(["AKM_ENGINE_OTHER_API_KEY"]);
-      const server = buildSdkConfig(lowered.profile, lowered.fallbackConnection);
+      const server = modelConfig(lowered.profile.model, lowered.fallbackConnection, undefined);
       expect(server.model).toBe("akm-custom/other");
       expect(server.provider).toMatchObject({
         "akm-custom": { options: { baseURL: "https://example.test/other/v1" }, models: { other: {} } },
@@ -275,7 +294,9 @@ describe("engine resolution", () => {
     });
     if (lowered.kind !== "sdk") throw new Error("fixture must lower to SDK");
     expect(lowered.profile.model).toBe("provider/exact");
-    expect(buildSdkConfig(lowered.profile, lowered.fallbackConnection).model).toBe("akm-custom/provider/exact");
+    expect(modelConfig(lowered.profile.model, lowered.fallbackConnection, undefined).model).toBe(
+      "akm-custom/provider/exact",
+    );
     expect(resolveDispatchModel({ model: "provider/exact" }, lowered.profile, "opencode-sdk")).toBe("provider/exact");
   });
 

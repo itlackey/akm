@@ -52,13 +52,14 @@ function makeClaudeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile 
 // ── builders.ts — opencodeBuilder ────────────────────────────────────────────
 
 describe("opencodeBuilder — basic dispatch", () => {
-  test("no agent options: argv = [opencode, run, --, <prompt>]", async () => {
+  test("no agent options: argv = [opencode, run] and the prompt goes on stdin", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile();
     const req: AgentDispatchRequest = { prompt: "do work" };
     const cmd = builder.build(profile, req);
-    expect(cmd.argv).toEqual(["opencode", "run", "--", "do work"]);
+    expect(cmd.argv).toEqual(["opencode", "run"]);
+    expect(cmd.stdin).toBe("do work");
   });
 
   test("without a model override, configured model args are preserved", async () => {
@@ -66,21 +67,14 @@ describe("opencodeBuilder — basic dispatch", () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile({ args: ["run", "--model", "openai/gpt-5.4-mini"] });
     const cmd = builder.build(profile, { prompt: "do work" });
-    expect(cmd.argv).toEqual(["opencode", "run", "--model", "openai/gpt-5.4-mini", "--", "do work"]);
+    expect(cmd.argv).toEqual(["opencode", "run", "--model", "openai/gpt-5.4-mini"]);
   });
 
   test("forwards an exact native agent selector through --agent", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const builder = getCommandBuilder("opencode");
     const req = { prompt: "do work", agent: "Review-Team.Exact" } as AgentDispatchRequest;
-    expect(builder.build(makeOpencodeProfile(), req).argv).toEqual([
-      "opencode",
-      "run",
-      "--agent",
-      "Review-Team.Exact",
-      "--",
-      "do work",
-    ]);
+    expect(builder.build(makeOpencodeProfile(), req).argv).toEqual(["opencode", "run", "--agent", "Review-Team.Exact"]);
   });
 
   // `opencode run` 1.18.25 has no --system-prompt: it prints its usage and
@@ -90,7 +84,7 @@ describe("opencodeBuilder — basic dispatch", () => {
     const builder = getCommandBuilder("opencode");
     const req: AgentDispatchRequest = { prompt: "do work", systemPrompt: "You are helpful." };
     expect(builder.personaChannel).toBe("prompt");
-    expect(builder.build(makeOpencodeProfile(), req).argv).toEqual(["opencode", "run", "--", "do work"]);
+    expect(builder.build(makeOpencodeProfile(), req).argv).toEqual(["opencode", "run"]);
   });
 
   test("with pre-resolved model: --model flag present", async () => {
@@ -122,7 +116,7 @@ describe("opencodeBuilder — basic dispatch", () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile({ args: ["run", "--model", "openai/gpt-5.4-mini"] });
     const cmd = builder.build(profile, { prompt: "do work", model: "gpt-5.6-terra" });
-    expect(cmd.argv).toEqual(["opencode", "run", "--model", "gpt-5.6-terra", "--", "do work"]);
+    expect(cmd.argv).toEqual(["opencode", "run", "--model", "gpt-5.6-terra"]);
   });
 
   test("provider-qualified override replaces the configured model unchanged", async () => {
@@ -130,7 +124,7 @@ describe("opencodeBuilder — basic dispatch", () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile({ args: ["run", "--model=openai/gpt-5.4-mini"] });
     const cmd = builder.build(profile, { prompt: "do work", model: "openai/gpt-5.6-terra" });
-    expect(cmd.argv).toEqual(["opencode", "run", "--model", "openai/gpt-5.6-terra", "--", "do work"]);
+    expect(cmd.argv).toEqual(["opencode", "run", "--model", "openai/gpt-5.6-terra"]);
   });
 
   test("an exact override replaces the configured model without provider rewriting", async () => {
@@ -138,7 +132,7 @@ describe("opencodeBuilder — basic dispatch", () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile({ args: ["run", "--model", "openai/gpt-5.4-mini"] });
     const cmd = builder.build(profile, { prompt: "do work", model: "opus" });
-    expect(cmd.argv).toEqual(["opencode", "run", "--model", "opus", "--", "do work"]);
+    expect(cmd.argv).toEqual(["opencode", "run", "--model", "opus"]);
   });
 
   test("tool policy is NOT emitted (opencode ignores toolPolicy)", async () => {
@@ -155,35 +149,21 @@ describe("opencodeBuilder — basic dispatch", () => {
 
 // ── builders.ts — opencodeBuilder: inference ──────────────────────────────────
 //
-// Inference reaches opencode only in the config akm injects for model work
-// (`OPENCODE_CONFIG_CONTENT`; see `harnesses/opencode/model-config.ts`).
+// The OpenCode 1 CLI translates no inference: it is the user's opencode config's to set.
 
 describe("opencodeBuilder — inference", () => {
   const INFERENCE = { temperature: 0.2, reasoningEffort: "low", maxTokens: 4096, contextLength: 120000 };
 
-  // Inference for an ordinary dispatch is the user's opencode config's to set, so akm injects nothing, whatever the request carries.
+  // akm injects nothing, whatever the request carries.
   test("an ordinary dispatch injects nothing: argv and env are the engine's", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const profile = makeOpencodeProfile({ args: ["run", "--model", "krang/chat/qwen3.8-27b"] });
     for (const inference of [{}, INFERENCE]) {
       const cmd = getCommandBuilder("opencode").build(profile, { prompt: "do work", inference });
 
-      expect(cmd.argv).toEqual(["opencode", "run", "--model", "krang/chat/qwen3.8-27b", "--", "do work"]);
+      expect(cmd.argv).toEqual(["opencode", "run", "--model", "krang/chat/qwen3.8-27b"]);
       expect(cmd.env).toBeUndefined();
     }
-  });
-
-  test("model work with no inference defines the agent and nothing else, as before", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const cmd = getCommandBuilder("opencode").build(makeOpencodeProfile(), {
-      prompt: "judge it",
-      model: "krang/m",
-      modelWork: true,
-    });
-    const config = JSON.parse(cmd.env?.OPENCODE_CONFIG_CONTENT ?? "null");
-
-    expect(Object.keys(config).sort()).toEqual(["agent", "compaction", "permission"]);
-    expect(config.agent["akm-model-work"]).not.toHaveProperty("options");
   });
 });
 
@@ -337,15 +317,13 @@ describe("getCommandBuilder — platform routing", () => {
 // ── builders.ts — argument injection guards (M5) ──────────────────────────────
 
 describe("builders — argument injection guards", () => {
-  test("opencodeBuilder: prompt preceded by '--' end-of-options separator", async () => {
+  test("opencodeBuilder: a prompt that looks like a flag goes on stdin, not in argv", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile();
-    const cmd = builder.build(profile, { prompt: "do work" });
-    const argv = cmd.argv as string[];
-    const sepIdx = argv.indexOf("--");
-    expect(sepIdx).toBeGreaterThan(-1);
-    expect(argv[sepIdx + 1]).toBe("do work");
+    const cmd = builder.build(profile, { prompt: "--do work" });
+    expect(cmd.argv).not.toContain("--do work");
+    expect(cmd.stdin).toBe("--do work");
   });
 
   test("claudeBuilder: prompt preceded by '--' end-of-options separator", async () => {

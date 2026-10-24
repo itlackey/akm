@@ -16,7 +16,6 @@ import {
 } from "../src/commands/health/checks";
 import type { AkmConfig } from "../src/core/config/config";
 import { validateConfigShape } from "../src/core/config/config-schema";
-import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";
 import { withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 const llm = {
@@ -66,40 +65,6 @@ describe("health engine probes", () => {
       status: "pass",
       evidence: { engines: [{ engine: "shared", status: "pass" }] },
     });
-  });
-
-  test("sanitizes SDK executable probe exceptions, including a NUL bin", async () => {
-    const sentinel = "PRIVATE_SDK_BIN_SENTINEL";
-    const parsed = validateConfigShape({
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      engines: {
-        sdk: { kind: "agent", platform: "opencode-sdk", bin: `${sentinel}\0` },
-      },
-      defaults: { engine: "sdk" },
-    });
-    if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors));
-
-    const result = await runDefaultEngineProbe({
-      loadConfig: () => parsed.value,
-      resolvePackage: () => "/sdk/package.json",
-      spawnSync: (() => {
-        throw new TypeError(`spawn rejected ${sentinel}: raw child output`);
-      }) as never,
-    });
-
-    expect(result).toEqual({
-      name: "default-engine",
-      kind: "deterministic",
-      status: "warn",
-      confidence: "high",
-      message: 'SDK engine "sdk" executable availability could not be checked.',
-      evidence: { engine: "sdk", runtimeKind: "sdk", binaryAvailable: false },
-    });
-    const serialized = JSON.stringify(result);
-    expect(serialized).not.toContain(sentinel);
-    expect(serialized).not.toContain("raw child output");
-    expect(serialized).not.toContain("NUL");
   });
 
   test("reports all explicitly configured engine availability in sorted, safe evidence", async () => {
@@ -169,9 +134,11 @@ describe("health engine probes", () => {
       engines: { fast: llm },
       defaults: { llmEngine: "fast" },
     };
-    const general = await runDefaultEngineProbe({ loadConfig: () => config, which: () => undefined });
+    const general = await runDefaultEngineProbe({ loadConfig: () => config });
     const result = await runDefaultLlmEngineProbe({ loadConfig: () => config });
-    expect(general.status).toBe("unknown");
+    // No default engine: the general default is the embedded OpenCode.
+    expect(general.status).toBe("pass");
+    expect(general.evidence).toMatchObject({ engine: "opencode-sdk" });
     expect(result.status).toBe("pass");
     expect(result.message).toBe('LLM engine "fast" is configured. Reachability was not probed.');
     expect(result.evidence).toMatchObject({ engine: "fast", runtimeKind: "llm", model: "fallback-model" });
@@ -189,15 +156,11 @@ describe("health engine probes", () => {
     };
     const inheritedModel = await runDefaultEngineProbe({
       loadConfig: () => config,
-      resolvePackage: () => "/sdk/package.json",
       spawnSync: (() => ({ status: 0 })) as never,
     });
     expect(inheritedModel.status).toBe("pass");
     expect(inheritedModel.message).toBe('SDK engine "sdk" is available. Reachability was not probed.');
     expect(inheritedModel.evidence).toMatchObject({
-      binary: "opencode-test",
-      binaryAvailable: true,
-      packageAvailable: true,
       fallbackEngine: "fallback",
       fallbackModel: "fallback-model",
       model: "fallback-model",
@@ -214,71 +177,11 @@ describe("health engine probes", () => {
     };
     const ready = await runDefaultEngineProbe({
       loadConfig: () => readyConfig,
-      resolvePackage: () => "/sdk/package.json",
       spawnSync: (() => ({ status: 0 })) as never,
     });
     expect(ready.status).toBe("pass");
     expect(ready.message).toBe('SDK engine "sdk" is available. Reachability was not probed.');
     expect(ready.evidence).toMatchObject({ model: "sdk-model", configuredModel: "sdk-model", modelSource: "sdk" });
-  });
-
-  test("reports SDK package and binary failures independently", async () => {
-    const config: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      engines: {
-        sdk: { kind: "agent", platform: "opencode-sdk", model: "sdk-model", llmEngine: "fallback" },
-        fallback: llm,
-      },
-      defaults: { engine: "sdk", llmEngine: "fallback" },
-    };
-    const result = await runDefaultEngineProbe({
-      loadConfig: () => config,
-      resolvePackage: () => {
-        throw new Error("missing");
-      },
-      spawnSync: (() => ({ status: 1 })) as never,
-    });
-    expect(result.status).toBe("warn");
-    // The binary cannot be run, so its major is unknown: the newest (2), whose client package is @opencode/client.
-    expect(result.message).toContain("@opencode/client package");
-    expect(result.message).not.toContain("@opencode-ai/sdk");
-    expect(result.message).toContain("opencode binary");
-  });
-
-  test("checks the client package of the OpenCode major the binary reports", async () => {
-    const resolved: string[] = [];
-    for (const [version, major, pkg] of [
-      ["1.18.34", 1, "@opencode-ai/sdk"],
-      ["opencode v2.0.26", 2, "@opencode/client"],
-    ] as const) {
-      _setOpencodeVersionProbeForTests(undefined); // a detection is cached per binary
-      const config: AkmConfig = {
-        configVersion: "0.9.0",
-        semanticSearchMode: "off",
-        engines: { sdk: { kind: "agent", platform: "opencode-sdk", model: "sdk-model" } },
-        defaults: { engine: "sdk" },
-      };
-      // Only the selected major's package is missing: the other major's package must not count.
-      const result = await runDefaultEngineProbe({
-        loadConfig: () => config,
-        resolvePackage: (name: string) => {
-          resolved.push(name);
-          if (name === pkg) throw new Error("missing");
-          return "/sdk/package.json";
-        },
-        spawnSync: (() => ({ status: 0, stdout: `${version}\n` })) as never,
-      });
-      expect(result.status).toBe("warn");
-      expect(result.message).toContain(`${pkg} package`);
-      expect(result.evidence).toMatchObject({
-        package: pkg,
-        packageAvailable: false,
-        detectedVersion: version,
-        detectedMajor: major,
-      });
-    }
-    expect(resolved).toEqual(["@opencode-ai/sdk", "@opencode/client"]);
   });
 
   test("accepts native OpenCode SDK configuration without an AKM LLM fallback", async () => {
@@ -295,8 +198,6 @@ describe("health engine probes", () => {
     expect(result.status).toBe("pass");
     expect(result.message).toBe('SDK engine "sdk" is available.');
     expect(result.evidence).toMatchObject({
-      packageAvailable: true,
-      binaryAvailable: true,
       model: "sdk-model",
       fallbackEngine: null,
     });
@@ -312,7 +213,6 @@ describe("health engine probes", () => {
     let probed = 0;
     const result = await runDefaultEngineProbe({
       loadConfig: () => config,
-      resolvePackage: () => "/sdk/package.json",
       spawnSync: (() => ({ status: 0 })) as never,
       probeReachable: async () => {
         probed += 1;
@@ -341,7 +241,6 @@ describe("health engine probes", () => {
     };
     const result = await runDefaultEngineProbe({
       loadConfig: () => config,
-      resolvePackage: () => "/sdk/package.json",
       spawnSync: (() => ({ status: 0 })) as never,
     });
     expect(result.status).toBe("warn");
@@ -418,7 +317,6 @@ describe("health engine probes", () => {
     };
     const result = await runDefaultEngineProbe({
       loadConfig: () => config,
-      resolvePackage: () => "/sdk/package.json",
       spawnSync: (() => ({ status: 0 })) as never,
       env: {},
       listEnvAssets: () => [{ ref: "env/lab", path: "/stash/env/lab.env", keys: ["PRIVATE_IMPROVE_TOKEN"] }],
@@ -847,7 +745,6 @@ describe("health engine reachability probe (#914)", () => {
     };
     const result = await runDefaultEngineProbe({
       loadConfig: () => config,
-      resolvePackage: () => "/sdk/package.json",
       spawnSync: (() => ({ status: 0 })) as never,
       probeReachable: async () => ({ reachable: false, error: "ECONNREFUSED" }),
     });

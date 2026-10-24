@@ -5,14 +5,14 @@ real task. This path takes about five to seven minutes end to end.
 
 ## Runtime Requirement
 
-The npm package requires Node.js >= 22 to bootstrap its command on every
+The npm package requires Node.js >= 24 to bootstrap its command on every
 platform. If a working Bun >= 1.0 is also on `PATH`, the package launcher
 prefers Bun for execution; old, unusable, or absent Bun installations fall back
 to Node.js. The standalone binaries are runtime-free.
 
 ## 1. Install
 
-**Option 1 — npm package (recommended; requires [Node.js](https://nodejs.org) >= 22):**
+**Option 1 — npm package (recommended; requires [Node.js](https://nodejs.org) >= 24):**
 
 ```sh
 npm install -g akm-cli

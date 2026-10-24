@@ -705,7 +705,7 @@ describe("akmExtract — Codex sessions", () => {
       countNewExtractCandidates(config, { harnesses: [new CodexProvider()], since: "24h", stateDb: db });
 
     // Improve's session count sees one candidate: the guardian rollout is not a session.
-    expect(newSessions()).toBe(1);
+    expect(await newSessions()).toBe(1);
 
     const first = await run();
     expect(first.ok).toBe(true);
@@ -726,7 +726,7 @@ describe("akmExtract — Codex sessions", () => {
     expect(getExtractedSessionsMap(db, "codex", [PERSON]).get(PERSON)?.content_hash).toBe(
       first.sessions[0]?.contentHash,
     );
-    expect(newSessions()).toBe(0);
+    expect(await newSessions()).toBe(0);
     const second = await run();
     expect(second.sessionsSkipped).toBe(1);
     expect(second.sessions[0]?.skipReason).toBe("already_extracted");

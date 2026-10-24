@@ -13,7 +13,7 @@ export interface OpenCodeSessionMeta {
   title?: string;
 }
 
-/** The session columns both majors' tables share (`session` in OpenCode 1, `session_v2` in OpenCode 2). */
+/** The OpenCode 1 `session` table's columns akm reads. */
 export type SessionRow = {
   id: string;
   title: string | null;

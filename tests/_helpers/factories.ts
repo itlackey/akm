@@ -32,7 +32,7 @@ export function quietQualityGateConfig(): AkmConfig {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
     engines: {
-      "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+      "fake-agent": { kind: "agent", platform: "claude", bin: "fake-agent" },
     },
     defaults: { engine: "fake-agent", improveStrategy: "default" },
     improve: {

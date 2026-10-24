@@ -21,7 +21,9 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import { FALLBACK_ANNOUNCEMENT } from "../../src/integrations/agent/engine-fallback";
 import { runCliStatus as runCli } from "../_helpers/cli";
+import { installFakeOpencodeHost } from "../_helpers/fake-opencode-host";
 import { type Cleanup, sandboxStashDir, withEnv, writeSandboxConfig } from "../_helpers/sandbox";
 
 let stashCleanup: Cleanup = () => {};
@@ -38,17 +40,16 @@ afterEach(() => {
 });
 
 describe("akm contribution cluster — JSON envelope snapshot (WS6)", () => {
-  test("agent (no engine): {ok:false} usage envelope on stderr (exit 2)", async () => {
-    // `akm agent` now falls back to an `opencode-sdk` engine when an opencode
-    // binary is resolvable, so the no-engine failure is only deterministic with
-    // PATH emptied — otherwise this asserts a different outcome on a developer
-    // machine that happens to have opencode installed than it does in CI.
-    const { stderr, status } = await withEnv({ PATH: "" }, () => runCli(["agent"]));
-    expect(status).toBe(2);
-    const env = JSON.parse(stderr);
-    expect(env.ok).toBe(false);
-    expect(env.code).toBe("MISSING_REQUIRED_ARGUMENT");
-    expect(env.error).toMatch(/agent has no selected engine/);
+  test("agent (no engine): falls back to the announced opencode-sdk engine (exit 0)", async () => {
+    // With no engine configured, `akm agent` runs on the embedded OpenCode, with no binary or PATH check.
+    const host = installFakeOpencodeHost({ reply: () => "hello" });
+    const { stdout, stderr, status } = await withEnv({ PATH: "" }, () => runCli(["agent"]));
+    expect(status).toBe(0);
+    const env = JSON.parse(stdout);
+    expect(env).toMatchObject({ ok: true, engine: "opencode-sdk", stdout: "hello" });
+    expect(env.warnings).toContain(FALLBACK_ANNOUNCEMENT);
+    expect(stderr).toContain(FALLBACK_ANNOUNCEMENT);
+    expect(host.calls).toHaveLength(1);
   });
 
   test("lint: success envelope carries fixed/flagged arrays + summary (exit 0)", async () => {

@@ -70,7 +70,7 @@ describe("model-work engine keys need an engine that confines the model-work too
       expect(errors).toEqual([
         {
           path: key,
-          message: `engine "${engine}" (platform ${engine}) cannot confine the model-work tool policy, which unattended model work requires. Use an LLM engine, or an agent engine on opencode, claude or opencode-sdk.`,
+          message: `engine "${engine}" (platform ${engine}) cannot confine the model-work tool policy, which unattended model work requires. Use an LLM engine, or an agent engine on claude or opencode-sdk.`,
         },
       ]);
     }

@@ -36,10 +36,10 @@ function launcherFixture(bin: "akm" | "akm-migrate"): { launcher: string; cleanu
   const launcher = path.join(root, bin);
   fs.copyFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", bin), launcher);
   if (bin === "akm") {
-    fs.writeFileSync(path.join(root, "cli-node.mjs"), 'console.log("NODE_22_LAUNCHER_RAN");\n');
+    fs.writeFileSync(path.join(root, "cli-node.mjs"), 'console.log("NODE_24_LAUNCHER_RAN");\n');
   } else {
     fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
-    fs.writeFileSync(path.join(root, "scripts", "akm-migrate-node.js"), 'console.log("NODE_22_LAUNCHER_RAN");\n');
+    fs.writeFileSync(path.join(root, "scripts", "akm-migrate-node.js"), 'console.log("NODE_24_LAUNCHER_RAN");\n');
   }
   return { launcher, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
@@ -61,8 +61,8 @@ describe("npm bin contract", () => {
       scripts?: Record<string, string>;
     };
 
-    expect(pkg.engines).toEqual({ node: ">=22" });
-    expect(pkg.scripts?.preinstall).toContain("Node.js >= 22");
+    expect(pkg.engines).toEqual({ node: ">=24" });
+    expect(pkg.scripts?.preinstall).toContain("Node.js >= 24");
     expect(pkg.scripts?.preinstall).toContain("working Bun >= 1.0");
     expect(pkg.scripts?.preinstall).toContain("optional and preferred for akm and akm-migrate");
     expect(pkg.scripts?.preinstall).toContain("runtime-free standalone binary");
@@ -80,13 +80,13 @@ describe("npm bin contract", () => {
 
     const akmLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm"), "utf8");
     expect(akmLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
-    expect(akmLauncher).toContain("requires Node.js >= 22 to bootstrap");
+    expect(akmLauncher).toContain("requires Node.js >= 24 to bootstrap");
     expect(akmLauncher).toContain('new URL("./cli.js", import.meta.url)');
     expect(akmLauncher).toContain('await import("./cli-node.mjs")');
 
     const migrateLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm-migrate"), "utf8");
     expect(migrateLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
-    expect(migrateLauncher).toContain("requires Node.js >= 22 to bootstrap");
+    expect(migrateLauncher).toContain("requires Node.js >= 24 to bootstrap");
     expect(migrateLauncher).toContain('new URL("./scripts/akm-migrate.js", import.meta.url)');
     expect(migrateLauncher).toContain('new URL("./scripts/akm-migrate-node.js", import.meta.url)');
     expect(migrateLauncher).toContain('process.versions.bun ? process.execPath : useBun ? "bun" : process.execPath');
@@ -104,34 +104,34 @@ describe("npm bin contract", () => {
     }
   });
 
-  test("rejects Node 20 (below the 22 floor) before either published launcher can execute its payload", () => {
+  test("rejects Node 22 (below the 24 floor) before either published launcher can execute its payload", () => {
     for (const bin of ["akm", "akm-migrate"] as const) {
       const fixture = launcherFixture(bin);
       try {
         const result = runAsNodeVersion(
-          "20.0.0",
+          "22.0.0",
           `await import(${JSON.stringify(pathToFileURL(fixture.launcher).href)});`,
         );
         expect(result.status).toBe(1);
-        expect(result.stderr).toContain("requires Node.js >= 22 to bootstrap");
-        expect(result.stdout).not.toContain("NODE_22_LAUNCHER_RAN");
+        expect(result.stderr).toContain("requires Node.js >= 24 to bootstrap");
+        expect(result.stdout).not.toContain("NODE_24_LAUNCHER_RAN");
       } finally {
         fixture.cleanup();
       }
     }
   });
 
-  test("preinstall rejects Node 20 and admits Node 22", () => {
+  test("preinstall rejects Node 22 and admits Node 24", () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as {
       scripts?: Record<string, string>;
     };
     const program = preinstallProgram(pkg.scripts?.preinstall ?? "");
 
-    const rejected = runAsNodeVersion("20.0.0", program);
+    const rejected = runAsNodeVersion("22.0.0", program);
     expect(rejected.status).toBe(1);
-    expect(rejected.stderr).toContain("requires Node.js >= 22");
+    expect(rejected.stderr).toContain("requires Node.js >= 24");
 
-    const accepted = runAsNodeVersion("22.0.0", program);
+    const accepted = runAsNodeVersion("24.0.0", program);
     expect(accepted.status).toBe(0);
   });
 });

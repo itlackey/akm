@@ -74,7 +74,7 @@ export interface AkmImproveOptions {
   reflectFn?: ReflectFn;
   distillFn?: DistillFn;
   memoryInferenceFn?: typeof runMemoryInferencePass;
-  extractCandidateCountFn?: typeof countNewExtractCandidates;
+  extractCandidateCountFn?: (...args: Parameters<typeof countNewExtractCandidates>) => number | Promise<number>;
   /** Session-log harnesses for both the `minNewSessions` gate and the extract pass. */
   extractHarnesses?: SessionLogHarness[];
   ensureIndexFn?: (stashDir: string, options?: EnsureIndexOptions) => Promise<unknown>;

@@ -334,7 +334,7 @@ describe("--format jsonl", () => {
     const config = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { test: { kind: "agent", platform: "opencode", bin: "/bin/echo" } },
+      engines: { test: { kind: "agent", platform: "claude", bin: "/bin/echo" } },
       defaults: { engine: "test" },
     };
     const runtime = makeCliRuntime();

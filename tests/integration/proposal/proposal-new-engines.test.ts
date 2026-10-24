@@ -46,7 +46,7 @@ let storage: IsolatedAkmStorage;
 
 beforeAll(() => {
   bins = makeSandboxDir("akm-proposal-new-bin");
-  // claude answers in its JSON result envelope; opencode prints the reply as it is.
+  // claude answers in its JSON result envelope when asked for it; the plain stubs print the reply as it is.
   fs.writeFileSync(path.join(bins.dir, "claude-envelope"), fakeHarness(SCENARIOS.proposal ?? [], "claude"), {
     mode: 0o755,
   });
@@ -77,8 +77,8 @@ beforeEach(() => {
       "llm-repair": llm("repair"),
       "llm-invalid": llm("invalid"),
       claude: agent("claude", "claude-envelope"),
-      "opencode-invalid": agent("opencode", "plain-invalid"),
-      "opencode-repair": agent("opencode", "plain-repair"),
+      "claude-invalid": agent("claude", "plain-invalid"),
+      "claude-repair": agent("claude", "plain-repair"),
     },
     defaults: { engine: "llm" },
   });
@@ -158,16 +158,16 @@ describe("a reply that is not a proposal gets one corrective retry", () => {
   });
 
   test("an agent CLI engine corrected by the retry creates the proposal", async () => {
-    const result = await proposalNew("opencode-repair");
+    const result = await proposalNew("claude-repair");
 
-    expectProposalCreated(result, "opencode-repair");
+    expectProposalCreated(result, "claude-repair");
     expect(calls("plain-repair")).toHaveLength(2);
     expect(calls("plain-repair")[1]?.argv.at(-1)).toContain("failed validation");
   });
 
   test.each([
     ["llm-invalid", () => llmBodies.length],
-    ["opencode-invalid", () => calls("plain-invalid").length],
+    ["claude-invalid", () => calls("plain-invalid").length],
   ])("%s: a reply still invalid after the retry fails clearly and creates nothing", async (engine, count) => {
     const result = await proposalNew(engine);
 

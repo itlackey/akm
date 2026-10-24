@@ -11,7 +11,7 @@
  * canonical JSON, so the plan is round-tripped the same way here.
  */
 
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
 import { getCommandBuilder } from "../../src/integrations/agent/builders";
 import { HARNESS_REGISTRY } from "../../src/integrations/harnesses";
@@ -20,6 +20,7 @@ import { prepareWorkflowExecution } from "../../src/workflows/exec/unit-dispatch
 import { canonicalPlanJson } from "../../src/workflows/ir/plan-hash";
 import type { FrozenWorkflowCommandTarget } from "../../src/workflows/plan";
 import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
+import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { freezeWorkflow } from "../_helpers/workflow";
 
 const SCHEMA = { type: "object", properties: { fact: { type: "string" } }, required: ["fact"] };
@@ -82,11 +83,15 @@ function deliveredPrompt(engine: string): { delivered: string; expected: string;
   if (built.runner.kind === "llm") return { delivered: built.messages?.at(-1)?.content ?? "", expected, instruction };
   if (built.runner.kind === "sdk") return { delivered: built.prompt, expected, instruction };
   const platform = built.runner.profile.platform ?? built.runner.profile.name;
-  const argv = getCommandBuilder(platform).build(built.runner.profile, built.options.dispatch!).argv;
-  return { delivered: argv.join("\n"), expected, instruction };
+  // A harness that reads its prompt on stdin (OpenCode 1) gets it there instead of in argv.
+  const command = getCommandBuilder(platform).build(built.runner.profile, built.options.dispatch!);
+  return { delivered: [...command.argv, command.stdin ?? ""].join("\n"), expected, instruction };
 }
 
 describe("a workflow unit's output schema reaches its transport once", () => {
+  // The OpenCode 1 builder reads the binary's version; a fake keeps the PATH out of it.
+  beforeEach(() => fakeOpencodeMajor(1));
+
   test.each(Object.keys(ENGINES))("%s", (engine) => {
     const { delivered, expected, instruction } = deliveredPrompt(engine);
 

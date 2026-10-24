@@ -20,7 +20,7 @@ import {
   resolveModelMapAlias,
 } from "../../src/integrations/agent/model-map";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
-import { buildSdkConfig } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { modelConfig } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 
 const installedText = JSON.stringify({
   version: 1,
@@ -93,17 +93,7 @@ describe("versioned installed/user model-map contract", () => {
         expect(command.argv[command.argv.indexOf("--model") + 1]).toBe(exact[platform]);
       }
       const sdkSelection = resolveModelMapAlias(alias, "opencode-sdk", merged);
-      expect(
-        buildSdkConfig({
-          name: "opencode-sdk",
-          bin: "",
-          args: [],
-          stdio: "captured",
-          envPassthrough: [],
-          parseOutput: "text",
-          model: sdkSelection.model,
-        }).model,
-      ).toBe(exact.sdk);
+      expect(modelConfig(sdkSelection.model, undefined, undefined).model).toBe(exact.sdk);
     }
   });
 

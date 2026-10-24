@@ -4,7 +4,7 @@
 
 /**
  * An improve process's `llm` overlay (`improve.strategies.<s>.processes.<p>.llm`)
- * reaches an agent engine's model work. Model work resolves its runner once,
+ * reaches an `opencode-sdk` engine's model work. Model work resolves its runner once,
  * freezes it in the improve plan, and every stage call resolves from that
  * runner again, so the overlay must survive that round trip. With no overlay,
  * akm sends nothing of its own and the model's configured default applies.
@@ -16,9 +16,9 @@ import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/c
 import { buildExecution, resolveExecution } from "../../../src/integrations/agent/execution";
 import type { AgentProfile } from "../../../src/integrations/agent/profiles";
 import type { RunnerSpec } from "../../../src/integrations/agent/runner";
-import { getHarness } from "../../../src/integrations/harnesses";
+import { modelConfig } from "../../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 
-const OPENCODE = { kind: "agent", platform: "opencode", args: ["run", "--model", "krang/chat/qwen3.8-27b"] };
+const OPENCODE_SDK = { kind: "agent", platform: "opencode-sdk", model: "krang/chat/qwen3.8-27b" };
 
 function configFor(
   engine: Record<string, unknown>,
@@ -59,42 +59,34 @@ function resolveAgain(runner: ReturnType<typeof resolveReflect>["runner"]) {
 
 describe("improve model work on an agent engine", () => {
   test("the process overlay survives the frozen runner and reaches the model-work agent", () => {
-    const { config, profile } = configFor(OPENCODE, { reasoningEffort: "low", temperature: 0.2 });
+    const { config, profile } = configFor(OPENCODE_SDK, { reasoningEffort: "low", temperature: 0.2 });
     const resolved = resolveReflect(config, profile);
 
     expect(resolved.notices.filter((notice) => (notice.field ?? "").startsWith("inference."))).toEqual([]);
     const again = resolveAgain(resolved.runner);
     expect(again.request.inference).toEqual({ reasoningEffort: "low", temperature: 0.2 });
-    expect(again.runner.kind === "agent" && again.runner.profile.inference).toEqual({
-      reasoningEffort: "low",
-      temperature: 0.2,
-    });
+    expect(agentProfile(again.runner).inference).toEqual({ reasoningEffort: "low", temperature: 0.2 });
     const built = buildExecution(again.request, again.runner);
-    const command = getHarness("opencode")?.agentBuilder?.build(
-      agentProfile(built.runner),
-      built.options.dispatch ?? { prompt: "" },
-    );
-    expect(JSON.parse(command?.env?.OPENCODE_CONFIG_CONTENT ?? "null").agent["akm-model-work"].options).toEqual({
-      reasoningEffort: "low",
-      temperature: 0.2,
+    const sent = modelConfig(agentProfile(built.runner).model, undefined, built.options.dispatch?.inference);
+    expect(sent).toEqual({
+      model: "krang/chat/qwen3.8-27b",
+      provider: {
+        krang: { models: { "chat/qwen3.8-27b": { options: { reasoningEffort: "low", temperature: 0.2 } } } },
+      },
     });
   });
 
   test("with no setting anywhere, akm sends nothing of its own", () => {
-    const { config, profile } = configFor(OPENCODE);
+    const { config, profile } = configFor(OPENCODE_SDK);
     const { runner } = resolveReflect(config, profile);
     const again = resolveAgain(runner);
     const built = buildExecution(again.request, again.runner);
-    const command = getHarness("opencode")?.agentBuilder?.build(
-      agentProfile(built.runner),
-      built.options.dispatch ?? { prompt: "" },
-    );
 
     expect(again.request).not.toHaveProperty("inference");
-    expect(runner.kind === "agent" && runner.profile).not.toHaveProperty("inference");
-    // The injected config defines the model-work agent and nothing about the model or its options.
-    const injected = JSON.parse(command?.env?.OPENCODE_CONFIG_CONTENT ?? "null");
-    expect(Object.keys(injected).sort()).toEqual(["agent", "compaction", "permission"]);
-    expect(injected.agent["akm-model-work"]).not.toHaveProperty("options");
+    expect(agentProfile(runner)).not.toHaveProperty("inference");
+    // The config names the model and nothing about its options.
+    expect(modelConfig(agentProfile(built.runner).model, undefined, built.options.dispatch?.inference)).toEqual({
+      model: "krang/chat/qwen3.8-27b",
+    });
   });
 });

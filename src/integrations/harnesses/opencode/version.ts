@@ -3,39 +3,26 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Which OpenCode major a binary is (#1049).
+ * Which OpenCode major an installed `opencode` binary is.
  *
- * akm drives two OpenCode majors through separate adapters. There is no config
- * field for the choice: the binary says which major it is. {@link resolveOpencodeBin}
- * picks the binary (the engine's own `bin`, else the newest OpenCode on PATH) and
- * {@link detectOpencodeMajor} runs `<bin> --version` once per binary per process.
- *
- * - Major 1: OpenCode 1 adapters, plus a one-time warning recommending OpenCode 2.
- * - Major 2: OpenCode 2 adapters.
- * - Anything else, or a `--version` that fails or cannot be parsed: the newest
- *   adapters akm knows (OpenCode 2) and a one-time warning with the raw output.
- *   Detection never aborts; the dispatch reports whatever real error the binary
- *   produces.
- *
- * PATH lookups are memoized too: PATH does not change inside a process, and
- * every dispatch asks for the same one or two binaries.
+ * akm runs OpenCode 2 embedded (`../opencode-sdk`) and needs no binary. The
+ * binary matters only to the legacy OpenCode 1 CLI harness, which refuses an
+ * OpenCode 2 binary, and to plugin upgrades, which refresh a plugin cache with
+ * the major that owns it. {@link detectOpencodeMajor} runs `<bin> --version`
+ * once per binary per process.
  */
 
 import childProcess from "node:child_process";
 import { warnOnce } from "../../../core/warn";
 import { defaultWhich } from "../../agent/detect";
-import { OPENCODE_SDK_SERVER_BIN } from "../../agent/profiles";
-/** The OpenCode major a binary reports, as akm uses it. */
-export type OpencodeMajor = 1 | 2;
+import { OPENCODE_BIN } from "../../agent/profiles";
 
 /** OpenCode 2's own alias for its binary; it can sit next to an OpenCode 1 `opencode` on PATH. */
 export const OPENCODE2_BIN = "opencode2";
 const VERSION_TIMEOUT_MS = 30_000;
 
 export interface OpencodeVersionInfo {
-  /** The adapter major to use: 1, or 2 (also for every binary whose major is not 1). */
-  readonly major: OpencodeMajor;
-  /** The major the binary reported, when it reported one. */
+  /** The major the binary reported, when it reported an OpenCode version. */
   readonly reportedMajor?: number;
   /** Trimmed `--version` output; empty when the binary could not be run. */
   readonly version: string;
@@ -85,9 +72,13 @@ function lookup(bin: string, which: Which | undefined): string | undefined {
   return onPath.get(bin);
 }
 
-/** The major in `opencode --version` output (`1.18.34`, `opencode v2.0.26`), or undefined when there is none. */
+/**
+ * The major in `opencode --version` output (`1.18.34`, `opencode v2.0.26`), or
+ * undefined when the output is not an OpenCode version (another program's
+ * `--version`, such as `true (GNU coreutils) 9.7`).
+ */
 export function parseOpencodeMajor(versionOutput: string): number | undefined {
-  const match = versionOutput.match(/(\d+)\.\d+/);
+  const match = versionOutput.trim().match(/^(?:opencode\s+)?v?(\d+)\.\d+(?:\.\d+)?(?:[-+.\w]*)$/im);
   return match ? Number(match[1]) : undefined;
 }
 
@@ -97,7 +88,7 @@ export function parseOpencodeMajor(versionOutput: string): number | undefined {
  */
 export function resolveOpencodeBin(explicitBin?: string, which?: Which): string {
   if (explicitBin) return explicitBin;
-  return lookup(OPENCODE2_BIN, which) ? OPENCODE2_BIN : OPENCODE_SDK_SERVER_BIN;
+  return lookup(OPENCODE2_BIN, which) ? OPENCODE2_BIN : OPENCODE_BIN;
 }
 
 /** Detect the OpenCode major of `bin`: one `--version` run per binary per process. */
@@ -108,22 +99,13 @@ export function detectOpencodeMajor(bin: string, options: DetectOptions = {}): O
   const raw = (options.probe ?? probeOverride ?? defaultProbe)(path);
   const version = raw ?? "";
   const reportedMajor = raw === undefined ? undefined : parseOpencodeMajor(raw);
-  const major: OpencodeMajor = reportedMajor === 1 ? 1 : 2;
   if (reportedMajor === 1) {
     warnOnce(
       `opencode-version:${path}`,
       `${path} is OpenCode ${version}. OpenCode 1 support continues, but upgrading to OpenCode 2 is recommended.`,
     );
-  } else if (reportedMajor !== 2) {
-    warnOnce(
-      `opencode-version:${path}`,
-      raw === undefined
-        ? `Could not run \`${path} --version\`, so its OpenCode major is unknown; treating it as OpenCode 2.`
-        : `${path} reported an unrecognized OpenCode version (${JSON.stringify(raw)}); treating it as OpenCode 2.`,
-    );
   }
   const info: OpencodeVersionInfo = {
-    major,
     ...(reportedMajor !== undefined ? { reportedMajor } : {}),
     version,
     runnable: raw !== undefined,

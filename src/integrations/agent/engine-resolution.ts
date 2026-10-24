@@ -12,9 +12,9 @@ import { ConfigError } from "../../core/errors";
 import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
 import { collectSensitiveValues } from "../../core/redaction";
 import { isRefToken } from "../../core/ref-token";
+import { warnOnce } from "../../core/warn";
 import { resolveSecretFromStore } from "../../sources/snapshot-fetchers/secret-seam";
 import { getHarness } from "../harnesses";
-import { resolveOpencodeBin } from "../harnesses/opencode/version";
 import { DEFAULT_LLM_TIMEOUT_MS } from "./config";
 import { type AgentProfile, getBuiltinAgentProfile } from "./profiles";
 
@@ -413,14 +413,20 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
   const platform = harness.id;
   const sdk = platform === "opencode-sdk";
   const builtin = getBuiltinAgentProfile(platform);
-  // An OpenCode engine without its own `bin` runs the newest OpenCode on PATH.
-  const opencodeFamily = platform === "opencode" || sdk;
+  const unused = sdk ? (["bin", "args"] as const).filter((key) => engine[key] !== undefined) : [];
+  if (unused.length > 0) {
+    warnOnce(
+      `opencode-sdk-unused:${name}`,
+      `[akm] Engine "${name}": ${unused.join(" and ")} ${unused.length === 1 ? "does" : "do"} nothing on opencode-sdk, which runs OpenCode embedded; ignoring ${unused.length === 1 ? "it" : "them"}.`,
+    );
+  }
   const profile: AgentProfile = {
     name,
     platform,
     personaChannel: sdk ? "native" : (harness.agentBuilder?.personaChannel ?? "prompt"),
-    bin: opencodeFamily ? resolveOpencodeBin(engine.bin) : (engine.bin ?? builtin?.bin ?? platform),
-    args: engine.args ?? builtin?.args ?? [],
+    // The embedded OpenCode runs no binary.
+    bin: sdk ? "" : (engine.bin ?? builtin?.bin ?? platform),
+    args: sdk ? [] : (engine.args ?? builtin?.args ?? []),
     stdio: "captured",
     ...(builtin?.env ? { env: builtin.env } : {}),
     envPassthrough: builtin?.envPassthrough ?? [],

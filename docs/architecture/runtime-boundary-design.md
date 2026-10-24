@@ -127,7 +127,7 @@ spawnSync(['git', 'ls-files', ...])
 - Add `semver` to `dependencies` (tiny, zero-deps)
 - Add `node: ">=22"` to `engines` (raised from 20.12 when Node 20 support was dropped, 2026-07) (`@clack/core` uses `node:util.styleText`,
   which was added in Node 20.12)
-- Require Node >= 22 in the npm `preinstall` guard
+- Require Node >= 24 in the npm `preinstall` guard
 
 ---
 

@@ -6,19 +6,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { disposeDispatchResources } from "../../src/integrations/agent/runner-dispatch";
-import {
-  __setServerFactory,
-  __setTestServer,
-  closeServer,
-  runOpencodeSdk,
-} from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { runOpencodeSdk } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import { startWorkflowRun } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
-import { fakeOpencodeMajor } from "../_helpers/opencode-version";
+import { installFakeOpencodeHost } from "../_helpers/fake-opencode-host";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
-
-beforeEach(() => fakeOpencodeMajor(1));
 
 /**
  * Process-lifecycle disposal (owner finding 4 — a successful engine-driven run
@@ -234,69 +227,30 @@ describe("runWorkflowSteps drains dispatch resources on every exit path", () => 
 
 // ── (B) the disposal seam actually tears down the SDK registry ───────────────
 
-describe("disposeDispatchResources drains the SDK server registry", () => {
-  const ENV_KEY = "AKM_DISPOSE_TEST_ENV";
-
-  afterEach(() => {
-    __setServerFactory(null);
-    __setTestServer(null);
-    closeServer();
-  });
-
-  test("closes every cached server and empties the registry so the next dispatch starts fresh", async () => {
-    const closes: string[] = [];
-    let started = 0;
-    __setServerFactory(((options: { port?: number }) => {
-      started++;
-      const tag = options.port ? `port-${options.port}` : "default";
-      return Promise.resolve({
-        client: {
-          session: {
-            create: async () => ({ data: { id: `sess-${started}` } }),
-            prompt: async () => ({ data: { parts: [{ type: "text", text: "ok" }] } }),
-          },
-        },
-        server: {
-          close() {
-            closes.push(tag);
-          },
-        },
-      });
-    }) as never);
-
-    const profile = { name: "mysdk", bin: "opencode", args: [] } as never;
-    // Populate the registry: the default (no-env) server plus an env-keyed one
-    // on its own OS-allocated port.
+describe("disposeDispatchResources closes the embedded OpenCode hosts", () => {
+  test("closes every cached host so the next dispatch starts a fresh one", async () => {
+    const { lifecycle } = installFakeOpencodeHost({ reply: () => "ok" });
+    const profile = { name: "mysdk", bin: "", args: [] } as never;
+    // Two configurations, two cached hosts: one with no model, one with akm's model.
     await runOpencodeSdk(profile, "p", { timeoutMs: null });
-    await runOpencodeSdk(profile, "p", { env: { [ENV_KEY]: "v" }, timeoutMs: null });
-    expect(started).toBe(2);
+    await runOpencodeSdk(profile, "p", { timeoutMs: null, dispatch: { prompt: "p", model: "lab/m" } });
+    expect(lifecycle.created).toBe(2);
 
-    // The drain the engine calls closes BOTH cached servers synchronously.
     await disposeDispatchResources();
-    expect(closes.length).toBe(2);
-    expect(closes.every((tag) => tag.startsWith("port-"))).toBe(true);
+    expect(lifecycle.closed).toBe(2);
 
-    // Registry emptied: the next dispatch starts a fresh server (start count bumps).
     await runOpencodeSdk(profile, "p", { timeoutMs: null });
-    expect(started).toBe(3);
+    expect(lifecycle.created).toBe(3);
   });
 
-  test("awaits an in-flight server start and closes the late server before disposal resolves", async () => {
-    let resolveFactory!: (server: never) => void;
-    let factoryStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      factoryStarted = resolve;
+  test("awaits a host still starting and closes it before disposal resolves", async () => {
+    let start!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      start = resolve;
     });
-    let closed = 0;
-    __setServerFactory((() => {
-      factoryStarted();
-      return new Promise((resolve) => {
-        resolveFactory = resolve;
-      });
-    }) as never);
-    const profile = { name: "mysdk", bin: "opencode", args: [] } as never;
-    const running = runOpencodeSdk(profile, "p", { timeoutMs: null });
-    await started;
+    const { lifecycle } = installFakeOpencodeHost({ reply: () => "ok", ready });
+    const running = runOpencodeSdk({ name: "mysdk", bin: "", args: [] } as never, "p", { timeoutMs: null });
+    await Promise.resolve();
 
     let disposed = false;
     const disposal = disposeDispatchResources().then(() => {
@@ -305,22 +259,10 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
     await Promise.resolve();
     expect(disposed).toBe(false);
 
-    resolveFactory({
-      client: {
-        session: {
-          create: async () => ({ data: { id: "late" } }),
-          prompt: async () => ({ data: { parts: [{ type: "text", text: "ok" }] } }),
-        },
-      },
-      server: {
-        close() {
-          closed++;
-        },
-      },
-    } as never);
+    start();
     await disposal;
     await running;
-    expect(closed).toBe(1);
+    expect(lifecycle.closed).toBe(1);
   });
 });
 
@@ -333,52 +275,18 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
 // the server stays open past the run; after the fix the engine `finally` closes
 // it the moment the run resolves — the exact hang the owner observed, headless.
 
-describe("engine run via the SDK runner closes its server on completion (end-to-end)", () => {
-  // The implicit opencode-sdk engine runs a binary reporting OpenCode 2.
-  beforeEach(() => fakeOpencodeMajor(2));
-  afterEach(() => {
-    __setServerFactory(null);
-    __setTestServer(null);
-    closeServer();
-  });
-
-  test("a successful sdk-dispatched run leaves no server open when it resolves", async () => {
+describe("engine run via the SDK runner closes its host on completion (end-to-end)", () => {
+  test("a successful sdk-dispatched run leaves no host open when it resolves", async () => {
     writeProgram("sdk-e2e", oneStep("sdk-e2e"));
-
-    let closed = 0;
-    let prompted = 0;
-    __setServerFactory((() =>
-      Promise.resolve({
-        client: {
-          session: {
-            create: async () => ({ id: "sess-e2e" }),
-            prompt: async () => {
-              prompted++;
-              return { id: "msg-user" };
-            },
-            wait: async () => {},
-            context: async () => [
-              { id: "msg-user", type: "user", text: "p" },
-              { id: "msg-a", type: "assistant", content: [{ type: "text", text: "sdk-done" }] },
-              { id: "msg-idle", type: "idle", outcome: "succeeded" },
-            ],
-          },
-        },
-        server: {
-          close() {
-            closed++;
-          },
-        },
-      })) as never);
+    const { calls, lifecycle } = installFakeOpencodeHost({ reply: () => "sdk-done" });
 
     const started = await startWorkflowRun("workflows/sdk-e2e", {});
     const result = await runWorkflowSteps({ target: started.run.id, summaryJudge: null });
 
-    // The real SDK path ran (the fake server answered the prompt)…
-    expect(prompted).toBe(1);
+    // The real runner path ran (the fake host answered the prompt)…
+    expect(calls).toHaveLength(1);
     expect(result.done).toBe(true);
-    // …and the cached server was CLOSED by the engine's finally — the process
-    // would exit cleanly instead of hanging on the leaked child handle.
-    expect(closed).toBe(1);
+    // …and the engine's finally closed the host it opened.
+    expect(lifecycle.closed).toBe(lifecycle.created);
   });
 });

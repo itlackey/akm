@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The OpenCode integration is rebuilt on `@opencode/sdk` (#1244). An
+  `opencode-sdk` engine now runs OpenCode 2 embedded in akm's process: no
+  `opencode` binary, no `opencode serve`, no port. It ignores `bin` and `args`
+  with a warning (`args` used to fail config validation).
+  - Agent and workflow runs load the user's default OpenCode config, with akm's
+    model on top when akm names one.
+  - Model work runs on an empty akm-owned config, with read, grep and glob and
+    akm's own `akm_search`, `akm_show` and `akm_curate`, which run in-process.
+    Every other tool is denied, and none of the user's plugins, MCP servers or
+    agents load. Its model is akm's, else the one the user's OpenCode config
+    selects.
+  - Sessions are stored in akm's own OpenCode database,
+    `<akm data dir>/opencode.db`.
+  - Questions are cancelled and permission requests rejected, each with a
+    message, and the model carries on.
+  - Inference reaches every `opencode-sdk` dispatch, not only model work. On a
+    model from the user's OpenCode config it is laid over that model, best
+    effort, with a one-time warning.
+- `platform: "opencode"` is the OpenCode 1 CLI only. It sends the prompt on
+  stdin, refuses an OpenCode 2 binary with a message naming `opencode-sdk`, and
+  no longer runs model work: a config that names an `opencode` engine for model
+  work fails to load.
+- With no engine configured, akm uses the embedded OpenCode whether or not an
+  `opencode` binary is installed. `akm health` and `akm improve
+  --require-engines` no longer check for an OpenCode binary or client package.
+- A non-interactive `akm setup` picks `opencode-sdk` when OpenCode is set up for
+  the user (a model in their OpenCode config, or saved credentials), else the
+  first agent CLI on `PATH`, else `opencode-sdk`. It never picks the OpenCode 1
+  CLI.
+- The npm package requires Node.js 24 or later (was 22): `@opencode/sdk` needs
+  it. CI tests Node 24 and 26.
+- Standalone binaries are built by `scripts/build-standalone.ts`, which stubs
+  the embedded OpenCode's persistent-terminal helper and native file finder
+  (neither is used by akm runs).
+
+### Removed
+
+- The `opencode serve` server management, the OpenCode 1 and 2 HTTP adapters,
+  the injected `akm-model-work` OpenCode agent, and the `@opencode-ai/sdk` and
+  `@opencode/client` dependencies.
+
 ## [0.10.261013] - 2026-10-23
 
 ### Fixed

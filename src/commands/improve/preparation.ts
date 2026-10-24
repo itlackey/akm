@@ -299,7 +299,7 @@ interface ExtractPassPlan {
 }
 
 /** The extract gates, evaluated once for both the live pass and the dry-run report. */
-function inspectExtractPass(args: ImprovePreparationStageArgs, readOnly: boolean): ExtractPassPlan {
+async function inspectExtractPass(args: ImprovePreparationStageArgs, readOnly: boolean): Promise<ExtractPassPlan> {
   const { options, improveProfile, resolvedPlan, eventsCtx } = args;
   const enabled = resolvedPlan.processes.extract.enabled;
   const hasRunner = resolvedPlan.processes.extract.runner?.engine !== undefined;
@@ -309,14 +309,17 @@ function inspectExtractPass(args: ImprovePreparationStageArgs, readOnly: boolean
   let newCandidateCount: number | undefined;
   if (enabled && hasRunner && availableHarnesses.length > 0 && minNewSessions > 0) {
     const defaultSince = improveProfile.processes?.extract?.defaultSince;
-    newCandidateCount = (options.extractCandidateCountFn ?? countNewExtractCandidates)(options.config ?? loadConfig(), {
-      harnesses: availableHarnesses,
-      improveProfile,
-      ...(defaultSince ? { since: defaultSince } : {}),
-      ...(eventsCtx?.db ? { stateDb: eventsCtx.db } : {}),
-      ...(!readOnly && eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
-      ...(readOnly ? { readOnly: true } : {}),
-    });
+    newCandidateCount = await (options.extractCandidateCountFn ?? countNewExtractCandidates)(
+      options.config ?? loadConfig(),
+      {
+        harnesses: availableHarnesses,
+        improveProfile,
+        ...(defaultSince ? { since: defaultSince } : {}),
+        ...(eventsCtx?.db ? { stateDb: eventsCtx.db } : {}),
+        ...(!readOnly && eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
+        ...(readOnly ? { readOnly: true } : {}),
+      },
+    );
   }
   const belowMinNewSessions =
     minNewSessions > 0 && newCandidateCount !== undefined && newCandidateCount < minNewSessions;
@@ -529,7 +532,7 @@ export async function runImprovePreparationStage(args: ImprovePreparationStageAr
         plan: planConsolidationPass(args).plan,
       }
     : await runConsolidationPass(args);
-  const extractPlan = inspectExtractPass(args, planOnly);
+  const extractPlan = await inspectExtractPass(args, planOnly);
   const extractPass = planOnly ? { warnings: [] } : await runSessionExtractPass(args, extractPlan);
   cleanupWarnings.push(...extractPass.warnings);
   if (persist) {

@@ -7,7 +7,7 @@ import { type AkmProposeOptions, akmPropose } from "../src/commands/proposal/pro
 import { listProposals } from "../src/commands/proposal/repository";
 import type { AkmConfig } from "../src/core/config/config";
 import { buildProposePrompt, PROPOSAL_JSON_SCHEMA } from "../src/integrations/agent/prompts";
-import { __setTestServer, closeServer } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { installFakeOpencodeHost } from "./_helpers/fake-opencode-host";
 import { fakeOpencodeMajor } from "./_helpers/opencode-version";
 import { makeStashDir, mutateScopedEnv, type SandboxedDir, withEnv, withMockedFetch } from "./_helpers/sandbox";
 
@@ -15,8 +15,7 @@ beforeEach(() => fakeOpencodeMajor(1));
 
 const sandboxes: SandboxedDir[] = [];
 
-afterEach(async () => {
-  await closeServer();
+afterEach(() => {
   for (const sandbox of sandboxes.splice(0)) sandbox.cleanup();
 });
 
@@ -252,19 +251,12 @@ describe("proposal consumers lower resolved execution requests", () => {
   test("SDK replies that echo a symbolic fallback credential are rejected instead of persisting redacted text", async () => {
     const stashDir = proposalStash();
     const secret = "proposal-sdk-fallback-secret-092";
-    __setTestServer({
-      client: {
-        session: {
-          create: async () => ({ data: { id: "proposal-sdk-session" } }),
-          prompt: async () => {
-            const content = `---\ndescription: SDK fallback proposal\n---\n\nThe provider echoed ${secret}.\n`;
-            const reply = JSON.stringify({ ref: "skills/sdk-fallback-redaction", content });
-            return { data: { parts: [{ type: "text", text: reply }] } };
-          },
-        },
+    installFakeOpencodeHost({
+      reply: () => {
+        const content = `---\ndescription: SDK fallback proposal\n---\n\nThe provider echoed ${secret}.\n`;
+        return JSON.stringify({ ref: "skills/sdk-fallback-redaction", content });
       },
-      server: { close() {} },
-    } as never);
+    });
 
     const result = await withEnv({ PROPOSAL_SDK_FALLBACK_KEY: secret }, () =>
       akmPropose({

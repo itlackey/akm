@@ -5,19 +5,21 @@
 // The OpenCode SDK runner (#1244) against the real embedded OpenCode and a
 // loopback fake model: no binary, no network.
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { OpenCode } from "@opencode/sdk";
 import type { LlmConnectionConfig } from "../src/core/config/config";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import {
-  __setHostFactory,
+  _setOpencodeHostFactoryForTests,
   akmOpencodeDatabasePath,
   closeOpencodeSdk,
   runOpencodeSdk,
 } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { type FakeModelServer, startFakeModel } from "./_helpers/fake-model-server";
+import { installFakeOpencodeHost } from "./_helpers/fake-opencode-host";
+import { overrideSeam } from "./_helpers/seams";
 
 const profile: AgentProfile = {
   name: "opencode-sdk",
@@ -36,14 +38,16 @@ let work: string;
 beforeAll(() => {
   model = startFakeModel();
   llm = { endpoint: model.url, model: "fake-model", apiKey: "test-key", contextLength: 40000, maxTokens: 4000 };
-  // No model catalog fetch: tests stay off the network.
-  __setHostFactory((options) => OpenCode.create({ ...options, models: { fetch: false } }));
   work = fs.mkdtempSync(path.join(process.env.HOME ?? "/tmp", "sdk-work-"));
 });
 
+// No model catalog fetch: tests stay off the network.
+beforeEach(() =>
+  overrideSeam(_setOpencodeHostFactoryForTests, (options) => OpenCode.create({ ...options, models: { fetch: false } })),
+);
+
 afterAll(async () => {
   await closeOpencodeSdk();
-  __setHostFactory(null);
   model.stop();
 });
 
@@ -73,6 +77,23 @@ describe("runOpencodeSdk", () => {
     expect(result.stdout).toBe("Q-DONE");
   });
 
+  test("a permission request is rejected with a message and the run carries on", async () => {
+    const config = path.join(process.env.XDG_CONFIG_HOME ?? "", "opencode");
+    fs.mkdirSync(config, { recursive: true });
+    fs.writeFileSync(
+      path.join(config, "opencode.json"),
+      JSON.stringify({ permissions: [{ action: "shell", resource: "*", effect: "ask" }] }),
+    );
+    try {
+      const result = await run("MODE:shell ask first");
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain("permission.rejected");
+      expect(result.stdout).toContain("nobody can answer");
+    } finally {
+      fs.rmSync(path.join(config, "opencode.json"));
+    }
+  });
+
   test("a compaction in the middle of a turn does not hide the turn", async () => {
     const before = model.requests.length;
     const result = await run("MODE:compact go");
@@ -94,9 +115,10 @@ describe("runOpencodeSdk", () => {
   });
 
   test("permissions deny every tool the granted capabilities do not cover", async () => {
+    const before = model.requests.length;
     const result = await run("MODE:shell go", { dispatch: { prompt: "", permissions: ["read"] } });
     expect(result.ok).toBe(true);
-    const offered = requestsFor("shell")[0]?.tools ?? [];
+    const offered = model.requests.slice(before).find((r) => r.mode === "shell")?.tools ?? [];
     expect([...offered].sort()).toEqual(["glob", "grep", "read"]);
   });
 
@@ -144,6 +166,43 @@ describe("runOpencodeSdk", () => {
       delete process.env.USERFAKE_KEY;
       fs.rmSync(path.join(config, "opencode.json"));
     }
+  });
+
+  test("inference is laid over a model from the user's OpenCode config", async () => {
+    const config = path.join(process.env.XDG_CONFIG_HOME ?? "", "opencode");
+    fs.mkdirSync(config, { recursive: true });
+    fs.writeFileSync(
+      path.join(config, "opencode.json"),
+      JSON.stringify({
+        provider: {
+          userfake: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: model.url, apiKey: "user-key" },
+            models: { "fake-model": {} },
+          },
+        },
+      }),
+    );
+    try {
+      const before = model.requests.length;
+      const result = await runOpencodeSdk(profile, "MODE:answer with effort", {
+        cwd: work,
+        timeoutMs: 60_000,
+        dispatch: { prompt: "", model: "userfake/fake-model", inference: { reasoningEffort: "high" } },
+      });
+      expect(result.ok).toBe(true);
+      const sent = model.requests.slice(before).find((r) => r.mode === "answer");
+      expect(sent?.params.reasoning_effort).toBe("high");
+    } finally {
+      fs.rmSync(path.join(config, "opencode.json"));
+    }
+  });
+
+  test("a turn longer than one page of history is read across pages", async () => {
+    installFakeOpencodeHost({ reply: () => ({ text: "AFTER-MANY-STEPS", steps: 450 }) });
+    const result = await run("long turn");
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("AFTER-MANY-STEPS");
   });
 
   test("the deadline ends a run as a timeout", async () => {
