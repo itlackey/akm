@@ -269,7 +269,7 @@ cannot enforce:
 |---|---|
 | LLM | No tools. |
 | `claude` | Read and Edit inside the working directory, and Bash for `akm search` and `akm show` only. akm runs it with `--restricted`, so your user, project and local settings cannot widen that. |
-| `opencode`, `opencode-sdk` | Read, grep and glob in the working directory and the stash, edit in the working directory only, and `akm_search` and `akm_show`, through an injected `akm-model-work` agent. No bash, because opencode cannot stop a redirect such as `akm show x > file` from writing elsewhere. |
+| `opencode`, `opencode-sdk` | Read, grep and glob in the working directory and the stash, and edit in the working directory only, through an injected `akm-model-work` agent. No bash, because opencode cannot stop a redirect such as `akm show x > file` from writing elsewhere. |
 | Every other `agent` harness | Cannot run model work: akm refuses the request before it starts. |
 
 **The one rule.** Every key model work reads its engine from must name an
@@ -294,13 +294,9 @@ key, the engine and its platform. Other engine keys, `defaults.engine` and
   [Inference on an agent engine](#inference-on-an-agent-engine)); on any other
   agent engine it is reported as `untranslated-field` notices, not errors.
 - opencode model work may read the stash and write only its working directory.
-  `akm_search` and `akm_show` come from the akm-opencode plugin (0.9.21 or
-  later), which akm does not load: put it in your opencode config
-  (`"plugin": ["akm-opencode"]` for OpenCode 1; for OpenCode 2 install
-  `akm-opencode-v2` with `opencode plugin add akm-opencode-v2`, see
-  [Use AKM With Any Agent](https://github.com/itlackey/akm/blob/main/docs/guides/use-with-any-agent.md#opencode-plugins-one-package-per-opencode-major)). akm turns off the plugin's curation, learning
-  and write gate for these dispatches and keeps its state in akm's state
-  directory. The stash is protected from edits only while the temporary
+  When your opencode config loads the akm-opencode plugin, akm denies its tools
+  to model work, turns off its curation, learning and write gate for these
+  dispatches and keeps its state in akm's state directory. The stash is protected from edits only while the temporary
   directory is outside a git repository.
 
 ### Model-map files

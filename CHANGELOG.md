@@ -35,6 +35,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   now counts as already saved, as the `akm remember` command does, and the
   plugin's search, show and curate calls are left out.
 - OpenCode install hints name OpenCode 2 (`npm i -g @opencode/cli`) (#1244).
+- Model work on `opencode` and `opencode-sdk` no longer offers the akm plugin's
+  `akm_search` and `akm_show` tools (#1244). akm switches the plugin's CLI off
+  for model work, so both always failed. Model work keeps read, and edit in its
+  working directory.
 
 ### Fixed
 

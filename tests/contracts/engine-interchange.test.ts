@@ -361,8 +361,6 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
       glob: "allow",
       edit: { "*": "allow", [`${stash.dir.slice(1)}/*`]: "deny", [`${stash.dir}/*`]: "deny" },
       external_directory: { [`${stash.dir}/*`]: "allow", "~/.local/share/opencode/tool-output/*": "deny" },
-      akm_search: "allow",
-      akm_show: "allow",
       akm_feedback: "deny",
       akm_remember: "deny",
       akm_curate: "deny",
