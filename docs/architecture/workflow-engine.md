@@ -9,9 +9,8 @@ exact frontmatter/body syntax that produces the plan, see
 [Workflow Schema](../reference/workflow-schema.md). For the day-to-day
 commands that drive a run, see [Running Workflows](../guides/run-workflows.md).
 
-> **`akm workflow run` is Stable, ungated, and the only execution surface.**
-> It is the canonical start/resume/execute command; there is no separate
-> external-driver protocol.
+> **`akm workflow run` is the one command that starts, resumes, and executes a
+> run.** There is no separate driver protocol.
 
 ## Frozen plans
 
@@ -31,19 +30,19 @@ run.
 Dispatch-significant material is immutable. The resolved request is frozen,
 the resolved target is frozen, and runner selection is frozen.
 Working directory (`cwd`) identity is frozen.
-Git identity and its commit OID are frozen. The executable a unit runs is
-resolved at dispatch, so upgrading a CLI (say, `claude`) never strands a run.
+Git identity and its commit OID are frozen. An agent binary is frozen by name
+(say, `claude`) and found on `PATH` when the unit dispatches, so upgrading that
+CLI does not invalidate a run.
 Exact models, inference, tools and authorization,
 execution limits, parameter snapshots, command/script bytes, and verifier
 selection therefore cannot drift under an in-flight run.
 
-Workflow environment asset values are the narrow live-value exception within
-authored workflow inputs.
-The environment owner key set and secret-token topology are frozen.
-Literal values remain frozen. Pass-through bindings
-materialize at dispatch from the current process, and env/secret references
-materialize their current values only after owner/topology checks. Durable
-plans never store secret values or enable whole-process `inheritEnv`.
+Workflow environment asset values are the one live-value exception within
+authored workflow inputs. The environment owner key set and secret-token
+topology are frozen, and literal values stay frozen. Pass-through bindings
+materialize at dispatch from the current process, and env and secret references
+materialize their current values at dispatch. A durable plan stores secret
+references, not secret values.
 
 **A run executes the plan compiled at creation; edits to source need a new
 run.** Resuming a run re-reads its workflow source only to warn, once, when
@@ -60,10 +59,10 @@ freezes to a `child-workflow` frozen target. Unlike the `command`/`shell`/
 frozen plan, embedded**: compiling the parent recursively compiles,
 validates, and freezes each child in full — depth-first, all of it — before
 the parent run is ever published. Nothing about a child is re-read at
-dispatch time; the embedded plan is authoritative. See
-[Workflow Schema: Child workflows](../reference/workflow-schema.md#child-workflows)
-for the authoring-side view, including the three composition bounds (depth,
-cycle, aggregate embedded bytes) enforced at freeze.
+dispatch time; the embedded plan is authoritative. A composition cycle is
+refused at freeze (`COMPOSITION_INVALID`, `src/workflows/freeze/targets/child-workflow.ts`).
+See [Workflow Schema: Child workflows](../reference/workflow-schema.md#child-workflows)
+for the authoring-side view.
 
 **Decoding.** An embedded child plan is decoded by the same structural
 decoder as its parent, recursively. Its `planHash` and the target's
@@ -117,12 +116,10 @@ exactly the second executor this design avoids.
 
 **Why `hashVersion` is 7, and why child composition did not move it.** The
 version prefix mixed into a unit's input hash is 7
-(`src/workflows/exec/step-work.ts`); 0.9.2 bumped it — a single, durable
-5 → 7 step, since every released tag on the line carries 5 — when
-`taskInputs`, the resolved values of a composed task's reference-kind
-`inputBindings`, joined the preimage (see [ADR
-0002](decisions/0002-unit-reuse-and-input-hash-scope.md)). Child composition
-itself contributed nothing to that bump: the parent unit's input-hash
+(`src/workflows/exec/step-work.ts`); it became 7 when `taskInputs`, the
+resolved values of a composed task's reference-kind `inputBindings`, joined the
+preimage. Child composition itself contributed nothing to that bump: the
+parent unit's input-hash
 preimage already covers everything the child drive depends on — the frozen
 target carries the child's ref, plan hash, content hash, binding mode, and
 its entire embedded plan, so any change anywhere in the child changes the
@@ -165,7 +162,9 @@ Every dispatched unit is journaled under a content-derived identity — the
 node id plus a hash of its item for a map unit (`<node>:solo` otherwise) —
 together with an input hash over everything the unit was asked to do (its
 frozen instructions and target, declared `inputs:` artifacts, the params
-snapshot, gate feedback). On
+snapshot, gate feedback, and the resolved values of a composed task's input
+bindings). Environment bindings enter the hash by name, never by value, and
+`retry` and `onError` do not enter it. On
 re-run, a unit whose journal row is `completed` is **reused**, never
 re-dispatched; a failed or missing unit is dispatched live. The recorded
 input hash is informational: a completed unit stays completed even when the
@@ -194,9 +193,11 @@ dispatching anything: one `O_EXCL` file per run id under the data directory
 holder's pid, released when the invocation exits. A second `workflow run`
 against a run another live process holds refuses up front with
 `RUN_LEASE_HELD` (exit 75), naming the holder pid. A lock whose holder pid is
-dead is reclaimed at once, so a crashed engine never wedges a run; nothing
+dead is reclaimed at once, so a crashed engine does not wedge a run; nothing
 expires by age and nothing renews. `workflow status` and `list` never take
-the lock.
+the lock. When the invocation ends, on every exit path, the engine also closes
+any cached SDK server processes (`disposeDispatchResources`) so the one-shot
+process can exit.
 
 ## Worktree isolation
 
@@ -206,22 +207,21 @@ A file-mutating unit can declare `isolation: worktree` in its `unit:` bag
 Each unit attempt gets a fresh **detached git worktree** of the run's base
 repository under a run-scoped temp directory; the worktree path is journaled
 on the unit row and passed to the harness as its working directory, so
-parallel fan-out units can never trample each other's working tree. After the
+parallel fan-out units do not share a working tree. After the
 unit finishes, a clean worktree (`git status --porcelain` empty) is removed
-automatically; a dirty one is retained and its path logged, so uncollected
-work is never destroyed. Declaring worktree isolation in a non-git directory
-fails the step cleanly before anything dispatches.
+automatically; a dirty one is retained and its path logged. Retained worktrees
+older than a week are removed by a sweep that runs at most once per process.
+Declaring worktree isolation in a non-git directory fails the step before
+anything dispatches.
 
-> **Warning — outputs matched by `.gitignore` are treated as disposable.** A
-> worktree-isolated unit's output survives only if it lands on a
-> **collectible path**: a tracked file, or an untracked file your repository
-> does **not** `.gitignore`. Anything a unit writes to a `.gitignore`d path —
-> build outputs, caches, logs, dependency directories like
-> `node_modules`/`dist`, or a scratch file under an ignored directory — is
-> **discarded** when its clean worktree is auto-removed. If a unit produces an
-> artifact that must survive, write it to a non-ignored path, or report it as
-> a result (a structured `output` / free-text result), before the unit
-> returns.
+> **Outputs matched by `.gitignore` are treated as disposable.** A
+> worktree-isolated unit's output survives only if it lands on a tracked file
+> or an untracked file your repository does not `.gitignore`. Anything a unit
+> writes to a `.gitignore`d path — build outputs, caches, logs, dependency
+> directories like `node_modules`/`dist` — is discarded when its clean worktree
+> is auto-removed. If a unit produces an artifact that must survive, write it
+> to a non-ignored path, or report it as a result (a structured `output` or
+> free-text result), before the unit returns.
 
 The clean probe deliberately does **not** pass `--ignored`, so "uncollected
 work" means tracked or untracked-*unignored* changes only. A worktree whose
@@ -233,17 +233,17 @@ would blow up disk under the temp root.
 ## Concurrency limits
 
 Native fan-out (`akm workflow run`) uses the minimum of four limits: the
-map's declared `concurrency`, the run's frozen `workflow.maxConcurrency`, the
-selected frozen LLM engine's `concurrency` (including an SDK engine's
-fallback LLM), and the current host's CPU-derived safety limit. Reapplying
-host safety keeps a run safe when it resumes on a smaller machine.
+map's `concurrency` (4 when the map declares none, or `workflow.defaultMapConcurrency`
+when set), the run's frozen `workflow.maxConcurrency`, the selected frozen LLM
+engine's `concurrency` (including an SDK engine's fallback LLM), and the current
+host's CPU-derived limit. The host limit is applied again on resume, so a run
+resumed on a smaller machine uses fewer workers. The policy lives in
+`src/workflows/concurrency-policy.ts`.
 
-- **Unset (default):** the CPU-derived value `min(16, max(1, cores − 2))` — a
-  conservative default that leaves headroom on the host and matches the
-  original Claude-Code cap.
+- **Unset (default):** the CPU-derived value `min(16, max(1, cores − 2))`.
 - **Set:** an explicit positive integer, clamped when frozen to `[1, 64]`
-  (values above 64 are clamped down, never rejected, so one config shared
-  across machines with different core counts never hard-fails).
+  (values above 64 are clamped down, so one config can be shared across
+  machines with different core counts).
 
 ```console
 $ akm config set workflow.maxConcurrency 8   # raise the frozen workflow limit
@@ -251,9 +251,8 @@ $ akm config get workflow.maxConcurrency
 8
 ```
 
-A workflow that fans out is authorizing **N parallel agents**, not one — see
-[Running Workflows: workflow sources are executed code](../guides/run-workflows.md#security-workflow-sources-are-executed-code)
-for what that means for trust.
+A fan-out runs up to N agents at once, not one; see
+[Running Workflows](../guides/run-workflows.md).
 
 ## Run scope and persistence
 
