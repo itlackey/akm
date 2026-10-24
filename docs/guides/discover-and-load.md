@@ -151,7 +151,7 @@ its ranking) and does not trigger a rewrite.
 - [Architecture](../architecture/architecture.md) — ranking and search
   implementation detail (Search Pipeline, Show Resolution, Utility Scoring)
 - [Bundles](bundles.md) — where indexed assets come from
-- [Knowledge Management](knowledge-management.md) — capturing and importing
+- [Capture Knowledge](capture-knowledge.md) — capturing and importing
   assets before they're discoverable
 - [Use akm with any agent](use-with-any-agent.md) — how agents reference
   assets by ref in practice

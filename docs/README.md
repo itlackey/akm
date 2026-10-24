@@ -42,16 +42,14 @@ Package complete capabilities and turn knowledge into repeatable work.
 
 - [Bundle Author's Guide](guides/author-bundles.md) -- Build a bundle, make it discoverable, and share it so others can install it with `akm bundle add`
 - [Author's Guide: Writing Workflows](guides/author-workflows.md) -- Write and test a workflow definition, from a minimal example to gates and outputs
-- [Claude Code workflows vs. akm workflows](guides/claude-code-vs-akm-workflows.md) -- Short decision guide for choosing between a session-native workflow and an akm workflow ([full technical comparison](architecture/comparisons/claude-code-vs-akm-workflows-full.md))
 - [Bundling akm](integration/bundling-akm.md) -- Ship akm inside your own product: the pin/migrate/health boot contract, plan JSON shapes, and exit codes for bundlers
 
 ### Maintainers
 
 Working on akm itself, not just using it.
 
-- [Maintainer Docs](maintainers/README.md) -- Start here: local development, measuring improvement, and the curate contract
+- [Maintainer Docs](maintainers/README.md) -- Start here: local development, the release checklist, and measuring improvement
 - [Local Development](maintainers/local-development.md) -- Dogfooding akm while editing its own source
-- [Curate Workmap](maintainers/curate-workmap.md) -- The current `akm curate` contract and the highest-value next fixes
 
 ## Look up details
 
@@ -72,13 +70,10 @@ Working on akm itself, not just using it.
 - [Adapters](architecture/adapters.md) -- How akm picks an adapter, indexes, validates, and writes into a bundle
 - [The Workflow Engine](architecture/workflow-engine.md) -- How a frozen plan is stored, dispatched, and resumed without replaying completed units
 - [The Improvement Loop](architecture/improvement.md) -- How a feedback signal becomes a ranking change, and how evidence becomes a proposal
-- [Runtime Boundary Design](architecture/runtime-boundary-design.md) -- Isolating `bun:sqlite`/`Bun.*` from the core
-- [Architecture Decision History](architecture/akm-architecture-decision-history.md) -- ADR-style record of the major architecture rulings
-- [Specs](architecture/README.md#specs-specs) -- Normative specifications (bundle/adapter model, ref grammar, bundle conventions)
-- [Internals](architecture/README.md#internals-internals) -- Current-truth subsystem references (storage, search, indexing, improve, health)
-- [Testing](architecture/README.md#testing-testing) -- Testing workflow and pre-release checklist
+- [Specs](architecture/README.md#specs-specs) -- Normative specifications (ref grammar, OKF support)
+- [Internals](architecture/README.md#internals-internals) -- Current-truth subsystem references (storage, indexing, classification, improve, health)
+- [Testing](architecture/README.md#testing-testing) -- Testing workflow
 - [Migration](migration/README.md) -- Upgrade guides and per-release migration notes
-- [Roadmap](https://github.com/itlackey/akm/blob/main/ROADMAP.md) -- High-level focus for the releases from here through 1.0
 
 ## Execution boundary
 

@@ -331,7 +331,7 @@ get discovered, see [Registry](../reference/registry.md).
 ## See also
 
 - [Discover & Load](discover-and-load.md) — querying the index after bundles are connected
-- [Knowledge Management](knowledge-management.md) — writing your own assets
+- [Capture Knowledge](capture-knowledge.md) — writing your own assets
 - [Use akm With Any Agent](use-with-any-agent.md) — using refs across bundles in prompts
 - [Website Source Recipe](recipes/website-source.md) — walkthrough for adding a crawled website bundle
 - [Website Sources](../reference/website-sources.md) — fetcher reference, X credentials, crawl options

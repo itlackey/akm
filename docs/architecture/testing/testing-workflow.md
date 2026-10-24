@@ -8,9 +8,7 @@ This project is a CLI with three risk-heavy areas:
 
 The safest way to test it is in layers: fast local checks first, then end-to-end
 CLI coverage, then Docker-based deployment and upgrade validation. This document
-owns automated test workflow and test-authoring guidance only. The authoritative
-manual setup, command matrix, expected behavior, release gates, evidence, and
-cleanup live in [AKM Manual Testing Runbook](./manual-testing-checklist.md).
+covers the automated test workflow and test-authoring guidance.
 
 ## What To Validate
 
@@ -274,13 +272,6 @@ have passed on that commit; see the
 [maintainer release checklist](../../maintainers/release-checklist.md). The
 weekly scheduled run of Gated CI detects default-branch drift.
 
-## Manual QA Authority
-
-Use [AKM Manual Testing Runbook](./manual-testing-checklist.md) for every manual
-flow. Its full sandbox is mandatory; the smaller historical XDG-only setup is
-unsafe because `AKM_CONFIG_DIR` can bypass it. The runbook also owns expected
-exits/channels, fixtures, release evidence, platform gates, and cleanup.
-
 ## Docker Deployment Validation
 
 ### Automated matrix
@@ -327,21 +318,12 @@ which can catch failures that unit and subprocess tests miss.
 
 Those should be validated in disposable containers as described next.
 
-## Published Artifact Acceptance
-
-Published binary, installer, checksum, native-platform, and self-upgrade
-procedures are release-facing manual gates. Run sections 21-22 of the
-[manual runbook](./manual-testing-checklist.md); do not validate release bytes
-with an installer fetched from raw `main`.
-
 ## Upgrade Regression Coverage
 
 Managed-source updates and CLI self-upgrade are separate implementations.
 Provider/registry suites cover source add/update/remove/cache behavior;
 `tests/integration/self-update.test.ts` covers install-method detection,
-orchestration, checksum, and failure paths. Real managed-source and self-upgrade
-acceptance is manual and lives in section 21 of the
-[manual runbook](./manual-testing-checklist.md).
+orchestration, checksum, and failure paths.
 
 ### Upgrade rehearsal gate
 

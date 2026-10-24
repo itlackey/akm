@@ -25,7 +25,6 @@ Task-oriented guides and command tours for using akm.
 
 - [Bundle Author's Guide](author-bundles.md) -- Build and share a bundle on GitHub, npm, or a network directory
 - [Wikis](wikis.md) -- Multi-wiki knowledge bases (Karpathy-style)
-- [Claude Code workflows vs. akm workflows](claude-code-vs-akm-workflows.md) -- Comparing the two things that share a name
 
 ## Recipes
 

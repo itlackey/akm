@@ -80,9 +80,8 @@ recognized and indexed automatically once added as a source — see
 which formats are read-only versus writable in the current release.
 The native directory remains the source of truth: AKM translates recognized
 assets while reading the bundle and does not synchronize, copy, or write them
-back. The approved target execution rules for these translated agents and
-commands are documented in
-[Agent, Command, Engine, and Model Resolution](../architecture/specs/agent-command-engine-model-design.md).
+back. Execution of these translated agents and commands is described in
+[Architecture: Engine Boundary](../architecture/architecture.md#engine-boundary).
 
 ## AKM complements, rather than replaces
 
@@ -167,7 +166,7 @@ which plugin you install, and the plugin choice does not change it.
 
 - [Configuration](../reference/configuration.md#engines) — named agent engines and model aliases
 - [Discover and Load](discover-and-load.md) — the full curate → show retrieval path
-- [Knowledge Management](knowledge-management.md) — capturing agent-generated memories
+- [Capture Knowledge](capture-knowledge.md) — capturing agent-generated memories
 - [Improve the Library](improve-the-library.md) — feeding back usage signals
 - [CLI Reference](../reference/cli.md) — `completions`, `agent`, and `hints` command documentation
 - [Concepts](concepts.md) — refs, origins, and the asset type system

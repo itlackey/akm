@@ -18,9 +18,7 @@ an extra indexed concept in a fixture meant to stay behavior-frozen.
   `tests/fixtures/format-family-goldens/`, whose goldens were authored ahead
   of their adapters).
 - **Goldens:** `tests/fixtures/format-family-goldens/okf/{recognition,placement,lint,renderer}.json`
-- **Spec:** `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §5 (the
-  reference OKF adapter) + §5.1 (`type` from frontmatter, no directory gate) +
-  §9 (links); `docs/architecture/specs/okf-support.md`.
+- **Spec:** `docs/architecture/specs/okf-support.md`.
 - **Real-world source:** https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
 
 Files:

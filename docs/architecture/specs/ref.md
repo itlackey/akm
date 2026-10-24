@@ -12,9 +12,7 @@ search -> pick a hit -> pass its ref to show
 > **Status.** This document is normative for 0.9.0 and is the target the
 > implementation is being brought to. Sections marked **[0.9.0 change]**
 > describe decisions taken during the 0.9.0 surface review that the code does
-> not yet fully implement; see
-> [`0.9.0-release-surface-review.md`](./0.9.0-release-surface-review.md) and
-> [`0.9.0-decisions.md`](./0.9.0-decisions.md).
+> not yet fully implement.
 
 ## Item Refs
 
@@ -45,7 +43,7 @@ as `personal//memories/vpn-note`. See
 [`okf-support.md`](./okf-support.md).
 
 Refs are parsed by `parseBundleRef` in `src/core/asset/asset-ref.ts`. The
-grammar (normative spec §11.1) is:
+grammar is:
 
 ```text
 ref        := [ bundle "//" ] concept-id [ "#" fragment ]
@@ -137,10 +135,10 @@ A fragment that matches no heading is an error that **lists the available
 fragment slugs** — that error is the discovery mechanism, replacing the removed
 `toc` view mode.
 
-**Every other item kind — adapter-owned selector.** Per normative spec §11.3,
-when one item exposes multiple exports the adapter MAY append a stable
-fragment (`team//tools/toolbox#deploy`). The fragment is adapter-owned and
-opaque to the core. The two meanings coexist because the core only interprets
+**Every other item kind — adapter-owned selector.** When one item exposes
+multiple exports the adapter MAY append a stable fragment
+(`team//tools/toolbox#deploy`). The fragment is adapter-owned and opaque to
+the core. The two meanings coexist because the core only interprets
 fragments for items whose adapter declares them markdown documents; for
 everything else it passes the fragment through untouched.
 
@@ -269,7 +267,7 @@ refs dangling. That defect is why `akm mv` shipped **Experimental** earlier in
 the 0.9.0 cycle and was never covered by the stability contract.
 
 **Amended 2026-07-30.** `akm mv` was removed outright before the 0.9.0
-release (no alias, no stub — see [`0.9.0-decisions.md` §D3](./0.9.0-decisions.md#d3--renames-are-delete--create-akm-mv-ships-experimental)).
+release (no alias, no stub).
 There is no tool today that rewrites inbound refs on rename; see "Renames and
 moves" below for the current procedure.
 
