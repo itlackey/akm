@@ -23,7 +23,7 @@ Item refs use this wire format:
 | --- | --- | --- |
 | `bundle` | no | Workspace bundle slug (e.g. `personal`, `team-catalog`) that owns the item. Separated from the rest of the ref by `//`. When omitted, CLI input resolves against `defaultBundle` first and then the remaining bundles in installation-priority order. |
 | `conceptId` | yes | Adapter-defined path within the bundle, `/`-separated and canonicalized by that adapter. Examples: `knowledge/http-caching`, `skills/code-review`, `scripts/db/migrate/run.sh`, `tables/customers`. |
-| `fragment` | no | Selector for a part of the item. For markdown-document items the core interprets it as a **section selector**; for every other item kind it is an adapter-owned selector, opaque to the core. See [Fragments](#fragments). |
+| `fragment` | no | Selects a section of a Markdown item. On any other item `akm show` warns and shows the whole item. See [Fragments](#fragments). |
 
 `type` is not part of a ref. Identity is a path, not a `type:name` pair, and a
 conceptId is an **opaque path** — akm does not parse meaning out of its
@@ -44,7 +44,7 @@ grammar is:
 ref        := [ bundle "//" ] concept-id [ "#" fragment ]
 bundle     := any run of non-space chars excluding : . # /
 concept-id := adapter-canonical path within the bundle, / -separated, NFC, case-sensitive
-fragment   := section slug (markdown-document items) | adapter-owned selector
+fragment   := section slug (Markdown items)
 ```
 
 The bundle slug excludes `:`, `.`, `#`, `/`, and whitespace so a `bundle//conceptId`
@@ -120,11 +120,8 @@ fragment slugs**, which is how a caller discovers them. Opaque
 `#akm-fragment-...` selectors resolve against the indexed revision; see
 [Architecture: Show Resolution](../architecture.md#show-resolution).
 
-**Every other item kind — adapter-owned selector.** The grammar reserves the
-fragment for the adapter: when one item exposes multiple exports the adapter may
-append a stable fragment (`team//tools/toolbox#deploy`), and the core does not
-interpret it. Today `akm show` ignores a fragment on an item that is not a
-Markdown document, warns, and shows the whole item.
+**Every other item.** `akm show` ignores the fragment, warns, and shows the whole
+item.
 
 **Fragments are input-only.** Durable state — index rows, state keys, proposal
 targets, bindings — does not store a fragment, and a stored ref carrying one is
@@ -166,7 +163,7 @@ than an error, because "unrecognized" is not a decidable property. Callers that
 want a closed set should filter on conceptId prefix instead (see above).
 
 The closed set still applies where a type must select a *write placement* —
-`akm proposal new <type> <name>`, `placeNew` — because those need a directory to write to.
+`akm proposal new <type> <name>` — because that needs a directory to write to.
 
 ## Reserved structural files
 

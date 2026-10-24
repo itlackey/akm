@@ -65,14 +65,6 @@ scheduled tasks that invoke `akm`. Re-run `akm task sync --rebind` only when you
 intend existing scheduler entries to capture the new installed runtime, then
 verify with `akm task doctor`.
 
-## Transitional Machine-Local Wrapper
-
-Some development machines still have a historical machine-local wrapper. Leave
-that file untouched, but treat it as transitional: do not document wrapper
-modes, depend on it in tests, or use it to choose between source and package
-behavior. Invoke `bun src/cli.ts`, `node dist/akm`, or `bun run test:package`
-explicitly instead.
-
 ## Inspecting a Live Database
 
 `state.db`, `logs.db`, and `index.db` are WAL-mode SQLite databases that akm

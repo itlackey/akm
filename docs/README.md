@@ -49,7 +49,6 @@ also has its own README indexing everything inside it: [Guides](guides/README.md
 - [Website Sources](reference/website-sources.md) -- The fetcher API for crawling and importing URLs
 - [Data & Telemetry](reference/data-and-telemetry.md) -- What akm reads and writes on your machine
 - [Architecture](architecture/architecture.md) and [Core Principles](architecture/akm-core-principles.md) -- How akm fits together and the principles it follows; [the architecture index](architecture/README.md) lists the rest
-- [Roadmap](https://github.com/itlackey/akm/blob/main/ROADMAP.md) -- High-level focus for the releases from here through 1.0
 
 ## Migration
 

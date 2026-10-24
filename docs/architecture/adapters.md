@@ -149,30 +149,17 @@ concern.
 
 ---
 
-## `placeNew()` wiring status
+## `placeNew()`
 
-The interface declares `placeNew()` as an optional capability method, and 9
-of the 11 built-in adapters already implement it — all but `okf` and
-`website-snapshot` (`claude` and `opencode` inherit theirs from the shared
-tool-dir factory). **Nothing in the write path calls it yet**: AKM-native
-writes still resolve through AKM's own flat type→directory placement table
-(`src/core/asset/asset-placement.ts`'s `PLACEMENT_SPECS`), not through the
-owning adapter's `placeNew()`.
-
-Placement for every existing bundle is already correct; routing writes
-through `placeNew()` is a planned change that would not alter where existing
-bundles place files. Treat the `placeNew()` bodies as unexercised by the write
-path until that happens. See [STABILITY.md](../../STABILITY.md) ("On the
-horizon") for the up-to-date status.
+Nothing in the write path calls `placeNew()`; writes resolve through the native type-to-directory table in `src/core/asset/asset-placement.ts`.
 
 ---
 
 ## Write allowlists
 
-`placeNew()` wiring is a separate question from **which bundles AKM-native
-write commands are allowed to touch at all** — that's decided today by a
-small allowlist check, `assertAkmAssetWrite` (`src/core/write-source.ts`),
-run before any write command touches the filesystem. It compares the target
+Which bundles AKM-native write commands may touch is decided by a small
+allowlist check, `assertAkmAssetWrite` (`src/core/write-source.ts`), run before
+any write command touches the filesystem. It compares the target
 bundle's detected (or configured) adapter id against an allowlist and throws
 a `UsageError` on a miss.
 

@@ -1,8 +1,8 @@
 # Stability policy
 
 `akm-cli` follows [Semantic Versioning](https://semver.org/) on the 0.x line
-**with one caveat**: until 1.0, minor releases (0.x → 0.x+1) may include
-breaking changes.
+**with one caveat**: while the version is 0.x, minor releases (0.x → 0.x+1)
+may include breaking changes.
 
 **0.9.x series exception.** The 0.9.x releases are a deliberate refactoring
 and clean-up series: the goal is to pay off all remaining technical debt and
@@ -134,8 +134,8 @@ covers beyond the table.
     accepts it. On markdown-document items the core resolves it as a section
     selector — `akm show <ref>#<heading-slug>` returns that one section, no
     fragment returns the whole item, and an unmatched fragment lists the
-    available slugs. Elsewhere it is an adapter-owned selector opaque to the
-    core. See
+    available slugs. On any other item `akm show` ignores the fragment, warns,
+    and shows the whole item. See
     [`docs/architecture/specs/ref.md`](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/ref.md).
   - **Refs in prose** must be fully qualified (`bundle//conceptId`) or a native
     adapter link form. A bare conceptId in prose is ordinary text, not a ref.
@@ -258,7 +258,7 @@ CHANGELOG with a migration note.
   CLI path, a deprecation candidate once `opencode-sdk` covers it), `codex`,
   `copilot`, `pi`, `gemini`, `aider`, `amazonq` and `openhands`. Every harness
   is Evolving: the harness implementation is being reworked so harnesses are
-  easy to add, remove and update (0.10). The set will grow.
+  easy to add, remove and update (0.10).
 - **Proposal queue** — proposal statuses (`pending`, `accepted`, `rejected`,
   `reverted`) are stable; the JSON shape of a proposal record may add fields.
 - **Registries** — registries are searched with `akm search --from registry`.
@@ -285,7 +285,7 @@ for scripted use.
   stable, but lesson-distillation triggers and ranking are tuning targets.
 - **`--shape agent` and `--shape summary`** — the output-projection axis.
   `summary` is implemented only on `akm show`; `agent` is implemented on
-  `search`, `show` and `curate`. Coverage will expand.
+  `search`, `show` and `curate`.
 - **Env and secret write verbs** — `env create`, `env remove` and
   `secret set`. The read-and-inject commands are Stable: `akm env list`,
   `akm secret list` and `akm show` print names only, and
@@ -396,23 +396,12 @@ These changes are planned and will land in a known future release. They
 are not part of the current stability contract; you should plan migrations
 around them.
 
-The breaking changes planned for 0.9 have shipped; what remains is below.
-
 - **0.10 — `config set`/`config unset` may drop the config dump** in favor of
   a compact `{ok, shape, key}` result; `akm config list` remains the full read.
 - **0.10 — migration extraction.** The migration machinery leaves the CLI for
   a separately published `akm-migrate` package (see Internal above).
 - **0.10 — `--auto-accept` hard error.** It is currently accepted-and-warned;
   see the Improvement loop entry.
-- **0.10 — `BundleAdapter.placeNew()` wiring.** The interface declares
-  `placeNew()` as an optional capability method and most built-in adapters
-  implement it, but nothing in the write path calls it — writes still resolve
-  through AKM's native flat type→directory table. Nothing user-visible changes
-  in 0.10 for this alone.
-- **1.0 contract freeze** — the `[bundle//]conceptId[#fragment]` ref grammar,
-  the supported source model, search behavior, and write-target rules are
-  frozen at 1.0. The SDK and in-process plugin story ship on top of that
-  frozen core.
 
 ## Reporting stability regressions
 
