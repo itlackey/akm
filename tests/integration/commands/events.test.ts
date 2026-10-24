@@ -352,7 +352,7 @@ describe("akm CLI mutation events", () => {
   });
 });
 
-describe("log --limit (D-38)", () => {
+describe("log --limit", () => {
   // The verified-live repro this closes: 26 events seeded, `akm log --limit 5
   // --format json` used to return all 26 — citty silently swallows an
   // unrecognized flag, and there was no limiting mechanism in the read path

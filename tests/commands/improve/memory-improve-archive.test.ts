@@ -179,7 +179,7 @@ describe("derivedTwinPath", () => {
   });
 });
 
-describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)", () => {
+describe("purgeGracedArchive — the purge sweep", () => {
   /** A retire-shaped archive (proposalId set), via the real production path so `retiredAt` matches reality. Returns the tombstone's own `retiredAt`. */
   function archiveRetirement(stashDir: string, relPath: string, ref: string): string {
     const filePath = writeAsset(stashDir, relPath, "description: a retired asset");
@@ -241,7 +241,7 @@ describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)
     });
   });
 
-  test("past the grace period AND committed-clean in git: the archived file is deleted, cleanup.md is not (B1)", () => {
+  test("past the grace period AND committed-clean in git: the archived file is deleted, cleanup.md is not", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
@@ -291,7 +291,7 @@ describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)
     expect(fs.existsSync(path.join(archiveRoot, dir, "memories", "child.derived.md"))).toBe(true);
   });
 
-  test("an untracked archived file (never committed) is kept — git has no other copy of it (B1)", () => {
+  test("an untracked archived file (never committed) is kept — git has no other copy of it", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     // A `kind: "filesystem"` bundle's `proposal accept` never commits
@@ -309,7 +309,7 @@ describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)
     expect(fs.existsSync(path.join(archiveRoot, dir, "cleanup.md"))).toBe(true);
   });
 
-  test("a modified archived file (committed, then edited on disk with no new commit) is kept (B1)", () => {
+  test("a modified archived file (committed, then edited on disk with no new commit) is kept", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
@@ -327,7 +327,7 @@ describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)
     expect(fs.existsSync(path.join(archiveRoot, dir, "memories", "stale.md"))).toBe(true);
   });
 
-  test("a symlinked archive/<dir> is never followed — nothing outside the archive is touched (N1)", () => {
+  test("a symlinked archive/<dir> is never followed — nothing outside the archive is touched", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
@@ -360,7 +360,7 @@ describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)
     expect(fs.existsSync(path.join(victimDir, "cleanup.md"))).toBe(true);
   });
 
-  test("a broken 'git status' (nonzero exit) purges NOTHING this sweep, even though 'git ls-files' still works, and warns once (G8, round-3 review)", () => {
+  test("a broken 'git status' (nonzero exit) purges NOTHING this sweep, even though 'git ls-files' still works, and warns once", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
@@ -403,7 +403,7 @@ describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)
     expect(warnings[0]).toContain("archive purge");
   });
 
-  test("a broken submodule (gitlink) that fails 'git status' but not 'git ls-files' purges NOTHING (G9, round-3 review)", () => {
+  test("a broken submodule (gitlink) that fails 'git status' but not 'git ls-files' purges NOTHING", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
@@ -433,7 +433,7 @@ describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)
     expect(fs.existsSync(archivedFile)).toBe(true);
   });
 
-  test("an assume-unchanged tracked file hides its own edit from 'git status' — kept, not purged (G10, round-3 review)", () => {
+  test("an assume-unchanged tracked file hides its own edit from 'git status' — kept, not purged", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     archiveRetirement(stashDir, "memories/stale.md", "memories/stale");

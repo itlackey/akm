@@ -97,6 +97,8 @@ export interface RegistrySearchResultHit {
   description?: string;
   tags?: string[];
   action?: string;
+  /** Ref to pass to `akm bundle add` to install this hit. */
+  installRef?: string;
   score?: number;
   whyMatched?: string[];
   /** Name of the registry that provided this hit (provenance tracking) */

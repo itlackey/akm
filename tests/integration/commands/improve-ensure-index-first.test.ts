@@ -128,7 +128,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
     expect(entryCountAtCollect).toBe(2);
   });
 
-  test("R6: ensureIndexDurationMs is surfaced on the result only when an implicit reindex actually ran", async () => {
+  test("ensureIndexDurationMs is surfaced on the result only when an implicit reindex actually ran", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-duration-");
     mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
     saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));

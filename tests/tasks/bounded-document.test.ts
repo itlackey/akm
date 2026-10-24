@@ -103,7 +103,7 @@ describe("assertBoundedTaskYamlDocument — the sourceLabel seam renders 'task s
   });
 });
 
-describe("sourceError — the per-field funnel renders both source labels via its sourceLabel context field (D2-N4)", () => {
+describe("sourceError — the per-field funnel renders both source labels via its sourceLabel context field", () => {
   test("sourceLabel: 'task source' renders the 'Invalid task source at …' shape", () => {
     const error = caught(() => sourceError({ filePath: "/x.yml", sourceLabel: "task source" }, ["foo"], "bar."));
     expect(error).toBeInstanceOf(UsageError);
@@ -130,7 +130,7 @@ describe("sourceError — the per-field funnel renders both source labels via it
     expect(v4Error.message).toBe("Invalid task source v4 at /x.yml:3: foo bar.");
   });
 
-  test("an empty field path renders the '$' root selector for both labels (B-16's shape)", () => {
+  test("an empty field path renders the '$' root selector for both labels", () => {
     const error = caught(() =>
       sourceError({ filePath: "/x.yml", sourceLabel: "task source v4" }, [], "top-level detail."),
     );

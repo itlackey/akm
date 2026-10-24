@@ -80,7 +80,7 @@ const RECOGNITION_GOLDEN = JSON.parse(
 /** A handful of representative refs to exercise every action-builder branch (incl. the `task:` strip). */
 const SAMPLE_REFS = ["personal//knowledge/http-caching", "team//workflows/release", "task:deploy", "b//x"];
 
-describe("TYPE_PRESENTATION — renderer NAMES reproduce TYPE_TO_RENDERER verbatim (§2)", () => {
+describe("TYPE_PRESENTATION — renderer NAMES reproduce TYPE_TO_RENDERER verbatim", () => {
   test("every KNOWN_TYPE's renderer equals the live TYPE_TO_RENDERER entry", () => {
     for (const type of KNOWN_TYPES) {
       expect(TYPE_PRESENTATION[type].renderer, `renderer for ${type}`).toBe(TYPE_TO_RENDERER[type]);
@@ -111,7 +111,7 @@ describe("TYPE_PRESENTATION — renderer NAMES reproduce TYPE_TO_RENDERER verbat
   });
 });
 
-describe("TYPE_PRESENTATION — action builders reproduce ACTION_BUILDERS verbatim (§2)", () => {
+describe("TYPE_PRESENTATION — action builders reproduce ACTION_BUILDERS verbatim", () => {
   test("presentationFor(type).action(ref) equals ACTION_BUILDERS[type](ref) for every KNOWN_TYPE and sample ref", () => {
     for (const type of KNOWN_TYPES) {
       const action = presentationFor(type).action;
@@ -149,7 +149,7 @@ describe("TYPE_PRESENTATION — fragment refs follow the parent-action contract"
   });
 });
 
-describe("TYPE_PRESENTATION — renderer NAMES agree with the frozen recognition golden (§2)", () => {
+describe("TYPE_PRESENTATION — renderer NAMES agree with the frozen recognition golden", () => {
   test("every recognition-golden entry's renderer matches presentationFor(type).renderer", () => {
     let asserted = 0;
     for (const [relPath, entry] of Object.entries(RECOGNITION_GOLDEN.byRelPath)) {
@@ -170,7 +170,7 @@ describe("TYPE_PRESENTATION — renderer NAMES agree with the frozen recognition
   });
 });
 
-describe("presentationFor — foreign/unknown fallback is renderer-less generic (unchanged, §2)", () => {
+describe("presentationFor — foreign/unknown fallback is renderer-less generic (unchanged)", () => {
   test("an unknown type resolves to the generic { label: 'Asset' } with no renderer/action", () => {
     const generic = presentationFor("some-third-party-okf-type");
     expect(generic).toEqual({ label: "Asset" });

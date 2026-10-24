@@ -208,7 +208,7 @@ const CONSOLIDATE_PROCESS_FIELDS = {
   allowedTypes: allowedTypesField,
   limit: processLimitField,
   // Minimum eligible-memory pool size below which the consolidation pass skips
-  // entirely (emits `pool_below_min_size`). 0 disables the guard. Default 500.
+  // entirely (emits `pool_below_min_size`). Default 0, which disables the guard.
   minPoolSize: z.number().int().min(0).optional(),
   maxChunkSize: z.number().int().min(1).max(50).optional(),
   // Fallback p90 wall-clock time per consolidation chunk in seconds, used for

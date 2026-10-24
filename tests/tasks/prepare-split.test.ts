@@ -76,7 +76,7 @@ function shellDocument(root: string) {
   return projectTaskSourceV4(parsed.v4);
 }
 
-describe("prepare/prepare.ts's entry — three-caller shape parity (P1b spec §4.1/§4.2, D4; P4 shim deletion)", () => {
+describe("prepare/prepare.ts's entry — three-caller shape parity", () => {
   test("run/load-task.ts's context shape — bundleName/bundleRoot/config + resolveAsset({bundle,type,name}) + conditional schedulerContext", async () => {
     const root = sandboxRoot();
     const document = shellDocument(root);
@@ -153,7 +153,7 @@ describe("prepare/prepare.ts's entry — three-caller shape parity (P1b spec §4
   });
 });
 
-describe("src/tasks/runtime-v3.ts — the deleted compat shim (spec §9, P4 §3.2.7 row B-25)", () => {
+describe("src/tasks/runtime-v3.ts — the deleted compat shim", () => {
   test("does not exist — every caller is rewired to prepare/prepare.ts directly", () => {
     expect(fs.existsSync(RUNTIME_V3_FILE)).toBe(false);
   });

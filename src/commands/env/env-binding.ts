@@ -26,6 +26,7 @@ import { isWithin } from "../../core/common";
 import { makeEnvRef, makeSecretRef, resolveEnvPath } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { isThirdPartySource } from "../../indexer/search/search-source";
 import { isDangerousEnvKey } from "../lint/env-key-rules";
 import { loadEnv, resolveSecretTokens } from "./env";
 import { readValue } from "./secret";
@@ -107,14 +108,15 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
   const keys = Object.keys(envValues);
 
   // Scan injected keys for known process-hijacking variables. The workspace
-  // activation policy decides block (third-party, registryId set) vs. warn
-  // (first-party stash, where the operator owns the file).
+  // activation policy decides block (a bundle installed from elsewhere) vs.
+  // warn (first-party stash, where the operator owns the file).
   const dangerous = keys.filter(isDangerousEnvKey);
   if (dangerous.length > 0) {
     const detail = `Env "${envRef}" injects process-hijacking variable(s): ${dangerous.join(", ")}.`;
+    const thirdParty = isThirdPartySource(source);
     const decision = decideDangerousEnvInjection({
       dangerousKeys: dangerous,
-      thirdParty: Boolean(source.registryId),
+      thirdParty,
       allowDangerousEnvKeys: options.allowDangerousEnvKeys,
     });
     if (decision === "block") {
@@ -127,7 +129,7 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
     }
     if (decision === "warn") {
       warn(
-        options.allowDangerousEnvKeys && source.registryId
+        options.allowDangerousEnvKeys && thirdParty
           ? `${detail} Injecting anyway (--allow-dangerous-env-keys).`
           : `${detail} Injecting anyway (first-party stash).`,
       );

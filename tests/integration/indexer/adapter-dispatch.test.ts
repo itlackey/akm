@@ -130,7 +130,7 @@ describe("indexer dispatch — a detected llm-wiki component is recognized by th
   });
 });
 
-describe("indexer dispatch — unknown adapter id skip contract (§4)", () => {
+describe("indexer dispatch — unknown adapter id skip contract", () => {
   test("adapterForId returns undefined for an unknown id (the production skip+warn condition)", () => {
     expect(adapterForId("no-such-adapter")).toBeUndefined();
     // A known id still resolves — the loop dispatches it rather than skipping.

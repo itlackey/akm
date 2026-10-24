@@ -52,7 +52,7 @@ function makeFakeSignalSource() {
   };
 }
 
-describe("runImproveSession lifecycle (R8)", () => {
+describe("runImproveSession lifecycle", () => {
   test("SIGTERM persists the terminated row BEFORE exit, with the right exit code", async () => {
     const events: string[] = [];
     const signalSource = makeFakeSignalSource();

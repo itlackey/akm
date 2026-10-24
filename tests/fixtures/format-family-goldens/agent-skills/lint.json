@@ -30,7 +30,7 @@
         {
           "file": "Data_Analysis/SKILL.md",
           "issue": "skill-name-invalid",
-          "detail": "skill name 'Data_Analysis' must match ^[a-z0-9]+(-[a-z0-9]+)*$ (lowercase letters, digits, hyphen-separated), NFKC-normalized, 1-64 chars, and equal to the parent directory name (Agent Skills hard rule, spec §4.5). 'Data_Analysis' contains uppercase letters and an underscore.",
+          "detail": "skill name 'Data_Analysis' must match ^[a-z0-9]+(-[a-z0-9]+)*$ (lowercase letters, digits, hyphen-separated), NFKC-normalized, 1-64 chars, and equal to the parent directory name (Agent Skills hard rule). 'Data_Analysis' contains uppercase letters and an underscore.",
           "fixed": false
         }
       ],
@@ -44,7 +44,7 @@
         {
           "file": "overlong-summary/SKILL.md",
           "issue": "skill-description-too-long",
-          "detail": "skill description is 1237 characters; the Agent Skills hard limit is 1-1024 characters (spec §4.5).",
+          "detail": "skill description is 1237 characters; the Agent Skills hard limit is 1-1024 characters.",
           "fixed": false
         }
       ],

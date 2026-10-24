@@ -41,8 +41,6 @@ import {
 } from "./robots";
 import type { FetcherContext, SecretResolveFn, WikiSnapshotResult } from "./types";
 
-/** Allow up to 7 days of stale snapshots when refresh fails so search remains available during outages. */
-const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 /** Allow limited breadth-first expansion without letting the crawl queue grow unbounded. */
 const QUEUE_EXPANSION_FACTOR = 5;
 
@@ -180,7 +178,6 @@ export async function ensureWebsiteMirror(
 
   await withFreshnessCache({
     markerPath: cachePaths.manifestPath,
-    staleMs: CACHE_STALE_MS,
     force: options?.force === true,
     isUsable: () => !requireStashDir || hasExtractedSite(cachePaths.stashDir),
     refresh: async () => {

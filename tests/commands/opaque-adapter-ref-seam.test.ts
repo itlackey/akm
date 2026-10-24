@@ -38,7 +38,7 @@ function write(root: string, rel: string, content: string): void {
   fs.writeFileSync(destination, content, "utf8");
 }
 
-describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands", () => {
+describe("opaque adapter conceptIds at the ref-consuming commands", () => {
   let storage: IsolatedAkmStorage;
   let okfRoot: string;
   let conceptPath: string;

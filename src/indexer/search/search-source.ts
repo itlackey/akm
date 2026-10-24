@@ -18,7 +18,7 @@ import { ConfigError } from "../../core/errors";
 import { getUnresolvedSourcesDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import { resolveGitContentRoot, resolveWritable } from "../../core/write-source";
-import { lockContentRootFor } from "../../integrations/lockfile";
+import { lockContentRootFor, readLockfile } from "../../integrations/lockfile";
 import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 import { ensureWebsiteMirror } from "../../sources/snapshot-fetchers/website-ingest";
 
@@ -276,6 +276,22 @@ export function findSourceForPath(filePath: string, sources: SearchSource[]): Se
   return best;
 }
 
+// ── Trust ───────────────────────────────────────────────────────────────────
+
+/**
+ * Whether a bundle was installed from elsewhere, so its env and secret files
+ * are not the operator's own: any git, website, or npm bundle, or a bundle
+ * whose lock entry records a non-local install. The working bundle and a plain
+ * local filesystem bundle are first-party. A search source's `registryId` is
+ * its bundle key (the lock entry id), not a mark of a registry install.
+ */
+export function isThirdPartySource(source: SearchSource): boolean {
+  if (source.isDefault) return false;
+  if (source.type !== undefined && source.type !== "filesystem") return true;
+  if (!source.registryId) return false;
+  return readLockfile().some((lock) => lock.id === source.registryId && lock.source !== "local");
+}
+
 // ── Editability ─────────────────────────────────────────────────────────────
 
 /**
@@ -385,6 +401,18 @@ export async function ensureSourceCaches(
       // Managed installs are refreshed only by add/update. Hydrating the URL-
       // derived provider cache here would create a second checkout while reads
       // and writes continue using the lock root.
+      continue;
+    }
+    if (entry.type === "npm") {
+      // A configured npm bundle with no lock entry has no walkable path (its
+      // provider path is the package spec), and nothing marks it materialized,
+      // so syncing it here would hit the npm registry on every index run and
+      // still leave it unindexed. `akm bundle update` installs it and writes
+      // the lock entry.
+      warn(
+        `Warning: npm source "${entry.name}" is not installed; skipping it. ` +
+          `Run \`akm bundle update ${entry.name}\` to install it.`,
+      );
       continue;
     }
     const factory = resolveSourceProviderFactory(entry.type);

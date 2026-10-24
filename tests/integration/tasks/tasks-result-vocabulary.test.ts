@@ -95,7 +95,7 @@ function rawMetadata(taskId: string): Record<string, unknown> | undefined {
   }
 }
 
-describe("F-2 (D8) — every NEW history row carries the targetVocab: 2 marker", () => {
+describe("every NEW history row carries the targetVocab: 2 marker", () => {
   test('a prepared workflow run stores targetVocab: 2 alongside target_kind "workflow"', async () => {
     writeTask("vocab-workflow", "version: 4\nuses: workflows/noop\n");
 
@@ -169,7 +169,7 @@ describe("F-2 (D8) — every NEW history row carries the targetVocab: 2 marker",
   });
 });
 
-describe("§5.6 C-7 — the exit-78 rewire survives the vocabulary re-code", () => {
+describe("the exit-78 rewire survives the vocabulary re-code", () => {
   // A shell task whose command exits 78 -> CLI exit 78, pinned as a code path,
   // not merely as prose (the documented-behavior prose pin is
   // tests/cli/exit-code-hints.test.ts).
@@ -193,7 +193,7 @@ describe("§5.6 C-7 — the exit-78 rewire survives the vocabulary re-code", () 
   });
 });
 
-describe("F-4 (P1a advisory) — SAFE_TASK_ATTEMPT_ERROR_CODES gains TASK_SOURCE_INVALID and COMPOSITION_INVALID", () => {
+describe("SAFE_TASK_ATTEMPT_ERROR_CODES gains TASK_SOURCE_INVALID and COMPOSITION_INVALID", () => {
   // The allowlist itself (SAFE_TASK_ATTEMPT_ERROR_CODES in
   // src/tasks/run/attempt-lifecycle.ts) is not exported — its membership is
   // observed the same way production code observes it: through

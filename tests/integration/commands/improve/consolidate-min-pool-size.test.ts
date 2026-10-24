@@ -187,7 +187,7 @@ describe("#553 consolidate minPoolSize guard", () => {
     TIMEOUT_MS,
   );
 
-  test("completes the pass despite a retired advisory op in the response, and records every judged memory (R4 + R12a)", async () => {
+  test("completes the pass despite a retired advisory op in the response, and records every judged memory", async () => {
     writeMemory(
       "primary",
       "A substantive primary memory that remains unchanged while its proposed merge awaits review. Its promotion proposal may succeed, but that cannot complete the pending merge.",

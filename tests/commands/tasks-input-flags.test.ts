@@ -121,7 +121,7 @@ const TAGGED_TASK_YAML = [
   "",
 ].join("\n");
 
-describe("akm task run — exact-name input flags materialize literal bindings (P2a spec §5.1)", () => {
+describe("akm task run — exact-name input flags materialize literal bindings", () => {
   // The materialized literals must become `readonly TaskInputBinding[]` on the
   // `TaskInvocation` the run CONSTRUCTS (`TaskInvocation.inputs?`,
   // src/tasks/model/invocation.ts). The seam hands back that
@@ -132,7 +132,7 @@ describe("akm task run — exact-name input flags materialize literal bindings (
   // is otherwise impossible: the model-purity ratchet
   // (tests/tasks/model-contracts.test.ts) keeps `TaskInvocation` a pure,
   // IO-free type, and nothing in production reads the inputs back.
-  test('"--scope all --strict" materializes both as literal TaskInputBinding entries on the constructed TaskInvocation before dispatch (B-06, B-30, B-31)', async () => {
+  test('"--scope all --strict" materializes both as literal TaskInputBinding entries on the constructed TaskInvocation before dispatch', async () => {
     writeTask("review", REVIEW_TASK_YAML);
     let captured: TaskInvocation | undefined;
 
@@ -178,7 +178,7 @@ describe("akm task run — exact-name input flags materialize literal bindings (
   // `hint`. This checks the whole serialized envelope rather than assuming
   // the enumeration is in `.error`; a bare `typeof envelope.error === "string"`
   // check would be satisfied by any non-empty string.
-  test("an input flag the task does not declare fails UNKNOWN_FLAG, naming the offending flag and enumerating the declared inputs (B-27)", async () => {
+  test("an input flag the task does not declare fails UNKNOWN_FLAG, naming the offending flag and enumerating the declared inputs", async () => {
     writeTask("review", REVIEW_TASK_YAML);
     const result = await runCliCapture(["task", "run", "review", "--not-a-declared-input", "x"]);
 
@@ -196,7 +196,7 @@ describe("akm task run — exact-name input flags materialize literal bindings (
     expect(rendered).toContain("strict");
   });
 
-  test("a value that violates its input's declared schema fails INPUT_BINDING_INVALID, naming the input and carrying validateJsonSchemaSubset's own detail (B-28)", async () => {
+  test("a value that violates its input's declared schema fails INPUT_BINDING_INVALID, naming the input and carrying validateJsonSchemaSubset's own detail", async () => {
     writeTask("ticketed", TICKETED_TASK_YAML);
     // `scope` is declared `enum: [changed, all]`; "bogus" satisfies neither.
     // `--ticket` is supplied so this fails on the VALUE, not the separate
@@ -243,7 +243,7 @@ describe("akm task run — exact-name input flags materialize literal bindings (
     expect(rendered).toContain(detailSuffix);
   });
 
-  test("omitting a required: true input with no flag at all fails INPUT_BINDING_INVALID, naming the missing input (B-29)", async () => {
+  test("omitting a required: true input with no flag at all fails INPUT_BINDING_INVALID, naming the missing input", async () => {
     writeTask("ticketed", TICKETED_TASK_YAML);
     const result = await runCliCapture(["task", "run", "ticketed"]);
 
@@ -265,8 +265,8 @@ describe("akm task run — exact-name input flags materialize literal bindings (
 // {ok:false,error,code} envelope (or, for the success case, the real run
 // result).
 
-describe("akm task run — B-31 array grouping and its failure modes, end to end", () => {
-  test("`--tags a --tags b` on a type: array input succeeds with the grouped array (B-31)", async () => {
+describe("akm task run — array grouping and its failure modes, end to end", () => {
+  test("`--tags a --tags b` on a type: array input succeeds with the grouped array", async () => {
     writeTask("tagged", TAGGED_TASK_YAML);
     const result = await runCliCapture(["task", "run", "tagged", "--tags", "a", "--tags", "b"]);
 
@@ -276,7 +276,7 @@ describe("akm task run — B-31 array grouping and its failure modes, end to end
     expect(envelope.result.status).toBe("completed");
   });
 
-  test("a repeated flag on a NON-array-declared input fails INPUT_BINDING_INVALID on the real envelope (B-31)", async () => {
+  test("a repeated flag on a NON-array-declared input fails INPUT_BINDING_INVALID on the real envelope", async () => {
     writeTask("review", REVIEW_TASK_YAML);
     // `scope` is declared `type: string` (not array) — two distinct,
     // individually-valid enum values still trip the duplicate-non-array
@@ -290,7 +290,7 @@ describe("akm task run — B-31 array grouping and its failure modes, end to end
     expect(JSON.stringify(envelope)).toContain("scope");
   });
 
-  test("a malformed JSON-array shorthand (`[not json`) fails INPUT_BINDING_INVALID on the real envelope (B-31)", async () => {
+  test("a malformed JSON-array shorthand (`[not json`) fails INPUT_BINDING_INVALID on the real envelope", async () => {
     writeTask("tagged", TAGGED_TASK_YAML);
     const result = await runCliCapture(["task", "run", "tagged", "--tags", "[not json"]);
 
@@ -305,7 +305,7 @@ describe("akm task run — B-31 array grouping and its failure modes, end to end
 // ── A valid input flag set is byte-identical to the same run without flags; a
 // manual-only v4 task runs end-to-end.
 
-describe("akm task run — end to end (B-26, §0: a valid flag set is byte-identical to the same run without flags)", () => {
+describe("akm task run — end to end (a valid flag set is byte-identical to the same run without flags)", () => {
   /** Fields that legitimately differ between two separate runs of the identical task (timestamps, the per-run log file path). */
   const VOLATILE_RESULT_FIELDS = ["startedAt", "finishedAt", "durationMs", "log"] as const;
 
@@ -332,7 +332,7 @@ describe("akm task run — end to end (B-26, §0: a valid flag set is byte-ident
     expect(stableResult(rows[0] as Record<string, unknown>)).toEqual(stableResult(rows[1] as Record<string, unknown>));
   });
 
-  test("a manual-only version: 4 task (no schedule:) parses AND runs successfully end-to-end via akm task run (§9 acceptance bullet)", async () => {
+  test("a manual-only version: 4 task (no schedule:) parses AND runs successfully end-to-end via akm task run", async () => {
     writeTask("review", REVIEW_TASK_YAML);
     const result = await runCliCapture(["task", "run", "review"]);
 
@@ -346,7 +346,7 @@ describe("akm task run — end to end (B-26, §0: a valid flag set is byte-ident
 // ── Retired --target and `akm task run`'s own declared flags are PRESERVED,
 // never treated as inputs.
 
-describe("akm task run <id> --target x — the retired-flag usage error is unchanged (B-32, PRESERVE)", () => {
+describe("akm task run <id> --target x — the retired-flag usage error is unchanged", () => {
   test("still rejects with the retired-flag INVALID_FLAG_VALUE usage error, exit 2 — --target is NEVER treated as an input", async () => {
     // rejectRetiredTaskTargetFlag() (src/commands/tasks/tasks-cli.ts) runs
     // BEFORE any task lookup, so the id need not exist for this to fire.
@@ -428,7 +428,7 @@ describe("akm task run <id> --target x — the retired-flag usage error is uncha
   });
 });
 
-describe("parseTaskInputFlags — akm task run's own declared flags are excluded from the captured input set (B-33, PRESERVE)", () => {
+describe("parseTaskInputFlags — akm task run's own declared flags are excluded from the captured input set", () => {
   test("--bundle/--format/--scheduled/--quiet are parsed as their declared flags and never appear in the materialized flag set; a genuine input flag still does", () => {
     const flags = parseTaskInputFlags(
       ["review", "--bundle", "fixture", "--format", "json", "--scheduled", "--quiet", "--scope", "all"],
@@ -437,7 +437,7 @@ describe("parseTaskInputFlags — akm task run's own declared flags are excluded
     expect(flags).toEqual([{ name: "scope", value: "all" }]);
   });
 
-  test("TASK_RUN_VALUE_FLAGS / TASK_RUN_BOOLEAN_FLAGS are exactly the closed sets spec §5.1 names", () => {
+  test("TASK_RUN_VALUE_FLAGS / TASK_RUN_BOOLEAN_FLAGS are exactly the closed flag sets", () => {
     expect([...TASK_RUN_VALUE_FLAGS].sort()).toEqual(["bundle", "detail", "format", "output", "shape"].sort());
     expect([...TASK_RUN_BOOLEAN_FLAGS].sort()).toEqual(
       ["help", "no-quiet", "no-verbose", "quiet", "scheduled", "verbose"].sort(),
@@ -445,7 +445,7 @@ describe("parseTaskInputFlags — akm task run's own declared flags are excluded
   });
 });
 
-describe("isTaskRunWithId — F-5's explicit classification requirement", () => {
+describe("isTaskRunWithId — explicit classification requirement", () => {
   test("`akm task run <id> --scope all` still classifies as a task-run-with-id", () => {
     expect(isTaskRunWithId(["bun", "cli.ts", "task", "run", "nightly", "--scope", "all"])).toBe(true);
   });

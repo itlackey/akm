@@ -277,7 +277,7 @@ describe("buildDistillPrompt", () => {
     expect(prompt).toContain("(asset is not currently indexed");
   });
 
-  test("D-3: negative signal feedback goes into '## What failed' section", () => {
+  test("negative signal feedback goes into '## What failed' section", () => {
     const prompt = buildDistillPrompt({
       inputRef: "skills/deploy",
       assetContent: null,
@@ -294,7 +294,7 @@ describe("buildDistillPrompt", () => {
     expect(prompt).not.toContain("## What worked");
   });
 
-  test("D-3: positive signal feedback goes into '## What worked' section", () => {
+  test("positive signal feedback goes into '## What worked' section", () => {
     const prompt = buildDistillPrompt({
       inputRef: "skills/deploy",
       assetContent: null,
@@ -311,7 +311,7 @@ describe("buildDistillPrompt", () => {
     expect(prompt).not.toContain("## What failed");
   });
 
-  test("D-3: mixed signals produce both What-worked and What-failed sections", () => {
+  test("mixed signals produce both What-worked and What-failed sections", () => {
     const prompt = buildDistillPrompt({
       inputRef: "skills/deploy",
       assetContent: null,
@@ -326,7 +326,7 @@ describe("buildDistillPrompt", () => {
     expect(prompt).toContain("Broke prod");
   });
 
-  test("D-3: non-signal events fall back to flat format", () => {
+  test("non-signal events fall back to flat format", () => {
     // When no positive/negative signals are present, fall back to old format.
     const prompt = buildDistillPrompt({
       inputRef: "skills/deploy",
@@ -381,7 +381,7 @@ describe("buildDistillPrompt", () => {
 // these rows, so the Reflexion-context mapper must read the preview from
 // `p.payload.content` (always populated) rather than `proposalContent(p)`,
 // which throws when `changes[0]?.after` is undefined.
-describe("akmDistill — rejected proposals tolerate legacy rows with no persisted changes (R1)", () => {
+describe("akmDistill — rejected proposals tolerate legacy rows with no persisted changes", () => {
   test("a rejected proposal with no metadata_json.changes does not throw and its content still reaches the prompt", async () => {
     const stash = makeStashDir();
     const sourceFile = path.join(stash, "skills", "duplicate.md");
@@ -430,7 +430,7 @@ describe("akmDistill — rejected proposals tolerate legacy rows with no persist
 // procedural refusal (the target changed after mint), not a judgement on the
 // content, and would mislead the LLM into avoiding content it was never
 // actually judged on. An ordinary rejection stays in the context.
-describe("akmDistill — rejected proposals exclude stale-target auto-rejects from the Reflexion context (STALE, R20)", () => {
+describe("akmDistill — rejected proposals exclude stale-target auto-rejects from the Reflexion context", () => {
   test("a stale-target auto-reject's reason and content preview do not reach the prompt; an ordinary rejection's do", async () => {
     const stash = makeStashDir();
     const sourceFile = path.join(stash, "skills", "dup-stale-vs-ordinary.md");
@@ -1567,7 +1567,7 @@ describe("akmDistill — success envelope shape contract (#284)", () => {
 
 // ── #369 — fast path forces LLM when destination knowledge exists ─────────────
 
-describe("D-1: fast path calls LLM merge when destination knowledge exists (#369)", () => {
+describe("fast path calls LLM merge when destination knowledge exists (#369)", () => {
   test("NOOP: LLM says no update needed — proposal is skipped", async () => {
     const stash = makeStashDir();
     // Create an existing knowledge file at the destination
@@ -1903,7 +1903,7 @@ describe("akmDistill — pipeline-fix integration", () => {
     expect(result.proposalRef).not.toMatch(/-lesson-lesson$/);
   });
 
-  test("refuses env/secret refs as input (08-F2: secret bytes never reach the LLM)", async () => {
+  test("refuses env/secret refs as input (secret bytes never reach the LLM)", async () => {
     const stash = makeStashDir();
     for (const ref of ["env/prod-api", "secrets/signing-key"]) {
       const result = await akmDistill({
@@ -2026,7 +2026,7 @@ describe("akmDistill — pipeline-fix integration", () => {
 
 // ── judge-verdict routing + output encoding salience ─────────────────────────
 
-describe("akmDistill — R3 judge verdict routing + G4 output encoding salience", () => {
+describe("akmDistill — judge verdict routing + output encoding salience", () => {
   test("generation and quality judging each read the credential at dispatch; neither value is persisted", async () => {
     const stash = makeStashDir();
     const sourcePath = path.join(stash, "skills", "deploy.md");
@@ -2214,7 +2214,7 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     expect(listProposals(stash)).toEqual(before);
   });
 
-  test("07 P0-2 end-to-end: gate ON + unjudgeable verdict → routed to review, never auto-queued", async () => {
+  test("end-to-end: gate ON + unjudgeable verdict → routed to review, never auto-queued", async () => {
     const stash = makeStashDir();
     // Distill returns a valid lesson, but the judge's second call receives the
     // same non-JSON text → parse failure → the gate fails CLOSED. This drives

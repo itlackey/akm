@@ -66,7 +66,7 @@ function write(file: string, content: string): void {
 
 const emptyInstalled = [] as const;
 
-describe("whole-set task source v4 scheduler sync planning — B-07 (manual-only, D2-N6)", () => {
+describe("whole-set task source v4 scheduler sync planning — manual-only", () => {
   test("a version: 4 task with no schedule: contributes ZERO bindings and records ZERO failures — compileSchedulerSources does not reject", async () => {
     const bundleRoot = root();
     write(
@@ -136,7 +136,7 @@ describe("whole-set task source v4 scheduler sync planning — B-07 (manual-only
     expect(plan.operations).toHaveLength(1);
   });
 
-  test("emits no diagnostic (no warn()) for a manual-only version: 4 task — B-38's warn is scoped to non-empty schedule[i].inputs only", async () => {
+  test("emits no diagnostic (no warn()) for a manual-only version: 4 task — the warn is scoped to non-empty schedule[i].inputs only", async () => {
     const bundleRoot = root();
     write(
       path.join(bundleRoot, "tasks", "manual-only.yml"),
@@ -161,7 +161,7 @@ describe("whole-set task source v4 scheduler sync planning — B-07 (manual-only
   });
 });
 
-describe("whole-set task source v4 scheduler sync planning — locally activated scheduled bindings (B-08..B-10)", () => {
+describe("whole-set task source v4 scheduler sync planning — locally activated scheduled bindings", () => {
   test("a scheduled version: 4 task compiles exactly one binding via the SAME compileTaskSchedulerBindings seam as v3", async () => {
     const bundleRoot = root();
     write(
@@ -240,7 +240,7 @@ describe("whole-set task source v4 scheduler sync planning — sources `akm migr
   });
 });
 
-describe("whole-set task source v4 scheduler sync planning — B-45/F-B2 (schedule[i].inputs delivered as a sorted invocation tail)", () => {
+describe("whole-set task source v4 scheduler sync planning — schedule[i].inputs delivered as a sorted invocation tail", () => {
   // schedule[i].inputs are delivered through the compiled binding's own
   // invocation tail, so there is nothing to warn about.
   test("schedule[i].inputs non-empty compiles a sorted --<name> <value> tail per entry — no warn, and each entry's tail reflects its OWN inputs", async () => {
@@ -387,7 +387,7 @@ describe("whole-set task source v4 scheduler sync planning — B-45/F-B2 (schedu
 
 // ── Generic whole-set CAS/collision/composition mechanics ─────────────────────
 
-describe("whole-set scheduler sync planning — task+workflow composition and CAS mechanics (ported, F-A2.6)", () => {
+describe("whole-set scheduler sync planning — task+workflow composition and CAS mechanics (ported)", () => {
   test("compiles task and workflow schedules together and never installs workflow_dispatch", async () => {
     const bundleRoot = root();
     write(

@@ -13,7 +13,7 @@ import { UsageError } from "../src/core/errors";
 // of `${…}` is not. Do not rewrite this to a plain inline literal.
 const LEGACY_TASK_REF = `task:${"foo"}`;
 
-describe("parseTaskRef (0.9.0 grammar, D-R3)", () => {
+describe("parseTaskRef (0.9.0 grammar)", () => {
   test("accepts a bare task id", () => {
     expect(parseTaskRef("foo")).toEqual({ id: "foo" });
   });

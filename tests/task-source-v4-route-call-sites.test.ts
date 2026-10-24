@@ -53,7 +53,7 @@ const INVALID_V4_TASK = ["version: 4", "uses: commands/x", "run: echo x", ""].jo
 
 // ── akm-lint.ts — taskDiagnostics ───────────────────────────────────────────
 
-describe("taskDiagnostics — akm lint on a version: 4 source (B-36, akm-lint.ts:317)", () => {
+describe("taskDiagnostics — akm lint on a version: 4 source (akm-lint.ts:317)", () => {
   test("a valid version: 4 source yields NO invalid-task-yaml diagnostic", () => {
     const diagnostics = taskDiagnostics("tasks/nightly.yml", VALID_V4_TASK);
     expect(diagnostics.filter((d) => d.issue === "invalid-task-yaml")).toEqual([]);
@@ -137,7 +137,7 @@ describe("akmTaskAdapter.looksLikeRoot() — a version: 4 root (akm-task-adapter
 // lesson-md/memory-md cases' own `applyFrontmatterDescriptionAndTags` +
 // `when_to_use:` hint pattern).
 
-describe("foldRecognizedMetadata('task-yaml', …) — a version: 4 task's top-level keys (B-37, akm-metadata.ts:242)", () => {
+describe("foldRecognizedMetadata('task-yaml', …) — a version: 4 task's top-level keys (akm-metadata.ts:242)", () => {
   test("description, tags, and a when_to_use: searchHint are extracted from the v4 document's TOP-LEVEL keys", () => {
     const root = tmpDir("akm-metadata-v4-");
     const filePath = path.join(root, "tasks", "nightly.yml");

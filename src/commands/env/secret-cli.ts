@@ -47,7 +47,7 @@ import {
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { isThirdPartySource, resolveSourceEntries } from "../../indexer/search/search-source";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
 
@@ -182,6 +182,12 @@ const secretRunCommand = defineJsonCommand({
       description:
         "When used with --clean, also inherit these parent env vars (comma-separated). Ignored without --clean.",
     },
+    "allow-dangerous-env-keys": {
+      type: "boolean",
+      description:
+        "Allow injecting a secret into a process-hijacking variable (e.g. LD_PRELOAD, PATH) from a third-party stash, which otherwise blocks. Use only after explicitly reviewing the secret.",
+      default: false,
+    },
   },
   async run({ args }) {
     // Validate the target env var name FIRST (before the command split) so a
@@ -205,18 +211,27 @@ const secretRunCommand = defineJsonCommand({
     const { isDangerousEnvKey } = await import("../lint/env-key-rules.js");
     if (isDangerousEnvKey(varName)) {
       const detail = `"${varName}" is a known process-hijacking variable (e.g. LD_PRELOAD, PATH).`;
+      const allowDangerousEnvKeys = args["allow-dangerous-env-keys"] === true;
+      const thirdParty = isThirdPartySource(source);
       const decision = decideDangerousEnvInjection({
         dangerousKeys: [varName],
-        thirdParty: Boolean(source.registryId),
+        thirdParty,
+        allowDangerousEnvKeys,
       });
       if (decision === "block") {
         throw new UsageError(
           `Refusing to inject a secret from a third-party stash into ${detail}\n` +
-            "       Review the secret, then copy it into a first-party secret if you trust it.",
+            "       Review the secret, then copy it into a first-party secret if you trust it, " +
+            "or pass --allow-dangerous-env-keys once you have.",
           "INVALID_FLAG_VALUE",
         );
       }
-      warn(`Injecting a secret into ${detail} Injecting anyway (first-party stash).`);
+      warn(
+        `Injecting a secret into ${detail} ` +
+          (allowDangerousEnvKeys && thirdParty
+            ? "Injecting anyway (--allow-dangerous-env-keys)."
+            : "Injecting anyway (first-party stash)."),
+      );
     }
 
     const { readValue } = await import("./secret.js");

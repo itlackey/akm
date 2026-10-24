@@ -40,9 +40,9 @@ const NEW_CODE_HINTS: ReadonlyArray<readonly [UsageErrorCode, string]> = [
   ["INPUT_BINDING_INVALID", "Check the step's with: keys against the target's declared inputs."],
 ];
 
-describe("D7 diagnostics — five new UsageErrorCode members + USAGE_HINTS (spec §2.1, B-24)", () => {
+describe("diagnostics — five new UsageErrorCode members + USAGE_HINTS", () => {
   for (const [code, expectedHint] of NEW_CODE_HINTS) {
-    test(`${code}: constructible as a UsageError, kind "usage", code round-trips, hint() returns the exact §2.1 string`, () => {
+    test(`${code}: constructible as a UsageError, kind "usage", code round-trips, hint() returns the exact string`, () => {
       const error = new UsageError("x", code);
       expect(error).toBeInstanceOf(UsageError);
       expect(error).toBeInstanceOf(Error);

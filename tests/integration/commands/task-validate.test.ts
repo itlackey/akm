@@ -143,7 +143,7 @@ describe("akm task validate <path> (#907)", () => {
     expect(env.resolved).toBeUndefined();
   });
 
-  test("a v4 file with a cron sync's local backend cannot parse -> outcome 'invalid', exit 1 (#907 review item 1)", async () => {
+  test("a v4 file with a cron sync's local backend cannot parse -> outcome 'invalid', exit 1 (#907)", async () => {
     const stash = makeStashDir();
     const scratch = makeScratchDir();
     // Only 4 fields — `parseSchedule` requires 5. task-source-v4.ts's own
@@ -162,7 +162,7 @@ describe("akm task validate <path> (#907)", () => {
     expect(env.resolved).toBeUndefined();
   });
 
-  test("a v4 file whose schedule entry leaves a required input unsatisfied -> outcome 'invalid', exit 1 (#907 review item 1)", async () => {
+  test("a v4 file whose schedule entry leaves a required input unsatisfied -> outcome 'invalid', exit 1 (#907)", async () => {
     const stash = makeStashDir();
     const scratch = makeScratchDir();
     const filePath = writeFixture(

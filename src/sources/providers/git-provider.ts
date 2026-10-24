@@ -17,9 +17,6 @@ import { assertNoIgnoredPathOverwrite, cloneRepo, inspectGitUpstream, runGit } f
 import type { SourceLockData, SyncOptions } from "./install-types";
 import { sanitizeString } from "./provider-utils";
 
-/** Maximum stale age allowed when refresh fails (7 days). */
-const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
-
 export interface ParsedRepoUrl {
   cloneUrl: string;
   ref: string | null;
@@ -103,9 +100,7 @@ export async function ensureGitMirror(
 
   await withFreshnessCache({
     markerPath: cachePaths.indexPath,
-    staleMs: CACHE_STALE_MS,
     force: options?.force === true,
-    allowStaleOnRefreshFailure: !(options?.force === true && writable),
     isUsable: () => !requireRepoDir || hasExtractedRepo(cachePaths.repoDir),
     refresh: async () => {
       fs.mkdirSync(cachePaths.rootDir, { recursive: true });

@@ -51,7 +51,7 @@ function readTaskSchema(): JsonSchema {
   return JSON.parse(fs.readFileSync(path.join(root, "schemas", "akm-task.json"), "utf8")) as JsonSchema;
 }
 
-test("published task schema pins the exact task source v4 top-level key set (D2-N7)", () => {
+test("published task schema pins the exact task source v4 top-level key set", () => {
   const schema = readTaskSchema();
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 
@@ -163,7 +163,7 @@ test("published outputSchema grammar rejects keywords the runtime subset cannot 
 
 // ── task source v4 tests, rooted at the schema document itself ─────────────
 
-test("published task schema's root oneOf rejects an akm: or on: key — retired task-v3 vocabulary, D2-N7", () => {
+test("published task schema's root oneOf rejects an akm: or on: key — retired task-v3 vocabulary", () => {
   const schema = readTaskSchema();
   const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
   const base = { version: TASK_SOURCE_V4_VERSION, run: "echo hi" };
@@ -182,7 +182,7 @@ test("published task schema's root oneOf rejects an akm: or on: key — retired 
 
 // The schema has no githubActionRef definition; a github-action uses: shape is
 // rejected.
-test("published task schema rejects a github-action uses: shape (B-13)", () => {
+test("published task schema rejects a github-action uses: shape", () => {
   const schema = readTaskSchema();
   const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
   const githubRef = "actions/checkout@v4";
@@ -196,7 +196,7 @@ test("published task schema rejects a github-action uses: shape (B-13)", () => {
   ).toBe(true);
 });
 
-test("published task schema's schedule: bounds at TASK_V3_MAX_SCHEDULES and closes each entry to TASK_SOURCE_V4_SCHEDULE_KEYS (D2-N5)", () => {
+test("published task schema's schedule: bounds at TASK_V3_MAX_SCHEDULES and closes each entry to TASK_SOURCE_V4_SCHEDULE_KEYS", () => {
   const schema = readTaskSchema();
   const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
   const base = { version: TASK_SOURCE_V4_VERSION, run: "echo hi" };
@@ -222,7 +222,7 @@ test("published task schema's schedule: bounds at TASK_V3_MAX_SCHEDULES and clos
   );
 });
 
-test("published task schema's input declarations are closed to TASK_INPUT_DECLARATION_KEYS (D2-N3)", () => {
+test("published task schema's input declarations are closed to TASK_INPUT_DECLARATION_KEYS", () => {
   const schema = readTaskSchema();
   const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
   const base = { version: TASK_SOURCE_V4_VERSION, run: "echo hi" };
@@ -415,7 +415,7 @@ test("published task schema's akm: options bag equivalents (timeout/redact) stay
   expect((schema.properties.timeout?.oneOf as JsonSchema[])[0]?.maximum).toBe(EXECUTION_MAX_TIMEOUT_MS);
 });
 
-test("published task schema's inputs: rejects every name akm task run reserves for its own flags (code-review finding)", () => {
+test("published task schema's inputs: rejects every name akm task run reserves for its own flags", () => {
   // `parseInputDeclarations` (src/tasks/source/task-source-v4.ts) rejects any
   // declared input name in TASK_RUN_RESERVED_FLAG_NAMES with
   // TASK_SOURCE_INVALID — the CLI would always treat that flag as its own,

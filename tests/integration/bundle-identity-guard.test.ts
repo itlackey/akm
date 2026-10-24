@@ -76,7 +76,7 @@ function bundleConfigAt(id: string, bundlePath: string): AkmConfig {
   } as unknown as AkmConfig;
 }
 
-describe("§11.5 bundle-rename startup guard", () => {
+describe("bundle-rename startup guard", () => {
   test("warns on the hand-rename signature (configured id missing, unconfigured id indexed)", () => {
     seedIndexBundles(["oldname"]);
     warnOnBundleRenameDrift(bundleConfigAt("newname", "/s/oldname"));

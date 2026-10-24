@@ -54,7 +54,7 @@ function write(file: string, content: string): void {
   fs.writeFileSync(file, content);
 }
 
-describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after --scheduled (B-45)", () => {
+describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after --scheduled", () => {
   test("two inputs authored out of alphabetical order, one boolean, compile a tail sorted by name — the boolean as `--alpha true`, never a bare flag", async () => {
     const bundleRoot = root();
     write(
@@ -139,7 +139,7 @@ describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after -
     ]);
   });
 
-  test("empty/absent schedule[].inputs still compiles the fixed, zero-extra-token tail (B-N3: byte-identical when there is nothing to add)", async () => {
+  test("empty/absent schedule[].inputs still compiles the fixed, zero-extra-token tail (byte-identical when there is nothing to add)", async () => {
     const bundleRoot = root();
     write(
       path.join(bundleRoot, "tasks", "bare-nightly.yml"),
@@ -167,7 +167,7 @@ describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after -
   });
 });
 
-describe("schedule[].inputs is validated against the declared contract, never silently accepted (B-50)", () => {
+describe("schedule[].inputs is validated against the declared contract, never silently accepted", () => {
   test("an unknown (undeclared) schedule[].inputs name is refused — the sync path never resolves it into a binding", async () => {
     const bundleRoot = root();
     write(
@@ -204,7 +204,7 @@ describe("schedule[].inputs is validated against the declared contract, never si
 
 // ── Part 2: the compiled tail round-trips; a malformed one is refused ──────
 
-describe("a compiled input-flag tail round-trips through the public scheduler invocation parser (B-46)", () => {
+describe("a compiled input-flag tail round-trips through the public scheduler invocation parser", () => {
   test("buildScheduledInvocation accepts the sorted tail, and parseScheduledInvocationArgv recovers the identical public invocation plus target", () => {
     const invocation = [
       "task",
@@ -227,7 +227,7 @@ describe("a compiled input-flag tail round-trips through the public scheduler in
   });
 });
 
-describe("a malformed input-flag tail is refused by the existing invalidSchedulerInvocation() ConfigError (B-47)", () => {
+describe("a malformed input-flag tail is refused by the existing invalidSchedulerInvocation() ConfigError", () => {
   test.each([
     ["a bare flag with no trailing value", ["task", "run", "x", "--bundle", "team", "--scheduled", "--alpha"]],
     [
@@ -257,7 +257,7 @@ describe("a malformed input-flag tail is refused by the existing invalidSchedule
 // tests/workflows/task-inputs-delivery.test.ts, which is scoped to
 // workflow-STEP composition specifically).
 
-describe("a scheduled run's compiled invocation tail delivers schedule-supplied inputs through the SAME materialization path as `akm task run --<name>` (B-48)", () => {
+describe("a scheduled run's compiled invocation tail delivers schedule-supplied inputs through the SAME materialization path as `akm task run --<name>`", () => {
   let storage: IsolatedAkmStorage;
 
   function setUp(): void {

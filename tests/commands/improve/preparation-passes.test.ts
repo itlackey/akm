@@ -224,7 +224,7 @@ describe("partitionBySignalDelta — the four buckets", () => {
     expect(out.fullySkippedCount).toBe(1);
   });
 
-  test("O-2 (#365): explicit --scope <ref> bypasses every gate", () => {
+  test("explicit --scope <ref> bypasses every gate", () => {
     const stash = freshStash();
     const out = partitionBySignalDelta({
       scope: { mode: "ref", value: "memories/target" },

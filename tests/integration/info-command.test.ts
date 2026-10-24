@@ -320,7 +320,7 @@ describe("assembleInfo", () => {
   // reports mode "off" / status "disabled" rather than "auto" / "pending". The
   // "auto" case is pinned separately below so the pending-status path keeps its
   // coverage.
-  test("reports semantic search off by default (R-039)", () => {
+  test("reports semantic search off by default", () => {
     const info = assembleInfo();
 
     expect(info.searchModes).toContain("fts");

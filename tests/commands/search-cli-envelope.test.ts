@@ -73,7 +73,7 @@ async function makeIndexedStash(): Promise<string> {
   return stash;
 }
 
-describe("akm search/curate/show — JSON envelope snapshot (WS6)", () => {
+describe("akm search/curate/show — JSON envelope snapshot", () => {
   test("search: indexed stash → success envelope with hits array", async () => {
     const stash = await makeIndexedStash();
     const { stdout, status } = await runCli(["search", "deploy"], stash);
@@ -83,7 +83,7 @@ describe("akm search/curate/show — JSON envelope snapshot (WS6)", () => {
     expect((env.hits as Array<{ name: string }>).map((h) => h.name)).toContain("deploy-widgets");
   });
 
-  test("search: missing query → JSON envelope with hits array (F5/R-009: bare query browses, per --help's own contract)", async () => {
+  test("search: missing query → JSON envelope with hits array (bare query browses, per --help's own contract)", async () => {
     const stash = await makeIndexedStash();
     // R-009 orchestrator ruling: `search --help` documents "QUERY  Search
     // query (omit to list all assets)" — a bare `akm search` must honor that

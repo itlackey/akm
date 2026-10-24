@@ -198,7 +198,7 @@ describe("remember --bundle", () => {
 // `--showSimilar` is kept as an explicit, documented alias rather than
 // becoming a silent accident, and both spellings must keep behaving
 // identically.
-describe("remember --show-similar / --showSimilar (R-062 rename, both spellings work)", () => {
+describe("remember --show-similar / --showSimilar (rename, both spellings work)", () => {
   test("--show-similar (canonical kebab-case spelling) includes a similar[] array", async () => {
     const { result } = await runCli(["remember", "pinned note about deploy pipelines", "--show-similar"]);
     expect(result.status).toBe(0);

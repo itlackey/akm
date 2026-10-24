@@ -94,7 +94,7 @@ const stubAdapter: BundleAdapter = {
   },
 };
 
-describe("BundleAdapter type-level conformance (WI-1.1)", () => {
+describe("BundleAdapter type-level conformance", () => {
   test("a minimal stub implementing only the REQUIRED members typechecks as BundleAdapter", () => {
     // See the compile-time note on `stubAdapter` above. This assertion is
     // the runtime half: required methods exist and are callable.

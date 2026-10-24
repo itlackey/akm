@@ -52,7 +52,7 @@ afterEach(() => {
   envCleanup = () => {};
 });
 
-describe("akm stash-lifecycle cluster — JSON envelope snapshot (WS6)", () => {
+describe("akm stash-lifecycle cluster — JSON envelope snapshot", () => {
   test("info: success envelope carries version + assetTypes array (exit 0)", async () => {
     const { stdout, status } = await runCli(["info"]);
     expect(status).toBe(0);

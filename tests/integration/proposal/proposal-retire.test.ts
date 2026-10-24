@@ -315,7 +315,7 @@ describe("akm proposal accept on a retire proposal", () => {
     expect(second.proposal.status).toBe("accepted");
   });
 
-  describe("S5 crash recovery (second review round: intent-based, resume-safe)", () => {
+  describe("crash recovery (intent-based, resume-safe)", () => {
     test("intent recorded but no file moved yet — accept resumes from it and finishes", async () => {
       const oldPath = writeAsset("memories/old-note.md", "description: an old note");
       const newPath = writeAsset("memories/new-note.md", "description: a new note");
@@ -519,7 +519,7 @@ describe("akm proposal accept on a retire proposal", () => {
     });
   });
 
-  describe("B2: accept-time freshness — both sides, not just the retired one", () => {
+  describe("accept-time freshness — both sides, not just the retired one", () => {
     test("refuses when the successor was edited after judging", async () => {
       const oldPath = writeAsset("memories/old-note.md", "description: an old note");
       const newPath = writeAsset("memories/new-note.md", "description: a new note");
@@ -705,7 +705,7 @@ describe("akm proposal revert on a retire proposal", () => {
     expect(fs.existsSync(twinPath)).toBe(true);
   });
 
-  test("S4: byte-exact — YAML comments, key order and a pre-existing human supersededBy edge all survive the round trip", async () => {
+  test("byte-exact — YAML comments, key order and a pre-existing human supersededBy edge all survive the round trip", async () => {
     const original =
       "---\n# a comment akm never wrote\ndescription: 'quoted old'\ntags: [x, y]\nsupersededBy:\n  - memories/someone-elses-note\nbeliefState: superseded\nupdated: 2026-06-01\n---\nOld body.\n";
     const filePath = writeAsset("memories/old-note.md", "placeholder"); // overwritten below with the exact bytes
@@ -733,7 +733,7 @@ describe("akm proposal revert on a retire proposal", () => {
     expect(fm.supersededBy).toEqual(["memories/someone-elses-note"]);
   });
 
-  test("S5: validates every archive dir before moving any of them — a twin whose destination is occupied leaves the primary archived too", async () => {
+  test("validates every archive dir before moving any of them — a twin whose destination is occupied leaves the primary archived too", async () => {
     const parentPath = writeAsset("memories/parent.md", "description: parent");
     const twinPath = writeAsset(
       "memories/parent.derived.md",
@@ -767,7 +767,7 @@ describe("akm proposal revert on a retire proposal", () => {
     expect(fs.readdirSync(archiveRoot)).toHaveLength(2);
   });
 
-  describe("S5 crash recovery on revert (second review round: resume-safe, P4)", () => {
+  describe("crash recovery on revert (resume-safe)", () => {
     test("primary already moved back, twin still archived — revert resumes and finishes both", async () => {
       const parentPath = writeAsset("memories/parent.md", "description: parent");
       const twinPath = writeAsset(
@@ -841,7 +841,7 @@ describe("akm proposal revert on a retire proposal", () => {
       expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted");
     });
 
-    test("a REAL purge sweep past grace deletes the archived bytes — revert then refuses with 'archived copy ... is missing', status stays accepted, the tombstone survives, and a second sweep is a no-op (S5)", async () => {
+    test("a REAL purge sweep past grace deletes the archived bytes — revert then refuses with 'archived copy ... is missing', status stays accepted, the tombstone survives, and a second sweep is a no-op", async () => {
       const parentPath = writeAsset("memories/parent.md", "description: parent");
       const newPath = writeAsset("memories/new-note.md", "description: a new note");
       const config = makeConfig(storage.stashDir);
@@ -1172,7 +1172,7 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
     );
   });
 
-  test("S6: bulk accept --generator consolidate-pair sweeps only retire proposals; --generator consolidate sweeps only promotions", async () => {
+  test("bulk accept --generator consolidate-pair sweeps only retire proposals; --generator consolidate sweeps only promotions", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");
     const config = makeConfig(storage.stashDir);
@@ -1216,7 +1216,7 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
     expect(getProposal(storage.stashDir, retireProposal.id).status).toBe("accepted");
   });
 
-  test("item 1: a continuityRisk proposal is skipped by bulk accept, but a person can still accept it by id", async () => {
+  test("a continuityRisk proposal is skipped by bulk accept, but a person can still accept it by id", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");
     const config = makeConfig(storage.stashDir);
@@ -1247,7 +1247,7 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
     expect(accepted.proposal.status).toBe("accepted");
   });
 
-  test("item 1: bulk REJECT is unaffected by continuityRisk — declining a flagged proposal is always safe", async () => {
+  test("bulk REJECT is unaffected by continuityRisk — declining a flagged proposal is always safe", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");
     const config = makeConfig(storage.stashDir);
@@ -1275,7 +1275,7 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
     expect(getProposal(storage.stashDir, riskyProposal.id).status).toBe("rejected");
   });
 
-  test("S6: --max-diff-lines counts a retire proposal by its target's own current line count, not its empty payload", async () => {
+  test("--max-diff-lines counts a retire proposal by its target's own current line count, not its empty payload", async () => {
     const bigPath = writeAsset(
       "memories/big-note.md",
       "description: a big note",
@@ -1315,8 +1315,8 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
   });
 });
 
-describe("O1: an accepted promotion retires its source memory", () => {
-  test("archives promotionSource (and its .derived twin) when the promotion is accepted and its body is unchanged (B3)", async () => {
+describe("an accepted promotion retires its source memory", () => {
+  test("archives promotionSource (and its .derived twin) when the promotion is accepted and its body is unchanged", async () => {
     const sourceContent = "---\ndescription: source memory\n---\n\nSource body.\n";
     const sourcePath = writeAsset("memories/source-note.md", "placeholder");
     fs.writeFileSync(sourcePath, sourceContent, "utf8");
@@ -1351,7 +1351,7 @@ describe("O1: an accepted promotion retires its source memory", () => {
     expect(tombstone.successorRefs).toEqual([result.ref]);
   });
 
-  test("B3: a source edited after the promotion was minted is left alone — not archived", async () => {
+  test("a source edited after the promotion was minted is left alone — not archived", async () => {
     const originalContent = "---\ndescription: source memory\n---\n\nOriginal fact.\n";
     const sourcePath = writeAsset("memories/source-note.md", "placeholder");
     fs.writeFileSync(sourcePath, originalContent, "utf8");
@@ -1379,7 +1379,7 @@ describe("O1: an accepted promotion retires its source memory", () => {
     expect(content).toContain("NEW FACT ADDED LATER");
   });
 
-  test("B3: a promotion minted before promotionSourceHash existed never archives its source", async () => {
+  test("a promotion minted before promotionSourceHash existed never archives its source", async () => {
     const sourcePath = writeAsset("memories/source-note.md", "description: source memory");
     const config = makeConfig(storage.stashDir);
     const proposal = createProposal(storage.stashDir, {
@@ -1432,7 +1432,7 @@ describe("O1: an accepted promotion retires its source memory", () => {
   });
 });
 
-describe("retire and promote proposals mint under separate sources (S6)", () => {
+describe("retire and promote proposals mint under separate sources", () => {
   test("listProposals(status: pending) shows both, filterable by their own distinct source", () => {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");
@@ -1462,7 +1462,7 @@ describe("retire and promote proposals mint under separate sources (S6)", () => 
   });
 });
 
-describe("drain hard-skip is unconditional on the retire shape (S6: not on the source string)", () => {
+describe("drain hard-skip is unconditional on the retire shape (not on the source string)", () => {
   test("drainProposals with applyMode: promote and reject leaves a retire proposal pending, whatever its source value", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");

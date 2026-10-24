@@ -76,7 +76,7 @@ function parseTrailingJsonEnvelope(stderr: string): { ok: boolean; error: string
   return JSON.parse(stderr.slice(start));
 }
 
-describe("akm index — index.db contention (field follow-up to #956, F1)", () => {
+describe("akm index — index.db contention (field follow-up to #956)", () => {
   test("without --skip-if-locked: a busy index.db reclassifies to exit 75 INDEX_DB_CONTENDED; " +
     "--skip-if-locked on the same setup still skips at exit 0 without ever touching the DB", async () => {
     writeMemory("note-0");

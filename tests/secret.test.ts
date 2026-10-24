@@ -194,7 +194,7 @@ describe("secret list", () => {
 // to a different code) lives in
 // tests/integration/secret/secret-path-run.test.ts.
 
-describe("colon ref spelling removed (Q-08)", () => {
+describe("colon ref spelling removed", () => {
   // Exercised via `secret run`: it routes the ref through the
   // parseSecretRef/assertNotColonRef check (src/core/env-secret-ref.ts).
   test("`secret:<name>` fails loudly naming the slash replacement, instead of a confusing not-found", async () => {

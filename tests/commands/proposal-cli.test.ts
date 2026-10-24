@@ -177,7 +177,7 @@ describe("akm proposal drain strategy selector", () => {
     expect(JSON.parse(forced.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "agent" });
   });
 
-  test("a stale-target refusal is auto-rejected, not left as a generic failure (STALE, R20)", async () => {
+  test("a stale-target refusal is auto-rejected, not left as a generic failure", async () => {
     const stashDir = makeStashDir();
     const assetPath = path.join(stashDir, "lessons", "cli-stale.md");
     fs.writeFileSync(
@@ -615,7 +615,7 @@ describe("akm proposal reopen (CLI, #997)", () => {
   });
 });
 
-describe("akm proposal accept --generator bulk safety guard (WS0)", () => {
+describe("akm proposal accept --generator bulk safety guard", () => {
   test("bulk accept without --yes aborts in non-interactive mode (exit 2)", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
@@ -658,7 +658,7 @@ describe("akm proposal accept --generator bulk safety guard (WS0)", () => {
   });
 });
 
-describe("accept/reject --generator flag (WS3)", () => {
+describe("accept/reject --generator flag", () => {
   test("bulk accept --generator proceeds with --yes and promotes matching proposals", async () => {
     const stash = makeStashDir();
     seedProposal(stash);

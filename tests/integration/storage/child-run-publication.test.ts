@@ -225,7 +225,7 @@ afterEach(() => storage.cleanup());
 
 // ── one-transaction publication ─────────────────────────────────────────────
 
-describe("publishChildWorkflowRun — atomic publication (C-07)", () => {
+describe("publishChildWorkflowRun — atomic publication", () => {
   test("inserts the child run row, its step, and one workflow_started event, and returns the inserted row", () => {
     const db = openStateDatabase(getStateDbPath());
     try {
@@ -317,7 +317,7 @@ describe("publishChildWorkflowRun — atomic publication (C-07)", () => {
 
 // ── idempotent second call ──────────────────────────────────────────────────
 
-describe("publishChildWorkflowRun — idempotent second call (C-08)", () => {
+describe("publishChildWorkflowRun — idempotent second call", () => {
   test("a second call with the same (parentRunId, invocationKey) returns the SAME child row — no second insert, event, or step set", () => {
     const db = openStateDatabase(getStateDbPath());
     try {
@@ -411,7 +411,7 @@ try {
 `;
 }
 
-describe("publishChildWorkflowRun — two concurrent publishers (C-09)", () => {
+describe("publishChildWorkflowRun — two concurrent publishers", () => {
   test("the loser reads the winner's row — never a duplicate row, never a thrown conflict", async () => {
     const dbPath = getStateDbPath();
     const db = openStateDatabase(dbPath);
@@ -544,7 +544,7 @@ describe("publishChildWorkflowRun — two concurrent publishers (C-09)", () => {
 // itself wrote — and must perform no second insert and no second
 // workflow_started event when it finds one.
 
-describe("publishChildWorkflowRun — deterministic loser path via a pre-inserted winner (C-09)", () => {
+describe("publishChildWorkflowRun — deterministic loser path via a pre-inserted winner", () => {
   test("recognizes a winner row it did not insert itself — no second insert, no second event", () => {
     const db = openStateDatabase(getStateDbPath());
     try {
@@ -604,7 +604,7 @@ describe("publishChildWorkflowRun — deterministic loser path via a pre-inserte
 
 // ── never reads child source ────────────────────────────────────────────────
 
-describe("publishChildWorkflowRun — no child source access (C-11)", () => {
+describe("publishChildWorkflowRun — no child source access", () => {
   test("succeeds with no workflow source file on disk, and never calls fs.readFileSync under the stash dir", () => {
     const db = openStateDatabase(getStateDbPath());
     try {
@@ -642,7 +642,7 @@ describe("publishChildWorkflowRun — no child source access (C-11)", () => {
 
 // ── top-level scope-conflict rules do not apply ─────────────────────────────
 
-describe("publishChildWorkflowRun — top-level scope-conflict rules do not apply (C-10)", () => {
+describe("publishChildWorkflowRun — top-level scope-conflict rules do not apply", () => {
   test("succeeds even when an active top-level run occupies the same (workflow_ref, scope_key) publishWorkflowRunV4 would reject", () => {
     const db = openStateDatabase(getStateDbPath());
     try {
@@ -682,7 +682,7 @@ describe("publishChildWorkflowRun — top-level scope-conflict rules do not appl
 
 // ── accessors ───────────────────────────────────────────────────────────────
 
-describe("publishChildWorkflowRun accessors — childRunsOf, getRunByInvocationKey (C-13, C-14)", () => {
+describe("publishChildWorkflowRun accessors — childRunsOf, getRunByInvocationKey", () => {
   test("childRunsOf returns [] for a childless parent, then every child in created_at, id order", () => {
     const db = openStateDatabase(getStateDbPath());
     try {
@@ -767,7 +767,7 @@ describe("publishChildWorkflowRun accessors — childRunsOf, getRunByInvocationK
 // the isolation boundary the SELECT-else-INSERT sequence depends on. This
 // pins the exact mechanism by which nesting silently defeats the guarantee,
 // through the real, unmodified `publishChildWorkflowRun`.
-describe("publishChildWorkflowRun — the outermost-transaction precondition (Review log R10)", () => {
+describe("publishChildWorkflowRun — the outermost-transaction precondition", () => {
   test("issues its own BEGIN IMMEDIATE/COMMIT when it is the outermost transaction", () => {
     const db = openStateDatabase(getStateDbPath());
     try {

@@ -56,7 +56,7 @@ export function normalizeQuality(raw: string): string {
   if (!warnedUnknownQualityValues.has(raw)) {
     warnedUnknownQualityValues.add(raw);
     warn(
-      `Warning: unknown quality value "${raw}" — entry remains searchable, but consider using "generated", "curated", or "proposed" (v1 spec §4.2).`,
+      `Warning: unknown quality value "${raw}" — entry remains searchable, but consider using "generated", "curated", or "proposed".`,
     );
   }
   return raw;

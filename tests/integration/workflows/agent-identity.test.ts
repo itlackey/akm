@@ -184,7 +184,7 @@ describe("workflow run agent identity persistence", () => {
     expect(match?.agentSessionId).toBe("session-xyz");
   });
 
-  test("workflow_started event emits only run id + status, never the raw workflow title (07 P1-B)", async () => {
+  test("workflow_started event emits only run id + status, never the raw workflow title", async () => {
     writeWorkflow("title-flow");
     const started = await startWorkflowRun("workflows/title-flow", {});
 

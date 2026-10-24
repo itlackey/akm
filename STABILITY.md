@@ -44,7 +44,7 @@ covers beyond the table.
 | `akm bundle add` | Stable | |
 | `akm bundle list` | Stable | |
 | `akm bundle show` | Evolving | |
-| `akm bundle rename` | Evolving | |
+| `akm bundle rename` | Stable | |
 | `akm bundle remove` | Stable | |
 | `akm bundle update` | Stable | |
 | `akm upgrade` | Stable | Including the plugin step and `--next`. |

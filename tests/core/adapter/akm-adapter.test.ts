@@ -70,7 +70,7 @@ function allTypesContexts(): FileContext[] {
 
 // ── adapter metadata ─────────────────────────────────────────────────────────
 
-describe("akm adapter — metadata (§7)", () => {
+describe("akm adapter — metadata", () => {
   test("id / version", () => {
     expect(akmAdapter.id).toBe("akm");
     expect(akmAdapter.version).toBe("0.9.2");
@@ -86,7 +86,7 @@ describe("akm adapter — metadata (§7)", () => {
 
 // ── 1. recognition parity (byte-for-byte vs the golden) ──────────────────────
 
-describe("akm adapter — recognize reproduces runMatchers classification (§5.1 BINDING)", () => {
+describe("akm adapter — recognize reproduces runMatchers classification (BINDING)", () => {
   test("every fixture file recognizes as its golden type + carries its golden renderer", () => {
     const contexts = allTypesContexts();
     // 13 assets: exactly one file per type.
@@ -115,7 +115,7 @@ describe("akm adapter — recognize reproduces runMatchers classification (§5.1
     expect(asserted).toBe(Object.keys(RECOGNITION_GOLDEN.byRelPath).length);
   });
 
-  test("conceptId is the D-R2 qualified `<stash-subdir>/<canonical-name>` spelling", () => {
+  test("conceptId is the qualified `<stash-subdir>/<canonical-name>` spelling", () => {
     const byRel = new Map(allTypesContexts().map((c) => [c.relPath, c]));
     // conceptId = stashDirFor(type)/canonicalName — for markdown types the OKF
     // concept ID (path − .md); skill = its DIR (skills/<dir>, not .../SKILL);
@@ -147,7 +147,7 @@ describe("akm adapter — recognize reproduces runMatchers classification (§5.1
 
 // ── 2. recognizeMatch — content/extension winners ───────────────────────────
 
-describe("akm adapter — recognizeMatch classifies content/extension winners (§5.1)", () => {
+describe("akm adapter — recognizeMatch classifies content/extension winners", () => {
   test("classifies hand-built contexts where smartMd/extension is the winner", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-adapter-sync-"));
     tmpDirs.push(tmp);
@@ -170,7 +170,7 @@ describe("akm adapter — recognizeMatch classifies content/extension winners (�
 
 // ── 3. placement parity (byte-for-byte vs the golden) ───────────────────────
 
-describe("akm adapter — placeNew reproduces resolveAssetPathFromName placement (§5.1)", () => {
+describe("akm adapter — placeNew reproduces resolveAssetPathFromName placement", () => {
   test("every akm type's qualified conceptId places at exactly the golden path", () => {
     for (const [type, entry] of Object.entries(PLACEMENT_GOLDEN.byType)) {
       // The qualified path-form conceptId: <stash-subdir>/<canonical-name>.
@@ -199,7 +199,7 @@ describe("akm adapter — placeNew reproduces resolveAssetPathFromName placement
 
 // ── 3b. recognize folds the 11 metadata contributors ─────────────────────────
 
-describe("akm adapter — recognize folds the index-time metadata contributors (§2)", () => {
+describe("akm adapter — recognize folds the index-time metadata contributors", () => {
   // Direct pins of the index-time metadata fold (searchHints / toc / parameters)
   // that `recognize` carries onto the IndexDocument, held as literals. Absence is
   // pinned too (an empty ExpectedFold asserts recognize adds NO fold surface for
@@ -275,7 +275,7 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
     expect(asserted).toBe(13);
   });
 
-  test("the winning renderer is still carried on documentJson.renderer (WI-B contract intact)", () => {
+  test("the winning renderer is still carried on documentJson.renderer (contract intact)", () => {
     for (const ctx of allTypesContexts()) {
       const doc = akmAdapter.recognize(component(), ctx);
       expect((doc?.documentJson as { renderer?: string })?.renderer).toBeDefined();
@@ -305,7 +305,7 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
 
 // ── 3c. reserved filenames (index.md / log.md) ───────────────────────────────
 
-describe("akm adapter — D-R6 reserved filenames are never items (spec §5.1)", () => {
+describe("akm adapter — reserved filenames are never items", () => {
   test("a bundle-root README.md is documentation, not a knowledge item (#979)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-adapter-root-readme-"));
     tmpDirs.push(tmp);
@@ -351,7 +351,7 @@ describe("akm adapter — D-R6 reserved filenames are never items (spec §5.1)",
 
 // ── 4. directoryList / looksLikeRoot ─────────────────────────────────────────
 
-describe("akm adapter — owned dirs + root probe (§7 / §1.2)", () => {
+describe("akm adapter — owned dirs + root probe", () => {
   test("directoryList = the TYPE_DIRS stash subdirs", () => {
     const dirs = new Set(akmAdapter.directoryList?.(component()));
     for (const d of [

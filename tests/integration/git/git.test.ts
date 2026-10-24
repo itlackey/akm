@@ -248,6 +248,30 @@ describe("GitSourceProvider", () => {
     expect(fs.existsSync(docPath)).toBe(true);
   });
 
+  test("a failed forced refresh reports the failure and keeps the previous copy, however recent the marker", async () => {
+    const localRepoPath = createLocalGitRepo();
+    const repo = { cloneUrl: localRepoPath, ref: null as string | null, canonicalUrl: localRepoPath };
+    const cachePaths = getCachePaths(repo.canonicalUrl);
+    const docPath = path.join(cachePaths.repoDir, "content", "openai", "docs", "chat-api", "python", "DOC.md");
+
+    await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
+    expect(fs.existsSync(docPath)).toBe(true);
+    const markerBefore = fs.statSync(cachePaths.indexPath).mtimeMs;
+
+    // The upstream disappears; the marker is seconds old, well inside the
+    // former seven-day window that used to turn this failure into a success.
+    fs.rmSync(localRepoPath, { recursive: true, force: true });
+
+    await expect(ensureGitMirror(repo, cachePaths, { requireRepoDir: true, force: true })).rejects.toThrow();
+
+    // The previous copy is still on disk and the marker was not advanced.
+    expect(fs.existsSync(docPath)).toBe(true);
+    expect(fs.statSync(cachePaths.indexPath).mtimeMs).toBe(markerBefore);
+
+    // A plain (non-forced) sync keeps serving that copy without touching upstream.
+    await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
+  });
+
   test("cache mirror treats repo-root stash layouts as fresh extracted repos", async () => {
     const localRepoPath = createRootLayoutGitRepo();
     const repo = { cloneUrl: localRepoPath, ref: null as string | null, canonicalUrl: localRepoPath };

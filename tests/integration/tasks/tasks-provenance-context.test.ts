@@ -254,7 +254,7 @@ describe("command/prompt arm threads an explicit provenance.eventSource end to e
   });
 });
 
-describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { eventSource: "task", scheduled }', () => {
+describe('CLI boundary: `akm task run` builds { eventSource: "task", scheduled }', () => {
   test("manual and scheduled execution both run: the list decides what gets installed, not what may run", async () => {
     const id = "cli-local-activation";
     writeTask(id, "version: 4\nrun: 'true'\nschedule: '@daily'\n");
@@ -309,7 +309,7 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
   });
 });
 
-describe("F-3 (type-level only) — RunTaskOptions.bundleDir replaces stashDir", () => {
+describe("RunTaskOptions.bundleDir replaces stashDir", () => {
   // This test only pins the TYPE-LEVEL shape: a bare
   // `bundleDir` (no `stashDir` anywhere) is a complete, valid RunTaskOptions.
   test("runTask accepts bundleDir (no stashDir) and resolves the task normally", async () => {

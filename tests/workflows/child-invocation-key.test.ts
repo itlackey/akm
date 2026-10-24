@@ -20,7 +20,7 @@ const { computeChildInvocationKey } = ChildInvocationModule;
 
 // ── computeChildInvocationKey (A-17…A-19) ───────────────────────────────────
 
-describe("computeChildInvocationKey (§3.4, A-17…A-19)", () => {
+describe("computeChildInvocationKey", () => {
   const base = { parentRunId: "run-1", parentUnitId: "unit-1", unitInputHash: "d".repeat(64) };
 
   test("is deterministic: the same three inputs hash identically", () => {

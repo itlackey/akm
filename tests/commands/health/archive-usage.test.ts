@@ -50,7 +50,7 @@ function seedArchiveFile(stashDir: string, relPath: string, contents: string): v
 }
 
 describe("collectArchiveUsageAdvisory", () => {
-  test("silent when the bundle is git-backed AND every archived byte is committed and clean (round 3)", () => {
+  test("silent when the bundle is git-backed AND every archived byte is committed and clean", () => {
     const stashDir = sandbox();
     initGitRepo(stashDir);
     seedArchiveFile(stashDir, "2026-01-01-memories-old/cleanup.md", "---\nkind: memory-cleanup-archive\n---\n");
@@ -59,7 +59,7 @@ describe("collectArchiveUsageAdvisory", () => {
     expect(collectArchiveUsageAdvisory(stashDir)).toBeUndefined();
   });
 
-  test("warns with byte/file counts when a git-backed bundle's archive has uncommitted bytes (round 3)", () => {
+  test("warns with byte/file counts when a git-backed bundle's archive has uncommitted bytes", () => {
     // A filesystem-kind bundle whose accepted retirements are never
     // committed, even though `.git` exists.
     const stashDir = sandbox();
@@ -90,7 +90,7 @@ describe("collectArchiveUsageAdvisory", () => {
     expect(advisory?.message).toContain("2 file(s), 15 byte(s) of that cannot be purged");
   });
 
-  test("an unusable .git (present but not a real repo) counts the WHOLE archive as unpurgeable, not silently nothing (round 3)", () => {
+  test("an unusable .git (present but not a real repo) counts the WHOLE archive as unpurgeable, not silently nothing", () => {
     const stashDir = sandbox();
     markGitBacked(stashDir); // a bare, non-functional .git directory
     seedArchiveFile(stashDir, "2026-01-01-memories-old/cleanup.md", "1234567890"); // 10 bytes

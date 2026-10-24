@@ -176,7 +176,7 @@ function buildFixture(): void {
   }
 }
 
-describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {
+describe("derived-memory search enrichment", () => {
   test("parent hit gains expandTo + derived child's description/tags when child exists", async () => {
     const result = await akmSearch({ query: "claude-prefs", source: "local", limit: 10 });
     const parentHit = result.hits.find((h) => h.type === "memory" && h.name === "claude-prefs");

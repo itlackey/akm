@@ -4,7 +4,6 @@ import { shapeForCommand } from "../src/output/shapes";
 import {
   capDescription,
   pickFields,
-  shapeAssetHit,
   shapeProposalAcceptOutput,
   shapeProposalDiffOutput,
   shapeProposalEntry,
@@ -136,8 +135,8 @@ describe("shapeSearchHit — local stash hits", () => {
       action: "akm show skills/deploy",
       score: 0.42,
       estimatedTokens: 120,
+      ref: "skills/deploy",
     });
-    expect(out).not.toHaveProperty("ref");
     expect(out).not.toHaveProperty("origin");
     expect(out).not.toHaveProperty("tags");
   });
@@ -155,17 +154,16 @@ describe("shapeSearchHit — registry hits", () => {
     name: "azure-ops",
     description: "Azure ops kit",
     action: "akm bundle add npm:azure-ops",
+    installRef: "npm:azure-ops",
     warnings: ["registry rate limit hit, results may be stale"],
     id: "npm:azure-ops",
     score: 0.7,
   };
 
-  test("brief keeps name/score (QA #28: brief now projects name+installRef+score)", () => {
-    // Brief includes name (normalised from title if needed) and score so
-    // callers can use the result without --detail full.
+  test("brief is exactly name + installRef + score (QA #28)", () => {
+    // Brief carries the install ref so callers can act without --detail full.
     const result = shapeSearchHit(registryHit, "brief");
-    expect(result.name).toBe("azure-ops");
-    expect(result.score).toBe(0.7);
+    expect(result).toEqual({ name: "azure-ops", installRef: "npm:azure-ops", score: 0.7 });
     // action is not in brief output — use installRef to act
     expect(result).not.toHaveProperty("curated");
     // brief intentionally omits warnings to keep payloads small
@@ -178,6 +176,7 @@ describe("shapeSearchHit — registry hits", () => {
       name: "azure-ops",
       description: "Azure ops kit",
       action: "akm bundle add npm:azure-ops",
+      installRef: "npm:azure-ops",
       warnings: ["registry rate limit hit, results may be stale"],
     });
     expect(out).not.toHaveProperty("curated");
@@ -234,35 +233,6 @@ describe("shapeSearchHitForAgent", () => {
       editHint: "akm clone team//skills/deploy",
     });
     expect(readOnly.editHint).toBe("akm clone team//skills/deploy");
-  });
-});
-
-describe("shapeAssetHit", () => {
-  const asset = {
-    assetName: "deploy",
-    assetType: "skill",
-    description: "Deploy the app",
-    stash: { id: "x", name: "x" },
-    action: "akm show skills/deploy",
-    estimatedTokens: 120,
-  };
-
-  test("brief drops description", () => {
-    expect(shapeAssetHit(asset, "brief")).toEqual({
-      assetName: "deploy",
-      assetType: "skill",
-      action: "akm show skills/deploy",
-      estimatedTokens: 120,
-    });
-  });
-
-  test("normal includes description + stash", () => {
-    expect(shapeAssetHit(asset, "normal")).toMatchObject({
-      assetName: "deploy",
-      assetType: "skill",
-      description: "Deploy the app",
-      stash: { id: "x", name: "x" },
-    });
   });
 });
 
@@ -620,7 +590,7 @@ describe("shapeForCommand — `results` collection alias (#922)", () => {
   const LIST_COMMANDS: Array<[string, string, Record<string, unknown>]> = [
     ["search", "hits", { hits: [{ type: "skill", name: "x", action: "a" }], registryHits: [] }],
     ["curate", "items", { items: [{ type: "skill", name: "x" }], query: "q", summary: "s" }],
-    ["registry-search", "hits", { hits: [{ name: "x", installRef: "x" }], assetHits: [] }],
+    ["registry-search", "hits", { hits: [{ name: "x", installRef: "x" }] }],
     ["proposal-list", "proposals", { totalCount: 1, proposals: [{ id: "p1", ref: "lessons/x", status: "pending" }] }],
     ["list", "sources", { sources: [{ name: "b1" }] }],
     ["env-list", "envs", { envs: [{ name: "e1" }] }],
@@ -747,7 +717,7 @@ describe("shapeProposal* — proposal commands", () => {
     expect(out).not.toHaveProperty("continuityRisk"); // this fixture is not flagged
   });
 
-  test("shapeProposalEntry brief projects a minimal continuityRisk marker for a flagged retire proposal (round 3)", () => {
+  test("shapeProposalEntry brief projects a minimal continuityRisk marker for a flagged retire proposal", () => {
     // `proposal list`'s DEFAULT detail level is "brief" (no --detail flag
     // given projects here) — retirement itself is not restored until
     // "normal", so without this marker a flagged proposal would be

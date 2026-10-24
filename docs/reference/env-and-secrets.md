@@ -71,10 +71,13 @@ They exit with the command's status and are exempt from `--format`.
   own subprocesses can read them, and the child decides what it writes to
   stdout and stderr. For a long-lived process, point it at the secret file
   (`<bundle>/secrets/<name>`) directly instead.
-- `env run` stops when the env file sets a process-hijacking variable such as
-  `LD_PRELOAD` or `PATH`, unless you pass `--allow-dangerous-env-keys`;
-  `EDITOR`, `VISUAL` and `PAGER` only warn. `secret run` refuses a `<VAR>` that
-  is a process-hijacking name.
+- A process-hijacking variable such as `LD_PRELOAD` or `PATH` is checked on
+  both commands: in an env file for `env run`, and as the `<VAR>` name for
+  `secret run`. In the working bundle or a local filesystem bundle (your own
+  files) akm warns on stderr and injects anyway. In a bundle installed from
+  elsewhere (a git, website or npm bundle) both commands stop unless you pass
+  `--allow-dangerous-env-keys` after reviewing the file. `EDITOR`, `VISUAL` and
+  `PAGER` only warn.
 - Each run records an `env_access` or `secret_access` event with the key or
   variable names.
 
@@ -91,12 +94,14 @@ search index; `env run` still works on it.
 ### Indexing
 
 `akm bundle create` makes the bundle a git repository whose `.gitignore` lists
-`env/` and `secrets/`. The indexer skips git-ignored files, so those assets are
-not indexed by default: `akm search` does not return them and `akm show
-env/<name>` finds the file only after you remove the path from `.gitignore` and
-re-run `akm index`. `env list`, `env path`, `env export`, `env run`,
-`secret list` and `secret run` read the files directly and do not need the
-index.
+`env/` and `secrets/`, so those files are never committed. The indexer skips
+git-ignored files everywhere else, but it still indexes the files under a
+bundle's `env/` and `secrets/` directories when git ignores them: `akm search
+--type env` and `akm show env/<name>` find an env file of a default bundle after
+`akm index`. The index holds key names only for an env file and the name for a
+secret; values are never indexed. `env list`, `env path`, `env export`,
+`env run`, `secret list` and `secret run` read the files directly and do not
+need the index.
 
 ## Write-target resolution
 

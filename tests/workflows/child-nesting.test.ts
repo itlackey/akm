@@ -240,8 +240,8 @@ function successDispatcher(): (request: UnitDispatchRequest) => Promise<UnitDisp
 
 // ── A-31, A-32: eventSource threading (verbatim / absent) ──────────────────
 
-describe("A-31, A-32 — RunWorkflowOptions.eventSource is threaded into the child drive verbatim, or absent", () => {
-  test("A-31: a set eventSource is forwarded to the child's own runWorkflowSteps call unchanged", async () => {
+describe("RunWorkflowOptions.eventSource is threaded into the child drive verbatim, or absent", () => {
+  test("a set eventSource is forwarded to the child's own runWorkflowSteps call unchanged", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
     let captured: Record<string, unknown> | undefined;
@@ -264,7 +264,7 @@ describe("A-31, A-32 — RunWorkflowOptions.eventSource is threaded into the chi
     }
   });
 
-  test("A-32: an absent eventSource is never forwarded — byte-identical to every non-task caller (PRESERVE)", async () => {
+  test("an absent eventSource is never forwarded — byte-identical to every non-task caller", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
     let captured: Record<string, unknown> | undefined;
@@ -288,8 +288,8 @@ describe("A-31, A-32 — RunWorkflowOptions.eventSource is threaded into the chi
 
 // ── A-33: an injected dispatcher serves both child units and child judges ──
 
-describe("A-33 — StepExecutionContext.dispatcher is threaded into the child drive's dispatcher", () => {
-  test("A-33: a single injected fake serves BOTH a gated child's unit dispatch and its completion-criteria judge dispatch", async () => {
+describe("StepExecutionContext.dispatcher is threaded into the child drive's dispatcher", () => {
+  test("a single injected fake serves BOTH a gated child's unit dispatch and its completion-criteria judge dispatch", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(gatedChildPlan(), { ref: "workflows/gated-nested-child" });
     let sawUnitCall = false;
@@ -312,7 +312,7 @@ describe("A-33 — StepExecutionContext.dispatcher is threaded into the child dr
     expect(childRow?.status).toBe("completed");
   });
 
-  test("A-33 (call-shape): the captured runWorkflowSteps options carry the SAME dispatcher reference passed on ctx", async () => {
+  test("call-shape: the captured runWorkflowSteps options carry the SAME dispatcher reference passed on ctx", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
     const dispatcher = successDispatcher();
@@ -337,8 +337,8 @@ describe("A-33 — StepExecutionContext.dispatcher is threaded into the child dr
 
 // ── A-34: maxConcurrency threading — effective width is min(parent cap, child plan cap) ──
 
-describe("A-34 — StepExecutionContext.maxConcurrency caps the child drive's effective concurrency", () => {
-  test("A-34: with a wide child-plan execution.maxConcurrency, ctx.maxConcurrency is the binding constraint", async () => {
+describe("StepExecutionContext.maxConcurrency caps the child drive's effective concurrency", () => {
+  test("with a wide child-plan execution.maxConcurrency, ctx.maxConcurrency is the binding constraint", async () => {
     const parent = await seedParentRun();
     // The child's OWN frozen plan allows up to 8 concurrent units; ctx caps it
     // at 2 — min(2, 8) = 2 must be the width actually observed.
@@ -368,7 +368,7 @@ describe("A-34 — StepExecutionContext.maxConcurrency caps the child drive's ef
     expect(peak).toBe(2);
   });
 
-  test("A-34 (call-shape): ctx.maxConcurrency is forwarded to the child's own runWorkflowSteps call verbatim", async () => {
+  test("call-shape: ctx.maxConcurrency is forwarded to the child's own runWorkflowSteps call verbatim", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
     let captured: Record<string, unknown> | undefined;
@@ -394,8 +394,8 @@ describe("A-34 — StepExecutionContext.maxConcurrency caps the child drive's ef
 
 // ── A-35: three-level nesting drives recursively through the identical seam ─
 
-describe("A-35 — a child that itself composes a grandchild drives recursively", () => {
-  test("A-35: three levels complete; three run rows exist, linked root -> child -> grandchild", async () => {
+describe("a child that itself composes a grandchild drives recursively", () => {
+  test("three levels complete; three run rows exist, linked root -> child -> grandchild", async () => {
     const root = await seedParentRun();
     const grandchildPlan = leafChildPlan("workflows/grandchild.md");
     const grandchildTarget = buildChildTarget(grandchildPlan, { ref: "workflows/grandchild" });
@@ -461,8 +461,8 @@ describe("A-35 — a child that itself composes a grandchild drives recursively"
 
 // ── A-36: no second, executor-side depth bound ──────────────────────────────
 
-describe("A-36 — the executor adds no depth bound of its own", () => {
-  test("A-36: src/workflows/exec/child-workflow.ts never references the freeze-time composition-depth limit", () => {
+describe("the executor adds no depth bound of its own", () => {
+  test("src/workflows/exec/child-workflow.ts never references the freeze-time composition-depth limit", () => {
     const file = path.resolve(import.meta.dir, "../../src/workflows/exec/child-workflow.ts");
     // Depth is bounded at FREEZE (and re-bounded at decode). A second,
     // executor-side depth counter/bound here would be a mistake — this pin fails

@@ -25,7 +25,7 @@ function requireHarness(id: string) {
   return harness;
 }
 
-describe("HARNESS_REGISTRY — P2 adapter integration", () => {
+describe("HARNESS_REGISTRY — adapter integration", () => {
   test("every registry entry with agentDispatch has a resolvable builder (no throw)", () => {
     for (const h of AGENT_DISPATCH_HARNESSES.filter((entry) => entry.agentBuilder)) {
       expect(() => getCommandBuilder(h.id)).not.toThrow();

@@ -174,8 +174,8 @@ function recordingDispatcher(): {
 
 // ── A-01: the seam must route a child-workflow unit away from UnitDispatcher ─
 
-describe("A-01 — the dispatch seam routes a child-workflow unit away from UnitDispatcher", () => {
-  test("A-01: the injected dispatcher is never invoked directly with a child-workflow-kind request", async () => {
+describe("the dispatch seam routes a child-workflow unit away from UnitDispatcher", () => {
+  test("the injected dispatcher is never invoked directly with a child-workflow-kind request", async () => {
     const runId = "11111111-1111-4111-8111-111111111111";
     const stepId = "compose";
     await seedParentRun({ runId, stepId });
@@ -197,8 +197,8 @@ describe("A-01 — the dispatch seam routes a child-workflow unit away from Unit
 
 // ── A-02: the composing unit's own journal bookkeeping is unaffected ───────
 
-describe("A-02 — the composing unit still reserves and finishes its own attempt row", () => {
-  test("A-02: workflow_run_units carries phase 'unit' and runner 'exec' for the composing unit, regardless of dispatch routing", async () => {
+describe("the composing unit still reserves and finishes its own attempt row", () => {
+  test("workflow_run_units carries phase 'unit' and runner 'exec' for the composing unit, regardless of dispatch routing", async () => {
     const runId = "22222222-2222-4222-8222-222222222222";
     const stepId = "compose";
     await seedParentRun({ runId, stepId });
@@ -225,7 +225,7 @@ describe("A-02 — the composing unit still reserves and finishes its own attemp
 
 // ── A-04: the retired UsageErrorCode leaves no trace under src/ ────────────
 
-describe("A-04 — WORKFLOW_CHILD_EXECUTION_UNSUPPORTED is retired (B-N11)", () => {
+describe("WORKFLOW_CHILD_EXECUTION_UNSUPPORTED is retired", () => {
   function collectTsFiles(dir: string): string[] {
     const results: string[] = [];
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -239,7 +239,7 @@ describe("A-04 — WORKFLOW_CHILD_EXECUTION_UNSUPPORTED is retired (B-N11)", () 
     return results;
   }
 
-  test("A-04: no *.ts file under src/ mentions WORKFLOW_CHILD_EXECUTION_UNSUPPORTED", () => {
+  test("no *.ts file under src/ mentions WORKFLOW_CHILD_EXECUTION_UNSUPPORTED", () => {
     const root = path.resolve(import.meta.dir, "../../src");
     const hits = collectTsFiles(root)
       .filter((file) => fs.readFileSync(file, "utf8").includes("WORKFLOW_CHILD_EXECUTION_UNSUPPORTED"))
@@ -254,8 +254,8 @@ describe("A-04 — WORKFLOW_CHILD_EXECUTION_UNSUPPORTED is retired (B-N11)", () 
 
 // ── A-05: an ordinary command unit's dispatch path is byte-unchanged ───────
 
-describe("A-05 — an ordinary command unit is unaffected (PRESERVE)", () => {
-  test("A-05: a plain command-kind unit still reaches UnitDispatcher exactly once, unchanged", async () => {
+describe("an ordinary command unit is unaffected", () => {
+  test("a plain command-kind unit still reaches UnitDispatcher exactly once, unchanged", async () => {
     const runId = "33333333-3333-4333-8333-333333333333";
     const stepId = "notify";
     await seedParentRun({ runId, stepId });
@@ -281,8 +281,8 @@ describe("A-05 — an ordinary command unit is unaffected (PRESERVE)", () => {
 
 // ── A-06: computeStepWorkList already builds a child-workflow unit correctly ─
 
-describe("A-06 — computeStepWorkList already treats a child-workflow target correctly (PRESERVE)", () => {
-  test("A-06: timeoutMs is null, runner is exec, and the prompt is built through the normal engine-unit path (never execContext)", () => {
+describe("computeStepWorkList already treats a child-workflow target correctly", () => {
+  test("timeoutMs is null, runner is exec, and the prompt is built through the normal engine-unit path (never execContext)", () => {
     const target = buildChildTarget(leafChildPlan());
     const plan = stepPlanWithTarget(target, "compose");
     const input: WorkListInput = { runId: "run-1", params: {}, stepOutputs: {} };

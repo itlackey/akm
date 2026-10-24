@@ -616,7 +616,7 @@ describe("update preserves entry.source for writable installed entries", () => {
 
 // ── Regression: R-015 — `akm bundle update --all` must account for plain sources ───
 
-describe("R-015: akm bundle update --all with mixed plain and managed sources", () => {
+describe("akm bundle update --all with mixed plain and managed sources", () => {
   async function removeIndexedSecondaryFilesystemBundle(marker: string): Promise<string> {
     const secondaryRoot = createTmpDir(`akm-r015-fs-incomplete-${marker}-`);
     makeStashDir(secondaryRoot);

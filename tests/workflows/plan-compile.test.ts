@@ -529,7 +529,7 @@ Do the assigned item.
     expect(errors[0]!.message).toContain("Unknown root");
   });
 
-  test("map.over as a bare name (no reference grammar) is rejected — P1 ambient lookup is gone", () => {
+  test("map.over as a bare name (no reference grammar) is rejected — ambient lookup is gone", () => {
     const errors = errorsFrom(`---
 type: workflow
 steps:

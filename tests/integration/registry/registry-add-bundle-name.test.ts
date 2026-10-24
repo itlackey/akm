@@ -169,7 +169,7 @@ describe("akm bundle add <registry ref> without a usable --name", () => {
   });
 });
 
-describe("akm bundle add <registry ref> --name conflicts (D6)", () => {
+describe("akm bundle add <registry ref> --name conflicts", () => {
   function configPath(): string {
     return path.join(storage.configDir, "akm", "config.json");
   }

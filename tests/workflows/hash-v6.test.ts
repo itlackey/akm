@@ -212,8 +212,8 @@ function buildCommandTargetWithPersona(personaContent: string): FrozenWorkflowTa
 // with no dependency on child-workflow support. A-15 (a claim specifically
 // about embedded child planHash sensitivity) uses a child-workflow fixture.
 
-describe("hashVersion 7 — unit input hash (A-11, A-14, A-15)", () => {
-  test("the preimage matches §3.3's field list exactly, under the akm.workflow.unit\\0v7\\0 prefix (an ordinary target — independent of child-workflow support)", () => {
+describe("hashVersion 7 — unit input hash", () => {
+  test("the preimage matches the documented field list exactly, under the akm.workflow.unit\\0v7\\0 prefix (an ordinary target — independent of child-workflow support)", () => {
     const target = buildOrdinaryShellTarget();
     const stepPlan = stepPlanWithTarget(target);
     const input: WorkListInput = { runId: "run-1", params: { p: 1 }, stepOutputs: {} };
@@ -250,7 +250,7 @@ describe("hashVersion 7 — unit input hash (A-11, A-14, A-15)", () => {
     expect(unit.inputHash).toBe(expectedHash);
   });
 
-  test("a target WITH inputBindings adds exactly ONE preimage field — taskInputs, the RESOLVED values — in gateFeedback's conditional style (R-R15)", () => {
+  test("a target WITH inputBindings adds exactly ONE preimage field — taskInputs, the RESOLVED values — in gateFeedback's conditional style", () => {
     const target = buildOrdinaryShellTarget({
       inputBindings: [
         { kind: "literal", name: "ticket", value: "T-1" },
@@ -295,7 +295,7 @@ describe("hashVersion 7 — unit input hash (A-11, A-14, A-15)", () => {
     expect(unit.inputHash).toBe(expectedHash);
   });
 
-  test("a changed embedded child planHash changes the unit's input hash (A-15)", () => {
+  test("a changed embedded child planHash changes the unit's input hash", () => {
     const childPlanA = { title: "child-a", irVersion: 5 };
     const childPlanB = { title: "child-b", irVersion: 5 };
     const targetA = asFrozenTarget(
@@ -319,7 +319,7 @@ describe("hashVersion 7 — unit input hash (A-11, A-14, A-15)", () => {
     expect(hashA).not.toBe(hashB);
   });
 
-  test("a changed persona snapshot changes the unit's input hash (A-N9: persona snapshots ARE in the preimage, transitively via frozenTarget.request.persona)", () => {
+  test("a changed persona snapshot changes the unit's input hash (persona snapshots ARE in the preimage, transitively via frozenTarget.request.persona)", () => {
     const targetA = buildCommandTargetWithPersona("You are a careful reviewer, PERSONA-A.");
     const targetB = buildCommandTargetWithPersona("You are a careful reviewer, PERSONA-B.");
     const input: WorkListInput = { runId: "run-1", params: {}, stepOutputs: {} };
@@ -346,7 +346,7 @@ describe("hashVersion 7 — unit input hash (A-11, A-14, A-15)", () => {
     expect(resultA2.list.units[0]?.inputHash).toBe(hashA);
   });
 
-  test("a changed inputBindings entry changes the unit's input hash, target kind held constant (A-11's frozenTarget field)", () => {
+  test("a changed inputBindings entry changes the unit's input hash, target kind held constant (the frozenTarget field)", () => {
     const withoutBindings = buildOrdinaryShellTarget();
     const withBindings = buildOrdinaryShellTarget({
       inputBindings: [{ kind: "literal", name: "x", value: "a" }],
@@ -388,7 +388,7 @@ const GATE_WF = [
   "",
 ].join("\n");
 
-describe("hashVersion 7 — the gate hash (A-12)", () => {
+describe("hashVersion 7 — the gate hash", () => {
   test("the gate hash prefix is akm.workflow.gate\\0v7\\0 with hashVersion 7 in the preimage — bumped in lockstep with the unit prefix — dispatch/invocation/prompt otherwise unchanged", async () => {
     writeProgram("gate-hash", GATE_WF);
     const started = await startWorkflowRun("workflows/gate-hash");

@@ -28,7 +28,7 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfi
 const STEP_ID = "dispatch";
 const TASK_REF = "tasks/nightly-v4";
 
-describe("A-N6/F-A4 — a task source v4 target composes from a workflow step (supersedes p2a's LC-N1/B-24)", () => {
+describe("a task source v4 target composes from a workflow step", () => {
   let storage: IsolatedAkmStorage;
 
   beforeEach(() => {

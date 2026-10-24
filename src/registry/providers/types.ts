@@ -18,18 +18,16 @@
  */
 
 import type { RegistryConfigEntry } from "../../core/config/config";
-import type { RegistryAssetSearchHit, RegistrySearchHit } from "../types";
+import type { RegistrySearchHit } from "../types";
 
 export interface RegistryProviderSearchOptions {
   query: string;
   /** Maximum number of results to return. Always in range [1, 100]. */
   limit: number;
-  includeAssets?: boolean;
 }
 
 export interface RegistryProviderResult {
   hits: RegistrySearchHit[];
-  assetHits?: RegistryAssetSearchHit[];
   warnings?: string[];
 }
 

@@ -82,7 +82,7 @@ function component(root: string): BundleComponent {
   return { id: "b", adapter: "akm", root, writable: true };
 }
 
-describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
+describe("drain-layer broken-workflow drop", () => {
   test("recognize ALONE swallows the workflow parse error (the gap the drain closes)", () => {
     const { stashDir, badPath } = makeStash();
     const brokenCtx = buildFileContext(stashDir, badPath);

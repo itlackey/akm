@@ -59,13 +59,13 @@ function runner(
 }
 
 describe("callStructured contract", () => {
-  test("(0) explicit null inference survives unless request inference intentionally overlays it", () => {
+  test("explicit null inference survives unless request inference intentionally overlays it", () => {
     expect(resolveStructuredCurrent({ inference: null }, undefined)).toEqual({ inference: null });
     expect(resolveStructuredCurrent({ inference: null }, { temperature: 0.25 })).toEqual({
       inference: { temperature: 0.25 },
     });
   });
-  test("(1) gated success -> parse runs on raw, returns T", async () => {
+  test("gated success -> parse runs on raw, returns T", async () => {
     let parsedRaw: string | undefined = "UNSET";
     const result = await callStructured<{ ok: boolean; raw?: string }>({
       feature: "memory_inference",
@@ -84,7 +84,7 @@ describe("callStructured contract", () => {
     expect(result).toEqual({ ok: true, raw: '{"value":42}' });
   });
 
-  test("(2) gated empty/bad raw -> parse returns the caller fallback itself", async () => {
+  test("gated empty/bad raw -> parse returns the caller fallback itself", async () => {
     const FALLBACK = { ok: false as const };
     const result = await callStructured<{ ok: boolean }>({
       feature: "memory_inference",
@@ -101,7 +101,7 @@ describe("callStructured contract", () => {
     expect(result).toBe(FALLBACK);
   });
 
-  test("(3) gated throw w/ context-size message -> onError('context_limit')", async () => {
+  test("gated throw w/ context-size message -> onError('context_limit')", async () => {
     let seen: LlmErrorClass | undefined;
     let seenErr: unknown;
     const result = await callStructured<string>({
@@ -127,7 +127,7 @@ describe("callStructured contract", () => {
     expect(result).toBe("CTX");
   });
 
-  test("(4) gated throw LlmCallError(provider_html_error) -> onError('html')", async () => {
+  test("gated throw LlmCallError(provider_html_error) -> onError('html')", async () => {
     let seen: LlmErrorClass | undefined;
     const htmlErr = new LlmCallError("provider returned HTML", "provider_html_error");
     const result = await callStructured<string>({
@@ -154,7 +154,7 @@ describe("callStructured contract", () => {
     expect(result).toBe("HTML");
   });
 
-  test("(5) gated throw generic -> onError('other')", async () => {
+  test("gated throw generic -> onError('other')", async () => {
     let seen: LlmErrorClass | undefined;
     const result = await callStructured<string>({
       feature: "memory_inference",
@@ -177,7 +177,7 @@ describe("callStructured contract", () => {
     expect(result).toBe("OTHER");
   });
 
-  test("(6) UNGATED (akmConfig undefined) throw -> error PROPAGATES", async () => {
+  test("UNGATED (akmConfig undefined) throw -> error PROPAGATES", async () => {
     const boom = new Error("ungated propagation");
     const onErrorCalls: LlmErrorClass[] = [];
     const promise = callStructured<string>({
@@ -202,7 +202,7 @@ describe("callStructured contract", () => {
     expect(onErrorCalls).toEqual([]);
   });
 
-  test("(7) onRetryAttempt is forwarded into the chat call options", async () => {
+  test("onRetryAttempt is forwarded into the chat call options", async () => {
     let forwarded: (() => void) | undefined;
     const onRetryAttempt = () => {};
     await callStructured<string>({
@@ -224,7 +224,7 @@ describe("callStructured contract", () => {
     expect(forwarded).toBe(onRetryAttempt);
   });
 
-  test("(8) enabled:true opens a gate whose feature key has no config resolver", async () => {
+  test("enabled:true opens a gate whose feature key has no config resolver", async () => {
     // `distill` has no FEATURE_LOCATION resolver: without the enabled override
     // the gate is hard-closed. The override is how improve-owned features
     // (distill/consolidation/contradiction) migrate onto the seam.
@@ -249,7 +249,7 @@ describe("callStructured contract", () => {
     expect(result).toBe("raw");
   });
 
-  test("(9) resolver-less feature WITHOUT enabled override -> gate closed, fallback + onFallback('disabled')", async () => {
+  test("resolver-less feature WITHOUT enabled override -> gate closed, fallback + onFallback('disabled')", async () => {
     let chatRan = false;
     const reasons: string[] = [];
     const result = await callStructured<string>({
@@ -302,7 +302,7 @@ describe("callStructured contract", () => {
     expect(chatRan).toBe(false);
   });
 
-  test("(10) maxTokens and enableThinking reach the transport as exact resolved inference", async () => {
+  test("maxTokens and enableThinking reach the transport as exact resolved inference", async () => {
     let seenMaxTokens: number | undefined;
     let seenEnableThinking: boolean | undefined;
     await callStructured<string>({
@@ -327,7 +327,7 @@ describe("callStructured contract", () => {
     expect(seenEnableThinking).toBe(false);
   });
 
-  test("(11) timeoutMs key-presence is preserved: absent takes the default, explicit undefined stays disabled", async () => {
+  test("timeoutMs key-presence is preserved: absent takes the default, explicit undefined stays disabled", async () => {
     // Tri-state contract (see CallStructuredRequest doc): absent key = the
     // runner's own timeout, else the 600 s model-work default;
     // present-but-undefined = explicitly disabled.
@@ -438,7 +438,7 @@ describe("callStructured contract", () => {
     expect(seen?.aborted).toBe(true);
   });
 
-  test("(12) unsupported schema lowers optimistically, emits a structured notice, and preserves messages", async () => {
+  test("unsupported schema lowers optimistically, emits a structured notice, and preserves messages", async () => {
     const seenMessages: ChatMessage[][] = [];
     let seenOptions: Record<string, unknown> | undefined;
     let notices: readonly Readonly<LoweringNotice>[] = [];
@@ -475,7 +475,7 @@ describe("callStructured contract", () => {
     ]);
   });
 
-  test("(13) a structured call runs under the model-work tool policy, whatever tools the caller selects", async () => {
+  test("a structured call runs under the model-work tool policy, whatever tools the caller selects", async () => {
     // The caller's own selection would be denied (no execution.allowedTools on a
     // runner-only resolution); it is replaced, so the LLM call goes ahead.
     let chatRan = false;
@@ -615,7 +615,7 @@ describe("callStructured contract", () => {
     expect(prompts).toEqual(["judge this"]);
   });
 
-  test("(14) a provider failure is credential-redacted before ungated propagation", async () => {
+  test("a provider failure is credential-redacted before ungated propagation", async () => {
     const secret = "structured-secret-sentinel";
     let thrown: unknown;
     await withEnv({ AKM_STRUCTURED_SECRET: secret }, async () => {
@@ -643,7 +643,7 @@ describe("callStructured contract", () => {
     expect(String(thrown)).toContain("[REDACTED]");
   });
 
-  test("(15) a missing required symbolic credential remains a hard config failure", async () => {
+  test("a missing required symbolic credential remains a hard config failure", async () => {
     let chatRan = false;
     let onErrorCalls = 0;
     let onFallbackCalls = 0;
@@ -689,7 +689,7 @@ describe("callStructured contract", () => {
     expect(onFallbackCalls).toBe(0);
   });
 
-  test("(16) one preflighted runner serves different messages, models, inference, schemas, and timeouts", async () => {
+  test("one preflighted runner serves different messages, models, inference, schemas, and timeouts", async () => {
     const secret = "structured-lease-original-092";
     const replacement = "structured-lease-replacement-092";
     const selectedRunner = runner(

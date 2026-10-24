@@ -104,7 +104,7 @@ async function freeze(ref: string) {
   };
 }
 
-describe("P2b freeze identity — B-01: absence-when-empty is the identity-preserving default (A-N7)", () => {
+describe("freeze identity — absence-when-empty is the identity-preserving default", () => {
   test("a task-composing step whose target declares no inputs: at all, with no with:, freezes a target with no OWN inputBindings key", async () => {
     // task source v4, no `inputs:` key declared — mirroring
     // tests/workflows/with-rejection.test.ts's own reasoning: "declares no inputs"
@@ -127,8 +127,8 @@ describe("P2b freeze identity — B-01: absence-when-empty is the identity-prese
   });
 });
 
-describe("P2b freeze identity — B-44: the frozen hash vocabulary is unchanged (A-N7, §1.1(4))", () => {
-  test('WORKFLOW_PLAN_VERSION is 6, and computeUnitInputHash\'s prefix + hashVersion are exactly "akm.workflow.unit\\0v7\\0" / 7 — P3a landed 6, the R-R15 taskInputs fix bumped 7', async () => {
+describe("freeze identity — the frozen hash vocabulary is unchanged", () => {
+  test('WORKFLOW_PLAN_VERSION is 6, and computeUnitInputHash\'s prefix + hashVersion are exactly "akm.workflow.unit\\0v7\\0" / 7 — version 6 landed first, then the taskInputs fix bumped it to 7', async () => {
     expect(WORKFLOW_PLAN_VERSION).toBe(6);
 
     writeWorkflow("plain-command", [
@@ -172,7 +172,7 @@ describe("P2b freeze identity — B-44: the frozen hash vocabulary is unchanged 
   });
 });
 
-describe("P2b freeze identity — B-43: freezing the identical BOUND workflow twice is byte-identical", () => {
+describe("freeze identity — freezing the identical BOUND workflow twice is byte-identical", () => {
   test("two independent freezes of the same with:-bound task-composing step produce byte-identical plan hashes and unit input hashes", async () => {
     write("commands/review.md", "Review the composed task target.\n");
     write(

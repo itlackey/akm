@@ -56,7 +56,7 @@ describe("generic-files adapter — metadata + explicit-config", () => {
     expect(genericFilesAdapter.version).toBe("0.9.0");
   });
 
-  test("looksLikeRoot NEVER fires (explicit-config only, §1.2)", () => {
+  test("looksLikeRoot NEVER fires (explicit-config only)", () => {
     expect(genericFilesAdapter.looksLikeRoot?.(FIXTURE_ROOT)).toBe(false);
   });
 });

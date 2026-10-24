@@ -42,7 +42,7 @@ test("validateStashEntry rejects entries without name", () => {
   expect(validateStashEntry({ type: "script" })).toBeNull();
 });
 
-test("validateStashEntry accepts a foreign/unknown type as an open token (chunk 1.5)", () => {
+test("validateStashEntry accepts a foreign/unknown type as an open token", () => {
   const result = validateStashEntry({ name: "x", type: "invalid" });
   expect(result).not.toBeNull();
   expect(result?.type).toBe("invalid");

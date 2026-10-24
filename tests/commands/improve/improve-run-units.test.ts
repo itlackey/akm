@@ -16,7 +16,7 @@ import { describe, expect, test } from "bun:test";
 import { buildDryRunResult, buildLockSkippedResult } from "../../../src/commands/improve/improve";
 import type { ImproveEligibleRef } from "../../../src/core/improve-types";
 
-describe("buildLockSkippedResult — the P2 envelope", () => {
+describe("buildLockSkippedResult — the envelope", () => {
   test("field-exact skip envelope, runId conditional", () => {
     const withRunId = buildLockSkippedResult("default", { mode: "all" }, "run-1");
     expect(withRunId).toEqual({
@@ -38,7 +38,7 @@ describe("buildLockSkippedResult — the P2 envelope", () => {
   });
 });
 
-describe("buildDryRunResult — the P3 envelope", () => {
+describe("buildDryRunResult — the envelope", () => {
   test("plan-only envelope with conditional guidance/cleanup/filtered spreads", () => {
     const run = {
       selectedStrategy: { name: "default" },

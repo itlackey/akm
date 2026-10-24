@@ -33,7 +33,7 @@ const PROBE_ORDER = [
   "generic-files",
 ];
 
-describe("adapter registry — static frozen map (normative §12.6)", () => {
+describe("adapter registry — static frozen map", () => {
   test("getAdapters() is populated at module load — no registration call required", () => {
     // The registry is live purely from importing it. An empty registry would make
     // every source fall back to `akm`.
@@ -41,7 +41,7 @@ describe("adapter registry — static frozen map (normative §12.6)", () => {
     expect(getAdapters().map((a) => a.id)).toEqual(PROBE_ORDER);
   });
 
-  test("BUILTIN_ADAPTERS is the frozen §1.2 probe order and matches getAdapters()", () => {
+  test("BUILTIN_ADAPTERS is the frozen probe order and matches getAdapters()", () => {
     expect(Object.isFrozen(BUILTIN_ADAPTERS)).toBe(true);
     expect(BUILTIN_ADAPTERS.map((a) => a.id)).toEqual(PROBE_ORDER);
     expect(getAdapters().map((a) => a.id)).toEqual(BUILTIN_ADAPTERS.map((a) => a.id));
@@ -54,7 +54,7 @@ describe("adapter registry — static frozen map (normative §12.6)", () => {
     expect(adapterForId("okf")).toBe(okfAdapter);
   });
 
-  test("adapterForId returns undefined for an unknown id (spec §4 — caller skips + warns)", () => {
+  test("adapterForId returns undefined for an unknown id (caller skips + warns)", () => {
     expect(adapterForId("nope")).toBeUndefined();
   });
 

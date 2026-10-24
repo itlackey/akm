@@ -232,7 +232,7 @@ function loadCase(fixture: ManifestFixture): LoadedCase {
   return { fixture, expectation: expectationFor(fixture.id), document, projected };
 }
 
-describe("projectTaskSourceV4 — every tests/fixtures/execution-contracts/tasks/v4/ fixture (spec §3.5)", () => {
+describe("projectTaskSourceV4 — every tests/fixtures/execution-contracts/tasks/v4/ fixture", () => {
   // Canary: if manifest.json gains/loses a fixture without a matching update
   // here, this fails first with a clear count mismatch rather than a
   // confusing per-property diff below.
@@ -280,7 +280,7 @@ describe("projectTaskSourceV4 — every tests/fixtures/execution-contracts/tasks
     }
   });
 
-  test("inputs: (the document's typed input declarations) never appears anywhere on the projected document — delivery is P2b (spec §0, §3.5)", () => {
+  test("inputs: (the document's typed input declarations) never appears anywhere on the projected document", () => {
     const fixture = MANIFEST_FIXTURES.find((entry) => entry.id === "inputs-and-output");
     if (!fixture) throw new Error("fixture 'inputs-and-output' must exist");
     const { projected } = loadCase(fixture);
@@ -315,7 +315,7 @@ describe("projectTaskSourceV4 — every tests/fixtures/execution-contracts/tasks
 
 // ── Purity: a pure, typed transform over an ALREADY-PARSED document ────────
 
-describe("projectTaskSourceV4 — purity (spec §3.5: no YAML is fabricated, nothing is re-parsed)", () => {
+describe("projectTaskSourceV4 — purity (no YAML is fabricated, nothing is re-parsed)", () => {
   test("accepts a hand-constructed TaskSourceV4Document with no YAML string and no file on disk", () => {
     const handBuilt: TaskSourceV4Document = {
       version: TASK_SOURCE_V4_VERSION,
@@ -337,7 +337,7 @@ describe("projectTaskSourceV4 — purity (spec §3.5: no YAML is fabricated, not
     expect(projected.version).toBe(3);
   });
 
-  test("a manual-only hand-built document (schedule: []) projects triggers = { manual: true, schedules: [] } (D2-N6)", () => {
+  test("a manual-only hand-built document (schedule: []) projects triggers = { manual: true, schedules: [] }", () => {
     const handBuilt: TaskSourceV4Document = {
       version: TASK_SOURCE_V4_VERSION,
       target: { kind: "run", run: "echo hi" },
@@ -350,7 +350,7 @@ describe("projectTaskSourceV4 — purity (spec §3.5: no YAML is fabricated, not
     expect(projected.triggers).toEqual({ manual: true, schedules: [] });
   });
 
-  test("src/tasks/source/project-v4.ts fabricates no synthetic v3 YAML text and re-parses nothing (P1b §4.3's invariant, carried forward per spec §3.5)", () => {
+  test("src/tasks/source/project-v4.ts fabricates no synthetic v3 YAML text and re-parses nothing", () => {
     const source = fs.readFileSync(path.join(ROOT, "src/tasks/source/project-v4.ts"), "utf8");
     expect(source).not.toContain("version: 3\nuses:");
     expect(source).not.toMatch(/parseDocument\s*\(/);

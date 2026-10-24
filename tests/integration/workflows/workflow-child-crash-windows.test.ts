@@ -162,8 +162,8 @@ async function waitForChildOrExit(parentRunId: string, crasher: RunnerChild, lab
   }
 }
 
-describe.skipIf(!BUN)("multi-process crash windows around a composing child (C-01…C-03)", () => {
-  test("CW-1 (C-01): SIGKILL as soon as the child row is published → resume finds it by invocation_key, no duplicate child, no duplicate workflow_started event", async () => {
+describe.skipIf(!BUN)("multi-process crash windows around a composing child", () => {
+  test("SIGKILL as soon as the child row is published → resume finds it by invocation_key, no duplicate child, no duplicate workflow_started event", async () => {
     writeProgram(storage.stashDir, "cw1-leaf", CHILD_LEAF_WF);
     writeComposingParent(storage.stashDir, "cw1-parent", "workflows/cw1-leaf");
     const started = await startWorkflowRun("workflows/cw1-parent", {});
@@ -213,7 +213,7 @@ describe.skipIf(!BUN)("multi-process crash windows around a composing child (C-0
     expect(startedEventsForChild).toBe(1);
   }, 45_000);
 
-  test("CW-2 (C-02): SIGKILL mid-child-unit-dispatch → both runs resumable; resume re-dispatches ONLY the interrupted child unit, once", async () => {
+  test("SIGKILL mid-child-unit-dispatch → both runs resumable; resume re-dispatches ONLY the interrupted child unit, once", async () => {
     writeProgram(storage.stashDir, "cw2-leaf", CHILD_LEAF_WF);
     writeComposingParent(storage.stashDir, "cw2-parent", "workflows/cw2-leaf");
     const started = await startWorkflowRun("workflows/cw2-parent", {});
@@ -259,7 +259,7 @@ describe.skipIf(!BUN)("multi-process crash windows around a composing child (C-0
     expect(children).toHaveLength(1);
   }, 45_000);
 
-  test("CW-3 (C-03): SIGKILL after the child completes but before the parent's composing unit finalizes → resume completes the parent WITHOUT re-running the child", async () => {
+  test("SIGKILL after the child completes but before the parent's composing unit finalizes → resume completes the parent WITHOUT re-running the child", async () => {
     const releaseFile = path.join(storage.root, "cw3-release");
     writeProgram(storage.stashDir, "cw3-leaf", CHILD_LEAF_WF);
     writeComposingParent(storage.stashDir, "cw3-parent", "workflows/cw3-leaf");
@@ -358,8 +358,8 @@ try {
 `;
 }
 
-describe("two-parent-process contention on one child (C-04)", () => {
-  test("two genuinely concurrent publishers racing the identical (parentRunId, invocationKey) converge on one child row, one workflow_started event, and the same returned id (the SELECT-else-INSERT race half; B-N16)", async () => {
+describe("two-parent-process contention on one child", () => {
+  test("two genuinely concurrent publishers racing the identical (parentRunId, invocationKey) converge on one child row, one workflow_started event, and the same returned id (the SELECT-else-INSERT race half)", async () => {
     writeProgram(storage.stashDir, "c04-race-leaf", CHILD_LEAF_WF);
     writeComposingParent(storage.stashDir, "c04-race-parent", "workflows/c04-race-leaf");
     const started = await startWorkflowRun("workflows/c04-race-parent", {});

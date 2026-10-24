@@ -95,7 +95,7 @@ function childWorkflowFields(target: FrozenWorkflowTarget | undefined): {
 // ── editing child source AFTER publication cannot change the ─────────────
 // ── already-frozen parent (row B-06) ────────────────────────────────────────
 
-describe("editing child source after parent publication does not change the parent's frozen child plan (row B-06)", () => {
+describe("editing child source after parent publication does not change the parent's frozen child plan", () => {
   test("re-reading the stored run's plan_json shows the ORIGINAL child content, byte-identical, not the edited one", async () => {
     write("workflows/child.md", leafWorkflowDoc());
     writeParent("parent-b06", ["      - id: dispatch", "        uses: workflows/child"]);

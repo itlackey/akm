@@ -136,14 +136,14 @@ Other prose line unchanged here.
 // ── Part A: classifyReflectChange 'low-value' tier ──────────────────────────
 
 describe("#639 Part A — 'low-value' tier in classifyReflectChange", () => {
-  test("A1: ~2-line prose rewrite with few changed tokens => 'low-value'", () => {
+  test("~2-line prose rewrite with few changed tokens => 'low-value'", () => {
     // Verifies a ~2-line prose rewrite with few changed tokens is classified
     // 'low-value' by classifyReflectChange.
     const result = classifyReflectChange(PROSE_REWRITE_SOURCE, PROSE_REWRITE_CANDIDATE);
     expect(result).toBe("low-value" as ReflectChangeKind);
   });
 
-  test("A2: one-word negation/flag-correction is EXEMPT and classified as 'substantive'", () => {
+  test("one-word negation/flag-correction is EXEMPT and classified as 'substantive'", () => {
     // Even though only ~2 words change, negation is a semantically significant
     // Even though only ~2 words change, negation is a semantically significant
     // flag-correction and is EXEMPT from the low-value filter — it stays
@@ -152,7 +152,7 @@ describe("#639 Part A — 'low-value' tier in classifyReflectChange", () => {
     expect(result).toBe("substantive");
   });
 
-  test("A3: code-fence-only change is EXEMPT from low-value (treat as substantive)", () => {
+  test("code-fence-only change is EXEMPT from low-value (treat as substantive)", () => {
     // Code inside fences must be compared verbatim and changes inside fences
     // are NOT counted in the low-value token diff. A change only inside a fence
     // should come through as 'substantive' (not 'low-value') because code changes
@@ -161,7 +161,7 @@ describe("#639 Part A — 'low-value' tier in classifyReflectChange", () => {
     expect(result).toBe("substantive");
   });
 
-  test("A4: frontmatter-only value change is EXEMPT from low-value token count", () => {
+  test("frontmatter-only value change is EXEMPT from low-value token count", () => {
     // Frontmatter value changes are exempt — they land in 'substantive' even
     // if only a few words change, because description/when_to_use are semantic.
     // Verifies the frontmatter-value-change exemption is preserved.
@@ -170,7 +170,7 @@ describe("#639 Part A — 'low-value' tier in classifyReflectChange", () => {
     expect(result).toBe("substantive");
   });
 
-  test("A5: lines with decision/outcome markers are EXEMPT from low-value counting", () => {
+  test("lines with decision/outcome markers are EXEMPT from low-value counting", () => {
     // Lines containing 'Decision:' or 'outcome' are exempt markers per the ticket.
     // Changed tokens on those lines must not count toward the low-value threshold.
     // After implementation: changes on marker lines + 1 unchanged prose line =>
@@ -181,7 +181,7 @@ describe("#639 Part A — 'low-value' tier in classifyReflectChange", () => {
     expect(result).toBe("substantive");
   });
 
-  test("A6: ReflectChangeKind type includes 'low-value' as a valid member", () => {
+  test("ReflectChangeKind type includes 'low-value' as a valid member", () => {
     // The type must be extended. This test uses a type-level assertion at runtime:
     // if the exported type does not include 'low-value', the value 'low-value'
     // cast as ReflectChangeKind should still be assignable (TS only); at runtime
@@ -194,7 +194,7 @@ describe("#639 Part A — 'low-value' tier in classifyReflectChange", () => {
     expect(["noop", "cosmetic", "substantive", "low-value"]).toContain(kind);
   });
 
-  test("A7: default-preserving guard — without lowValueFilter config, 'low-value' classification does not block proposals", () => {
+  test("default-preserving guard — without lowValueFilter config, 'low-value' classification does not block proposals", () => {
     // The low-value classification is config-gated, DEFAULT OFF. This means:
     // classifyReflectChange CAN return 'low-value' (the pure function), but the
     // reflect.ts wire-up only treats 'low-value' as DEFERRED when the flag is

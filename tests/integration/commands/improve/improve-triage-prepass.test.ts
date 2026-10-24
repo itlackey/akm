@@ -125,7 +125,7 @@ describe("akm improve — triage pre-pass", () => {
   );
 
   test(
-    "R17: the pre-pass drain runs under withLlmStage, attributed to triage.judgment",
+    "the pre-pass drain runs under withLlmStage, attributed to triage.judgment",
     async () => {
       writeMemory("alpha", "Remember alpha details.");
       await akmIndex({ stashDir, full: true });
@@ -472,7 +472,7 @@ describe("akm improve — triage pre-pass", () => {
   );
 
   test(
-    "R6: ensureIndex runs BEFORE triage, and triage's own writes are indexed " +
+    "ensureIndex runs BEFORE triage, and triage's own writes are indexed " +
       "incrementally before collectEligibleRefs runs",
     async () => {
       writeMemory("alpha", "Remember alpha details.");

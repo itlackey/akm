@@ -5,6 +5,7 @@ import path from "node:path";
 import type { AkmConfig, BundleConfigEntry } from "../src/core/config/config";
 import { saveConfig } from "../src/core/config/config";
 import { getUnresolvedSourcesDir } from "../src/core/paths";
+import { _setWarnSinkForTests } from "../src/core/warn";
 import { resolveWritable } from "../src/core/write-source";
 import { buildDbHit } from "../src/indexer/search/db-search";
 import {
@@ -16,6 +17,7 @@ import {
 import type { InstallKind } from "../src/registry/types";
 import { seedLockEntries } from "./_helpers/lockfile";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
+import { withSeam } from "./_helpers/seams";
 
 /**
  * Seed a lock-backed registry-managed source (a git/npm `bundles` entry + its
@@ -590,47 +592,81 @@ describe("ensureSourceCaches", () => {
     }
   });
 
-  // npm sources are cache-backed too: routing through the provider registry's
-  // polymorphic sync() must refresh every cache-backed kind (including npm), not
-  // just git and website.
-  test("npm sources are refreshed (R2: routes through provider sync())", async () => {
+  // A configured npm bundle with no lock entry is not walkable and nothing marks
+  // it materialized, so syncing it would hit the npm registry on every index run
+  // and still index nothing. It is skipped with one warning naming the remedy.
+  test("a lockless npm bundle is skipped with one warning naming `akm bundle update`", async () => {
     const npmSyncSpy = spyOn(NpmSourceProvider.prototype, "sync").mockResolvedValue(undefined);
-    // Avoid real git/website network in the same run.
-    const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
-    const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
-      rootDir: "/tmp/root",
-      stashDir: "/tmp/stash",
-      manifestPath: "/tmp/manifest.json",
-    });
     const config: AkmConfig = {
       semanticSearchMode: "off",
       bundles: { "npm-source": { npm: "npm:test-pkg@1.2.3" } },
     };
+    const warnings: string[] = [];
     try {
-      await ensureSourceCaches(config);
-      expect(npmSyncSpy).toHaveBeenCalledTimes(1);
+      await withSeam(
+        _setWarnSinkForTests,
+        (level: string, args: unknown[]) => {
+          if (level === "warn") warnings.push(args.map(String).join(" "));
+        },
+        () => ensureSourceCaches(config),
+      );
+      expect(npmSyncSpy).not.toHaveBeenCalled();
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('npm source "npm-source" is not installed');
+      expect(warnings[0]).toContain("akm bundle update npm-source");
     } finally {
       npmSyncSpy.mockRestore();
-      gitSpy.mockRestore();
-      websiteSpy.mockRestore();
+    }
+  });
+
+  test("an npm bundle with a lock entry is left to add/update and is never synced here", async () => {
+    const npmSyncSpy = spyOn(NpmSourceProvider.prototype, "sync").mockResolvedValue(undefined);
+    const lockedRoot = path.join(stashDir, "locked-npm-root");
+    fs.mkdirSync(lockedRoot, { recursive: true });
+    fs.writeFileSync(path.join(lockedRoot, "README.md"), "locked\n");
+    seedManagedBundle(
+      "npm-locked",
+      { npm: "npm:test-pkg@1.2.3" },
+      {
+        source: "npm",
+        ref: "npm:test-pkg@1.2.3",
+        localRoot: lockedRoot,
+      },
+    );
+    const warnings: string[] = [];
+    try {
+      await withSeam(
+        _setWarnSinkForTests,
+        (level: string, args: unknown[]) => {
+          if (level === "warn") warnings.push(args.map(String).join(" "));
+        },
+        () => ensureSourceCaches(),
+      );
+      expect(npmSyncSpy).not.toHaveBeenCalled();
+      expect(warnings).toEqual([]);
+    } finally {
+      npmSyncSpy.mockRestore();
     }
   });
 
   test("reports 'Hydrating source i/n' progress per source before its sync resolves (#954)", async () => {
     const delayed = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
-    const npmSyncSpy = spyOn(NpmSourceProvider.prototype, "sync").mockImplementation(delayed);
+    const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockImplementation(async () => {
+      await delayed();
+      return { rootDir: "/tmp/root", stashDir: "/tmp/stash", manifestPath: "/tmp/manifest.json" };
+    });
     const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockImplementation(delayed);
     const config: AkmConfig = {
       semanticSearchMode: "off",
       bundles: {
-        "npm-source": { npm: "npm:test-pkg@1.2.3" },
+        "website-source": { website: { url: "https://example.test/docs" } },
         "git-source": { git: "https://github.com/example/repo.git" },
       },
     };
     const messages: string[] = [];
     try {
       await ensureSourceCaches(config, { onProgress: (message) => messages.push(message) });
-      expect(npmSyncSpy).toHaveBeenCalledTimes(1);
+      expect(websiteSpy).toHaveBeenCalledTimes(1);
       expect(gitSpy).toHaveBeenCalledTimes(1);
       // One "Hydrating source i/2: <name>" event per source, fired BEFORE
       // that source's sync resolves — proving the caller sees progress
@@ -638,12 +674,12 @@ describe("ensureSourceCaches", () => {
       // returns.
       expect(messages.filter((m) => /^Hydrating source \d+\/2: /.test(m))).toHaveLength(2);
     } finally {
-      npmSyncSpy.mockRestore();
+      websiteSpy.mockRestore();
       gitSpy.mockRestore();
     }
   });
 
-  test("git and website sources are still refreshed via the consolidated loop (R2 characterization)", async () => {
+  test("git and website sources are still refreshed via the consolidated loop (characterization)", async () => {
     const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
     const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
       rootDir: "/tmp/root",

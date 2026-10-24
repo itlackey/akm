@@ -85,7 +85,7 @@ afterEach(() => {
   storage.cleanup();
 });
 
-describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
+describe("unattended-improve reflect pin", () => {
   test("eventSource=improve runs an agent process engine under the model-work tool policy", async () => {
     const stash = makeStashDir();
     const config = agentModeConfig();

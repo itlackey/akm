@@ -92,7 +92,7 @@ describe("with-on-task-composition rejected fixture — registered, and accepted
 
   // Decode/compile accepts with: on every uses target; only taskDispatch's
   // freeze-time behavior rejects it.
-  test("the fixture compiles cleanly via compileWorkflowSource — decode/compile is unaffected by P1a", () => {
+  test("the fixture compiles cleanly via compileWorkflowSource — decode/compile is unaffected by the freeze-time with: rejection", () => {
     const { yaml } = readRejectedFixture(FIXTURE_ID);
     const result = compileWorkflowSource(yaml, { path: `workflows/rejected/${FIXTURE_ID}.yml` });
     expect(result.ok).toBe(true);
@@ -102,7 +102,7 @@ describe("with-on-task-composition rejected fixture — registered, and accepted
   });
 });
 
-describe("P1a Lane A — with: on uses: tasks/<ref> rejects at freeze (COMPOSITION_INVALID)", () => {
+describe("with: on uses: tasks/<ref> rejects at freeze (COMPOSITION_INVALID)", () => {
   let storage: IsolatedAkmStorage;
 
   beforeEach(() => {
@@ -150,7 +150,7 @@ describe("P1a Lane A — with: on uses: tasks/<ref> rejects at freeze (COMPOSITI
   }
 
   // B-02: taskDispatch rejects a `with:` on a target that declares no inputs.
-  test("B-02: a task-composed step with with: rejects at freeze with UsageError COMPOSITION_INVALID naming the step id", async () => {
+  test("a task-composed step with with: rejects at freeze with UsageError COMPOSITION_INVALID naming the step id", async () => {
     writeTaskTarget();
     const { yaml } = readRejectedFixture(FIXTURE_ID);
     write(`workflows/${FIXTURE_ID}.yml`, yaml);
@@ -166,7 +166,7 @@ describe("P1a Lane A — with: on uses: tasks/<ref> rejects at freeze (COMPOSITI
   // B-03. The guard fires on `source.with !== undefined` — ANY authored with:
   // shape that survives decode, including an empty mapping, not just a non-empty
   // one.
-  test("B-03: an empty with: {} mapping rejects identically to a non-empty one", async () => {
+  test("an empty with: {} mapping rejects identically to a non-empty one", async () => {
     writeTaskTarget();
     write(
       "workflows/empty-with-task-composition.yml",
@@ -206,7 +206,7 @@ describe("P1a Lane A — with: on uses: tasks/<ref> rejects at freeze (COMPOSITI
   // OBSERVABLE outcome — COMPOSITION_INVALID for an unresolvable task target
   // with with: attached — not how taskDispatch orders resolution vs. the with:
   // guard to get there.
-  test("B-02b: the with: rejection fires before resolveOwnedAsset — an unresolvable task target still rejects with COMPOSITION_INVALID, not an asset-resolution error", async () => {
+  test("the with: rejection fires before resolveOwnedAsset — an unresolvable task target still rejects with COMPOSITION_INVALID, not an asset-resolution error", async () => {
     write(
       "workflows/with-on-missing-task.yml",
       [
@@ -237,7 +237,7 @@ describe("P1a Lane A — with: on uses: tasks/<ref> rejects at freeze (COMPOSITI
 
   // B-04: a step authored WITHOUT with: at all must not be touched by the guard;
   // it keeps freezing to a command dispatch.
-  test("B-04: the same step authored WITHOUT with: still freezes to a command dispatch, unchanged", async () => {
+  test("the same step authored WITHOUT with: still freezes to a command dispatch, unchanged", async () => {
     writeTaskTarget();
     write(
       "workflows/without-with-task-composition.yml",
@@ -266,7 +266,7 @@ describe("P1a Lane A — with: on uses: tasks/<ref> rejects at freeze (COMPOSITI
   // builtin-command branch reads source.with directly and never calls
   // taskDispatch, so a valid with: on uses: akm/command keeps being consumed into
   // the frozen command target.
-  test("B-05: with: {content} on uses: akm/command is still consumed into the frozen command target", async () => {
+  test("with: {content} on uses: akm/command is still consumed into the frozen command target", async () => {
     write(
       "workflows/builtin-with-consumed.yml",
       [

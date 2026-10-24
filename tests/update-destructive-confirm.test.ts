@@ -139,7 +139,7 @@ function mockStagedSync(opts: { ref?: string; version?: string } = {}): ReturnTy
   });
 }
 
-describe("akm bundle update — destructive-branch confirmation gate (F1/R-058)", () => {
+describe("akm bundle update — destructive-branch confirmation gate", () => {
   test("resolved content dir MOVES, non-interactive, no --yes: BLOCKED, old root untouched", async () => {
     const oldRoot = createTmpDir("akm-update-confirm-old-");
     fs.writeFileSync(path.join(oldRoot, "marker.txt"), "old content");

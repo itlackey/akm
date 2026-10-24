@@ -63,7 +63,7 @@ const CONFIG = {
   profiles: { improve: { default: { processes: { consolidate: { enabled: true } } } } },
 } as unknown as AkmConfig;
 
-describe("akmConsolidate — pre-filter already-promoted memories before chunking (R5)", () => {
+describe("akmConsolidate — pre-filter already-promoted memories before chunking", () => {
   test("a memory whose body already exists in knowledge/ is dropped before chunking; the other memory still reaches it", async () => {
     writeMemory("dup-a", "Duplicate body content that is long enough to matter.");
     writeMemory("new-b", "Brand new body content that is long enough to matter.");
@@ -93,7 +93,7 @@ describe("akmConsolidate — pre-filter already-promoted memories before chunkin
     expect(result.processed).toBe(2);
   });
 
-  test("the limit cap selects from the pre-filtered pool, not the unfiltered one (R2-1)", async () => {
+  test("the limit cap selects from the pre-filtered pool, not the unfiltered one", async () => {
     // Oldest two memories are already promoted verbatim into knowledge/; a
     // limit-1 run must reach the one fresh memory instead of re-selecting and
     // dropping an already-promoted one every time.

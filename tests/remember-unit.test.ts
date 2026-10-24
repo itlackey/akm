@@ -106,7 +106,7 @@ describe("buildMemoryFrontmatter — YAML injection guard", () => {
   });
 });
 
-describe("buildMemoryFrontmatter — captureMode + beliefState (Phase 1B / Rec 7)", () => {
+describe("buildMemoryFrontmatter — captureMode + beliefState", () => {
   test("emits captureMode: hot when explicitly passed", () => {
     const out = buildMemoryFrontmatter({ tags: ["ops"], captureMode: "hot" });
     const parsed = yamlParse(out.replace(/^---\n/, "").replace(/\n---$/, "")) as Record<string, unknown>;

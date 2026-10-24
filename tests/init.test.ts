@@ -57,7 +57,7 @@ describe("akmInit (akm bundle create)", () => {
     expect(fs.existsSync(path.join(stashDir, "memories"))).toBe(true);
   });
 
-  test("scaffolds a .gitignore ignoring env/ and secrets/ (08-F1)", async () => {
+  test("scaffolds a .gitignore ignoring env/ and secrets/", async () => {
     const stashDir = makeTempDir("akm-init-gitignore-");
     fs.rmSync(stashDir, { recursive: true, force: true });
     await akmInit({ dir: stashDir });

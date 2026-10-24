@@ -106,7 +106,7 @@ function invoke(step: WorkflowPlanStep, upstreamOutput: string, dispatcher: Retu
   });
 }
 
-describe("R-R15 — resolved task inputs reach the prompt and input hash; resume skips completed units", () => {
+describe("resolved task inputs reach the prompt and input hash; resume skips completed units", () => {
   test("resume reuses the journaled row whether or not the bound value changed", async () => {
     const step = seedBoundConsumeStep();
 

@@ -392,7 +392,7 @@ describe("getCommandBuilder — derived from HARNESS_REGISTRY", () => {
     expect(() => getCommandBuilder("claude-code")).toThrow();
   });
 
-  test("P2 adapters resolve only through canonical harness ids", async () => {
+  test("adapters resolve only through canonical harness ids", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     for (const platform of ["codex", "gemini", "aider"]) {
       expect(getCommandBuilder(platform).platform).toBe(platform);
@@ -400,7 +400,7 @@ describe("getCommandBuilder — derived from HARNESS_REGISTRY", () => {
     }
   });
 
-  test("the P2 harness additions resolve without profile aliases", async () => {
+  test("the harness additions resolve without profile aliases", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     for (const platform of ["copilot", "pi", "amazonq", "openhands"]) {
       expect(getCommandBuilder(platform).platform).toBe(platform);

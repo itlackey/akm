@@ -49,7 +49,7 @@ function corruptDatabaseFile(dbPath: string): void {
   fs.writeFileSync(dbPath, buf);
 }
 
-describe("runStateDbIntegrityCheck (R0)", () => {
+describe("runStateDbIntegrityCheck", () => {
   test("reports ok on a freshly created, healthy state.db", () => {
     const dbPath = getStateDbPath();
     openStateDatabase(dbPath).close();
@@ -121,7 +121,7 @@ describe("runStateDbIntegrityCheck (R0)", () => {
   });
 });
 
-describe("getStateDbFreelistInfo (R0)", () => {
+describe("getStateDbFreelistInfo", () => {
   test("ratio is 0 on a freshly created state.db", () => {
     const dbPath = getStateDbPath();
     openStateDatabase(dbPath).close();
@@ -158,7 +158,7 @@ describe("getStateDbFreelistInfo (R0)", () => {
     expect(info.ratio).toBeGreaterThan(0);
   });
 
-  test("A3: reports a zeroed info with error (not a throw) when the file cannot be opened at all", () => {
+  test("reports a zeroed info with error (not a throw) when the file cannot be opened at all", () => {
     const dbPath = getStateDbPath();
     // No file at this path — never created.
     const info = getStateDbFreelistInfo(dbPath);
@@ -169,7 +169,7 @@ describe("getStateDbFreelistInfo (R0)", () => {
   });
 });
 
-describe("vacuumIfReclaimable on state.db (R0)", () => {
+describe("vacuumIfReclaimable on state.db", () => {
   test("does not VACUUM and reports below-threshold when the freelist ratio is low", () => {
     const dbPath = getStateDbPath();
     const db = openStateDatabase(dbPath);
@@ -224,7 +224,7 @@ describe("vacuumIfReclaimable on state.db (R0)", () => {
     }
   });
 
-  test("A3: honors a readOnly EventsContext — VACUUMs but does not append the event", () => {
+  test("honors a readOnly EventsContext — VACUUMs but does not append the event", () => {
     const dbPath = getStateDbPath();
     const db = openStateDatabase(dbPath);
     try {
@@ -254,7 +254,7 @@ describe("vacuumIfReclaimable on state.db (R0)", () => {
     }
   });
 
-  test("A3: uses the injected clock from EventsContext for the event's ts", () => {
+  test("uses the injected clock from EventsContext for the event's ts", () => {
     const dbPath = getStateDbPath();
     const db = openStateDatabase(dbPath);
     try {

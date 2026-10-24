@@ -401,7 +401,7 @@ describe("runAgent — argument and env construction", () => {
   });
 });
 
-describe("runAgent — cooperative abort (RunAgentOptions.signal, P0.5)", () => {
+describe("runAgent — cooperative abort (RunAgentOptions.signal)", () => {
   test("pre-aborted signal returns reason 'aborted' without spawning", async () => {
     let spawnCalled = false;
     const spawn: SpawnFn = () => {

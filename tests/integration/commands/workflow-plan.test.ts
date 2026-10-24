@@ -205,7 +205,7 @@ describe("akm workflow plan <ref> — json by default (#903)", () => {
   });
 });
 
-describe("akm workflow plan <ref> — text mode (B-46)", () => {
+describe("akm workflow plan <ref> — text mode", () => {
   test("exits 0 and prints a human summary on stdout", async () => {
     writeBasicWorkflow();
     await index();
@@ -219,7 +219,7 @@ describe("akm workflow plan <ref> — text mode (B-46)", () => {
   });
 });
 
-describe("akm workflow plan <ref> --format json (B-47, B-N9)", () => {
+describe("akm workflow plan <ref> --format json", () => {
   test("prints one JSON object with the exact closed key set", async () => {
     writeBasicWorkflow();
     await index();
@@ -244,7 +244,7 @@ describe("akm workflow plan <ref> --format json (B-47, B-N9)", () => {
     expect(envelope.execution).toMatchObject({ maxConcurrency: expect.any(Number) });
   });
 
-  test("never spells --json (B-N9): the flag is --format json, and --json is rejected", async () => {
+  test("never spells --json: the flag is --format json, and --json is rejected", async () => {
     writeBasicWorkflow();
     await index();
     const result = await runCliCapture(["workflow", "plan", "workflows/basic-plan", "--json"]);
@@ -256,7 +256,7 @@ describe("akm workflow plan <ref> --format json (B-47, B-N9)", () => {
   });
 });
 
-describe("akm --format json workflow plan <ref> — global (pre-subcommand) flag position (code-review round 4, finding 3 / Review log R3)", () => {
+describe("akm --format json workflow plan <ref> — global (pre-subcommand) flag position", () => {
   test("--format json BEFORE the subcommand still emits the JSON envelope, not the text summary", async () => {
     writeBasicWorkflow();
     await index();
@@ -347,7 +347,7 @@ describe("akm workflow plan <ref> honors a persisted output.format config defaul
   });
 });
 
-describe("akm workflow plan <ref> writes NOTHING durable (B-48)", () => {
+describe("akm workflow plan <ref> writes NOTHING durable", () => {
   test("zero new rows across every workflow table, the events table, and usage_events — either mode", async () => {
     writeBasicWorkflow();
     await index();
@@ -364,7 +364,7 @@ describe("akm workflow plan <ref> writes NOTHING durable (B-48)", () => {
     expect(afterJson).toEqual(before);
   });
 
-  test("emits no warn()/log output — stderr stays empty on a successful plan (B-56)", async () => {
+  test("emits no warn()/log output — stderr stays empty on a successful plan", async () => {
     writeBasicWorkflow();
     await index();
     const result = await runCliCapture(["workflow", "plan", "workflows/basic-plan"]);
@@ -373,7 +373,7 @@ describe("akm workflow plan <ref> writes NOTHING durable (B-48)", () => {
   });
 });
 
-describe("akm workflow plan <ref> — compile warnings surface in warnings[] (B-56)", () => {
+describe("akm workflow plan <ref> — compile warnings surface in warnings[]", () => {
   test("a compile advisory is returned in warnings[], not written to stderr", async () => {
     // The document below trips a checkWorkflowPlan advisory (compile.ts).
     // The behavior under test is that `workflow plan` returns it in the
@@ -389,7 +389,7 @@ describe("akm workflow plan <ref> — compile warnings surface in warnings[] (B-
   });
 });
 
-describe("akm workflow plan <ref> — lowering notices from freeze surface in notices[] (B-57)", () => {
+describe("akm workflow plan <ref> — lowering notices from freeze surface in notices[]", () => {
   // The unit opts its `test-llm` engine out of json_schema
   // (`supports_json_schema: false`), so the direct-LLM builder
   // (src/integrations/agent/execution.ts's buildLlm) cannot carry this step's
@@ -449,7 +449,7 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
   });
 });
 
-describe("akm workflow plan <ref> — a workflow composing a child (B-49)", () => {
+describe("akm workflow plan <ref> — a workflow composing a child", () => {
   function writeChild(): void {
     write(
       "workflows/plan-child.md",
@@ -547,7 +547,7 @@ describe("akm workflow plan <ref> — a workflow composing a child (B-49)", () =
   });
 });
 
-describe("akm workflow plan <ref> — a task-wrapped step (B-50)", () => {
+describe("akm workflow plan <ref> — a task-wrapped step", () => {
   test("a per-step expansion names via: task and the taskRef", async () => {
     write("commands/plan-noop.md", "Do nothing.\n");
     write("tasks/plan-wrapper.yml", ["version: 4", "run: echo wrapped", "shell: sh", ""].join("\n"));
@@ -564,7 +564,7 @@ describe("akm workflow plan <ref> — a task-wrapped step (B-50)", () => {
   });
 });
 
-describe("akm workflow plan <ref> — inputBindings: literal shown, reference shown unresolved (B-51)", () => {
+describe("akm workflow plan <ref> — inputBindings: literal shown, reference shown unresolved", () => {
   test("a literal with: value is shown; a reference with: {from:...} shows its from, never a resolved value", async () => {
     write("commands/plan-consume.md", "Consume a note.\n");
     write(
@@ -602,7 +602,7 @@ describe("akm workflow plan <ref> — inputBindings: literal shown, reference sh
   });
 });
 
-describe("akm workflow plan <ref> — SECRET-FREE, sentinel proof (B-52, B-53)", () => {
+describe("akm workflow plan <ref> — SECRET-FREE, sentinel proof", () => {
   const COMMAND_SENTINEL = "PLAN-COMMAND-BODY-SENTINEL-7f2a9c";
   const ENV_SENTINEL = "plan-env-sentinel-1";
 
@@ -671,7 +671,7 @@ describe("akm workflow plan <ref> — SECRET-FREE, sentinel proof (B-52, B-53)",
   });
 });
 
-describe("akm workflow plan <ref> — a workflow that fails to freeze (B-55)", () => {
+describe("akm workflow plan <ref> — a workflow that fails to freeze", () => {
   function writeBrokenWorkflow(): void {
     write(
       "workflows/plan-broken.md",
@@ -714,7 +714,7 @@ describe("akm workflow plan <ref> — a workflow that fails to freeze (B-55)", (
   });
 });
 
-describe("akm workflow plan — no ref / an unknown ref (B-58)", () => {
+describe("akm workflow plan — no ref / an unknown ref", () => {
   test("no ref at all: usage error, exit 2", async () => {
     const result = await runCliCapture(["workflow", "plan"]);
     expect(result.code).toBe(2);

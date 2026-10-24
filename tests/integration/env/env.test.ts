@@ -589,7 +589,7 @@ describe("vault removed in 0.9.0", () => {
   });
 });
 
-describe("colon ref spelling removed (Q-08)", () => {
+describe("colon ref spelling removed", () => {
   test("`env:<name>` fails loudly naming the slash replacement, instead of a confusing not-found", async () => {
     const stashDir = makeTempDir("akm-colon-removed-");
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });

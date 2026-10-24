@@ -138,7 +138,7 @@ describe("loadConfig", () => {
   // The interactive `akm setup` wizard is the only place that pre-selects
   // semantic search ON (see tests/setup-wizard.test.ts), with a warning, before
   // saving a config.
-  test("defaults semanticSearchMode to 'off' for a bare/headless install (R-039)", () => {
+  test("defaults semanticSearchMode to 'off' for a bare/headless install", () => {
     expect(DEFAULT_CONFIG.semanticSearchMode).toBe("off");
     expect(loadConfig().semanticSearchMode).toBe("off");
   });
@@ -373,7 +373,7 @@ describe("saveConfig", () => {
     expect(fs.readFileSync(second?.timestamped as string, "utf8")).toContain('"version":2');
   });
 
-  test("config backups are written owner-only (0600) — they can carry secrets (08-F4)", () => {
+  test("config backups are written owner-only (0600) — they can carry secrets", () => {
     saveConfig({ semanticSearchMode: "off" });
     // A second save backs up the first config file.
     saveConfig({ semanticSearchMode: "auto" });

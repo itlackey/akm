@@ -172,7 +172,7 @@ async function setRunStatus(
 
 // ── the byte-identity baseline for a childless run ─────────────────────────
 
-describe("akm workflow status — byte-identity baseline for a run with NO children (B-33, PRESERVE)", () => {
+describe("akm workflow status — byte-identity baseline for a run with NO children", () => {
   test("the JSON envelope carries no children key, and the text renderer's line shape is exactly today's", async () => {
     const runId = randomUUID();
     seedParentRun(runId);
@@ -208,7 +208,7 @@ describe("akm workflow status — byte-identity baseline for a run with NO child
     );
   });
 
-  test("akm workflow list on a childless scope carries no parentRunId/spawnedByUnitId/outputs on any run (B-45)", async () => {
+  test("akm workflow list on a childless scope carries no parentRunId/spawnedByUnitId/outputs on any run", async () => {
     const runId = randomUUID();
     seedParentRun(runId);
 
@@ -242,7 +242,7 @@ function childrenOf(detail: unknown): readonly ChildNodeView[] | undefined {
   return (detail as unknown as DetailChildrenView).children;
 }
 
-describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
+describe("the parent-child tree — JSON envelope", () => {
   test("a parent with one child gains children: [...] carrying the documented shape, ordered by created_at then id", async () => {
     const parentId = randomUUID();
     const scopeKey = seedParentRun(parentId);
@@ -273,7 +273,7 @@ describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
     expect(child.stepId).toBe("spawn");
   });
 
-  test("B-36: stepId is null when the spawning unit row is gone", async () => {
+  test("stepId is null when the spawning unit row is gone", async () => {
     const parentId = randomUUID();
     const scopeKey = seedParentRun(parentId);
     // Deliberately no reserveParentUnit call: spawnedByUnitId names a unit
@@ -293,7 +293,7 @@ describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
     expect((children?.[0] as ChildNodeView).stepId).toBeNull();
   });
 
-  test("multiple children are ordered by created_at, id (P3a's childRunsOf order)", async () => {
+  test("multiple children are ordered by created_at, id (childRunsOf order)", async () => {
     const parentId = randomUUID();
     const scopeKey = seedParentRun(parentId);
     await reserveParentUnit(parentId, "spawn", "spawn:1");
@@ -322,7 +322,7 @@ describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
     expect(children.map((c) => c.runId)).toEqual([firstChild, secondChild]);
   });
 
-  test("B-35: a blocked child carries a resume {command, then}", async () => {
+  test("a blocked child carries a resume {command, then}", async () => {
     const parentId = randomUUID();
     const scopeKey = seedParentRun(parentId);
     await reserveParentUnit(parentId, "spawn", "spawn:1");
@@ -347,7 +347,7 @@ describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
   });
 });
 
-describe("a 3-level composition tree (B-37)", () => {
+describe("a 3-level composition tree", () => {
   test("children nest recursively — depth of the rendered tree equals composition depth", async () => {
     const rootId = randomUUID();
     const scopeKey = seedParentRun(rootId, "test//workflows/status-tree-root");
@@ -389,7 +389,7 @@ describe("a 3-level composition tree (B-37)", () => {
 
 // ── text rendering (renderer contract, independent of wiring) ───────────────
 
-describe("akm workflow status — text rendering of the children: block (B-38, B-39)", () => {
+describe("akm workflow status — text rendering of the children: block", () => {
   /**
    * These feed `formatWorkflowStatusPlain` a hand-built envelope carrying a
    * `children` array in the documented shape directly — pinning the
@@ -408,7 +408,7 @@ describe("akm workflow status — text rendering of the children: block (B-38, B
     };
   }
 
-  test("B-38: a children: block renders after steps:, one glyph-prefixed line per child", () => {
+  test("a children: block renders after steps:, one glyph-prefixed line per child", () => {
     const text = formatWorkflowStatusPlain(
       baseEnvelope([
         {
@@ -429,7 +429,7 @@ describe("akm workflow status — text rendering of the children: block (B-38, B
     expect((text ?? "").indexOf("steps:")).toBeLessThan((text ?? "").indexOf("children:"));
   });
 
-  test("B-39: a blocked child in text mode adds indented resume: and then: lines", () => {
+  test("a blocked child in text mode adds indented resume: and then: lines", () => {
     const text = formatWorkflowStatusPlain(
       baseEnvelope([
         {
@@ -454,8 +454,8 @@ describe("akm workflow status — text rendering of the children: block (B-38, B
 
 // ── children are invisible to the three scope queries ───────────────────────
 
-describe("child runs are invisible to the three scope queries (B-40, B-42, B-43, B-N10)", () => {
-  test("B-40: akm workflow list excludes a child run sharing the parent's scope and workflow_ref", async () => {
+describe("child runs are invisible to the three scope queries", () => {
+  test("akm workflow list excludes a child run sharing the parent's scope and workflow_ref", async () => {
     const parentId = randomUUID();
     const scopeKey = seedParentRun(parentId);
     await reserveParentUnit(parentId, "spawn", "spawn:1");
@@ -473,7 +473,7 @@ describe("child runs are invisible to the three scope queries (B-40, B-42, B-43,
     expect(runs.map((r) => r.id)).not.toContain(childId);
   });
 
-  test("B-42: getActiveRunRowForScope (the scope-attach lookup akm workflow run <ref> uses) does not resolve a childless-looking scope to the child", async () => {
+  test("getActiveRunRowForScope (the scope-attach lookup akm workflow run <ref> uses) does not resolve a childless-looking scope to the child", async () => {
     const parentId = randomUUID();
     const scopeKey = seedParentRun(parentId);
     await reserveParentUnit(parentId, "spawn", "spawn:1");
@@ -496,7 +496,7 @@ describe("child runs are invisible to the three scope queries (B-40, B-42, B-43,
     expect(attach).toBeUndefined();
   });
 
-  test("B-42 (fourth site, code-review round 4 finding 2 / Review log R2): akm workflow run workflows/<childRef> starts a NEW top-level run end to end, never refusing in favor of the parent-driven child", async () => {
+  test("akm workflow run workflows/<childRef> starts a NEW top-level run end to end, never refusing in favor of the parent-driven child", async () => {
     const parentId = randomUUID();
     const scopeKey = seedParentRun(parentId);
     await reserveParentUnit(parentId, "spawn", "spawn:1");
@@ -535,7 +535,7 @@ describe("child runs are invisible to the three scope queries (B-40, B-42, B-43,
     expect(started.run.id).not.toBe(parentId);
   });
 
-  test("B-43: akm show's active-run guard (getActiveWorkflowRun) reports the PARENT run, never the child", async () => {
+  test("akm show's active-run guard (getActiveWorkflowRun) reports the PARENT run, never the child", async () => {
     const parentId = randomUUID();
     const scopeKey = seedParentRun(parentId);
     await reserveParentUnit(parentId, "spawn", "spawn:1");
@@ -556,7 +556,7 @@ describe("child runs are invisible to the three scope queries (B-40, B-42, B-43,
 
 // ── akm workflow list --children ─────────────────────────────────────────────
 
-describe("akm workflow list --children (B-41)", () => {
+describe("akm workflow list --children", () => {
   test("includes child rows, each carrying parentRunId, when the flag is passed", async () => {
     const parentId = randomUUID();
     const scopeKey = seedParentRun(parentId);
@@ -593,7 +593,7 @@ interface RunSummaryParentageView {
   readonly spawnedByUnitId?: string;
 }
 
-describe("akm workflow status <childRunId> (B-44)", () => {
+describe("akm workflow status <childRunId>", () => {
   test("works directly on a child run id; the envelope gains run.parentRunId and run.spawnedByUnitId", async () => {
     const parentId = randomUUID();
     const scopeKey = seedParentRun(parentId);

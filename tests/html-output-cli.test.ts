@@ -88,7 +88,7 @@ describe("--output <path>", () => {
 });
 
 describe("akm health --report", () => {
-  test("--format html renders the full report from the bespoke template (echarts is CDN-only, chunk-9 WI-9.4d)", async () => {
+  test("--format html renders the full report from the bespoke template (echarts is CDN-only)", async () => {
     const { code, stdout } = await runCliCapture(["health", "--report", "--format", "html"]);
     // health maps warn→4; both pass and warn are valid for a fresh sandbox DB.
     expect([0, 4]).toContain(code);

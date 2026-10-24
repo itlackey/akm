@@ -21,7 +21,7 @@ function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-describe("collectConfigSkewAdvisory (08-F3)", () => {
+describe("collectConfigSkewAdvisory", () => {
   test("warns when the on-disk configVersion is newer than this binary's", () => {
     const dir = makeTempDir("akm-surfaces-skew-");
     const configPath = path.join(dir, "config.json");

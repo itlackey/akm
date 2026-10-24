@@ -114,7 +114,7 @@ describe("readLockfile", () => {
     expect(result[0]!.integrity).toBe("sha512-xyz");
   });
 
-  test("preserves the §10.2 bundle-lock fields (localRoot, manifestDigest, adapterIds, installedAt)", () => {
+  test("preserves the bundle-lock fields (localRoot, manifestDigest, adapterIds, installedAt)", () => {
     const entry = validEntry({
       localRoot: "/cache/kit/content",
       manifestDigest: "sha256-manifest",

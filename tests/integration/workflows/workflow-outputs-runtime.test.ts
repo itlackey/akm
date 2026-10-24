@@ -140,8 +140,8 @@ async function completeSummarize(
 
 // ── resolve + persist at completion ─────────────────────────────────────────
 
-describe("run-completion output resolution (B-18, B-19)", () => {
-  test("B-18: a run whose final step completes, with outputs: declared, persists the resolved map as outputs_json in the completion transaction", async () => {
+describe("run-completion output resolution", () => {
+  test("a run whose final step completes, with outputs: declared, persists the resolved map as outputs_json in the completion transaction", async () => {
     const runId = randomUUID();
     const plan = planWithOutputs(freezeWorkflow(TWO_STEP_MD, "workflows/outputs-runtime.md"), {
       report: { from: "steps.summarize.output" },
@@ -157,7 +157,7 @@ describe("run-completion output resolution (B-18, B-19)", () => {
     expect(JSON.parse(view.outputs_json as string)).toEqual({ report: "all good" });
   });
 
-  test("B-19: a run whose plan declares no outputs: leaves outputs_json NULL", async () => {
+  test("a run whose plan declares no outputs: leaves outputs_json NULL", async () => {
     const runId = randomUUID();
     const plan = planWithOutputs(freezeWorkflow(TWO_STEP_MD, "workflows/no-outputs-runtime.md"));
     seedRun(runId, plan);
@@ -173,8 +173,8 @@ describe("run-completion output resolution (B-18, B-19)", () => {
 
 // ── resolution failures roll back the completion ────────────────────────────
 
-describe("run-completion output resolution failures complete with a warning, never roll back (B-20…B-22, issue 5)", () => {
-  test("B-20: an output whose from resolves to a missing property is dropped and warned about; the run still completes, and a SIBLING output that DID resolve is still stored", async () => {
+describe("run-completion output resolution failures complete with a warning, never roll back", () => {
+  test("an output whose from resolves to a missing property is dropped and warned about; the run still completes, and a SIBLING output that DID resolve is still stored", async () => {
     const runId = randomUUID();
     const plan = planWithOutputs(freezeWorkflow(TWO_STEP_MD, "workflows/outputs-missing-prop.md"), {
       report: { from: "steps.summarize.output.missing" },
@@ -202,7 +202,7 @@ describe("run-completion output resolution failures complete with a warning, nev
     expect(JSON.parse(view.outputs_json as string)).toEqual({ ok: 5 });
   });
 
-  test("B-21: a huge output value (well over the FORMER 1 MiB evidence cap) resolves and is stored in full — no truncation any more (issue 1)", async () => {
+  test("a huge output value (well over the FORMER 1 MiB evidence cap) resolves and is stored in full — no truncation any more", async () => {
     const runId = randomUUID();
     const plan = planWithOutputs(freezeWorkflow(TWO_STEP_MD, "workflows/outputs-big.md"), {
       big: { from: "steps.collect.output" },
@@ -229,7 +229,7 @@ describe("run-completion output resolution failures complete with a warning, nev
     expect(outputs.big).toEqual(huge);
   });
 
-  test("B-22: an output whose resolved value violates its declared schema is dropped and warned about, without blocking completion", async () => {
+  test("an output whose resolved value violates its declared schema is dropped and warned about, without blocking completion", async () => {
     const runId = randomUUID();
     const plan = planWithOutputs(freezeWorkflow(TWO_STEP_MD, "workflows/outputs-schema-violation.md"), {
       changed_count: { from: "steps.collect.output.total", schema: { type: "integer", minimum: 0 } },
@@ -250,7 +250,7 @@ describe("run-completion output resolution failures complete with a warning, nev
 
 // ── a failed/blocked run never resolves outputs ─────────────────────────────
 
-describe("a failed or blocked run never resolves outputs (B-23)", () => {
+describe("a failed or blocked run never resolves outputs", () => {
   test("a run whose step fails leaves outputs_json NULL and throws nothing about the (unreachable) declared output", async () => {
     const runId = randomUUID();
     const plan = planWithOutputs(freezeWorkflow(TWO_STEP_MD, "workflows/outputs-failed-run.md"), {
@@ -274,8 +274,8 @@ describe("a failed or blocked run never resolves outputs (B-23)", () => {
 
 // ── workflowRunExportedResult ───────────────────────────────────────────────
 
-describe("workflowRunExportedResult (B-24, B-25)", () => {
-  test("B-24: a completed run with outputs_json returns the parsed map", async () => {
+describe("workflowRunExportedResult", () => {
+  test("a completed run with outputs_json returns the parsed map", async () => {
     const runId = randomUUID();
     const plan = planWithOutputs(freezeWorkflow(TWO_STEP_MD, "workflows/exported-result-with-outputs.md"), {
       report: { from: "steps.summarize.output" },
@@ -289,7 +289,7 @@ describe("workflowRunExportedResult (B-24, B-25)", () => {
     expect(workflowRunExportedResult(row)).toEqual({ report: "final" });
   });
 
-  test("B-25: any run with outputs_json NULL synthesizes {runId, status} — never stored", async () => {
+  test("any run with outputs_json NULL synthesizes {runId, status} — never stored", async () => {
     const runId = randomUUID();
     const plan = planWithOutputs(freezeWorkflow(TWO_STEP_MD, "workflows/exported-result-no-outputs.md"));
     seedRun(runId, plan);
@@ -307,8 +307,8 @@ describe("workflowRunExportedResult (B-24, B-25)", () => {
 
 // ── akm workflow status envelope ────────────────────────────────────────────
 
-describe("akm workflow status — run.outputs (B-26, B-27, PRESERVE)", () => {
-  test("B-26: a run with outputs_json carries the resolved map under run.outputs", async () => {
+describe("akm workflow status — run.outputs", () => {
+  test("a run with outputs_json carries the resolved map under run.outputs", async () => {
     const runId = randomUUID();
     const plan = planWithOutputs(freezeWorkflow(TWO_STEP_MD, "workflows/status-with-outputs.md"), {
       report: { from: "steps.summarize.output" },
@@ -322,7 +322,7 @@ describe("akm workflow status — run.outputs (B-26, B-27, PRESERVE)", () => {
     expect(view.outputs).toEqual({ report: "final" });
   });
 
-  test("B-27: a run without a declared outputs: never carries run.outputs — absent, not null (Stable-tier byte identity)", async () => {
+  test("a run without a declared outputs: never carries run.outputs — absent, not null (Stable-tier byte identity)", async () => {
     const runId = randomUUID();
     const plan = planWithOutputs(freezeWorkflow(TWO_STEP_MD, "workflows/status-no-outputs.md"));
     seedRun(runId, plan);

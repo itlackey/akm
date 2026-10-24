@@ -421,7 +421,7 @@ describe("executeStepPlan — fan-out item shapes (edge cases)", () => {
     expect(result.summary).toContain("index 0");
   });
 
-  test("duplicate fan-out items dispatch instead of failing the work-list — occurrence-suffixed unit ids (issue 6)", async () => {
+  test("duplicate fan-out items dispatch instead of failing the work-list — occurrence-suffixed unit ids", async () => {
     seedRun({ params: { files: ["a", "a", "b"] }, steps: [{ id: "review", title: "Review files" }] });
     const stepPlan = plan(FAN_OUT_WF).steps[0]!;
     let dispatches = 0;
@@ -763,7 +763,7 @@ describe("executeStepPlan — vote reducer", () => {
   });
 });
 
-describe("executeStepPlan — harness-native session id journaling (P2 peer review)", () => {
+describe("executeStepPlan — harness-native session id journaling", () => {
   test("a dispatcher-revealed sessionId is persisted on the unit row and rehydrated on reuse", async () => {
     // Regression: the harness session id that defaultUnitDispatcher extracts
     // (e.g. codex `session_configured`) must reach
@@ -836,7 +836,7 @@ describe("executeStepPlan — harness-native session id journaling (P2 peer revi
   });
 });
 
-describe("executeStepPlan — durable-row reuse (peer review)", () => {
+describe("executeStepPlan — durable-row reuse", () => {
   test("re-executing a step reuses completed units with the same input hash instead of re-dispatching", async () => {
     seedRun({ params: { files: ["a", "b"] }, steps: [{ id: "review", title: "Review files" }] });
     const stepPlan = plan(FAN_OUT_WF).steps[0]!;
@@ -947,7 +947,7 @@ describe("executeStepPlan — durable-row reuse never counts against a declared 
   });
 });
 
-describe("step output promotion — steps.<id>.output addresses real results (peer review R1)", () => {
+describe("step output promotion — steps.<id>.output addresses real results", () => {
   const DOCS_SHAPE_WF = `---
 type: workflow
 steps:
@@ -1160,7 +1160,7 @@ Do second.
     expect(status.run.status).toBe("failed");
   });
 
-  test("refuses a non-active run BEFORE dispatching any unit (peer review #2)", async () => {
+  test("refuses a non-active run BEFORE dispatching any unit", async () => {
     seedRun({
       steps: [
         { id: "first", title: "First" },
@@ -1395,7 +1395,7 @@ Fix it.
     { id: "wrap-up", title: "Wrap up" },
   ];
 
-  test("routing survives resume: the journaled decision replays, unselected targets stay skipped (peer review)", async () => {
+  test("routing survives resume: the journaled decision replays, unselected targets stay skipped", async () => {
     // Route decisions must be pure functions of (frozen plan, params,
     // journaled results) — NOT per-invocation memory. First invocation stops
     // right after the route step completed (maxSteps), simulating a crash /
@@ -1551,7 +1551,7 @@ Branch c2.
     { id: "c2", title: "C2" },
   ];
 
-  test("cascaded routing: a skipped router's own branch targets are skipped, never dispatched (peer review)", async () => {
+  test("cascaded routing: a skipped router's own branch targets are skipped, never dispatched", async () => {
     // branch-router is an UNSELECTED target of
     // classify → it is skipped without evaluating its route. Its targets
     // (c1, c2) must cascade into the skip set rather than dispatch units for
@@ -1613,7 +1613,7 @@ Branch c2.
     expect(byId.get("c2")).toBe("skipped");
   });
 
-  test("resume after a fan-out failure re-dispatches ONLY the incomplete unit (peer review)", async () => {
+  test("resume after a fan-out failure re-dispatches ONLY the incomplete unit", async () => {
     // End-to-end confirmation of the documented resume contract: a failed
     // 6-item fan-out journals 6 attempts; after `workflow resume`, the
     // engine reuses the 5 completed rows and dispatches exactly one unit —

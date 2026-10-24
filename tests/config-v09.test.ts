@@ -277,7 +277,7 @@ describe("0.9 config contract", () => {
     expect(() => loadUserConfig()).not.toThrow();
   });
 
-  test("item 3: incrementalSince and neighborsPerChanged (retired consolidate keys) — one warning, survive a load and an ordinary write, dropped only by akm migrate apply", () => {
+  test("incrementalSince and neighborsPerChanged (retired consolidate keys) — one warning, survive a load and an ordinary write, dropped only by akm migrate apply", () => {
     const consolidatePath = ["improve", "strategies", "default", "processes", "consolidate"];
     writeConfig({
       configVersion: "0.9.0",
@@ -382,7 +382,7 @@ describe("0.9 config contract", () => {
     ).toBe(true);
   });
 
-  test("accepts a bundles + defaultBundle config (0.9.0 shape, spec §10.1 / D-R5)", () => {
+  test("accepts a bundles + defaultBundle config (0.9.0 shape)", () => {
     const ok = validateConfigShape({
       configVersion: "0.9.0",
       bundles: {
@@ -502,7 +502,7 @@ describe("0.9 config contract", () => {
     ).toBe(false);
   });
 
-  test("resolveConfiguredSources consumes bundles: defaultBundle first, then map insertion order (D-R4/D-R5)", () => {
+  test("resolveConfiguredSources consumes bundles: defaultBundle first, then map insertion order", () => {
     const config = {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",

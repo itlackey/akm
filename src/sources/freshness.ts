@@ -8,63 +8,49 @@
  * host and its mtime records the last successful refresh. A usable
  * materialized mirror is served as-is: age never triggers a refresh. Only a
  * missing marker, an unusable mirror, or `force` (`akm bundle update`) does.
- * On refresh failure the cached copy is still served while the marker is
- * younger than `staleMs`, so search stays available through upstream outages.
+ * A failed refresh is reported, never masked: the refresh implementations
+ * leave the previous copy on disk, so search keeps serving it, but the caller
+ * sees the error.
  */
 
 import fs from "node:fs";
-import { isExpired } from "./providers/provider-utils";
 
 export interface FreshnessCacheOptions {
   /** Marker file whose mtime records the last successful refresh. */
   markerPath: string;
-  /**
-   * Stale window: when the refresh fails, a marker younger than this serves
-   * the cached copy instead of surfacing the error.
-   */
-  staleMs: number;
-  /** Refresh even when the mirror is already materialized (stale fallback still applies). */
+  /** Refresh even when the mirror is already materialized. */
   force?: boolean;
-  /** Whether a failed refresh may silently serve a still-usable stale cache. */
-  allowStaleOnRefreshFailure?: boolean;
   /**
-   * Extra gate the cached copy must pass — on both the fresh and the stale
-   * path — before it can be served (e.g. "extracted content is present").
-   * Defaults to always-usable.
+   * Extra gate the cached copy must pass before it is served without a
+   * refresh (e.g. "extracted content is present"). Defaults to always-usable.
    */
   isUsable?: () => boolean;
   /**
    * Perform the refresh (clone/pull/scrape) and rewrite the marker file on
-   * success. A throw here falls back to the stale window.
+   * success. A throw propagates to the caller.
    */
   refresh: () => Promise<void>;
 }
 
 /**
- * Run the materialized → refresh → stale-fallback ladder around `refresh()`.
- * Resolves when the cached copy is usable (already materialized, refreshed, or
- * stale-but-within-window); rethrows the refresh error otherwise.
+ * Run the materialized → refresh ladder around `refresh()`. Resolves when the
+ * cached copy is usable as-is or has just been refreshed; a failed refresh
+ * rethrows its error.
  */
 export async function withFreshnessCache(options: FreshnessCacheOptions): Promise<void> {
   const usable = options.isUsable ?? (() => true);
 
-  let mtime = 0;
+  let materialized = false;
   try {
-    mtime = fs.statSync(options.markerPath).mtimeMs;
+    fs.statSync(options.markerPath);
+    materialized = true;
   } catch {
     /* no marker — never successfully refreshed */
   }
 
-  if (!options.force && mtime && usable()) {
+  if (!options.force && materialized && usable()) {
     return;
   }
 
-  try {
-    await options.refresh();
-  } catch (err) {
-    if (options.allowStaleOnRefreshFailure !== false && mtime && !isExpired(mtime, options.staleMs) && usable()) {
-      return;
-    }
-    throw err;
-  }
+  await options.refresh();
 }

@@ -142,7 +142,7 @@ afterAll(() => {
   }
 });
 
-describe("Phase 4 parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
+describe("parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
   test("indexed asset lookup returns the same file akmShow renders", async () => {
     const skillBody = [
       "---",

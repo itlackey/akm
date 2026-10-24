@@ -25,7 +25,7 @@ function run(
   } as unknown as HealthCheckContext);
 }
 
-describe("task-fail-rate check worst-single-task signal (item 6)", () => {
+describe("task-fail-rate check worst-single-task signal", () => {
   test("stays pass when the aggregate is below threshold and no task qualifies", () => {
     const r = run(0.01, 100, null);
     expect(r.status).toBe("pass");

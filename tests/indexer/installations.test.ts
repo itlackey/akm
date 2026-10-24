@@ -63,7 +63,7 @@ describe("slugForRegistryId", () => {
   });
 });
 
-describe("deriveInstallations — adapter selection (ordered §1.2 probe)", () => {
+describe("deriveInstallations — adapter selection (ordered probe)", () => {
   test("akm workspace stash → akm adapter", () => {
     const [inst] = deriveInstallations([{ path: AKM_ROOT, writable: true }]);
     expect(inst!.components[0]!.adapter).toBe("akm");
@@ -79,7 +79,7 @@ describe("deriveInstallations — adapter selection (ordered §1.2 probe)", () =
     expect(inst!.components[0]!.adapter).toBe("llm-wiki");
   });
 
-  test("a root no probe claims falls back to akm (recorded deviation from spec §1.2(3)'s okf)", () => {
+  test("a root no probe claims falls back to akm (recorded deviation: okf is not the fallback)", () => {
     // FALLBACK_ADAPTER_ID is `akm`, not `okf`, as the status-quo-preserving /
     // workspace-root-discipline choice (see installations.ts). Pins that decision
     // so a future flip to `okf` is a deliberate, visible change.
@@ -138,13 +138,13 @@ describe("deriveInstallations — id / trust / component shape", () => {
   });
 });
 
-describe("deriveBundleId — D-R5 slug-gated derivation (shared with the config migrator)", () => {
-  test("a slug-legal registryId IS the bundle id (D-R5 rule 1)", () => {
+describe("deriveBundleId — slug-gated derivation (shared with the config migrator)", () => {
+  test("a slug-legal registryId IS the bundle id (rule 1)", () => {
     const used = new Set<string>();
     expect(deriveBundleId("team-catalog", "/a/b/whatever", used)).toBe("team-catalog");
   });
 
-  test("a non-slug-legal registryId slugs from the path (bundle keys must be slug-legal, §11.1)", () => {
+  test("a non-slug-legal registryId slugs from the path (bundle keys must be slug-legal)", () => {
     const used = new Set<string>();
     // `github:owner/repo` carries ':' and '/', so it cannot be a bundle prefix.
     expect(deriveBundleId("github:owner/repo", "/x/y/repo", used)).toBe("repo");

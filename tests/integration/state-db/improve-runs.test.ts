@@ -289,7 +289,7 @@ describe("recordImproveRun", () => {
     }
   });
 
-  test("buckets reflect-guard-rejected as rejected (round-2 health fix)", () => {
+  test("buckets reflect-guard-rejected as rejected", () => {
     // Behaviour change (code-health round-2, audit items C1/H3): before the
     // shared classifyImproveAction was introduced, computeImproveRunMetrics'
     // switch had no case for `reflect-guard-rejected` and no default arm, so a

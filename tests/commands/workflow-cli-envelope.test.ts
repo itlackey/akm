@@ -83,7 +83,7 @@ async function createReleaseFlow(stash: string): Promise<void> {
   if (status !== 0) throw new Error(`workflow create failed: ${stderr}`);
 }
 
-describe("akm workflow — JSON envelope snapshot (WS6)", () => {
+describe("akm workflow — JSON envelope snapshot", () => {
   test("workflow create: success envelope reports the written workflow", async () => {
     const stash = makeStashDir();
     const src = writeWorkflowSource();

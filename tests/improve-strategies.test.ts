@@ -518,7 +518,7 @@ describe("resolveImprovePlan", () => {
     ).toThrow("No improve process can run");
   });
 
-  test("allowAllDisabled returns the plan instead of throwing when credential unavailability alone disables every process (#957 round 2)", () => {
+  test("allowAllDisabled returns the plan instead of throwing when credential unavailability alone disables every process (#957)", () => {
     const plan = resolveImprovePlan(
       "default",
       {
@@ -681,7 +681,7 @@ describe("projectResolvedProcessRouting (#947)", () => {
     expect(judgmentRow?.model).toBeUndefined();
   });
 
-  test("a credential-unavailable process still reports its resolved engine/model, unlike an unconfigured one (#800/#957 round 3)", () => {
+  test("a credential-unavailable process still reports its resolved engine/model, unlike an unconfigured one (#800/#957)", () => {
     const plan = resolveImprovePlan(
       "credential-test",
       {

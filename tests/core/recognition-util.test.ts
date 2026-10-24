@@ -70,7 +70,7 @@ describe("recognition-util — relocated symbol values (behavior-preserving move
   });
 });
 
-describe("recognition-util — D1-5 cycle-safety invariant (import-free)", () => {
+describe("recognition-util — cycle-safety invariant (import-free)", () => {
   const SRC_PATH = path.join(import.meta.dir, "../../src/core/recognition-util.ts");
 
   test("the file exists at the expected util-home path", () => {

@@ -201,7 +201,7 @@ describe("checkRetirementContinuity", () => {
     expect(searchCalls).toBeGreaterThan(0);
   });
 
-  test("a search failure drops that one query from the rank comparison, but still flags as unverified (S2)", async () => {
+  test("a search failure drops that one query from the rank comparison, but still flags as unverified", async () => {
     recordQuery("memories/old-note", "query one");
     recordQuery("memories/old-note", "query two");
     let call = 0;
@@ -225,7 +225,7 @@ describe("checkRetirementContinuity", () => {
     expect(risk?.unverifiedQueries).toBe(1);
   });
 
-  describe("S2: unverified queries never read as no-risk-found", () => {
+  describe("unverified queries never read as no-risk-found", () => {
     test("every search throws: flagged as unverified, not undefined", async () => {
       recordQuery("memories/old-note", "query one");
       const risk = await checkRetirementContinuity({
@@ -286,7 +286,7 @@ describe("checkRetirementContinuity", () => {
       expect(risk?.ranks[0]?.query).toBe("query one");
     });
 
-    test("a second proposal checked while the endpoint is still down is ALSO unverified, not just the first (round 3)", async () => {
+    test("a second proposal checked while the endpoint is still down is ALSO unverified, not just the first", async () => {
       recordQuery("memories/old-note", "query one");
       recordQuery("memories/beta-old", "query two");
       // Mirrors createContinuitySearch's OWN forcedKeywordOnly bookkeeping —
@@ -448,7 +448,7 @@ describe("checkRetirementContinuity", () => {
   });
 });
 
-describe("createContinuitySearch: keyword-only throttle after the first fallback (S2)", () => {
+describe("createContinuitySearch: keyword-only throttle after the first fallback", () => {
   test("once a query falls back to keyword-only, every later call through the SAME instance skips the semantic attempt entirely", async () => {
     const config: AkmConfig = {
       semanticSearchMode: "auto",

@@ -57,7 +57,7 @@ function walkTs(dir: string, out: string[]): void {
   }
 }
 
-describe("D-R6 producer conformance — no AKM producer emits a reserved concept file", () => {
+describe("producer conformance — no AKM producer emits a reserved concept file", () => {
   test("the only src files naming a literal index.md/log.md basename are allow-listed structural producers", () => {
     const files: string[] = [];
     walkTs(SRC_ROOT, files);

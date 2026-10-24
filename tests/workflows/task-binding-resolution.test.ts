@@ -107,7 +107,7 @@ function writeCentralTaskFixture(): void {
   );
 }
 
-describe("P2b pre-attempt — a reference resolves successfully against a prior step's output (B-31)", () => {
+describe("pre-attempt — a reference resolves successfully against a prior step's output", () => {
   test("computeStepWorkList succeeds when the referenced path resolves to a value satisfying the declared schema", async () => {
     writeCentralTaskFixture();
     writeWorkflow("collect-dispatch", [
@@ -152,7 +152,7 @@ describe("P2b pre-attempt — a reference resolves successfully against a prior 
   });
 });
 
-describe("P2b pre-attempt — a resolved reference violating its declared schema fails before dispatch (B-32)", () => {
+describe("pre-attempt — a resolved reference violating its declared schema fails before dispatch", () => {
   test("computeStepWorkList fails, naming the step, the input, the reference, and the schema error", async () => {
     writeCentralTaskFixture();
     writeWorkflow("collect-dispatch", [
@@ -217,7 +217,7 @@ describe("P2b pre-attempt — a resolved reference violating its declared schema
   // mode is "did not resolve" or "violates the schema" — both are
   // computeStepWorkList returning {ok:false} before any unit is built for the
   // `dispatch` step, which is the one fact this test needs.
-  test("the real engine never reserves a dispatch attempt for the failing unit — its attempt row set stays empty (B-32, before reserveUnitAttempt)", async () => {
+  test("the real engine never reserves a dispatch attempt for the failing unit — its attempt row set stays empty (before reserveUnitAttempt)", async () => {
     writeCentralTaskFixture();
     writeWorkflow("attempt-gate", [
       "      - id: collect",
@@ -264,7 +264,7 @@ describe("P2b pre-attempt — a resolved reference violating its declared schema
   });
 });
 
-describe("P2b pre-attempt — a reference that fails to resolve at all fails before dispatch (B-33)", () => {
+describe("pre-attempt — a reference that fails to resolve at all fails before dispatch", () => {
   test("computeStepWorkList fails, carrying resolveStepReference's own message when the referenced path is missing", async () => {
     writeCentralTaskFixture();
     writeWorkflow("collect-dispatch", [
@@ -300,7 +300,7 @@ describe("P2b pre-attempt — a reference that fails to resolve at all fails bef
   });
 });
 
-describe("P2b pre-attempt — a literal binding passes through unchanged, with no re-validation (B-34)", () => {
+describe("pre-attempt — a literal binding passes through unchanged, with no re-validation", () => {
   test("computeStepWorkList succeeds for a purely-literal binding set with NO stepOutputs at all", async () => {
     writeCentralTaskFixture();
     writeWorkflow("literal-only", [

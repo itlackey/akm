@@ -109,7 +109,7 @@ function asChildTargetView(frozenTarget: unknown): DecodedChildTargetView {
   return frozenTarget as unknown as DecodedChildTargetView;
 }
 
-describe("plan irVersion 5 — a child-workflow frozen target decodes (A-01, A-02)", () => {
+describe("plan irVersion 5 — a child-workflow frozen target decodes", () => {
   test("a parent plan whose unit targets a child workflow decodes: irVersion 5, frozenTarget.kind child-workflow", () => {
     const childPlan = freshUnitPlan("workflows/child.md");
     const planHash = computePlanHash(childPlan);
@@ -153,7 +153,7 @@ describe("plan irVersion 5 — a child-workflow frozen target decodes (A-01, A-0
   });
 });
 
-describe("embedded child plans at decode (A-20…A-23, §2.7)", () => {
+describe("embedded child plans at decode", () => {
   test("an embedded child's planHash, contentHash and irVersion are recorded, not gates: stale hashes and an older irVersion decode", () => {
     const childPlan = freshUnitPlan("workflows/child-provenance.md");
     const childTarget = buildChildTarget({
@@ -195,7 +195,7 @@ describe("embedded child plans at decode (A-20…A-23, §2.7)", () => {
     expect(() => decodeWorkflowPlan(deep)).not.toThrow();
   });
 
-  test("an unknown frozenTarget.kind still fails with the existing closed-kind message shape (A-24, PRESERVE)", () => {
+  test("an unknown frozenTarget.kind still fails with the existing closed-kind message shape", () => {
     const parentPlanJson = embedChildTarget(freshUnitPlan("workflows/parent-unknown-kind.md"), {
       kind: "not-a-real-target-kind",
     });

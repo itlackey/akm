@@ -120,7 +120,7 @@ describe("source provider copy safety", () => {
   });
 });
 
-describe("detectStashRoot — ordered §1.2 registry probe (WI: registry wiring)", () => {
+describe("detectStashRoot — ordered registry probe (registry wiring)", () => {
   test("an akm stash root (type dirs) is returned as-is — behavior-identical to the old akm-only probe", () => {
     // `akm.looksLikeRoot` fires (type dirs).
     expect(detectStashRoot(AKM_ROOT)).toBe(path.resolve(AKM_ROOT));

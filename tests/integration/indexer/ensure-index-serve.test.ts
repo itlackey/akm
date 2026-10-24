@@ -203,7 +203,7 @@ function bumpMtimeIntoFuture(filePath: string): void {
   fs.utimesSync(filePath, future, future);
 }
 
-describe("ensureIndex blocking mode: per-file staleness (R6)", () => {
+describe("ensureIndex blocking mode: per-file staleness", () => {
   test("a brand-new file that was never indexed is stale", () => {
     writeMemory("second");
     expect(isIndexStale(stashDir)).toBe(true);

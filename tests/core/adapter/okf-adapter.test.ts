@@ -69,7 +69,7 @@ function makeValidateContext(overrides: Partial<ValidateContext> = {}): Validate
 // ── adapter metadata ─────────────────────────────────────────────────────────
 
 describe("okf adapter — metadata", () => {
-  test("id / version / extensions per §5", () => {
+  test("id / version / extensions", () => {
     expect(okfAdapter.id).toBe("okf");
     expect(okfAdapter.version).toBe("0.9.0");
     expect(okfAdapter.extensions).toEqual([".md"]);
@@ -112,7 +112,7 @@ describe("okf adapter — recognize reads `type` from frontmatter", () => {
 
 // ── recognize: reserved files ────────────────────────────────────────────────
 
-describe("okf adapter — reserved files return null (§5, OKF §1.4)", () => {
+describe("okf adapter — reserved files return null", () => {
   test("root index.md and log.md are excluded", () => {
     expect(okfAdapter.recognize(component(), fc("index.md"))).toBeNull();
     expect(okfAdapter.recognize(component(), fc("log.md"))).toBeNull();
@@ -134,7 +134,7 @@ describe("okf adapter — reserved files return null (§5, OKF §1.4)", () => {
 
 // ── recognize: conceptId / ref / projection ──────────────────────────────────
 
-describe("okf adapter — conceptId + OKF field projection (§0.1/§3)", () => {
+describe("okf adapter — conceptId + OKF field projection", () => {
   test("conceptId = path within component root minus `.md`; ref = `<c.id>//<conceptId>`", () => {
     const doc = okfAdapter.recognize(component(), fc("tables/orders.md"));
     expect(doc?.conceptId).toBe("tables/orders");
@@ -217,7 +217,7 @@ describe("okf adapter — v0.2 `updated` precedence: generated.at over legacy ti
 
 // ── recognize: v0.2 trust/provenance/lifecycle families (okf-support.md v0.2 note) ─
 
-describe("okf adapter — v0.2 provenance family: generated/verified/sources land under the NAMESPACED `provenance` field (D1.3 collision avoidance)", () => {
+describe("okf adapter — v0.2 provenance family: generated/verified/sources land under the NAMESPACED `provenance` field (collision avoidance)", () => {
   test("generated {by, at} populates provenance.generatedBy / provenance.generatedAt", () => {
     const doc = okfAdapter.recognize(
       component(),
@@ -244,7 +244,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
     ]);
   });
 
-  test("verified SINGLE-MAPPING form (no list dash, v0.2 §-permitted shorthand) normalizes to a one-element array", () => {
+  test("verified SINGLE-MAPPING form (no list dash, shorthand the OKF v0.2 spec permits) normalizes to a one-element array", () => {
     const doc = okfAdapter.recognize(
       component(),
       synthetic(
@@ -450,7 +450,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
 
 // ── links: both OKF forms ────────────────────────────────────────────────────
 
-describe("okf adapter — OKF link resolution, both forms (§9)", () => {
+describe("okf adapter — OKF link resolution, both forms", () => {
   test("`/`-rooted and relative links both resolve to component-root-relative conceptIds", () => {
     const doc = okfAdapter.recognize(component(), fc("tables/orders.md"));
     // `/tables/customers.md` (dedup of two occurrences) + `../metrics/wau.md`
@@ -529,7 +529,7 @@ function readFixture(relPath: string): string {
   return fs.readFileSync(path.join(FIXTURE_ROOT, relPath), "utf8");
 }
 
-describe("okf adapter — validate is LENIENT (§5)", () => {
+describe("okf adapter — validate is LENIENT", () => {
   test("missing `type` => an INFO diagnostic (issue `missing-type`), never an error", async () => {
     const diags = await okfAdapter.validate(
       component(),
@@ -576,7 +576,7 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
     expect(diags.some((d) => d.issue === "missing-ref")).toBe(false);
   });
 
-  test("a `timestamp` satisfies the freshness check — no `missing-updated` (§0.1, legacy v0.1 fallback)", async () => {
+  test("a `timestamp` satisfies the freshness check — no `missing-updated` (legacy v0.1 fallback)", async () => {
     const diags = await okfAdapter.validate(
       component(),
       [change("tables/orders.md", readFixture("tables/orders.md"))],

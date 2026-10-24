@@ -79,17 +79,18 @@ stderr envelope.
 | Level | Fields |
 | --- | --- |
 | `brief` (default) | `type`, `name`, `ref`, `action`, `estimatedTokens`, `keys` |
-| `normal` | `type`, `name`, `description`, `action`, `score`, `estimatedTokens`, `warnings`, `quality`, plus `keys` when non-empty |
+| `normal` | `type`, `name`, `ref`, `description`, `action`, `score`, `estimatedTokens`, `warnings`, `quality`, plus `keys` when non-empty |
 | `full` | the whole hit, including `ref`, `itemRef`, `bundleId`, `conceptId`, `origin`, `tags` and `whyMatched` |
 | `--shape agent` | `name`, `ref`, `type`, `path`, `editable`, `description`, `action`, `score`, `estimatedTokens`, `keys`, and `editHint` when `editable` is `false` |
 
-`ref` is present at `brief`, `full` and `--shape agent`, and absent at
-`normal`. `path` and `editable` appear only with `--shape agent`.
+`ref` is present at every detail level and in every shape. `path` and `editable`
+appear only with `--shape agent`.
 
 Registry hits (`registryHits` in the result, never mixed into `hits`) carry
-`name` and `score` at `brief`; `normal` adds `description`, `action` (which
-holds the `akm bundle add` command) and `warnings`; `full` is the whole hit,
-including `type`, `id` and `registryName`. See [Registry](registry.md).
+`name`, `installRef` (the ref to pass to `akm bundle add`) and `score` at
+`brief`; `normal` adds `description`, `action` (the full `akm bundle add`
+command) and `warnings`; `full` is the whole hit, including `type`, `id` and
+`registryName`. See [Registry](registry.md).
 
 ## Commands
 
@@ -116,6 +117,8 @@ Run `akm setup --help` for every flag.
 
 Build or refresh the search index (`index.db`). Incremental by default.
 
+`akm index` fetches a bundle only if it has never been materialized on this host; it never refreshes one (`akm bundle update` does), and `--full` does not change that.
+
 | Flag | Meaning |
 | --- | --- |
 | `--full` | Reindex everything |
@@ -140,7 +143,7 @@ activity. Exits 0 for pass, 4 for warn, 1 for fail. The report layout under
 | --- | --- |
 | `--since <window>` | Window start: ISO timestamp, date, epoch ms, or `24h` / `7d` |
 | `--report` | Full report dataset: per-run rows, trends, the pending proposal queue |
-| `--no-probe` | Skip the endpoint reachability probes and the GitHub release check (offline hosts) |
+| `--no-probe` | Skip the endpoint reachability probes, the GitHub release check, the Claude plugin tag lookup (`git ls-remote`), and running the scheduler's recorded binary (offline hosts) |
 
 ```sh
 akm health
@@ -462,7 +465,8 @@ Run `akm config <subcommand> --help` for every flag.
 ### feedback
 
 Record whether an asset helped. Feedback changes the asset's usefulness score
-immediately and feeds `akm improve`.
+immediately and feeds `akm improve`, which uses the score to choose what to work
+on. It does not change search order.
 
 | Flag | Meaning |
 | --- | --- |

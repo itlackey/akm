@@ -331,8 +331,8 @@ function forceRunStatus(runId: string, status: "blocked" | "failed"): void {
 
 // ── first publication ───────────────────────────────────────────────────────
 
-describe("A-07, A-08, A-09 — first publication of a child run", () => {
-  test("A-07: derives the invocation key, publishes exactly one child row, one workflow_started event, one step set", async () => {
+describe("first publication of a child run", () => {
+  test("derives the invocation key, publishes exactly one child row, one workflow_started event, one step set", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
     const dispatcher = successDispatcher();
@@ -362,7 +362,7 @@ describe("A-07, A-08, A-09 — first publication of a child run", () => {
     expect(startedEventsForChild).toBe(1);
   });
 
-  test("A-08: the published child row's identity fields match the spec's exact table", async () => {
+  test("the published child row's identity fields match the exact expected table", async () => {
     const parent = await seedParentRun({
       scopeKey: "dir:v1:distinctive-scope",
       agentHarness: "claude-code",
@@ -387,7 +387,7 @@ describe("A-07, A-08, A-09 — first publication of a child run", () => {
     expect(child?.workflow_ref).toBe("workflows/leaf-child");
   });
 
-  test("A-09: params_json carries exactly the resolved inputBindings of the composing unit; {} when the step binds nothing", async () => {
+  test("params_json carries exactly the resolved inputBindings of the composing unit; {} when the step binds nothing", async () => {
     const parentNoBindings = await seedParentRun();
     const targetNoBindings = buildChildTarget(leafChildPlan());
     await driveChildWorkflowUnit(
@@ -413,8 +413,8 @@ describe("A-07, A-08, A-09 — first publication of a child run", () => {
 
 // ── publication failures ────────────────────────────────────────────────────
 
-describe("A-11, A-12 — publication failures never publish a child row or event", () => {
-  test("A-11: childParams violating the child plan's paramSchemas fails with child_workflow_publish_failed, carrying validateWorkflowParams' errors; no child row", async () => {
+describe("publication failures never publish a child row or event", () => {
+  test("childParams violating the child plan's paramSchemas fails with child_workflow_publish_failed, carrying validateWorkflowParams' errors; no child row", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(paramChildPlan(), { ref: "workflows/param-child" });
 
@@ -436,7 +436,7 @@ describe("A-11, A-12 — publication failures never publish a child row or event
     expect(children).toHaveLength(0);
   });
 
-  test("A-12: publishChildWorkflowRun throwing for any other reason fails with the same reason, wrapping the cause; no child row survives", async () => {
+  test("publishChildWorkflowRun throwing for any other reason fails with the same reason, wrapping the cause; no child row survives", async () => {
     const parent = await seedParentRun();
     const childPlan = leafChildPlan();
     // Corrupt the embedded plan's OWN steps to collide on the workflow_run_steps
@@ -467,8 +467,8 @@ describe("A-11, A-12 — publication failures never publish a child row or event
 
 // ── idempotency and per-invocation identity ─────────────────────────────────
 
-describe("A-13, A-14, A-15 — retry/resume reuses the same child", () => {
-  test("A-13: calling the seam twice with the same three key inputs finds the SAME child both times", async () => {
+describe("retry/resume reuses the same child", () => {
+  test("calling the seam twice with the same three key inputs finds the SAME child both times", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
 
@@ -482,7 +482,7 @@ describe("A-13, A-14, A-15 — retry/resume reuses the same child", () => {
     expect(children).toHaveLength(1);
   });
 
-  test("A-14: a parent RESUME of the composing step (same invocation_key) drives the SAME child, never re-publishing", async () => {
+  test("a parent RESUME of the composing step (same invocation_key) drives the SAME child, never re-publishing", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
 
@@ -496,7 +496,7 @@ describe("A-13, A-14, A-15 — retry/resume reuses the same child", () => {
     expect(await withWorkflowRunsRepo((repo) => repo.childRunsOf(parent.runId))).toHaveLength(1);
   });
 
-  test("A-15: a parent RETRY of the composing step (journalBaseId retry-stable) reuses the same child", async () => {
+  test("a parent RETRY of the composing step (journalBaseId retry-stable) reuses the same child", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
 
@@ -510,8 +510,8 @@ describe("A-13, A-14, A-15 — retry/resume reuses the same child", () => {
   });
 });
 
-describe("A-16 — a gate loop's changed gateFeedback yields a NEW child", () => {
-  test("A-16: computeUnitInputHash differs under different gateFeedback, and feeding the two hashes into the seam yields two DIFFERENT child runs", async () => {
+describe("a gate loop's changed gateFeedback yields a NEW child", () => {
+  test("computeUnitInputHash differs under different gateFeedback, and feeding the two hashes into the seam yields two DIFFERENT child runs", async () => {
     const target = buildChildTarget(leafChildPlan());
     const plan: WorkflowPlanStep = {
       stepId: "compose",
@@ -561,8 +561,8 @@ describe("A-16 — a gate loop's changed gateFeedback yields a NEW child", () =>
   });
 });
 
-describe("A-17 — two composing steps, same child ref, same bindings — two independent children", () => {
-  test("A-17: different parentUnitId yields a different invocation_key and therefore a second child run", async () => {
+describe("two composing steps, same child ref, same bindings — two independent children", () => {
+  test("different parentUnitId yields a different invocation_key and therefore a second child run", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
 
@@ -580,8 +580,8 @@ describe("A-17 — two composing steps, same child ref, same bindings — two in
 
 // ── driving and status mapping ──────────────────────────────────────────────
 
-describe("A-18, A-19 — an active child is driven to completion; the exported result is promoted", () => {
-  test("A-18: runWorkflowSteps drives the newly-published (active) child", async () => {
+describe("an active child is driven to completion; the exported result is promoted", () => {
+  test("runWorkflowSteps drives the newly-published (active) child", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
 
@@ -592,7 +592,7 @@ describe("A-18, A-19 — an active child is driven to completion; the exported r
     expect(childRow?.status).toBe("completed");
   });
 
-  test("A-19: the parent unit completes with the child's exported {runId, status} result (no outputs: declared)", async () => {
+  test("the parent unit completes with the child's exported {runId, status} result (no outputs: declared)", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
 
@@ -606,7 +606,7 @@ describe("A-18, A-19 — an active child is driven to completion; the exported r
     expect(outcome.result).toEqual({ runId: childRunId, status: "completed" });
   });
 
-  test("A-19b: the composing step's persisted evidence_json and the unit's result_json both carry {runId, status}, with no childRun key", async () => {
+  test("the composing step's persisted evidence_json and the unit's result_json both carry {runId, status}, with no childRun key", async () => {
     // A direct driveChildWorkflowUnit call (as above) returns only a
     // UnitOutcome — it never touches workflow_run_steps/workflow_run_units. Only
     // a full parent drive (finalizeExecutedStep -> completeWorkflowStep, on the
@@ -699,8 +699,8 @@ describe("A-18, A-19 — an active child is driven to completion; the exported r
   });
 });
 
-describe("A-20 — a failed child fails the parent unit, naming the child run, ref, and failed step", () => {
-  test("A-20: failure_reason is child_workflow_failed and the message names the child run id, ref, and its failed step", async () => {
+describe("a failed child fails the parent unit, naming the child run, ref, and failed step", () => {
+  test("failure_reason is child_workflow_failed and the message names the child run id, ref, and its failed step", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan(), { ref: "workflows/failing-child" });
 
@@ -729,8 +729,8 @@ describe("A-20 — a failed child fails the parent unit, naming the child run, r
   });
 });
 
-describe("A-21 — a blocked child blocks the parent RUN, with the exact resume notes", () => {
-  test("A-21: the composing STEP completes blocked (not failed), the parent RUN derives blocked, and the notes name the child run id + both resume commands verbatim", async () => {
+describe("a blocked child blocks the parent RUN, with the exact resume notes", () => {
+  test("the composing STEP completes blocked (not failed), the parent RUN derives blocked, and the notes name the child run id + both resume commands verbatim", async () => {
     const parentRunId = randomUUID();
     const parentStepId = "compose";
     const childPlan = gatedChildPlan();
@@ -820,8 +820,8 @@ describe("A-21 — a blocked child blocks the parent RUN, with the exact resume 
   });
 });
 
-describe("A-22, A-23 — a child already blocked/failed from a previous attempt is not re-driven", () => {
-  test("A-22: a child already blocked is mapped identically to A-21 WITHOUT driving it — no lock taken, no new unit rows", async () => {
+describe("a child already blocked/failed from a previous attempt is not re-driven", () => {
+  test("a child already blocked is mapped like a freshly blocked child WITHOUT driving it — no lock taken, no new unit rows", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(gatedChildPlan(), { ref: "workflows/pre-blocked-child" });
     const key = computeChildInvocationKey({
@@ -872,7 +872,7 @@ describe("A-22, A-23 — a child already blocked/failed from a previous attempt 
     expect((await withWorkflowRunsRepo((repo) => repo.getRunById(childRunId)))?.status).toBe("blocked");
   });
 
-  test("A-23: a child already failed is mapped identically to A-20 WITHOUT driving it", async () => {
+  test("a child already failed is mapped like a freshly failed child WITHOUT driving it", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan(), { ref: "workflows/pre-failed-child" });
     const key = computeChildInvocationKey({
@@ -917,8 +917,8 @@ describe("A-22, A-23 — a child already blocked/failed from a previous attempt 
   });
 });
 
-describe("A-27 — a child whose run lock is already held busies the parent unit", () => {
-  test("A-27: failure_reason is child_workflow_busy, message carries the holder pid, and the parent run stays resumable", async () => {
+describe("a child whose run lock is already held busies the parent unit", () => {
+  test("failure_reason is child_workflow_busy, message carries the holder pid, and the parent run stays resumable", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan(), { ref: "workflows/busy-child" });
     const key = computeChildInvocationKey({
@@ -966,8 +966,8 @@ describe("A-27 — a child whose run lock is already held busies the parent unit
 
 // ── the exact reuse-seam call shape ─────────────────────────────────────────
 
-describe("A-24, A-25 — the child drive passes a no-op disposeDispatchResources and no maxSteps/maxRetries", () => {
-  test("A-24a: disposeDispatchResources is passed as a no-op — a DIFFERENT function object from the real registry drain", async () => {
+describe("the child drive passes a no-op disposeDispatchResources and no maxSteps/maxRetries", () => {
+  test("disposeDispatchResources is passed as a no-op — a DIFFERENT function object from the real registry drain", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
     const spy = spyOn(runWorkflowModule, "runWorkflowSteps").mockImplementation(
@@ -996,7 +996,7 @@ describe("A-24, A-25 — the child drive passes a no-op disposeDispatchResources
     }
   });
 
-  test("A-24b: the real registry drain is invoked zero times while a child drive runs end to end", async () => {
+  test("the real registry drain is invoked zero times while a child drive runs end to end", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
     // runWorkflowSteps is NOT mocked here: the child is driven for real,
@@ -1018,7 +1018,7 @@ describe("A-24, A-25 — the child drive passes a no-op disposeDispatchResources
     }
   });
 
-  test("A-24c: a full parent drive composing a child invokes the real registry drain exactly once, in the PARENT's own finally", async () => {
+  test("a full parent drive composing a child invokes the real registry drain exactly once, in the PARENT's own finally", async () => {
     const parentRunId = randomUUID();
     const parentStepId = "compose";
     const target = buildChildTarget(leafChildPlan(), { ref: "workflows/drain-child" });
@@ -1096,7 +1096,7 @@ describe("A-24, A-25 — the child drive passes a no-op disposeDispatchResources
     }
   });
 
-  test("A-25: maxSteps and maxRetries are never forwarded into the child drive's runWorkflowSteps call", async () => {
+  test("maxSteps and maxRetries are never forwarded into the child drive's runWorkflowSteps call", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
     let captured: Record<string, unknown> | undefined;
@@ -1123,8 +1123,8 @@ describe("A-24, A-25 — the child drive passes a no-op disposeDispatchResources
 
 // ── the parent's maxSteps counts ONE composing step, not the child's ────────
 
-describe("A-26 — a composing step consumes exactly one parent maxSteps allowance", () => {
-  test("A-26: --max-steps 1 on a workflow whose first step composes a 4-step child still runs all 4 child steps", async () => {
+describe("a composing step consumes exactly one parent maxSteps allowance", () => {
+  test("--max-steps 1 on a workflow whose first step composes a 4-step child still runs all 4 child steps", async () => {
     const parentRunId = randomUUID();
     const parentStepId = "compose";
     const target = buildChildTarget(fourStepChildPlan(), { ref: "workflows/four-step-child" });

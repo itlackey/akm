@@ -95,15 +95,17 @@ by `--detail` level:
 
 | Level | Fields |
 | --- | --- |
-| `brief` | `name`, `score` |
-| `normal` | `name`, `description`, `action`, `score`, and `warnings` when present |
-| `full` | the whole hit: `type`, `name`, `id`, `description`, `action`, `score`, `registryName`, and `warnings` when present |
+| `brief` | `name`, `installRef`, `score` |
+| `normal` | `name`, `description`, `action`, `installRef`, `score`, and `warnings` when present |
+| `full` | the whole hit: `type`, `name`, `id`, `description`, `action`, `installRef`, `score`, `registryName`, and `warnings` when present |
 
-`action` holds the install command, for example
-`akm bundle add github:itlackey/akm-stash -> then search again`. Registry
-scores are normalized to 0 to 1 within each registry's results; compare them
-only within one registry, never with local scores. `--assets` is accepted but
-`akm search` does not currently print asset-level registry hits.
+`installRef` is the ref to pass to `akm bundle add`, for example
+`github:itlackey/akm-stash`. `action` holds the whole install command, for
+example `akm bundle add github:itlackey/akm-stash -> then search again`.
+Registry scores are normalized to 0 to 1 within each registry's results;
+compare them only within one registry, never with local scores. Search returns
+bundle-level hits only; it does not list the individual assets inside a
+registry bundle.
 
 ## Installing
 

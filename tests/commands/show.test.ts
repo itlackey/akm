@@ -325,7 +325,7 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     expect(result.toolPolicy).toBeUndefined();
   });
 
-  test("a read against a cold git bundle (no cache, no lock) skips it fast with a warning — never clones (spec §14.3)", async () => {
+  test("a read against a cold git bundle (no cache, no lock) skips it fast with a warning — never clones", async () => {
     // Query time must never touch the network. A configured
     // git bundle with NO materialized cache AND NO lock localRoot is UNAVAILABLE
     // for the read: it is skipped with a warning naming the remedy, while the

@@ -44,9 +44,8 @@ Enforced by: the `SourceProvider` interface in `src/sources/provider.ts` (it has
 ### 3. Discovery chooses, show delivers, the file is the last resort
 
 `search` and `curate` return enough to pick an asset and a `ref` to act on; `show` returns the
-payload. The `ref` is present in search results at the default (`brief`) and `full` detail levels
-and in the agent shape, absent at `normal`, and included in `curate` and `show` results at every
-level. Agent-shaped search, show and curate results also carry the file `path` and whether it is
+payload. The `ref` is present in every search, curate and show result, at every detail level and in
+every shape. Agent-shaped search, show and curate results also carry the file `path` and whether it is
 `editable`, for anything `show` does not deliver.
 
 Cost: Default search results carry no description, so a caller sometimes needs a second call to choose between near matches.

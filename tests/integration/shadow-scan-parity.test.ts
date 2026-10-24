@@ -124,7 +124,7 @@ for (const { name, root } of STASHES) {
       expect(new Set(rows.map(rowKey))).toEqual(new Set(docs.map(docKey)));
     });
 
-    test("each item persists with item_ref = <bundle>//<conceptId> (D-R2) and a content_hash", () => {
+    test("each item persists with item_ref = <bundle>//<conceptId> and a content_hash", () => {
       const rowByKey = new Map(rows.map((r) => [rowKey(r), r]));
       // All rows share ONE bundle prefix (single-source fixture).
       const bundles = new Set(rows.map((r) => r.itemRef?.split("//")[0]));

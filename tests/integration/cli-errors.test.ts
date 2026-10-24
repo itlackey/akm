@@ -174,7 +174,7 @@ describe("CLI error handling", () => {
 // CLI-envelope-level coverage of two diagnostic codes declared in
 // src/core/errors.ts: one test per code asserting the {ok:false,error,code}
 // JSON envelope on stderr and exit 2.
-describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID, TASK_SOURCE_INVALID)", () => {
+describe("CLI envelope coverage for the diagnostic codes (COMPOSITION_INVALID, TASK_SOURCE_INVALID)", () => {
   test("akm task run of a malformed task source emits {ok:false,code:TASK_SOURCE_INVALID} on stderr, exit 2", async () => {
     const stash = makeStashDir();
     disposers.push(stash);
@@ -474,7 +474,7 @@ describe("output shape registry — every CLI verb returns a registered shape", 
 // citty's `runCommand` directly and never runs `src/cli.ts`'s
 // `import.meta.main`-gated startup block where the reclassification lives
 // (see that harness's own module docstring).
-describe("R-032: citty CLIError family exits 2, not 1", () => {
+describe("citty CLIError family exits 2, not 1", () => {
   test("akm totally-bogus (unknown top-level command) exits 2", () => {
     const { status, stderr } = spawnCli(["totally-bogus"], { cwd: repoRoot });
     expect(status).toBe(2);
@@ -537,7 +537,7 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
     });
   }
 
-  test("akm --help still exits 0 and prints usage (unaffected by the R-032 fix)", () => {
+  test("akm --help still exits 0 and prints usage (unaffected by the fix)", () => {
     const { status, stdout } = spawnCli(["--help"], { cwd: repoRoot });
     expect(status).toBe(0);
     expect(stdout).toContain("USAGE");
@@ -651,7 +651,7 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
 
 // The sectioned root help groups top-level commands instead of citty's flat
 // alphabetical-by-declaration COMMANDS dump.
-describe("S11: sectioned root help", () => {
+describe("sectioned root help", () => {
   test("bare akm prints the sectioned overview and exits 0", () => {
     const { status, stdout, stderr } = spawnCli([], { cwd: repoRoot });
     expect(status).toBe(0);
@@ -784,7 +784,7 @@ describe("S11: sectioned root help", () => {
 // bare-group behavior is a usage error (exit 2) via `defineGroupCommand`'s
 // shared default, not a command-specific `output()` call, so they are out of
 // scope here.
-describe("GLOBAL_OUTPUT_ARGS coverage guard (R-051)", () => {
+describe("GLOBAL_OUTPUT_ARGS coverage guard", () => {
   // biome-ignore lint/suspicious/noExplicitAny: walking citty's dynamically-shaped command tree
   type AnyCittyCommandForTest = Record<string, any>;
 
@@ -839,7 +839,7 @@ describe("GLOBAL_OUTPUT_ARGS coverage guard (R-051)", () => {
     expect(missing).toEqual([]);
   });
 
-  test("the three PKG-8-owned sites (health, index, lint) declare GLOBAL_OUTPUT_ARGS", () => {
+  test("the three sites (health, index, lint) declare GLOBAL_OUTPUT_ARGS", () => {
     const requiredKeys = Object.keys(GLOBAL_OUTPUT_ARGS);
     const leaves = collectTerminalLeafCommands(main as unknown as AnyCittyCommandForTest);
     for (const path of ["health", "index", "lint"]) {

@@ -70,7 +70,7 @@ function sha256Hex(text: string): string {
 
 // ── applyInputDefaults ───────────────────────────────────────────────────────
 
-describe("applyInputDefaults (§4.2) — defaults are additive, supplied values always win", () => {
+describe("applyInputDefaults — defaults are additive, supplied values always win", () => {
   test("applies a declared default when the input is absent from values", () => {
     const contract: InputContract = {
       scope: { schema: { type: "string", enum: ["changed", "all"] }, default: "changed", required: false },
@@ -168,7 +168,7 @@ function expectedValidateInputsErrors(
   return [...schemaErrors, ...missingRequired];
 }
 
-describe("validateInputs (§4.2) — path-prefixed error strings", () => {
+describe("validateInputs — path-prefixed error strings", () => {
   test("a fully valid values object yields no errors", () => {
     const contract: InputContract = {
       scope: { schema: { type: "string", enum: ["changed", "all"] }, required: false },
@@ -326,12 +326,12 @@ function poisonedDiagnostics(): InputFlagDiagnostics {
   };
 }
 
-describe("materializeInputFlags (§4.2, D3-N3) — exact-name matching and coercion", () => {
-  test("zero contract, zero flags: returns {} and calls no diagnostic (B-26 baseline)", () => {
+describe("materializeInputFlags — exact-name matching and coercion", () => {
+  test("zero contract, zero flags: returns {} and calls no diagnostic (baseline)", () => {
     expect(materializeInputFlags({}, [], poisonedDiagnostics())).toEqual({});
   });
 
-  test("an empty contract rejects ANY flag with unknownFlag — a v3 task's empty contract rejects every input (§5.1)", () => {
+  test("an empty contract rejects ANY flag with unknownFlag — a v3 task's empty contract rejects every input", () => {
     const probe = probeDiagnostics();
     const flags: InputFlag[] = [{ name: "x", value: "1" }];
     const err = thrown(() => materializeInputFlags({}, flags, probe.diagnostics));
@@ -449,7 +449,7 @@ describe("materializeInputFlags (§4.2, D3-N3) — exact-name matching and coerc
     expect(probe.calls.invalidValue).toEqual([{ name: "count", detail: "requires a value of type integer" }]);
   });
 
-  test('numeric-looking string preserved exactly: --version 001 on type:"string" stays the string "001" (B-30)', () => {
+  test('numeric-looking string preserved exactly: --version 001 on type:"string" stays the string "001"', () => {
     const contract: InputContract = { version: { schema: { type: "string" }, required: false } };
     const result = materializeInputFlags(contract, [{ name: "version", value: "001" }], poisonedDiagnostics());
     expect(result).toEqual({ version: "001" });
@@ -490,7 +490,7 @@ describe("materializeInputFlags (§4.2, D3-N3) — exact-name matching and coerc
   // behavior (the two tests directly above, and the "repeated flag" / "JSON
   // shorthand" tests earlier in this describe block, all use a sole
   // `type: "array"` and are unaffected by this fix).
-  describe('a union type that includes "array" alongside a scalar type (F1)', () => {
+  describe('a union type that includes "array" alongside a scalar type', () => {
     test('a single, non-bracketed value on type:["array","string"] stays the string, never wrapped in an array', () => {
       const contract: InputContract = { x: { schema: { type: ["array", "string"] }, required: false } };
       const result = materializeInputFlags(contract, [{ name: "x", value: "hello" }], poisonedDiagnostics());
@@ -505,7 +505,7 @@ describe("materializeInputFlags (§4.2, D3-N3) — exact-name matching and coerc
       });
     });
 
-    test('a numeric-looking string on type:["array","string"] is preserved exactly too (B-30 still applies inside the union)', () => {
+    test('a numeric-looking string on type:["array","string"] is preserved exactly too (the exact-preservation rule still applies inside the union)', () => {
       const contract: InputContract = { version: { schema: { type: ["array", "string"] }, required: false } };
       const result = materializeInputFlags(contract, [{ name: "version", value: "001" }], poisonedDiagnostics());
       expect(result).toEqual({ version: "001" });
@@ -559,7 +559,7 @@ const CANONICAL_JSON_FIXTURES: readonly unknown[] = [
   { scope: "changed", strict: true, count: 0, tags: ["a", "b"], nested: { z: 1, a: { deep: [1, { y: 2, x: 1 }] } } },
 ];
 
-describe("canonicalInputJson — byte-equal to canonicalJson (D3-N2)", () => {
+describe("canonicalInputJson — byte-equal to canonicalJson", () => {
   CANONICAL_JSON_FIXTURES.forEach((fixture, index) => {
     test(`fixture #${index} is byte-equal to canonicalJson`, () => {
       expect(canonicalInputJson(fixture)).toBe(canonicalJson(fixture));
@@ -581,7 +581,7 @@ describe("canonicalInputJson — byte-equal to canonicalJson (D3-N2)", () => {
   });
 });
 
-describe("canonicalInputHash (D3-N2, B-39)", () => {
+describe("canonicalInputHash", () => {
   test("is a stable 64-character lowercase hex sha256 digest", () => {
     const hash = canonicalInputHash({ a: 1 });
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
@@ -621,7 +621,7 @@ describe("canonicalInputHash (D3-N2, B-39)", () => {
 
 // ── INPUT_NAME_PATTERN ───────────────────────────────────────────────────────
 
-describe("INPUT_NAME_PATTERN (D3-N1) — same grammar as today's PROGRAM_PARAM_NAME_PATTERN", () => {
+describe("INPUT_NAME_PATTERN — same grammar as today's PROGRAM_PARAM_NAME_PATTERN", () => {
   test("accepts/rejects the same identifier shapes as PROGRAM_PARAM_NAME_PATTERN", () => {
     const accepted = ["scope", "_scope", "scope1", "SCOPE_2"];
     const rejected = ["1scope", "sco-pe", "sco.pe", "", " scope", "scope "];
@@ -635,7 +635,7 @@ describe("INPUT_NAME_PATTERN (D3-N1) — same grammar as today's PROGRAM_PARAM_N
     }
   });
 
-  test("is the exact same regex source and flags as today's PROGRAM_PARAM_NAME_PATTERN (F-3: a re-export, not a redefinition)", () => {
+  test("is the exact same regex source and flags as today's PROGRAM_PARAM_NAME_PATTERN (a re-export, not a redefinition)", () => {
     expect(INPUT_NAME_PATTERN.source).toBe(PROGRAM_PARAM_NAME_PATTERN.source);
     expect(INPUT_NAME_PATTERN.flags).toBe(PROGRAM_PARAM_NAME_PATTERN.flags);
   });
@@ -762,7 +762,7 @@ function isAllowedInputContractSpecifier(specifier: string): boolean {
   );
 }
 
-describe("purity — src/execution/input-contract.ts imports only the D3-N1 allowlist", () => {
+describe("purity — src/execution/input-contract.ts imports only its allowlist", () => {
   test("imports something (guards against a vacuous pass on an empty stub)", () => {
     expect(importedModuleSpecifiers(INPUT_CONTRACT_PATH).length).toBeGreaterThan(0);
   });
@@ -840,7 +840,7 @@ function topLevelDeclaredNames(filePath: string): Set<string> {
   return names;
 }
 
-describe("structure — src/workflows/ir/params.ts becomes a thin consumer of input-contract.ts (§4.3, §9)", () => {
+describe("structure — src/workflows/ir/params.ts becomes a thin consumer of input-contract.ts", () => {
   test("imports from ../../execution/input-contract", () => {
     const specifiers = importedModuleSpecifiers(PARAMS_TS_PATH);
     const resolvesToInputContract = specifiers.some(

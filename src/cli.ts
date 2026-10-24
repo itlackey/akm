@@ -334,9 +334,9 @@ const healthCommand = defineCommand({
       type: "boolean",
       default: true,
       description:
-        "Probe default-llm-engine / configured-engines reachability, check for a newer akm release, and check the scheduler's recorded akm binary version (on by default).",
+        "Probe default-llm-engine / configured-engines reachability, check for a newer akm release, look up the newest Claude plugin tag, and check the scheduler's recorded akm binary version (on by default).",
       negativeDescription:
-        "Skip the reachability probes, the update check, and the scheduler-binary version check (for an offline or air-gapped host).",
+        "Skip the reachability probes, the update check, the Claude plugin tag lookup, and the scheduler-binary version check (for an offline or air-gapped host).",
     },
   },
   async run({ args }) {

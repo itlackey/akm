@@ -132,15 +132,18 @@ test("an interrupted refresh keeps the previous snapshot whole and is recovered 
   // Kill the refresh in the middle of its page-write loop.
   const events: WebsiteSnapshotWriteEvent[] = [];
   const stashDuringWrite: string[][] = [];
-  await withSeam(
-    _setWebsiteSnapshotWriteHookForTests,
-    (event: WebsiteSnapshotWriteEvent) => {
-      events.push(event);
-      stashDuringWrite.push(snapshotFiles(cachePaths.stashDir));
-      if (event.index === 2) throw new Error("simulated kill -9 mid-refresh");
-    },
-    () => ensureWebsiteMirror(entry, { allowPrivateHosts: true, requireStashDir: true, force: true }),
-  );
+  // The forced refresh reports its failure: no window masks it as a success.
+  await expect(
+    withSeam(
+      _setWebsiteSnapshotWriteHookForTests,
+      (event: WebsiteSnapshotWriteEvent) => {
+        events.push(event);
+        stashDuringWrite.push(snapshotFiles(cachePaths.stashDir));
+        if (event.index === 2) throw new Error("simulated kill -9 mid-refresh");
+      },
+      () => ensureWebsiteMirror(entry, { allowPrivateHosts: true, requireStashDir: true, force: true }),
+    ),
+  ).rejects.toThrow("simulated kill -9 mid-refresh");
 
   // The interruption really landed MID-loop: at least one page of generation 2
   // had already been written to disk when the process "died", and there was
@@ -196,13 +199,15 @@ test("a plain (non-forced) run after an interruption never serves a partial mirr
   expect(generationOneFiles.length).toBe(4);
 
   site.setPages(GENERATION_TWO);
-  await withSeam(
-    _setWebsiteSnapshotWriteHookForTests,
-    (event: WebsiteSnapshotWriteEvent) => {
-      if (event.index === 1) throw new Error("simulated kill -9 mid-refresh");
-    },
-    () => ensureWebsiteMirror(entry, { allowPrivateHosts: true, requireStashDir: true, force: true }),
-  );
+  await expect(
+    withSeam(
+      _setWebsiteSnapshotWriteHookForTests,
+      (event: WebsiteSnapshotWriteEvent) => {
+        if (event.index === 1) throw new Error("simulated kill -9 mid-refresh");
+      },
+      () => ensureWebsiteMirror(entry, { allowPrivateHosts: true, requireStashDir: true, force: true }),
+    ),
+  ).rejects.toThrow("simulated kill -9 mid-refresh");
 
   await ensureWebsiteMirror(entry, { allowPrivateHosts: true, requireStashDir: true });
 

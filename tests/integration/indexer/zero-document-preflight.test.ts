@@ -65,7 +65,7 @@ afterEach(() => {
   cleanup();
 });
 
-describe("#624-P1 zero-document preflight on --full", () => {
+describe("#624 zero-document preflight on --full", () => {
   test("an unreadable/missing source root preserves the last-known-good index (no wipe)", async () => {
     expect(entryCount()).toBeGreaterThan(0);
 

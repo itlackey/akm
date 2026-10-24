@@ -19,14 +19,14 @@
  * network call is bounded to {@link CLI_VERSION_CHECK_TIMEOUT_MS} with no
  * retries, not `checkForUpdate`'s own 30s/3-retry defaults, which are tuned
  * for the deliberate, explicit `akm upgrade` command rather than a
- * `--probe`-default-on health check). This is the SECOND deliberate network
- * exception in `akm health` (see
- * `plugin-staleness.ts` and `docs/architecture/internals/health-advisories.md`)
- * — unlike plugin-staleness's unconditional `git ls-remote`, this one is
- * gated behind the same `--probe`/`--no-probe` flag the engine-reachability
- * checks already use, so an air-gapped host's existing `--no-probe` habit
- * suppresses it too, and offline/rate-limited failures degrade to `unknown`
- * (never a false `warn`).
+ * `--probe`-default-on health check). `akm health` runs several probes by
+ * default (see `docs/architecture/internals/health-advisories.md`, "Network
+ * and processes"): it reaches each configured LLM endpoint, asks GitHub for
+ * the latest release here, runs `git ls-remote --tags` for `plugin-version`
+ * (`plugin-staleness.ts`), and runs the scheduler's recorded binary. This one
+ * is gated behind the same `--probe`/`--no-probe` flag as the others, so an
+ * air-gapped host's `--no-probe` habit suppresses it too, and
+ * offline/rate-limited failures degrade to `unknown` (never a false `warn`).
  */
 
 import { pkgVersion } from "../../version";

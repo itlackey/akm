@@ -75,7 +75,7 @@ async function captureThrow(fn: () => Promise<unknown>): Promise<unknown> {
   throw new Error("expected fn() to throw, but it resolved");
 }
 
-describe("child-workflow dispatch fails closed as an internal-invariant guard (P3b flip, B-N11)", () => {
+describe("child-workflow dispatch fails closed as an internal-invariant guard", () => {
   test('dispatchWorkflowExecution rejects a child-workflow target with a plain Error naming the bypassed child-executor seam — not the retired UsageError and not the generic "not a command target" ConfigError', async () => {
     const request = childWorkflowRequest("workflows/child");
     const caught = await captureThrow(() => dispatchWorkflowExecution(request));

@@ -275,7 +275,7 @@ describe("buildHealthHtmlReplacements", () => {
     expect(replacements["%%EXEC_SUMMARY_HTML%%"]).toContain("<b>improving</b>");
   });
 
-  test("echarts is CDN-only (chunk-9 WI-9.4d — the vendored inline payload was removed)", async () => {
+  test("echarts is CDN-only (the vendored inline payload was removed)", async () => {
     seedImproveRun();
     const result = await healthResult();
 

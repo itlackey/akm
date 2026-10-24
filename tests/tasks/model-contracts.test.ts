@@ -40,8 +40,8 @@ function exportsTypeNamed(filePath: string, name: string): boolean {
   return found;
 }
 
-describe("model/invocation.ts — pure type exports (P1b spec §1.1, design decision 1)", () => {
-  test("invocation.ts exports TaskInvocation and the D5 ExecutionProvenanceContext type", () => {
+describe("model/invocation.ts — pure type exports", () => {
+  test("invocation.ts exports TaskInvocation and the ExecutionProvenanceContext type", () => {
     expect(exportsTypeNamed(MODEL_INVOCATION_FILE, "TaskInvocation")).toBe(true);
     // ExecutionProvenanceContext = Readonly<{eventSource: "user"|"task";
     // scheduled: boolean}>. The runtime factory lives in run/provenance.ts — this
@@ -119,7 +119,7 @@ function forbiddenSpecifier(specifier: string): boolean {
   return FORBIDDEN_PATH_SUBSTRINGS.some((needle) => specifier.includes(needle));
 }
 
-describe("purity ratchet — src/tasks/model/invocation.ts (P1b spec §3.2)", () => {
+describe("purity ratchet — src/tasks/model/invocation.ts", () => {
   test("imports no fs/db/network/storage/integration module and contains no dynamic import or require", () => {
     const scan = scanModule(MODEL_INVOCATION_FILE);
     const offending = scan.staticSpecifiers.filter(forbiddenSpecifier);

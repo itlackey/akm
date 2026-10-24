@@ -23,7 +23,7 @@ import { validateStashEntry } from "../../src/indexer/passes/metadata";
 
 // ── (a) open-token acceptance as DATA ───────────────────────────────────────
 
-describe("open type token — accepted as data (D1.5-1)", () => {
+describe("open type token — accepted as data", () => {
   test("validateStashEntry accepts an entry whose type is not in KNOWN_TYPES", () => {
     const result = validateStashEntry({ name: "widget-one", type: "widget" });
     expect(result).not.toBeNull();
@@ -68,7 +68,7 @@ describe("KNOWN_TYPES exhaustiveness — typed tables compile-cover all 14", () 
 
 // ── (c) presentationFor fallback ────────────────────────────────────────────
 
-describe("presentationFor — open-string fallback (§2.3)", () => {
+describe("presentationFor — open-string fallback", () => {
   test("returns a type-specific presentation for every KNOWN_TYPE", () => {
     for (const type of KNOWN_TYPES) {
       expect(presentationFor(type)).toEqual(TYPE_PRESENTATION[type]);

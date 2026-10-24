@@ -18,9 +18,10 @@
  *   1. **Dangerous env-key injection** (`env-binding.ts`). Injecting an env
  *      whose keys include a genuine RCE-class process-hijacking variable
  *      (LD_PRELOAD, PATH, GIT_SSH_COMMAND, BASH_FUNC_*, …) is BLOCKED when the
- *      env comes from a third-party stash (one installed from a registry, i.e.
- *      `source.registryId` is set) and only WARNED for the operator's own
- *      first-party stash, an explicit `--allow-dangerous-env-keys`, or a key from the
+ *      env comes from a third-party stash (one installed from elsewhere: a git,
+ *      website or npm bundle; see `isThirdPartySource`) and only WARNED for the
+ *      operator's own first-party stash (the working bundle or a local
+ *      directory), an explicit `--allow-dangerous-env-keys`, or a key from the
  *      interactive-tool group (EDITOR/VISUAL/PAGER — high-FP, and never
  *      actually invoked by akm's own env-injection path). → {@link decideDangerousEnvInjection}
  *
@@ -90,7 +91,7 @@ const INTERACTIVE_TOOL_ENV_KEYS = new Set(["EDITOR", "VISUAL", "PAGER"]);
  * @param dangerousKeys The subset of injected keys flagged as process-hijacking
  *   (already filtered by the caller via `isDangerousEnvKey`).
  * @param thirdParty `true` when the env's source is a third-party stash — i.e.
- *   its origin carries a `registryId`.
+ *   `isThirdPartySource` is true for it.
  * @param allowDangerousEnvKeys `true` when the operator passed `--allow-dangerous-env-keys` (or
  *   its equivalent) for this injection. Defaults to `false`.
  */

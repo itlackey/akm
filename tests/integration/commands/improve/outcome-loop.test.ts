@@ -280,7 +280,7 @@ describe("updateAssetOutcome — differential update (second call)", () => {
     }
   });
 
-  test("outcome_score is clamped to OUTCOME_SCORE_MAX (RPE saturation, G2)", () => {
+  test("outcome_score is clamped to OUTCOME_SCORE_MAX (RPE saturation)", () => {
     const { db } = openTestDb();
     try {
       // Seed a legacy unbounded row above the ceiling (live max was 3.13).

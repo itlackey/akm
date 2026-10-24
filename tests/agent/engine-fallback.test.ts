@@ -65,7 +65,7 @@ describe("withEngineFallback", () => {
     expect(Object.keys(result.config.engines ?? {}).sort()).toEqual(["claude", FALLBACK_ENGINE_NAME].sort());
   });
 
-  test("a configured fallback engine with a custom bin outside PATH is still probed (review P2)", () => {
+  test("a configured fallback engine with a custom bin outside PATH is still probed", () => {
     // The operator pinned an absolute bin; a bare `which opencode` says no.
     // Reporting the install as engine-less would contradict operator-wins.
     const onlyCustomBin = (bin: string) => (bin === "/opt/oc/bin/opencode" ? bin : undefined);
@@ -82,7 +82,7 @@ describe("fallbackAnnouncement", () => {
     expect(fallbackAnnouncement(FALLBACK_ENGINE_NAME, FALLBACK_ENGINE_NAME)).toBe(FALLBACK_ANNOUNCEMENT);
   });
 
-  test("stays silent when a higher-precedence engine won (review P2)", () => {
+  test("stays silent when a higher-precedence engine won", () => {
     // A prompt task's `engine:` and a workflow's document/unit `engine:` both
     // outrank `defaults.engine`. Announcing there would falsely claim opencode
     // supplied the provider/model/auth.

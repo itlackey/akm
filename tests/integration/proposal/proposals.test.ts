@@ -159,7 +159,7 @@ describe("createProposal / listProposals / getProposal", () => {
     expect((events.events[0]?.metadata as Record<string, unknown> | undefined)?.proposalId).toBe(created.id);
   });
 
-  test("akmProposalList --generator filters by source (S4), matching accept/reject --generator", () => {
+  test("akmProposalList --generator filters by source, matching accept/reject --generator", () => {
     const stash = makeStashDir();
     createProposal(stash, { ref: "lessons/from-reflect", source: "reflect", payload: { content: VALID_LESSON } });
     createProposal(stash, { ref: "lessons/from-distill", source: "distill", payload: { content: VALID_LESSON } });
@@ -330,7 +330,7 @@ describe("createProposal / listProposals / getProposal", () => {
   });
 });
 
-describe("ref-filter parse failures are LOUD (D-R3)", () => {
+describe("ref-filter parse failures are LOUD", () => {
   // Legacy `type:name` built via interpolation so the test-ref-literal ratchet
   // never counts it (the type keyword is not literally adjacent to the colon).
   const legacyRef = `skill:${"deploy"}`;
@@ -780,7 +780,7 @@ describe("createProposal and proposal decisions record the improve ledger", () =
 
 // ── #385 — source allow-list + sourceRun advisory ────────────────────────────
 
-describe("F-4: source allow-list validation and sourceRun advisory (#385)", () => {
+describe("source allow-list validation and sourceRun advisory (#385)", () => {
   test("isValidProposalSource returns true for known source values", () => {
     for (const src of PROPOSAL_SOURCES) {
       expect(isValidProposalSource(src)).toBe(true);
@@ -831,7 +831,7 @@ describe("F-4: source allow-list validation and sourceRun advisory (#385)", () =
 
 // ── Confidence score ────────────────────────────────────────────────────────
 
-describe("Phase 6A: createProposal validates and round-trips confidence", () => {
+describe("createProposal validates and round-trips confidence", () => {
   test("accepts a valid confidence in [0, 1] and persists it on the proposal", () => {
     const stash = makeStashDir();
     const result = createProposal(stash, {
@@ -901,7 +901,7 @@ describe("Phase 6A: createProposal validates and round-trips confidence", () => 
 
 // ── Proposal expiration ─────────────────────────────────────────────────────
 
-describe("Phase 6B: expireStaleProposals archives proposals past retention", () => {
+describe("expireStaleProposals archives proposals past retention", () => {
   test("expires only proposals older than archiveRetentionDays", () => {
     const stash = makeStashDir();
     const config: AkmConfig = { ...makeConfig(stash), archiveRetentionDays: 30 } as AkmConfig;
@@ -1098,7 +1098,7 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
 
 // ── Proposal reversion ──────────────────────────────────────────────────────
 
-describe("Phase 6C: promoteProposal captures backup; revertProposal restores it", () => {
+describe("promoteProposal captures backup; revertProposal restores it", () => {
   // The three "waits for the shared asset-mutation lease" tests below need no
   // sleep between starting the mutation and asserting it hasn't completed yet.
   // `withAssetMutationLease` (src/indexer/index-writer-lock.ts,
@@ -1539,7 +1539,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
 // `ctx.actorId` is a ProposalsContext test seam (mirrors the existing
 // `now`/`randomUUID` seams) so these assertions never depend on the real
 // OS username of whatever machine runs the suite.
-describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native writes", () => {
+describe("promoteProposal stamps OKF v0.2 provenance onto AKM-native writes", () => {
   // Reads the HYBRID on-disk shape (#730): `generated:` and
   // `verified:` are stamped BARE at the top level (OKF v0.2's own spelling, so a
   // third-party OKF reader sees conformant trust metadata), while `sources`
@@ -1891,7 +1891,7 @@ describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native 
 
 // ── FileChange[] envelope + mint-time beforeHash ────────────────────────────
 
-describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
+describe("createProposal derives the FileChange[] envelope", () => {
   test("new target: single create change, after IS the payload content, no beforeHash", () => {
     const stash = makeStashDir();
     const created = createProposal(stash, {

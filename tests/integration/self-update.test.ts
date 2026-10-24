@@ -365,7 +365,7 @@ describe("performUpgrade", () => {
     expect(spawnSyncSpy).toHaveBeenCalled();
   });
 
-  test("a lagging @latest dist-tag downgrades the result to upgraded:false with the pin remedy (§24.2)", async () => {
+  test("a lagging @latest dist-tag downgrades the result to upgraded:false with the pin remedy", async () => {
     // The install command "succeeds" but the on-PATH akm still reports the
     // OLD version — the registry's @latest tag lags the GitHub release.
     spyOn(childProcess, "spawnSync").mockImplementation(((_command: string, args: string[]) => {

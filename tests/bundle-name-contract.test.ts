@@ -52,7 +52,7 @@ function configPath(): string {
   return path.join(storage.configDir, "akm", "config.json");
 }
 
-describe("akm bundle add <local path> --name (D6)", () => {
+describe("akm bundle add <local path> --name", () => {
   test("every successful add result carries bundleId", async () => {
     const dir = createTmpDir();
     makeStashDir(dir);
@@ -128,7 +128,7 @@ describe("akm bundle add <local path> --name (D6)", () => {
   });
 });
 
-describe("akm bundle add <website URL> --name (D6)", () => {
+describe("akm bundle add <website URL> --name", () => {
   // The name contract is enforced inside the config mutation, before the
   // website mirror is fetched — so these never need a mocked network.
   test("an illegal bundle name fails before any write", async () => {

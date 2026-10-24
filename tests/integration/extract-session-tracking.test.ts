@@ -157,19 +157,19 @@ function priorRow(overrides: Partial<ExtractedSessionRow> = {}): ExtractedSessio
 
 describe("shouldSkipAlreadyExtractedSession (content-hash)", () => {
   // A never-seen session is always processed.
-  test("returns false when there is no prior record (AC3)", () => {
+  test("returns false when there is no prior record", () => {
     expect(shouldSkipAlreadyExtractedSession(undefined, "anyhash")).toBe(false);
   });
 
   // Byte-identical content is skipped.
-  test("returns true when prior content_hash equals current hash (AC1)", () => {
+  test("returns true when prior content_hash equals current hash", () => {
     const prior = priorRow({ content_hash: "H" });
     expect(shouldSkipAlreadyExtractedSession(prior, "H")).toBe(true);
   });
 
   // Clock-independence — the skip decision must NOT depend on
   // session_ended_at. Same hash → skip regardless of recorded ended-at.
-  test("skip decision is independent of session_ended_at (AC1 clock-skew immunity)", () => {
+  test("skip decision is independent of session_ended_at (clock-skew immunity)", () => {
     const farFuture = priorRow({ content_hash: "H", session_ended_at: "2999-01-01T00:00:00.000Z" });
     const farPast = priorRow({ content_hash: "H", session_ended_at: "1971-01-01T00:00:00.000Z" });
     const nullEnded = priorRow({ content_hash: "H", session_ended_at: null });
@@ -179,13 +179,13 @@ describe("shouldSkipAlreadyExtractedSession (content-hash)", () => {
   });
 
   // Changed content forces a re-process.
-  test("returns false when prior content_hash differs from current hash (AC2)", () => {
+  test("returns false when prior content_hash differs from current hash", () => {
     const prior = priorRow({ content_hash: "H1" });
     expect(shouldSkipAlreadyExtractedSession(prior, "H2")).toBe(false);
   });
 
   // A legacy/hash-less row is re-processed exactly once to backfill.
-  test("returns false when prior content_hash is null (AC4 backfill once)", () => {
+  test("returns false when prior content_hash is null (backfill once)", () => {
     const prior = priorRow({ content_hash: null });
     expect(shouldSkipAlreadyExtractedSession(prior, "H")).toBe(false);
   });
@@ -212,7 +212,7 @@ describe("hashSessionContent", () => {
     expect(hashSessionContent(reTitled)).toBe(hashSessionContent(base));
   });
 
-  test("changes when an event's text changes (AC2 source)", () => {
+  test("changes when an event's text changes (source)", () => {
     const a = fakeSession("ses_text", 1_000_000, { text: "user: first version of the question" });
     const b = fakeSession("ses_text", 1_000_000, { text: "user: a DIFFERENT question entirely" });
     expect(hashSessionContent(a)).not.toBe(hashSessionContent(b));
@@ -458,7 +458,7 @@ describe("extract_sessions_seen — state.db round-trip", () => {
 
   // Migration-level: a pre-013 row (written without a content_hash) reads
   // back content_hash === null and does not throw.
-  test("migration 013: a row written without content_hash reads back null (AC4)", () => {
+  test("migration 013: a row written without content_hash reads back null", () => {
     const db = openInMem();
     // Simulate a legacy (pre-013) write using only the original column set.
     db.prepare(`
@@ -531,7 +531,7 @@ describe("akmExtract — skip-already-extracted (content-hash)", () => {
   // End-to-end: seed the SAME content_hash the run will compute; the session
   // must be skipped (zero chat() calls) EVEN WHEN the recorded session_ended_at
   // diverges wildly from the live session (clock-skew immunity).
-  test("skips a session whose content_hash matches, regardless of endedAt (AC1)", async () => {
+  test("skips a session whose content_hash matches, regardless of endedAt", async () => {
     const stash = makeStashDir();
     const liveEndedAt = Date.now();
     const session = fakeSession("ses_seen", liveEndedAt);
@@ -571,7 +571,7 @@ describe("akmExtract — skip-already-extracted (content-hash)", () => {
 
   // End-to-end: seed a stale content_hash; the run must re-process and UPDATE
   // the stored hash to the freshly computed value.
-  test("re-processes when the stored content_hash is stale, and updates it (AC2)", async () => {
+  test("re-processes when the stored content_hash is stale, and updates it", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_updated", Date.now());
     const freshHash = hashSessionContent(session);
@@ -607,7 +607,7 @@ describe("akmExtract — skip-already-extracted (content-hash)", () => {
 
   // End-to-end: a legacy null-hash row is processed once (backfill) and the
   // hash becomes stable, so a second unchanged run skips it.
-  test("backfills a null content_hash row once, then skips on the next unchanged run (AC4)", async () => {
+  test("backfills a null content_hash row once, then skips on the next unchanged run", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_backfill", Date.now());
     const db = openStateDatabase(":memory:");
@@ -1079,7 +1079,7 @@ describe("akmExtract — per-session lock", () => {
 // the hash would make the next run skip it as "already_extracted" and it would
 // never be retried once the LLM recovers / the triage bar changes. Persisting a
 // null hash keeps the row eligible for the existing null-hash retry.
-describe("akmExtract — R4 transient outcomes stay retryable (null content_hash)", () => {
+describe("akmExtract — transient outcomes stay retryable (null content_hash)", () => {
   test("llm_unavailable → tracked row carries a null content_hash", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_llm_down", Date.now());

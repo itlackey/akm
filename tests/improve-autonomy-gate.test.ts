@@ -105,7 +105,7 @@ describe("applyAutonomyGate with autonomy ON", () => {
 });
 
 describe("lane inventory", () => {
-  test("covers exactly the three lanes D8 gates, and not advisory consolidation or sync.push", () => {
+  test("covers exactly the three gated lanes, and not advisory consolidation or sync.push", () => {
     expect([...(AUTONOMY_LANES as readonly string[])].sort()).toEqual([
       "memoryCleanup",
       "memoryInference",

@@ -121,7 +121,7 @@ function skillFieldDiagnostics(relPath: string, dirName: string, data: Record<st
       issue: "skill-name-invalid",
       detail:
         `skill name '${name}' must match ^[a-z0-9]+(-[a-z0-9]+)*$ (NFKC, 1-${NAME_MAX} chars, ` +
-        `no reserved word, == parent dir name '${dirName}') — Agent Skills hard rule (spec §4.5).`,
+        `no reserved word, == parent dir name '${dirName}') — Agent Skills hard rule.`,
       fixed: false,
     });
   }
@@ -131,7 +131,7 @@ function skillFieldDiagnostics(relPath: string, dirName: string, data: Record<st
     diagnostics.push({
       file: relPath,
       issue: "skill-description-too-long",
-      detail: `skill description is ${description.length} characters; the Agent Skills hard limit is 1-${DESCRIPTION_MAX} (spec §4.5).`,
+      detail: `skill description is ${description.length} characters; the Agent Skills hard limit is 1-${DESCRIPTION_MAX}.`,
       fixed: false,
     });
   }

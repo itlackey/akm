@@ -148,7 +148,7 @@ function parentUnitId(stepId: string): string {
 
 // ── an abort mid-child-drive leaves both runs resumable ─────────────────────
 
-describe("A-28, A-29 — a parent AbortSignal aborted mid-child-drive is observed by the child, leaving it resumable", () => {
+describe("a parent AbortSignal aborted mid-child-drive is observed by the child, leaving it resumable", () => {
   /** One shared dispatcher for BOTH `ctx.dispatcher` and the top-level `dispatcher` field — the test is agnostic about which of the two the drive actually reads, so both must observe the identical abort-on-first-call behavior. */
   function abortingDispatcher(controller: AbortController, counter: { count: number }) {
     return async (): Promise<{ ok: true; text: string }> => {
@@ -162,7 +162,7 @@ describe("A-28, A-29 — a parent AbortSignal aborted mid-child-drive is observe
     };
   }
 
-  test("A-28: the child drive returns ok: false, failureReason 'aborted', once the signal fires mid-drive", async () => {
+  test("the child drive returns ok: false, failureReason 'aborted', once the signal fires mid-drive", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(twoStepChildPlan(), { ref: "workflows/two-step-child" });
     const controller = new AbortController();
@@ -199,7 +199,7 @@ describe("A-28, A-29 — a parent AbortSignal aborted mid-child-drive is observe
     expect(counter.count).toBe(1);
   });
 
-  test("A-29: after the abort, the child's own run lock is released and the child run stays active (resumable)", async () => {
+  test("after the abort, the child's own run lock is released and the child run stays active (resumable)", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(twoStepChildPlan(), { ref: "workflows/two-step-child-b" });
     const controller = new AbortController();
@@ -244,8 +244,8 @@ describe("A-28, A-29 — a parent AbortSignal aborted mid-child-drive is observe
 
 // ── aborting the PARENT drive aborts the nested child drive too ─────────────
 
-describe("A-30 — aborting the parent's drive mid-dispatch aborts the child drive too", () => {
-  test("A-30: the parent's abort cascades into the child; both stop, and the child is left resumable", async () => {
+describe("aborting the parent's drive mid-dispatch aborts the child drive too", () => {
+  test("the parent's abort cascades into the child; both stop, and the child is left resumable", async () => {
     const parentRunId = randomUUID();
     const parentStepId = "compose";
     const childPlan = twoStepChildPlan();

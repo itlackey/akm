@@ -125,7 +125,7 @@ afterEach(() => {
 // ── crawlWebsite integration (via ensureWebsiteMirror) ──────────────────────
 
 describe("crawlWebsite robots.txt compliance", () => {
-  test("C-02: a disallowed start URL throws UsageError before fetching any page", async () => {
+  test("a disallowed start URL throws UsageError before fetching any page", async () => {
     const { url, requestLog } = startFixtureServer({
       robots: { body: "User-agent: *\nDisallow: /\n" },
       pages: { "/": "<html><body>Home</body></html>" },
@@ -152,7 +152,7 @@ describe("crawlWebsite robots.txt compliance", () => {
   });
 
   test(
-    "C-02: a trailing-slash start URL is rejected even though normalizeSiteUrl strips the slash before the " +
+    "a trailing-slash start URL is rejected even though normalizeSiteUrl strips the slash before the " +
       "robots check sees it",
     async () => {
       // Regression: validateWebsiteUrl -> normalizeSiteUrl strips the start
@@ -183,7 +183,7 @@ describe("crawlWebsite robots.txt compliance", () => {
     },
   );
 
-  test("C-03: a 5xx robots.txt on the start origin no longer blocks the crawl", async () => {
+  test("a 5xx robots.txt on the start origin no longer blocks the crawl", async () => {
     const { url, requestLog } = startFixtureServer({
       robots: { status: 500, body: "boom" },
       pages: { "/": "<html><body>Home</body></html>" },
@@ -196,7 +196,7 @@ describe("crawlWebsite robots.txt compliance", () => {
   });
 
   test(
-    "C-04/C-05/C-06: default respectRobots skips a disallowed page without fetching it and reads robots.txt " +
+    "default respectRobots skips a disallowed page without fetching it and reads robots.txt " +
       "once; respectRobots:false fully bypasses it",
     async () => {
       const { url, requestLog } = startFixtureServer({
@@ -236,7 +236,7 @@ describe("crawlWebsite robots.txt compliance", () => {
     },
   );
 
-  test("C-04: a Disallow: /dir/ rule is honored for a discovered /dir/ link even with no redirect involved", async () => {
+  test("a Disallow: /dir/ rule is honored for a discovered /dir/ link even with no redirect involved", async () => {
     // Regression: normalizeCrawlUrl strips a link's trailing slash before
     // the robots gate runs, so `Disallow: /secret/` never matched the
     // slash-less alias `/secret` the gate actually checked — even when the
@@ -268,7 +268,7 @@ describe("crawlWebsite robots.txt compliance", () => {
     expect(requestLog.map((r) => r.pathname)).toEqual(["/robots.txt", "/llms.txt", "/", "/public"]);
   });
 
-  test("C-04: a redirect that lands on a disallowed URL is skipped, not fetched into the stash", async () => {
+  test("a redirect that lands on a disallowed URL is skipped, not fetched into the stash", async () => {
     // Regression: normalizeCrawlUrl strips trailing slashes before the
     // initial robots gate, so `Disallow: /secret/` correctly lets `/secret`
     // through that gate. If the server then redirects `/secret` -> `/secret/`
@@ -301,7 +301,7 @@ describe("crawlWebsite robots.txt compliance", () => {
     expect(requestLog.some((r) => r.pathname === "/secret/")).toBe(false);
   });
 
-  test("C-04: an allowed URL that redirects to a disallowed URL is skipped", async () => {
+  test("an allowed URL that redirects to a disallowed URL is skipped", async () => {
     const { url, requestLog } = startFixtureServer({
       robots: { body: "User-agent: *\nDisallow: /secret\n" },
       pages: {
@@ -319,7 +319,7 @@ describe("crawlWebsite robots.txt compliance", () => {
     expect(requestLog.some((r) => r.pathname === "/go")).toBe(true);
   });
 
-  test("C-04: an intermediate redirect hop landing on a disallowed URL is never requested", async () => {
+  test("an intermediate redirect hop landing on a disallowed URL is never requested", async () => {
     // Regression: fetchWebsiteResponse only robots-checked the pre-redirect
     // queue URL (crawlWebsite's gate) and the FINAL post-redirect URL
     // (fetchWebsitePage's recheck above). Every hop strictly BETWEEN those
@@ -347,7 +347,7 @@ describe("crawlWebsite robots.txt compliance", () => {
     expect(stashContainsSourceUrl(cachePaths.stashDir, publicUrl)).toBe(false);
   });
 
-  test("C-04: a start URL disallowed only when normalized crawls under its raw Allow-matching form", async () => {
+  test("a start URL disallowed only when normalized crawls under its raw Allow-matching form", async () => {
     // Regression: normalizeSiteUrl strips a start URL's trailing slash
     // before the robots check ever sees it, so the canonical
     // "Disallow: / \n Allow: /docs/" layout — which requires that trailing
@@ -374,7 +374,7 @@ describe("crawlWebsite robots.txt compliance", () => {
     expect(requestLog.map((r) => r.pathname)).toEqual(["/robots.txt", "/docs/"]);
   });
 
-  test("C-04: a discovered link disallowed only when normalized is fetched under its raw Allow-matching form", async () => {
+  test("a discovered link disallowed only when normalized is fetched under its raw Allow-matching form", async () => {
     // Regression: the crawlWebsite queue gate ANDed isAllowed(normalized)
     // with isAllowed(raw) and always fetched the normalized (slash-stripped)
     // form. Under "Disallow: / \n Allow: /docs/", a discovered <a
@@ -469,7 +469,7 @@ describe("crawlWebsite robots.txt compliance", () => {
     },
   );
 
-  test("C-06: robots.txt is fetched exactly once per origin no matter how many pages are crawled", async () => {
+  test("robots.txt is fetched exactly once per origin no matter how many pages are crawled", async () => {
     const { url, requestLog } = startFixtureServer({
       robots: { body: "User-agent: *\n" }, // no Disallow lines => allow everything
       pages: {
@@ -490,7 +490,7 @@ describe("crawlWebsite robots.txt compliance", () => {
   });
 
   test(
-    "C-07/C-09: Crawl-delay spaces page fetches apart but does not delay the first fetch",
+    "Crawl-delay spaces page fetches apart but does not delay the first fetch",
     async () => {
       const { url, requestLog } = startFixtureServer({
         // 150ms: small enough to keep the test fast, well above scheduler jitter.
@@ -516,7 +516,7 @@ describe("crawlWebsite robots.txt compliance", () => {
   );
 
   test(
-    "C-10: a Crawl-delay that would cross the wall-clock deadline defers the URL and reports it unfetched, never sleeping past the cap",
+    "a Crawl-delay that would cross the wall-clock deadline defers the URL and reports it unfetched, never sleeping past the cap",
     async () => {
       const warnCalls: string[] = [];
       overrideSeam(_setWarnSinkForTests, (level, args) => {
@@ -566,7 +566,7 @@ describe("crawlWebsite robots.txt compliance", () => {
   );
 
   test(
-    "C-11: a robots-skipped URL between two allowed pages does not add an extra delay-sized gap",
+    "a robots-skipped URL between two allowed pages does not add an extra delay-sized gap",
     async () => {
       const { url, requestLog } = startFixtureServer({
         // 200ms: large enough that "one interval" (~200ms) and "two

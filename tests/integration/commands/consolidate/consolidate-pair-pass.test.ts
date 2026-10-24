@@ -291,7 +291,7 @@ describe("selectInitiators / selectCandidates — threshold math against a real 
     expect(candidates.map((c) => c.other.name)).toEqual(["mid-note"]);
   });
 
-  test("an initiator with a prior attempt whose content is UNCHANGED is not eligible (S1: no timer, content only)", () => {
+  test("an initiator with a prior attempt whose content is UNCHANGED is not eligible (no timer, content only)", () => {
     const oldPath = writeAsset("memories/old-note.md", "description: old note");
     const raw = fs.readFileSync(oldPath, "utf8");
     const stateDb = openStateDatabase();
@@ -324,7 +324,7 @@ describe("selectInitiators / selectCandidates — threshold math against a real 
     expect(initiators).toHaveLength(0);
   });
 
-  test("S2: fetches 20 raw neighbours and keeps the first 5 that pass every filter, not just the raw top 5", () => {
+  test("fetches 20 raw neighbours and keeps the first 5 that pass every filter, not just the raw top 5", () => {
     const initiatorPath = writeAsset("memories/initiator.md", "description: initiator");
     dateAsset(initiatorPath, 60);
     const db = openIndexDatabase(getDbPath());
@@ -433,7 +433,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     }
   });
 
-  test("item 1: a continuity-risk pair still mints, with the risk on its retirement metadata", async () => {
+  test("a continuity-risk pair still mints, with the risk on its retirement metadata", async () => {
     // Distinct bodies (an identical pair gets no check at all — this
     // test is about the rank-based flag, so the two sides must differ).
     const oldPath = writeAsset("memories/old-note.md", "description: old", "Old body text.\n");
@@ -479,7 +479,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     });
   });
 
-  test("never mints two retire proposals for the same asset in one run, and a just-used successor cannot itself be retired in the same run (B2 chain guard)", async () => {
+  test("never mints two retire proposals for the same asset in one run, and a just-used successor cannot itself be retired in the same run (chain guard)", async () => {
     // A is the nearest neighbour of both B and C, and all three are mutually
     // close enough to pair up — three candidate pairs total: {A,B}, {B,C},
     // {A,C}. A "duplicate" judge on every pair would naively retire A twice
@@ -750,7 +750,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(result.retired).toHaveLength(0);
   });
 
-  test("never retires a SUBFOLDER .derived memory whose parent still exists (S3: no doubled subfolder segment)", async () => {
+  test("never retires a SUBFOLDER .derived memory whose parent still exists (no doubled subfolder segment)", async () => {
     writeAsset("memories/sub/foo.md", "description: parent memory in a subfolder");
     const derivedPath = writeAsset(
       "memories/sub/foo.derived.md",
@@ -774,7 +774,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(result.retired).toHaveLength(0);
   });
 
-  test("skips a pair when either side already has a pending retire proposal, as the retired ref OR its successor (B2)", async () => {
+  test("skips a pair when either side already has a pending retire proposal, as the retired ref OR its successor", async () => {
     const { createRetireProposal } = await import("../../../../src/commands/proposal/repository");
     const oldPath = writeAsset("memories/old-note.md", "description: old");
     dateAsset(oldPath, 60);
@@ -870,7 +870,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     }
   });
 
-  test("an initiator with no candidates still gets a ledger row (S1), so it is not rescanned every night", async () => {
+  test("an initiator with no candidates still gets a ledger row, so it is not rescanned every night", async () => {
     const lonelyPath = writeAsset("memories/lonely.md", "description: lonely");
     const farPath = writeAsset("memories/far.md", "description: far");
     const db = openIndexDatabase(getDbPath());
@@ -935,7 +935,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(chatCalls).toBe(0);
   });
 
-  test("a rejected retire proposal is not re-proposed once the initiator's content is unchanged (S1: no timer)", async () => {
+  test("a rejected retire proposal is not re-proposed once the initiator's content is unchanged (no timer)", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: old");
     dateAsset(oldPath, 60);
     const newPath = writeAsset("memories/new-note.md", "description: new");
@@ -1003,7 +1003,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(r3.retired).toHaveLength(1); // content changed since the last attempt: judged again, and re-proposed
   });
 
-  test("item 0: a rejected pair stays rejected even when a sibling verdict drops the initiator's own ledger row", async () => {
+  test("a rejected pair stays rejected even when a sibling verdict drops the initiator's own ledger row", async () => {
     // I is the initiator both Y and Z pair against — indexed first, so it
     // claims both pairs (same "claims every pair it's nearest to" setup as
     // the chain-guard test above). Y and Z sit on OPPOSITE sides of I
@@ -1130,7 +1130,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(fs.existsSync(zPath)).toBe(true);
   });
 
-  test("S1: a reverted pair (accepted, then undone) stays settled too — not just a rejected one", async () => {
+  test("a reverted pair (accepted, then undone) stays settled too — not just a rejected one", async () => {
     // Same I/Y/Z shape as the test above: I claims both (I,Y) and
     // (I,Z); Y and Z sit on opposite sides of I so (Y,Z) itself never pairs.
     const iPath = writeAsset("memories/i-note.md", "description: i");
@@ -1327,7 +1327,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(fs.existsSync(yPath) && fs.existsSync(iPath)).toBe(true); // reopening moved nothing
   });
 
-  test("a cap-cut initiator gets no ledger row and is picked back up next run (S1)", async () => {
+  test("a cap-cut initiator gets no ledger row and is picked back up next run", async () => {
     // Patching MAX_PAIRS_PER_RUN is impractical here, so this proves the
     // underlying mechanism directly: an initiator whose candidate did NOT make
     // it into `judgeable` (skipped by the pending-proposal filter, the same
@@ -1559,7 +1559,7 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
   });
 });
 
-describe("loadGitFirstAddedMap — real git, large output (B1 regression)", () => {
+describe("loadGitFirstAddedMap — real git, large output (regression)", () => {
   // `spawnSync`'s default maxBuffer is 1 MB, and a real bundle can print
   // ~1.8 MB from this exact git log command — enough to silently overflow it.
   // Overflow looks identical to "git failed" (a non-zero/null status), so

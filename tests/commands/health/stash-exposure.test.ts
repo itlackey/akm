@@ -22,7 +22,7 @@ function fakeGit(opts: { isRepo?: boolean; tracked?: string[]; remotes?: string[
   };
 }
 
-describe("collectStashExposureAdvisory (08-F1)", () => {
+describe("collectStashExposureAdvisory", () => {
   test("warns when env/secret assets are tracked AND a remote is configured", () => {
     const adv = collectStashExposureAdvisory(
       "/stash",

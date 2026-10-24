@@ -172,7 +172,7 @@ describe("entrypoint global --shape=summary ordering", () => {
 // deliberately does NOT inherit `config.output.detail` the way
 // `search`/`curate` do — a bare `akm show <ref>` always returns the FULL
 // asset body, regardless of the config default.
-describe("akm show --detail resolution (F6/R-021)", () => {
+describe("akm show --detail resolution", () => {
   function seedCommand(storage: ReturnType<typeof useStorage>): void {
     writeFixture(
       path.join(storage.stashDir, "commands", "release.md"),

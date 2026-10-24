@@ -446,7 +446,7 @@ describe("resolveWriteTarget", () => {
     fs.rmSync(paths.rootDir, { recursive: true, force: true });
   });
 
-  test("git target with a lock localRoot reads AND writes through that root (§10.2 lock-first unification)", async () => {
+  test("git target with a lock localRoot reads AND writes through that root (lock-first unification)", async () => {
     const url = "https://example.invalid/acme/locked-layout.git";
     // The derived cache repoDir is what BOTH paths used to (write) or would
     // (read fallback) resolve to WITHOUT a lock — the divergence under test.

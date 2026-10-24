@@ -142,7 +142,7 @@ function writeSoloComposingParent(name: string, childRef: string): void {
 // ── a resumed parent replays a completed composing step ────────────────────
 // ── without re-driving the child ────────────────────────────────────────────
 
-describe("a resumed parent replays a completed composing step without re-driving the child (C-05, C-06)", () => {
+describe("a resumed parent replays a completed composing step without re-driving the child", () => {
   test("the composing unit is REUSED from the journal on resume — the child's own leaf unit is never re-dispatched, and the composing step's evidence is byte-identical", async () => {
     writeChildLeaf("replay-leaf");
     writeFinishCommand();
@@ -267,7 +267,7 @@ describe("a resumed parent replays a completed composing step without re-driving
 
 // ── resume skips a completed composing unit ─────────────────────────────────
 
-describe("resume skips a completed composing unit whatever input_hash it recorded (C-07)", () => {
+describe("resume skips a completed composing unit whatever input_hash it recorded", () => {
   test("the journaled child result is reused; no child is published or driven", async () => {
     writeChildLeaf("tamper-leaf");
     writeSoloComposingParent("tamper-parent", "workflows/tamper-leaf");

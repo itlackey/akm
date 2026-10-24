@@ -71,7 +71,8 @@ forces a sync. `akm index` calls `sync()` without `force`, so it fetches a
 source only if it has never been materialized on this host; nothing refreshes
 on a timer. A git or npm install recorded in the lockfile whose files are
 missing is reported with a warning that names `akm bundle update`; index does
-not fetch it.
+not fetch it. A configured npm bundle with no lock entry has no walkable path,
+so index skips it with the same warning instead of calling `sync()`.
 
 `akm index` indexes each source through its bundle's adapter. A source that
 could not be walked completely keeps its previously indexed rows and the index

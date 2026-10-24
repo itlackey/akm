@@ -452,7 +452,7 @@ describe("semantic search setup", () => {
   // fresh install with no config.json yet), the wizard's "Enable semantic
   // search?" prompt must still default to checked, and the asset/download
   // warning must be shown before that prompt is asked.
-  test("pre-selects semantic search ON in the wizard even though the runtime default is now off (R-039)", async () => {
+  test("pre-selects semantic search ON in the wizard even though the runtime default is now off", async () => {
     q.confirms.push(false);
 
     await stepSemanticSearch({ semanticSearchMode: "off" } as never);

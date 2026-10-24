@@ -36,7 +36,7 @@ afterEach(() => {
   delete process.env.AKM_TEST_ENV_VALUE;
 });
 
-describe("akm env — JSON envelope snapshot (WS6)", () => {
+describe("akm env — JSON envelope snapshot", () => {
   test("env create: success envelope carries the env ref", async () => {
     const { stdout, status } = await runCli(["env", "create", "prod"]);
     expect(status).toBe(0);

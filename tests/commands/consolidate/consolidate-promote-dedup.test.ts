@@ -359,7 +359,7 @@ describe("existing knowledge body dedup", () => {
     expect(warnings.some((warning) => warning.includes("identical body already exists in knowledge"))).toBe(true);
   });
 
-  it("detects a duplicate whose body starts with its own --- block (H1)", async () => {
+  it("detects a duplicate whose body starts with its own --- block", async () => {
     // Regression: the post-LLM dedup hash used to be computed as
     // contentHash(parseFrontmatter(memoryContent).content.trim(), "body") — an already-
     // stripped body run through cacheHash's own internal strip a second time.

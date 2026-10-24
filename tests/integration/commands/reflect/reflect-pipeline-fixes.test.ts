@@ -151,7 +151,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     expect(result.error).toContain("env");
   });
 
-  test("secret:* ref is rejected (08-F2: secret material must never reach reflect's LLM)", async () => {
+  test("secret:* ref is rejected (secret material must never reach reflect's LLM)", async () => {
     const stash = makeStashDir();
     let spawned = false;
     const spy: SpawnFn = (cmd) => {

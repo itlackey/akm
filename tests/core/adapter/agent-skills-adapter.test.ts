@@ -111,7 +111,7 @@ describe("agent-skills adapter — renderer golden (renders regardless of validi
   }
 });
 
-describe("agent-skills adapter — lint golden (Agent Skills §4.5 hard rules)", () => {
+describe("agent-skills adapter — lint golden (hard rules)", () => {
   const perType = loadGolden("lint").perType as Record<string, { relPath: string; issues: Diagnostic[] }>;
 
   test("each SKILL.md validates to exactly the golden's issue codes", async () => {

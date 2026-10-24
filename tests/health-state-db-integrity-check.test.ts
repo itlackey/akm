@@ -30,7 +30,7 @@ function run(stateDbIntegrity: StateDbIntegrityResult, stateDbFreelist: StateDbF
   } as unknown as HealthCheckContext);
 }
 
-describe("state-db-integrity check (R0)", () => {
+describe("state-db-integrity check", () => {
   test("is registered as a hard check", () => {
     expect(check).toBeDefined();
     expect(check?.channel).toBe("hard");

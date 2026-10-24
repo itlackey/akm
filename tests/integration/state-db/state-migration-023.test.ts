@@ -79,7 +79,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-describe("migration 023-child-workflow-runs — registry position and safety classification (C-03)", () => {
+describe("migration 023-child-workflow-runs — registry position and safety classification", () => {
   // Not asserted as the final entry: later migrations append after this one,
   // so this test pins only 023's own position relative to its immediate
   // predecessor, 022.
@@ -131,7 +131,7 @@ describe("migration 023-child-workflow-runs — registry position and safety cla
   });
 });
 
-describe("migration 023-child-workflow-runs — additive schema (C-01, C-02)", () => {
+describe("migration 023-child-workflow-runs — additive schema", () => {
   test("a fresh state.db carries parent_run_id, parent_unit_id, invocation_key, and both indexes", () => {
     const db = openStateDatabase(statePath());
     try {
@@ -228,7 +228,7 @@ describe("migration 023-child-workflow-runs — additive schema (C-01, C-02)", (
   });
 });
 
-describe("migration 023-child-workflow-runs — partial unique invocation-key index (C-04, C-05)", () => {
+describe("migration 023-child-workflow-runs — partial unique invocation-key index", () => {
   function insertRun(
     db: { prepare(sql: string): { run(...params: unknown[]): unknown } },
     input: {
@@ -260,7 +260,7 @@ describe("migration 023-child-workflow-runs — partial unique invocation-key in
     );
   }
 
-  test("two top-level rows (parent_run_id NULL) with invocation_key NULL both insert — the index is partial (C-05)", () => {
+  test("two top-level rows (parent_run_id NULL) with invocation_key NULL both insert — the index is partial", () => {
     const db = openStateDatabase(statePath());
     try {
       insertRun(db, {
@@ -287,7 +287,7 @@ describe("migration 023-child-workflow-runs — partial unique invocation-key in
     }
   });
 
-  test("two child rows under the same parent with the same invocation_key: the second insert violates the unique index (C-04)", () => {
+  test("two child rows under the same parent with the same invocation_key: the second insert violates the unique index", () => {
     const db = openStateDatabase(statePath());
     try {
       insertRun(db, {

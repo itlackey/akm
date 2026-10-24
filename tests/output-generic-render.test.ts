@@ -76,7 +76,7 @@ describe("renderGenericMarkdown", () => {
     expect(md).toContain("a\\|b");
   });
 
-  test("drops root-level shape/schemaVersion envelope metadata as sections (F3)", () => {
+  test("drops root-level shape/schemaVersion envelope metadata as sections", () => {
     const md = renderGenericMarkdown("secret-list", {
       shape: "sentinel-shape-value",
       schemaVersion: 424242,
@@ -145,7 +145,7 @@ describe("renderGenericHtml", () => {
     expect(renderGenericHtml("noop", null).trim().length).toBeGreaterThan(0);
   });
 
-  test("drops root-level shape/schemaVersion envelope metadata as sections (F3)", () => {
+  test("drops root-level shape/schemaVersion envelope metadata as sections", () => {
     const html = renderGenericHtml("secret-list", {
       shape: "sentinel-shape-value",
       schemaVersion: 424242,

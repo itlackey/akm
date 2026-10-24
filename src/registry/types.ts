@@ -97,21 +97,8 @@ export interface RegistrySearchHit {
   warnings?: string[];
 }
 
-export interface RegistryAssetSearchHit {
-  type: "registry-asset";
-  assetType: string;
-  assetName: string;
-  description?: string;
-  estimatedTokens?: number;
-  stash: { id: string; name: string };
-  registryName?: string;
-  action: string;
-  score?: number;
-}
-
 export interface RegistrySearchResponse {
   query: string;
   hits: RegistrySearchHit[];
   warnings: string[];
-  assetHits?: RegistryAssetSearchHit[];
 }

@@ -96,7 +96,7 @@ describe("capability-derived sublists", () => {
   });
 });
 
-describe("workflow-engine descriptor fields (P2, plan §'Capability matrix')", () => {
+describe("workflow-engine descriptor fields (capability matrix)", () => {
   it("claude: result extractor for the `claude -p --output-format json` envelope, CLAUDE_SESSION_ID", () => {
     const claude = getHarness("claude");
     if (!claude) throw new Error("claude harness not registered");

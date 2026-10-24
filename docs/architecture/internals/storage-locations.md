@@ -363,8 +363,8 @@ A bundle recognized by the `llm-wiki` adapter (a root with `schema.md` and
 | Path | Contents | Retention |
 |---|---|---|
 | `$CACHE/registry/<source>-<id>/<version>/` | Installed npm and git/github packages: `artifact.tar.gz`, `clone/`, `extracted/` | No automatic cleanup |
-| `$CACHE/registry-index/git-<hash>/` | Mirror of a `git` bundle: `repo/` and an `index.json` freshness marker | Fetched on add and on `akm bundle update`, never on a timer; if a forced refresh fails the old copy is served for up to 7 days |
-| `$CACHE/registry-index/website-<hash>/` | A `website` bundle snapshot: `stash/` and `manifest.json` | Fetched on add and on `akm bundle update`, never on a timer; if a forced refresh fails the old copy is served for up to 7 days |
+| `$CACHE/registry-index/git-<hash>/` | Mirror of a `git` bundle: `repo/` and an `index.json` freshness marker | Fetched on add and on `akm bundle update`, never on a timer; if a forced refresh fails, `akm bundle update` reports the error and the old copy stays on disk |
+| `$CACHE/registry-index/website-<hash>/` | A `website` bundle snapshot: `stash/` and `manifest.json` | Fetched on add and on `akm bundle update`, never on a timer; if a forced refresh fails, `akm bundle update` reports the error and the old copy stays on disk |
 | `$CACHE/index/unresolved-sources/<stash>/<name>` | Placeholder path for a configured source whose content root did not resolve; not created on disk | n/a |
 | `$CACHE/tasks/logs/<task-id>/<ISO-ts>.log` | Per-run task log file; the cron backend also writes `<id>.log` directly in `$CACHE/tasks/logs/` | `akm improve` deletes files older than `improve.eventRetentionDays` (default 90) |
 | `$CACHE/logs/index/<ISO-ts>.log`, `$CACHE/logs/improve/<ISO-ts>.log` | Log of one `akm index` run or one non-dry-run `akm improve` run | No automatic cleanup |

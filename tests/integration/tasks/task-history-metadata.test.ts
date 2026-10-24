@@ -126,7 +126,7 @@ describe("decodeTaskHistoryMetadata", () => {
   // The result-vocabulary marker rides the
   // metadata as `targetVocab`, validated as 2 | undefined; the accepted
   // values are never widened.
-  test("accepts targetVocab 2 and metadata without targetVocab (P1b vocabulary marker)", () => {
+  test("accepts targetVocab 2 and metadata without targetVocab (vocabulary marker)", () => {
     expect(decodeTaskHistoryMetadata({ metadataVersion: 2, durationMs: 1, detail: null, targetVocab: 2 })).toEqual({
       metadataVersion: 2,
       durationMs: 1,

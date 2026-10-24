@@ -29,7 +29,7 @@ function countEventsTable(): number {
   }
 }
 
-describe("probeStateDbRoundTrip (R-030)", () => {
+describe("probeStateDbRoundTrip", () => {
   test("repeated invocations do not grow the events table", () => {
     const storage: IsolatedAkmStorage = withIsolatedAkmStorage();
     try {

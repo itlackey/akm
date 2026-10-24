@@ -212,7 +212,7 @@ describe("tombstoneReason", () => {
   });
 });
 
-describe("decideRetirement — the calibrated outcome table (owner grades, O5)", () => {
+describe("decideRetirement — the calibrated outcome table (owner grades)", () => {
   const older = side({ ref: "memories/older" });
   const newer = side({ ref: "memories/newer" });
   const NONE = { onlyInA: [], onlyInB: [] };

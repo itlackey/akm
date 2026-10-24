@@ -126,7 +126,7 @@ async function firstStep(ref: string): Promise<{ runId: string; step: WorkflowPl
 
 // ── B-35/B-36 — shell/script targets: ONE AKM_TASK_INPUTS env var ──────────
 
-describe("shell/script task target — AKM_TASK_INPUTS is exactly one canonical-JSON env var (B-35, B-36)", () => {
+describe("shell/script task target — AKM_TASK_INPUTS is exactly one canonical-JSON env var", () => {
   /**
    * Runs a single-step workflow composing an already-written `taskRef` and
    * returns the AKM_*-prefixed subset of the child process's full env name
@@ -154,7 +154,7 @@ describe("shell/script task target — AKM_TASK_INPUTS is exactly one canonical-
       .filter((name) => name.length > 0 && name.startsWith("AKM_"));
   }
 
-  test("a shell-target (run:/shell:) task receives AKM_TASK_INPUTS with the exact canonical JSON, and no per-input var exists under any spelling (B-35)", async () => {
+  test("a shell-target (run:/shell:) task receives AKM_TASK_INPUTS with the exact canonical JSON, and no per-input var exists under any spelling", async () => {
     // Baseline: the identical execution surface — a shell-target task
     // composed from a workflow step — with NO inputs: declared and NO
     // with: authored, the same "no effective inputs" shape B-39 pins below.
@@ -218,7 +218,7 @@ describe("shell/script task target — AKM_TASK_INPUTS is exactly one canonical-
     expect(boundAkmNames.sort()).toEqual([...baselineAkmNames, "AKM_TASK_INPUTS"].sort());
   });
 
-  test("a script-target (uses: scripts/<ref>) task receives the identical AKM_TASK_INPUTS delivery, and no per-input var exists under any spelling (B-36)", async () => {
+  test("a script-target (uses: scripts/<ref>) task receives the identical AKM_TASK_INPUTS delivery, and no per-input var exists under any spelling", async () => {
     // Same empirical-baseline idiom as B-35 above, for the script target.
     write("scripts/echo-inputs-baseline.sh", ["#!/bin/sh", "env | cut -d= -f1", ""].join("\n"));
     write(
@@ -286,7 +286,7 @@ describe("shell/script task target — AKM_TASK_INPUTS is exactly one canonical-
 // dropped" defect — is pinned end-to-end for a real delivery surface, not
 // merely for the pre-attempt work-list shape.
 
-describe("shell task target — a REFERENCE binding's RESOLVED value reaches AKM_TASK_INPUTS (B-31, B-35, B-N1)", () => {
+describe("shell task target — a REFERENCE binding's RESOLVED value reaches AKM_TASK_INPUTS", () => {
   test("scope: {from: steps.collect.output.scope} resolves against a prior step's REAL evidence, and the RESOLVED value ('all', never the {from: ...} shape it was authored as) is what AKM_TASK_INPUTS carries", async () => {
     write(
       "tasks/shell-echo-ref.yml",
@@ -354,7 +354,7 @@ describe("shell task target — a REFERENCE binding's RESOLVED value reaches AKM
 // plain-step roster — no AKM_TASK_INPUTS key, on EITHER of the two ways "no
 // effective inputs" can arise.
 
-describe("shell/script task target — empty effective inputs emit NO AKM_TASK_INPUTS var at all (B-39, B-N1)", () => {
+describe("shell/script task target — empty effective inputs emit NO AKM_TASK_INPUTS var at all", () => {
   test("the target declares no inputs: at all — AKM_TASK_INPUTS is absent from the child's env name list", async () => {
     write(
       "tasks/shell-no-inputs.yml",
@@ -429,7 +429,7 @@ describe("shell/script task target — empty effective inputs emit NO AKM_TASK_I
 
 // ── B-37 — the spawn-boundary size guard covers AKM_TASK_INPUTS too ────────
 
-describe("oversized effective inputs fail exec_context_too_large at the pre-spawn boundary check (B-37, B-N1)", () => {
+describe("oversized effective inputs fail exec_context_too_large at the pre-spawn boundary check", () => {
   test("a literal input whose canonical JSON exceeds THIS platform's per-variable ceiling fails naming AKM_TASK_INPUTS, its size, and the platform limit", async () => {
     const LIMITS = execContextLimits();
     // Same idiom as tests/integration/workflows/exec-unit.test.ts's own
@@ -475,7 +475,7 @@ describe("oversized effective inputs fail exec_context_too_large at the pre-spaw
 
 // ── B-38 — command (agent/LLM) targets: the fenced "## Task inputs" block ──
 
-describe("command target — a structured '## Task inputs' fenced JSON block, prose byte-unchanged, never interpolated (B-38, B-N2)", () => {
+describe("command target — a structured '## Task inputs' fenced JSON block, prose byte-unchanged, never interpolated", () => {
   test("the assembled prompt carries the resolved inputs as a fenced JSON block; the composed command's authored prose survives byte-exact; the bound value is never spliced into prose", async () => {
     const INSTRUCTIONS = "Echo the composed note for the delivery suite.\n";
     write("commands/echo-note.md", INSTRUCTIONS);
@@ -542,7 +542,7 @@ describe("command target — a structured '## Task inputs' fenced JSON block, pr
 
 // ── B-39 (command half) — empty effective inputs append NO prompt block ────
 
-describe("command target — empty effective inputs append NO '## Task inputs' block (B-39, B-N2)", () => {
+describe("command target — empty effective inputs append NO '## Task inputs' block", () => {
   test("the target declares no inputs: at all — the prompt has no '## Task inputs' heading, and the authored prose is byte-unchanged", async () => {
     const INSTRUCTIONS = "Echo the composed note for the delivery suite, with nothing bound.\n";
     write("commands/echo-plain.md", INSTRUCTIONS);
@@ -581,7 +581,7 @@ describe("command target — empty effective inputs append NO '## Task inputs' b
 // This is NOT step composition — it is a v4 TASK whose own target is
 // `uses: workflows/<ref>`, run directly via `akm task run`.
 
-describe("workflow target — a v4 task's effective inputs become the child run's params (B-40)", () => {
+describe("workflow target — a v4 task's effective inputs become the child run's params", () => {
   function writeChildWorkflow(): void {
     writeWorkflow("child", ["      - id: work", '        run: "true"', "        shell: sh"].join("\n"));
   }

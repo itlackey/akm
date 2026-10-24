@@ -135,7 +135,7 @@ function scanForParseTaskV3YamlUsage(filePath: string): ParseTaskV3YamlUsage {
   return { importsFromSourceV3, callsParseTaskV3Yaml };
 }
 
-describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrication (P1b spec §4.3)", () => {
+describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrication", () => {
   describe("behavioral parity with the CURRENT frozen script target (before/after shape)", () => {
     let storage: IsolatedAkmStorage;
     const scriptBytes = "#!/bin/sh\nprintf direct-script\n";
@@ -151,7 +151,7 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
       storage.cleanup();
     });
 
-    test("ref / sha256 / interpreter / byteLength are byte-identical to today's directScript output, for the P0 R-02 script fixture", async () => {
+    test("ref / sha256 / interpreter / byteLength are byte-identical to today's directScript output, for the script fixture", async () => {
       // "Before": the production path (directScript()+prepareTaskV3Execution) run
       // for real, rather than asserting against a hand-typed guess.
       write(storage.stashDir, "scripts/exact.sh", scriptBytes);
@@ -221,7 +221,7 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
     });
   });
 
-  describe("the synthetic-YAML fabrication is gone from src/, not merely relocated (grep-provable, spec §4.3/§9)", () => {
+  describe("the synthetic-YAML fabrication is gone from src/, not merely relocated (grep-provable)", () => {
     // The check is a literal `rg -F` equivalent over ALL of src/
     // (`rg -F 'schedule: "@daily"' src/`, `rg -F 'version: 3\nuses:' src/` — both
     // zero hits), not a scan scoped to source-freeze-v4.ts alone. Reading only
@@ -300,7 +300,7 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
     // parseTaskV3Yaml, which is forbidden outright regardless of wording. So
     // prepareScriptTarget's own module is scanned STRUCTURALLY (import specifiers
     // + call expressions) for any use of parseTaskV3Yaml at all.
-    describe("src/tasks/prepare/prepare-script-target.ts never imports or calls parseTaskV3Yaml (spec §4.3)", () => {
+    describe("src/tasks/prepare/prepare-script-target.ts never imports or calls parseTaskV3Yaml", () => {
       const PREPARE_SCRIPT_TARGET_FILE = path.join(SRC_ROOT, "tasks/prepare/prepare-script-target.ts");
 
       test("imports nothing from source-v3 and contains no parseTaskV3Yaml(...) call", () => {
@@ -325,7 +325,7 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
     // function BODY specifically: the same "locate the named function, then walk
     // only its subtree" technique as scanForParseTaskV3YamlUsage above,
     // generalized from "does this MODULE call X" to "does this FUNCTION call X".
-    describe("src/workflows/freeze/targets/{script,task}.ts, post P2b split: directScript has no parseTaskV3Yaml call, a prepareScriptTarget call instead (spec §4.3)", () => {
+    describe("src/workflows/freeze/targets/{script,task}.ts, after the split: directScript has no parseTaskV3Yaml call, a prepareScriptTarget call instead", () => {
       const SCRIPT_TARGET_FILE = path.join(SRC_ROOT, "workflows/freeze/targets/script.ts");
       const TASK_TARGET_FILE = path.join(SRC_ROOT, "workflows/freeze/targets/task.ts");
 
@@ -385,7 +385,7 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
       // parseTaskSource — so the same "locate the function, walk only its subtree"
       // technique is applied one hop further to keep proving the scan is
       // function-scoped, not file-wide.
-      test("taskDispatch (the same file, unrelated to R-02) still legitimately resolves a real document via resolveTaskForComposition -> parseTaskSource(...)", () => {
+      test("taskDispatch (the same file) still legitimately resolves a real document via resolveTaskForComposition -> parseTaskSource(...)", () => {
         const scan = scanFunctionCalls(TASK_TARGET_FILE, "taskDispatch");
         expect(scan.functionFound, "taskDispatch function declaration not found in task.ts").toBe(true);
         expect(scan.calledNames.has("resolveTaskForComposition")).toBe(true);

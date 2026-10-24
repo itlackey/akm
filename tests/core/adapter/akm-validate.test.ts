@@ -83,7 +83,7 @@ function change(relPath: string, content: string, op: FileChange["op"] = "create
 
 // ── 1. CLEAN parity vs the frozen lint golden ────────────────────────────────
 
-describe("akm adapter — validate reproduces the lint golden perType (clean, §6)", () => {
+describe("akm adapter — validate reproduces the lint golden perType (clean)", () => {
   test("every fixture type validates to EXACTLY the golden's (empty) issues", async () => {
     const ctx = diskCtx(ALL_TYPES_ROOT);
     let asserted = 0;
@@ -121,7 +121,7 @@ describe("akm adapter — validate reproduces the lint golden perType (clean, §
 
 // ── 2. positive per-type findings ────────────────────────────────────────────
 
-describe("akm adapter — validate fires each type's positive finding (§6)", () => {
+describe("akm adapter — validate fires each type's positive finding", () => {
   const ROOT = "/virtual";
   const issues = (diags: Diagnostic[]) => diags.map((d) => d.issue);
 
@@ -272,7 +272,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
 
 // ── 3. read-only discipline (placeholder-stub / orphaned-stub never delete) ──
 
-describe("akm adapter — validate keeps placeholder-stub / orphaned-stub READ-ONLY (§6)", () => {
+describe("akm adapter — validate keeps placeholder-stub / orphaned-stub READ-ONLY", () => {
   const ROOT = "/virtual";
 
   test("placeholder-stub is a non-fixable Diagnostic (WorkflowLinter, never deleted)", async () => {
@@ -306,7 +306,7 @@ describe("akm adapter — validate keeps placeholder-stub / orphaned-stub READ-O
 
 // ── 4. env/secret dangerous-key `.env`-suffix narrowness ─────────────────────
 
-describe("akm adapter — env/secret dangerous-key `.env`-suffix narrowness preserved (§6)", () => {
+describe("akm adapter — env/secret dangerous-key `.env`-suffix narrowness preserved", () => {
   const ROOT = "/virtual";
 
   test("a bare (non-`.env`) secret file is NOT scanned even with a dangerous-looking key", async () => {

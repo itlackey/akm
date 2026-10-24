@@ -513,7 +513,7 @@ describe("remember --enrich graceful degradation", () => {
 
 // ── hot-path captureMode + beliefState ─────────────────────────────────────
 
-describe("remember writes captureMode: hot + beliefState: asserted (Phase 1B)", () => {
+describe("remember writes captureMode: hot + beliefState: asserted", () => {
   test("--tag path writes captureMode: hot and beliefState: asserted", async () => {
     const { result } = await runCli(["remember", "VPN required for staging", "--tag", "ops"]);
     expect(result.status).toBe(0);

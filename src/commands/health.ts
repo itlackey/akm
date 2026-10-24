@@ -430,9 +430,9 @@ function gatherAncillaryAdvisories(
   // and warn when stale or when the plugin's own akm-cli version range no
   // longer admits this CLI. Best-effort — no plugin installed, an unreadable
   // manifest, or a network failure while checking the newest tag must not
-  // abort the health report.
+  // abort the health report. The newest-tag lookup honors `--no-probe`.
   try {
-    advisories.push(...collectPluginStalenessAdvisories({ cliVersion: pkgVersion }));
+    advisories.push(...collectPluginStalenessAdvisories({ cliVersion: pkgVersion, probe: Boolean(options.probe) }));
   } catch {
     // Non-fatal.
   }

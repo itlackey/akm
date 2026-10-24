@@ -44,8 +44,8 @@ async function targetRefApi() {
 
 // ── classifyTargetRef: accept/reject matrix ─────────────────────────────────
 
-describe("classifyTargetRef — canonical asset-ref classification (P1a §4.1, src/execution/target-ref.ts)", () => {
-  test("B-09/B-10/B-11: classifies each of commands/scripts/tasks/workflows, bundle-qualified or not, and freezes the result", async () => {
+describe("classifyTargetRef — canonical asset-ref classification (src/execution/target-ref.ts)", () => {
+  test("classifies each of commands/scripts/tasks/workflows, bundle-qualified or not, and freezes the result", async () => {
     const { classifyTargetRef } = await targetRefApi();
     const matrix: Array<[string, TargetRefKind]> = [
       ["commands/review", "command"],
@@ -71,7 +71,7 @@ describe("classifyTargetRef — canonical asset-ref classification (P1a §4.1, s
   // No `akm/command` special case inside classifyTargetRef itself — it is the
   // bare canonical-ref classifier; callers (classifyWorkflowSourceUses) layer
   // builtin detection on top.
-  test("B-12: 'akm/command' is rejected — classifyTargetRef has no builtin special case", async () => {
+  test("'akm/command' is rejected — classifyTargetRef has no builtin special case", async () => {
     const { classifyTargetRef } = await targetRefApi();
     const error = thrown(() => classifyTargetRef("akm/command"));
     expect(error).toBeInstanceOf(UsageError);
@@ -85,7 +85,7 @@ describe("classifyTargetRef — canonical asset-ref classification (P1a §4.1, s
   // reject with the exact message. No GitHub locator grammar lives here —
   // "owner/repo@v1" is just an unrecognized family, same as any other
   // non-canonical shape.
-  test("B-13: rejects malformed, fragment, empty, whitespace, and github-locator-shaped values with TARGET_REF_INVALID", async () => {
+  test("rejects malformed, fragment, empty, whitespace, and github-locator-shaped values with TARGET_REF_INVALID", async () => {
     const { classifyTargetRef } = await targetRefApi();
     const rejected = [
       "commands/review#fragment",
@@ -113,10 +113,10 @@ describe("classifyTargetRef — canonical asset-ref classification (P1a §4.1, s
 // ── classifyWorkflowStepUses through the REAL default classifier — the ─────
 // ── parity table, exercised without a spy ──────────────────────────────────
 
-describe("classifyWorkflowStepUses — identical observable results through the new seam (P1a §4.3/§4.5 parity)", () => {
+describe("classifyWorkflowStepUses — identical observable results through the new seam", () => {
   // "workflows/child" is in this accepted table as ["workflows/child",
   // "workflow"], matching TargetRefKind (src/execution/target-ref.ts).
-  test("accepts every §4.5 accepted kind through the real default classifier", () => {
+  test("accepts every accepted kind through the real default classifier", () => {
     const accepted: Array<[string, "command" | "script" | "task" | "builtin-command" | "workflow"]> = [
       ["commands/review", "command"],
       ["team//commands/review", "command"],
@@ -147,7 +147,7 @@ describe("classifyWorkflowStepUses — identical observable results through the 
   // Every github-locator-shaped value below is just an unrecognized ref shape —
   // there is no locator grammar — so each of these rows is
   // unsupported-uses-target.
-  test("rejects every §4.5 non-accepted kind with its listed WorkflowSourceSemanticError code", () => {
+  test("rejects every non-accepted kind with its listed WorkflowSourceSemanticError code", () => {
     const rejected: Array<[string, string]> = [
       ["actions/checkout@v4", "unsupported-uses-target"],
       ["./actions/review", "local-action-path-unsupported"],
@@ -211,7 +211,7 @@ function isSourceV3Specifier(specifier: string): boolean {
   return /(?:^|\/)tasks\/source-v3(?:\.ts)?$/.test(specifier);
 }
 
-describe("import boundary — the workflow uses-classification seam imports nothing from tasks/source-v3 (P1a §4.2/§4.3)", () => {
+describe("import boundary — the workflow uses-classification seam imports nothing from tasks/source-v3", () => {
   test("src/workflows/source-semantics.ts imports nothing from tasks/source-v3", () => {
     const specifiers = importedModuleSpecifiers(path.join(ROOT, "src/workflows/source-semantics.ts"));
     expect(specifiers.filter(isSourceV3Specifier)).toEqual([]);

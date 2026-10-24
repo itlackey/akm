@@ -85,7 +85,7 @@ describe("computeAcceptRateBySource", () => {
     expect(computeAcceptRateBySource(stash)).toEqual([]);
   });
 
-  test("a stale-target auto-reject is excluded from rejected/total; an ordinary rejection is counted (STALE, R20)", () => {
+  test("a stale-target auto-reject is excluded from rejected/total; an ordinary rejection is counted", () => {
     const stash = makeStashDir();
 
     const stale = seedProposal(stash, "lessons/stale", "distill");

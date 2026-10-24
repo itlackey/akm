@@ -278,6 +278,7 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (Array.isArray(hit.keys) && hit.keys.length > 0) lines.push(`  keys: ${hit.keys.join(", ")}`);
     if (hit.size) lines.push(`  size: ${String(hit.size)}`);
     if (hit.action) lines.push(`  action: ${String(hit.action)}`);
+    if (hit.installRef) lines.push(`  installRef: ${String(hit.installRef)}`);
     if (hit.run) lines.push(`  run: ${String(hit.run)}`);
     if (Array.isArray(hit.tags) && hit.tags.length > 0) lines.push(`  tags: ${hit.tags.join(", ")}`);
     // Optional quality marker (e.g. "curated" / "proposed").

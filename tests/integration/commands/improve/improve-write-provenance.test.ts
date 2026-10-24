@@ -267,7 +267,7 @@ test("auto-sync stages a deletion the run performed", async () => {
   expect(result.writtenPaths).toEqual(["memories/human.md"]);
 });
 
-test("item 4: the purge sweep deletes an archived retirement past its grace period, and the deletion is committed by the auto-sync", async () => {
+test("the purge sweep deletes an archived retirement past its grace period, and the deletion is committed by the auto-sync", async () => {
   initRepo();
   // A retirement archived well past RETIRE_GRACE_DAYS, seeded and committed
   // BEFORE the run starts — the purge sweep runs at improve-run start, ahead

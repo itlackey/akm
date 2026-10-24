@@ -45,7 +45,7 @@ const RUN_DIR = path.join(ROOT, "src/tasks/run");
 
 // ── (a) each module loads and exports its named responsibility ─────────────
 
-describe("src/tasks/run/** — each named module exports its spec §5.1 responsibility", () => {
+describe("src/tasks/run/** — each named module exports its responsibility", () => {
   test("run/run-task.ts exports runTask", () => {
     expect(typeof runTask).toBe("function");
   });
@@ -66,13 +66,13 @@ describe("src/tasks/run/** — each named module exports its spec §5.1 responsi
     expect(typeof scrubDbLines).toBe("function");
   });
 
-  test('run/provenance.ts exports a context factory matching D5\'s construction ({eventSource: "task", scheduled}, spec §1.2/§5.2)', () => {
+  test('run/provenance.ts exports a context factory matching the documented construction ({eventSource: "task", scheduled})', () => {
     expect(createExecutionProvenanceContext(false)).toEqual({ eventSource: "task", scheduled: false });
     expect(createExecutionProvenanceContext(true)).toEqual({ eventSource: "task", scheduled: true });
   });
 });
 
-describe("src/tasks/run/** — the remaining §5.1 modules export real runtime logic, not an empty stub (spec §5.1)", () => {
+describe("src/tasks/run/** — the remaining modules export real runtime logic, not an empty stub", () => {
   // load-task.ts / run-native-task.ts / run-workflow-task.ts /
   // run-command-task.ts hold helpers with no committed exported name
   // (loadPreparedTask-shaped orchestration; shellCommand/
@@ -123,7 +123,7 @@ describe("src/tasks/run/** — the remaining §5.1 modules export real runtime l
   }
 });
 
-describe("src/tasks/runner.ts — the deleted compat shim (spec §5.1/§9, P4 §3.2.7 row B-26)", () => {
+describe("src/tasks/runner.ts — the deleted compat shim", () => {
   test("does not exist — every caller is rewired to src/tasks/run/** directly", () => {
     expect(fs.existsSync(RUNNER_FILE)).toBe(false);
   });

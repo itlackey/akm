@@ -82,7 +82,7 @@ describe("getRetrievalCounts", () => {
     expect(counts.get("commands/release")).toBe(1);
   });
 
-  test("matches an opaque adapter conceptId (Q-07/D11 — a leading segment outside AKM's own placement dirs)", () => {
+  test("matches an opaque adapter conceptId (a leading segment outside AKM's own placement dirs)", () => {
     // "tables" is not an AKM placement stash-subdir (skills/, knowledge/, …),
     // so `bareRefCandidates` must reconstruct the FULL "tables/customers"
     // conceptId — not just "customers" — to match these stored rows.

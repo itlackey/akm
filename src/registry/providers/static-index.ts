@@ -16,7 +16,7 @@ import { fetchCachedJson } from "../../storage/repositories/registry-index-cache
 import { registerRegistryProvider } from "../factory";
 import { fetchRegistryJson } from "../network";
 import { buildInstallRef } from "../resolve";
-import type { InstallKind, RegistryAssetEntry, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
+import type { InstallKind, RegistryAssetEntry, RegistrySearchHit } from "../types";
 import type { RegistryProvider, RegistryProviderResult, RegistryProviderSearchOptions } from "./types";
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -70,13 +70,7 @@ class StaticIndexProvider implements RegistryProvider {
 
     const hits = scoreBundles(bundles, options.query, options.limit);
 
-    let assetHits: RegistryAssetSearchHit[] | undefined;
-    if (options.includeAssets) {
-      const scored = scoreAssets(bundles, options.query, options.limit);
-      if (scored.length > 0) assetHits = scored;
-    }
-
-    return { hits, assetHits, warnings: warnings.length > 0 ? warnings : undefined };
+    return { hits, warnings: warnings.length > 0 ? warnings : undefined };
   }
 
   // ── Internals ───────────────────────────────────────────────────────────
@@ -298,82 +292,6 @@ function parseAssetEntry(raw: unknown): RegistryAssetEntry | null {
     tags: asStringArray(obj.tags),
     estimatedTokens: typeof obj.estimatedTokens === "number" ? obj.estimatedTokens : undefined,
   };
-}
-
-// ── Asset-level scoring ─────────────────────────────────────────────────────
-
-function scoreAssets(
-  stashes: Array<{ stash: RegistryBundleEntry; registryName?: string }>,
-  query: string,
-  limit: number,
-): RegistryAssetSearchHit[] {
-  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return [];
-
-  const scored: Array<{ hit: RegistryAssetSearchHit; score: number }> = [];
-
-  for (const { stash, registryName } of stashes) {
-    if (!stash.assets || stash.assets.length === 0) continue;
-
-    const installRef = buildInstallRef(stash.source, stash.ref, "registry");
-
-    for (const asset of stash.assets) {
-      const score = scoreAsset(asset, tokens);
-      if (score > 0) {
-        scored.push({
-          hit: {
-            type: "registry-asset",
-            assetType: asset.type,
-            assetName: asset.name,
-            description: asset.description,
-            estimatedTokens: asset.estimatedTokens,
-            stash: { id: stash.id, name: stash.name },
-            registryName,
-            action: `akm bundle add ${installRef}`,
-            score: Math.round(score * 1000) / 1000,
-          },
-          score,
-        });
-      }
-    }
-  }
-
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, limit).map(({ hit }) => hit);
-}
-
-function scoreAsset(asset: RegistryAssetEntry, tokens: string[]): number {
-  let score = 0;
-  const nameLower = asset.name.toLowerCase();
-  const descLower = (asset.description ?? "").toLowerCase();
-  const tagsLower = (asset.tags ?? []).map((t) => t.toLowerCase());
-  const typeLower = asset.type.toLowerCase();
-
-  for (const token of tokens) {
-    if (nameLower === token) {
-      score += 1.0;
-    } else if (nameLower.includes(token)) {
-      score += 0.6;
-    }
-
-    if (typeLower === token) {
-      score += 0.4;
-    } else if (typeLower.includes(token)) {
-      score += 0.2;
-    }
-
-    if (tagsLower.some((tag) => tag === token)) {
-      score += 0.5;
-    } else if (tagsLower.some((tag) => tag.includes(token))) {
-      score += 0.25;
-    }
-
-    if (descLower.includes(token)) {
-      score += 0.2;
-    }
-  }
-
-  return tokens.length > 0 ? score / tokens.length : 0;
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────

@@ -130,7 +130,9 @@ run `akm bundle update`. `akm index` fetches a bundle only if it has never been
 materialized on this host, such as a website or a `--provider git` bundle in a
 config you copied to a new machine; it does not re-fetch a bundle that is
 already there, however old. For a git, GitHub or npm install whose files are
-missing, `akm index` warns and names `akm bundle update` instead of fetching.
+missing, `akm index` warns and names `akm bundle update` instead of fetching. An
+npm bundle in config with no lock entry (for example a config copied to a new
+machine) is skipped with the same warning; `akm bundle update` installs it.
 To refresh on a schedule, schedule `akm bundle update --all --skip-if-locked`,
 where `--skip-if-locked` turns database contention with a concurrent index or
 improve run into a successful skip instead of exit 75.
@@ -258,7 +260,6 @@ don't know about yet. The official registry ships pre-configured.
 ```sh
 akm registry list                             # See configured registries
 akm search "deploy" --from registry           # Search registry bundles by topic
-akm search "code review" --from registry --assets  # Include asset-level hits
 akm registry add https://example.com/registry/index.json --name my-team
 akm registry remove my-team
 ```

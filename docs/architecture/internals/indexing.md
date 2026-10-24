@@ -7,7 +7,7 @@ no LLM runs during indexing. The entry point is `akmIndex` in
 
 ## Pipeline
 
-1. **Preflight.** Open `state.db` (this applies pending migrations), materialize sources not yet on this host (`ensureSourceCaches`: a `git`, `website`, or `npm` source is fetched into `$CACHE` only if it has never been materialized here; nothing refreshes on a timer), resolve the source list, and detect each bundle's adapter. Detected adapter ids are persisted to the config (reported as `configUpdated.detectedAdapters`).
+1. **Preflight.** Open `state.db` (this applies pending migrations), materialize sources not yet on this host (`ensureSourceCaches`: a `git` or `website` source is fetched into `$CACHE` only if it has never been materialized here; an `npm` bundle with no lock entry is skipped with a warning naming `akm bundle update`; nothing refreshes on a timer), resolve the source list, and detect each bundle's adapter. Detected adapter ids are persisted to the config (reported as `configUpdated.detectedAdapters`).
 2. **Walk.** `scanSourceDirs` walks each source (`walkStashFlat`, `src/indexer/walk/walker.ts`), groups files by directory, and decides per directory whether it can be skipped. A directory that is drained has each file recognized by its bundle's adapter (`adapter.recognize`, see [Classification](classification.md)).
 3. **Persist.** `persistDirRecords` writes every drained directory in one transaction: the `entries` row, its `entries_fts` row, its `entry_fragments` row, and its `asset_links` rows. A changed embedding input deletes the entry's vector. Rows for files that left a directory are deleted in the same transaction.
 4. **Reconcile.** When every source was scanned completely, rows belonging to removed sources are dropped. With `--clean`, rows whose file is gone are deleted (`--dry-run` previews them; unreadable files keep their rows).
@@ -25,7 +25,7 @@ The command returns the entry count, per-phase timings, warnings, the `--clean` 
 
 ## Walking
 
-`walkStashFlat` lists files with `git ls-files --cached --others --exclude-standard` when the source sits inside a git repository (so `.gitignore` applies), and with a directory walk otherwise. Both skip `.git`, `node_modules`, `bin`, `.cache`, and dot-directories, unless the adapter asks to see every directory (OKF does). Symlinks are not followed; the one exception is a file symlink under a workflow directory.
+`walkStashFlat` lists files with `git ls-files --cached --others --exclude-standard` when the source sits inside a git repository (so `.gitignore` applies), plus a second `git ls-files --others --ignored` listing for `env/` and `secrets/` so git-ignored env and secret assets are still indexed, and with a directory walk otherwise. Both skip `.git`, `node_modules`, `bin`, `.cache`, and dot-directories, unless the adapter asks to see every directory (OKF does). Symlinks are not followed; the one exception is a file symlink under a workflow directory.
 
 ## Search fields
 

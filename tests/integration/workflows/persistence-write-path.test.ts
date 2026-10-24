@@ -382,7 +382,7 @@ describe("a big artifact survives both a live run and a resume (issue C fix)", (
     for (let i = 0; i < CHUNK_COUNT; i++) expect(persisted.output).toContain(chunkText(i));
   }, 60_000);
 
-  test("the fix for finding 1: a run RESUMED from a row a previous invocation wrote dispatches the next step against the complete value, not a tombstone", async () => {
+  test("a run RESUMED from a row a previous invocation wrote dispatches the next step against the complete value, not a tombstone", async () => {
     seedFlowRun();
     // Simulate the rows a PRIOR invocation left behind: `produce` completed,
     // its promoted artifact — well over the former 1 MiB cap — written whole,

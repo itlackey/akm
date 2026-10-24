@@ -136,7 +136,7 @@ function foldRecognize(adapter: BundleAdapter, c: BundleComponent): IndexDocumen
 
 // ── 1. looksLikeRoot own-root-only ───────────────────────────────────────────
 
-describe("conformance — looksLikeRoot own-root-only (§4)", () => {
+describe("conformance — looksLikeRoot own-root-only", () => {
   test("the built-in registry is exactly the 11 format families, and every one has a fixture root", () => {
     // Pins the fixture set: every registered adapter has a golden/fixture root in
     // OWN_ROOT_BY_ID, so the ordered-probe matrix below is complete.
@@ -160,7 +160,7 @@ describe("conformance — looksLikeRoot own-root-only (§4)", () => {
     }
   });
 
-  test("the §1.2 ordered probe selects each root's OWN adapter — no adapter shadows another", () => {
+  test("the ordered probe selects each root's OWN adapter — no adapter shadows another", () => {
     for (const [id, root] of Object.entries(OWN_ROOT_BY_ID)) {
       if (NEVER_FIRES.has(id)) {
         // Explicit-config: NO probe claims a generic-files root.
@@ -194,7 +194,7 @@ describe("conformance — looksLikeRoot own-root-only (§4)", () => {
 
 // ── 2. index() == fold(recognize) ─────────────────────────────────────────────
 
-describe("conformance — index() == fold(recognize) (§12.3)", () => {
+describe("conformance — index() == fold(recognize)", () => {
   test("no built-in adapter overrides index() — the conformance is vacuously satisfied", () => {
     // An adapter overriding index() MUST keep it == fold(recognize).
     // None of the built-ins override it, so the core walk × recognize IS the

@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Bundles are fetched when added and on `akm bundle update`; `akm index` no longer re-fetches a website or git-provider bundle after twelve hours, `--full` does not force a fetch, and a failed `akm bundle update` now reports the failure instead of silently keeping the old copy.
+- `akm search --assets` is removed; it produced no output. Registry hits now carry `installRef` at the default detail level.
+- Your working bundle and plain local bundles are first-party for dangerous env keys: `akm env run` and `akm secret run` warn and proceed; bundles installed from git, npm, a website or a registry still refuse unless `--allow-dangerous-env-keys` is passed, which `secret run` now accepts too.
+- Env and secret files are indexed even when the bundle's `.gitignore` hides them, so `akm show env/<name>` works in a default bundle.
+- `--detail normal` search hits include `ref`.
+- The `auto-accept-validation` health check is renamed `triage-promote-validation`; `--no-probe` now also skips the plugin tag lookup; `akm task doctor` no longer reports an unused history directory.
+- `akm feedback` help and the agent guide no longer claim feedback changes search order; it moves the utility score that `akm improve` reads.
+
+### Removed
+
+- ROADMAP.md, the docs/plans tree, the decision records, superseded specs, manual test checklists and other historical documentation; SECURITY.md is now a reporting stub.
+
 ## [0.9.32] - 2026-10-13
 
 A patch release: `akm feedback` no longer reports success for feedback it could not store.

@@ -516,7 +516,7 @@ describe("body truncation", () => {
   // The excerpt truncates the BODY, not the raw file (frontmatter + body):
   // slicing the raw file would judge a memory whose frontmatter alone exceeds
   // bodyTruncation on metadata only.
-  it("a memory whose frontmatter alone exceeds bodyTruncation still shows body text in the prompt (R5)", () => {
+  it("a memory whose frontmatter alone exceeds bodyTruncation still shows body text in the prompt", () => {
     const longFrontmatter = `---\ndescription: ${"F".repeat(600)}\n---\n`;
     const body = `${longFrontmatter}Actual body text that must appear.`;
     const entry = makeMemoryEntry(tempDir, "long-frontmatter", body);
@@ -525,7 +525,7 @@ describe("body truncation", () => {
     expect(prompt).toContain("Actual body text that must appear.");
   });
 
-  it("a (captureMode: hot) memory with frontmatter longer than bodyTruncation is still detected as hot (R5)", () => {
+  it("a (captureMode: hot) memory with frontmatter longer than bodyTruncation is still detected as hot", () => {
     const longFrontmatter = `---\ncaptureMode: hot\ndescription: ${"F".repeat(600)}\n---\n`;
     const body = `${longFrontmatter}Body text.`;
     const entry = makeMemoryEntry(tempDir, "hot-long-frontmatter", body);

@@ -109,7 +109,7 @@ describe("config schema drift pins", () => {
     }
   });
 
-  test("0.9.0 bundles/defaultBundle config-shape keys are present (spec §10.1 / D-R5)", () => {
+  test("0.9.0 bundles/defaultBundle config-shape keys are present", () => {
     const schema = readSchema();
     const props = schema.properties as Record<string, Record<string, unknown>>;
     // `bundles` is an object keyed by bundle slug; each entry carries the

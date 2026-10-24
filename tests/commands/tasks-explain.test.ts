@@ -166,7 +166,7 @@ function hasExecutionFieldProvenance(json: unknown): boolean {
   return visit(json);
 }
 
-describe("akm task explain <ref> — text output (B-52)", () => {
+describe("akm task explain <ref> — text output", () => {
   test("prints declarations+defaults, target kind+ref, effective execution settings, and schedule bindings", async () => {
     writeExplainDemoFixture();
     const result = await runCliCapture(["task", "explain", "explain-demo"]);
@@ -324,7 +324,7 @@ function findSuppliedInputRow(
   return visit(json);
 }
 
-describe("akm task explain <ref> — a required input with no default, left unsupplied (B-52)", () => {
+describe("akm task explain <ref> — a required input with no default, left unsupplied", () => {
   test("prints the declaration instead of refusing to explain — the exact case the verb exists to explain", async () => {
     writeTask(
       "explain-required",
@@ -360,7 +360,7 @@ describe("akm task explain <ref> — a required input with no default, left unsu
   });
 });
 
-describe("akm task explain <ref> --format json (B-53)", () => {
+describe("akm task explain <ref> --format json", () => {
   test("prints one JSON object on stdout carrying the same fields", async () => {
     writeExplainDemoFixture();
     const result = await runCliCapture(["task", "explain", "explain-demo", "--format", "json"]);
@@ -448,7 +448,7 @@ function suppliedValueProvenances(json: unknown, inputName: string): unknown[] {
   return found;
 }
 
-describe("akm task explain <ref> --<flag> — supplied-value provenance (B-54)", () => {
+describe("akm task explain <ref> --<flag> — supplied-value provenance", () => {
   test("an unflagged input's supplied value is attributed to its DEFAULT, structurally — not merely because the word 'default' appears anywhere in the envelope", async () => {
     writeExplainDemoFixture();
     const result = await runCliCapture(["task", "explain", "explain-demo", "--format", "json"]);
@@ -511,7 +511,7 @@ describe("akm task explain <ref> --<flag> — supplied-value provenance (B-54)",
   });
 });
 
-describe("akm task explain <ref> --<undeclared> — UNKNOWN_FLAG (B-55)", () => {
+describe("akm task explain <ref> --<undeclared> — UNKNOWN_FLAG", () => {
   test("an undeclared flag fails UNKNOWN_FLAG, exit 2, {ok:false,error,code} on stderr", async () => {
     writeExplainDemoFixture();
     const result = await runCliCapture(["task", "explain", "explain-demo", "--not-a-declared-input", "x"]);
@@ -540,7 +540,7 @@ describe("akm task explain <ref> --<undeclared> — UNKNOWN_FLAG (B-55)", () => 
 // bare token: rejection is keyed on the name before the first `=`, the same
 // split `parseTaskInputFlags` itself performs, so `--scheduled=false` and
 // `--scheduled=1` are rejected exactly like `--scheduled`.
-describe("akm task explain <ref> --scheduled — UNKNOWN_FLAG (F7)", () => {
+describe("akm task explain <ref> --scheduled — UNKNOWN_FLAG", () => {
   for (const token of ["--scheduled", "--scheduled=true", "--scheduled=false", "--scheduled=1"]) {
     test(`\`${token}\` (task run's own reserved flag) fails UNKNOWN_FLAG on explain instead of being silently discarded`, async () => {
       writeExplainDemoFixture();
@@ -555,7 +555,7 @@ describe("akm task explain <ref> --scheduled — UNKNOWN_FLAG (F7)", () => {
   }
 });
 
-describe("akm task explain <ref> — structural bans (B-56, B-N4): env:/prompt/run: bodies never reach this module", () => {
+describe("akm task explain <ref> — structural bans: env:/prompt/run: bodies never reach this module", () => {
   test("never prints a resolved env: value, a prompt body, or a run:/script sentinel — in EITHER output format", async () => {
     writeExplainDemoFixture();
     const text = await runCliCapture(["task", "explain", "explain-demo"]);
@@ -747,7 +747,7 @@ describe("akm task explain <ref> — secret-shaped VALUE redaction (Finding 1: e
   });
 });
 
-describe("akm task explain — no ref / an unknown ref (B-58)", () => {
+describe("akm task explain — no ref / an unknown ref", () => {
   test("no ref at all: usage error, exit 2", async () => {
     const result = await runCliCapture(["task", "explain"]);
     expect(result.code).toBe(2);
@@ -763,7 +763,7 @@ describe("akm task explain — no ref / an unknown ref (B-58)", () => {
   });
 });
 
-describe("isTaskRunWithId — akm task explain never classifies as a task run (B-59, PRESERVE)", () => {
+describe("isTaskRunWithId — akm task explain never classifies as a task run", () => {
   test("`akm task explain <ref>` classifies false; `akm task run <ref>` is unaffected and still classifies true", () => {
     expect(isTaskRunWithId(["bun", "cli.ts", "task", "explain", "explain-demo"])).toBe(false);
     expect(isTaskRunWithId(["bun", "cli.ts", "task", "explain", "explain-demo", "--scope", "all"])).toBe(false);

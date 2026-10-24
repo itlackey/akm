@@ -40,7 +40,7 @@ function yamlWorkflow(stepYaml: string): string {
   ].join("\n");
 }
 
-describe("inline akm/command content is never scanned for native-tool constructs (issue 4)", () => {
+describe("inline akm/command content is never scanned for native-tool constructs", () => {
   test("compiles, loads, and freezes end to end — @file mention alongside $ARGUMENTS is plain prose", async () => {
     write(
       "workflows/gated.yml",

@@ -149,7 +149,7 @@ async function expectNoRunRowWritten(): Promise<void> {
   expect(runs).toHaveLength(0);
 }
 
-describe("a reference into a declared child output freezes (B-28)", () => {
+describe("a reference into a declared child output freezes", () => {
   test("steps.<child>.output.<declaredName> freezes when the child declares that output", async () => {
     writeNoopCommand();
     writeConsumeTask();
@@ -166,7 +166,7 @@ describe("a reference into a declared child output freezes (B-28)", () => {
   });
 });
 
-describe("a reference into an undeclared child output fails at freeze (B-29)", () => {
+describe("a reference into an undeclared child output fails at freeze", () => {
   test("steps.<child>.output.<bogus> fails COMPOSITION_INVALID, naming the step, the child ref, the bad name, and the child's declared names", async () => {
     writeNoopCommand();
     writeConsumeTask();
@@ -194,7 +194,7 @@ describe("a reference into an undeclared child output fails at freeze (B-29)", (
   });
 });
 
-describe("a reference into a no-outputs child's non-{runId,status} name fails at freeze (B-30)", () => {
+describe("a reference into a no-outputs child's non-{runId,status} name fails at freeze", () => {
   test("steps.<child>.output.<bogus> fails COMPOSITION_INVALID when the child declares no outputs:, message pointing at outputs:", async () => {
     writeNoopCommand();
     writeConsumeTask();
@@ -239,7 +239,7 @@ describe("a reference into a no-outputs child's non-{runId,status} name fails at
   });
 });
 
-describe("freeze checks only the first path segment (B-31)", () => {
+describe("freeze checks only the first path segment", () => {
   test("steps.<child>.output.status.extra freezes — the freeze-time check does not walk past the first segment", async () => {
     // The default export is {runId, status}; "status" is a valid first
     // segment, so a deeper path is accepted at freeze even though "status" is
@@ -264,7 +264,7 @@ describe("freeze checks only the first path segment (B-31)", () => {
   });
 });
 
-describe("a reference into a NON-child step's output is unaffected (B-32, PRESERVE)", () => {
+describe("a reference into a NON-child step's output is unaffected", () => {
   test("steps.<ordinaryTaskStep>.output.<anything> still freezes — the new check applies only to child-workflow targets", async () => {
     writeNoopCommand();
     writeConsumeTask();

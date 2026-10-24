@@ -194,7 +194,7 @@ describe("processImproveLoopRef — reflect half", () => {
     expect(tally.actions[1]!.result).toEqual({ ok: true, reason: "type-filter" });
   });
 
-  test(".derived memory refs skip reflect with the B6 synthetic action", async () => {
+  test(".derived memory refs skip reflect with the synthetic action", async () => {
     const { stashDir } = freshSandbox();
     const env = makeEnv({ stashDir });
 
@@ -386,7 +386,7 @@ describe("processImproveLoopRef — distill half", () => {
     expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "require_planned_refs" });
   });
 
-  test("B7: a UsageError from distill is recorded as a validation_failed distill action", async () => {
+  test("a UsageError from distill is recorded as a validation_failed distill action", async () => {
     const { stashDir } = freshSandbox();
     const env = distillOnlyEnv({
       stashDir,

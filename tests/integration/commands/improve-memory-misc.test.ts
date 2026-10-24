@@ -58,7 +58,7 @@ afterEach(() => {
 
 // ── O-2 / #365 — scope-ref cooldown bypass ──────────────────────────────────
 
-describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
+describe("--scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
   test("explicit --scope <ref> reflects even when ref is on reflect cooldown", async () => {
     const stashDir = makeTempDir("akm-o2-reflect-bypass-");
     writeMemory(stashDir, "auth-tips", { description: "auth memory" }, "Auth tips content.");
@@ -144,7 +144,7 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
 
 // ── O-1 / #364 — AbortSignal budget propagation ─────────────────────────────
 
-describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", () => {
+describe("wall-clock budget AbortSignal propagated to sub-calls (#364)", () => {
   test("reflectFn receives a timeoutMs derived from the remaining budget", async () => {
     const stashDir = makeTempDir("akm-o1-timeout-propagation-");
     writeMemory(stashDir, "budget-test", { description: "budget memory" }, "Budget test content.");
@@ -220,7 +220,7 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
 
 // ── D-2 / #370 — reject-aware distill cooldown ───────────────────────────────
 
-describe("D-2: reject-aware cooldown for distill (#370)", () => {
+describe("reject-aware cooldown for distill (#370)", () => {
   test("distill is skipped when the lesson for an asset was recently rejected", async () => {
     const stashDir = makeTempDir("akm-d2-reject-cooldown-");
     writeMemory(stashDir, "auth-tips", { description: "auth memory" }, "Auth tips content.");
@@ -267,7 +267,7 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
     expect(result.distillSkipped?.samples.some((s) => s.ref === "memories/auth-tips")).toBe(true);
   });
 
-  test("D-2: --scope <ref> bypasses distill reject cooldown (O-2 interaction)", async () => {
+  test("--scope <ref> bypasses distill reject cooldown", async () => {
     const stashDir = makeTempDir("akm-d2-scope-bypass-");
     writeMemory(stashDir, "auth-tips", { description: "auth memory" }, "Auth tips content.");
     await buildIndex(stashDir);
@@ -310,7 +310,7 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
 
 // ── M-3 / #387 — schema-repair routes through proposal queue ─────────────────
 
-describe("M-3: schema-repair routes through proposal queue (#387)", () => {
+describe("schema-repair routes through proposal queue (#387)", () => {
   test("runSchemaRepairPass preserves a missing symbolic credential as a hard config failure", async () => {
     const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
     const stashDir = makeTempDir("akm-m3-schema-credential-");

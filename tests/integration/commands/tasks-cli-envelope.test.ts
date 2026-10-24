@@ -44,7 +44,7 @@ function writeLocallyDisabledCommandTask(stashDir: string): void {
   );
 }
 
-describe("akm task — JSON envelope snapshot (WS6)", () => {
+describe("akm task — JSON envelope snapshot", () => {
   // Canonical bare-group behavior: bare `akm task` is a usage error naming the
   // subcommands — the next test covers the explicit `akm task doctor`.
   test("bare `akm task` → usage-error envelope, exit 2", async () => {

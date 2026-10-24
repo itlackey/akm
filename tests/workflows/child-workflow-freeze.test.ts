@@ -178,12 +178,12 @@ function childWorkflowFields(target: FrozenWorkflowTarget | undefined): {
 
 // ── Direct child workflows — uses: workflows/<ref> (rows B-04…B-11) ─────────
 
-describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", () => {
+describe("direct child workflows — uses: workflows/<ref>", () => {
   function writeChild(): void {
     write("workflows/child.md", paramWorkflowDoc());
   }
 
-  test("B-04: a direct uses: workflows/<ref> step freezes to a child-workflow target with the embedded frozen child plan and its planHash", async () => {
+  test("a direct uses: workflows/<ref> step freezes to a child-workflow target with the embedded frozen child plan and its planHash", async () => {
     writeChild();
     writeParent("direct-basic", ["      - id: dispatch", "        uses: workflows/child"]);
     await akmIndex({ stashDir: storage.stashDir, full: true });
@@ -208,7 +208,7 @@ describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", 
     expect(fields.taskRef).toBeUndefined();
   });
 
-  test("B-08: with: on the direct step naming a declared child param freezes as an inputBindings entry", async () => {
+  test("with: on the direct step naming a declared child param freezes as an inputBindings entry", async () => {
     writeChild();
     writeParent("direct-with", [
       "      - id: dispatch",
@@ -226,7 +226,7 @@ describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", 
     expect(fields.inputBindings).toEqual([{ kind: "literal", name: "scope", value: "urgent" }]);
   });
 
-  test("B-09: with: naming an undeclared child param fails INPUT_BINDING_INVALID at freeze, before publication", async () => {
+  test("with: naming an undeclared child param fails INPUT_BINDING_INVALID at freeze, before publication", async () => {
     writeChild();
     writeParent("direct-bogus", [
       "      - id: dispatch",
@@ -241,7 +241,7 @@ describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", 
     await expectNoRunRowWritten();
   });
 
-  test("B-10: with: {from: ...} plus another key is a hard INPUT_BINDING_INVALID failure, never reinterpreted as a literal", async () => {
+  test("with: {from: ...} plus another key is a hard INPUT_BINDING_INVALID failure, never reinterpreted as a literal", async () => {
     writeChild();
     writeParent("direct-hard-fail", [
       "      - id: dispatch",
@@ -258,7 +258,7 @@ describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", 
     await expectNoRunRowWritten();
   });
 
-  test("B-11: workflows/<ref> that does not resolve fails the existing asset-resolution failure, unchanged in code and shape", async () => {
+  test("workflows/<ref> that does not resolve fails the existing asset-resolution failure, unchanged in code and shape", async () => {
     writeParent("direct-missing", ["      - id: dispatch", "        uses: workflows/does-not-exist"]);
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
@@ -274,7 +274,7 @@ describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", 
 // ── (rows B-12…B-17; the v4-declared-inputs case, B-13, is in ───────────────
 // ── tests/workflows/task-input-bindings.test.ts) ────────────────────────────
 
-describe("task-wrapped child workflows — uses: tasks/<t> where t targets a workflow (rows B-12, B-14, B-15)", () => {
+describe("task-wrapped child workflows — uses: tasks/<t> where t targets a workflow", () => {
   function writeChild(): void {
     write("workflows/child.md", paramWorkflowDoc());
   }
@@ -286,7 +286,7 @@ describe("task-wrapped child workflows — uses: tasks/<t> where t targets a wor
   // declared-input contract regardless of whether the composing step authors a
   // `with:` (it cannot, on a task target), so the child's params arrive as a
   // literal binding sourced from the input's `default:`.
-  test("B-12/B-14: a task whose own uses: targets a workflow freezes to a child-workflow target, via task, and the task's own declared input default becomes the child's params", async () => {
+  test("a task whose own uses: targets a workflow freezes to a child-workflow target, via task, and the task's own declared input default becomes the child's params", async () => {
     writeChild();
     write(
       "tasks/v4-wrapper.yml",
@@ -315,7 +315,7 @@ describe("task-wrapped child workflows — uses: tasks/<t> where t targets a wor
     expect(fields.inputBindings).toEqual([{ kind: "literal", name: "scope", value: "from-v4-task" }]);
   });
 
-  test("B-15: a task with env: on a workflow target runs anyway, ignoring env:", async () => {
+  test("a task with env: on a workflow target runs anyway, ignoring env:", async () => {
     writeChild();
     write(
       "tasks/v4-env-wrapper.yml",
@@ -474,7 +474,7 @@ describe("direct and task-wrapped composition of the SAME child lower to the sam
 
 // ── Composition bounds — depth, cycle, aggregate size (rows B-18…B-25) ─────
 
-describe("composition bounds — depth, cycle, aggregate embedded size (rows B-18…B-25)", () => {
+describe("composition bounds — depth, cycle, aggregate embedded size", () => {
   /**
    * A chain of `count` workflows: chain-0 -> chain-1 -> … -> chain-(count-2)
    * -> chain-(count-1) (a leaf). Every COMPOSING node must be GitHub-YAML
@@ -495,7 +495,7 @@ describe("composition bounds — depth, cycle, aggregate embedded size (rows B-1
     }
   }
 
-  test("B-19: a composition chain 10 levels deep freezes — depth is unbounded, only the cycle check (B-20/B-21) bounds composition", async () => {
+  test("a composition chain 10 levels deep freezes — depth is unbounded, only the cycle check bounds composition", async () => {
     writeChain(11);
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
@@ -503,7 +503,7 @@ describe("composition bounds — depth, cycle, aggregate embedded size (rows B-1
     expect(started.run.id).toBeTruthy();
   });
 
-  test("B-20: a direct self-reference (A -> A) fails COMPOSITION_INVALID naming the cycle path", async () => {
+  test("a direct self-reference (A -> A) fails COMPOSITION_INVALID naming the cycle path", async () => {
     writeParent("self-cycle", ["      - id: loop", "        uses: workflows/self-cycle"]);
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
@@ -513,7 +513,7 @@ describe("composition bounds — depth, cycle, aggregate embedded size (rows B-1
     await expectNoRunRowWritten();
   });
 
-  test("B-21: an indirect cycle (A -> B -> A) fails COMPOSITION_INVALID naming A -> B -> A", async () => {
+  test("an indirect cycle (A -> B -> A) fails COMPOSITION_INVALID naming A -> B -> A", async () => {
     writeParent("cycle-a", ["      - id: hop", "        uses: workflows/cycle-b"]);
     writeParent("cycle-b", ["      - id: hop", "        uses: workflows/cycle-a"]);
     await akmIndex({ stashDir: storage.stashDir, full: true });
@@ -525,7 +525,7 @@ describe("composition bounds — depth, cycle, aggregate embedded size (rows B-1
     await expectNoRunRowWritten();
   });
 
-  test("B-22: a task-mediated cycle (A -> tasks/w -> B -> A) fails COMPOSITION_INVALID, the reported path naming the intermediate task ref", async () => {
+  test("a task-mediated cycle (A -> tasks/w -> B -> A) fails COMPOSITION_INVALID, the reported path naming the intermediate task ref", async () => {
     writeParent("task-cycle-a", ["      - id: hop", "        uses: tasks/wrap-task-cycle-b"]);
     write(
       "tasks/wrap-task-cycle-b.yml",
@@ -540,7 +540,7 @@ describe("composition bounds — depth, cycle, aggregate embedded size (rows B-1
     await expectNoRunRowWritten();
   });
 
-  test("B-23: the same workflow reached twice on disjoint branches (a diamond) is not a cycle and freezes, each occurrence embedding its own copy", async () => {
+  test("the same workflow reached twice on disjoint branches (a diamond) is not a cycle and freezes, each occurrence embedding its own copy", async () => {
     write("workflows/diamond-leaf.md", leafWorkflowDoc());
     writeParent("diamond-root", [
       "      - id: s1",
@@ -575,7 +575,7 @@ describe("composition bounds — depth, cycle, aggregate embedded size (rows B-1
     expect(fields1.frozenPlanIrVersion).toBe(fields2.frozenPlanIrVersion);
   });
 
-  test("B-24: aggregate embedded child plan bytes once over the former 1 MiB cap now freezes fine (a large plan is not a wrong plan)", async () => {
+  test("aggregate embedded child plan bytes once over the former 1 MiB cap now freezes fine (a large plan is not a wrong plan)", async () => {
     // Five children at 250,000 'x' bytes each (well under the 256 KiB
     // per-instruction cap and the 1 MiB per-source-file cap individually)
     // sum to 1,250,000 bytes — comfortably over the 1,048,576-byte

@@ -220,7 +220,7 @@ describe("buildExtractPrompt", () => {
     filePath: "/tmp/x",
   });
 
-  test("fences the untrusted transcript with begin/end markers (07 P0-3)", () => {
+  test("fences the untrusted transcript with begin/end markers", () => {
     const prompt = buildExtractPrompt({
       data: sampleData(),
       events: [fenceEvent("some session content")],

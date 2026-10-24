@@ -58,7 +58,7 @@ afterEach(() => {
   }
 });
 
-describe("akm bundle group — JSON envelope snapshot (S7)", () => {
+describe("akm bundle group — JSON envelope snapshot", () => {
   test("update --skip-if-locked recognizes only update-relevant transient lock failures (#976)", () => {
     for (const code of ["INDEX_DB_CONTENDED", "STATE_DB_CONTENDED"] as const) {
       expect(isSkippableBundleUpdateLock(new TransientError("busy", code))).toBe(true);

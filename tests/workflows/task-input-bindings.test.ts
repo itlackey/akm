@@ -168,8 +168,8 @@ async function expectNoRunRowWritten(): Promise<void> {
   expect(runs).toHaveLength(0);
 }
 
-describe("P2b freeze-time — literal and reference bindings normalize into inputBindings (B-10, B-14, B-19, B-20)", () => {
-  test("B-10/B-19/B-20: a literal with: value freezes alongside declared defaults, sorted by name; an unsupplied optional input with no default is absent", async () => {
+describe("freeze-time — literal and reference bindings normalize into inputBindings", () => {
+  test("a literal with: value freezes alongside declared defaults, sorted by name; an unsupplied optional input with no default is absent", async () => {
     writeCentralTaskFixture();
     writeWorkflow("case", [
       `      - id: ${STEP_ID}`,
@@ -194,7 +194,7 @@ describe("P2b freeze-time — literal and reference bindings normalize into inpu
     ]);
   });
 
-  test("B-14: a {from: steps.<id>.output.<path>} with: value freezes to a kind:reference binding naming the parsed reference", async () => {
+  test("a {from: steps.<id>.output.<path>} with: value freezes to a kind:reference binding naming the parsed reference", async () => {
     writeCentralTaskFixture();
     writeWorkflow("case", [
       "      - id: collect",
@@ -229,8 +229,8 @@ describe("P2b freeze-time — literal and reference bindings normalize into inpu
   });
 });
 
-describe("P2b freeze-time — hard rejections: INPUT_BINDING_INVALID (B-11, B-12, B-13)", () => {
-  test("B-11: an unknown with: key is rejected, naming the step, the offending key, and the sorted declared set", async () => {
+describe("freeze-time — hard rejections: INPUT_BINDING_INVALID", () => {
+  test("an unknown with: key is rejected, naming the step, the offending key, and the sorted declared set", async () => {
     writeCentralTaskFixture();
     writeWorkflow("case", [
       `      - id: ${STEP_ID}`,
@@ -249,7 +249,7 @@ describe("P2b freeze-time — hard rejections: INPUT_BINDING_INVALID (B-11, B-12
     await expectNoRunRowWritten();
   });
 
-  test("B-12: a required input with no default, not supplied by with:, is rejected naming the missing input", async () => {
+  test("a required input with no default, not supplied by with:, is rejected naming the missing input", async () => {
     writeCentralTaskFixture();
     writeWorkflow("case", [
       `      - id: ${STEP_ID}`,
@@ -265,7 +265,7 @@ describe("P2b freeze-time — hard rejections: INPUT_BINDING_INVALID (B-11, B-12
     await expectNoRunRowWritten();
   });
 
-  test("B-13: a literal value violating its declared schema is rejected, path-rooted at with.<name>", async () => {
+  test("a literal value violating its declared schema is rejected, path-rooted at with.<name>", async () => {
     writeCentralTaskFixture();
     writeWorkflow("case", [
       `      - id: ${STEP_ID}`,
@@ -283,8 +283,8 @@ describe("P2b freeze-time — hard rejections: INPUT_BINDING_INVALID (B-11, B-12
   });
 });
 
-describe("P2b freeze-time — the {from} hard-fail band never falls back to a literal (B-15, B-16)", () => {
-  test("B-15: {from} plus any other key is rejected, never reinterpreted as a literal object", async () => {
+describe("freeze-time — the {from} hard-fail band never falls back to a literal", () => {
+  test("{from} plus any other key is rejected, never reinterpreted as a literal object", async () => {
     writeCentralTaskFixture();
     writeWorkflow("case", [
       "      - id: collect",
@@ -310,7 +310,7 @@ describe("P2b freeze-time — the {from} hard-fail band never falls back to a li
     await expectNoRunRowWritten();
   });
 
-  test('B-16a: {from: "not a reference"} is rejected with parseReference\'s own message, never reinterpreted as a literal', async () => {
+  test('{from: "not a reference"} is rejected with parseReference\'s own message, never reinterpreted as a literal', async () => {
     writeCentralTaskFixture();
     writeWorkflow("case", [
       `      - id: ${STEP_ID}`,
@@ -328,7 +328,7 @@ describe("P2b freeze-time — the {from} hard-fail band never falls back to a li
     await expectNoRunRowWritten();
   });
 
-  test("B-16b: {from: 42} (a non-string from) is rejected structurally, never reinterpreted as a literal", async () => {
+  test("{from: 42} (a non-string from) is rejected structurally, never reinterpreted as a literal", async () => {
     writeCentralTaskFixture();
     writeWorkflow("case", [
       `      - id: ${STEP_ID}`,
@@ -345,7 +345,7 @@ describe("P2b freeze-time — the {from} hard-fail band never falls back to a li
     await expectNoRunRowWritten();
   });
 
-  test('B-16c: {from: "steps.x"} (incomplete reference grammar) is rejected, never reinterpreted as a literal', async () => {
+  test('{from: "steps.x"} (incomplete reference grammar) is rejected, never reinterpreted as a literal', async () => {
     writeCentralTaskFixture();
     writeWorkflow("case", [
       `      - id: ${STEP_ID}`,
@@ -364,8 +364,8 @@ describe("P2b freeze-time — the {from} hard-fail band never falls back to a li
   });
 });
 
-describe("P2b freeze-time — reference structural checks: earlier step, both grammar roots (B-17, B-18, A-N4)", () => {
-  test("B-17a: a reference naming a LATER step is rejected — earlier means before this step in frozen order", async () => {
+describe("freeze-time — reference structural checks: earlier step, both grammar roots", () => {
+  test("a reference naming a LATER step is rejected — earlier means before this step in frozen order", async () => {
     writeCentralTaskFixture();
     writeWorkflow("case", [
       `      - id: ${STEP_ID}`,
@@ -387,7 +387,7 @@ describe("P2b freeze-time — reference structural checks: earlier step, both gr
     await expectNoRunRowWritten();
   });
 
-  test("B-17b: a self-reference is rejected", async () => {
+  test("a self-reference is rejected", async () => {
     writeCentralTaskFixture();
     writeWorkflow("case", [
       `      - id: ${STEP_ID}`,
@@ -405,7 +405,7 @@ describe("P2b freeze-time — reference structural checks: earlier step, both gr
     await expectNoRunRowWritten();
   });
 
-  test("B-17c: a reference naming a nonexistent step id is rejected", async () => {
+  test("a reference naming a nonexistent step id is rejected", async () => {
     writeCentralTaskFixture();
     writeWorkflow("case", [
       `      - id: ${STEP_ID}`,
@@ -423,7 +423,7 @@ describe("P2b freeze-time — reference structural checks: earlier step, both gr
     await expectNoRunRowWritten();
   });
 
-  test("B-18: a {from: params.<undeclared>} reference is rejected, naming the workflow's declared params", async () => {
+  test("a {from: params.<undeclared>} reference is rejected, naming the workflow's declared params", async () => {
     writeCentralTaskFixture();
     writeWorkflow("case", [
       `      - id: ${STEP_ID}`,
@@ -443,8 +443,8 @@ describe("P2b freeze-time — reference structural checks: earlier step, both gr
   });
 });
 
-describe("P2b freeze-time — COMPOSITION_INVALID narrows to no-declared-inputs, grows to commands/scripts (B-21, B-22, B-23, A-N5)", () => {
-  test("B-21: with: on a version: 4 task target that declares no inputs: at all is rejected COMPOSITION_INVALID", async () => {
+describe("freeze-time — COMPOSITION_INVALID narrows to no-declared-inputs, grows to commands/scripts", () => {
+  test("with: on a version: 4 task target that declares no inputs: at all is rejected COMPOSITION_INVALID", async () => {
     write("commands/review.md", "Review the workflow-composed task target.\n");
     write("tasks/no-inputs-v4.yml", ["version: 4", "name: No declared inputs", "uses: commands/review", ""].join("\n"));
     writeWorkflow("case", [
@@ -463,7 +463,7 @@ describe("P2b freeze-time — COMPOSITION_INVALID narrows to no-declared-inputs,
     expect(error.message.toLowerCase()).toContain("no inputs");
   });
 
-  test("B-22: with: on a uses: commands/<ref> step is rejected COMPOSITION_INVALID — a command ref is not a binding surface", async () => {
+  test("with: on a uses: commands/<ref> step is rejected COMPOSITION_INVALID — a command ref is not a binding surface", async () => {
     write("commands/other.md", "Some other command.\n");
     writeWorkflow("case", [
       `      - id: ${STEP_ID}`,
@@ -481,7 +481,7 @@ describe("P2b freeze-time — COMPOSITION_INVALID narrows to no-declared-inputs,
     expect(error.message.toLowerCase()).toContain("not a binding surface");
   });
 
-  test("B-23: with: on a uses: scripts/<ref> step is rejected COMPOSITION_INVALID — a script ref is not a binding surface", async () => {
+  test("with: on a uses: scripts/<ref> step is rejected COMPOSITION_INVALID — a script ref is not a binding surface", async () => {
     write("scripts/build.sh", "#!/bin/sh\nprintf built\n");
     writeWorkflow("case", [
       `      - id: ${STEP_ID}`,
@@ -500,7 +500,7 @@ describe("P2b freeze-time — COMPOSITION_INVALID narrows to no-declared-inputs,
   });
 });
 
-describe("P2b compile-time — structured with: values are a task/workflow binding surface only (B-25…B-27, A-N3)", () => {
+describe("compile-time — structured with: values are a task/workflow binding surface only", () => {
   function compileStep(uses: string, withLines: string[]) {
     return compileWorkflowSource(
       [
@@ -520,7 +520,7 @@ describe("P2b compile-time — structured with: values are a task/workflow bindi
     );
   }
 
-  test("B-27: a ${{ … }} expression nested inside a with: value on a task step is rejected", () => {
+  test("a ${{ … }} expression nested inside a with: value on a task step is rejected", () => {
     const result = compileStep(TASK_REF, ["          ticket: ABC-1", '          meta: { note: "${{ params.x }}" }']);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errors[0]?.code).toBe("unsupported-github-expression");
@@ -530,20 +530,20 @@ describe("P2b compile-time — structured with: values are a task/workflow bindi
     "akm/command",
     "commands/other",
     "scripts/build.sh",
-  ])("B-26: a nested with: value on uses: %s is rejected as non-scalar", (uses) => {
+  ])("a nested with: value on uses: %s is rejected as non-scalar", (uses) => {
     const result = compileStep(uses, ["          content: { nested: true }"]);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errors[0]?.code).toBe("scalar-required");
   });
 
-  test("B-25: the identical nested with: shape on a uses: tasks/<ref> step compiles", () => {
+  test("the identical nested with: shape on a uses: tasks/<ref> step compiles", () => {
     const result = compileStep(TASK_REF, ["          ticket: T-1", "          meta: { nested: true }"]);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.plan.steps[0]?.spec?.with).toEqual({ ticket: "T-1", meta: { nested: true } });
   });
 });
 
-describe("P2b freeze-time — no merge semantics across a two-level task -> workflow -> task composition chain (B-29, A-N4)", () => {
+describe("freeze-time — no merge semantics across a two-level task -> workflow -> task composition chain", () => {
   /**
    * A chain, not two sibling steps of one workflow (two siblings prove
    * independence between unrelated call sites, but nothing about a CHAIN, i.e.
@@ -594,7 +594,7 @@ describe("P2b freeze-time — no merge semantics across a two-level task -> work
     );
   }
 
-  test("B-29: the inner task's frozen binding carries its OWN declared default — the outer task's default for the identical input name never reaches it", async () => {
+  test("the inner task's frozen binding carries its OWN declared default — the outer task's default for the identical input name never reaches it", async () => {
     writeChainFixtures();
     // No with: at all on "inner" — the point is that task-inner-chain's OWN
     // default is what freezes, with nothing from task-outer-chain.yml (which
@@ -611,7 +611,7 @@ describe("P2b freeze-time — no merge semantics across a two-level task -> work
     ]);
   });
 
-  test("A-N4: a {from: params.<name>} reference on the inner step resolves against the CHILD workflow's own declared params, never the outer task's declared inputs, even when the names coincide", async () => {
+  test("a {from: params.<name>} reference on the inner step resolves against the CHILD workflow's own declared params, never the outer task's declared inputs, even when the names coincide", async () => {
     writeChainFixtures();
     // "scope" is the exact name task-outer-chain.yml declares, and — were
     // the outer task actually run — the exact param name its effective
@@ -639,7 +639,7 @@ describe("P2b freeze-time — no merge semantics across a two-level task -> work
   });
 });
 
-describe("P3a — a task-wrapped workflow target now composes to a child-workflow target (B-30 FLIPS in P3a; row B-12/B-13)", () => {
+describe("a task-wrapped workflow target now composes to a child-workflow target", () => {
   /**
    * A version: 4 task step whose OWN target is `uses: workflows/<ref>` freezes
    * to a `{kind: "child-workflow", via: "task"}` target (routed to the ONE
@@ -730,7 +730,7 @@ describe("P3a — a task-wrapped workflow target now composes to a child-workflo
   });
 });
 
-describe("P2b freeze-time — hash coverage: a changed binding changes the unit input hash (B-41, B-42, §1.1(4))", () => {
+describe("freeze-time — hash coverage: a changed binding changes the unit input hash", () => {
   /** The single step's content-derived input hash, computed the SAME pure way the engine does. */
   function unitHash(
     plan: ReturnType<typeof decodeWorkflowPlan>,
@@ -742,7 +742,7 @@ describe("P2b freeze-time — hash coverage: a changed binding changes the unit 
     return computed.list.units[0]!.inputHash;
   }
 
-  test("B-41: changing a literal binding's value changes the unit input hash", async () => {
+  test("changing a literal binding's value changes the unit input hash", async () => {
     writeCentralTaskFixture();
     writeWorkflow("case-a", [
       `      - id: ${STEP_ID}`,
@@ -767,7 +767,7 @@ describe("P2b freeze-time — hash coverage: a changed binding changes the unit 
     expect(unitHash(planA, runA.run.id)).not.toBe(unitHash(planB, runB.run.id));
   });
 
-  test("B-42: changing a reference binding's from path changes the unit input hash", async () => {
+  test("changing a reference binding's from path changes the unit input hash", async () => {
     writeCentralTaskFixture();
     const collectStep = [
       "      - id: collect",
@@ -807,7 +807,7 @@ describe("P2b freeze-time — hash coverage: a changed binding changes the unit 
     expect(unitHash(planA, runA.run.id, stepOutputs)).not.toBe(unitHash(planB, runB.run.id, stepOutputs));
   });
 
-  test("R-R15 (hashVersion 7): changing a reference binding's RESOLVED value — same from path, changed upstream output — changes the unit input hash; an unchanged value keeps it byte-stable", async () => {
+  test("hashVersion 7: changing a reference binding's RESOLVED value — same from path, changed upstream output — changes the unit input hash; an unchanged value keeps it byte-stable", async () => {
     // The case B-41/B-42 do not cover: both of those vary the FROZEN binding (a
     // literal's value, a reference's from path), which lives inside frozenTarget.
     // Here ONE frozen plan is hashed against two different upstream outputs, so

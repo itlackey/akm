@@ -47,7 +47,7 @@ function configWithoutLlm(): AkmConfig {
   } as unknown as AkmConfig;
 }
 
-describe("runLessonQualityJudge — fail-CLOSED (07 P0-2)", () => {
+describe("runLessonQualityJudge — fail-CLOSED", () => {
   test("parse failure → pass:false, routed to review (score -1, reviewNeeded)", async () => {
     const result = await runLessonQualityJudge(
       configWithLlm(),
@@ -204,7 +204,7 @@ describe("buildReflectJudgePrompt", () => {
   });
 });
 
-describe("runLessonQualityJudge — pinned temperature (R13)", () => {
+describe("runLessonQualityJudge — pinned temperature", () => {
   test("the request carries temperature: 0 regardless of the runner's configured temperature", async () => {
     let receivedTemperature: number | undefined;
     // Simulate a runner resolved at a non-zero generation temperature (0.3):
@@ -239,7 +239,7 @@ describe("runLessonQualityJudge — pinned temperature (R13)", () => {
   });
 });
 
-describe("runLessonQualityJudge — per-criterion scores (R16 / JUDGE2)", () => {
+describe("runLessonQualityJudge — per-criterion scores", () => {
   test('new-shape {"scores": {...}} JSON parses to the correct average and exposes criteria', async () => {
     const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
       JSON.stringify({ scores: { reusable: 4, nonRedundancy: 5, grounding: 5 }, reason: "solid" }),
@@ -514,7 +514,7 @@ describe("runLessonQualityJudge — a criterion at 2 or below rejects, grounding
   });
 });
 
-describe("runReflectQualityJudge — per-criterion scores (R16)", () => {
+describe("runReflectQualityJudge — per-criterion scores", () => {
   test("the reflect judge's new-shape criteria use its own criterion names", async () => {
     const result = await runReflectQualityJudge(configWithLlm(), "candidate content", "source content", [], async () =>
       JSON.stringify({

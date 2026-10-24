@@ -144,7 +144,7 @@ describe("parseRefInput", () => {
   // segment is not an AKM placement stashDir, so valid adapter-emitted conceptIds
   // (OKF items, website pages, wiki pageKinds, adapter `instruction` docs) are
   // not rejected by ref-consuming commands.
-  test("new-grammar conceptId with an unknown-but-well-formed prefix → accepted as opaque data (D11)", () => {
+  test("new-grammar conceptId with an unknown-but-well-formed prefix → accepted as opaque data", () => {
     expect(parseRefInput("notatype/thing")).toEqual({ type: "notatype", name: "notatype/thing", origin: undefined });
     expect(parseRefInput("tables/customers")).toEqual({
       type: "tables",
@@ -158,7 +158,7 @@ describe("parseRefInput", () => {
     });
   });
 
-  test("D11 opaque acceptance round-trips through the UNCHANGED conceptIdFromTypeName", () => {
+  test("opaque acceptance round-trips through the UNCHANGED conceptIdFromTypeName", () => {
     // This is the property the proposals-repository canonical-ref check and the
     // index-utility-repository event matcher both depend on: reconstructing
     // `type`/`name` via conceptIdFromTypeName must reproduce the exact input
@@ -169,7 +169,7 @@ describe("parseRefInput", () => {
     }
   });
 
-  test("D11 collision guard: a leading segment that coincidentally spells a real type KEY (not its stashDir) still round-trips", () => {
+  test("collision guard: a leading segment that coincidentally spells a real type KEY (not its stashDir) still round-trips", () => {
     // "skill" (singular) is a real PLACEMENT_SPECS type key, but ITS stashDir is
     // "skills" (plural) — so "skill/foo" is not a known placement dir and falls
     // into the opaque branch. Naively using "skill" as the opaque `type` would
@@ -193,7 +193,7 @@ describe("parseRefInput", () => {
     }
   });
 
-  test("D11 does NOT loosen acceptance of a bare (no-slash) name — still the caller's bare-name-to-qualify job", () => {
+  test("does NOT loosen acceptance of a bare (no-slash) name — still the caller's bare-name-to-qualify job", () => {
     expect(() => parseRefInput("notatype")).toThrow(NotFoundError);
     expect(() => parseRefInput("prod")).toThrow(NotFoundError);
   });
@@ -203,7 +203,7 @@ describe("parseRefInput", () => {
     expect(isFullRefInput("catalog//readme")).toBe(true);
   });
 
-  test("D11 does NOT re-accept the retired colon `type:name` grammar (Q-02)", () => {
+  test("does NOT re-accept the retired colon `type:name` grammar", () => {
     // No slash at all after the colon.
     expect(() => parseRefInput("skill:code-review")).toThrow(NotFoundError);
     expect(() => parseRefInput("knowledge:guide.md")).toThrow(NotFoundError);
@@ -276,7 +276,7 @@ describe("displayRef (F4b output-spelling rule)", () => {
     ).toBe("team-catalog//workflows/release");
   });
 
-  test("non-default bundle → bundle//conceptId (WI-8.5c: always the new grammar)", () => {
+  test("non-default bundle → bundle//conceptId (always the new grammar)", () => {
     // Every source has a legal slug bundle id, so a non-default bundle always
     // displays as `bundle//conceptId`. A raw non-slug registryId reaching here
     // (edge case) is emitted verbatim as the bundle.
