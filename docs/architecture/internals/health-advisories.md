@@ -1,110 +1,64 @@
-# `akm health` advisory → action map
+# `akm health` checks
 
-Run `akm health` (add `--json` for machine output). The authoritative result
-combines hard failures with deterministic warnings across both output
-channels:
+`akm health` emits the checks below. Each result has a `name`, and lands in
+`hardChecks` (the state.db and engine checks) or `advisories` (the rest). The
+list comes from `HEALTH_CHECKS` in `src/commands/health/checks.ts`, `akmHealth`
+in `src/commands/health.ts`, and the collectors in `src/commands/health/`. The
+checks from `index-state-generation` down to `opencode-plugin-version` appear
+only when they have something to report; the others are always present.
 
-- Deterministic hard-check and advisory warnings set the overall status to `warn` and exit code 4.
-- A hard check `fail` sets the overall status to `fail` and exit code 1.
-- A heuristic (non-deterministic) advisory `warn` does not change or gate the overall status.
-- A heuristic (non-deterministic) advisory `warn` does not change or gate the exit code.
+## Status and exit code
 
-This table is the interpretive key for a second operator: what each named
-advisory measures and whether to act. Some `warn`s below are *adjudicated,
-expected* states — treat them as "no action" until the referenced condition
-changes.
+Each check is `pass`, `warn`, `fail`, or `unknown`, and `deterministic` or
+`heuristic`.
 
-| Advisory (name in output) | What it means | Action |
+- Any `fail` in `hardChecks` makes the overall status `fail` and the exit code 1.
+- Otherwise, any `warn` from a `deterministic` check (hard or advisory) makes it `warn` and the exit code 4.
+- `heuristic` warns (`session-extraction`, `triage-promote-validation`) and `unknown` results do not change the overall status.
+
+`--since` sets the window the task and improve checks read. The default is 24 hours.
+
+## Network and processes
+
+Probing is on by default; `--no-probe` turns it off. With probing on, health sends a
+`GET` to `<endpoint>/models` of each configured LLM engine (3 second timeout; any HTTP
+response counts as reachable), looks up the latest akm release on GitHub for `cli-version`
+(5 second timeout, no retries), and runs the akm binary recorded by the scheduler with
+`--version` for `scheduler-binary`. `plugin-version` runs `git ls-remote --tags origin`
+against the Claude plugin marketplace clone whenever a Claude plugin is installed. With
+`--no-probe` it skips that call and reports `unknown` (its `AKM_VERSION_RANGE` check is
+local and still runs).
+
+## Checks
+
+| Check | Fires when | Remedy |
 |---|---|---|
-| `state-db-schema` | state.db is missing required tables. | Re-run `akm bundle create`; a fresh/older DB was opened. |
-| `state-db-round-trip` | Append/read probe against state.db failed. | Check disk/permissions on the state.db path; the store is unwritable. |
-| `state-db-integrity` | state.db failed `PRAGMA integrity_check` (which, unlike `quick_check`, also compares every index with its table), or more than half its pages are free (reclaimable by VACUUM). | Back up state.db, then run `sqlite3 -readonly state.db ".dump" \| sqlite3 state.new.db`, verify `state.new.db` passes `integrity_check`, and swap it in; the freelist warning clears on its own on the next `akm improve` retention purge, which VACUUMs state.db above the same 50% threshold. |
-| `task-log-backing` | task_history rows reference log files missing on disk. | Logs were pruned/moved out from under the DB; safe to ignore if intentional, else restore the log dir. |
-| `active-runs` | A task run has exceeded the stale threshold (>15 min). | Inspect with `akm task history`; a lane is likely wedged — kill/re-run it. |
-| `default-engine` | The configured general default agent, SDK, or LLM engine is missing or incomplete. | Correct `defaults.engine`; SDK operation requires the `opencode` binary on PATH (the npm SDK is an HTTP client and spawns `opencode serve`), while a fallback LLM is checked only when configured. |
-| `model-map-files` | The installed or optional user `models.json` is missing, unreadable, or invalid. | Repair the installation for an installed-map failure; remove or correct the user overlay for a warning. |
-| `selected-model-aliases` | A known selected alias lacks a mapping for its selected engine. Unknown model strings remain exact pass-through identifiers. | Add the missing alias/engine entry or select an exact model ID. |
-| `default-llm-engine` | The independently configured LLM default is missing, incompatible, lacks a required credential, or (#914) its endpoint refuses the reachability probe. | Correct `defaults.llmEngine`, its connection, any symbolic credential binding, or the endpoint itself; an unreachable default is a hard `fail`. |
-| `configured-engines` | Checks every explicitly configured engine and aggregates its deterministic availability, including (#914) reachability for `kind: "llm"` engines. | Repair engines whose safe status is `warn`; no configured engines yields `unknown`. |
-| `active-improve-strategy` | An enabled process in the effective improve strategy cannot resolve its engine or required credential; evidence and the message name the resolved engine per process (#913), surfacing a strategy-level pin that shadows `defaults.llmEngine`. Derived from the same `resolveImprovePlan` credential check the real `improve` run uses (#957), so this reflects exactly what a run in this environment would skip. `warn` when some but not all enabled LLM-backed processes are unavailable; **`fail`** (#957) when EVERY enabled `capability: "llm"` process in the strategy is unavailable — the nightly run would be a total no-op, not a partial degradation. | Inspect the named unavailable process(es), then correct its process override, strategy triage engine, SDK fallback, or default LLM. A `fail` here means `akm improve --require-engines` would abort the same run outright; add that flag to the scheduled task once the credential is fixed to make future silent no-ops fail loudly instead. |
-| `task-fail-rate` | ≥5% of scheduled task runs failed in the window (exit 143/70 recurring), or a single task_id fails at/above the same threshold. (#943) For `command`-kind (agent/LLM dispatch) failures specifically, `evidence.agentFailureReasonCounts` always carries a `detail.reason` breakdown (`timeout`, `non_zero_exit`, `spawn_failed`, …), and the warn message names the dominant reason — e.g. `(timeout-dominant: 9/12 command-task failures)` — when one reason is at least half of the counted command-task failures. | Triage as a bug: `akm task doctor`, inspect failing lane logs. For a native shell/script task, exit-143 = killed/timeout, exit-70 = internal error. For a `command`-kind (agent/LLM) task, read `detail.reason` from `akm task history` instead of the exit code — `timeout` means the dispatch's own deadline (not an outer process kill) expired; `non_zero_exit`/`spawn_failed`/`aborted`/etc. name the other failure shapes. |
-| `data-dir-usage` | The data directory is more than 3× the live databases (`state.db` + `index.db` + `logs.db`), or one top-level subdirectory holds more than half of it; the message names that subdirectory with its size and share. | Look at the named subdirectory. `backups/tasks/` holds one snapshot per `akm migrate apply` run that rewrote a task file; everything under `backups/` is yours to prune. |
-| `stash-git-exposure` | `env/` or `secrets/` assets are git-tracked **and** a remote is set — `git push` can leak keys. | `git rm --cached` the files, add `env/`+`secrets/` to `.gitignore` (a rule alone does not untrack). |
-| `semantic-search-runtime` | Semantic search is blocked; often a configured remote embedding endpoint is down. | Restore the endpoint, or set `semanticSearchMode` to `off`, or drop `embedding.endpoint` to use the local model. |
-| `session-extraction` | (#914) Derived from the `extract_sessions_seen` ledger for the last 7 days — not `improve_runs`, which the hook-driven `akm proposal extract --session-id ...` never writes. `unknown` when nothing was recorded; `warn` when every session in the window was skipped for an infrastructure reason (`llm_unavailable`, `read_failed`, `exception`, `locked_concurrent`), naming the reason and engine; otherwise `pass` with per-outcome counts. | An `unknown` machine may be deliberately not configured for extraction, or may have stopped harvesting — check for recent sessions. A `warn` names the broken engine/reason directly. |
-| `pool-saturation` | <2% of the session pool was new — possible discovery/dedup bug. | Verify `akm proposal extract` still finds new sessions; a healthy steady state sits above 10%. |
-| `auto-accept-validation` | Proposals passed the confidence gate but failed validation (bad frontmatter, truncation). | Review the affected pending proposals via `akm proposal list`; they were held, not lost. |
-| `outcome-proxy-adequacy` | Retrieval proxy is *inverted* (corr < −0.3): popular assets are the most-needing-improvement. | Known WS-2 limitation; no live action — see plan §WS-2 / CONTEXT before tuning. |
-| `outcome-proxy-dead` | Retrieval proxy is *dead* (\|corr\| < 0.1 at n≥500): outcome_score is noise. | **Adjudicated/expected** during the minting-shutdown re-baseline (12-D1); no action. |
-| `salience-uniformity-collapse` | Gini across all positive, resolvable retrieval-salience values is below 0.08 — ranking no longer discriminates among assets with retrieval evidence. | Inspect the reported sample size and salience freshness; run `akm index` to refresh retrieval timestamps, then let the improve schedule recompute salience before tuning weights. |
-| `enrichment-lane-minting` | Enrichment lanes minted new assets above threshold (5% warn / higher = fail). | Adjudicated against the ratified minting rules; act only if the share keeps climbing post-shutdown. |
-| `improve-churn-ratio` | Accepted proposals rewrote the same few refs (ratio > 1.5) instead of covering the corpus. | Expected while coverage is low; watch the trend, do not retune on a single window. |
-| `collapse-churn-detector` | R5 detector fired collapse/churn alerts (or `unknown` = no cycle rows yet). | Inspect recent collapse/churn cycle rows and the detector's advisory output before acting. |
-| `thinking-control` | (#949) For every configured `kind: "llm"` engine with `enableThinking: false`, checks the window's recorded `llm_usage` for reasoning tokens. Passive: never issues its own completion. `unknown` when no engine sets `enableThinking: false`, or when a configured one made no calls in the window. | A `warn` names the engine that returned reasoning tokens — its endpoint, or a gateway in front of it, is not honoring the thinking-off control. Check the gateway/endpoint config; behind a gateway that drops `chat_template_kwargs` (Bifrost), set `reasoningEffort: "none"` on the engine, which such gateways pass through. |
-| `cli-version` | (#950) Compares the installed akm-cli version against the latest GitHub release (the same source `akm upgrade` trusts). `--probe`-gated: `unknown` "not probed" with `--no-probe`; offline/rate-limited also degrades to `unknown`, never a false `warn`. | Run `akm upgrade` when a newer release is reported. An `unknown` result carries no staleness claim either way — check manually if it matters. |
-| `engine-last-used` | (#950) For every engine bound to an enabled process in the active improve strategy, checks `llm_usage` for a call in the last 30 days (independent of `--since`). `unknown` when no engine is bound, or when no improve run has been recorded (started) in that window at all (a fresh install). | A `warn` names the idle engine and the process it is bound to. Configured, reachable, and credentialed is not the same as actually used — investigate why the bound process is not invoking it (disabled downstream, misrouted, or genuinely unused). |
-| `scheduler-binary` | (#953) Reads the scheduler's recorded akm invocation for the installed tasks (the same binding `task sync`/`task doctor` already read — no crontab/launchd/schtasks text parsing) and runs it with `--version`, compared against the running CLI's version. `--probe`-gated: `unknown` "not probed" with `--no-probe`. `unknown` when no scheduled task is installed or the recorded binary cannot be executed. | A `warn` names both versions — upgrading akm through a different installer than the one active at the last `task sync` left the schedule pointed at the old binary; run `akm task sync` to rebind it. |
-| `plugin-version` / `opencode-plugin-version` | (itlackey/akm#832,) `plugin-version` reports each installed Claude Code harness plugin's version and its declared `AKM_VERSION_RANGE` admission of the running CLI. `opencode-plugin-version` does the same for the OpenCode plugin's own bundled `akm-cli` (read from its `package.json`, never executed) — it runs in-process and shares the host's databases, so its lag matters the same way. Neither is `--probe`-gated. | A `warn` names the stale/out-of-range plugin and the update command (`claude plugin update <ref>` for the Claude plugin; update the OpenCode plugin for the bundled copy). |
-
-> Adjudicated states (`outcome-proxy-dead`, `enrichment-lane-minting`)
-> are the before/after instrument for the 12-D1 minting shutdown — do not "fix" them by retuning.
-> When in doubt, prefer no action over panic-retuning (per the review-12 guard).
-
-## Engine and model advisories
-
-`selected-model-aliases` warns when a known selected alias is missing the selected engine mapping.
-It checks explicit string model selections on sorted
-configured engines against the merged installed/user model map. Unknown model
-identifiers are exact pass-through values and are not reported as missing. An
-invalid model map makes this check `unknown` with generic evidence rather than
-copying parser text or authored values.
-
-`configured-engines` covers every explicitly configured engine. It reuses the
-same availability result as the default-engine projections and reports sorted
-safe evidence containing only engine name and status. All available engines
-pass; any unavailable engine warns; no explicitly configured engines is
-`unknown`.
-
-Agent checks inspect local binary availability; SDK checks inspect the
-package/binary and any configured fallback. LLM checks (a `kind: "llm"`
-runner, and an SDK runner's LLM fallback connection) additionally send a
-real, bounded (3 s timeout) reachability probe (#914) — one `GET` against
-the endpoint's `/models` route; any HTTP response counts, so a cold local
-server is never asked to load a model — to `default-llm-engine`'s and
-`configured-engines`' endpoints, one probe per distinct endpoint per
-invocation (no cross-run cache, so a stale "reachable" verdict never lingers).
-An unreachable endpoint is a hard `fail` for `default-llm-engine` (extraction
-and improve depend on it directly) and a `warn` for every other engine that
-resolves to it. Pass `--no-probe` to skip these probes entirely (offline or
-air-gapped hosts) — every affected check then reports its prior,
-credential-only verdict and notes that reachability was not probed.
-
-Engine evidence names the endpoint and model of the probed connection so an
-operator can tell which connection was checked; it never includes credential
-values or provider output.
-
-(#950) When a required `$VAR`-style credential is unavailable in the health
-process's own shell, `default-llm-engine` and `configured-engines` also check
-whether any `env/` asset defines a key by the same name. When one does, the
-`warn` message and `evidence.suppliedByEnvAsset` name the env asset's ref
-(e.g. `env/lab`) and point at `akm env run env/lab -- ...` — never the
-variable name itself, which stays out of both the message and evidence (see
-`tests/health-engine-probe.test.ts`). This is the common case where the
-operator's real workflow already supplies the credential under an `env run`
-wrapper; the check still `warn`s (the credential genuinely is unavailable in
-*this* invocation's shell), just with an actionable next step instead of a
-bare "unavailable".
-
-`akm health` makes at most two network calls, both best-effort and silent on
-failure: `plugin-version`'s `git ls-remote` (unconditional, predates
-`--probe`) and `cli-version`'s GitHub-release lookup (gated behind
-`--probe`/`--no-probe`, same flag as engine reachability). See
-`src/commands/health/plugin-staleness.ts` and
-`src/commands/health/version-drift.ts` for the discipline each follows.
-
-The salience Gini guardrails are calibrated against distribution shape, not a
-top-ranked quantile: near-uniform `0.49/0.51` scores produce about `0.01`, a
-balanced `0.25/0.75` spread produces `0.25`, and one dominant score among nine
-`0.01` scores produces about `0.82`. Read-only full-observation snapshots were
-also stable inside the neutral `0.08..0.35` band: `0.2613` across 1,209 assets
-on 2026-07-12 and `0.2506` across 1,454 non-missing assets on 2026-08-17.
+| `state-db-schema` | `fail`: state.db is missing one of `events`, `proposals`, `schema_migrations`, `task_history`. | The message lists the missing tables. |
+| `state-db-round-trip` | `fail`: appending and reading back a probe event failed. The probe row is deleted again. | The message gives the error. |
+| `state-db-integrity` | `fail`: `PRAGMA integrity_check` failed, or reading the freelist failed. `warn`: more than 50% of the pages are free. | For a failed check, follow the repair in the message: back up state.db, run `sqlite3 -readonly state.db ".recover" \| sqlite3 state.new.db`, confirm `state.new.db` passes `integrity_check`, stop every akm process, delete `state.db-wal` and `state.db-shm`, then swap `state.new.db` in as state.db. The free-page warning clears when `akm improve`'s retention purge VACUUMs state.db. |
+| `state-db-migrations` | Always `pass` in a normal run; the message lists the migrations this open applied and the pre-migration copy. `fail` when the open could not apply a pending migration; this row is then the whole report. | Run `akm migrate apply`. |
+| `task-history-read` | Always `pass`; reports the number of `task_history` rows read in the window. | None. |
+| `active-runs` | `warn`: a task run has been active for more than 15 minutes. The message names the tasks and their age. | Inspect with `akm task history`. |
+| `default-engine` | `unknown`: no default engine resolves (`defaults.engine` is unset and no opencode binary is found for the implicit fallback). `warn`: the engine's binary fails `--version`, an SDK engine lacks `@opencode-ai/sdk`, its binary, or its fallback LLM connection or credential, or an LLM engine's credential is unavailable. | Fix `defaults.engine` or install what the message names. When the credential is supplied by an `env/` asset, the message names its ref; run under `akm env run <ref> -- ...`. |
+| `model-map-files` | `fail`: the installed `models.json` is invalid. `warn`: the user `models.json` overlay is invalid. | Reinstall akm for `fail`; fix or remove the user `models.json` for `warn`. |
+| `selected-model-aliases` | `warn`: a configured engine selects a model alias that is known in the model map but has no mapping for that engine. `unknown`: no engine selects a model, or the model map is invalid. | Add the alias for that engine in `models.json`, or select an exact model ID. Unknown strings are passed through as exact model IDs. |
+| `default-llm-engine` | `unknown`: `defaults.llmEngine` is unset. `warn`: its credential is unavailable. `fail`: its endpoint is unreachable. | Fix `defaults.llmEngine`, its credential, or the endpoint. `--no-probe` skips the reachability test. |
+| `configured-engines` | `warn`: one or more engines under `engines` are unavailable (the message gives the count; evidence lists each engine's status). `unknown`: none configured. | Fix the engines listed as `warn` in the evidence. |
+| `active-improve-strategy` | `warn`: some enabled processes in the active improve strategy have no usable engine or credential. `fail`: none of the model-calling processes can run, so a scheduled `akm improve` would do nothing. `warn` or `unknown` when the strategy itself cannot be resolved. | Fix the engine or credential for the processes the message names, or the strategy-level `engine`. Add `--require-engines` to the scheduled `akm improve` so it fails instead of silently skipping. |
+| `task-fail-rate` | `warn`: at least 5% of task runs in the window failed, or one task with at least 5 runs fails at that rate. The message names the dominant `detail.reason` (`timeout`, `non_zero_exit`, `spawn_failed`, ...) when one reason is at least half of the command-task failures. | Inspect failed runs with `akm task history` and `akm task doctor`. `evidence.agentFailureReasonCounts` breaks command-task failures down by reason. |
+| `session-extraction` | `heuristic`. Reads the last 7 days of the extract ledger. `unknown`: nothing recorded. `warn`: every session was skipped or failed for an infrastructure reason (`llm_unavailable`, `read_failed`, `exception`, `locked_concurrent`); the message names the reason and engine. | Fix the named engine. `unknown` is normal on a machine that does not extract sessions. |
+| `triage-promote-validation` | `heuristic`. Reads `triage.promoted` and `gateAutoAcceptFailedCount` (only rows an older release wrote carry it) from the improve runs in the window. `warn`: proposals the triage drain promoted then failed validation (truncated description, invalid frontmatter); they stay pending. | Review them with `akm proposal list`. |
+| `thinking-control` | `warn`: an engine with `enableThinking: false` recorded reasoning tokens in the window, so its endpoint or a gateway in front of it ignores the setting. `unknown`: no engine sets `enableThinking: false`, or none made calls. | Check the endpoint or gateway. akm sends `enableThinking: false` as both `chat_template_kwargs.enable_thinking` and `enable_thinking`; `reasoningEffort` on the engine sends `reasoning_effort` as a second control. |
+| `cli-version` | `warn`: a newer akm release exists on GitHub. `unknown`: `--no-probe`, or the release lookup failed. | Run `akm upgrade`. |
+| `engine-last-used` | `warn`: an engine bound to an enabled improve process has no `llm_usage` row in the last 30 days. `unknown`: no engine is bound, or no improve run started in those 30 days. | Find out why the bound process is not calling the engine (disabled, routed elsewhere, or unused). |
+| `scheduler-binary` | `warn`: the akm binary recorded in the scheduler reports a different version than the running CLI. `unknown`: `--no-probe`, no scheduled task installed, or the recorded binary cannot be run. | Run `akm task sync` to rebind the schedule. |
+| `index-state-generation` | `warn`: usage links in state.db point at index entries that no longer match (an index and state.db from different generations). | Stop concurrent writers and run `akm index --full`. |
+| `stash-git-exposure` | `warn`: `env/` or `secrets/` files are tracked by git in the working bundle and the bundle has a remote. Skipped when the bundle has no `.git`. | Run `git rm --cached` on the listed files and add `env/` and `secrets/` to `.gitignore`. A `.gitignore` rule alone does not untrack files. |
+| `binary-config-skew` | `warn`: `config.json` has a `configVersion` newer than this binary knows. | Upgrade this install. |
+| `egress-endpoints` | `pass` with a list of the remote endpoints in the effective config: enabled registries, git and website bundles, LLM engine endpoints, and the embedding endpoint. Omitted when none are configured. | None. |
+| `type-directory-disagreement` | `warn`: an indexed asset's resolved type differs from the type its directory declares. Each line gives the file, both types, and the classifier signal that won (`winner`). | Review the listed files. Intended overrides (for example a `knowledge/` file containing `$ARGUMENTS`) are marked `known-good override`. |
+| `memory-cleanup-archive` | `pass` with size and file count when the working bundle has `.akm/memory-cleanup/archive` content and no git history (the purge does not run there). `warn` when a git-backed bundle has archived files the purge cannot remove (untracked, modified, or unverifiable in git). | Commit the archived files so the purge can remove them once they age out. |
+| `data-dir-usage` | `warn`: the data directory is over 1 GB and either more than 3 times the size of `state.db`, `index.db`, and `logs.db` (with their WAL and SHM files), or one top-level subdirectory holds more than half of it. The message names that subdirectory and its size. | Inspect the named subdirectory. `backups/tasks/` holds task-file snapshots written by `akm migrate apply`. |
+| `plugin-version` | One row per installed Claude Code `akm` plugin. `warn`: a newer tag exists on the plugin's remote, or the plugin's `AKM_VERSION_RANGE` does not admit the running CLI. `unknown`: `--no-probe` (the remote tag lookup is skipped; a range mismatch still warns). | Run the `claude plugin update <ref>` command in the message. |
+| `opencode-plugin-version` | `warn`: the `akm-cli` bundled in the OpenCode plugin has a different version than the running CLI. Omitted when the OpenCode plugin is not installed. | Update the OpenCode plugin. |
+| `state-db-readable` | Replaces all other checks. `fail`: state.db exists but cannot be read. | Fix the owner and mode of the data directory, or point `AKM_DATA_DIR` or `XDG_DATA_HOME` at a location this user owns. |

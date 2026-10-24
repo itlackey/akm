@@ -33,7 +33,7 @@ import {
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { getTaskHistoryDir, getTaskLogDir } from "../../core/paths";
+import { getTaskLogDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import {
   commitWriteTargetBoundary,
@@ -295,28 +295,22 @@ export async function akmTasksRun(
   const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
   const resolvedId = taskIdForAdapter(parsed.id, adapterId);
   const scheduled = options.scheduled === true;
-  // D5 "Construction" (spec docs/plans/specs/p1b-model-extraction.md §1.2/
-  // §5.2): built ONCE at this invocation boundary. eventSource is "task"
-  // whether or not --scheduled was passed (§1.6 D5-N1) — scheduled stays a
-  // separate field carrying its own pre-existing meaning (activation policy,
-  // scheduler env), never selecting the event source.
+  // Built ONCE at this invocation boundary. eventSource is "task" whether or
+  // not --scheduled was passed — scheduled stays a separate field carrying its
+  // own meaning (activation policy, scheduler env), never selecting the event
+  // source.
   const provenance = createExecutionProvenanceContext(scheduled);
-  // F-3 (spec §5.4): RunTaskOptions.stashDir renamed to bundleDir — VALUE-
-  // preserving, no CLI flag change.
+  // The raw, exact-name input flags `tasks-cli.ts` captures ride through
+  // unchanged to `runTask` -> `loadPreparedTask`'s materializer, which
+  // attaches the materialized literals to the constructed `TaskInvocation`.
+  // This is only the pass-through surface: a valid flag set does not change
+  // the run, and the inputs are validated only, not delivered to the target.
   //
-  // P2a Lane C (spec docs/plans/specs/p2a-task-source-v4.md §5.1): the raw,
-  // exact-name input flags `tasks-cli.ts`'s Stage 1 captures ride through
-  // unchanged to `runTask` -> `loadPreparedTask`'s Stage 2 materializer,
-  // which owns declaring `inputFlags` on `RunTaskOptions` and attaching the
-  // materialized literals to the constructed `TaskInvocation`. This is only
-  // the pass-through surface: a valid flag set stays byte-identical to the
-  // same run without flags (§0), and P2a delivers nothing to the target.
-  //
-  // No `as` cast (test-review finding, spec §6 F-5): `RunTaskOptions` (this
-  // literal's inferred type is checked directly against it, below) declares
-  // every one of these fields, so the compiler — not a suppressed excess-
-  // property check — enforces this seam. A future rename or removal on
-  // either side now fails `tsc`, not silently at the `runTask` boundary.
+  // No `as` cast: `RunTaskOptions` (this literal's inferred type is checked
+  // directly against it, below) declares every one of these fields, so the
+  // compiler — not a suppressed excess-property check — enforces this seam. A
+  // future rename or removal on either side fails `tsc`, not silently at the
+  // `runTask` boundary.
   const runOptions: RunTaskOptions = {
     bundleDir: bundle.source.path,
     bundleName: bundle.source.name,
@@ -328,11 +322,9 @@ export async function akmTasksRun(
   // The runner owns the prepare-before-reserve boundary. Invalid source,
   // projectability, and resolver failures therefore create no history row.
   const result = await runTask(resolvedId, runOptions);
-  // C-7 (spec §5.6): after D8's result-vocabulary re-code, "command" means
-  // the agent/LLM arm — the native shell/script arm now reports "shell" /
-  // "script". Rewired in the SAME commit as the vocabulary re-code so a
-  // shell/script task's process exit 78 still passes through as CLI exit 78
-  // (documented behavior, src/assets/hints/cli-hints-short.md:95).
+  // "command" means the agent/LLM arm — the native shell/script arm reports
+  // "shell" / "script". A shell/script task's process exit 78 passes through
+  // as CLI exit 78 (documented behavior, src/assets/hints/cli-hints-short.md).
   const exitCode =
     result.status === "failed" &&
     (result.target.kind === "shell" || result.target.kind === "script") &&
@@ -810,16 +802,11 @@ export interface TasksDoctorResult {
   }>;
   remediation?: "akm task sync --rebind";
   logDir: string;
-  historyDir: string;
   engine: { defaultEngine?: string; available: string[] };
   scheduleSubset: string;
   warnings: string[];
   /**
-   * Effective proposal-queue triage settings for the default improve strategy.
-   * Absent when the resolved strategy has no `triage` process block.
-   */
-  /**
-   * D8 — the autonomy gate's effect on the default improve strategy. A scheduled
+   * The autonomy gate's effect on the default improve strategy. A scheduled
    * run that quietly stopped consolidating is the silent no-op the gate exists
    * to prevent, and this is where an operator looks for the explanation.
    */
@@ -828,6 +815,10 @@ export interface TasksDoctorResult {
     configKey: string;
     gatedLanes: { lane: string; reason: string }[];
   };
+  /**
+   * Effective proposal-queue triage settings for the default improve strategy.
+   * Absent when the resolved strategy has no `triage` process block.
+   */
   improveTriage?: {
     defaultStrategy: string;
     enabled: boolean;
@@ -868,11 +859,10 @@ export async function akmTasksDoctor(
   const defaultEngine = config.defaults?.engine;
   const engines = Object.keys(config.engines ?? {});
 
-  // §6.1: surface the effective triage settings for the default improve
-  // strategy. The struct is a fixed shape, so this is a deliberate addition.
+  // Surface the effective triage settings for the default improve strategy.
   const improveStrategyName =
     typeof config.defaults?.improveStrategy === "string" ? config.defaults.improveStrategy : "default";
-  // D8 — report the EFFECTIVE strategy, not the raw one. Resolving the raw
+  // Report the EFFECTIVE strategy, not the raw one. Resolving the raw
   // strategy here would report `applyMode: "promote"` for a promote strategy
   // under a review-first config, while the run actually uses "queue" — a doctor
   // command lying about the thing it exists to diagnose.
@@ -905,7 +895,6 @@ export async function akmTasksDoctor(
       ? { remediation: "akm task sync --rebind" as const }
       : {}),
     logDir: getTaskLogDir(),
-    historyDir: getTaskHistoryDir(),
     engine: { defaultEngine, available: engines },
     scheduleSubset: SCHEDULE_SUPPORTED_SUBSET_HINT,
     warnings,
@@ -987,8 +976,7 @@ function taskProjectionAssetResolver(
 }
 
 /**
- * Exported for `src/commands/tasks/explain.ts` (P2b Lane B, spec
- * docs/plans/specs/p2b-input-bindings.md §4.5, B-N4): `akm task explain`
+ * Exported for `src/commands/tasks/explain.ts`: `akm task explain`
  * resolves its `--bundle` axis identically to every other read-only task
  * verb here (`akm task history`, `akm task run`) — the SAME resolver, not a
  * second one.
@@ -1083,8 +1071,7 @@ interface RenderInput {
 
 /**
  * Infer a JSON-Schema-subset `type` keyword from one `--params` value's
- * runtime shape (spec docs/plans/specs/p4-deletions-closeout.md §3.2.6, row
- * B-20). `null` is not one of the five runtime types the spec enumerates
+ * runtime shape. `null` is not one of the five usual runtime types
  * (string/number/boolean/object/array) but is a value JSON.parse can still
  * produce for a param; `src/core/json-schema.ts`'s subset validator accepts
  * `"null"` as a `type`, so it is handled rather than mis-typed.
@@ -1098,9 +1085,9 @@ function jsonSchemaTypeOf(value: unknown): string {
 /**
  * Render `--params` as typed `inputs:` declarations, one per key, each
  * carrying a `default:` equal to the authored value and a `type:` inferred
- * from its own JSON runtime shape (row B-20). Never emitted as `with:` —
- * task source v4 accepts `with:` only on `uses: akm/command` (§3.2.6's
- * `parseTarget`/`checkTopLevelKeys`), and a workflow target's declared
+ * from its own JSON runtime shape. Never emitted as `with:` —
+ * task source v4 accepts `with:` only on `uses: akm/command`
+ * (`parseTarget`/`checkTopLevelKeys`), and a workflow target's declared
  * inputs are what `load-task.ts`'s existing v4 delivery override binds into
  * the child run's params.
  */

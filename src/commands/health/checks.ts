@@ -1488,21 +1488,23 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     },
   },
   {
-    name: "auto-accept-validation",
+    name: "triage-promote-validation",
     channel: "advisory",
     run: (ctx) => {
+      // `ctx.autoAccept` keeps its name: it is the persisted improve-metrics
+      // field fed by `triage.promoted` and `gateAutoAcceptFailedCount`.
       const aa = ctx.autoAccept;
       return {
-        name: "auto-accept-validation",
+        name: "triage-promote-validation",
         kind: "heuristic",
         status: aa.validationFailed > 0 ? "warn" : "pass",
         confidence: aa.promoted + aa.validationFailed > 0 ? "high" : "low",
         message:
           aa.validationFailed > 0
-            ? `${aa.validationFailed} auto-accept validation attempt(s) failed after passing the confidence threshold (truncated description, invalid frontmatter, etc.) — the affected proposals remain pending for manual review.`
+            ? `${aa.validationFailed} proposal(s) the triage drain promoted then failed validation (truncated description, invalid frontmatter, etc.) — they remain pending for manual review.`
             : aa.promoted > 0
-              ? `Auto-accept healthy: ${aa.promoted} proposal(s) promoted, 0 validation failures.`
-              : "Auto-accept gate did not run (disabled or no proposals above threshold).",
+              ? `Triage promote healthy: ${aa.promoted} proposal(s) promoted, 0 validation failures.`
+              : "The triage drain promoted no proposals in the window.",
         evidence: { promoted: aa.promoted, validationFailed: aa.validationFailed },
       };
     },

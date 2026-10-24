@@ -10,9 +10,9 @@
  * with no staging directory and no atomic rename. A process killed anywhere in
  * that loop left the mirror empty or holding an arbitrary SUBSET of the new
  * pages, with the previous snapshot already destroyed — and because the
- * freshness marker is only rewritten on success, the marker still looked
- * recent, so the next non-forced `sync()` could serve the wreckage for up to
- * the 12-hour refresh interval instead of rebuilding it.
+ * freshness marker is only rewritten on success, the marker still existed, so
+ * the next non-forced `sync()` could serve the wreckage instead of rebuilding
+ * it.
  *
  * `scrapeWebsiteToStash` / `writeSnapshotToStash` now build into a sibling
  * staging directory and swap it in with renames. These tests interrupt a
@@ -132,15 +132,18 @@ test("an interrupted refresh keeps the previous snapshot whole and is recovered 
   // Kill the refresh in the middle of its page-write loop.
   const events: WebsiteSnapshotWriteEvent[] = [];
   const stashDuringWrite: string[][] = [];
-  await withSeam(
-    _setWebsiteSnapshotWriteHookForTests,
-    (event: WebsiteSnapshotWriteEvent) => {
-      events.push(event);
-      stashDuringWrite.push(snapshotFiles(cachePaths.stashDir));
-      if (event.index === 2) throw new Error("simulated kill -9 mid-refresh");
-    },
-    () => ensureWebsiteMirror(entry, { allowPrivateHosts: true, requireStashDir: true, force: true }),
-  );
+  // The forced refresh reports its failure: no window masks it as a success.
+  await expect(
+    withSeam(
+      _setWebsiteSnapshotWriteHookForTests,
+      (event: WebsiteSnapshotWriteEvent) => {
+        events.push(event);
+        stashDuringWrite.push(snapshotFiles(cachePaths.stashDir));
+        if (event.index === 2) throw new Error("simulated kill -9 mid-refresh");
+      },
+      () => ensureWebsiteMirror(entry, { allowPrivateHosts: true, requireStashDir: true, force: true }),
+    ),
+  ).rejects.toThrow("simulated kill -9 mid-refresh");
 
   // The interruption really landed MID-loop: at least one page of generation 2
   // had already been written to disk when the process "died", and there was
@@ -183,7 +186,7 @@ test("an interrupted refresh keeps the previous snapshot whole and is recovered 
 
 test("a plain (non-forced) run after an interruption never serves a partial mirror", async () => {
   // The freshness marker is only rewritten on success, so after an interrupted
-  // FORCED refresh the marker still looks recent and a plain `sync()` skips the
+  // FORCED refresh the marker still exists and a plain `sync()` skips the
   // refresh entirely. With the in-place write that meant serving whatever
   // subset of pages happened to have landed; with staging the skipped refresh
   // serves the previous COMPLETE snapshot instead.
@@ -196,13 +199,15 @@ test("a plain (non-forced) run after an interruption never serves a partial mirr
   expect(generationOneFiles.length).toBe(4);
 
   site.setPages(GENERATION_TWO);
-  await withSeam(
-    _setWebsiteSnapshotWriteHookForTests,
-    (event: WebsiteSnapshotWriteEvent) => {
-      if (event.index === 1) throw new Error("simulated kill -9 mid-refresh");
-    },
-    () => ensureWebsiteMirror(entry, { allowPrivateHosts: true, requireStashDir: true, force: true }),
-  );
+  await expect(
+    withSeam(
+      _setWebsiteSnapshotWriteHookForTests,
+      (event: WebsiteSnapshotWriteEvent) => {
+        if (event.index === 1) throw new Error("simulated kill -9 mid-refresh");
+      },
+      () => ensureWebsiteMirror(entry, { allowPrivateHosts: true, requireStashDir: true, force: true }),
+    ),
+  ).rejects.toThrow("simulated kill -9 mid-refresh");
 
   await ensureWebsiteMirror(entry, { allowPrivateHosts: true, requireStashDir: true });
 

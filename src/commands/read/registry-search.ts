@@ -12,7 +12,7 @@ import {
 } from "../../core/registry-url";
 import { warn } from "../../core/warn";
 import { resolveRegistryProviderFactory } from "../../registry/factory";
-import type { RegistryAssetSearchHit, RegistrySearchHit, RegistrySearchResponse } from "../../registry/types";
+import type { RegistrySearchHit, RegistrySearchResponse } from "../../registry/types";
 
 // ── Eagerly import providers to trigger self-registration ───────────────────
 
@@ -24,8 +24,6 @@ export interface RegistrySearchOptions {
   limit?: number;
   /** Override registries. Accepts an array of RegistryConfigEntry objects. */
   registries?: RegistryConfigEntry[];
-  /** When true, also search asset-level metadata within stashes. */
-  includeAssets?: boolean;
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -51,7 +49,7 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
     entries.map((entry) => {
       const provider = createProvider(entry, warnings);
       if (!provider) return Promise.resolve(null);
-      return provider.search({ query: trimmed, limit, includeAssets: options?.includeAssets });
+      return provider.search({ query: trimmed, limit });
     }),
   );
 
@@ -60,7 +58,6 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
   // scores from different providers (e.g. static-index can exceed 1.85 while
   // skills-sh uses installs-relative scoring) are comparable in the merged list.
   const allHits: RegistrySearchHit[] = [];
-  const allAssetHits: RegistryAssetSearchHit[] = [];
 
   for (let i = 0; i < results.length; i++) {
     const result = results[i]!;
@@ -88,21 +85,6 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
       allHits.push(hit);
     }
 
-    if (value.assetHits) {
-      const validAssetHits: RegistryAssetSearchHit[] = [];
-      for (const hit of value.assetHits) {
-        if (isCompleteAssetHit(hit)) {
-          validAssetHits.push(hit);
-        } else {
-          dropped++;
-        }
-      }
-      normalizeScores(validAssetHits);
-      for (const hit of validAssetHits) {
-        allAssetHits.push(hit);
-      }
-    }
-
     if (dropped > 0) {
       warnings.push(`Registry ${registryLabel} returned ${dropped} incomplete hit(s); dropped from response.`);
     }
@@ -113,15 +95,7 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
   allHits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const limitedHits = allHits.slice(0, limit);
 
-  allAssetHits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-  const limitedAssetHits = allAssetHits.slice(0, limit);
-
-  return {
-    query: trimmed,
-    hits: limitedHits,
-    warnings,
-    assetHits: limitedAssetHits.length > 0 ? limitedAssetHits : undefined,
-  };
+  return { query: trimmed, hits: limitedHits, warnings };
 }
 
 // ── Registry resolution ─────────────────────────────────────────────────────
@@ -249,26 +223,4 @@ function isCompleteHit(hit: RegistrySearchHit | undefined | null): hit is Regist
     typeof hit.installRef === "string" &&
     hit.installRef.length > 0
   );
-}
-
-function isCompleteAssetHit(hit: RegistryAssetSearchHit | undefined | null): hit is RegistryAssetSearchHit {
-  if (!hit || typeof hit !== "object") return false;
-  if (
-    hit.type !== "registry-asset" ||
-    typeof hit.assetType !== "string" ||
-    hit.assetType.length === 0 ||
-    typeof hit.assetName !== "string" ||
-    hit.assetName.length === 0 ||
-    typeof hit.action !== "string"
-  ) {
-    return false;
-  }
-  // `stash` is required by the consumer (output shaping + asset-action display);
-  // rejecting incomplete stashes here keeps malformed objects out of the JSON
-  // output. Flagged in PR #168 review (#9).
-  const stash = hit.stash as { id?: unknown; name?: unknown } | undefined;
-  if (!stash || typeof stash !== "object") return false;
-  if (typeof stash.id !== "string" || stash.id.length === 0) return false;
-  if (typeof stash.name !== "string" || stash.name.length === 0) return false;
-  return true;
 }

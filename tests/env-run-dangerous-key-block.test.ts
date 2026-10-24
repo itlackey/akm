@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { runCliCapture } from "./_helpers/cli";
+import { seedLockEntries } from "./_helpers/lockfile";
 import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv, writeSandboxConfig } from "./_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
@@ -23,8 +24,14 @@ afterAll(() => {
   disposers.length = 0;
 });
 
+/** `vendor` as a git bundle installed from elsewhere: config descriptor plus the lock entry that locates its files. */
+function configureInstalledVendor(sourceDir: string): void {
+  writeSandboxConfig({ bundles: { vendor: { git: "https://example.com/vendor.git" } } });
+  seedLockEntries([{ id: "vendor", source: "git", ref: "git+https://example.com/vendor.git", localRoot: sourceDir }]);
+}
+
 describe("env run dangerous-key blocking", () => {
-  test("blocks GIT_CONFIG_* keys for non-primary named sources", async () => {
+  test("blocks GIT_CONFIG_* keys for an installed (git) bundle", async () => {
     const sourceDir = makeTempStash();
     fs.mkdirSync(path.join(sourceDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(sourceDir, "env", "danger.env"), "GIT_CONFIG_GLOBAL=/tmp/evil.gitconfig\n", "utf8");
@@ -39,9 +46,7 @@ describe("env run dangerous-key blocking", () => {
         XDG_STATE_HOME: makeTempDir("akm-env-run-state-"),
       },
       async () => {
-        writeSandboxConfig({
-          bundles: { vendor: { path: sourceDir } },
-        });
+        configureInstalledVendor(sourceDir);
         return runCliCapture(["env", "run", "vendor//env/danger", "--", "true"]);
       },
     );
@@ -70,9 +75,7 @@ describe("env run dangerous-key blocking", () => {
         XDG_STATE_HOME: makeTempDir("akm-env-run-state-"),
       },
       async () => {
-        writeSandboxConfig({
-          bundles: { vendor: { path: sourceDir } },
-        });
+        configureInstalledVendor(sourceDir);
         return runCliCapture(["env", "run", "vendor//env/danger", "--", "true"]);
       },
     );
@@ -102,9 +105,7 @@ describe("env run dangerous-key blocking", () => {
         XDG_STATE_HOME: makeTempDir("akm-env-run-state-"),
       },
       async () => {
-        writeSandboxConfig({
-          bundles: { vendor: { path: sourceDir } },
-        });
+        configureInstalledVendor(sourceDir);
         return runCliCapture([
           "env",
           "run",
@@ -122,5 +123,65 @@ describe("env run dangerous-key blocking", () => {
     expect(result.stderr).toContain("GIT_SSH_COMMAND");
     expect(result.stderr).toContain("--allow-dangerous-env-keys");
     expect(fs.readFileSync(markerFile, "utf8")).toBe("/tmp/evil-ssh");
+  });
+
+  test("warns and injects an RCE-class key from the working bundle (defaultBundle) without a flag", async () => {
+    const workingDir = makeTempStash();
+    fs.mkdirSync(path.join(workingDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(workingDir, "env", "danger.env"), "GIT_SSH_COMMAND=/tmp/own-ssh\n", "utf8");
+    const markerFile = path.join(makeTempDir("akm-env-run-marker-"), "git-ssh-command.txt");
+
+    const result = await withEnv(
+      {
+        AKM_BUNDLE_DIR: undefined,
+        HOME: makeTempDir("akm-env-run-home-"),
+        XDG_CONFIG_HOME: makeTempDir("akm-env-run-config-"),
+        XDG_CACHE_HOME: makeTempDir("akm-env-run-cache-"),
+        XDG_DATA_HOME: makeTempDir("akm-env-run-data-"),
+        XDG_STATE_HOME: makeTempDir("akm-env-run-state-"),
+      },
+      async () => {
+        writeSandboxConfig({ defaultBundle: "main", bundles: { main: { path: workingDir } } });
+        return runCliCapture([
+          "env",
+          "run",
+          "env/danger",
+          "--",
+          process.execPath,
+          "-e",
+          `require("fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.GIT_SSH_COMMAND || "")`,
+        ]);
+      },
+    );
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain("GIT_SSH_COMMAND");
+    expect(result.stderr).toContain("first-party stash");
+    expect(fs.readFileSync(markerFile, "utf8")).toBe("/tmp/own-ssh");
+  });
+
+  test("warns and injects an RCE-class key from a plain local filesystem bundle", async () => {
+    const sourceDir = makeTempStash();
+    fs.mkdirSync(path.join(sourceDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(sourceDir, "env", "danger.env"), "GIT_SSH_COMMAND=/tmp/local-ssh\n", "utf8");
+
+    const result = await withEnv(
+      {
+        AKM_BUNDLE_DIR: makeTempStash(),
+        HOME: makeTempDir("akm-env-run-home-"),
+        XDG_CONFIG_HOME: makeTempDir("akm-env-run-config-"),
+        XDG_CACHE_HOME: makeTempDir("akm-env-run-cache-"),
+        XDG_DATA_HOME: makeTempDir("akm-env-run-data-"),
+        XDG_STATE_HOME: makeTempDir("akm-env-run-state-"),
+      },
+      async () => {
+        writeSandboxConfig({ bundles: { local: { path: sourceDir } } });
+        return runCliCapture(["env", "run", "local//env/danger", "--", "true"]);
+      },
+    );
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain("GIT_SSH_COMMAND");
+    expect(result.stderr).toContain("first-party stash");
   });
 });

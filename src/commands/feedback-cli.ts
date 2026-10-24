@@ -170,13 +170,14 @@ function buildLessonStrengthUpdate(rawBytes: Buffer, feedbackRef: string): { str
 
 /**
  * Result of {@link recordFeedbackUsage}: the raw utility-policy result (when
- * the update ran) plus whether the ranking update was actually applied, and
+ * the update ran) plus whether the utility score was actually written, and
  * why not when it wasn't. R-034: the caller could not previously distinguish
  * "no update needed" from "update was skipped" — this makes that explicit so
  * `akm feedback`'s response envelope can report it instead of staying silent.
  */
 interface RecordFeedbackUsageResult {
   utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
+  /** True when the utility score was written. Search order does not read it. */
   rankingUpdateApplied: boolean;
   /** Set whenever `rankingUpdateApplied` is false; explains why. */
   rankingUpdateSkippedReason: string | undefined;
@@ -188,8 +189,8 @@ interface RecordFeedbackUsageResult {
  * state.db; entries + utility_scores stay in `indexDb`. BOTH positive and
  * negative signals apply the EMA utility update unconditionally and
  * immediately when the source is user-attributed — no `akm index` run is
- * required for either signal to affect search ranking. Uses the bounded-step
- * EMA policy (F-5 / #386, arXiv:2601.03192).
+ * required. The score orders `akm improve`'s work; search ranking does not read
+ * it. Uses the bounded-step EMA policy (F-5 / #386, arXiv:2601.03192).
  *
  * The update is intentionally SKIPPED for non-`user` event sources (`improve`,
  * `task`, `audit`, `unknown`) — an anti-self-reinforcement guard that stops an
@@ -230,7 +231,7 @@ function recordFeedbackUsage(
     }
     if (eventSource !== "user") {
       rankingUpdateSkippedReason =
-        `feedback source is "${eventSource}", not "user" — ranking updates only apply to user-attributed ` +
+        `feedback source is "${eventSource}", not "user" — the utility score is only updated for user-attributed ` +
         "feedback (anti-self-reinforcement guard; set AKM_EVENT_SOURCE=user to record as user demand).";
       return;
     }
@@ -510,11 +511,11 @@ export const feedbackCommand = defineJsonCommand({
       "--superseded-by <ref> (the asset that replaces it) or --outdated (it describes a past\n" +
       "state and nothing replaces it), with --reason and --source: the same proposal sets its\n" +
       "beliefState and, for --superseded-by, adds the ref to supersededBy. `--positive` records\n" +
-      "that an asset helped (it raises its ranking) and does not trigger a rewrite.\n\n" +
-      "Both signals adjust the asset's usefulness score right away, in the same\n" +
-      "process: positive feedback raises it, negative lowers it, and recent\n" +
-      "feedback counts for more than old feedback. No reindex is needed — the new\n" +
-      "score affects ranking starting with the very next `akm search`.",
+      "that an asset helped and does not trigger a rewrite.\n\n" +
+      "Feedback is recorded against the asset and moves its utility score right away,\n" +
+      "in the same process: positive feedback raises it, negative lowers it, and recent\n" +
+      "feedback counts for more than old feedback. No reindex is needed. `akm improve`\n" +
+      "uses the score to choose what to work on; it does not change search order.",
   },
   args: {
     // Optional in citty so run() is invoked even when omitted; we re-validate
@@ -523,13 +524,13 @@ export const feedbackCommand = defineJsonCommand({
     ref: { type: "positional", description: "Asset ref ([bundle//]conceptId, e.g. lessons/deploy)", required: false },
     positive: {
       type: "boolean",
-      description: "Record that the asset helped (raises its ranking immediately; does not trigger a rewrite)",
+      description: "Record that the asset helped (raises its utility score for improve; does not trigger a rewrite)",
       default: false,
     },
     negative: {
       type: "boolean",
       description:
-        "Flag the asset: lowers its ranking immediately (no reindex needed), and the next improve run may repair its frontmatter from --reason. Attach --replace/--with/--source to correct its text, or --superseded-by/--outdated to mark its history.",
+        "Flag the asset: lowers its utility score for improve (no reindex needed), and the next improve run may repair its frontmatter from --reason. Attach --replace/--with/--source to correct its text, or --superseded-by/--outdated to mark its history.",
       default: false,
     },
     reason: {
@@ -724,8 +725,8 @@ export const feedbackCommand = defineJsonCommand({
       }
       // Persist the feedback signal into usage_events. Both positive and
       // negative signals apply the EMA utility update immediately — no
-      // `akm index` run is required for either signal to affect ranking in
-      // search results (see recordFeedbackUsage / applyFeedbackToUtilityScore).
+      // `akm index` run is required (see recordFeedbackUsage /
+      // applyFeedbackToUtilityScore). Search order does not read the score.
       // WI-8.5b: the `feedback` / `improve_review_needed` events key on the
       // resolved entry's fully-qualified item_ref — the SAME durable key the
       // usage_events row carries and the SAME spelling the signal-delta
@@ -871,6 +872,8 @@ export const feedbackCommand = defineJsonCommand({
       signal,
       reason: reason?.trim() ?? null,
       tags: validatedTags,
+      // The JSON key is stable; `applied: true` means the utility score was
+      // written. It never moves search order (improve reads the score).
       rankingUpdate: rankingUpdateApplied
         ? { applied: true }
         : { applied: false, reason: rankingUpdateSkippedReason ?? "unknown" },

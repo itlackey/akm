@@ -18,7 +18,7 @@ import { ConfigError } from "../../core/errors";
 import { getUnresolvedSourcesDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import { resolveGitContentRoot, resolveWritable } from "../../core/write-source";
-import { lockContentRootFor } from "../../integrations/lockfile";
+import { lockContentRootFor, readLockfile } from "../../integrations/lockfile";
 import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 import { ensureWebsiteMirror } from "../../sources/snapshot-fetchers/website-ingest";
 
@@ -276,6 +276,22 @@ export function findSourceForPath(filePath: string, sources: SearchSource[]): Se
   return best;
 }
 
+// ── Trust ───────────────────────────────────────────────────────────────────
+
+/**
+ * Whether a bundle was installed from elsewhere, so its env and secret files
+ * are not the operator's own: any git, website, or npm bundle, or a bundle
+ * whose lock entry records a non-local install. The working bundle and a plain
+ * local filesystem bundle are first-party. A search source's `registryId` is
+ * its bundle key (the lock entry id), not a mark of a registry install.
+ */
+export function isThirdPartySource(source: SearchSource): boolean {
+  if (source.isDefault) return false;
+  if (source.type !== undefined && source.type !== "filesystem") return true;
+  if (!source.registryId) return false;
+  return readLockfile().some((lock) => lock.id === source.registryId && lock.source !== "local");
+}
+
 // ── Editability ─────────────────────────────────────────────────────────────
 
 /**
@@ -322,13 +338,17 @@ function isSuspiciousStashRoot(dir: string): boolean {
  * `resolveSourceEntries()` so the content directories pass the
  * `isValidDirectory()` check.
  *
+ * Sources are never refreshed here: `sync()` is called without `force`, so a
+ * source is fetched only when it has never been materialized on this host.
+ * `akm bundle update` is what refreshes one.
+ *
  * `materialize` (default `true`) is the query-time safety valve (spec §14.3 /
  * D11): the sanctioned materialization callers (`akm index`, source
  * add/update/sync, improve's blocking preflight) pass it truthy and clone/pull/
  * fetch as needed. A READ command's inline auto-index passes `materialize:
  * false` — network is FORBIDDEN at query time, so instead of `sync()` we only
  * check whether each cache-backed source is already materialized: a present
- * cache is served as-is (last-known-good; no TTL pull either), while an absent
+ * cache is served as-is (last-known-good), while an absent
  * or partially-staged cache makes that source UNAVAILABLE for the read and is
  * skipped with one warning naming the remedy. The rest of the command still
  * resolves.
@@ -336,7 +356,6 @@ function isSuspiciousStashRoot(dir: string): boolean {
 export async function ensureSourceCaches(
   config?: AkmConfig,
   options?: {
-    force?: boolean;
     materialize?: boolean;
     secrets?: import("../../sources/provider").SecretResolver;
     /**
@@ -350,7 +369,6 @@ export async function ensureSourceCaches(
   },
 ): Promise<void> {
   const cfg = config ?? loadConfig();
-  const force = options?.force === true;
   const materialize = options?.materialize !== false;
   const onProgress = options?.onProgress ?? (() => {});
   // Polymorphic refresh: walk every enabled source through its registered
@@ -383,6 +401,18 @@ export async function ensureSourceCaches(
       // Managed installs are refreshed only by add/update. Hydrating the URL-
       // derived provider cache here would create a second checkout while reads
       // and writes continue using the lock root.
+      continue;
+    }
+    if (entry.type === "npm") {
+      // A configured npm bundle with no lock entry has no walkable path (its
+      // provider path is the package spec), and nothing marks it materialized,
+      // so syncing it here would hit the npm registry on every index run and
+      // still leave it unindexed. `akm bundle update` installs it and writes
+      // the lock entry.
+      warn(
+        `Warning: npm source "${entry.name}" is not installed; skipping it. ` +
+          `Run \`akm bundle update ${entry.name}\` to install it.`,
+      );
       continue;
     }
     const factory = resolveSourceProviderFactory(entry.type);
@@ -422,7 +452,7 @@ export async function ensureSourceCaches(
       // `toSync` only ever holds providers whose `.sync` passed the check
       // above; the optional-chain here is just to satisfy the type (the
       // narrowing does not survive the array round-trip).
-      await provider.sync?.({ force, secrets: options?.secrets, ensureWebsiteMirror });
+      await provider.sync?.({ secrets: options?.secrets, ensureWebsiteMirror });
     } catch (err) {
       warn(
         `Warning: failed to refresh ${provider.kind} source "${provider.name}": ${err instanceof Error ? err.message : String(err)}`,

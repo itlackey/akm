@@ -17,12 +17,6 @@ import { assertNoIgnoredPathOverwrite, cloneRepo, inspectGitUpstream, runGit } f
 import type { SourceLockData, SyncOptions } from "./install-types";
 import { sanitizeString } from "./provider-utils";
 
-/** Cache TTL before refreshing the mirrored repo (12 hours). */
-const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
-
-/** Maximum stale age allowed when refresh fails (7 days). */
-const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
-
 export interface ParsedRepoUrl {
   cloneUrl: string;
   ref: string | null;
@@ -106,10 +100,7 @@ export async function ensureGitMirror(
 
   await withFreshnessCache({
     markerPath: cachePaths.indexPath,
-    ttlMs: CACHE_TTL_MS,
-    staleMs: CACHE_STALE_MS,
     force: options?.force === true,
-    allowStaleOnRefreshFailure: !(options?.force === true && writable),
     isUsable: () => !requireRepoDir || hasExtractedRepo(cachePaths.repoDir),
     refresh: async () => {
       fs.mkdirSync(cachePaths.rootDir, { recursive: true });
@@ -127,8 +118,8 @@ export async function ensureGitMirror(
 
 /**
  * Sync mode for a long-lived configured git stash. Mirrors the repo into the
- * shared registry-index cache (12h TTL) and exposes the working tree as the
- * stash content directory.
+ * shared registry-index cache and exposes the working tree as the stash
+ * content directory. A mirror that already exists is reused unless `force`.
  */
 export async function syncMirroredRepo(config: SourceConfigEntry, options?: SyncOptions): Promise<SourceLockData> {
   if (!config.url) {
@@ -194,10 +185,8 @@ function hasExtractedRepo(repoDir: string): boolean {
 
   try {
     if (!fs.statSync(repoDir).isDirectory()) return false;
-    // WI-3.1: the "any type dir present" test is now sourced from the `akm`
-    // adapter's directoryList() — behavior-identical to the placement
-    // stash-subdir names, with `stashDirNames()` kept live as the fallback. The
-    // content/ subdir check above is preserved verbatim.
+    // The "any type dir present" test is sourced from the `akm`
+    // adapter's directoryList(), with `stashDirNames()` as the fallback.
     const ownedDirs =
       akmAdapter.directoryList?.({ id: "akm", adapter: "akm", root: repoDir, writable: false }) ?? stashDirNames();
     return ownedDirs.some((dirName) => fs.existsSync(path.join(repoDir, dirName)));

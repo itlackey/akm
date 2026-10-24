@@ -183,12 +183,12 @@ Rework it.
 `;
 
 describe("compiled and frozen plan — full-vocabulary golden", () => {
-  test("the canonical workflow-format example parses and compiles", () => {
-    const specPath = path.resolve(import.meta.dir, "../../docs/architecture/specs/workflow-format-unification.md");
-    const spec = fs.readFileSync(specPath, "utf8");
-    const example = spec.match(/### 2\.2 The format\n\n````markdown\n([\s\S]*?)\n````/);
-    if (!example?.[1]) throw new Error("canonical workflow example not found");
-    expect(compileOk(example[1], "github-issues", specPath).steps).toHaveLength(6);
+  test("the richer workflow example in the schema reference parses and compiles", () => {
+    const docPath = path.resolve(import.meta.dir, "../../docs/reference/workflow-schema.md");
+    const doc = fs.readFileSync(docPath, "utf8");
+    const example = doc.match(/## Richer example\n[\s\S]*?\n```markdown\n([\s\S]*?)\n```\n/);
+    if (!example?.[1]) throw new Error("richer workflow example not found");
+    expect(compileOk(example[1], "review-changes", docPath).steps).toHaveLength(7);
   });
 
   test("defaults, unit overrides, map, route, and schemas land where freeze reads them", () => {
@@ -302,17 +302,12 @@ Do the thing.
 // Reference validation (map.over / route.input / inputs[])
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// SEMANTIC CHANGE (workflow-format-unification, spec §2.3): the closed
-// reference grammar now lives in exactly three frontmatter positions
+// The closed reference grammar lives in exactly three frontmatter positions
 // (`map.over`, `route.input`, `inputs[]`) — prose is NEVER scanned for it.
-// The pre-unification tests that exercised references INSIDE instructions
-// (`${{ steps.b.output.x }}` in prose) are ported onto `inputs:` — the new
-// declared-input surface that replaced prose splicing as how a step names an
-// upstream artifact — since that is the closest surviving equivalent
-// (a step-level, non-map/route reference to a prior step's output). Tests
-// about `item` / `item_index` in prose are DELETED outright below; there is
-// no equivalent — those roots no longer exist in the language at all (they
-// are not merely restricted to map units, per spec §2.3).
+// `inputs:` is the declared-input surface by which a step names an upstream
+// artifact (a step-level, non-map/route reference to a prior step's output).
+// `item` / `item_index` do not exist in the language at all (they are not
+// merely restricted to map units).
 
 describe("checkWorkflowPlan — reference validation", () => {
   test("steps.<id> must reference an EARLIER step (forward reference rejected)", () => {
@@ -369,13 +364,10 @@ Use it.
     expect(errors[0]!.message).toContain(`"ghost" is not a step in this workflow`);
   });
 
-  // DELETED (workflow-format-unification, spec §2.3): the pre-unification
-  // "params.<name> outside the declared block compiles — presence is a
-  // run-scope concern" case was tested against an INSTRUCTIONS reference.
-  // Prose is never scanned for references any more, so that specific surface
-  // is gone; the identical run-scope-concern property for the two whole-value
-  // positions that still carry the grammar (`map.over`/`route.input`) is
-  // covered by the next test.
+  // Presence of `params.<name>` outside the declared block is a run-scope
+  // concern, not a compile concern. Prose is never scanned for references, so
+  // that property is pinned for the two whole-value positions
+  // (`map.over`/`route.input`) by the next test.
 
   test("undeclared params.<name> in map.over and route.input compiles too (run-scope concern)", () => {
     const plan = compileOk(`---
@@ -422,8 +414,8 @@ Review the assigned item.
   });
 
   test("with NO params block, any params.<name> reference is accepted (run-scope concern)", () => {
-    // Documented: a workflow that declares no params block keeps the prior
-    // behavior — presence is validated at run/start, not compile.
+    // A workflow that declares no params block: presence is validated at
+    // run/start, not compile.
     const plan = compileOk(`---
 type: workflow
 steps:
@@ -445,14 +437,13 @@ d
     expect(plan.params).toBeUndefined();
   });
 
-  // DELETED (workflow-format-unification, spec §2.3): `item` / `item_index`
-  // are deleted from the reference grammar entirely — not merely restricted
-  // to map units. There is no "valid inside a map unit, invalid outside" case
-  // any more: neither position exists anywhere in the language, and prose is
-  // never scanned for it regardless of step kind. A map unit's item/index
-  // reach it as attached context (`buildUnitPrompt` in
+  // `item` / `item_index` are not part of the reference grammar at all — not
+  // merely restricted to map units. There is no "valid inside a map unit, invalid
+  // outside" case: neither position exists anywhere in the language, and prose is
+  // never scanned for it regardless of step kind. A map unit's item/index reach
+  // it as attached context (`buildUnitPrompt` in
   // `src/workflows/exec/step-work.ts`), never as a resolved reference — see
-  // `native-executor.test.ts` and `step-work.test.ts` for the new contract.
+  // `tests/integration/workflows/native-executor.test.ts`.
 
   test("map.over referencing an earlier step's output is valid", () => {
     const plan = compileOk(`---
@@ -476,10 +467,9 @@ Review the assigned item.
   });
 
   test("errors accumulate across steps instead of stopping at the first", () => {
-    // Ported onto two independently-invalid whole-value references (an
-    // unknown-step `inputs:` and a forward-referencing `map.over`) since
-    // instructions can no longer carry a reference at all — see the module
-    // doc above.
+    // Two independently-invalid whole-value references (an unknown-step `inputs:`
+    // and a forward-referencing `map.over`); instructions cannot carry a reference
+    // at all.
     const errors = compileErrors(`---
 type: workflow
 steps:
@@ -512,12 +502,11 @@ z
 // Whole-value reference enforcement (map.over, route.input)
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// SEMANTIC CHANGE: with the `${{ … }}` delimiter gone, "surrounded by literal
-// text" is expressed as "the string isn't a bare reference at all" — the
-// parser's closed two-root grammar (`program/expressions.ts`) rejects it as
-// an unknown root rather than the old "single whole-value expression"
-// wording. The underlying property (only a single whole-value reference is
-// legal here, never prose-with-an-expression-inside) is unchanged.
+// There is no `${{ … }}` delimiter, so "surrounded by literal text" is
+// expressed as "the string isn't a bare reference at all" — the parser's closed
+// two-root grammar (`program/expressions.ts`) rejects it as an unknown root. The
+// property under test: only a single whole-value reference is legal here, never
+// prose-with-an-expression-inside.
 
 describe("checkWorkflowPlan — whole-value references", () => {
   test("map.over with surrounding literal text is rejected", () => {
@@ -540,7 +529,7 @@ Do the assigned item.
     expect(errors[0]!.message).toContain("Unknown root");
   });
 
-  test("map.over as a bare name (no reference grammar) is rejected — P1 ambient lookup is gone", () => {
+  test("map.over as a bare name (no reference grammar) is rejected — ambient lookup is gone", () => {
     const errors = errorsFrom(`---
 type: workflow
 steps:
@@ -614,13 +603,6 @@ Done.
 // Plan hash
 // ─────────────────────────────────────────────────────────────────────────────
 
-// DELETED (workflow-format-unification): the pre-unification "both frontends
-// hash through the same function (markdown plan hashes too)" test proved two
-// DIFFERENT frontends (classic linear markdown + YAML program) shared one
-// hashing path. There is only one frontend now, so that cross-frontend proof
-// no longer has a second frontend to compare against; the determinism +
-// key-order-independence properties it also covered are pinned by the two
-// tests above and by `freezeWorkflow`'s exclusive use in every other suite.
 describe("computePlanHash", () => {
   const executableWf = FULL_WF.replace("default-agent", "test-agent").replace("engine: reviewer", "engine: test-agent");
 

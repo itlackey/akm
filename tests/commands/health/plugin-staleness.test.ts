@@ -194,6 +194,53 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     expect(adv?.evidence?.stale).toBe(false);
   });
 
+  test("probe: false never asks the remote and reports unknown, not up to date", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-no-probe-");
+    installPlugin(pluginsRoot, { version: "0.9.1" });
+    makeMarketplaceDir(pluginsRoot);
+
+    let calls = 0;
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.9.2",
+      probe: false,
+      listRemoteTags: () => {
+        calls += 1;
+        return ["9.9.9"];
+      },
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(calls).toBe(0);
+    expect(adv?.status).toBe("unknown");
+    expect(adv?.message).toContain("not probed");
+    expect(adv?.evidence?.probed).toBe(false);
+    expect(adv?.evidence?.availableVersion).toBeNull();
+    expect(adv?.evidence?.stale).toBe(false);
+  });
+
+  test("probe: false still runs the local range check and warns on a mismatch", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-no-probe-range-");
+    installPlugin(pluginsRoot, { version: "0.9.1", versionRange: "0.9.1" });
+    makeMarketplaceDir(pluginsRoot);
+
+    let calls = 0;
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.9.2",
+      probe: false,
+      listRemoteTags: () => {
+        calls += 1;
+        return undefined;
+      },
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(calls).toBe(0);
+    expect(adv?.status).toBe("warn");
+    expect(adv?.evidence?.admitted).toBe(false);
+  });
+
   test("unreadable/malformed plugin.json is skipped, not a crash", () => {
     const pluginsRoot = makeTempDir("akm-plugin-badmanifest-");
     const pluginDir = path.join(pluginsRoot, "cache", "akm-plugins", "akm", "0.9.1", ".claude-plugin");

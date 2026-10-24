@@ -4,17 +4,11 @@
 
 // Output text formatters for `akm registry *` commands.
 
-import {
-  formatRegistryAddPlain,
-  formatRegistryListPlain,
-  formatRegistryRemovePlain,
-  formatRegistrySearchPlain,
-} from "./helpers";
+import { formatRegistryAddPlain, formatRegistryListPlain, formatRegistryRemovePlain } from "./helpers";
 import type { TextFormatterEntry } from "./registry";
 
 export const registryCommandFormatters: TextFormatterEntry[] = [
   { command: "registry-list", handler: (r) => formatRegistryListPlain(r) },
   { command: "registry-add", handler: (r) => formatRegistryAddPlain(r) },
   { command: "registry-remove", handler: (r) => formatRegistryRemovePlain(r) },
-  { command: "registry-search", handler: (r, detail) => formatRegistrySearchPlain(r, detail) },
 ];

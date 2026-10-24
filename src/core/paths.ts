@@ -401,14 +401,10 @@ export function getStashLocksDir(stashDir: string): string {
   return stashScopedDir(path.join(getStateDir(), "locks"), stashDir);
 }
 
-// ── Scheduled-task runtime directories (logs + history) ──────────────────────
+// ── Scheduled-task runtime directory (logs; run history lives in state.db) ───
 
 export function getTaskLogDir(): string {
   return path.join(getCacheDir(), "tasks", "logs");
-}
-
-export function getTaskHistoryDir(): string {
-  return path.join(getCacheDir(), "tasks", "history");
 }
 
 // ── Default stash directory ──────────────────────────────────────────────────

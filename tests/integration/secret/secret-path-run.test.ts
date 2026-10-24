@@ -36,6 +36,7 @@ import path from "node:path";
 import { setSecret } from "../../../src/commands/env/secret";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../../src/llm/embedder";
 import { runCliCapture } from "../../_helpers/cli";
+import { seedLockEntries } from "../../_helpers/lockfile";
 import { makeStashDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
@@ -88,7 +89,7 @@ async function runCli(
   });
 }
 
-describe("secret path / secret remove — removed in 0.9.0 (R-027 / D-49)", () => {
+describe("secret path / secret remove — removed in 0.9.0", () => {
   test("`akm secret path <ref>` fails loudly: exit 2, citty's Unknown command, no path printed", () => {
     const stashDir = makeStash();
     const fp = path.join(stashDir, "secrets", "demo");
@@ -137,19 +138,72 @@ describe("secret run", () => {
     expect(status).toBe(0);
   });
 
-  test("blocks a dangerous target variable name for a third-party (named, non-primary) stash", async () => {
-    const primaryStashDir = makeStash();
-    const vendorStashDir = makeStash();
-    setSecret(path.join(vendorStashDir, "secrets", "demo"), Buffer.from("v"));
-    writeSandboxConfig({ bundles: { vendor: { path: vendorStashDir } } });
+  test("warns and still runs for a dangerous target variable name on the working bundle (defaultBundle)", async () => {
+    const workingDir = makeStash();
+    setSecret(path.join(workingDir, "secrets", "demo"), Buffer.from("v"));
+    writeSandboxConfig({ defaultBundle: "main", bundles: { main: { path: workingDir } } });
 
-    const { status, stderr } = await runCli(["secret", "run", "vendor//secrets/demo", "LD_PRELOAD", "--", "true"], {
+    const { status, stderr } = await runCli(["secret", "run", "secrets/demo", "LD_PRELOAD", "--", "true"], {
+      AKM_BUNDLE_DIR: undefined,
+    });
+
+    expect(stderr).toContain("LD_PRELOAD");
+    expect(stderr).toContain("first-party stash");
+    expect(status).toBe(0);
+  });
+
+  test("warns and still runs for a dangerous target variable name on a plain local filesystem bundle", async () => {
+    const primaryStashDir = makeStash();
+    const localStashDir = makeStash();
+    setSecret(path.join(localStashDir, "secrets", "demo"), Buffer.from("v"));
+    writeSandboxConfig({ bundles: { local: { path: localStashDir } } });
+
+    const { status, stderr } = await runCli(["secret", "run", "local//secrets/demo", "LD_PRELOAD", "--", "true"], {
       AKM_BUNDLE_DIR: primaryStashDir,
     });
 
-    expect(status).toBe(2);
-    expect(JSON.parse(stderr.trim()).error).toContain("Refusing to inject a secret from a third-party stash");
-    expect(JSON.parse(stderr.trim()).error).toContain("LD_PRELOAD");
+    expect(stderr).toContain("first-party stash");
+    expect(status).toBe(0);
+  });
+
+  describe("a bundle installed from elsewhere (git)", () => {
+    function setupInstalledVendor(): string {
+      const primaryStashDir = makeStash();
+      const vendorStashDir = makeStash();
+      setSecret(path.join(vendorStashDir, "secrets", "demo"), Buffer.from("v"));
+      writeSandboxConfig({ bundles: { vendor: { git: "https://example.com/vendor.git" } } });
+      seedLockEntries([
+        { id: "vendor", source: "git", ref: "git+https://example.com/vendor.git", localRoot: vendorStashDir },
+      ]);
+      return primaryStashDir;
+    }
+
+    test("blocks a dangerous target variable name and names the override", async () => {
+      const primaryStashDir = setupInstalledVendor();
+
+      const { status, stderr } = await runCli(["secret", "run", "vendor//secrets/demo", "LD_PRELOAD", "--", "true"], {
+        AKM_BUNDLE_DIR: primaryStashDir,
+      });
+
+      expect(status).toBe(2);
+      const error = JSON.parse(stderr.trim()).error as string;
+      expect(error).toContain("Refusing to inject a secret from a third-party stash");
+      expect(error).toContain("LD_PRELOAD");
+      expect(error).toContain("--allow-dangerous-env-keys");
+    });
+
+    test("--allow-dangerous-env-keys warns and runs", async () => {
+      const primaryStashDir = setupInstalledVendor();
+
+      const { status, stderr } = await runCli(
+        ["secret", "run", "vendor//secrets/demo", "LD_PRELOAD", "--allow-dangerous-env-keys", "--", "true"],
+        { AKM_BUNDLE_DIR: primaryStashDir },
+      );
+
+      expect(stderr).toContain("LD_PRELOAD");
+      expect(stderr).toContain("--allow-dangerous-env-keys");
+      expect(status).toBe(0);
+    });
   });
 
   test("rejects an invalid env var name", async () => {

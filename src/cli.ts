@@ -144,10 +144,6 @@ function applyEarlyStderrFlags(argv: string[]): void {
   }
 }
 
-// resolveHelpMigrateVersionArg moved to ./cli/invocation (chunk-9 WI-9.9
-// argv-normalization fold — it re-scanned process.argv, same as
-// findCittyTopLevelCommand and parseAllFlagValues below).
-
 /**
  * Stderr-only human-friendly hint after a non-interactive `setup` invocation.
  * Default --format is `json`, so a CI or piped consumer sees only the JSON on
@@ -187,10 +183,9 @@ const setupCommand = defineCommand({
       "Interactive configuration wizard. Configures embeddings/LLM connections (for indexing/enrichment), agent profiles (CLI agent, embedded SDK, or none), sources, and registries. Shows which features are enabled at the end. Use --config <json> or --yes for non-interactive/scripting mode.",
   },
   args: {
-    // R-051/S11: `setup` is a raw `defineCommand` (not `defineJsonCommand`),
-    // so it does not get `GLOBAL_OUTPUT_ARGS` for free — same gap `health`
-    // already had. Three of its four run branches call `output()`; spreading
-    // this in is a `--help` visibility fix, not a behavior change.
+    // `setup` is a raw `defineCommand` (not `defineJsonCommand`), so it does
+    // not get `GLOBAL_OUTPUT_ARGS` for free. Three of its four run branches
+    // call `output()`; spreading this in is a `--help` visibility fix.
     ...GLOBAL_OUTPUT_ARGS,
     config: {
       type: "string",
@@ -300,11 +295,11 @@ const healthCommand = defineCommand({
     description: "Check akm runtime health, artifacts, and improve metrics",
   },
   args: {
-    // R-051: `health` is a raw `defineCommand` (not `defineJsonCommand`), so
-    // it does not get `GLOBAL_OUTPUT_ARGS` for free. `--format`/`--detail`/
-    // `--shape`/`--output` already parsed correctly here (this command has
+    // `health` is a raw `defineCommand` (not `defineJsonCommand`), so it does
+    // not get `GLOBAL_OUTPUT_ARGS` for free. `--format`/`--detail`/
+    // `--shape`/`--output` parse correctly here regardless (this command has
     // no positional for a stray value to fall into), so this is purely a
-    // `--help` visibility / consistency fix, not a behavior change.
+    // `--help` visibility / consistency measure.
     ...GLOBAL_OUTPUT_ARGS,
     since: {
       type: "string",
@@ -339,9 +334,9 @@ const healthCommand = defineCommand({
       type: "boolean",
       default: true,
       description:
-        "Probe default-llm-engine / configured-engines reachability, check for a newer akm release, and check the scheduler's recorded akm binary version (on by default).",
+        "Probe default-llm-engine / configured-engines reachability, check for a newer akm release, look up the newest Claude plugin tag, and check the scheduler's recorded akm binary version (on by default).",
       negativeDescription:
-        "Skip the reachability probes, the update check, and the scheduler-binary version check (for an offline or air-gapped host).",
+        "Skip the reachability probes, the update check, the Claude plugin tag lookup, and the scheduler-binary version check (for an offline or air-gapped host).",
     },
   },
   async run({ args }) {
@@ -411,8 +406,8 @@ const healthCommand = defineCommand({
       }
       output("health", base);
     });
-    // R-067: `emitJsonError` (src/cli/shared.ts) no longer force-exits on the
-    // error path — it sets `process.exitCode` and returns, so a `--report`
+    // `emitJsonError` (src/cli/shared.ts) does not force-exit on the error
+    // path — it sets `process.exitCode` and returns, so a `--report`
     // failure thrown AFTER `resultStatus` was already assigned (e.g. the
     // proposal-queue read above) would otherwise leave `resultStatus`
     // populated here too. Skip the status-derived exit entirely once
@@ -472,14 +467,12 @@ const completionsCommand = defineCommand({
     },
   },
   run({ args }) {
-    // R-052(b): this was a bare `run()` throwing directly, so an unsupported
-    // `--shell` value escaped straight to citty's top-level error handling
-    // instead of the standard JSON envelope — exit 1 with a raw stack trace
-    // instead of the classified exit-2 usage error every other command
-    // produces (`completions` is format-exempt, so it stays a raw
-    // `defineCommand` rather than `defineJsonCommand`, but still needs the
-    // same error-classification wrapper other bare `defineCommand`s in this
-    // file use, e.g. `help migrate` below).
+    // An unsupported `--shell` value must reach the standard JSON envelope as
+    // the classified exit-2 usage error, not escape to citty's top-level error
+    // handling as a raw stack trace (`completions` is format-exempt, so it
+    // stays a raw `defineCommand` rather than `defineJsonCommand`, but still
+    // needs the same error-classification wrapper other bare `defineCommand`s
+    // in this file use, e.g. `help migrate` below).
     return runWithJsonErrors(() => {
       if (args.shell !== "bash") {
         throw new UsageError(`Unsupported shell: ${args.shell}. Only bash is supported.`);
@@ -658,8 +651,7 @@ export const main = defineCommand({
 const MAIN_TOP_LEVEL_ARGS = main.args as ArgsDef;
 
 /**
- * F-5 (spec docs/plans/specs/p2a-task-source-v4.md §6): exported so
- * `akm task run`'s input-flags coverage can pin that an undeclared,
+ * Exported so `akm task run`'s input-flags coverage can pin that an undeclared,
  * per-task dynamic flag (e.g. `--scope all`) does not change this
  * classification — it parses only `args.id` off the declared args and
  * tolerates extra tokens (citty's non-strict `parseArgs`).
@@ -737,7 +729,7 @@ const EXIT_HEALTH_WARN = EXIT_CODES.HEALTH_WARN;
 
 // ── Top-level driver (replaces citty's `runMain`) ───────────────────────────
 //
-// R-032: citty's own `runMain` catches EVERY error escaping `runCommand` —
+// citty's own `runMain` catches EVERY error escaping `runCommand` —
 // including its unexported `CLIError`, thrown for "Unknown command …", "No
 // command specified.", "Missing required argument/positional …", and invalid
 // enum values — and unconditionally calls `process.exit(1)`, regardless of
@@ -751,7 +743,7 @@ const EXIT_HEALTH_WARN = EXIT_CODES.HEALTH_WARN;
 // of `runMain`, replicating `runMain`'s `--help` / `--version`
 // short-circuits and its CLIError → usage-banner rendering, but classifying
 // a CLIError as USAGE (2) instead of GENERAL (1). Every other error escaping
-// this boundary keeps the previous GENERAL (1) mapping — this only
+// this boundary keeps the GENERAL (1) mapping — this only
 // reclassifies the one error family citty itself throws before any of our
 // own command bodies (and their `runWithJsonErrors` / `emitJsonError`
 // classification) ever run.
@@ -831,7 +823,7 @@ function resolveCittyCommandPath(
  * dropping the `akm ` root prefix every top-level command's `--help` already
  * shows. Building a synthetic parent whose `meta.name` is the full prefix
  * (`akm task`) fixes it for any depth without patching the vendored
- * dependency (S11 item 4).
+ * dependency.
  */
 function buildUsageParentForPath(path: readonly string[]): AnyCittyCommand {
   // `version` carries through too — citty's renderUsage falls back to
@@ -846,7 +838,7 @@ function buildUsageParentForPath(path: readonly string[]): AnyCittyCommand {
   };
 }
 
-// ── Sectioned root help (S11) ────────────────────────────────────────────────
+// ── Sectioned root help ────────────────────────────────────────────────
 //
 // citty's own generated COMMANDS list is a flat, unordered dump of every
 // top-level command — fine for a handful of commands, not for the ~28 this
@@ -929,7 +921,7 @@ function renderCommandSections(): string {
 }
 
 /**
- * Sectioned replacement for citty's root COMMANDS list (S11 item 1). Reuses
+ * Sectioned replacement for citty's root COMMANDS list. Reuses
  * `renderUsage(main)` for the banner + exit-code table (kept verbatim) +
  * USAGE line + global OPTIONS, then cuts the string before citty's own
  * "COMMANDS" heading (present because `main` has `subCommands`) and appends
@@ -1019,7 +1011,7 @@ function cittyCliErrorUsageCode(error: Error & { code?: string }): UsageErrorCod
 
 /**
  * Route a citty `CLIError` through the standard JSON envelope instead of
- * citty's own usage-banner + raw `console.error(message)` (S11 item 3): the
+ * citty's own usage-banner + raw `console.error(message)`: the
  * one-line diagnosis is the error's own message (e.g. "Unknown command
  * foo"), and the hint is a short pointer — with a did-you-mean suggestion
  * prepended when the unresolved token is close to a real sibling command —
@@ -1050,12 +1042,10 @@ export function normalizeCittyCliError(error: unknown, rawArgs: readonly string[
 
 /**
  * The CLI's real startup sequence, extracted into a function so error paths
- * can `return` early — top-level `return` is a syntax error in an ES module,
- * and this used to rely on `emitJsonError`'s `never` return type (a
- * synchronous `process.exit`) to stop execution instead. Now that
- * `emitJsonError` (src/cli/shared.ts, R-067) only records `process.exitCode`
- * and returns, every direct call site here needs its own explicit `return;`
- * to stop the rest of startup from running after a fatal early error.
+ * can `return` early — top-level `return` is a syntax error in an ES module.
+ * `emitJsonError` (src/cli/shared.ts) only records `process.exitCode` and
+ * returns, so every direct call site here needs its own explicit `return;` to
+ * stop the rest of startup from running after a fatal early error.
  */
 export async function runCli(): Promise<void> {
   try {
@@ -1065,7 +1055,7 @@ export async function runCli(): Promise<void> {
     return;
   }
   // Mint the ParsedInvocation singleton from the (normalized) argv — the ONE
-  // place argv is parsed for the whole process (plan §10.7 / chunk-9 WI-9.9).
+  // place argv is parsed for the whole process.
   // Every out-of-cli.ts command module reads argv state through
   // `getParsedInvocation()` from here on instead of re-scanning process.argv.
   setParsedInvocation(process.argv);
@@ -1110,11 +1100,10 @@ export async function runCli(): Promise<void> {
 
   const commandPath = resolveCittyCommandPath(main, process.argv.slice(2));
 
-  // D7 — every command that renders through output() honours all six --format
+  // Every command that renders through output() honours all six --format
   // values. The declared exempt set (src/output/format-exempt.ts) does not
   // render an envelope at all, so warn rather than pretend: silently ignoring
-  // the flag is what made the old md/html behaviour so hard to discover. A
-  // warning, not an error, because the flag is harmless here and scripts that
+  // the flag makes the behaviour hard to discover. A warning, not an error, because the flag is harmless here and scripts that
   // pass --format globally to a mixed batch of commands should still work.
   const invocation = getParsedInvocation();
   if (
@@ -1172,7 +1161,7 @@ export async function runCli(): Promise<void> {
     if (HELP_FLAGS.some((flag) => ownArgs.includes(flag))) {
       const resolved = resolveDeepestCittyCommand(main, rawArgs);
       if (resolved === (main as AnyCittyCommand)) {
-        // Root `--help` (S11 item 1): the sectioned overview, not citty's
+        // Root `--help`: the sectioned overview, not citty's
         // flat COMMANDS dump.
         process.stdout.write(`${await renderSectionedRootHelp()}\n`);
       } else {
@@ -1186,13 +1175,13 @@ export async function runCli(): Promise<void> {
       return;
     }
     // citty's parseArgs (strict: false) silently ignores undeclared flags, so
-    // a typo used to run the command with defaults and exit 0. Checked here, after --help and
-    // --version, so those keep working on any command.
+    // a typo would otherwise run the command with defaults and exit 0. Checked
+    // here, after --help and --version, so those keep working on any command.
     assertKnownFlags(main as FlagScanCommand, rawArgs);
     await runCommand(main, { rawArgs });
   } catch (error) {
     if (isCittyCliError(error)) {
-      // R-032/S11: reclassify citty's own "unknown command" / "no command
+      // Reclassify citty's own "unknown command" / "no command
       // specified" / "missing required argument" family as USAGE (2) and
       // route it through the SAME JSON envelope every other command's
       // failure uses (`emitJsonError`), rather than citty's own usage-banner

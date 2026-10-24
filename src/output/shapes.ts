@@ -35,7 +35,6 @@ import { proposalRejectShapes } from "./shapes/proposal/reject";
 import { proposalReopenShapes } from "./shapes/proposal/reopen";
 import { proposalShowShapes } from "./shapes/proposal/show";
 import { getOutputShapeHandler, type OutputShapeEntry, registerOutputShapes } from "./shapes/registry";
-import { registrySearchShapes } from "./shapes/registry-search";
 import { searchShapes } from "./shapes/search";
 import { secretListShapes } from "./shapes/secret-list";
 import { showShapes } from "./shapes/show";
@@ -49,7 +48,6 @@ import { showShapes } from "./shapes/show";
 const BUILT_IN_OUTPUT_SHAPES: OutputShapeEntry[] = [
   ...searchShapes,
   ...curateShapes,
-  ...registrySearchShapes,
   ...showShapes,
   ...eventsShapes,
   ...proposalListShapes,
@@ -114,7 +112,6 @@ const SHAPE_SUMMARY_COMMANDS = new Set(["show"]);
 const LIST_RESULT_COLLECTION_KEYS: Readonly<Record<string, string>> = {
   search: "hits",
   curate: "items",
-  "registry-search": "hits",
   "proposal-list": "proposals",
   list: "sources", // `akm bundle list`
   "env-list": "envs",

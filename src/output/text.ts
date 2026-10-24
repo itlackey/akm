@@ -106,7 +106,7 @@ registerTextFormatters(BUILT_IN_TEXT_FORMATTERS);
 // ── JSONL output (unchanged — not part of the formatPlain dispatch) ───────────
 
 export function outputJsonl(command: string, shaped: unknown): void {
-  if (command === "search" || command === "registry-search") {
+  if (command === "search") {
     const r = shaped as Record<string, unknown>;
     const hits = Array.isArray(r.hits) ? (r.hits as Record<string, unknown>[]) : [];
     for (const hit of hits) {

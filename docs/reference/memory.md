@@ -89,7 +89,7 @@ automation keeps working — agents that want the deeper summary follow
 - `akm search --belief` defaults to `all` — no filter is applied unless you
   pass `current` or `historical` explicitly.
 
-## Security / persistence implications
+## Storage
 
 - Memories are plain markdown files inside a bundle directory; there is no
   separate memory store. `akm improve` and `akm lint` only operate on

@@ -30,19 +30,20 @@
  *      and there was previously no way to know that from the CLI side.
  *
  * Read-only: this never fetches, writes, or mutates the plugin cache or
- * marketplace clone. Check 2 is one of two deliberate exceptions to "`akm
- * health` makes no network call" (see `./health-advisories.md`; the other is
- * the `cli-version` advisory in `./version-drift.ts`, #950): a plugin's
- * local marketplace clone is not proof of what is newest upstream — the
- * incident above involved a clone that hadn't seen the fix's tag at all — so
- * the only way to ever detect drift is to ask the remote what tags exist.
- * That query is a `git ls-remote --tags` (lists refs; fetches nothing,
- * writes nothing) with a short timeout, and any failure (offline, no
+ * marketplace clone. Check 2 is one of the probes `akm health` runs by
+ * default (see `docs/architecture/internals/health-advisories.md`, "Network
+ * and processes"; the others reach the configured LLM endpoints, GitHub for
+ * `cli-version` in `./version-drift.ts`, and run the scheduler's recorded
+ * binary). A plugin's local marketplace clone is not proof of what is newest
+ * upstream — the incident above involved a clone that hadn't seen the fix's
+ * tag at all — so the only way to ever detect drift is to ask the remote what
+ * tags exist. That query is a `git ls-remote --tags` (lists refs; fetches
+ * nothing, writes nothing) with a short timeout, and any failure (offline, no
  * remote, timeout) degrades to "installed version reported, no staleness
- * claim" rather than a false positive or a hang. Unlike `cli-version`, this
- * check is NOT gated behind `--probe`/`--no-probe` — it predates that flag
- * and stays unconditional; see `./version-drift.ts` for why the newer check
- * chose the opposite default.
+ * claim" rather than a false positive or a hang. Like every other probe it
+ * is gated behind `--probe`/`--no-probe`: with probing off the remote is not
+ * asked, the row reports `unknown` ("not probed") and only the local range
+ * check (3) runs.
  *
  * Every collector here is best-effort and silent on missing/unreadable
  * input: no Claude plugin installed, no marketplace clone, an unreadable
@@ -225,6 +226,12 @@ export interface PluginStalenessOptions {
   pluginsRoot?: string;
   /** The running akm-cli version to check plugin compatibility against. */
   cliVersion: string;
+  /**
+   * Whether check 2 may ask the remote for tags (`akm health --probe`, on by
+   * default; `--no-probe` passes `false`). Defaults to `true` here so callers
+   * that inject `listRemoteTags` need not repeat it; `health.ts` always passes it.
+   */
+  probe?: boolean;
   /** Injectable remote-tag lister; defaults to the real `git ls-remote`. */
   listRemoteTags?: ListRemoteTagsFn;
   /** Root of OpenCode's package cache. Defaults to `opencodeCacheDir()`. */
@@ -244,7 +251,11 @@ export function collectPluginStalenessAdvisories(options: PluginStalenessOptions
   const listRemoteTags = options.listRemoteTags ?? realListRemoteTags;
   const plugins = detectInstalledPlugins(pluginsRoot);
 
-  const results = plugins.map((plugin) => buildAdvisory(plugin, options.cliVersion, pluginsRoot, listRemoteTags));
+  const probe = options.probe ?? true;
+
+  const results = plugins.map((plugin) =>
+    buildAdvisory(plugin, options.cliVersion, pluginsRoot, listRemoteTags, probe),
+  );
 
   const opencodeCacheRoot = options.opencodeCacheRoot ?? opencodeCacheDir();
   const bundledVersion = detectOpencodeBundledAkmVersion(opencodeCacheRoot);
@@ -260,6 +271,7 @@ function buildAdvisory(
   cliVersion: string,
   pluginsRoot: string,
   listRemoteTags: ListRemoteTagsFn,
+  probe: boolean,
 ): HealthCheckResult {
   const pluginRef = `${plugin.pluginName}@${plugin.marketplace}`;
 
@@ -267,7 +279,7 @@ function buildAdvisory(
   const marketplaceDir = path.join(pluginsRoot, "marketplaces", plugin.marketplace);
   let availableVersion: string | undefined;
   try {
-    const tags = fs.existsSync(marketplaceDir) ? listRemoteTags(marketplaceDir) : undefined;
+    const tags = probe && fs.existsSync(marketplaceDir) ? listRemoteTags(marketplaceDir) : undefined;
     availableVersion = tags && tags.length > 0 ? maxSatisfying(tags, "*") : undefined;
   } catch {
     availableVersion = undefined;
@@ -283,6 +295,7 @@ function buildAdvisory(
   const admitted = rangeKnown ? satisfiesRange(cliVersion, versionRange as string) : undefined;
 
   const messageParts = [`${pluginRef}: installed ${plugin.version}`];
+  if (!probe) messageParts.push("newest tag was not probed");
   if (availableVersion !== undefined) {
     messageParts.push(stale ? `available ${availableVersion} (STALE)` : `available ${availableVersion} (up to date)`);
   }
@@ -296,7 +309,9 @@ function buildAdvisory(
   return {
     name: "plugin-version",
     kind: "deterministic",
-    status: stale || admitted === false ? "warn" : "pass",
+    // Not probed => staleness is unknown, not "up to date"; only the local
+    // range check can still warn.
+    status: stale || admitted === false ? "warn" : probe ? "pass" : "unknown",
     confidence: "high",
     message: messageParts.join(" — "),
     evidence: {
@@ -305,6 +320,7 @@ function buildAdvisory(
       plugin: plugin.pluginName,
       installedVersion: plugin.version,
       availableVersion: availableVersion ?? null,
+      ...(probe ? {} : { probed: false }),
       stale,
       versionRange: versionRange ?? null,
       cliVersion,

@@ -87,7 +87,7 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
   if (detail === "normal") {
     // `confidence` and `gateDecision` (#577) explain why a proposal is pending,
     // so they are projected at `normal` for `akm proposal list/show` when present.
-    // `retirement` (alpha.9) is the same kind of field for a consolidate
+    // `retirement` is the same kind of field for a consolidate
     // `retire` proposal: without it, "list/show" carries no reason a reviewer
     // could act on (its `payload.content` is empty by design — a retire
     // proposal deletes, it does not write).
@@ -300,79 +300,46 @@ export function shapeSearchOutput(
   };
 }
 
-export function shapeRegistrySearchOutput(
-  result: Record<string, unknown>,
-  detail: DetailLevel,
-): Record<string, unknown> {
-  const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
-  const assetHits = Array.isArray(result.assetHits) ? (result.assetHits as Record<string, unknown>[]) : [];
-
-  // Shape stash hits as registry type
-  const shapedKitHits = hits.map((hit) => shapeSearchHit({ ...hit, type: "registry" }, detail));
-
-  // Shape asset hits by detail level
-  const shapedAssetHits = assetHits.map((hit) => shapeAssetHit(hit, detail));
-
-  const shaped: Record<string, unknown> = {
-    hits: shapedKitHits,
-    ...(shapedAssetHits.length > 0 ? { assetHits: shapedAssetHits } : {}),
-    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
-  };
-
-  if (detail === "full") {
-    shaped.query = result.query;
-  }
-
-  return shaped;
-}
-
-export function shapeAssetHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  if (detail === "brief") return pickFields(hit, ["assetName", "assetType", "action", "estimatedTokens"]);
-  if (detail === "normal") {
-    return capDescription(
-      pickFields(hit, ["assetName", "assetType", "description", "stash", "action", "estimatedTokens"]),
-      NORMAL_DESCRIPTION_LIMIT,
-    );
-  }
-  return hit;
-}
-
 export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   if (hit.type === "registry") {
     if (detail === "brief") {
-      // RegistrySearchHit uses `title` (not `name`); always project installRef
-      // and score so callers can use the result without --detail full (QA #28).
-      const out = pickFields(hit, ["title", "name", "installRef", "score"]);
-      // Normalise: if only title exists, expose it as `name` for consistency
-      if (out.title && !out.name) out.name = out.title;
-      return out;
+      // Always project installRef and score so callers can use the result
+      // without --detail full (QA #28).
+      return pickFields(hit, ["name", "installRef", "score"]);
     }
     if (detail === "normal") {
-      // `curated` was removed in v1 (spec §4.2). Renderers project optional
-      // hit-level `warnings` instead so providers can surface non-fatal issues.
-      const out = capDescription(
-        pickFields(hit, ["title", "name", "description", "action", "installRef", "score", "warnings"]),
+      // Renderers project optional hit-level `warnings` so providers can
+      // surface non-fatal issues.
+      return capDescription(
+        pickFields(hit, ["name", "description", "action", "installRef", "score", "warnings"]),
         NORMAL_DESCRIPTION_LIMIT,
       );
-      if (out.title && !out.name) out.name = out.title;
-      return out;
     }
     return hit;
   }
 
   // Stash hit (local or remote)
   // `ref` is included at `brief` so agents can run `akm show <ref>` without
-  // needing --detail full or --shape agent (REC-03).
+  // needing --detail full or --shape agent.
   if (detail === "brief") {
     return pickFields(hit, ["type", "name", "ref", "action", "estimatedTokens", "keys"]);
   }
   if (detail === "normal") {
     // `warnings` is projected at `normal` so non-fatal hit-level issues are
     // visible without forcing callers up to `--detail full`. Optional
-    // `quality` (v1 spec §4.2) is also surfaced when present so callers
-    // can see why a `proposed` entry showed up under `--include-proposed`.
+    // `quality` is also surfaced when present so callers can see why a `proposed` entry showed up under `--include-proposed`.
     const shaped = capDescription(
-      pickFields(hit, ["type", "name", "description", "action", "score", "estimatedTokens", "warnings", "quality"]),
+      pickFields(hit, [
+        "type",
+        "name",
+        "ref",
+        "description",
+        "action",
+        "score",
+        "estimatedTokens",
+        "warnings",
+        "quality",
+      ]),
       NORMAL_DESCRIPTION_LIMIT,
     );
     if (Array.isArray(hit.keys) && hit.keys.length > 0) shaped.keys = hit.keys;
@@ -457,8 +424,7 @@ export function shapeShowOutput(
       "type",
       "name",
       // ref is present on every show shape (human/summary/agent) — it is the
-      // canonical identity of the asset, not an agent-only convenience field
-      // (R-020).
+      // canonical identity of the asset, not an agent-only convenience field.
       "ref",
       "description",
       "tags",
@@ -477,7 +443,7 @@ export function shapeShowOutput(
   const base = pickFields(result, [
     "type",
     "name",
-    // ref is always projected, same as path/editable below (R-020).
+    // ref is always projected, same as path/editable below.
     "ref",
     "origin",
     "action",

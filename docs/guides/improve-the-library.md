@@ -1,11 +1,10 @@
 # Improve the Library
 
-AKM learns from outcomes, but changes remain reviewable. Every time an agent
-uses a capability and reports back whether it helped, AKM folds that signal
-into the asset's utility score; when the report says the content was wrong, it
-proposes a concrete edit. Nothing lands in your bundle automatically: every
-generated change queues as a proposal you (or an explicit policy) accept,
-reject, or revert.
+AKM learns from outcomes, but changes remain reviewable. When an agent reports
+whether a capability helped, akm records the report; when the report says the
+content was wrong, a later `akm improve` run drafts a concrete edit as a
+proposal. A proposal changes your bundle when you accept it, or when a policy
+you opted into does (see [Review-first](#review-first-and-the-autonomy-opt-in)).
 
 ```text
 agent selects capability -> agent records outcome -> AKM updates utility and analyzes evidence ->
@@ -15,28 +14,27 @@ AKM creates a proposal -> human or policy reviews the diff -> accept / reject / 
 ## akm feedback
 
 `akm feedback` records a positive or negative signal for any indexed asset.
-The signal updates the asset's utility score immediately, so highly-rated
-assets rank higher and assets flagged wrong or stale surface less often right
-away. See
+The signal is written to the event log and moves the asset's utility score,
+which `akm improve` uses to decide which assets to look at first. Feedback
+does not change `akm search` ranking, which is relevance alone. See
 [Architecture: The Improvement Loop](../architecture/improvement.md#utility-scoring)
-for how that score is computed.
+for how the score is computed.
 
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
-flags the asset: it ranks lower right away, and the next improve run may repair
-its description, title or `when_to_use` from your reason. Improve does not
-rewrite an asset's text. Once you have verified the correct fact, attach the
-exact fix: `--replace "<exact current text>" --with "<corrected text>"
---source "<URL, command or file that shows it>"` (repeat `--replace`/`--with`
-for several edits). akm checks that each `--replace` text appears exactly once,
-records nothing if one does not, and queues the edit as a `feedback` proposal
-for review. `--positive` records that an asset helped (it raises its ranking)
-and does not trigger a rewrite.
+flags the asset, and the next improve run may repair its description, title or
+`when_to_use` from your reason. Improve does not rewrite an asset's text. Once
+you have verified the correct fact, attach the exact fix: `--replace "<exact
+current text>" --with "<corrected text>" --source "<URL, command or file that
+shows it>"` (repeat `--replace`/`--with` for several edits). akm checks that
+each `--replace` text appears exactly once, records nothing if one does not,
+and queues the edit as a `feedback` proposal for review. `--positive` records
+that an asset helped and does not trigger a rewrite.
 
 ```sh
 akm feedback skills/code-review --positive
 akm feedback agents/reviewer --negative --reason "Gave outdated migration steps"
 akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/"
-akm feedback workflows/ship-release --positive --reason "Worked end-to-end on 0.8.0"
+akm feedback workflows/ship-release --positive --reason "Worked end-to-end on the first try"
 
 # With a structured reason slug (consumed by improve/distill prompts):
 akm feedback skills/planner --negative --reason "wrong-default-timeout"
@@ -45,7 +43,7 @@ akm feedback skills/planner --negative --reason "wrong-default-timeout"
 Specify exactly one of `--positive` or `--negative`. The ref must be present in
 the current local index. `--negative` additionally requires `--reason`, and
 omitting it exits 2. Full flag reference:
-[CLI Reference — feedback](../reference/cli.md#feedback---reason).
+[CLI Reference — feedback](../reference/cli.md#feedback).
 
 Record feedback about the asset's content: that it helped, or that it turned
 out wrong or stale. Record `--negative` only for content that is wrong or stale,
@@ -64,9 +62,8 @@ akm feedback skills/deploy --negative \
 
 ## akm log
 
-`akm log` is the realtime append-only event stream that every mutating CLI
-verb writes to — the record of what agents selected and what feedback they
-gave.
+`akm log` is the append-only event stream akm writes to as it works: what
+agents selected, what feedback they gave, what improve and workflows did.
 
 ```sh
 akm log                                         # All events, oldest first
@@ -81,10 +78,7 @@ and cursor format.
 ## akm improve
 
 `akm improve` is the main entry point for the self-improvement pass. It reads
-feedback signals and usage patterns, then generates proposals — it never
-writes directly to your bundle. By default, generated proposals always queue
-for review; the underlying autonomy gate and strategy configuration are
-covered in [Architecture: The Improvement Loop](../architecture/improvement.md).
+feedback and usage, then generates proposals for you to review.
 
 ```sh
 akm improve                           # Full bundle pass
@@ -100,50 +94,24 @@ A run improves one bundle, the one it writes to (`--bundle`, else
 bundles alone even when they are writable. Run `akm improve --bundle team` to
 improve another one. A scheduled run covers the same single bundle, so schedule
 one `akm improve --bundle <name>` run per other bundle you want improved.
-`--dry-run` previews the bundle a live run would improve.
 
-A rewrite (reflect) is planned only for assets with negative feedback in the
-last 30 days that is newer than the last time improve tried them, or for an
-explicit ref; a positive or note-only signal never plans one, and neither does a negative whose exact fix (`--replace`, `--outdated`, `--superseded-by`) has since been accepted. Distill reads any
-feedback on a memory in that window, but skips a memory flagged wrong and not
-edited since: a negative feedback in that window judged the body it still has
-(or, recorded without that body's hash, is newer than its file's last write).
-It also skips a memory whose only feedback in that window is a positive with no
-reason or note: say what helped (`--reason`), or the lesson has nothing to
-distil.
-Unless `--require-feedback-signal` is set,
-two fallback lanes pick assets with no such feedback: high-salience assets that
-were never reflected, and, in a strategy that enables proactive maintenance,
-assets due for a revisit. They only select and score assets and plan nothing,
-so improve does not rewrite on a proactive cadence. The planned assets are
-ranked by salience and cut to `--limit`.
-Improve reworks only what gets read: without fresh feedback, a fallback lane
-picks an asset (and a memory is judged for consolidation) only if `search`,
-`curate` or `show` returned it, or feedback named it, in the last 90 days — the
-usage log's retention — or if it is new material no improve stage has processed
-yet. An explicit ref (`akm improve skills/code-review`) is always reworked.
-Full flag reference: [CLI Reference — improve](../reference/cli.md#improve).
+A rewrite (reflect) is planned for assets with negative feedback from the last
+30 days that is newer than the last time improve tried them, or for an explicit
+ref (`akm improve skills/code-review` always reworks that ref). A positive or
+note-only signal never plans one. Unless `--require-feedback-signal` is set, two
+fallback lanes pick assets with no such feedback: high-salience assets that were
+never reflected and, in a strategy that enables proactive maintenance, assets
+due for a revisit. A fallback lane only picks an asset that `search`, `curate`
+or `show` returned (or feedback named) in the last 90 days, or new material no
+improve stage has processed yet. The planned assets are ranked by salience and
+cut to `--limit`. The full selection rules are in
+[Improve Workflow](../architecture/internals/improve-workflow.md) and
+[CLI Reference — improve](../reference/cli.md#improve).
 
-`--dry-run` is an execution-plan preview, not a raw scope listing. Its
-`plannedRefs` are the final ranked refs after validation, retrieval, signal,
-disk, and limit gates. The accompanying `plan` keeps the pre-gate `rawInScope` count,
-per-gate removal counts and reasons, configured versus effective limits, and
-the selection lane for each final ref. `plan.snapshot` explains whether the
-existing index was readable; a missing or incompatible index produces an
-explicit empty snapshot without creating or migrating it. The plan reports the
-cap as `limits.effective` (`limits.additiveReplayAllowance` is always `0` and
-`limits.totalCeiling` equals the cap, because the replay lane is retired). It
-also reports proactive-maintenance due statistics, consolidation pool gates and
-chunk estimate, extract/memory-inference stage decisions, and proposal-triage
-mode and caps. The plan has
-`mode: "estimate"` and `dispatch: false`; producing it does not acquire the
-improve lock, invoke an LLM, create state, or write proposals, events, assets,
-cache files, or result records.
-
-The preview is a best-effort observation assembled during the invocation, not
-an atomic cross-store snapshot or a reservation. A later live run re-inspects
-mutable index, state, filesystem, and session-log inputs before dispatch, so
-concurrent changes can legitimately produce a different plan.
+`--dry-run` previews a run without calling an LLM or writing anything. The
+result's `plannedRefs` are the refs left after every gate, and `plan` carries
+the per-gate removal counts, the effective limit, and the engine each process
+would use. A live run re-inspects its inputs, so it can plan differently.
 
 **Example: auto-generate lessons from usage patterns**
 
@@ -153,10 +121,36 @@ akm improve --limit 20       # process at most 20 refs
 akm proposal list            # review what was generated
 ```
 
+### Review-first, and the autonomy opt-in
+
+`akm improve` queues proposals; it does not edit your assets. Three lanes that
+would write without review stay off until you set `experimental.improveAutonomy`:
+
+```sh
+akm config set experimental.improveAutonomy true
+```
+
+- **Memory inference** writes `.derived.md` children next to memories.
+- **Memory cleanup** rewrites belief-state frontmatter and moves retired
+  memories to an archive.
+- **Triage with `applyMode: "promote"`** (set in a strategy's `triage` block)
+  accepts queued proposals whose quality judge passed, plus retire proposals
+  the consolidate pair pass staged with no continuity risk.
+
+With the key off (the default), each lane is downgraded and the downgrade is
+reported on stderr and in `akm health`. `akm proposal drain --promote` is a
+separate, explicit way to accept judged proposals and does not need the key.
+
+Some writes happen either way: session summaries under `sessions/**`, the purge
+at the start of each improve run of archived retired memories older than 30
+days (git-tracked and clean ones only), the commit that `akm proposal accept`
+makes in a git-backed bundle, and the end-of-run sync that commits and pushes a
+git-backed bundle (`--no-sync` and `--no-push` turn it off for a run).
+
 ## akm proposal (list, show, diff, accept, reject, reopen, revert)
 
 `akm proposal list` lists pending proposals in the queue. Each proposal is an
-AI-generated suggested change — an edit to an existing asset, a new lesson, a
+AI-generated suggested change: an edit to an existing asset, a new lesson, a
 memory consolidation, or a deprecation. Review the diff, then accept or reject.
 
 ```sh
@@ -191,13 +185,26 @@ akm proposal diff abc12345             # preview the proposed consolidation
 akm proposal accept abc12345           # write it to the bundle
 ```
 
+### akm proposal drain
+
+`akm proposal drain` works through the pending backlog in one pass: it rejects
+empty diffs, accepts proposals whose quality judge passed on their exact content
+when you pass `--promote` (add `--yes` outside a terminal), and leaves the rest
+for you to review. Without `--promote` it stages and writes nothing to your
+assets.
+
+```sh
+akm proposal drain --dry-run                    # List what would be accepted, rejected or deferred
+akm proposal drain --promote --yes --max-accepts 10
+```
+
 ## akm proposal new
 
-`akm proposal new` asks an engine to author a brand-new asset — useful
-when you want to create something from scratch rather than improving an
-existing asset. Any engine kind works (an LLM engine, an agent CLI or
-`opencode-sdk`): the engine returns the asset as JSON, which akm validates.
-Output always goes to the proposal queue, never directly to the bundle.
+`akm proposal new` asks an engine to author a brand-new asset, useful when you
+want to create something from scratch rather than improving an existing asset.
+Any engine kind works (an LLM engine, an agent CLI or `opencode-sdk`): the
+engine returns the asset as JSON, which akm validates. The result goes to the
+proposal queue, not directly to the bundle.
 
 ```sh
 akm proposal new skill code-review --task "PR-style review skill for TypeScript repos"
@@ -230,17 +237,11 @@ akm proposal reject <id> --reason "not the right fix"
 akm proposal revert <id>
 ```
 
-Nothing in this loop bypasses review by default: `akm improve` only ever
-queues proposals, and promotion into the bundle happens through an explicit
-`akm proposal accept` (or an explicit opt-in policy) — see
-[Architecture: The Improvement Loop](../architecture/improvement.md) for the
-autonomy gate that governs the few lanes that can act without one.
-
 ## See also
 
 - [Discover & Load](discover-and-load.md) — finding and loading assets
-- [Knowledge Management](knowledge-management.md) — capturing memories and docs
+- [Capture Knowledge](capture-knowledge.md) — capturing memories and docs
 - [Agent Integration](use-with-any-agent.md) — wiring feedback into agent workflows
 - [CLI Reference](../reference/cli.md) — full flag documentation for `feedback`, `log`, `improve`, `proposal`
 - [Architecture: The Improvement Loop](../architecture/improvement.md) — utility scoring, strategies, autonomy gates, auto-sync, and session extraction
-- [Concepts](../guides/concepts.md) — bundles, refs and the index
+- [Concepts](concepts.md) — bundles, refs and the index

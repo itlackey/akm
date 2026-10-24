@@ -650,7 +650,6 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
   // path. `secret-seam` is imported here, never from inside the cycle.
   const { storeSecretResolver } = await import("../sources/snapshot-fetchers/secret-seam.js");
   await ensureSourceCaches(config, {
-    force: full,
     materialize: options.hydrateSources !== false,
     secrets: storeSecretResolver,
     // Same progress channel as every other phase (#954) — a
@@ -1840,8 +1839,10 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
   // (Chunk-8 WI-8.3); its table is created by state migration 020.
   purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
 
-  // Time-proportional decay: apply one round of EMA per elapsed day so
-  // indexing frequency doesn't affect how fast scores decay.
+  // Decay is raised to the days since the last run, floored at one day. Every
+  // run therefore applies at least one full round of EMA decay (so runs less
+  // than a day apart each decay a full round), and a longer gap applies
+  // proportionally more rounds. The first run counts as one day.
   const lastComputedAt = getMeta(db, "last_utility_computed_at");
   let elapsedDays = 1; // default for first run
   if (lastComputedAt) {

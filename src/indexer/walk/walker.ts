@@ -81,7 +81,8 @@ export function walkStash(typeRoot: string, assetType: string): DirectoryGroup[]
  * Unlike walkStash(), this does NOT filter by asset type or require files to
  * live under type-specific directories. Matchers decide what each file is.
  *
- * If the directory is a git repo, uses `git ls-files` to respect .gitignore.
+ * If the directory is a git repo, uses `git ls-files` to respect .gitignore,
+ * except that git-ignored files under `env/` and `secrets/` are still walked.
  * Otherwise falls back to a manual walk that skips .git, node_modules, bin,
  * .cache, dot-directories, and the legacy metadata sidecar.
  */
@@ -101,7 +102,8 @@ export function walkStashFlatWithStatus(stashRoot: string, options: WalkStashFla
 }
 
 /**
- * Walk using `git ls-files` to respect .gitignore.
+ * Walk using `git ls-files` to respect .gitignore (ignored `env/` and
+ * `secrets/` files excepted).
  * Returns null if the directory is not a git repo or git fails.
  */
 function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkStashFlatResult | null {
@@ -124,13 +126,24 @@ function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkSta
     : String(deletedResult.stdout ?? "");
   const deletedFiles = new Set(deletedStdout.split("\0").filter(Boolean));
 
+  // `akm bundle create` git-ignores `env/` and `secrets/` so credentials are
+  // never committed, but they are still bundle assets. List the ignored files
+  // under those two directories as well; the adapters index key names only.
+  const ignoredResult = spawnSync(
+    ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "env/", "secrets/"],
+    { cwd: stashRoot },
+  );
+  if (!ignoredResult.success) return null;
+  const ignoredStdout = Buffer.isBuffer(ignoredResult.stdout)
+    ? ignoredResult.stdout.toString("utf8")
+    : String(ignoredResult.stdout ?? "");
+
   // Data-hygiene filename skips: the legacy metadata sidecar (never indexed as
-  // content — Chunk-8 folds it into the bundle format) plus git dot-files.
+  // content) plus git dot-files.
   const SKIP_FILES = new Set([".stash.json", ".gitignore", ".gitattributes"]);
 
   const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : String(result.stdout ?? "");
-  const files = stdout
-    .split("\0")
+  const files = [...stdout.split("\0"), ...ignoredStdout.split("\0")]
     .filter((f) => f.length > 0)
     .filter((f) => !deletedFiles.has(f))
     .filter((f) => !f.startsWith("..") && !path.isAbsolute(f))

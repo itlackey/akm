@@ -94,28 +94,29 @@ akm import ./doc.md --target my-other-bundle    # Route import to a named writab
 akm workflow create ship-release               # Create a workflow asset in the bundle
 akm lint --type workflows                      # Parse and compile every .md/.yml workflow source; list every error
 akm workflow run workflows/ship-release        # Start or resume and execute the workflow
-akm feedback skills/code-review --positive     # Record that an asset helped (ranks it higher; no rewrite)
-akm feedback agents/reviewer --negative --reason "says to run jest; the suite runs on vitest" # Content wrong or stale: lowers its ranking; improve may repair its frontmatter
+akm feedback skills/code-review --positive     # Record that an asset helped (moves its utility score for improve; no rewrite)
+akm feedback agents/reviewer --negative --reason "says to run jest; the suite runs on vitest" # Content wrong or stale: lowers its utility score; improve may repair its frontmatter
 akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/" # Queue an exact fix
 akm feedback memories/deployment-notes --positive # Works for memories too
 akm feedback env/prod --positive               # Records env feedback without surfacing values
 ```
 
-Use `akm feedback --positive` when an asset's content materially helps, so
-future search ranking can learn from actual usage. Record negative feedback only
-when the asset's content is wrong or stale, and say what is wrong and what it
-should say.
+Use `akm feedback --positive` when an asset's content materially helps. Feedback
+is recorded against the asset and moves its utility score, which `akm improve`
+uses to choose what to work on; it does not change search order. Record
+negative feedback only when the asset's content is wrong or stale, and say what
+is wrong and what it should say.
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
-flags the asset: it ranks lower right away, and the next improve run may repair
-its description, title or `when_to_use` from your reason. A note that simply did
+flags the asset: its utility score drops right away, and the next improve run
+may repair its description, title or `when_to_use` from your reason. A note that simply did
 not fit your task is not negative feedback: record nothing for it. Improve does
 not rewrite an asset's text: once you have verified the correct fact, attach the
 exact fix with `--replace "<exact current text>" --with "<corrected text>"
 --source "<URL, command or file>"`, which akm checks and queues as a proposal.
 A note that is outdated can be marked with `--outdated`, or
 `--superseded-by <ref>` when another note replaces it.
-`--positive` records that an asset helped (it raises its ranking) and does not
-trigger a rewrite; improve no longer rewrites assets from positive signals or on
+`--positive` records that an asset helped (it raises its utility score) and
+does not trigger a rewrite; improve no longer rewrites assets from positive signals or on
 a proactive cadence. An akm command that fails says nothing about the asset;
 don't record it as feedback.
 
@@ -303,7 +304,6 @@ akm registry add <url> --name my-team         # Add with label
 akm registry add <url> --provider skills-sh   # Specify provider type
 akm registry remove <url-or-name>             # Remove a registry
 akm search "<query>" --from registry          # Search all registries (registry search was folded into search)
-akm search "<query>" --from registry --assets # Include asset-level results
 ```
 
 ## Configuration

@@ -4,8 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-// akm 0.9.0 Chunk 5 (type-merge): the durable indexed-entry shape is the merged
-// `IndexDocument` (spec §3 = the pre-merge entry shape + provenance). Its body
+// The durable indexed-entry shape is `IndexDocument`. Its body
 // — and the sub-shapes it references — live in `core/adapter/types.ts` so
 // `IndexDocument` can reference them without a `metadata.ts ↔ types.ts` cycle;
 // they are imported (and re-exported below) here. `SCOPE_KEYS` (a value) stays.
@@ -34,7 +33,7 @@ export interface StashFile {
   warnings?: string[];
 }
 
-// ── Quality semantics (v1 spec §4.2) ────────────────────────────────────────
+// ── Quality semantics ───────────────────────────────────────────────────────
 
 /**
  * Well-known quality values. `generated`, `curated`, and `enriched` are included in
@@ -57,7 +56,7 @@ export function normalizeQuality(raw: string): string {
   if (!warnedUnknownQualityValues.has(raw)) {
     warnedUnknownQualityValues.add(raw);
     warn(
-      `Warning: unknown quality value "${raw}" — entry remains searchable, but consider using "generated", "curated", or "proposed" (v1 spec §4.2).`,
+      `Warning: unknown quality value "${raw}" — entry remains searchable, but consider using "generated", "curated", or "proposed".`,
     );
   }
   return raw;
@@ -73,7 +72,7 @@ export function _resetUnknownQualityWarnings(): void {
 
 /**
  * Returns true if an entry's quality marks it as "proposed". Proposed
- * entries are excluded from default search per v1 spec §4.2.
+ * entries are excluded from default search.
  */
 export function isProposedQuality(quality: string | undefined): boolean {
   return quality === "proposed";
@@ -150,7 +149,7 @@ export function validateStashEntry(entry: unknown): IndexDocument | null {
   if (xrefs) result.xrefs = xrefs;
   const sources = normalizeNonEmptyStringList(e.sources);
   if (sources) result.sources = sources;
-  // SPEC-6: `category` must survive the projection. Non-string values are
+  // `category` must survive the projection. Non-string values are
   // dropped, not coerced.
   if (typeof e.category === "string" && e.category.trim().length > 0) {
     result.category = e.category.trim();
@@ -326,7 +325,7 @@ export function applyCuratedFrontmatter(entry: IndexDocument, fmData: Record<str
   const quality = asNonEmptyString(fmData.quality);
   if (quality) entry.quality = normalizeQuality(quality);
 
-  // SPEC-6 capture step: the `category:` frontmatter key (e.g. `convention`,
+  // Capture the `category:` frontmatter key (e.g. `convention`,
   // `meta` on facts) must land on the indexed entry so category-keyed
   // policies can see it. Trimmed; blank/non-string values are ignored.
   const category = asNonEmptyString(fmData.category);
@@ -363,13 +362,13 @@ export function applyCuratedFrontmatter(entry: IndexDocument, fmData: Record<str
   const evidenceSources = normalizeNonEmptyStringList(fmData.evidenceSources);
   if (evidenceSources) entry.evidenceSources = evidenceSources;
 
-  // Phase 5A / Advantage D5: capture parent ref for derived memories.
+  // Capture the parent ref for derived memories.
   // Memory-inference writes `source: "memories/<parent>"` and `inferred: true`
   // (and a derived child name suffix `.derived`). We mirror that source ref into
   // `entry.derivedFrom` so the indexer can populate the dedicated `derived_from`
-  // column. Group-C item 2: the column is stored in the 0.9.0 `memories/<name>`
-  // conceptId grammar — moving in lockstep with the `getDerivedForParent` lookup
-  // key (search-hit-enrichers) so producer + consumer speak one grammar.
+  // column. The column is stored as the `memories/<name>` conceptId, matching
+  // the `getDerivedForParent` lookup key (search-hit-enrichers) so producer and
+  // consumer speak one grammar.
   // Non-derived entries leave this field unset.
   if (entry.type === "memory") {
     const isDerivedByName = entry.name.toLowerCase().endsWith(".derived");
@@ -458,7 +457,7 @@ function isWikiRole(value: unknown): value is NonNullable<IndexDocument["wikiRol
 /**
  * Parse one `verified:` family value into the `IndexDocument.provenance` shape.
  * Accepts OKF v0.2's list form and its documented single-mapping shorthand
- * ("consumers MUST treat a bare mapping as a one-element list", SPEC §5.2).
+ * ("consumers MUST treat a bare mapping as a one-element list", OKF v0.2 §5.2).
  * Tolerant: an entry without a usable `by` is dropped individually.
  */
 function parseVerifiedFamily(value: unknown): { by: string; at?: string }[] {
@@ -476,9 +475,9 @@ function parseVerifiedFamily(value: unknown): { by: string; at?: string }[] {
 
 /**
  * Extract the OKF v0.2 provenance families that `promoteProposal` stamps onto
- * accepted AKM-native proposals (D2, #730), and apply them to the entry.
+ * accepted AKM-native proposals (#730), and apply them to the entry.
  *
- * The on-disk shape is deliberately **hybrid** (owner decision, #730 review):
+ * The on-disk shape is deliberately **hybrid** (#730 review):
  * `generated:` and `verified:` are stamped BARE at the top level, exactly as
  * OKF v0.2 spells them, because neither has any pre-existing AKM consumer — so
  * a third-party OKF v0.2 reader treating an AKM stash as an OKF bundle sees
@@ -490,8 +489,8 @@ function parseVerifiedFamily(value: unknown): { by: string; at?: string }[] {
  * non-strings).
  *
  * The nested `provenance.generatedBy` / `.generatedAt` / `.verified` spellings
- * are still read as a fallback so assets stamped by an earlier build of this
- * branch keep resolving. Tolerant throughout: any malformed sub-field is
+ * are still read as a fallback so assets stamped by an earlier build keep
+ * resolving. Tolerant throughout: any malformed sub-field is
  * dropped individually rather than rejecting the whole block.
  */
 export function applyProvenanceFrontmatter(entry: IndexDocument, fmData: Record<string, unknown>): void {
@@ -533,8 +532,8 @@ export function applyProvenanceFrontmatter(entry: IndexDocument, fmData: Record<
 }
 
 // AKM-stash indexing policy (env/vaults/secrets sensitive-marker + wiki-infra
-// exclusions) moved to the `akm` adapter's `recognize` as path/stat-based
-// abstention (owner ruling 2026-07-21 — adapter-owned filtering). See
+// exclusions) lives in the `akm` adapter's `recognize` as path/stat-based
+// abstention. See
 // `akmStashAbstains` in `src/core/adapter/adapters/akm-adapter.ts`.
 
 /**
@@ -766,11 +765,9 @@ function mergeAliases(existing: string[] | undefined, generated: string[]): stri
 /**
  * Maximum native Markdown prose carried by the low-weight `content` field.
  *
- * Raised far past any real authored document:
- * this used to sit at 16_384 chars, tight enough that ordinary long-form
- * skills/knowledge docs lost their tail from both FTS and the embedding
- * input with no visible signal (the cut was reported via `warnVerbose`,
- * silent unless `AKM_VERBOSE` was set). The remaining bound exists only to
+ * Set far past any real authored document, so ordinary long-form
+ * skills/knowledge docs never lose their tail from FTS or the embedding
+ * input. The bound exists only to
  * stop a truly pathological single file (a committed data dump, a decompressed
  * log) from ballooning index size — not to shave real content — so a caller
  * that hits it is always told, unconditionally.
@@ -822,7 +819,7 @@ function hasSessionMemoryMarker(fmData: Record<string, unknown>, body: string): 
  * like a top-level `key:` mapping entry. Ordinary prose bracketed by two
  * thematic-break `---` lines fails this test, so a decorative opening
  * callout is treated as the paragraph it is instead of being discarded
- * (review finding on SPEC-8 — the block finder alone accepts ANY content up
+ * (the block finder alone accepts ANY content up
  * to an arbitrarily distant closing `---`).
  */
 function isFrontmatterShaped(lines: string[], block: { open: number; close: number }): boolean {
@@ -1170,13 +1167,12 @@ export function projectMarkdownFragmentContent(raw: string): string | undefined 
 /**
  * Priorities 1-2 of the metadata pipeline — package.json (P1), `.md`
  * frontmatter (P2), and script `@param`/comment metadata (P2b) — everything
- * that runs BEFORE the renderer-contributor step (P3). Extracted (Chunk 5 M-b)
- * so the `akm` adapter's synchronous `recognize` shares this exact assembly
- * with the live index-drain path; the two differ ONLY in how they obtain the
+ * that runs BEFORE the renderer-contributor step (P3). Shared by the `akm`
+ * adapter's synchronous `recognize` and the live index-drain path; the two
+ * differ ONLY in how they obtain the
  * P3 renderer metadata (the adapter uses the synchronous
  * `foldRecognizedMetadata`), guaranteeing P1/P2/P4 parity by construction.
- * Behavior-preserving: this is a verbatim lift of the former inline P1/P2/P2b
- * block. Mutates `entry` in place.
+ * Mutates `entry` in place.
  */
 export function applyPreContributorFields(
   entry: IndexDocument,
@@ -1208,7 +1204,7 @@ export function applyPreContributorFields(
     if (fmParams) entry.parameters = fmParams;
     // Pass wiki-pattern frontmatter through onto the entry
     applyWikiFrontmatter(entry, parsed.data);
-    // D2 (#730): reread the namespaced `provenance:` block promoteProposal stamps.
+    // #730: reread the namespaced `provenance:` block promoteProposal stamps.
     applyProvenanceFrontmatter(entry, parsed.data);
     // Native Markdown has one bounded low-weight body projection. Sensitive
     // types and raw session/checkpoint material never cross this boundary.
@@ -1222,7 +1218,7 @@ export function applyPreContributorFields(
         entry.content = contentProjection;
         if (truncationInfo.truncated) {
           entry.contentTruncated = true;
-          // Unconditional, not warnVerbose: this bound now sits far past any
+          // Unconditional, not warnVerbose: this bound sits far past any
           // real document, so tripping it means
           // something unusual is in the bundle and the operator should see
           // it without having to pass --verbose.
@@ -1255,8 +1251,8 @@ export function applyPreContributorFields(
  * Priority 4 of the metadata pipeline — filename-heuristic fallbacks (P4) that
  * run AFTER the renderer-contributor step (P3): a filename description when none
  * was set, path/dir-derived tags, tag normalization, and alias generation.
- * Extracted (Chunk 5 M-b) alongside {@link applyPreContributorFields} so both
- * pipeline paths share it. Behavior-preserving verbatim lift. Mutates `entry`.
+ * Shared with {@link applyPreContributorFields} by both pipeline paths.
+ * Mutates `entry`.
  */
 export function applyPostContributorFields(
   entry: IndexDocument,
@@ -1277,7 +1273,7 @@ export function applyPostContributorFields(
     entry.tags = extractTagsFromPath(file, dirPath);
   }
 
-  // Stash-organization conventions (SPEC-2): directory (scope/domain) tokens
+  // Stash-organization conventions: directory (scope/domain) tokens
   // always reach the tags column, even when the author set explicit tags, so
   // nested assets keep the exact-tag ranking boost for their scope token.
   // Derived from canonicalName (the ref subpath) rather than the filesystem
@@ -1297,14 +1293,6 @@ export function applyPostContributorFields(
 
   entry.filename = path.basename(file);
 }
-
-// The pre-0.9.0 flat-walk matcher-pass metadata source was DELETED in Chunk 5
-// F4a M-core-3. Its role (recognize a stash root's files into durable entries)
-// is now the `akm` adapter's `recognize`, drained by `indexer/scan/drain-dir.ts`
-// (`drainDirDocuments` for the live indexer, `recognizeStashEntries` for the
-// `manifest` fallback / `registry` index builder / metadata unit tests). The
-// flip is the F4 engine swap; the shadow-parity gate proved recognize produced
-// the identical entries before the old pass was removed.
 
 export function buildMetadataSkipWarning(filePath: string, assetType: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
@@ -1344,9 +1332,9 @@ function normalizeTerms(values: string[]): string[] {
     const cleaned = value.toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
     if (!cleaned) continue;
     normalized.add(cleaned);
-    // De-pluralization heuristic removed: the FTS5 porter stemmer (configured
-    // with `tokenize='porter unicode61'`) handles stemming correctly, including
-    // edge cases like "kubernetes" and "status" that the naive s-strip mangled.
+    // No de-pluralization here: the FTS5 porter stemmer (configured with
+    // `tokenize='porter unicode61'`) handles stemming correctly, including
+    // edge cases like "kubernetes" and "status" that a naive s-strip mangles.
   }
   return Array.from(normalized);
 }
@@ -1453,7 +1441,7 @@ export function extractTagsFromPath(filePath: string, rootDir: string): string[]
  * Unlike {@link extractTagsFromPath} this never tokenizes the filename
  * segment: it exists so a nested asset's directory (scope/domain) tokens can
  * be merged into explicit author tags without dragging every filename word
- * into exact-tag matching (SPEC-2, docs/architecture/specs/stash-conventions-code-spec.md).
+ * into exact-tag matching.
  * Tokenization mirrors `extractTagsFromPath`: each segment splits on `-`/`_`/
  * `.`, lowercased, single-character tokens dropped. A name with no directory
  * segments yields no tags.

@@ -29,10 +29,11 @@ the full ref format — generate one instead of hand-writing it:
 akm help agents >> AGENTS.md
 ```
 
-The output is stable across patch releases and designed for agents rather
-than humans: it describes the lookup workflow (`curate` → `show` →
-`feedback`) and explains how refs work. It prints a short guide by default;
-pass `--full` for the complete one.
+The output is written for agents rather than humans: it describes the lookup
+workflow (`curate` → `show` → `feedback`) and explains how refs work. `akm help
+agents` prints a short guide by default and the complete one with `--full`;
+`akm hints` prints the complete guide by default and the short one with
+`--detail brief`.
 
 ## The retrieval loop: curate, show, feedback
 
@@ -50,18 +51,22 @@ akm show workflows/deploy-to-prod
 akm feedback workflows/deploy-to-prod --positive --reason "Completed without issues"
 ```
 
-**Get refs from search.** Agents should call `akm search --shape agent` or
-`akm curate` to discover refs — not guess them. The `ref` field in search
-results is the stable token to pass to `akm show`. Feedback closes the loop.
-Record `--negative` only when the asset's content is wrong or stale; a note that
-simply did not fit the task is not negative feedback, so record nothing for it.
+**Get refs from search.** Agents should call `akm search` or `akm curate` to
+discover refs rather than guess them. Both return a `ref` at the default detail
+level; pass it to `akm show`. `--shape agent` (Experimental) additionally
+returns each hit's `path` and `editable` flag, for agents that read or edit the
+file directly.
+
+Feedback closes the loop. Record `--negative` only when the asset's content is
+wrong or stale; a note that simply did not fit the task is not negative
+feedback, so record nothing for it.
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
 flags the asset, and the next improve run may repair its description, title or
 `when_to_use` from your reason. Once you have verified the correct fact, attach
 the exact fix with `--replace`, `--with` and `--source`. `--positive` records
-that an asset helped (it raises its ranking) and does not trigger a rewrite. See
-[Improve the Library](improve-the-library.md) for what happens to feedback after
-it's recorded.
+that an asset helped and does not trigger a rewrite. Feedback does not change
+search ranking. See [Improve the Library](improve-the-library.md) for what
+happens to feedback after it's recorded.
 
 ## Compatibility matrix
 
@@ -80,9 +85,7 @@ recognized and indexed automatically once added as a source — see
 which formats are read-only versus writable in the current release.
 The native directory remains the source of truth: AKM translates recognized
 assets while reading the bundle and does not synchronize, copy, or write them
-back. The approved target execution rules for these translated agents and
-commands are documented in
-[Agent, Command, Engine, and Model Resolution](../architecture/specs/agent-command-engine-model-design.md).
+back.
 
 ## AKM complements, rather than replaces
 
@@ -100,13 +103,14 @@ than replacing either.
   for subcommands and flags. See [CLI Reference](../reference/cli.md#completions).
 - **Dispatching a bundle agent asset.** `akm agent agents/<name> --engine
   <engine> --prompt "..."` runs a bundle `agents/<name>` persona and model
-  defaults through a named engine — including built-in model aliases like
-  `sonnet` and `opus` that resolve per platform. The current CLI rejects a
-  nonempty tool request at its separate authorization boundary; asset metadata
-  is never authorization by itself. See
-  [Configuration](../reference/configuration.md#engines) for the alias table
-  and [Architecture](../architecture/architecture.md) for how dispatch is
-  built into platform-specific CLI argv per backend.
+  defaults through a named engine. Models can be named with the built-in
+  aliases `fast`, `balanced` and `reasoning`, which resolve per platform
+  (`akm models list` prints the table). A `tools:` request in the agent asset
+  is honored only up to your `execution.allowedTools` config list, which is
+  empty by default. See
+  [Configuration](../reference/configuration.md#engines) for engines and
+  aliases and [Architecture](../architecture/architecture.md) for how dispatch
+  is built into platform-specific CLI argv per backend.
 - **Install refs vs. asset refs.** `npm:@scope/pkg` and `github:owner/repo`
   are install refs, accepted only by `akm bundle add`/`akm clone`, and are a
   different grammar from the `[bundle//]conceptId` refs `show`/`search` use.
@@ -114,7 +118,7 @@ than replacing either.
 - **Plugin integrations.** For tighter editor and agent integrations,
   platform-specific plugins are available in
   [akm-plugins](https://github.com/itlackey/akm-plugins) (current
-  integrations include OpenCode). Plugins add richer UX — in-editor asset
+  integrations include Claude Code, Codex and OpenCode). Plugins add richer UX — in-editor asset
   browsing, automatic context injection — but the core `akm` CLI works
   without them.
 
@@ -122,8 +126,8 @@ than replacing either.
 
 - [Configuration](../reference/configuration.md#engines) — named agent engines and model aliases
 - [Discover and Load](discover-and-load.md) — the full curate → show retrieval path
-- [Knowledge Management](knowledge-management.md) — capturing agent-generated memories
+- [Capture Knowledge](capture-knowledge.md) — capturing agent-generated memories
 - [Improve the Library](improve-the-library.md) — feeding back usage signals
 - [CLI Reference](../reference/cli.md) — `completions`, `agent`, and `help agents` command documentation
-- [Concepts](concepts.md) — refs, origins, and the asset type system
+- [Concepts](concepts.md) — bundles, adapters, refs, and the asset type system
 - [Bundle Types](../reference/bundle-types.md) — how AKM indexes existing project layouts in place

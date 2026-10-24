@@ -2,7 +2,7 @@
 
 A **`BundleAdapter`** (`src/core/adapter/bundle-adapter.ts`) is the code that
 decides what a bundle's files *are*, how they're indexed, how `akm lint`
-validates them, and where a new item would be placed. 0.9.0 ships 11
+validates them, and where a new item would be placed. akm ships 11
 built-in adapters — one per format in
 [Supported Formats](../reference/supported-formats.md). This page is the
 write-path and internals reference; that page is the compatibility table.
@@ -11,8 +11,8 @@ For read-only native tool bundles, recognition is runtime translation, not
 conversion: the adapter projects native files into AKM's index/runtime shapes
 while the source file remains authoritative. AKM does not synchronize native
 formats, maintain translated canonical copies, or write agent/command assets
-back through the Claude/OpenCode adapters. See
-[Agent, Command, Engine, and Model Resolution](specs/agent-command-engine-model-design.md).
+back through the Claude/OpenCode adapters. Execution of agent and command assets
+is described in [Architecture: Engine Boundary](architecture.md#engine-boundary).
 
 > **Stability note.** The adapter set, bundle-recognition rules, and the
 > `bundles` config shape are still evolving — see [STABILITY.md](../../STABILITY.md).
@@ -31,9 +31,9 @@ install/index time:
    returns `true` claims the root.
 3. If no probe fires, the bundle falls back to the `akm` adapter.
 
-The order is pinned by `BUILTIN_ADAPTERS` (`src/core/adapter/adapters/index.ts`)
-and enforced by the conformance suite's ordered-owner matrix — it, not any
-prose spec listing, is authoritative:
+The order is the array order of `BUILTIN_ADAPTERS`
+(`src/core/adapter/adapters/index.ts`), pinned by
+`tests/core/adapter/registry.test.ts`:
 
 ```text
 website-snapshot   -- root manifest.json {url, fetchedAt}
@@ -41,8 +41,8 @@ agent-skills       -- a <name>/SKILL.md package at the bundle root
 claude             -- root CLAUDE.md + commands/|agents/|skills/
 opencode           -- opencode.json(c), or root AGENTS.md + a tool dir
 dotenv             -- every top-level dir is env/ and/or secrets/
-akm-workflow       -- a top-level .md with explicit type: workflow
-akm-task           -- a top-level valid task source v4 .yml (schedule optional)
+akm-workflow       -- a top-level .md with type: workflow, or a GitHub-Actions-shaped .yml
+akm-task           -- a top-level task source .yml (v4, or a v2/v3 file awaiting migration)
 llm-wiki           -- root schema.md + pages/
 akm                -- .stash marker, or 2+ native subdirs, or fallback
 okf                -- root index.md, or any .md with frontmatter type
@@ -91,15 +91,19 @@ interface BundleAdapter {
   affectedItems?(c: BundleComponent, changedPaths: string[]): string[];
 
   // REQUIRED — native validation (change-transaction pre-commit + lint --fix).
-  // Adapters MUST NOT write and MUST NOT read the live filesystem: ctx serves
+  // Adapters do not write and do not read the live filesystem: ctx serves
   // a run snapshot with pending changes overlaid, plus a read-only
   // resolveRef for link/xref existence.
   validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]>;
 
+  // OPTIONAL — runtime translation for executable agent/command assets: returns
+  // the frontmatter-free command or persona source the execution boundary uses.
+  renderExecutionSource?(c: BundleComponent, file: FileContext): AdapterRenderedExecutionSource | null;
+
   // OPTIONAL — the CLOSED-FORM set of existing-file placements/read aliases
   // that could own `conceptId`, used for first-owner arbitration without
   // reading authored bytes or walking the bundle.
-  readCandidates?(c: BundleComponent, conceptId: string): Array<{ path: string; conceptId: string }>;
+  readCandidates?(c: BundleComponent, conceptId: string): AdapterReadCandidate[]; // { path, conceptId }
 
   // OPTIONAL — placement / discovery.
   placeNew?(c: BundleComponent, conceptId: string): string;   // where a new item would live
@@ -109,8 +113,8 @@ interface BundleAdapter {
 ```
 
 `recognize` and `validate` are required on every adapter; `index`,
-`affectedItems`, `readCandidates`, `placeNew`, `directoryList`, and
-`looksLikeRoot` are optional capability methods. An adapter overriding `index()` must keep
+`affectedItems`, `renderExecutionSource`, `readCandidates`, `placeNew`,
+`directoryList`, and `looksLikeRoot` are optional capability methods. An adapter overriding `index()` must keep
 `recognize()` coherent with it (conformance: `index()` == fold of
 `recognize()` over the core walk) or declare component-level
 incrementality.
@@ -123,7 +127,7 @@ physical-owner decision. Each candidate carries its canonical concept identity,
 so a byte-denying ownership probe never has to infer identity from the query.
 Path-derived recognition (`toCanonicalName`/`toAssetPath`, `src/core/asset/asset-placement.ts`)
 is a deterministic function of a file's path, so its inverse — every physical
-spelling that could own one conceptId — is computable in CLOSED FORM (#857):
+spelling that could own one conceptId — is computable in closed form:
 the canonical placement under the type's own bundle subdir, the loose
 off-canonical placement (an authored path elsewhere in the bundle, keyed off
 its full path relative to the bundle root instead of the type subdir — this
@@ -137,40 +141,25 @@ adapter returning a candidate the file does not actually own is harmless —
 it is simply filtered out.
 
 The core walk — the live indexer's per-dir walk, drained by
-`drainDirDocuments` — is one implementation carrying the security policy
-(symlink-safety, skip-dirs, git-awareness); adapters never reimplement it.
+`drainDirDocuments` — is one implementation (symlink handling, skipped
+directories, git awareness); adapters do not reimplement it.
 
 Cross-component ref existence is a **core** base check, not an adapter
 concern.
 
 ---
 
-## `placeNew()` wiring status
+## `placeNew()`
 
-The interface declares `placeNew()` as an optional capability method, and 9
-of the 11 built-in adapters already implement it — all but `okf` and
-`website-snapshot` (`claude` and `opencode` inherit theirs from the shared
-tool-dir factory). **Nothing in the write path calls it yet**: AKM-native
-writes still resolve through AKM's own flat type→directory placement table
-(`src/core/asset/asset-placement.ts`'s `PLACEMENT_SPECS`), not through the
-owning adapter's `placeNew()`.
-
-Placement for every existing bundle is already correct today — this is a
-deliberately sequenced routing change, not unfinished behavior. It's
-scoped out of 0.9.0 by
-[D12](../architecture/specs/0.9.0-decisions.md#d12--bundleadapterplacenew-stays-unwired-until-010)
-and deferred to 0.10; nothing user-visible changes in 0.10 for this alone.
-See [STABILITY.md](../../STABILITY.md) ("On the horizon") for the
-up-to-date status if this changes.
+Nothing in the write path calls `placeNew()`; writes resolve through the native type-to-directory table in `src/core/asset/asset-placement.ts`.
 
 ---
 
 ## Write allowlists
 
-`placeNew()` wiring is a separate question from **which bundles AKM-native
-write commands are allowed to touch at all** — that's decided today by a
-small allowlist check, `assertAkmAssetWrite` (`src/core/write-source.ts`),
-run before any write command touches the filesystem. It compares the target
+Which bundles AKM-native write commands may touch is decided by a small
+allowlist check, `assertAkmAssetWrite` (`src/core/write-source.ts`), run before
+any write command touches the filesystem. It compares the target
 bundle's detected (or configured) adapter id against an allowlist and throws
 a `UsageError` on a miss.
 
@@ -183,7 +172,7 @@ The default allowlist is `["akm"]`. Two command families widen it explicitly:
 
 Every other adapter — including every adapter that already implements
 `placeNew()` (`agent-skills`, `claude`, `opencode`, `akm-task`,
-`generic-files`) — is rejected by every AKM-native write command in 0.9.0.
+`generic-files`) — is refused by every AKM-native write command.
 `akm task add` in particular uses the *default* allowlist (`akm` only), so a
 standalone `akm-task` bundle is read-only through AKM-native write commands
 even though `akm-task`'s own `placeNew()` is implemented.
@@ -193,12 +182,9 @@ creating, editing, or deleting through AKM's own commands is restricted.
 "Read-only" in [Supported Formats](../reference/supported-formats.md) means
 this write-command restriction, not a filesystem permission.
 
-This allowlist boundary is also where AKM's [execution
-boundary](../guides/concepts.md) principle shows up on the write side: AKM
-retrieves and validates every supported format, but it only lets its own
-write commands mutate a narrow, explicitly-declared set of targets — it
-does not widen write access to a format just because that format's adapter
-happens to expose a `placeNew()` implementation.
+AKM retrieves and validates every supported format, but its own write
+commands mutate only the targets on the allowlist; implementing `placeNew()`
+does not add a format to it.
 
 ---
 
@@ -207,10 +193,15 @@ happens to expose a `placeNew()` implementation.
 The native and standalone `akm-task` paths delegate to the authoritative task
 source parser, `parseTaskSource`, which accepts only `version: 4` (task
 source v4). A task source v4 document declares exactly one executable
-selector (`uses` or `run`), but its scheduling is OPTIONAL — a document with
+selector (`uses` or `run`), but its scheduling is optional — a document with
 no `schedule:` is valid and runnable manually. A `version: 3` or `version: 2`
-document is no longer read by `src` at all: it fails closed with
-`TASK_SCHEMA_VERSION_UNSUPPORTED`, naming `akm migrate` as the path forward.
+document is not read: it raises `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming
+`akm migrate apply`, which converts it. The `akm-task` probe still recognizes a
+root of v2/v3 task files so the migrator can find them. Targets are
+`akm/command` and canonical `commands/`, `workflows/`, and `scripts/` refs;
+the github-action `uses:` variant, agent refs, and task refs are refused.
+`.yaml` is a collection hint only: recognition gates on `.yml`, so a `.yaml`
+near miss is diagnosed (`invalid-task-yaml`) but never indexed or scheduled.
 See [Tasks](../reference/tasks.md) for the public source contract and the
 migration path.
 
@@ -233,23 +224,13 @@ they actually work:
 - **`claude`/`opencode` share one codec** (`tool-dir-shared.ts`) and differ
   only in instruction filename and adapter/component ids. Both accept only
   the canonical plural tool directories.
-- **`dotenv` redaction is a hard, adapter-level contract.** No frontmatter
-  `type:` override can bypass it: `env` entries surface only key names,
-  `secret` entries surface only the file name, never content. A `.env`
-  file placed under `secrets/` is a secret (name-only), not an env group —
-  the directory gate wins over the `.env` suffix.
+- **`dotenv` redaction is keyed on the adapter.** A frontmatter `type:` does
+  not change it: `env` entries surface only key names and `secret` entries
+  surface only the file name. A `.env` file placed under `secrets/` is a secret
+  (name-only), not an env group — the directory wins over the `.env` suffix.
 - **Task adapters share one task source parser.** A standalone `akm-task`
   bundle and task files owned by the native `akm` adapter both route through
-  `parseTaskSource`, which accepts only `version: 4` (task source v4) — a
-  `version: 3` or `version: 2` document fails closed with
-  `TASK_SCHEMA_VERSION_UNSUPPORTED` and is never indexed, validated, or run.
-  Task source v4 requires exactly one `uses` or `run` executable selector,
-  but its `schedule:` is OPTIONAL. It recognizes `akm/command`, `commands/`,
-  `workflows/`, and `scripts/` targets, refuses the github-action `uses:`
-  variant entirely (removed in v4 — no equivalent spelling), and refuses
-  agent/task refs and unsupported actions. `.yaml` is a collection hint only:
-  recognition still gates on `.yml`, so the near miss is diagnosed but never
-  indexed or scheduled. See the [Tasks reference](../reference/tasks.md).
+  `parseTaskSource` (see [Task adapter](#task-adapter)).
 - **`llm-wiki`, `akm`, and `okf` all reserve `index.md`/`log.md`** as
   structural files — never indexed as concepts, never valid write targets —
   at any depth.
@@ -268,5 +249,5 @@ they actually work:
 
 - [Supported Formats](../reference/supported-formats.md) — the compatibility table this page's internals back
 - [Asset Types](../reference/asset-types.md) — the `akm` adapter's 14 native asset types
-- [Concepts](../guides/concepts.md) — the retrieval loop and execution boundary these adapters serve
+- [Concepts](../guides/concepts.md) — the retrieval loop these adapters serve
 - [Architecture](architecture.md) — sources, refs, the search pipeline, and the write-source chokepoint

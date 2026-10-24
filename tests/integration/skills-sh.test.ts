@@ -296,38 +296,6 @@ describe("SkillsShProvider", () => {
     });
   });
 
-  describe("asset hits", () => {
-    test("includeAssets returns RegistryAssetSearchHit entries", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
-      const result = await provider.search({ query: "react", limit: 10, includeAssets: true });
-      expect(result.assetHits).toHaveLength(3);
-    });
-
-    test("asset hits have assetType skill", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
-      const result = await provider.search({ query: "react", limit: 10, includeAssets: true });
-      for (const hit of result.assetHits ?? []) {
-        expect(hit.assetType).toBe("skill");
-      }
-    });
-
-    test("asset hits have correct action", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
-      const result = await provider.search({ query: "react", limit: 10, includeAssets: true });
-      expect(result.assetHits![0]!.action).toBe("akm bundle add github:vercel-labs/agent-skills");
-    });
-
-    test("no asset hits when includeAssets is false", async () => {
-      const srv = serveJson(FIXTURE_RESPONSE);
-      const provider = makeProvider(srv.url);
-      const result = await provider.search({ query: "react", limit: 10, includeAssets: false });
-      expect(result.assetHits).toBeUndefined();
-    });
-  });
-
   describe("caching", () => {
     test("second call uses cache after server is killed", async () => {
       const srv = serveJson(FIXTURE_RESPONSE);
