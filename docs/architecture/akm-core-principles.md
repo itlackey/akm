@@ -27,6 +27,11 @@ first, degrade with a warning second, abort last. Machinery that prevents
 data loss or corruption, such as backups, atomic writes, write-path
 validation and path containment, is exempt.
 
+The same rule applies to code that is not a guard: build what the current
+design needs and nothing for a future one (YAGNI). No speculative option,
+abstraction, extension point or "flexibility" goes in until a real caller
+needs it, and a mechanism nothing calls any more comes out.
+
 Why: every footgun this codebase has removed was a guard added because a
 hazard was conceivable; the limits made the tool refuse to do its job
 more often than they protected anyone.
@@ -206,3 +211,22 @@ Why: heavy machinery and tight coupling are the opposite of akm's goals.
 
 Enforced by: review. The seam is `HARNESS_REGISTRY` (principle 2), which the
 opencode-sdk path still bypasses.
+
+### 11. Simple is not sloppy
+
+Principle 1 removes machinery that is not justified; it does not lower the
+standard of what remains. Code is kept simple with SOLID structure, not
+instead of it: a module has one responsibility and one reason to change;
+behaviour is extended by adding a case in its one place (principle 2), not
+by editing every caller; a caller depends on the narrow interface it uses,
+not on the internals behind it; types say what a value is. Shrinking a diff
+by merging unrelated concerns, dropping the error handling the design calls
+for, or flattening clear structure into one long function is not
+simplification and is reverted in review.
+
+Why: the layers this codebase has removed were added without need, but the
+remedy for over-engineering is a small clean design, not a monolith. Both
+cost the next reader.
+
+Enforced by: review; `tests/contracts/module-boundaries.test.ts` for the
+module seams it pins.
