@@ -1917,7 +1917,7 @@ exact fix with `--replace`, `--with` and `--source`: akm checks that each
 `--replace` text appears exactly once and that the frontmatter still parses,
 records nothing if either check fails, and applies the edit at once, with no
 review or gate: it files a `feedback` proposal and accepts it in the same command
-(the accept is a normal one, committed to a git-backed bundle, and
+(gate decision `manual-fix`, `src/commands/feedback-cli.ts`; the accept is a normal one, committed to a git-backed bundle, and
 `akm proposal revert` undoes it). If the accept refuses, the proposal is
 rejected, the file is left alone and the command fails. The asset stays eligible
 for improve like any other.
@@ -1931,7 +1931,9 @@ helped (it raises its ranking) and does not trigger a rewrite. Feedback
 changes `akm search` and `akm curate` ranking at once, with no reindex: each
 recorded positive raises the asset's score and each negative lowers it, the
 same way for every asset, so an asset with 5 positives ranks higher than one
-with 2, and each further vote counts for a little less. The effect is small: it
+with 2, and each further vote counts for a little less. A hit's fused score is
+multiplied by `1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))`
+(`FEEDBACK_WEIGHT` in `src/indexer/search/ranking.ts`). The effect is small: it
 reorders close matches and does not override relevance. Only feedback recorded
 as the user counts, not feedback from improve, task or audit runs; the output's
 `rankingUpdate.applied` says which it was (`true`, or `false` with a `reason`).

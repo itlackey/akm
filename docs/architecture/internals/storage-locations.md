@@ -282,8 +282,10 @@ Incremental indexing cache. Directory skipped if hash + mtime unchanged.
 
 Primary key: `(asset_ref, cache_variant)`.
 
-Cache miss on effective-input change or cache-variant change. See the
-[memory-inference caching rules](../0.10-process-rules.md#memory-inference).
+Cache miss on effective-input change or cache-variant change. An unchanged
+effective input is a validated hit with no LLM call (`cacheHits`); the cached value is a derived memory
+or `{ "noChange": true }`, and an unrecognised or corrupt value falls through to a
+recompute (`src/indexer/passes/memory-inference.ts`, `src/indexer/db/llm-cache.ts`).
 Stale rows removed by
 `clearStaleCacheEntries()`. The cache can also be bypassed by internal forced
 re-enrichment callers.

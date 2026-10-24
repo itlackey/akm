@@ -374,7 +374,13 @@ exactly this path (`proposal drain --promote` without judgment): 0.91 (terra) an
 
 Every downgrade is reported, not silent: it warns on stderr, appends an
 `improve_skipped` event with `reason: "autonomy_gated"`, and is counted in
-`akm health`'s improve skip-reason summary. Consolidation stays enabled with
+`akm health`'s improve skip-reason summary. The `default` strategy enables
+`memoryInference`, so every live `akm improve` run on an install without the
+opt-in warns `[improve] memoryInference skipped` and names
+`experimental.improveAutonomy`. That is by design, because a gated lane is never
+a silent no-op (`applyAutonomyGate` in `src/commands/improve/autonomy-gate.ts`,
+the warning in `runImproveStageSequence` in `src/commands/improve/improve.ts`).
+Consolidation stays enabled with
 autonomy off: both its passes only ever emit a reviewable proposal. The one
 pair-pass `retire` proposal `triage` `applyMode: "promote"` accepts is a
 retirement the pair pass staged (nothing unique to the retired side, confirmed
