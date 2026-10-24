@@ -16,7 +16,3 @@ actually improve it, and the current state of the `curate` implementation.
 - [Curate Workmap](curate-workmap.md) — the current `akm curate` contract,
   where its implementation diverges from intended behavior, and the
   highest-value next fixes.
-- [Documentation Review Prompt](documentation-review-prompt.md) — a reusable
-  two-stage prompt for a code-verified review of the docs tree: the principles
-  on their own, then every document checked against the principles and the
-  code, with the link and orphan checker it uses.
