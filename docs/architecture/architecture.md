@@ -56,6 +56,12 @@ itself is written are in [Core Principles](akm-core-principles.md).
   `--shape human` by default; failures are `{ok, error, code}` on stderr
   with a stable exit code. Pinned by
   `tests/integration/output-baseline.test.ts`.
+- **A workflow run executes the plan frozen at creation.** The plan, resolved
+  request, engine and fan-out width are journaled when the run starts; a
+  resumed run reads the journal, never config or credentials, so editing
+  config changes the next run and not the one in flight. Pinned by
+  `tests/workflows/child-plan-immutability.test.ts` and
+  `tests/workflows/immutable-execution-v4-red.test.ts`.
 - **Host authority is local and never inferred.** Inherited config shares
   portable policy only; a disabled bundle is inert; the default bundle is
   explicit. Pinned by `tests/config.test.ts` and

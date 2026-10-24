@@ -2,8 +2,8 @@
 
 How akm is built. These are the rules the code, the tests and the
 documentation in this repository follow. What akm does for a user is
-described in [Architecture](architecture.md); the product invariants that
-used to live here are its "Invariants" section.
+described in [Architecture](architecture.md), whose "Invariants" section
+lists the behaviors every command keeps.
 
 Each principle states the rule, why it exists, and what enforces it. A rule
 with nothing enforcing it is held by review, and says so.
@@ -12,8 +12,7 @@ with nothing enforcing it is held by review, and says so.
 
 When two principles pull against each other: a user's data comes first,
 then honesty (code and documentation that do what they say), then
-simplicity, then convenience. A principle marked as a goal not yet reached
-does not make the code wrong where it falls short; it names the work.
+simplicity, then convenience.
 
 ## Principles
 
@@ -56,90 +55,61 @@ are held by review; the opencode-sdk path still bypasses the second one in
 the config schema, setup, health, the engine fallback and workflow
 teardown, which is open work.
 
-### 3. Decide once, then freeze
+### 3. Upgrades never strand a user's data
 
-Anything that changes what a durable run does is resolved when the run is
-created and journaled with it: the plan, the resolved request, the engine,
-the fan-out width, the parameter snapshot. A resumed run reads the journal,
-never config, model aliases or credentials. Editing config changes the next
-run, not the one in flight.
+New code reads whatever an older release wrote. If the shape is old, convert
+it in memory, warn once, and keep going; `akm migrate apply` rewrites files
+on disk when the user asks, and is never required before a command will
+run. The only thing a reader refuses is data written by a newer release,
+and the error says to upgrade. Config is never strict: an unknown key is
+kept and named once, not rejected.
 
-Why: a run that can change underneath itself cannot be resumed, reasoned
-about, or reproduced.
-
-Enforced by: `tests/workflows/child-plan-immutability.test.ts`,
-`tests/workflows/immutable-execution-v4-red.test.ts`,
-`tests/concurrency-defaults.test.ts`.
-
-### 4. Readers tolerate the past and refuse only the future
-
-Data an older release wrote is read: converted in memory, warned about
-once, and left for `akm migrate apply` to rewrite on disk. The migrator is
-the on-disk rewrite path, never a precondition for reading. The only data a
-reader refuses is data a newer release wrote, and the refusal names the
-upgrade. No config object is strict: an unknown key at any depth is kept,
-named once, and round-trips through ordinary writes.
-
-Why: an upgrade that strands a user's data on the first command is worse
-than any inconsistency it was guarding against.
+Why: an upgrade that fails on the first command, or that silently drops
+what the user had, costs more than any inconsistency it was guarding
+against.
 
 Enforced by: `tests/integration/upgrade-rehearsal/`, which installs the
-previous release, builds real state, and runs the candidate against it.
-[Persisted-Data Compatibility](persisted-data-compat.md) is the per-format
-contract; every format change adds its old shape to the rehearsal.
+previous release, builds real state and runs the current build against it.
+[Persisted-Data Compatibility](persisted-data-compat.md) lists each stored
+format; a change to one adds its old shape to the rehearsal.
 
-### 5. Runtime code never invents authority
+### 4. Sane defaults, flexible overrides
 
-Sources, defaults, registries, credentials, scheduled tasks and execution
-policy come from this host's own config. Inherited config (`extends`)
-shares portable policy only. A disabled bundle is inert for reads, writes,
-indexing and execution. The default bundle is carried explicitly, never
-inferred from array position. The single exception, a config without
-`scheduler.enabled` adopting the scheduler rows akm already wrote on this
-host, is documented and is the only one.
+Every default works out of the box for the common case, which for anything
+touching a model means a slow local model on a single-threaded server: no
+`max_tokens` sent unless asked, one timeout, concurrency one against a
+loopback endpoint. Every default is overridable where it applies, per
+engine under `engines.<name>.*`, per workflow step, per command flag, and
+the override is honored as given. The tool never second-guesses a value
+the user set.
 
-Why: a tool that fills in trust decisions on its own becomes impossible to
-audit, and every "helpful" inference is a path a bundle author can abuse.
+Why: defaults that need tuning before the first useful result lose the
+user; overrides that are ignored or capped behind the user's back lose
+their trust.
 
-Enforced by: `tests/config.test.ts` (`HOST_LOCAL_CONFIG_KEYS` in
-`src/core/config/config.ts`) and `tests/core/activation-policy.test.ts`.
+Enforced by: `tests/concurrency-defaults.test.ts` and
+`tests/engine-resolution.test.ts`; the rest is review.
 
-### 6. Safe defaults, narrow overrides
+### 5. If it matters, a test or lint checks it
 
-Defaults work for the lowest common denominator: a slow local model on a
-single-threaded server. No `max_tokens` is sent unless configured, one
-timeout knob, concurrency one for a loopback endpoint, no per-call tuning
-knobs without a strong reason. An override that weakens a safety rule names
-exactly one risk: `--allow-insecure-transport` is for plain HTTP and
-nothing else, `--allow-dangerous-env-keys` is for reviewed
-process-hijacking environment keys and nothing else. There is no combined
-bypass.
+Any rule we want to hold is pinned: output shapes and exit codes, the ref
+grammar, the module table, the engine boundary, that every command and
+flag named in a doc exists, that shipped assets carry no dead refs. The pin
+is a test under `tests/contracts/`, a unit test, or a script in the `lint`
+chain. A rule nobody pinned is a preference, and may change without
+ceremony.
 
-Why: a knob nobody needed is a surface nobody tested; a combined bypass is
-a flag people cargo-cult.
-
-Enforced by: `tests/concurrency-defaults.test.ts`,
-`tests/env-run-dangerous-key-block.test.ts`; the rest is review.
-
-### 7. A contract is a test or a lint, or it is a preference
-
-Output shapes, exit codes, the ref grammar, the module table, the engine
-boundary, documentation examples that name real commands and flags, shipped
-assets that carry no dead refs: each is pinned. A rule that matters gets a
-pin in `tests/contracts/`, a unit test, or a script in the `lint` chain. A
-rule nobody pinned is a preference and may be changed without ceremony.
-
-Why: this repository's documentation drifted from its code for months
-because the documents said "normative" and nothing checked.
+Why: the documentation drifted from the code for months because the pages
+said "normative" and nothing checked.
 
 Enforced by: `bun run lint` (`scripts/lint-doc-examples.ts`,
 `scripts/lint-shipped-assets.ts`, `scripts/lint-secret-resolver-boundary.ts`),
 `tests/contracts/`, `tests/output-shapes-unit.test.ts`.
 
-### 8. The suite is green by default and isolated by construction
+### 6. The suite is green by default and isolated by construction
 
-`test:unit` and `test:integration` report zero failures at all times; a red
-run is a real break, never noise to route around, and a test that must be
+`test:unit` and `test:integration` report zero failures at all times. A
+red run is a real break, never noise to route around; a test that must be
 disabled is disabled explicitly with a linked issue. A test that opens a
 real database, touches the network, or spawns a process lives under
 `tests/integration/`; everything else lives under `tests/`. Tests never
@@ -154,7 +124,7 @@ Enforced by: `tests/_preload.ts` (the tripwire), `scripts/test-unit.sh`
 and `scripts/test-integration.sh` (the split), `TEST_ISOLATION_MISSING` in
 `src/core/paths.ts`.
 
-### 9. Prose lives in files; comments say why
+### 7. Prose lives in files; comments say why
 
 Multi-line markdown, XML or prose belongs in a standalone file next to the
 module that uses it, imported as text and filled with `{{PLACEHOLDER}}`
@@ -168,14 +138,14 @@ that looks like information.
 
 Enforced by: review.
 
-### 10. Documentation describes the product that exists
+### 8. Documentation describes the product that exists
 
 One current-truth document per subsystem; no second one is forked. Plans,
 decision records, review registers and future-work promises do not live
 under `docs/`. Code is cited by file and symbol, not line number. A
 document claims no guarantee the code does not enforce, and names no
 command, flag or file that does not exist. When code and documentation
-disagree, one of them is fixed in the same change, never left for later.
+disagree, one of them is fixed in the same change.
 
 Why: a user who reads a stale page loses more time than if the page had
 not existed, and a "normative" document the code ignores teaches
@@ -187,7 +157,7 @@ doc exists), the npm pack check in
 `tests/contracts/` (pinned sections of `architecture.md`, `cli.md` and
 `configuration.md`).
 
-### 11. CLI-only, Bun-first
+### 9. CLI-only, Bun-first
 
 This package is a command-line tool. There is no public API, no barrel
 exports and no `exports` map; `src/cli.ts` dispatches and commands live
