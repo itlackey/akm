@@ -3,17 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The frozen task-v3 reader (spec docs/plans/specs/p4-deletions-closeout.md
- * §3.2.4, P4-N1).
+ * The frozen task-v3 reader.
  *
  * `src/` no longer accepts task v3; this copy exists so the migrator can
  * still READ what it converts. It is frozen: it is never extended, and a
  * change to task source v4 never propagates here. It deliberately
- * duplicates code that used to live in `src/tasks/source-v3.ts` — moved
- * body-intact, verbatim, from that file as it stood at the parent of P4's
- * commit 2 (`refactor(p4): remove github-action locator grammar from
- * native classification`) — i.e. INCLUDING the GitHub Action locator
- * grammar that commit deleted from native classification.
+ * duplicates the v3 reader, including the GitHub Action locator grammar that
+ * native classification no longer has.
  * `src/tasks/source/task-to-v4.ts`'s `github-action-target-removed`
  * blocked reason needs this migrator to still be able to CLASSIFY a
  * locator (not merely detect its shape) so it can name the target
@@ -24,20 +20,12 @@
  * rule runs one way — this file may import from `src/`, `src/` may never
  * import from `scripts/`:
  * `rg -n 'from "\.\./\.\./scripts|from "\.\./scripts|scripts/akm-migrate' src/`
- * returns zero hits, before and after this file exists.
+ * returns zero hits.
  *
  * Do not "fix" a bug found here by porting a task source v4 change, and do
  * not add a task source v4 feature here. A behavior change to what this
  * file accepts is a behavior change to what the migrator can read FROM —
- * exactly the drift a frozen migrator exists to prevent. Two things this
- * file does NOT carry over from the original, because no migrator module
- * needs them: the bounded-document re-export block (D2-N4's own comment
- * explained that block existed only so OTHER `src/` consumers did not need
- * to import `./source/bounded-document` directly — every consumer here
- * already imports what it needs from `../../tasks/source/bounded-document`
- * on its own), and `taskExtensionDetail`/`TASK_EXTENSION`/
- * `TASK_NEAR_MISS_EXTENSION`/`taskV3SourceErrorDetail` (presentation
- * helpers for `src/`-side consumers, not part of reading a document).
+ * exactly the drift a frozen migrator exists to prevent.
  */
 
 import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../commands/command/builtin-action";
@@ -452,11 +440,11 @@ function parseTaskV3TriggerFields(input: ExecutionJsonObject, ctx: ParseContext)
  * Classify the strict trigger fragment `{akm?, on?}` into deterministic local
  * scheduler bindings. Unused by the migrator today (the three migrator
  * modules only call `parseTaskV3Yaml`) — vendored anyway for fidelity with
- * the original file this was moved body-intact from, and because
+ * the original v3 reader, and because
  * `parseTaskV3Document` shares its trigger-parsing helpers
  * (`parseTaskV3TriggerFields`/`compileTriggers`/`parseOn`/`parseAkm`) with
  * it. The LIVE, `src`-side `on:` parser is `parseTriggers`
- * (`src/workflows/github-yaml.ts`, P4-N3) — that one, not this frozen copy,
+ * (`src/workflows/github-yaml.ts`) — that one, not this frozen copy,
  * is what workflow compilation uses.
  */
 export function classifyTaskV3Triggers(value: unknown, options: ClassifyTaskV3TriggersOptions): TaskV3TriggerPlan {

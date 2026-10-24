@@ -3,28 +3,23 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Single-parse argv normalization (plan §10.7, chunk-9 WI-9.9).
+ * Single-parse argv normalization.
  *
- * Before this module, ~46 `process.argv` read sites were scattered across
- * `src/**` (32 outside `src/cli.ts`), each re-scanning the raw argv array for
- * repeated flags (`parseAllFlagValues`), `--`-passthrough tails (`env run`,
- * `secret run`), or first-occurrence flag values (`parseFlagValue`). This
- * module normalizes argv into one typed {@link ParsedInvocation} object,
- * minted ONCE by `src/cli.ts` at startup, so every downstream reader shares
- * one parse instead of re-scanning the raw array.
+ * This module normalizes argv into one typed {@link ParsedInvocation} object,
+ * minted ONCE by `src/cli.ts` at startup, so every downstream reader (repeated
+ * flags, `--`-passthrough tails such as `env run` / `secret run`,
+ * first-occurrence flag values) shares one parse instead of re-scanning the
+ * raw `process.argv` array.
  *
  * Deliberately import-free: this module must never join an import cycle
- * (cycle ratchet, plan §10.7 / chunk-9 D.3), so it depends on nothing but
- * global `process` — no `output/context`, no `core/errors`. The flag-parsing
- * primitives below are intentionally small, self-contained re-implementations
- * of the same algorithms `output/context.ts`'s `parseFlagValue`/
- * `hasBooleanFlag` and (the now-retired) `cli/shared.ts` `parseAllFlagValues`
- * used, kept byte-identical so every converted call site is behavior-
- * preserving — with ONE deliberate exception (R-033a): `getAllFlagValuesFrom`
- * now stops at a literal `--` separator instead of scanning past it, fixing a
- * bug where a repeatable flag's value placed after `--` (meant to end flag
- * parsing) was still read as a real flag occurrence. See that function's
- * docstring.
+ * (cycle ratchet), so it depends on nothing but global `process` — no
+ * `output/context`, no `core/errors`. The flag-parsing primitives below are
+ * intentionally small, self-contained implementations of the same algorithms
+ * as `output/context.ts`'s `parseFlagValue`/`hasBooleanFlag`.
+ * `getAllFlagValuesFrom` stops at a literal `--` separator instead of
+ * scanning past it, so a repeatable flag's value placed after `--` (meant to
+ * end flag parsing) is not read as a real flag occurrence. See that
+ * function's docstring.
  *
  * Singleton + fallback semantics (the design decision this module encodes):
  *  - `setParsedInvocation(argv)` is called exactly once, by `src/cli.ts`, in
@@ -44,8 +39,7 @@
  *    per test; caching the fallback parse would leak one run's flags into
  *    the next. So "lazily parses process.argv once" means "once PER CALL",
  *    not "once for the life of the process" — the fallback is intentionally
- *    request-scoped, mirroring how every pre-WI-9.9 leaf site read
- *    `process.argv` fresh at call time. Production code never touches the
+ *    request-scoped. Production code never touches the
  *    fallback path: the real entry point sets the singleton before any
  *    command handler can run.
  *  - `_resetParsedInvocationForTests()` clears an explicitly-set singleton
@@ -55,21 +49,16 @@
  *    `bun test`, but it exists so a test that DOES call
  *    `setParsedInvocation` directly can clean up after itself.
  *
- * Also folds three argv re-scanners that pre-dated this module (plan §10.7):
- *  - `parseAllFlagValues` (moved from `cli/shared.ts`) — repeated-flag
- *    collection (`--tag foo --tag bar`), re-exported from `cli/shared.ts` so
- *    every existing importer (feedback-cli, observability-cli, remember-cli,
- *    search-cli, stash-cli, cli.ts) is unaffected.
- *  - `findCittyTopLevelCommand`/`findCittyTopLevelCommandIndex` (moved from
- *    `cli/parse-args.ts`, which had zero internal imports for this cluster) —
- *    re-exported from `cli/parse-args.ts` for `tests/tasks-embedded.test.ts`.
- *  - `resolveHelpMigrateVersionArg` (moved from `cli.ts`, where it was
- *    private) — the `akm help migrate <version>` positional/flag
- *    disambiguation guard.
+ * Also hosts three argv scanners:
+ *  - `parseAllFlagValues` — repeated-flag collection (`--tag foo --tag bar`),
+ *    re-exported from `cli/shared.ts`.
+ *  - `findCittyTopLevelCommand`/`findCittyTopLevelCommandIndex` — re-exported
+ *    from `cli/parse-args.ts`.
+ *  - `resolveHelpMigrateVersionArg` — the `akm help migrate <version>`
+ *    positional/flag disambiguation guard.
  */
 
-// ── Repeated-flag / `--`-passthrough primitives (byte-identical to the
-// pre-WI-9.9 per-site implementations they replace) ─────────────────────────
+// ── Repeated-flag / `--`-passthrough primitives ─────────────────────────────
 
 function getFlagValueFrom(argv: readonly string[], flag: string): string | undefined {
   for (let i = 0; i < argv.length; i++) {
@@ -91,15 +80,12 @@ function hasFlagIn(argv: readonly string[], flag: string): boolean {
 
 /**
  * Collect every `--flag value` / `--flag=value` occurrence, stopping at a
- * literal `--` separator (R-033a). `--` conventionally ends flag parsing —
+ * literal `--` separator. `--` conventionally ends flag parsing —
  * everything after it is positional/passthrough, never a flag akm should
- * interpret. Before this fix, a token like `--tag leaked:yes` placed AFTER
- * `--` (e.g. `akm feedback <ref> --positive -- --tag leaked:yes`) was still
- * picked up as a real `--tag` value, letting argv content past the boundary
- * leak into structured output. This is a deliberate BEHAVIOR CHANGE from the
- * pre-WI-9.9 per-site implementation this module otherwise keeps
- * byte-identical (see the module docstring) — every caller of
- * `parseAllFlagValues`/`getAllFlagValues` inherits the fix for free.
+ * interpret. A token like `--tag leaked:yes` placed AFTER `--` (e.g.
+ * `akm feedback <ref> --positive -- --tag leaked:yes`) is therefore not
+ * picked up as a `--tag` value, so argv content past the boundary cannot leak
+ * into structured output.
  */
 function getAllFlagValuesFrom(argv: readonly string[], flag: string): string[] {
   const values: string[] = [];
@@ -108,7 +94,7 @@ function getAllFlagValuesFrom(argv: readonly string[], flag: string): string[] {
     if (arg === "--") break;
     if (arg === flag && i + 1 < argv.length) {
       values.push(argv[i + 1] as string);
-      // BUG-M4: skip the value index so `--tag --tag` (literal `--tag` value)
+      // Skip the value index so `--tag --tag` (literal `--tag` value)
       // does not double-count the second `--tag` as a separate flag occurrence.
       i++;
     } else if (arg.startsWith(`${flag}=`)) {
@@ -120,9 +106,9 @@ function getAllFlagValuesFrom(argv: readonly string[], flag: string): string[] {
 
 /**
  * Tokens after a literal `--` marker in argv, or `[]` when there is no `--`
- * OR nothing follows it. Callers that previously threw a "Missing command"
- * UsageError on `dashIndex < 0 || dashIndex === argv.length - 1` now check
- * `passthroughArgs().length === 0` — the two conditions are equivalent.
+ * OR nothing follows it. Callers that throw a "Missing command" UsageError
+ * when there is nothing to pass through check `passthroughArgs().length === 0`
+ * (equivalent to `dashIndex < 0 || dashIndex === argv.length - 1`).
  */
 function passthroughArgsFrom(argv: readonly string[]): string[] {
   const dashIndex = argv.indexOf("--");
@@ -164,8 +150,7 @@ let _invocation: ParsedInvocation | undefined;
 
 /**
  * Mint the process-wide {@link ParsedInvocation} singleton. Called exactly
- * once, by `src/cli.ts`, at startup — "normalize argv exactly once at entry"
- * (plan §10.7).
+ * once, by `src/cli.ts`, at startup — "normalize argv exactly once at entry".
  */
 export function setParsedInvocation(argv: readonly string[]): ParsedInvocation {
   _invocation = createParsedInvocation(argv);
@@ -190,7 +175,7 @@ export function _resetParsedInvocationForTests(): void {
   _invocation = undefined;
 }
 
-// ── Folded re-scanner #1: parseAllFlagValues (moved from cli/shared.ts) ─────
+// ── parseAllFlagValues ──────────────────────────────────────────────────────
 
 /**
  * Collect all occurrences of a repeatable flag from the current invocation's
@@ -203,8 +188,7 @@ export function parseAllFlagValues(flag: string): string[] {
   return getParsedInvocation().getAllFlagValues(flag);
 }
 
-// ── Folded re-scanner #2: findCittyTopLevelCommand(Index) (moved from
-// cli/parse-args.ts, which had zero internal imports for this cluster) ──────
+// ── findCittyTopLevelCommand(Index) ─────────────────────────────────────────
 
 export interface CittyArgDefinitionForScan {
   readonly type?: string;
@@ -262,8 +246,7 @@ export function findCittyTopLevelCommand(
   return index >= 0 ? rawArgs[index] : undefined;
 }
 
-// ── Folded re-scanner #3: resolveHelpMigrateVersionArg (moved from cli.ts,
-// where it was a private, unexported function) ──────────────────────────────
+// ── resolveHelpMigrateVersionArg ────────────────────────────────────────────
 
 /**
  * Guard against citty consuming a global flag value as the `help migrate`

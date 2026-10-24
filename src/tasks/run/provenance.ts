@@ -3,28 +3,26 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * D5's ExecutionProvenanceContext factory + resolution helper (spec
- * docs/plans/specs/p1b-model-extraction.md §1.2 D5, §5.2).
+ * ExecutionProvenanceContext factory + resolution helper.
  *
- * `createExecutionProvenanceContext` builds the SAME literal both of D5's
- * clauses build: "Construction" at the `akm task run` CLI boundary
- * (src/commands/tasks/tasks.ts's `akmTasksRun`) and "Threading" as
- * run-task.ts's own default for an absent `RunTaskOptions.provenance`.
- * `eventSource` is `"task"` UNCONDITIONALLY — spec §1.6 (D5-N1) is explicit
- * that it is NOT conditioned on `scheduled`; `scheduled` stays a separate
- * field carrying today's `RunTaskOptions.scheduled` meaning (activation
- * policy, scheduler env), never selecting the event source.
+ * `createExecutionProvenanceContext` builds the literal used at the
+ * `akm task run` CLI boundary (src/commands/tasks/tasks.ts's `akmTasksRun`)
+ * and as run-task.ts's default for an absent `RunTaskOptions.provenance`.
+ * `eventSource` is `"task"` UNCONDITIONALLY — it is NOT conditioned on
+ * `scheduled`; `scheduled` stays a separate field carrying
+ * `RunTaskOptions.scheduled`'s meaning (activation policy, scheduler env),
+ * never selecting the event source.
  *
- * Pure type module's runtime counterpart: `ExecutionProvenanceContext` itself
- * is declared in ../model/invocation.ts (Lane A, kept pure/IO-free per the
- * model purity ratchet); this file is where the runtime factory lives.
+ * `ExecutionProvenanceContext` itself is declared in ../model/invocation.ts
+ * (kept pure/IO-free per the model purity ratchet); this file is where the
+ * runtime factory lives.
  */
 
 import type { ExecutionProvenanceContext } from "../model/invocation";
 
 /**
  * Build the default task-run provenance context: `eventSource` is always
- * `"task"` (D5-N1); `scheduled` carries the caller's own scheduled flag.
+ * `"task"`; `scheduled` carries the caller's own scheduled flag.
  */
 export function createExecutionProvenanceContext(scheduled: boolean): ExecutionProvenanceContext {
   return Object.freeze({ eventSource: "task", scheduled });
@@ -33,9 +31,8 @@ export function createExecutionProvenanceContext(scheduled: boolean): ExecutionP
 /**
  * Resolve the effective provenance for one `runTask()` call: an explicit
  * `RunTaskOptions.provenance` always wins; absent, this is the default
- * context (§5.2 "Threading") — what keeps every pre-P1b caller (and any
- * future in-repo caller that never sets `provenance`) byte-equivalent to
- * today's behavior.
+ * context — what keeps any caller that never sets `provenance` on the
+ * default behavior.
  */
 export function resolveProvenanceContext(
   explicit: ExecutionProvenanceContext | undefined,

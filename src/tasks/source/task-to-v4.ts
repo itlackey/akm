@@ -4,12 +4,9 @@
 
 /**
  * Pure, byte-producing task-source migration planner: a v2, v3, or v4 task
- * file straight to task source v4 (spec docs/plans/specs/p2b-input-bindings.md
- * §1.3, §1.7 C-N1, §5). One planner, one outcome per file — the former
- * two-generation chain (legacy task to v3, then v3 to v4, composed by
- * `scripts/akm-migrate/migrate/task-files.ts`) is gone: a v2 file is read
- * once and converted directly, with no intermediate v3 file ever written to
- * disk or reported as its own outcome.
+ * file straight to task source v4. One planner, one outcome per file: a v2
+ * file is read once and converted directly, with no intermediate v3 file ever
+ * written to disk or reported as its own outcome.
  *
  * A v3 document — real, or the v3-shape record a v2 file converts to in
  * memory — is read as a raw record by a vendored bounded-YAML reader, never
@@ -18,16 +15,14 @@
  * numeric `timeout`, would be converted to milliseconds by the real parser).
  * The one exception is a pre-validation gate: every v3-versioned document —
  * real, or freshly built from v2 — is first checked against the REAL typed
- * `parseTaskV3Yaml`, exactly as the prior two-generation chain did at each of
- * its hops, so every blocked reason only the typed parser catches (an
- * escaping `working-directory` symlink, a GitHub-expression schedule, an
- * invalid builtin-command `with:` shape, and so on) still blocks here, with
- * the same reason. The OUTPUT side is validated through the REAL
- * `parseTaskSourceV4` before a "changed" outcome is ever handed back (C-N1,
- * B-71).
+ * `parseTaskV3Yaml`, so every blocked reason only the typed parser catches
+ * (an escaping `working-directory` symlink, a GitHub-expression schedule, an
+ * invalid builtin-command `with:` shape, and so on) blocks here. The OUTPUT
+ * side is validated through the REAL `parseTaskSourceV4` before a "changed"
+ * outcome is ever handed back.
  *
  * `inputs:` is never invented — the migrator translates structure, not
- * intent (spec §5.3).
+ * intent.
  */
 
 import crypto from "node:crypto";
@@ -69,7 +64,7 @@ export interface TaskToV4Changed extends TaskToV4OutcomeBase {
   readonly reason: "task-converted" | "source-enablement-removed";
   readonly after: Buffer;
   readonly afterHash: string;
-  /** Set only when a v3 trigger was dropped without a v4 equivalent (manual-only, B-62). */
+  /** Set only when a v3 trigger was dropped without a v4 equivalent (manual-only). */
   readonly notice?: string;
 }
 
@@ -289,7 +284,7 @@ function optionalString(value: unknown, label: string): string | undefined {
  * builds): reading the RAW decoded record — rather than a typed parser —
  * keeps every field's original value bytes (a duration string, a bare
  * millisecond integer, an env value's exact type) intact for verbatim
- * re-emission; a typed parse would normalize several of these away (C-N1).
+ * re-emission; a typed parse would normalize several of these away.
  * Which grammar applies to the result is entirely up to the caller, decided
  * after `data.version` is known.
  */
@@ -362,7 +357,7 @@ function planV3DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>)
       return blocked(input, "invalid-v3-task", causeMessage(cause));
     }
     // Mirrors the frozen v3 reader's own `parseOn` gates exactly
-    // (task-source-v3-frozen.ts:395-427): an empty `on: {}` declares no
+    // (task-source-v3-frozen.ts): an empty `on: {}` declares no
     // trigger at all, and `on.workflow_dispatch` accepts only null or an
     // empty mapping (inputs are unsupported in v3). The frozen parser
     // rejects both shapes outright, so this migrator must too — translating
@@ -496,7 +491,7 @@ function planV3DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>)
       if (Object.hasOwn(akm, key)) out[key] = akm[key];
     }
     // v3's `akm.outputSchema: null` means "no schema" (accepted verbatim by
-    // the frozen v3 reader, task-source-v3-frozen.ts:256-258); v4's
+    // the frozen v3 reader, task-source-v3-frozen.ts); v4's
     // `output:` has no null form (parseOutputSchema always requires a
     // mapping). Omitting the key is the faithful v4 equivalent of an
     // explicit v3 null — emitting `output: null` would fail the real
@@ -506,14 +501,14 @@ function planV3DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>)
       // or `uses: akm/command` (src/tasks/source/task-source-v4.ts's
       // `targetConsumesOutputSchema`). v3 enforced no such rule: the frozen v3
       // reader accepts `akm.outputSchema` on ANY target kind
-      // (task-source-v3-frozen.ts:256-263), and on `run:`/`uses: scripts/`/
+      // (task-source-v3-frozen.ts), and on `run:`/`uses: scripts/`/
       // `uses: workflows/` it was equally inert there — nothing ever consumed
       // it. Hoisting it unconditionally would therefore emit bytes the real
       // parseTaskSourceV4 below rejects, blocking a valid, previously-runnable
       // v3 file from `akm migrate apply`
       // (scripts/akm-migrate/migrate/task-files.ts). Dropping an
       // already-inert field and SAYING SO is the faithful translation, and
-      // keeps spec row B-66 / §5.3's `changed` guarantee intact.
+      // keeps the `changed` outcome's guarantee intact.
       if (usesTarget !== undefined && (usesTarget.kind === "command" || usesTarget.kind === "builtin-command")) {
         out.output = akm.outputSchema;
       } else {
@@ -752,8 +747,7 @@ function isReason(value: Record<string, unknown> | string): value is string {
 
 /**
  * v2 straight to v4: build the v3-shape record in memory, validate it
- * through the REAL typed v3 parser exactly as the prior v2-to-v3 generation
- * did (the same safety net, now inline), then hoist it to v4 through the
+ * through the REAL typed v3 parser, then hoist it to v4 through the
  * same `planV3DataToV4` every real v3 file goes through. `before`/
  * `beforeHash` on the result are always the original v2 bytes (`base(input)`,
  * computed from the untouched `input`).

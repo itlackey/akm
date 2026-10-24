@@ -260,7 +260,7 @@ const agentMdRenderer: AssetRenderer = {
       // `tools` is self-declared frontmatter. The provenance CEILING that decides
       // whether this self-declared policy is honoured is applied at the show
       // layer (`akmShowUnified`), which knows whether the source is the operator's
-      // own writable stash vs a read-only third-party source (07 P1-D).
+      // own writable stash vs a read-only third-party source.
       ...(toolPolicy !== undefined ? { toolPolicy } : {}),
       ...(modelHint !== undefined ? { modelHint } : {}),
     };
@@ -291,7 +291,7 @@ const knowledgeMdRenderer: AssetRenderer = {
 // ── 4c. lesson-md ────────────────────────────────────────────────────────────
 
 /**
- * Renderer for the `lesson` asset type (v1 spec §13).
+ * Renderer for the `lesson` asset type.
  *
  * Lessons are markdown files with required `description` and `when_to_use`
  * frontmatter. The renderer projects both fields explicitly so consumers can

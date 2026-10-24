@@ -10,7 +10,7 @@
  * is `run-workflow.ts`'s job.
  *
  *  - Data flow: instructions are the step's prose byte-exact; data reaches a
- *    unit as attached context (docs/architecture/decisions/0001-…).
+ *    unit as attached context.
  *  - An empty successful free-text output is journaled as absent, so a live
  *    run and a resume promote the same artifact.
  *  - A declared step `output` schema is validated before the step completes;
@@ -452,8 +452,7 @@ async function executeStepPlanInConnection(
   const { env, sensitiveValues, worktreeBase } = prerequisites;
 
   // Budget ceilings + lifetime-cap accounting, and the budget-chained abort
-  // signal they trip. Extracted verbatim (behavior-identical) — see
-  // {@link openDispatchBudget}.
+  // signal they trip. See {@link openDispatchBudget}.
   const { signal, budget, unchainSignal } = openDispatchBudget(ctx, dispatched);
 
   let outcomes: Array<UnitOutcome | undefined>;
@@ -604,7 +603,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     ...(env ? { env } : {}),
     ...(sensitiveValues ? { sensitiveValues } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
-    // F-1: forwarded to exec-unit.ts's childEnv for a
+    // Forwarded to exec-unit.ts's childEnv for a
     // "script"/"shell" unit, and to dispatchWorkflowExecution's
     // runExecution eventSource option (unit-dispatch.ts)
     // for a "command" unit — both arms observe it.
@@ -861,7 +860,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
     // A failed dispatch-row insert means NOTHING dispatched (the row is the
     // dispatch's precondition) — fail the unit with the real cause instead of
     // letting the throw escape into the scheduler, where a swallowed worker
-    // error is indistinguishable from "never claimed" and used to be
+    // error is indistinguishable from "never claimed" and would be
     // misreported as an aborted, never-dispatched unit.
     if (worktreePath !== undefined && input.worktreeBase !== undefined)
       await cleanupUnitWorktree(input.worktreeBase, worktreePath);
@@ -1041,11 +1040,10 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
         // NOTE: `validation_error` is deliberately outside PROGRAM_RETRY_REASONS,
         // so no `retry.on:` can name it and a schema-violating unit is not
         // re-run — see "fails with `validation_error` and is NOT re-run" in
-        // tests/integration/workflows/exec-unit.test.ts. A sweep finding
-        // proposed mapping it onto `llm_invalid_json` (which the parser accepts
-        // but this path never emits) to make such failures retryable; that is a
-        // behaviour change against an intentional design, not a bug fix, so it
-        // is left alone. Reconciling the vocabulary is a 0.9.2 decision.
+        // tests/integration/workflows/exec-unit.test.ts. Mapping it onto
+        // `llm_invalid_json` (which the parser accepts but this path never
+        // emits) would make such failures retryable; that is a behaviour
+        // change against an intentional design, so it is not done here.
         failureReason: structured.reason,
         error: structured.errors.join("; "),
         text: structured.raw,

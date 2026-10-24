@@ -180,19 +180,14 @@ function resolveWorkflowLintOwnership(stashRoot: string, files: readonly string[
 
 // ── Non-akm adapter dispatch (real `adapter.validate()`, not a re-implementation) ──
 //
-// akm 0.9.0 lint/adapter-dispatch wiring: `akm lint` used to special-case
-// exactly one non-akm adapter (`okf`, via a hand-rolled `missing-type`-only
-// `lintOkfBundle` re-implementation this change deletes) and silently route
-// every OTHER non-akm bundle (llm-wiki, dotenv, claude, opencode,
-// agent-skills, website-snapshot, generic-files, akm-task, akm-workflow)
-// through the AKM-shaped STASH_SUBDIRS sweep — the wrong linter for the wrong
-// format, and the reason those adapters' own `validate()` checks (OKF's
-// `missing-ref`; llm-wiki's `uncited-raw`/`missing-description`/`broken-xref`/
-// `broken-source`) were unreachable dead code. Every bundle is now linted by
-// its OWN configured/detected adapter's `validate()` — the single definition
-// of that format's rules, shared with the (now also wired, advisory-only)
-// change-transaction pre-commit gate in `commands/proposal/repository.ts`.
-// The adapter-dispatch work intentionally stays outside the `akm` sweep below.
+// Every non-akm bundle (okf, llm-wiki, dotenv, claude, opencode,
+// agent-skills, website-snapshot, generic-files, akm-task, akm-workflow) is
+// linted by its OWN configured/detected adapter's `validate()` — the single
+// definition of that format's rules, shared with the advisory-only
+// change-transaction pre-commit gate in `commands/proposal/repository.ts` —
+// rather than by the AKM-shaped STASH_SUBDIRS sweep, which is the wrong linter
+// for those formats. The adapter dispatch intentionally stays outside the
+// `akm` sweep below.
 // The sweep's workflow branch separately supports authoritative peer `.md` and
 // `.yml` sources while preserving the pinned Markdown findings/`--fix` bytes.
 
@@ -283,11 +278,10 @@ export function diagnosticToLintIssue(diag: Diagnostic): LintIssue {
 }
 
 /**
- * Lint a bundle through its OWN adapter's `validate()` (spec §12.1): the
+ * Lint a bundle through its OWN adapter's `validate()`: the
  * adapter never writes, so every finding lands in `flagged` — `fixed` is
  * always `false`/`"failed"` for a non-akm bundle regardless of `--fix`
- * (the CLI option is silently a no-op here, exactly as it already was for
- * `okf` before this change).
+ * (the CLI option is silently a no-op here).
  */
 async function lintViaAdapter(
   adapterId: string,
@@ -342,10 +336,7 @@ async function lintViaAdapter(
   const warnings = mapped.filter(isAdvisoryLintIssue);
   const flagged = mapped.filter((issue) => !isAdvisoryLintIssue(issue));
   // The cross-bundle env dangerous-key sweep (see `runEnvDangerousKeyPass`'s
-  // doc comment) ran for every non-akm adapter via the STASH_SUBDIRS
-  // fallthrough this dispatch replaces — EXCEPT `okf`, which the old code
-  // special-cased out before ever reaching that pass. Preserve both halves of
-  // that history exactly: skip only for `okf`. Some adapters (`dotenv`) ALSO
+  // doc comment) runs for every non-akm adapter EXCEPT `okf`. Some adapters (`dotenv`) ALSO
   // find the same `dangerous-env-key` findings natively through their own
   // `validate()` (reusing the same `dangerousEnvKeyDiagnostics` rule) — dedupe
   // by `(file, issue, detail)` so a bundle covered both ways reports each
@@ -389,14 +380,10 @@ function collectEnvFiles(dir: string): string[] {
 /**
  * Scan every `env/`/`secrets/` `.env` file across `[stashRoot, ...extraStashRoots]`
  * for keys that are known to enable process-execution hijacking. This is a
- * cross-bundle SECURITY sweep, not per-adapter validation — it has always run
- * regardless of which format family a given root's OWN files are (verbatim
- * extraction of the pass `lintAkmSweep` still runs inline; kept byte-identical
- * there per the CRITICAL akm-path constraint, and reused here for the
- * non-akm dispatch path so a non-akm PRIMARY bundle keeps the exact
- * cross-bundle coverage it already had — the pass previously reached every
- * non-akm adapter's bundle via the accidental STASH_SUBDIRS fallthrough this
- * change replaces with real dispatch).
+ * cross-bundle SECURITY sweep, not per-adapter validation — it runs
+ * regardless of which format family a given root's OWN files are (the same
+ * pass `lintAkmSweep` runs inline; also used by the non-akm dispatch path so a
+ * non-akm PRIMARY bundle gets the same cross-bundle coverage).
  */
 function runEnvDangerousKeyPass(
   stashRoot: string,
@@ -461,19 +448,17 @@ function isFileDeletion(issue: LintIssue): boolean {
   return issue.fixed === true && (issue.issue === "orphaned-stub" || issue.issue === "placeholder-stub");
 }
 
-// ── Per-file lint dispatch (was registry.ts + the 9 per-type linter classes) ──
+// ── Per-file lint dispatch ──────────────────────────────────────────────────
 //
-// akm 0.9.0 chunk-3 (plan §12): the 9 `BaseLinter` subclasses + `LINTER_MAP`/
-// `getLinterForType` are gone. The format-generic checks are the shared
+// The format-generic checks are the shared
 // `runBaseChecks` (`./base-linter`); the per-`type` RULES are the `akm`
 // adapter's `validate` surface (`core/adapter/adapters/akm-lint.ts`), imported
 // here so both the read-only adapter and this fix-capable CLI sweep share ONE
 // definition of each finding. The adapter never writes; the delete-fix for the
-// two stub types is applied HERE (a core/CLI concern), reproducing the old
-// MemoryLinter/WorkflowLinter `--fix` behavior byte-for-byte.
+// two stub types is applied HERE (a core/CLI concern).
 
 /**
- * Reproduce `SkillLinter.lintDirectory`: a skill subdirectory with no
+ * A skill subdirectory with no
  * `SKILL.md` is flagged `missing-skill-md` (never auto-fixable). Exported for
  * the lint-parity golden (`tests/integration/goldens-lint-output.test.ts`).
  */
@@ -812,8 +797,8 @@ function lintAkmSweep(
  * `commands/improve/preparation.ts`) or is a test that can `await` it.
  */
 export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResult> {
-  // Fail closed on a mistyped invocation (§24.2 "Lint" release gate): a
-  // nonexistent --dir used to walk nothing and report a clean
+  // Fail closed on a mistyped invocation: a
+  // nonexistent --dir would otherwise walk nothing and report a clean
   // `ok:true, flagged:0`, silently passing scripted --fail-on-flagged gates.
   if (options.dir !== undefined && !fs.statSync(options.dir, { throwIfNoEntry: false })?.isDirectory()) {
     throw new UsageError(`lint: --dir "${options.dir}" is not a directory.`, "INVALID_FLAG_VALUE");
@@ -822,7 +807,7 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // cross-stash refs (e.g. referencing assets in dimm-city/agent-stash) are
   // not falsely flagged as missing-ref.
   const cfg = options.config ?? loadConfig();
-  // 0.9.0 (spec §10.1): the primary stash is the defaultBundle's path.
+  // The primary stash is the defaultBundle's path.
   const stashRoot = options.dir ?? primaryBundlePath(cfg) ?? resolveStashDir();
   const sources = resolveSourceEntries(stashRoot, cfg);
   const configuredAdapter = sources.find((source) => path.resolve(source.path) === path.resolve(stashRoot))?.adapterId;

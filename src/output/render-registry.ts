@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Per-command `md` renderer registry (D7).
+ * Per-command `md` renderer registry.
  *
  * Mirrors `src/output/text/registry.ts`: a command may register a bespoke
  * Markdown renderer, and anything unregistered falls back to the generic

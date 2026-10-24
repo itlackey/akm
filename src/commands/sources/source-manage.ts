@@ -69,7 +69,7 @@ export function addStash(
   if (targetIsUrl && !providerType) {
     throw new UsageError("--provider is required for URL sources (e.g. --provider git --provider website)");
   }
-  // R-013: `--provider npm` names an npm package SPEC (e.g. "lodash",
+  // `--provider npm` names an npm package SPEC (e.g. "lodash",
   // "@scope/pkg@^2"), never a URL — a tarball URL is not installable as a
   // package spec and would only fail much later, at first sync, with a
   // confusing "Invalid npm package name" error. Reject it loudly here instead.
@@ -83,8 +83,7 @@ export function addStash(
   // add — the same "locator, not a URL" descriptor path used for git/website
   // URL sources below. Without this, a non-URL target fell through to the
   // filesystem branch below and `--provider npm` was silently ignored,
-  // creating a bogus filesystem bundle for the current working directory
-  // (R-013).
+  // creating a bogus filesystem bundle for the current working directory.
   const useDescriptorPath = targetIsUrl || providerType === "npm";
   mutateConfig((config) => {
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
@@ -137,10 +136,10 @@ export function addStash(
 }
 
 /**
- * Build the 0.9.0 bundle descriptor for a declarative (non-filesystem) source
- * (spec §10.1). `locator` is a URL for git/website; for npm it is a bare
- * package spec (e.g. "lodash", "@scope/pkg@^2") — never a URL (R-013,
- * rejected earlier in {@link addStash}).
+ * Build the bundle descriptor for a declarative (non-filesystem) source.
+ * `locator` is a URL for git/website; for npm it is a bare
+ * package spec (e.g. "lodash", "@scope/pkg@^2") — never a URL
+ * (rejected earlier in {@link addStash}).
  */
 function urlBundleDescriptor(
   providerType: string,

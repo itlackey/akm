@@ -3,11 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Shared per-harness helpers (§4.6 dedup, WI-9.3).
- *
- * Home for the small helpers every per-harness module used to inline:
- * `caps()` (×10 byte-identical copies across the harness barrels) and
- * `homeDir()` (×2 across the config importers).
+ * Shared per-harness helpers: `caps()` (used by every harness barrel) and
+ * `homeDir()` (used by the config importers).
  *
  * This module is a dependency SINK by design: it must not import from
  * `./types`, `./index.ts`, or any per-harness barrel — those files sit
@@ -35,11 +32,10 @@ interface HarnessCapabilityFlags {
  * harness participates in. A subsystem filters `HARNESS_REGISTRY` by the
  * relevant flag instead of maintaining its own list.
  *
- * `sessionLogs` is a discriminant (WI-9.7, H1): a plain `boolean` field here
- * used to let a harness declare `sessionLogs: true` with no
- * `sessionLogProvider`, caught only by a load-time throw in
- * `session-logs/index.ts`. Splitting this into a two-member union — each
- * member pinning `sessionLogs` to a literal `true`/`false` — lets
+ * `sessionLogs` is a discriminant: a plain `boolean` field here would let a
+ * harness declare `sessionLogs: true` with no `sessionLogProvider`. Splitting
+ * this into a two-member union — each member pinning `sessionLogs` to a
+ * literal `true`/`false` — lets
  * `./types.ts` discriminate `AkmHarness` on this field so a `true` harness is
  * REQUIRED to carry a `sessionLogProvider` at compile time; see
  * `SessionLogCapableHarness` / `NonSessionLogHarness` there.
@@ -80,19 +76,18 @@ export function homeDir(): string {
   return process.env.HOME ?? process.env.USERPROFILE ?? "";
 }
 
-// ── Harness config-import contract (chunk 9 WI-9.8 KILL 8) ─────────────────
+// ── Harness config-import contract ──────────────────────────────────────────
 //
-// `HarnessLLMConfig`/`HarnessConfigImporter` used to live in
+// `HarnessLLMConfig`/`HarnessConfigImporter` live here rather than in
 // `setup/harness-config-import.ts`, which imports the per-harness importers
 // (`claude/config-import.ts`, `opencode/config-import.ts`) BY VALUE to build
-// `HARNESS_CONFIG_IMPORTERS`. Those importer modules, in turn, needed the
+// `HARNESS_CONFIG_IMPORTERS`. Those importer modules need the
 // `HarnessConfigImporter` TYPE to annotate their exported importer object —
-// a type-only import back into `harness-config-import.ts` that still formed
+// a type-only import back into `harness-config-import.ts` would still form
 // a 3-file static-graph cycle (import type does not sever a cycle; only
 // moving the type does). Both types have zero external type deps, so they
-// live here — this module is a dependency SINK (see the file-level doc
-// comment above) — instead of a separate leaf. `harness-config-import.ts`
-// re-exports both so existing import sites are unaffected.
+// live in this dependency SINK (see the file-level doc comment above).
+// `harness-config-import.ts` re-exports both.
 
 /**
  * LLM/provider config extracted from an agent harness.

@@ -11,7 +11,7 @@
  * (substituted here via plain `%%TOKEN%%` string replacement — no template
  * engine, by design); `src/cli/shared.ts`'s `output()` calls their renderers
  * directly and every other command falls back to `renderGenericHtml`
- * (`./generic-render`). `--format html` therefore works for every command (D7)
+ * (`./generic-render`). `--format html` therefore works for every command
  * — this module's template path is just the opt-in bespoke rendering, not a
  * format-wide gate.
  */

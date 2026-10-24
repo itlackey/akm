@@ -6,24 +6,17 @@
  * The task_history read/write boundary: `appendHistory` (write) and
  * `readTaskHistory` / `taskHistoryRowToResult` (read).
  *
- * Moved from src/tasks/runner.ts (spec docs/plans/specs/p1b-model-extraction.md
- * §5.1, §9, runner.ts:1071-1158). `appendHistory` was module-private at head;
- * it is exported here because every dispatch arm (run-native-task.ts,
+ * `appendHistory` is called by every dispatch arm (run-native-task.ts,
  * run-workflow-task.ts, run-command-task.ts), attempt-lifecycle.ts, and
- * run-task.ts's disabled-task path all call it (spec §5.1's module split
- * moves what was one file's internal call graph across several files).
+ * run-task.ts's disabled-task path.
  *
- * D8 result-vocabulary re-code (why, and the WRITE side's exact shape): see
- * docs/architecture/decisions/0005-task-result-vocabulary-and-legacy-read-mapping.md.
- * The READ side used to carry a permanent legacy-vocabulary mapping here
- * (row B-51 of docs/plans/specs/p4-deletions-closeout.md called deleting it
- * "review-blocking") — SUPERSEDED: `task_history` is DB-owned data, so the
- * remap is now a one-time schema migration
+ * `task_history` is DB-owned data, so legacy `target_kind` vocabulary is
+ * rewritten by a one-time schema migration
  * (`025-task-history-vocabulary-backfill` in src/core/state/migrations.ts)
- * instead of a read-side shim run forever. Every row this function sees now
- * carries the current vocabulary's `target_kind` strings; the P0-pinned null
- * fallbacks still apply (workflow `ref` falls back to `""`, the command
- * arm's `engine` falls back to `null`).
+ * rather than a read-side shim. Every row the read side sees carries the
+ * current vocabulary's `target_kind` strings; the null fallbacks still apply
+ * (workflow `ref` falls back to `""`, the command arm's `engine` falls back
+ * to `null`).
  *
  * A DAG leaf with respect to the rest of src/tasks/run/**: this module
  * imports TaskRunResult/TaskRunStatus's TYPE from ./task-result but no VALUE
@@ -61,7 +54,7 @@ export function appendHistory(result: TaskRunResult, historyReserved = false): v
       metadataVersion: 2,
       durationMs: result.durationMs,
       detail: result.detail ?? null,
-      // D8 (spec §5.3): every NEW row carries the vocabulary marker.
+      // Every new row carries the vocabulary marker.
       targetVocab: 2,
       ...(result.target.kind === "command" ? { engine: result.target.engine } : {}),
     }),
@@ -138,7 +131,7 @@ function decodeTaskHistoryRows(rows: TaskHistoryRow[]): TaskRunResult[] {
  * Convert a `TaskHistoryRow` from state.db back to a `TaskRunResult` shape
  * that callers of `readTaskHistory()` expect.
  *
- * Reads `target_kind` directly in the current (post-D8) vocabulary — the
+ * Reads `target_kind` directly in the current vocabulary — the
  * `025-task-history-vocabulary-backfill` state migration rewrites every
  * legacy-vocabulary row before this ever runs against it.
  */

@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `memory-cleanup-archive` advisory for `akm health` (item 4, 0.9.17-alpha.9
- * plan §5.4/§8 step 8).
+ * `memory-cleanup-archive` advisory for `akm health`.
  *
  * Reports the archive's size and file count for every bundle, git-backed or
  * not. A bundle with no `.git` of its own keeps every retirement's archived
@@ -55,7 +54,7 @@ export function collectArchiveUsageAdvisory(stashDir: string): HealthCheckResult
     };
   }
 
-  // Git-backed: the SAME three checks purgeGracedArchive runs (B1, G10) —
+  // Git-backed: the SAME three checks purgeGracedArchive runs —
   // computed once here, not per file, and reused via `onFile` below instead
   // of a second walk of the same tree. A failed git check here fails the
   // same way purgeGracedArchive's own sweep would: nothing in the archive

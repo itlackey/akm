@@ -192,8 +192,8 @@ async function dispatchProposalPrompt(
 }
 
 /**
- * WI-8.5a — the fully-qualified `bundle//conceptId` item_ref for a proposal
- * target in `stashDir`. The conceptId is BUILT from the D-R2 static table
+ * The fully-qualified `bundle//conceptId` item_ref for a proposal
+ * target in `stashDir`. The conceptId is BUILT from the static table
  * (`deriveEntryProvenance`), never looked up, so a propose target that does not
  * yet exist on disk still keys onto its final spelling; the bundle is the
  * write-target stash's installation id (same derivation the index write path
@@ -205,7 +205,7 @@ function proposeItemRef(bundleId: string, type: string, name: string): string {
 }
 
 /**
- * The command-entry `propose_invoked` event. WI-8.5b: the ref carries the same
+ * The command-entry `propose_invoked` event. The ref carries the same
  * fully-qualified item_ref the durable proposal is minted under
  * (`proposeItemRef`), so the entry event and the stored proposal agree.
  */
@@ -267,7 +267,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   );
   const { result, reply, engineName, notices, sensitiveValues } = dispatch;
   if (!reply) {
-    // B3: ENOENT / not-found gives an actionable hint.
+    // ENOENT / not-found gives an actionable hint.
     if (isEnoentFailure(result)) {
       return {
         ...failureEnvelope(result, options.type, options.name, engineName, notices),

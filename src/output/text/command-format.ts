@@ -8,8 +8,7 @@
  * events/history, search/curate, and the stash-lifecycle verbs (init,
  * index, list, add, remove, update, upgrade, clone).
  *
- * Split out of `helpers.ts` (formerly 1418 lines / 59 fns) as its own
- * sibling module: unlike `show`/`workflow`/`proposal` (each a stateful,
+ * Unlike `show`/`workflow`/`proposal` (each a stateful,
  * multi-branch renderer with its own module), these are flat
  * field-extraction formatters with no shared state beyond
  * `formatRegistrySearchPlain` delegating to `formatSearchPlain` in this
@@ -281,9 +280,9 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (hit.action) lines.push(`  action: ${String(hit.action)}`);
     if (hit.run) lines.push(`  run: ${String(hit.run)}`);
     if (Array.isArray(hit.tags) && hit.tags.length > 0) lines.push(`  tags: ${hit.tags.join(", ")}`);
-    // Optional v1 spec §4.2 quality marker (e.g. "curated" / "proposed").
+    // Optional quality marker (e.g. "curated" / "proposed").
     if (typeof hit.quality === "string" && hit.quality) lines.push(`  quality: ${hit.quality}`);
-    // Surface optional hit-level warnings (v1 spec §4.2).
+    // Surface optional hit-level warnings.
     if (Array.isArray(hit.warnings) && hit.warnings.length > 0) {
       lines.push(`  warnings: ${(hit.warnings as string[]).join("; ")}`);
     }
@@ -310,7 +309,7 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (parts.length > 0) lines.push(`timing: ${parts.join(", ")}`);
   }
 
-  // REC-02: When stash hits exist, tell the agent the next required step so it
+  // When stash hits exist, tell the agent the next required step so it
   // doesn't skip `akm show` and write from training memory instead.
   if (hits.length >= 1) {
     // Prefer skill/command/agent type hits for the "Next:" ref — knowledge docs are
@@ -520,7 +519,7 @@ export function formatAddPlain(r: Record<string, unknown>): string {
   // writes a desired locator to config — nothing is synced until a later
   // `akm bundle update`. Force-fitting the declarative shape's `added`/`entry`/`message`
   // fields into the "Installed <ref> (N scanned...)" wording produced
-  // "Installed undefined (0 directories scanned...)" (R-014) because it
+  // "Installed undefined (0 directories scanned...)" because it
   // implied a sync that never happened. `AddResponse` always carries an
   // `index` block (even when zero entries were scanned); `SourceAddResult`
   // never does — that is the reliable shape discriminator used below to
@@ -625,11 +624,11 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
 }
 
 export function formatUpdatePlain(r: Record<string, unknown>): string {
-  // R-015: `processed` alone conflated three cases into one empty array —
+  // `processed` alone would conflate three cases into one empty array —
   // a true no-op (--all with nothing configured), a source this call flatly
   // never looked at (a plain source under --all), and a plain git/website
   // source that WAS just synced successfully but has no `UpdateResultItem`
-  // shape to report (no version/lock to diff). All three rendered as the
+  // shape to report (no version/lock to diff). All three would render as the
   // same misleading "nothing to update". `plainSynced` and `skipped` (see
   // sources/types.ts) cover the other two so this can report accurately.
   const processed = r.processed as Array<Record<string, unknown>> | undefined;

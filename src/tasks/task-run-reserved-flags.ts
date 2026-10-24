@@ -8,8 +8,7 @@
  * declared `inputs:` name that collides with one, without creating an import
  * cycle back through the CLI layer.
  *
- * Code-review finding (docs/plans/specs/p2b-input-bindings.md, P2b review
- * round 2): `schedulerInputFlagTail` (`../tasks/scheduler-binding.ts`) and
+ * `schedulerInputFlagTail` (`../tasks/scheduler-binding.ts`) and
  * `akm task run <id> --<name> <value>` both let an authored/declared input
  * NAME collide with a flag `akm task run` already binds to itself
  * (`--bundle`, `--scheduled`, …). `parseTaskInputFlags`
@@ -54,7 +53,7 @@ export const TASK_RUN_BOOLEAN_FLAGS: readonly string[] = [
  * appear in neither list above and must be reserved separately.
  *
  * `target` is the only member: the 0.9 rename of `akm task --target` to
- * `--bundle` (S8.4) is self-diagnosed rather than merely dropped —
+ * `--bundle` is self-diagnosed rather than merely dropped —
  * `rejectRetiredTaskTargetFlag` (`../commands/tasks/tasks-cli.ts`) throws the
  * rename hint for a `--target` in ANY spelling, bare or `--target=<value>`,
  * and the generic pre-dispatch gate exempts the name on every `task`
@@ -63,7 +62,7 @@ export const TASK_RUN_BOOLEAN_FLAGS: readonly string[] = [
  * ever scans argv, so a declared input named `target` is unreachable through
  * every spelling of its own flag — the exact value-misrouting hole the union
  * below exists to close, just reached from the CLI's diagnostic side instead
- * of from its declared-arg side (0.9.2 review round 2). Rejecting the
+ * of from its declared-arg side. Rejecting the
  * DECLARATION keeps the rename hint intact for everyone typing the retired
  * spelling while making the unusable declaration impossible to author, rather
  * than trading one silent failure for another.

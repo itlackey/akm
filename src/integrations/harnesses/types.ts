@@ -49,8 +49,7 @@ interface AkmHarnessCommon {
    *
    * Only harnesses that ALSO have `capabilities.sessionLogs === true` are
    * offered as setup stash-source candidates — selecting a harness with no
-   * session-log provider would be a silent no-op (the old `AGENT_PLATFORMS`
-   * trap that listed Continue/Codeium/Cursor/Codex CLI). `detectAgentPlatforms`
+   * session-log provider would be a silent no-op. `detectAgentPlatforms`
    * derives its candidate list from `SESSION_LOG_HARNESSES` that declare this
    * field, so the registry is the single source of which harnesses are real
    * stash sources. Absent ⇒ not offered during setup. NOTE: this field is
@@ -103,8 +102,7 @@ interface AkmHarnessCommon {
 
   /**
    * Harness-owned result extractor: normalizes a raw `AgentRunResult` into
-   * `{ text, sessionId? }` before schema validation (plan §"The adapter
-   * contract" step 3). Absent ⇒ the engine uses the raw stdout as text.
+   * `{ text, sessionId? }` before schema validation. Absent ⇒ the engine uses the raw stdout as text.
    */
   readonly resultExtractor?: AgentResultExtractor;
 }
@@ -112,10 +110,8 @@ interface AkmHarnessCommon {
 /**
  * A harness that declares `capabilities.sessionLogs: true`. Its
  * `sessionLogProvider` factory is REQUIRED — a harness cannot claim the
- * capability without supplying the provider that backs it. This is the
- * compile-time replacement for the load-time throw formerly in
- * `src/integrations/session-logs/index.ts` (WI-9.7, H1): omitting
- * `sessionLogProvider` while `sessionLogs: true` is now a type error at the
+ * capability without supplying the provider that backs it: omitting
+ * `sessionLogProvider` while `sessionLogs: true` is a type error at the
  * `HARNESS_REGISTRY` declaration, not a thrown error at import time.
  */
 export interface SessionLogCapableHarness extends AkmHarnessCommon {
@@ -142,7 +138,7 @@ export interface NonSessionLogHarness extends AkmHarnessCommon {
 /**
  * A single harness's identity + capability membership.
  *
- * Discriminated on `capabilities.sessionLogs` (WI-9.7, H1): the union forces
+ * Discriminated on `capabilities.sessionLogs`: the union forces
  * `sessionLogProvider` to be present exactly when `sessionLogs` is `true`, so
  * the pairing is a compile error to get wrong rather than a load-time throw.
  * See {@link SessionLogCapableHarness} / {@link NonSessionLogHarness}.
@@ -163,8 +159,8 @@ export type AkmHarness = SessionLogCapableHarness | NonSessionLogHarness;
  * the result always a subtype of `H`, so the constraint holds regardless of
  * what concrete harness type(s) `H` resolves to — this is what lets
  * `HARNESS_REGISTRY.filter(isSessionLogHarness)` (in `./index.ts`) actually
- * narrow to a type where `sessionLogProvider` is known-present, retiring the
- * load-time throw that used to guard this in `session-logs/index.ts`.
+ * narrow to a type where `sessionLogProvider` is known-present, with no
+ * load-time throw needed in `session-logs/index.ts`.
  */
 export function isSessionLogHarness<H extends AkmHarness>(h: H): h is H & SessionLogCapableHarness {
   return h.capabilities.sessionLogs;
@@ -176,7 +172,7 @@ export function isSessionLogHarness<H extends AkmHarness>(h: H): h is H & Sessio
  * Provides shared optional descriptor fields for concrete harnesses.
  *
  * Deliberately implements {@link AkmHarnessCommon}, NOT the discriminated
- * `AkmHarness` union (WI-9.7, H1): `AkmHarnessCommon` excludes `capabilities`
+ * `AkmHarness` union: `AkmHarnessCommon` excludes `capabilities`
  * and `sessionLogProvider`, the two fields whose pairing the union enforces.
  * A base class shared by both branches cannot itself satisfy either specific
  * union member — `capabilities` stays declared `abstract` at the (widened)

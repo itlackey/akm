@@ -49,8 +49,7 @@ export interface AgentProposalPayload {
   content: string;
   frontmatter?: Record<string, unknown>;
   /**
-   * Optional self-reported confidence score in `[0, 1]` (Advantage D6a / Phase
-   * 6A). Persisted on the proposal for reviewers and the triage judge — it no
+   * Optional self-reported confidence score in `[0, 1]`. Persisted on the proposal for reviewers and the triage judge — it no
    * longer drives any automated accept path (the improve confidence gate died
    * in 0.9.0). Out-of-range / non-finite values are clamped or dropped
    * downstream in `createProposal`.
@@ -117,7 +116,7 @@ export const REFLECT_TRUNCATION_MARKER = "... [truncated — focus on the visibl
  */
 const RESPONSE_CONTRACT_JSON = [
   "Respond ONLY with a single JSON object. No prose before or after.",
-  // Slash conceptId, not the retired `<type>:<name>` colon grammar (Q-02/Q-08).
+  // Slash conceptId, not the retired `<type>:<name>` colon grammar.
   // This contract is the schema an agent copies from, so a stale spelling here
   // teaches every proposal to use a ref form the CLI now rejects outright.
   'Shape: {"ref": "<type>/<name>", "content": "<full file contents>", "frontmatter": {...}, "confidence": <number 0..1>}',
@@ -556,7 +555,7 @@ export function validateProposalPayload(parsed: unknown): StructuredValidation<A
     content: parsed.content,
   };
   if (isRecord(parsed.frontmatter)) out.frontmatter = parsed.frontmatter;
-  // Phase 6A: extract optional `confidence` (number in [0, 1]). Clamp gently
+  // Extract optional `confidence` (number in [0, 1]). Clamp gently
   // rather than reject — a model that returns 1.0 or 0 with extra precision
   // (e.g. 1.0000001) should still surface a usable score. Anything that isn't
   // a finite number is dropped so downstream `createProposal` can rely on the

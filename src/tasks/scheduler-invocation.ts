@@ -230,11 +230,10 @@ function parsePublicSchedulerInvocation(
       index += 2;
     }
     if (invocation[index] !== "--scheduled") return undefined;
-    // P2b Lane B (spec §4.4, §1.7 B-N3): zero or more `--<name> <value>`
-    // schedule-supplied input flags may follow `--scheduled` — the same
-    // trailing tail `compileTaskSchedulerBindings` compiles from
-    // `schedule[i].inputs`. Absent/empty is the pre-P2b shape, byte-identical
-    // (B-03).
+    // Zero or more `--<name> <value>` schedule-supplied input flags may follow
+    // `--scheduled` — the same trailing tail `compileTaskSchedulerBindings`
+    // compiles from `schedule[i].inputs`. Absent/empty is a plain `--scheduled`
+    // invocation.
     if (!isValidSchedulerInputFlagTail(invocation.slice(index + 1))) return undefined;
     return { invocation: [...invocation], ...(target !== undefined ? { target } : {}) };
   }
@@ -253,23 +252,22 @@ function parsePublicSchedulerInvocation(
 }
 
 /**
- * Validate an OPTIONAL trailing schedule-input flag tail (spec §1.7 B-N3):
- * empty is valid (the pre-P2b shape). Otherwise the tail is a sequence of
- * entries, each EITHER:
+ * Validate an OPTIONAL trailing schedule-input flag tail: empty is valid.
+ * Otherwise the tail is a sequence of entries, each EITHER:
  *
- *   - a single inline `--<name>=<value>` token (code-review finding,
- *     scheduler-binding.ts:536 — the ONLY encoding a dash-leading value's
- *     exact text can round-trip through, since `<value>` here is everything
- *     after the first `=`, whatever its leading character); or
+ *   - a single inline `--<name>=<value>` token (the ONLY encoding a
+ *     dash-leading value's exact text can round-trip through, since `<value>`
+ *     here is everything after the first `=`, whatever its leading
+ *     character); or
  *   - a `(--<name>, <value>)` pair, where `<value>` is a single non-flag
- *     token (does not start with `-`) — the pre-P2b shape.
+ *     token (does not start with `-`).
  *
  * In both forms `<name>` matches {@link INPUT_NAME_PATTERN} and no name
  * repeats. A bare flag, a repeated name, a flag-shaped value in the pair
  * form, or a malformed token are all refused. This validates SHAPE only;
  * the real materialization against the task's declared contract happens
  * through the same `parseTaskInputFlags` + `materializeInputFlags` path
- * `akm task run --<name>` already uses (B-48) — `parseTaskInputFlags`
+ * `akm task run --<name>` already uses — `parseTaskInputFlags`
  * accepts both forms natively (its inline-`=` branch never inspects the
  * value's leading character).
  */

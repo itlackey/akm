@@ -7,15 +7,12 @@
  * `src/workflows/ir/params.ts` (workflow parameters) into a contract-shaped
  * vocabulary both workflow params AND task source v4's `inputs:`
  * declarations consume — one validation/coercion implementation, injected
- * per-caller diagnostics (D3-N3). Binding boundary: `src/execution/**` must
- * never import `src/workflows/**` (D3-N1) — `INPUT_NAME_PATTERN` and the
+ * per-caller diagnostics. Binding boundary: `src/execution/**` must
+ * never import `src/workflows/**` — `INPUT_NAME_PATTERN` and the
  * canonical-JSON helpers are therefore defined locally rather than imported
- * from the workflow side (D3-N1/D3-N2), verified by
+ * from the workflow side, verified by
  * `tests/execution/input-contract.test.ts`'s purity/byte-equality scans.
  * Pure module: no IO, no engine imports.
- *
- * See docs/architecture/decisions/0004-task-input-contract-and-flag-coercion.md
- * for the full generalization history and the D3-N1/D3-N2/D3-N3 rationale.
  */
 
 import { createHash } from "node:crypto";
@@ -27,13 +24,13 @@ import { validateJsonSchemaSubset } from "../core/json-schema";
  * (`params.<ident>` / `inputs.<ident>`): a letter or underscore, then
  * letters, digits, or underscores. Byte-identical source/flags to
  * `src/workflows/parser.ts`'s `PROGRAM_PARAM_NAME_PATTERN`, which
- * re-exports this constant (D3-N1) rather than defining its own copy.
+ * re-exports this constant rather than defining its own copy.
  */
 export const INPUT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** One input's declaration: a bounded JSON Schema, an optional default, and whether it is required. */
 export interface InputDeclaration {
-  /** The bounded JSON Schema (`default` and the declaration-root `required` flag stripped — task source v4 D2-N3). */
+  /** The bounded JSON Schema (`default` and the declaration-root `required` flag stripped). */
   readonly schema: Readonly<Record<string, unknown>>;
   readonly default?: unknown;
   readonly required: boolean;
@@ -50,18 +47,16 @@ export interface InputFlag {
 
 /**
  * A single input binding as it will be frozen into a `TaskInvocation`
- * (`src/tasks/model/invocation.ts`, P2b). Task source v4's `inputs:` grammar
+ * (`src/tasks/model/invocation.ts`). Task source v4's `inputs:` grammar
  * needs both a literal value (an `akm task run --<name> <value>` flag, or a
- * `schedule[i].inputs` literal) and a reference binding (P2b,
- * `docs/plans/specs/p2b-input-bindings.md` §3.6). P2a's `akm task run` input
+ * `schedule[i].inputs` literal) and a reference binding. `akm task run` input
  * flags only ever produce `kind: "literal"` bindings.
  *
  * The `reference` arm additionally carries `schema` — the declaration's
- * bounded JSON Schema (P2b §3.6's "Contract note"): pre-attempt resolution
+ * bounded JSON Schema: pre-attempt resolution
  * (`src/workflows/exec/step-work.ts`) validates the reference's RESOLVED
  * value against it without re-reading the task source, so the check stays a
- * pure function of the frozen plan. This is an additive widening; the
- * `literal` arm is untouched.
+ * pure function of the frozen plan.
  */
 export type TaskInputBinding =
   | Readonly<{ kind: "literal"; name: string; value: unknown }>
@@ -69,7 +64,7 @@ export type TaskInputBinding =
 
 /**
  * The injected message vocabulary `materializeInputFlags` calls into instead
- * of throwing a literal string itself (D3-N3). Each formatter returns the
+ * of throwing a literal string itself. Each formatter returns the
  * `UsageError` to throw; `materializeInputFlags` never constructs one
  * directly, so it carries no task- or workflow-specific wording of its own.
  */
@@ -155,7 +150,7 @@ export function validateInputs(
  * (`diagnostics.duplicateNonArray`), and string-preserving coercion (a union
  * type that permits `string` keeps the caller's exact text — `--version 001`
  * on `type:"string"` stays the string `"001"`, never a silently-converted
- * number, B-30). Ends by running {@link validateInputs} over the
+ * number). Ends by running {@link validateInputs} over the
  * materialized result and raising `diagnostics.contractViolation` with its
  * (still `"$"`-rooted) errors when non-empty.
  *
@@ -212,13 +207,13 @@ function materializeFlagValues(
     // and repeated flags on an array-CAPABLE declaration always group,
     // regardless of what else the type union permits. A union that ALSO
     // permits a scalar type (e.g. `["array","string"]`) must not force a
-    // single, non-bracketed value into this branch, though — F1: without
+    // single, non-bracketed value into this branch, though: without
     // this guard, `--x hello` against `type:["array","string"]` silently
     // became `["hello"]` instead of staying the string "hello", because the
     // per-element map below coerces each value against `items` (or nothing)
     // rather than trying the union's scalar alternatives first. Route that
     // single-value case through `coerceFlagValue` with the FULL schema
-    // instead, so its string-preservation (B-30) and null/number/boolean/
+    // instead, so its string-preservation and null/number/boolean/
     // object arms run before "array" is ever assumed.
     if (types.length === 1 || values.length > 1) {
       const itemSchema = isRecord(schema?.items) ? schema.items : undefined;
@@ -248,7 +243,7 @@ function coerceFlagValue(
 
   // A union that permits strings keeps the caller's exact text. This
   // prevents a value such as "001" from being silently converted to a
-  // number (B-30).
+  // number.
   if (types.includes("string")) return raw;
 
   for (const type of types) {
@@ -309,13 +304,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Canonical JSON used for input hashing: object keys recursively sorted, so
  * two structurally-equal input value sets hash identically regardless of key
  * insertion order. Byte-equal to `canonicalJson`
- * (`src/workflows/ir/plan-hash.ts`) — see D3-N2 above.
+ * (`src/workflows/ir/plan-hash.ts`).
  */
 export function canonicalInputJson(value: unknown): string {
   return JSON.stringify(sortInputJsonKeys(value));
 }
 
-/** sha256 hex digest of {@link canonicalInputJson}'s output — a stable input-value fingerprint (B-39, for P2b execution identity). */
+/** sha256 hex digest of {@link canonicalInputJson}'s output — a stable input-value fingerprint (used for execution identity). */
 export function canonicalInputHash(value: unknown): string {
   return createHash("sha256").update(canonicalInputJson(value)).digest("hex");
 }

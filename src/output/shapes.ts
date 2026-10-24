@@ -15,7 +15,7 @@
  * single deterministic, order-independent pass (`BUILT_IN_OUTPUT_SHAPES`).
  * Dropping a module from the assembly array is a COMPILE error, not a silent
  * runtime gap. The central `shapeForCommand` dispatcher looks up the registry
- * and throws for unknown commands (v1 spec §9 — exhaustive registry, no silent
+ * and throws for unknown commands (exhaustive registry, no silent
  * fallback).
  */
 
@@ -83,15 +83,14 @@ registerOutputShapes(BUILT_IN_OUTPUT_SHAPES);
  * This is therefore a pure nominal alias of `string` today — it changes no
  * runtime behaviour — but it gives the shaping/formatting consumers a single,
  * named tightening point should the registry later be reshaped into a literal
- * map. The `output()` producer and call sites are intentionally NOT retyped
- * here (deferred to design review).
+ * map. The `output()` producer and call sites are intentionally NOT retyped.
  */
 export type OutputCommandName = string;
 
 /**
  * Commands whose shape handler implements the `summary` projection. For every
- * other command, `--shape summary` is a usage error (v1 §5 — honest rejection
- * for a soon-frozen contract, not a silent fallback to `human`).
+ * other command, `--shape summary` is a usage error (honest rejection
+ * rather than a silent fallback to `human`).
  */
 const SHAPE_SUMMARY_COMMANDS = new Set(["show"]);
 
@@ -158,7 +157,7 @@ export function shapeForCommand(
   if (handler) {
     return withResultsAlias(command, handler(result, detail, effectiveShape));
   }
-  // v1 spec §9 (output-shape registry exhaustive): no silent JSON.stringify
+  // The output-shape registry is exhaustive: no silent JSON.stringify
   // fallback. A missing case here is a registration bug — fail loudly so
   // the caller (or its tests) sees the missing command name.
   throw new Error(`output shape not registered for command: ${command}`);

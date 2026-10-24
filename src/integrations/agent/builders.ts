@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Agent command builder strategy (v1 spec §12.2).
+ * Agent command builder strategy.
  *
  * Each supported agent CLI platform has its own `AgentCommandBuilder` that
  * translates a platform-agnostic `AgentDispatchRequest` into the exact argv
@@ -25,7 +25,7 @@ import type { AgentCommandBuilder } from "./builder-shared";
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 /**
- * DERIVED from `HARNESS_REGISTRY` (P0.5 registry-drift fix): each harness that
+ * DERIVED from `HARNESS_REGISTRY`: each harness that
  * owns an `agentBuilder` is registered under its canonical id. Named engines
  * are schema-validated to canonical harness ids before reaching this boundary.
  */

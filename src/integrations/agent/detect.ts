@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Setup-time agent CLI detection (v1 spec §12.3).
+ * Setup-time agent CLI detection.
  *
  * Probes every known/configured agent profile by checking `which <bin>` on
  * PATH. We do **not** call `<bin> --version` — that would execute the

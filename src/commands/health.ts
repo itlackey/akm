@@ -77,7 +77,7 @@ export interface AkmHealthOptions {
    */
   now?: () => number;
   /**
-   * C2 (#499): explicit state.db path override. Defaults to
+   * Explicit state.db path override (#499). Defaults to
    * `getStateDbPathInDataDir()` (the `XDG_DATA_HOME`-derived path). Tests pass a
    * path from their isolated storage root so the entire health read is pinned to
    * one file and never re-reads `process.env` — immune to a parallel test file
@@ -141,24 +141,24 @@ function validateAkmHealthOptions(options: AkmHealthOptions): void {
   }
 }
 
-// ── akmHealth phase helpers (chunk-9 WI-9.5b; file-level decompose following
-// the function's natural gather/advise/check/assemble phases) ───────────────
+// ── akmHealth phase helpers (the function's natural
+// gather/advise/check/assemble phases) ──────────────────────────────────────
 
 /** Event type appended + read back by the state.db round-trip probe. */
 const HEALTH_PROBE_EVENT = "health_probe";
 
-/** Synthetic sentinel ref (ref-grammar decision D-R3): a colon-free
+/** Synthetic sentinel ref: a colon-free
  * `<subsystem>/_<marker>` label. `health` has no asset stash-subdir, so
  * `health/_probe` names the subsystem. */
 const HEALTH_PROBE_REF = "health/_probe";
 
 /**
  * Verify state.db can accept a write and read it back — WITHOUT leaving any
- * permanent trace (R-030). Earlier versions appended a `health_probe` event
- * on every `akm health` invocation and never removed it: a read-only health
- * check ran on a cron would grow state.db without bound (the only purge is
- * `improve`'s retention pass, which a health-only user never runs). The probe
- * row inserted here is deleted again inside the SAME connection once the
+ * permanent trace. Leaving the `health_probe` event in place after every
+ * `akm health` invocation would grow state.db without bound for a read-only
+ * health check run on a cron (the only purge is `improve`'s retention pass,
+ * which a health-only user never runs). The probe row inserted here is
+ * deleted again inside the SAME connection once the
  * round trip is confirmed, so the net effect on the `events` table is always
  * zero rows — the round trip still genuinely exercises append + read against
  * the real table, it just doesn't accumulate.
@@ -221,7 +221,7 @@ interface TaskHistoryPhase {
 }
 
 /**
- * Item 7: dedupe stuck-active rows by task_id (keeping the oldest/largest age
+ * Dedupe stuck-active rows by task_id (keeping the oldest/largest age
  * per id) so the `active-runs` check can name WHICH tasks are stuck instead of
  * just a count. No pid/liveness probing — purely a projection of the rows
  * already read.
@@ -240,7 +240,7 @@ function dedupeStuckActiveTasks(
 }
 
 /**
- * Item 6: group task_history rows by task_id and return the one with the
+ * Group task_history rows by task_id and return the one with the
  * highest fail rate among tasks with at least MIN_ROWS_FOR_WORST_TASK_FAIL_RATE
  * rows in the window — surfaces a consistently-failing task that a large,
  * mostly-healthy population would otherwise hide behind the aggregate rate.
@@ -280,13 +280,13 @@ function gatherTaskHistoryPhase(db: Database, since: string, stateDbPath: string
   const missingTables = requiredTables.filter((name) => !tableNames.includes(name));
 
   const probe = probeStateDbRoundTrip(stateDbPath);
-  // R0: read-only, independent of the round-trip probe above — integrity_check
+  // Read-only, independent of the round-trip probe above — integrity_check
   // catches corruption a successful append/read cannot (out-of-order rowids,
   // bad index entry counts), and the freelist reading is purely informational.
   const stateDbIntegrity = runStateDbIntegrityCheck(stateDbPath);
   const stateDbFreelist = getStateDbFreelistInfo(stateDbPath);
 
-  // D8 (spec §5.3): a marked "command" row or a legacy (unmarked) "prompt"
+  // A marked "command" row or a legacy (unmarked) "prompt"
   // row is the agent/LLM arm; an unmarked "command" row is the legacy
   // native shell/script arm and must not be counted here (see
   // isAgentTaskHistoryRow's header comment, referenced from
@@ -364,7 +364,7 @@ function gatherAncillaryAdvisories(
   const indexStateMismatch = detectIndexStateGenerationMismatch(db);
   if (indexStateMismatch) advisories.push(indexStateMismatch);
 
-  // 08-F1: surface a `stash-git-exposure` advisory when env/secret assets are
+  // Surface a `stash-git-exposure` advisory when env/secret assets are
   // git-tracked AND a remote is configured (the leak moment). Best-effort.
   // Cheap guard: only shell out to git when the stash has its OWN `.git` (or a
   // test injected a fake seam), so the hot path never spawns for a non-git
@@ -404,8 +404,7 @@ function gatherAncillaryAdvisories(
     // Non-fatal.
   }
 
-  // Item 4 (alpha.9 plan §5.4/§8 step 8): a bundle with no git history of its
-  // own never gets the purge sweep, so its memory-cleanup archive only ever
+  // A bundle with no git history of its own never gets the purge sweep, so its memory-cleanup archive only ever
   // grows — report its size and file count instead. Best-effort — an
   // unreadable archive must not abort the health report.
   try {
@@ -535,7 +534,7 @@ interface WindowComparePhaseResult {
 }
 
 /**
- * Phase 3 — window-compare mode. Resolves `--window-compare`/`--windows` into
+ * Window-compare mode. Resolves `--window-compare`/`--windows` into
  * per-window bundles and computes deltas between the earliest and latest
  * window. Top-level metrics retain the primary `--since` query.
  */
@@ -773,10 +772,10 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     );
     const status: AkmHealthResult["status"] = hardFailure ? "fail" : deterministicWarnings ? "warn" : "pass";
 
-    // ── Window-compare mode (Phase 3) ─────────────────────────────────────
+    // ── Window-compare mode ─────────────────────────────────────
     const { windowResults, deltas } = resolveWindowComparePhase(options, db, stateDbPath, now);
 
-    // ── Per-run mode (Phase 2) ────────────────────────────────────────────
+    // ── Per-run mode ────────────────────────────────────────────
     const runs: ImproveRunSummary[] | undefined = options.groupBy === "run" ? perRunSummaries : undefined;
 
     return {

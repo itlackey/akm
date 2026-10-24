@@ -126,7 +126,7 @@ export function classifyWorkflowStepUses(value: string): WorkflowUsesTarget {
 /**
  * Validate AKM's built-in command action at the shared source/decoder boundary.
  *
- * Inline YAML actions are portable templates and therefore use WP4's one
+ * Inline YAML actions are portable templates and therefore use the one
  * authoritative template validator. Markdown prose is explicitly `literal`,
  * while a stored ref remains resolution-owned because its template bytes are
  * not available until the later resolver loads the command asset.

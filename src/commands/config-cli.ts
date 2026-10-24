@@ -45,8 +45,8 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
 }
 
 export function listConfig(config: AkmConfig): Record<string, unknown> {
-  // 0.9.0 (spec §10.1): sources live in `bundles` (spread from config); the
-  // retired top-level `sources[]` array is no longer surfaced.
+  // Sources live in `bundles` (spread from config); the retired top-level
+  // `sources[]` array is not surfaced.
   return redactConfigValue({ ...DEFAULT_CONFIG, ...config }) as Record<string, unknown>;
 }
 
@@ -135,14 +135,12 @@ export function akmConfigDiff(ref: string): { rows: ConfigDiffRow[] } {
 }
 
 // ── `akm config` command surface ────────────────────────────────────────────
-// Extracted verbatim from src/cli.ts (WS6). The `main.subCommands.config` key
-// and every config subcommand's args/output shape are byte-identical. Leaf
-// handlers whose body is a plain `runWithJsonErrors(() => { … })` are
-// migrated to `defineJsonCommand`, which emits the same JSON envelope
-// (stdout/stderr/exit-code) as the inline form.
+// Registered as `main.subCommands.config`. Leaf handlers whose body is a plain
+// `runWithJsonErrors(() => { … })` use `defineJsonCommand`, which emits the
+// standard JSON envelope (stdout/stderr/exit-code).
 //
 // `akm config enable|disable` (a hardcoded alias for toggling the skills.sh
-// registry) was removed in 0.9.0 (C4). Use `akm registry add|remove`, the
+// registry) was removed in 0.9.0. Use `akm registry add|remove`, the
 // general mechanism, instead.
 
 export const configCommand = defineGroupCommand({
@@ -285,6 +283,5 @@ export const configCommand = defineGroupCommand({
   // registered subcommand ran, so the routing set stays derived from the
   // subCommands map and can never desync.
   // No `defaultRun`: bare `akm config` is a usage error (exit 2), the canonical
-  // bare-group behavior — owner ruling 12. Run `akm config list` for what the
-  // bare form used to print.
+  // bare-group behavior. `akm config list` prints the configuration.
 });

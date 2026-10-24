@@ -373,7 +373,7 @@ function resolveFamilyContradictions(family: DerivedMemoryRecord[]): FamilyContr
       transitions: family
         .filter((record) => {
           // `deprecated` is a frozen historical state — never refresh it to active.
-          // (`superseded` is intentionally still refreshable to preserve pre-Phase-1A behavior.)
+          // (`superseded` is intentionally still refreshable.)
           if (isFrozenHistoricalBeliefState(record.beliefState)) return false;
           // `active` and `asserted` are both "current/believed" states. Only emit a
           // refresh if there is something to clear (contradictions / currentBeliefRefs)
@@ -478,7 +478,7 @@ function resolveFamilyContradictions(family: DerivedMemoryRecord[]): FamilyContr
     const componentRefs = [...components[componentIndex]!].sort();
     const peerCurrentRefs = componentRefs.filter((ref) => ref !== record.ref);
     // `deprecated` is a frozen historical state — never refresh to active.
-    // (`superseded` is intentionally still refreshable to preserve pre-Phase-1A behavior.)
+    // (`superseded` is intentionally still refreshable.)
     if (isFrozenHistoricalBeliefState(record.beliefState)) {
       continue;
     }
@@ -567,7 +567,7 @@ function stronglyConnectedComponents(
  * `undefined` for a knowledge or lesson ref (no such twin exists), or for a
  * memory that is already itself `.derived` (it has no further twin).
  *
- * Used by `akm proposal accept` (alpha.9) to take a retired or promoted
+ * Used by `akm proposal accept` to take a retired or promoted
  * memory's derived child along when it archives the memory.
  */
 export function derivedTwinPath(filePath: string, refType: string): string | undefined {
@@ -577,8 +577,8 @@ export function derivedTwinPath(filePath: string, refType: string): string | und
 }
 
 /**
- * True for a retire-proposal-caused archive (alpha.9: the consolidate pair
- * pass, or O1's promotion retirement) — distinguished from a memory-cleanup
+ * True for a retire-proposal-caused archive (the consolidate pair
+ * pass, or a promotion's source retirement) — distinguished from a memory-cleanup
  * family-prune candidate by carrying a `proposalId`. The two paths differ in
  * how `previousBeliefState` is derived (below) and in which extra tombstone
  * fields apply.
@@ -621,11 +621,11 @@ function resolvePreviousBeliefState(
  * `"git"`, in which case the caller's own `commitWriteTargetBoundary` commits
  * (and maybe pushes) immediately as part of the SAME accept.
  *
- * Generalized in alpha.9 to cover any memory, knowledge or lesson file in a
- * writable bundle — not only `.derived` memories — so `akm proposal accept`
- * can archive a consolidate pair-pass `retire` proposal's target, or (O1) an
- * accepted promotion's source memory, through the same one encoding memory
- * cleanup already used (D27: never two coexisting encodings). A
+ * Covers any memory, knowledge or lesson file in a writable bundle — not
+ * only `.derived` memories — so `akm proposal accept` can archive a
+ * consolidate pair-pass `retire` proposal's target, or an accepted
+ * promotion's source memory, through the same one encoding memory cleanup
+ * uses (never two coexisting encodings). A
  * retire-proposal candidate (one carrying `proposalId`) additionally stamps
  * `proposalId`, `successorRefs` and `retiredAt` on the tombstone.
  */
@@ -665,11 +665,11 @@ export function archiveCleanupCandidate(
     },
     "Archived derived memory for recoverable cleanup.\n",
   );
-  // 4c (third review round): write the tombstone BEFORE moving the file — a
-  // crash in between used to leave a file already at archivedPath with no
-  // cleanup.md to explain it (unrecoverable: revert refuses on a missing
-  // tombstone, and nothing else knows this archive dir exists). Reordered,
-  // a crash here instead leaves, at worst, a tombstone describing a move
+  // Write the tombstone BEFORE moving the file — a crash in between would
+  // otherwise leave a file already at archivedPath with no cleanup.md to
+  // explain it (unrecoverable: revert refuses on a missing tombstone, and
+  // nothing else knows this archive dir exists). In this order, a crash here
+  // instead leaves, at worst, a tombstone describing a move
   // that has not happened yet, with the file still at its original
   // location — the ordinary "nothing archived yet" state every caller
   // already handles.
@@ -702,8 +702,7 @@ export function archiveCleanupCandidate(
 
 /**
  * How long a retirement's archived bytes stay on disk after `retiredAt`
- * before the purge sweep deletes them. Git history keeps the bytes (D27;
- * plan §5.4 "Purge").
+ * before the purge sweep deletes them. Git history keeps the bytes.
  */
 export const RETIRE_GRACE_DAYS = 30;
 
@@ -722,12 +721,12 @@ export interface ArchivePurgeResult {
 const EMPTY_ARCHIVE_PURGE_RESULT: ArchivePurgeResult = { purgedDirs: 0, purgedFiles: 0 };
 
 /**
- * The purge sweep (0.9.17-alpha.9 plan §5.4, §8 step 8): deterministic, no
+ * The purge sweep: deterministic, no
  * LLM, run once at improve-run start. Deletes the archived asset bytes —
  * never `cleanup.md` — of every retirement whose tombstone `retiredAt` is
  * more than {@link RETIRE_GRACE_DAYS} old AND whose archived files are all
  * git-tracked and clean at the time of the sweep (see below). Git history
- * keeps the bytes (D27); the tombstone, and ref resolution through it
+ * keeps the bytes; the tombstone, and ref resolution through it
  * (`core/asset/memory-archive.ts`), are unaffected — only the tombstone's
  * own `originalPath` file(s) are removed.
  *
@@ -778,13 +777,13 @@ export function purgeGracedArchive(stashDir: string, now: Date = new Date()): Ar
   //
   // Each of the three git calls can itself fail independently — a broken
   // submodule can make `git status` exit nonzero while `git ls-files`
-  // succeeds, or vice versa (round-3 review, probes G8/G9). `[]` from a
+  // succeeds, or vice versa. `[]` from a
   // failed call is indistinguishable from a genuinely empty result once it
   // is in a Set, so this checks `ok` FIRST: any failure purges nothing this
   // sweep rather than silently trusting whichever check happened to
   // succeed — a `dirty`/`unverifiable` set that came back empty ONLY
   // because the call failed must never read as "nothing to protect".
-  // G10: assume-unchanged / skip-worktree files never show up as dirty even
+  // Assume-unchanged / skip-worktree files never show up as dirty even
   // when genuinely modified — `checkGitPathSafety` treats them the same as
   // "not tracked" below, so such a file (and its whole retirement) is left
   // for a later sweep.
@@ -801,7 +800,7 @@ export function purgeGracedArchive(stashDir: string, now: Date = new Date()): Ar
   for (const entry of entries) {
     // `Dirent.isDirectory()` reflects `lstat`, so it is false for a symlink
     // even when the symlink points at a directory — a symlinked
-    // `archive/<name>` is skipped here, never followed (N1). Everything
+    // `archive/<name>` is skipped here, never followed. Everything
     // below only ever joins path components onto `archiveRoot` through
     // `entry.name`/`readdirSync` results, so a purge can never reach
     // outside `.akm/memory-cleanup/archive/`.
@@ -819,7 +818,7 @@ export function purgeGracedArchive(stashDir: string, now: Date = new Date()): Ar
     if (!Number.isFinite(retiredMs) || retiredMs >= cutoffMs) continue; // "more than" the grace period — exactly at it is not enough
     const allFiles = listFilesRecursive(dir); // tombstone included — the whole entry must be a clean, committed unit
     const isSafeToPurge = allFiles.every((filePath) => gitSafety.isSafe(toPosix(path.relative(stashDir, filePath))));
-    if (!isSafeToPurge) continue; // untracked, modified, or unverifiable entry — skip the whole directory this sweep (B1, G10)
+    if (!isSafeToPurge) continue; // untracked, modified, or unverifiable entry — skip the whole directory this sweep
     let children: string[];
     try {
       children = fs.readdirSync(dir);
@@ -982,7 +981,7 @@ function collectDerivedMemories(stashDir: string, parentRefFilter?: string): Der
       tags,
       searchHints,
       body,
-      // parentRef is the 0.9.0 `memories/<name>` conceptId (Group-C item 2), so
+      // parentRef is the 0.9.0 `memories/<name>` conceptId, so
       // the canonical-child test compares the minted conceptId of the suffix-
       // stripped name against it rather than slicing a fixed `memory:` prefix.
       canonicalName:
@@ -1013,19 +1012,17 @@ function isActiveLikeBeliefState(state: Exclude<MemoryBeliefState, "archived">):
 }
 
 /**
- * `deprecated` is a frozen historical state introduced in Phase 1A. Once
- * recorded, the contradiction-resolution pass must not refresh it back to
- * active. (`contradicted` is also historical but it *is* updated by the
+ * `deprecated` is a frozen historical state. Once recorded, the
+ * contradiction-resolution pass must not refresh it back to active.
+ * (`contradicted` is also historical but it *is* updated by the
  * contradiction resolver, so it is treated separately.)
  *
- * Note: `superseded` is deliberately NOT included here. Pre-Phase-1A,
- * `superseded` records were refreshed to `active` by the belief-refresh
- * pass (the old guard was `record.beliefState !== "active"`). In practice
- * most `superseded` records are pruned earlier via `supersededBy` metadata
- * in `analyzeMemoryCleanup`, so they never reach belief refresh — but a
- * record marked `beliefState: superseded` without `supersededBy` metadata
- * was previously refreshable. Preserving that behavior here avoids a
- * surprise regression; only `deprecated` is the new frozen state.
+ * Note: `superseded` is deliberately NOT included here. Belief refresh
+ * refreshes a `superseded` record back to `active`. In practice most
+ * `superseded` records are pruned earlier via `supersededBy` metadata in
+ * `analyzeMemoryCleanup`, so they never reach belief refresh — but a record
+ * marked `beliefState: superseded` without `supersededBy` metadata is
+ * refreshable. Only `deprecated` is frozen.
  */
 function isFrozenHistoricalBeliefState(state: Exclude<MemoryBeliefState, "archived">): state is "deprecated" {
   return state === "deprecated";

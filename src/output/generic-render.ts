@@ -3,18 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Generic `md` / `html` / `text` rendering of a shaped output envelope (D7).
+ * Generic `md` / `html` / `text` rendering of a shaped output envelope.
  *
  * Every command gets `json`, `jsonl`, and `yaml` for free because those are
  * serializations of the envelope rather than renderings of it. `md`, `html`,
- * and `text` are renderings, and before D7 only `akm health` had `md`/`html`:
- * `md` silently emitted the JSON envelope everywhere else and `html` threw.
- * `text` had the same silent-JSON gap for any command with no registered
- * text formatter, closed later than `md`/`html` — see `renderGenericText`
- * below for why it is its own function rather than a reuse of
- * `renderGenericMarkdown`.
+ * and `text` are renderings, so a command with no bespoke renderer would
+ * otherwise silently emit the JSON envelope (or, for `html`, fail). See
+ * `renderGenericText` below for why `text` is its own function rather than a
+ * reuse of `renderGenericMarkdown`.
  *
- * These functions close that gap structurally rather than per command. A
+ * These functions cover that gap structurally rather than per command. A
  * command that registers a bespoke renderer (`akm health`) still wins; every
  * other command falls back to a real rendering derived from whatever its
  * envelope happens to contain. The shape is discovered, not declared, so a new

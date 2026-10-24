@@ -5,10 +5,9 @@
 /**
  * Single registration point for every akm agent harness (#562).
  *
- * `HARNESS_REGISTRY` is the ONE source of truth that replaces the three
- * previously-disconnected registries (session-logs index, agent profiles,
- * config/setup platform strings). All derived exports below are computed from
- * it, so adding a harness is a single entry here instead of ~16 scattered edits.
+ * `HARNESS_REGISTRY` is the ONE source of truth for the session-logs index,
+ * agent profiles, and config/setup platform strings. All derived exports below
+ * are computed from it, so adding a harness is a single entry here.
  *
  * This module is a dependency-graph LEAF: it imports nothing from
  * `core/config`. `core/config/config-types.ts` derives `VALID_HARNESS_IDS`
@@ -51,11 +50,10 @@ export { isSessionLogHarness } from "./types";
  * `z.enum(...)`, and the `platform` union all need the literal types.
  */
 // Order is significant: VALID_HARNESS_IDS derives from this array and feeds the
-// committed JSON-schema enum order. The original [opencode, claude,
-// opencode-sdk] prefix is preserved so the pre-unification portion of the
-// generated schema enum does not reorder; the seven P2 harness adapters are
-// appended after it, which extends the enum additively (schemas/akm-config.json
-// is regenerated in lockstep).
+// committed JSON-schema enum order. The [opencode, claude, opencode-sdk]
+// prefix is kept first so the generated schema enum does not reorder; new
+// adapters are appended after it, which extends the enum additively
+// (schemas/akm-config.json is regenerated in lockstep).
 export const HARNESS_REGISTRY = Object.freeze([
   new OpencodeHarness(),
   new ClaudeHarness(),
@@ -69,7 +67,7 @@ export const HARNESS_REGISTRY = Object.freeze([
   new OpenhandsHarness(),
 ] as const) satisfies readonly AkmHarness[];
 
-// Construction-time drift guard (WI-9.8 KILL 3, D.3 edge B): ./ids.ts's
+// Construction-time drift guard: ./ids.ts's
 // HARNESS_ID_TABLE is config's dependency-free mirror of (id, agentDispatch)
 // for every registered harness, kept out of core/config's import graph so
 // config doesn't have to import this (heavier) barrel. Assert they match so

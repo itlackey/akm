@@ -18,7 +18,7 @@
 import { UsageError } from "../core/errors";
 
 export type OutputFormat = "json" | "yaml" | "text" | "jsonl" | "md" | "html";
-/** Verbosity axis. `--detail` is verbosity ONLY (v1 §3.2). */
+/** Verbosity axis. `--detail` is verbosity ONLY. */
 export type DetailLevel = "brief" | "normal" | "full";
 /** Output-projection axis. `--shape` selects how a result is projected. */
 export type ShapeMode = "human" | "agent" | "summary";

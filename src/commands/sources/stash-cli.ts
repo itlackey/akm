@@ -7,26 +7,14 @@
  * the working stash and its index database: `akm index` (build/refresh the
  * search index), `akm import` (ingest a knowledge doc/URL), and `akm info`
  * (system capabilities + index stats).
- * Extracted verbatim from src/cli.ts (WS6) so the God Module shrinks; the
- * `main.subCommands.{index,import,info}` keys and every subcommand's
- * args/output shape stay byte-identical.
- *
- * 0.9 CLI overhaul (S7): `init` moved out of this cluster into the new
- * `akm bundle create` (src/commands/sources/bundle-cli.ts) — no top-level
- * `init` remains.
- *
- * These share no private helper with any command still inline in cli.ts — every
- * dependency is already exported from a shared module (core/paths, core/warn,
- * core/errors, core/events, output/context, cli/shared, cli/parse-args, plus the
- * per-command implementations in ./init, ./indexer, ./info, ./knowledge,
- * ./core/asset-create, ./core/common), so the cluster moves with zero hoisting.
+ * Registered as `main.subCommands.{index,import,info}`. There is no top-level
+ * `init`; it lives in `akm bundle create` (src/commands/sources/bundle-cli.ts).
  *
  * The leaf handlers whose body is a plain `runWithJsonErrors(...) + output(...)`
- * (`import`, `info`) are migrated onto
- * `defineJsonCommand`, which emits the same JSON envelope (stdout/stderr/
- * exit-code) as the inline form. `index` keeps a plain `defineCommand` wrapping
- * `runWithJsonErrors` because its body owns a spinner, an AbortController, and
- * SIGINT/SIGTERM handlers in a try/finally — left byte-for-byte untouched.
+ * (`import`, `info`) use `defineJsonCommand`, which emits the standard JSON
+ * envelope (stdout/stderr/exit-code). `index` keeps a plain `defineCommand`
+ * wrapping `runWithJsonErrors` because its body owns a spinner, an
+ * AbortController, and SIGINT/SIGTERM handlers in a try/finally.
  */
 
 import path from "node:path";
@@ -66,11 +54,11 @@ const EMBEDDED_BATCH_PROGRESS_PATTERN = /^Embedded \d+\/\d+ entries\.$/;
 export const indexCommand = defineCommand({
   meta: { name: "index", description: "Build search index (incremental by default; --full forces full reindex)" },
   args: {
-    // R-051: `index` is a raw `defineCommand` (not `defineJsonCommand`), so it
-    // does not get `GLOBAL_OUTPUT_ARGS` for free. `--format`/`--detail`/
-    // `--shape`/`--output` already parsed correctly here (this command has no
+    // `index` is a raw `defineCommand` (not `defineJsonCommand`), so it does
+    // not get `GLOBAL_OUTPUT_ARGS` for free. `--format`/`--detail`/
+    // `--shape`/`--output` parse correctly here regardless (this command has no
     // extra positional for a stray value to fall into), so this is purely a
-    // `--help` visibility / consistency fix, not a behavior change.
+    // `--help` visibility / consistency measure.
     ...GLOBAL_OUTPUT_ARGS,
     full: { type: "boolean", description: "Force full reindex", default: false },
     clean: {
@@ -147,8 +135,8 @@ export const indexCommand = defineCommand({
       }
       let latestMessage = "";
       // Resolve the stash dir once at the `akm index` command boundary and
-      // thread it into the indexer (WI-9.10 CLI-wide sweep) — the indexer leaf
-      // no longer reads the ambient `resolveStashDir()`.
+      // thread it into the indexer — the indexer leaf does not read the
+      // ambient `resolveStashDir()`.
       const stashDir = resolveStashDir();
       try {
         const result = await akmIndex({
@@ -166,11 +154,10 @@ export const indexCommand = defineCommand({
               spin.stop(`${progressPrefix}${message}`);
               spin.start(`${progressPrefix}${message}`);
             } else if (!EMBEDDED_BATCH_PROGRESS_PATTERN.test(message)) {
-              // Non-verbose, non-text (JSON/yaml/etc) mode: silence used to be
-              // total until the run finished (#954) — a stalled
-              // run looked identical to "nothing written". Phase-start
-              // messages and the embedding heartbeat now reach stderr here
-              // too; the high-frequency per-batch `Embedded N/M entries.`
+              // Non-verbose, non-text (JSON/yaml/etc) mode: total silence until
+              // the run finished (#954) would make a stalled run look
+              // identical to "nothing written". Phase-start messages and the
+              // embedding heartbeat reach stderr here too; the high-frequency per-batch `Embedded N/M entries.`
               // line (emitted after every committed batch)
               // is deliberately excluded — that would be spam, not a
               // heartbeat.

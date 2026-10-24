@@ -3,12 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Typed script-target preparer (spec
- * docs/plans/specs/p1b-model-extraction.md §4.3). Replaces directScript's
- * former synthetic-task-YAML fabrication (once in the since-deleted
- * `src/workflows/ir/source-freeze-v4.ts` shim; P4 deleted the file itself):
- * given a script asset's own owned identity (ref/file/
- * bundleRoot — never a synthetic task ref), freezes the same byte/
+ * Typed script-target preparer: given a script asset's own owned identity
+ * (ref/file/bundleRoot — never a synthetic task ref), freezes the same byte/
  * interpreter shape prepareTaskV3Execution's script arm freezes for a real
  * task-v3 script target — via the one shared captureScriptTarget()
  * implementation in ./script-capture. No task document is built or parsed

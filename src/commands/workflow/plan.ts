@@ -9,7 +9,7 @@
  * (`loadWorkflowAsset`, `freezeWorkflow`) and NOTHING else — never
  * `publishWorkflowRunV4`, `startWorkflowRun`, `appendEvent`, or `akmIndex`.
  *
- * SECRET-FREE, by construction (§4.6's closed print list): a resolved
+ * SECRET-FREE, by construction (a closed print list): a resolved
  * reference VALUE is never printed (references resolve at pre-attempt, not
  * here); a `literal` **environment** binding's value is never printed (only
  * `environment[].kind`/`.name`, and an `env-ref`'s `.ref`/`.keys`/
@@ -81,7 +81,7 @@ function childExpansion(target: FrozenChildWorkflowTarget): Record<string, unkno
   };
 }
 
-/** The task/child expansion boundary for one step (§4.6). */
+/** The task/child expansion boundary for one step. */
 function stepExpansion(
   step: WorkflowPlanStep,
   frozenTarget: FrozenWorkflowTarget | undefined,

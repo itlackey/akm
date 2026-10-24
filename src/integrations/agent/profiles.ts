@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Built-in profile registry for external agent CLIs (v1 spec §12.1).
+ * Built-in profile registry for external agent CLIs.
  *
  * A `AgentProfile` is the minimum metadata required to shell-out to a
  * coding-agent CLI. Named engines lower canonical harness metadata into this
@@ -58,16 +58,15 @@ export interface AgentProfile {
 
 // AKM_EVENT_SOURCE carries usage-event provenance (improve/task) so that akm
 // invocations a spawned agent makes are recorded as machine traffic, not user
-// demand (DRIFT-6). Without it in the passthrough whitelist, buildChildEnv drops
+// demand. Without it in the passthrough whitelist, buildChildEnv drops
 // the stamp at the agent boundary — e.g. `akm wiki ingest` spawns an agent whose
 // `akm curate/show/search` tool-calls then log source='user', silently inflating
-// every lane's read-back (GRR). It is a provenance tag, never a secret.
+// every lane's read-back. It is a provenance tag, never a secret.
 const COMMON_PASSTHROUGH = COMMON_SPAWN_ENV_PASSTHROUGH;
 
 /**
- * Built-in profiles for the agent CLIs akm knows out of the box: the five the
- * v1 spec calls out explicitly, plus the P2 harness adapters (copilot, pi,
- * amazonq, openhands — plan §"Capability matrix"). The fields here are
+ * Built-in profiles for the agent CLIs akm knows out of the box, including the
+ * copilot, pi, amazonq, and openhands harness adapters. The fields here are
  * conservative defaults — every value is overridable from user config.
  *
  * Engine lowering selects captured stdio for unattended dispatch.
@@ -113,7 +112,7 @@ const BUILTINS: Record<string, AgentProfile> = {
     envPassthrough: [...COMMON_PASSTHROUGH, "OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
     parseOutput: "text",
   },
-  // ── P2 harness-adapter profiles (plan §"Capability matrix") ────────────────
+  // ── Harness-adapter profiles ──────────────────────────────────────────────
   copilot: {
     name: "copilot",
     bin: "copilot",

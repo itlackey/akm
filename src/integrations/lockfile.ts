@@ -18,20 +18,17 @@ import type { InstallKind } from "../registry/types";
 // ── Types ───────────────────────────────────────────────────────────────────
 
 /**
- * LockfileEntry — resolved lock state for one bundle (spec §10.2).
+ * LockfileEntry — resolved lock state for one bundle.
  *
- * SHAPE BUMP (Chunk-8 WI-8.4): evolved from the pre-cutover per-source entry
- * (`{ id, source, ref, resolvedVersion?, resolvedRevision?, integrity? }`) to
- * the §10.2 bundle lock shape — ONE entry per bundle id, adding the optional
- * resolved fields the spec lists as SHOULD: `localRoot` (materialized root),
- * `manifestDigest`, `adapterIds`, and `installedAt`. The core identity/locator
- * fields are UNCHANGED (`id` = bundle id; `source` = source kind; `ref` =
- * locator), so old per-source `akm.lock` files still read (shape-tolerant:
- * `readLockfile` validates only id/source/ref and carries unknown/absent
- * optional fields through); an entry is upgraded to the new shape lazily on its
- * next `upsertLockEntry` write. The desired configuration lives in config.json's
- * `bundles`; this file records ONLY the resolved cache state (spec §10.2: the
- * config MUST NOT duplicate resolved cache paths/revisions).
+ * ONE entry per bundle id. The core identity/locator fields are `id` (bundle
+ * id), `source` (source kind), and `ref` (locator); the optional resolved
+ * fields are `localRoot` (materialized root), `manifestDigest`, `adapterIds`,
+ * and `installedAt`. `readLockfile` is shape-tolerant: it validates only
+ * id/source/ref and carries unknown/absent optional fields through, so an
+ * older `akm.lock` still reads, and an entry gains the optional fields lazily
+ * on its next `upsertLockEntry` write. The desired configuration lives in
+ * config.json's `bundles`; this file records ONLY the resolved cache state
+ * (the config must not duplicate resolved cache paths/revisions).
  *
  * The lockfile lives at `<dataDir>/akm.lock` and is managed independently from
  * `config.json`.
@@ -46,13 +43,13 @@ export interface LockfileEntry {
   resolvedVersion?: string;
   resolvedRevision?: string;
   integrity?: string;
-  /** Local materialized root (spec §10.2 "local materialized root"). */
+  /** Local materialized root. */
   localRoot?: string;
-  /** Manifest digest (spec §10.2), when the install flow computed one. */
+  /** Manifest digest, when the install flow computed one. */
   manifestDigest?: string;
-  /** Component adapter ids (spec §10.2), when known. */
+  /** Component adapter ids, when known. */
   adapterIds?: string[];
-  /** Installation timestamp (spec §10.2). */
+  /** Installation timestamp. */
   installedAt?: string;
 }
 
@@ -126,8 +123,8 @@ export function readLockfile(): LockfileEntry[] {
  * writes the whole array back. An unreadable `akm.lock` that reads as `[]`
  * therefore does not merely lose information — the very next
  * `writeFileAtomic` replaces the operator's entire lock record with the single
- * entry this call happened to be adding. That is the same catastrophe R-012
- * guards against for a *corrupt* file, reached instead through a permission
+ * entry this call happened to be adding. That is the same catastrophe
+ * {@link readLockfileOrThrow} guards against for a *corrupt* file, reached instead through a permission
  * fault, and `fs.existsSync`/a swallowed `readFileSync` could not tell the two
  * apart from "the file was never created".
  *
@@ -147,7 +144,7 @@ function assertLockfilePathReadable(target: string): void {
 
 /**
  * Like {@link readLockfile}, but THROWS instead of silently degrading to `[]`
- * when the on-disk lockfile exists yet cannot be read or parsed (R-012, #791).
+ * when the on-disk lockfile exists yet cannot be read or parsed (#791).
  *
  * `readLockfile`'s fail-open contract is intentional for READ paths — a
  * corrupt lock degrades a managed bundle to "unmanaged" rather than erroring
@@ -204,8 +201,8 @@ function readLockfileOrThrow(): LockfileEntry[] {
 
 /**
  * The materialized content root recorded in the lock for a managed (git/npm)
- * bundle — spec §10.2 desired/resolved split, where the desired config carries
- * only the source LOCATOR and the resolved `localRoot` lives here.
+ * bundle — the desired config carries only the source LOCATOR and the
+ * resolved `localRoot` lives here.
  *
  * This is the SINGLE lock-first resolution point shared by the indexer READ
  * path (`resolveEntryContentDir` in indexer/search) and the command-layer WRITE
@@ -244,7 +241,7 @@ export async function writeLockfile(entries: LockfileEntry[]): Promise<void> {
 export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
   const release = await acquireLockSentinel();
   try {
-    // R-012: readLockfileOrThrow (not readLockfile) — a corrupt/malformed
+    // readLockfileOrThrow (not readLockfile) — a corrupt/malformed
     // lockfile must abort the upsert loudly rather than read as `[]` and get
     // silently overwritten with just this one entry.
     const entries = readLockfileOrThrow();
@@ -256,7 +253,7 @@ export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
 }
 
 /**
- * Rename a lock entry's id in place (D6 — `akm bundle rename`), keeping every
+ * Rename a lock entry's id in place (`akm bundle rename`), keeping every
  * other resolved field (`localRoot`, `resolvedVersion`, …) unchanged. Returns
  * `true` when an entry for `oldId` existed and was renamed, `false` when
  * there was nothing to rename (e.g. a filesystem bundle, which has no lock
@@ -265,7 +262,7 @@ export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
 export async function renameLockEntry(oldId: string, newId: string): Promise<boolean> {
   const release = await acquireLockSentinel();
   try {
-    // R-012: see upsertLockEntry — a corrupt lockfile must abort loudly
+    // See upsertLockEntry — a corrupt lockfile must abort loudly
     // rather than read as `[]` and get silently overwritten.
     const entries = readLockfileOrThrow();
     const existing = entries.find((e) => e.id === oldId);
@@ -288,7 +285,7 @@ export async function removeLockEntry(id: string): Promise<void> {
   if (!fs.existsSync(dataDir)) return;
   const release = await acquireLockSentinel();
   try {
-    // R-012: see upsertLockEntry — same destructive-overwrite risk on a
+    // See upsertLockEntry — same destructive-overwrite risk on a
     // corrupt lockfile, so the same strict reader is used here.
     const entries = readLockfileOrThrow();
     writeLockfileUnlocked(entries.filter((e) => e.id !== id));

@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Shared CLI utilities extracted from `src/cli.ts` so that individual
- * command modules can import them without a circular dependency.
+ * Shared CLI utilities that individual command modules import without a
+ * circular dependency on `src/cli.ts`.
  *
  * Exported: output, runWithJsonErrors, parseAllFlagValues, emitJsonError
  */
@@ -96,17 +96,16 @@ function extractHint(error: unknown): string | undefined {
  * Serialize an error to the standard JSON envelope and record the mapped
  * exit code. Used in both the startup try/catch and `runWithJsonErrors`.
  *
- * R-067: this used to call `process.exit(exitCode)` directly, which
- * terminates the process synchronously and skips every pending `finally`
- * block up the call stack — including `src/cli.ts`'s own
- * `disposeDispatchResources()` cleanup and citty's per-command `cleanup`
- * hooks. `process.exitCode = exitCode; return;` is equivalent for every
- * caller here: Node/Bun exits with that code once the event loop drains
- * naturally, but cleanup on the way there still runs.
- * `src/commands/improve/extract-cli.ts` already uses this exact pattern for
- * its own non-throw failure signal.
+ * This does not call `process.exit(exitCode)`, which would terminate the
+ * process synchronously and skip every pending `finally` block up the call
+ * stack — including `src/cli.ts`'s own `disposeDispatchResources()` cleanup
+ * and citty's per-command `cleanup` hooks. It sets `process.exitCode` and
+ * returns: Node/Bun exits with that code once the event loop drains
+ * naturally, and cleanup on the way there still runs.
+ * `src/commands/improve/extract-cli.ts` uses this same pattern for its own
+ * non-throw failure signal.
  *
- * Because this no longer throws or exits, it no longer terminates control
+ * Because this neither throws nor exits, it does not terminate control
  * flow on its own — every call site MUST treat it like a normal return and
  * stop doing further work itself (an explicit `return;` right after the
  * call, same as any other caller of a fallible function). `runWithJsonErrors`
@@ -141,7 +140,7 @@ export async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)
  * A citty command whose `run` body is the plain command logic — any thrown
  * error is routed through the standard JSON envelope automatically. This is the
  * inverse of hand-writing `run() { return runWithJsonErrors(() => { ... }); }`
- * at every site (123 such sites at WS6 baseline).
+ * at every site.
  */
 export type JsonCommandDef<T extends ArgsDef = ArgsDef> = Omit<CommandDef<T>, "run"> & {
   /** Command body. Throw to emit the JSON error envelope + mapped exit code. */
@@ -177,7 +176,7 @@ export const GLOBAL_OUTPUT_ARGS = {
     type: "string",
     description: "Detail level (verbosity): brief|normal|full (global flag).",
   },
-  // R-050(c): single-sourced with the root command's own `--shape` help
+  // Single-sourced with the root command's own `--shape` help
   // (`main.args.shape` in src/cli.ts, which spreads this object) so the
   // caveat is visible from every leaf's own `--help`, not only the top-level
   // one. `summary` outside `show` falls back to `agent` with a warning
@@ -194,7 +193,7 @@ export const GLOBAL_OUTPUT_ARGS = {
     type: "string",
     description: "Write rendered output to a file instead of stdout (all formats except jsonl) (global flag)",
   },
-  // S11: surfaced at every leaf (not just the root) so `akm <command> --help`
+  // Surfaced at every leaf (not just the root) so `akm <command> --help`
   // documents them too — they already apply globally, parsed from raw argv
   // by `applyEarlyStderrFlags` in src/cli.ts before citty ever sees them, so
   // declaring them here is documentation, not new parsing behavior. A
@@ -239,27 +238,26 @@ export function defineJsonCommand<const T extends ArgsDef = ArgsDef>(def: JsonCo
 }
 
 /**
- * Canonical bare-group behavior (0.9.0 breaking change, owner ruling 12).
+ * Canonical bare-group behavior.
  *
- * Before 0.9.0 the twelve `akm <group>` command groups did three different
- * things when invoked with no subcommand: some printed help and exited 1,
- * some ran an implicit default action and exited 0 (e.g. bare `akm graph`
- * silently rendering `graph summary`), and one already raised a structured
- * usage error and exited 2. None of that is discoverable from the exit code
- * alone, and a script that greps stdout for a specific default action broke
- * silently the moment someone reordered subcommands.
+ * A bare `akm <group>` invocation with no subcommand could print help and
+ * exit 1, or run an implicit default action and exit 0 (e.g. bare
+ * `akm graph` silently rendering `graph summary`). None of that is
+ * discoverable from the exit code alone, and a script that greps stdout for a
+ * specific default action breaks silently the moment someone reorders
+ * subcommands.
  *
  * The canonical choice, applied uniformly: a bare group invocation is a
  * USAGE ERROR — exit 2, the same structured JSON envelope every other usage
  * mistake in this CLI produces (not citty's raw help banner, and not a
  * silent default action). This matches STABILITY.md's documented exit-code
  * table (2 = usage) and the exit code the CLI already used for "unknown
- * command" / "missing required argument" as of the companion 0.9.0 fix.
+ * command" / "missing required argument".
  *
- * `defaultRun` is now OPTIONAL for exactly this reason: omitting it opts a
+ * `defaultRun` is OPTIONAL for exactly this reason: omitting it opts a
  * group into the shared, canonical error below. Passing an explicit
  * `defaultRun` is a deliberate opt-out and should not be added to new groups
- * without a documented reason — see CHANGELOG for the migration note.
+ * without a documented reason.
  */
 function bareGroupUsageError<T extends ArgsDef>(meta: CommandDef<T>["meta"], subcommandSet: Set<string>): never {
   const name =
@@ -349,26 +347,22 @@ export function output(command: string, result: unknown): void {
       deliverRendered(yamlStringify(shaped), mode.outputPath);
       return;
     case "text": {
-      // D7 — registry first, generic rendering of the shaped envelope second.
+      // Registry first, generic rendering of the shaped envelope second.
       // Mirrors the md/html fallback immediately below: a command with no
-      // registered text formatter used to fall through to
-      // `JSON.stringify(shaped, null, 2)`, i.e. silently hand back JSON while
-      // claiming `--format text` — the same "wrong format wearing the right
-      // flag" bug D7 already closed for md/html. `renderGenericText` (a
-      // DISTINCT function from `renderGenericMarkdown` — see its doc comment
-      // in src/output/generic-render.ts for why reusing the md renderer here
-      // was itself a version of the same bug) renders flat `key=value` text
-      // matching the house style already established by registered text
-      // formatters like `config list`.
+      // registered text formatter must not hand back JSON while claiming
+      // `--format text`. `renderGenericText` (a DISTINCT function from
+      // `renderGenericMarkdown` — see its doc comment in
+      // src/output/generic-render.ts for why reusing the md renderer here
+      // would be the same bug) renders flat `key=value` text matching the
+      // house style of registered text formatters like `config list`.
       const plain = formatPlain(command, shaped, mode.detail);
       deliverRendered(plain ?? renderGenericText(command, shaped), mode.outputPath);
       return;
     }
     case "md": {
-      // D7 — registry first, generic rendering of the shaped envelope second.
-      // No command emits JSON under `--format md` any more: silently handing
-      // back the wrong format was the worst of the three behaviours this
-      // replaced.
+      // Registry first, generic rendering of the shaped envelope second. No
+      // command emits JSON under `--format md`: silently handing back the
+      // wrong format is worse than a generic rendering.
       const rendered = getMdRendererHandler(command)?.(shaped, mode.detail);
       deliverRendered(rendered ?? renderGenericMarkdown(command, shaped), mode.outputPath);
       return;
@@ -385,6 +379,4 @@ export function output(command: string, result: unknown): void {
   }
 }
 
-// parseAllFlagValues moved to ./invocation (chunk-9 WI-9.9 argv-normalization
-// fold); re-exported above so every existing importer of this module is
-// unaffected.
+// parseAllFlagValues lives in ./invocation and is re-exported above.

@@ -17,12 +17,11 @@ import type {
 } from "../proposal-types";
 import { defaultProposalQualityValidators } from "./proposal-quality-validators";
 
-// ProposalValidationContext / ProposalValidator moved to ../proposal-types.ts
-// (WI-9.8 KILL 1 — proposal-quality-validators.ts needed ProposalValidator
-// back, and this module needs defaultProposalQualityValidators from
-// proposal-quality-validators.ts as a value; hoisting the shared interface to
-// the dependency-free leaf breaks that back-edge). Re-exported here so
-// existing import sites are unchanged.
+// ProposalValidationContext / ProposalValidator live in ../proposal-types.ts:
+// proposal-quality-validators.ts needs ProposalValidator, and this module needs
+// defaultProposalQualityValidators from proposal-quality-validators.ts as a
+// value, so the shared interface is hoisted to the dependency-free leaf to
+// avoid a back-edge. Re-exported here for existing import sites.
 export type { ProposalValidationContext, ProposalValidator } from "../proposal-types";
 
 const genericProposalValidator: ProposalValidator = {
@@ -73,8 +72,7 @@ const canonicalProposalValidators: Readonly<Record<string, CanonicalProposalVali
   task(proposal, ctx) {
     const name = ctx.parsedRef?.name;
     if (!name) return [];
-    // Version-routing seam (spec docs/plans/specs/p2a-task-source-v4.md
-    // §3.6): a proposal body is validated by parsing alone — neither arm's
+    // Version-routing seam: a proposal body is validated by parsing alone — neither arm's
     // parsed document is inspected further, so routing through the union is
     // a pure swap; any parse failure (either version) is turned into an
     // `invalid-task-structure` finding by the try/catch this call sits in.
@@ -150,14 +148,12 @@ export const defaultProposalValidators: ProposalValidator[] = [
  * Structural-only subset used by {@link createProposal}'s mint-time
  * canonical-structure gate (repository.ts, `hasCanonicalProposalValidator`).
  * That gate exists to reject a lesson/task/workflow proposal whose body is
- * not parseable as its type — it predates {@link defaultProposalQualityValidators}
- * and was previously safe to run in full there because every quality
- * validator was advisory (`advisory()` downgrades findings to `severity:
- * "warn"`, which {@link runProposalValidators}'s `ok` never treats as
- * failing). Blocking durable-content validators (the #952 truncation marker
- * and #962 redaction marker) deliberately
- * remain outside this subset, so running the full
- * {@link defaultProposalValidators} list at mint time could throw
+ * not parseable as its type. Most quality validators are advisory
+ * (`advisory()` downgrades findings to `severity: "warn"`, which
+ * {@link runProposalValidators}'s `ok` never treats as failing), but the
+ * blocking durable-content validators (the #952 truncation marker and #962
+ * redaction marker) deliberately remain outside this subset, so running the
+ * full {@link defaultProposalValidators} list at mint time could throw
  * `invalid_canonical_structure` for any lesson/task/workflow reflect
  * proposal whose body carries the truncation marker — instead of minting it
  * for a person to review. Quality validators (prose

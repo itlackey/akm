@@ -8,36 +8,15 @@
  * clamp every arm's result uses), and `recordTaskAttemptFailure` (the
  * catch-all for a dispatch that threw after an attempt was reserved).
  *
- * Moved from src/tasks/runner.ts (spec docs/plans/specs/p1b-model-extraction.md
- * §5.1, §9, runner.ts:970-1069). `reserveTaskAttempt` and `finishAttempt`
- * were module-private at head; both are exported here because run-task.ts and
- * every dispatch arm (run-native-task.ts, run-workflow-task.ts,
- * run-command-task.ts), now separate files, call them.
+ * `reserveTaskAttempt` and `finishAttempt` are exported because run-task.ts
+ * and every dispatch arm (run-native-task.ts, run-workflow-task.ts,
+ * run-command-task.ts) call them.
  *
- * F-4 (P1a advisory, spec §5.5): `SAFE_TASK_ATTEMPT_ERROR_CODES` gains
- * `TASK_SOURCE_INVALID` and `COMPOSITION_INVALID` — see the comment on the
- * set for the verified reachability path. `SAFE_TASK_ATTEMPT_ERROR_CODES` and
- * `safeTaskAttemptErrorCode` stay unexported: their membership is observed
- * the same way production code observes it, through
- * `recordTaskAttemptFailure`'s one externally-visible effect (the stored
- * `detail.error` code).
- *
- * P4 (docs/plans/specs/p4-deletions-closeout.md §4.1, row B-55): the set
- * additionally gains `TARGET_REF_INVALID`, `WORKFLOW_SOURCE_INVALID`,
- * `INPUT_BINDING_INVALID`, and `TASK_TARGET_UNSUPPORTED` — every code P4's
- * `INVALID_FLAG_VALUE` re-coding sweep (spec §5.2) makes reachable from the
- * same post-reservation dispatch catch. `TARGET_REF_INVALID`
- * (`execution/target-ref.ts`) and `INPUT_BINDING_INVALID`
- * (`workflows/freeze/task-bindings.ts`) already reach it today through the
- * same WORKFLOW arm as `COMPOSITION_INVALID` above — freezing a composed
- * child (a `tasks/<ref>` or `workflows/<ref>` step) during dispatch can
- * classify a malformed `uses:` or an invalid `with:` binding after the
- * attempt is reserved. `WORKFLOW_SOURCE_INVALID` and `TASK_TARGET_UNSUPPORTED`
- * get their first live throw sites in this same phase (the freeze wrapper's
- * P4-N2 mapping, and `prepare/script-capture.ts`'s interpreter rejections,
- * respectively) — added here ahead of / alongside that wiring rather than
- * split across two commits, since an unreachable member of an allowlist Set
- * is inert, not a defect.
+ * `SAFE_TASK_ATTEMPT_ERROR_CODES` and `safeTaskAttemptErrorCode` stay
+ * unexported: their membership is observed the same way production code
+ * observes it, through `recordTaskAttemptFailure`'s one externally-visible
+ * effect (the stored `detail.error` code). See the comment on the set for
+ * why each code is reachable from the post-reservation dispatch catch.
  */
 
 import { AkmError, rethrowIfTestIsolationError } from "../../core/errors";
@@ -93,20 +72,22 @@ export function finishAttempt(startedAt: Date, observedFinishedAt: Date): Date {
  * usage failures, never an unclassified internal error that might leak
  * implementation detail.
  *
- * F-4 (P1a advisory, spec §5.5): `TASK_SOURCE_INVALID` and
- * `COMPOSITION_INVALID` join the allowlist. Verified reachability: the only
- * caller of `recordTaskAttemptFailure` inside the runner is the
+ * The only caller of `recordTaskAttemptFailure` inside the runner is the
  * post-reservation catch in run-task.ts; task-source parsing happens BEFORE
  * reservation (load-task.ts), so the direct parse path never reaches it.
- * Both codes reach it through the WORKFLOW arm instead: a workflow task whose
- * plan freezes a `tasks/<ref>` step raises `TASK_SOURCE_INVALID` (via
- * `taskDispatch`'s `parseTaskSource`/`parseTaskSourceV4Document` —
- * `src/workflows/freeze/targets/task.ts`; `parseTaskV3Yaml` no longer exists
- * in `src`, P4 deleted task v3 acceptance, spec
- * docs/plans/specs/p4-deletions-closeout.md §3.2) or `COMPOSITION_INVALID`
- * (the P1a with-rejection guard) DURING dispatch, after the attempt was
- * already reserved. Before this widening, both were recorded as
- * `"INTERNAL"`.
+ * `TASK_SOURCE_INVALID` and `COMPOSITION_INVALID` reach it through the
+ * WORKFLOW arm instead: a workflow task whose plan freezes a `tasks/<ref>`
+ * step raises `TASK_SOURCE_INVALID` (via `taskDispatch`'s
+ * `parseTaskSource`/`parseTaskSourceV4Document` —
+ * `src/workflows/freeze/targets/task.ts`) or `COMPOSITION_INVALID` (the
+ * with-rejection guard) DURING dispatch, after the attempt was already
+ * reserved. Freezing a composed child (a `tasks/<ref>` or `workflows/<ref>`
+ * step) can likewise raise `TARGET_REF_INVALID` (`execution/target-ref.ts`)
+ * for a malformed `uses:` and `INPUT_BINDING_INVALID`
+ * (`workflows/freeze/task-bindings.ts`) for an invalid `with:` binding;
+ * `WORKFLOW_SOURCE_INVALID` comes from the freeze wrapper and
+ * `TASK_TARGET_UNSUPPORTED` from `prepare/script-capture.ts`'s interpreter
+ * rejections.
  */
 const SAFE_TASK_ATTEMPT_ERROR_CODES = new Set([
   "CONFIG_DIR_UNRESOLVABLE",

@@ -3,29 +3,19 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Task source v4 — the second, additive task source grammar (spec
- * docs/plans/specs/p2a-task-source-v4.md §1.1 D1, §1.2 D2, §1.5 D2-N1..D2-N7,
- * §3). Never call this grammar bare "v4" in prose — the workflow plan IR is
- * separately versioned (D1).
+ * Task source v4. Never call this grammar bare "v4" in prose — the workflow
+ * plan IR is separately versioned.
  *
- * `version: 4` introduces typed `inputs:`, a single bounded `output:` schema
+ * `version: 4` has typed `inputs:`, a single bounded `output:` schema
  * (legal only on command targets, the one kind whose runtime consumes it —
  * see `targetConsumesOutputSchema` below),
- * OPTIONAL scheduling (absent `schedule:` is valid and manual-only, D2-N6),
- * and top-level execution controls (the `akm:` options bag and the `on:`
- * trigger block are both GONE — every `akm:` member that D2 does not
- * re-home survives as a top-level key instead, D2-N7). There is no
- * github-action `uses:` variant.
+ * OPTIONAL scheduling (absent `schedule:` is valid and manual-only),
+ * and top-level execution controls (there is no `akm:` options bag and no
+ * `on:` trigger block). There is no github-action `uses:` variant.
  *
- * `src/tasks/source-v3.ts` IS edited by this phase (D2-N4): the bounded-document
- * front end and the path-generic field helpers move body-intact out of that
- * file into `./bounded-document.ts`, and `source-v3.ts` now imports (and,
- * for the names that were already part of its public surface, re-exports)
- * them instead of declaring its own copies — see `./bounded-document.ts`'s
- * own header and spec §6 F-2 for the extraction itself. `parseTimeout` and
- * `parseTools` moved that way; `nullableSelector` did not (a recorded
- * deviation from a literal reading of D2-N4's own extraction list — see the
- * P2a Review log) and stays declared directly in `source-v3.ts`.
+ * The bounded-document front end and the path-generic field helpers
+ * (including `parseTimeout` and `parseTools`) live in `./bounded-document.ts`,
+ * shared with the frozen v3 reader.
  *
  * This file implements its OWN top-level-rooted versions of the three v3
  * helpers that hardcode the `["akm", …]` field path —
@@ -76,11 +66,11 @@ import {
   validateWorkingDirectory,
 } from "./bounded-document";
 
-// ── Closed constants (D1, D2-N3, D2-N7) ─────────────────────────────────────
+// ── Closed constants ─────────────────────────────────────
 
 export const TASK_SOURCE_V4_VERSION = 4 as const;
 
-/** The exact, closed top-level key set (D2-N7) — `akm` and `on` are deliberately absent. */
+/** The exact, closed top-level key set — `akm` and `on` are deliberately absent. */
 export const TASK_SOURCE_V4_TOP_LEVEL_KEYS = [
   "version",
   "name",
@@ -107,17 +97,17 @@ export const TASK_SOURCE_V4_TOP_LEVEL_KEYS = [
   "maxRetries",
 ] as const;
 
-/** Closes one `schedule:` list entry (D2-N5). */
+/** Closes one `schedule:` list entry. */
 export const TASK_SOURCE_V4_SCHEDULE_KEYS = ["cron", "inputs"] as const;
 
 /**
- * The closed key set for one `inputs.<name>` declaration root (D2-N3). The
+ * The closed key set for one `inputs.<name>` declaration root. The
  * JSON-Schema-subset portion is DERIVED from
  * `JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS` (`src/core/json-schema.ts`) rather
  * than restated, so the two lists cannot silently drift; `title`,
  * `description`, and `default` are declaration keys unique to task source
  * v4, layered on top (`required` is already one of the derived subset keywords — at the
- * declaration ROOT it is re-interpreted as the boolean flag, D2-N3).
+ * declaration ROOT it is re-interpreted as the boolean flag).
  */
 const SUBSET_KEYWORD_NAMES = JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS.split(",")
   .map((entry) => entry.split(":")[0]?.trim() ?? "")
@@ -126,7 +116,7 @@ export const TASK_INPUT_DECLARATION_KEYS = Object.freeze([...SUBSET_KEYWORD_NAME
 
 const SHELL_SET = new Set<string>(TASK_V3_HOST_SHELLS);
 
-// ── Types (spec §3.2) ────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────
 
 export type TaskSourceV4UsesTarget =
   | Readonly<{ kind: "builtin-command"; ref: "akm/command" }>
@@ -204,23 +194,21 @@ function ctxFrom(options: ParseTaskSourceV4DocumentOptions): BoundedDocumentCont
   };
 }
 
-// ── classifyTaskSourceV4Uses (spec §3.3) ────────────────────────────────────
+// ── classifyTaskSourceV4Uses ────────────────────────────────────
 
 /**
  * A value SHAPED like `owner/repo[/path]@revision` — used only to produce a
- * good "the github-action target was removed" message (B-13), never to
- * accept. Deliberately a shape test, not a full github-locator grammar:
- * native target classification recognizes no github-action variant at all
- * (P4 deleted the last one, `classifyTaskV3Uses`'s locator branch in
- * `source-v3.ts`) — only the shape needs to be recognized here, so the
- * rejection can name the target the user typed rather than guess.
+ * good "the github-action target was removed" message, never to accept.
+ * Deliberately a shape test, not a full github-locator grammar: native target
+ * classification recognizes no github-action variant at all — only the shape
+ * needs to be recognized here, so the rejection can name the target the user
+ * typed rather than guess.
  *
- * Runs ONLY on {@link classifyTargetRef}'s failure path (0.9.2 review round 2):
- * `@` is a legal character in a canonical asset ref, so a value the canonical
- * classifier accepts (`commands/review@v2`) is a valid target even though it
- * also matches this shape — the shape test upgrades the generic invalid-ref
- * message, and never vetoes a ref classification accepts (spec §3.3: "exists
- * only to produce a good message, never to accept").
+ * Runs ONLY on {@link classifyTargetRef}'s failure path: `@` is a legal
+ * character in a canonical asset ref, so a value the canonical classifier
+ * accepts (`commands/review@v2`) is a valid target even though it also matches
+ * this shape — the shape test upgrades the generic invalid-ref message, and
+ * never vetoes a ref classification accepts.
  */
 function looksLikeGithubActionLocator(value: string): boolean {
   const at = value.lastIndexOf("@");
@@ -233,25 +221,24 @@ function looksLikeGithubActionLocator(value: string): boolean {
 }
 
 /**
- * Classify one exact `uses:` string for task source v4 (spec §3.3). Delegates
- * to {@link classifyTargetRef} (`src/execution/target-ref.ts`) — the repo's
- * one canonical-ref classifier — rather than re-deriving ref grammar; layers
- * the `akm/command` builtin special case, the task-ref rejection (B-14), and
- * — on the classification-failure path only — the github-locator-shape
- * rejection (B-13) on top.
- */
-/**
  * The remedy sentence every `uses:` rejection below ends with. ONE constant so
  * the advice can never drift from what {@link TaskSourceV4UsesTarget} actually
  * admits — `commands/`, `scripts/`, `workflows/`, and the `akm/command`
- * builtin. Notably NOT `tasks/`: a task ref is rejected by B-14 below.
+ * builtin. Notably NOT `tasks/`: a task ref is rejected below.
  */
 const TASK_SOURCE_V4_USES_REMEDY = "Use a canonical commands/, scripts/, or workflows/ ref, or akm/command, instead.";
 
+/**
+ * Classify one exact `uses:` string for task source v4. Delegates
+ * to {@link classifyTargetRef} (`src/execution/target-ref.ts`) — the repo's
+ * one canonical-ref classifier — rather than re-deriving ref grammar; layers
+ * the `akm/command` builtin special case, the task-ref rejection, and
+ * — on the classification-failure path only — the github-locator-shape
+ * rejection on top.
+ */
 export function classifyTaskSourceV4Uses(value: string): TaskSourceV4UsesTarget {
-  // Diagnostic-codes ratchet remedy (tests/architecture/diagnostic-codes.test.ts,
-  // established pattern at src/tasks/model/definition.ts:66-79): every
-  // `UsageError` below omits its `code` argument rather than spelling it out
+  // Diagnostic-codes ratchet (tests/architecture/diagnostic-codes.test.ts):
+  // every `UsageError` below omits its `code` argument rather than spelling it out
   // — the constructor already defaults to the exact code these throws need
   // (src/core/errors.ts), so the thrown type, `.code`, and `.hint()` are all
   // unchanged; this keeps the literal code string out of the ratchet's
@@ -281,10 +268,10 @@ export function classifyTaskSourceV4Uses(value: string): TaskSourceV4UsesTarget 
     // `classifyTargetRef` is SHARED with the workflow classifier, where a
     // `tasks/` target IS executable, so its message names all four canonical
     // families. Re-raising it verbatim here advertised `tasks/` one branch
-    // before the B-14 check below rejects exactly that — the message named a
+    // before the task-ref check below rejects exactly that — the message named a
     // target this function does not accept. Restate it against the set this
-    // function actually returns (p2a §6 item 4(b) / p4 R-R14). Anything the
-    // shared classifier throws for another reason still propagates unchanged.
+    // function actually returns. Anything the shared classifier throws for
+    // another reason still propagates unchanged.
     if (cause instanceof UsageError && cause.code === "TARGET_REF_INVALID") {
       throw new UsageError(
         `${JSON.stringify(value)} is not an executable task source v4 target. ${TASK_SOURCE_V4_USES_REMEDY}`,
@@ -429,7 +416,7 @@ function parseExecutionControls(input: ExecutionJsonObject, ctx: BoundedDocument
   return Object.freeze(out) as TaskSourceV4Execution;
 }
 
-// ── inputs: -> InputContract (D2-N3) ────────────────────────────────────────
+// ── inputs: -> InputContract ────────────────────────────────────────
 
 function stripDeclarationAnnotations(declInput: ExecutionJsonObject): {
   readonly schema: Record<string, unknown>;
@@ -509,9 +496,7 @@ function parseInputDeclarations(value: ExecutionJsonValue, ctx: BoundedDocumentC
         "must match the input name pattern (a letter/underscore, then letters, digits, or underscores).",
       );
     }
-    // Code-review finding (docs/plans/specs/p2b-input-bindings.md review
-    // round 2, scheduler-binding.ts:238): a declared input name that
-    // collides with a flag `akm task run` already binds to itself (--bundle,
+    // A declared input name that collides with a flag `akm task run` already binds to itself (--bundle,
     // --scheduled, …) can never be supplied through that CLI — parseTaskInputFlags
     // (../../commands/tasks/tasks-cli.ts) always treats the name as its OWN
     // flag, so the value is either silently misrouted (a second --bundle
@@ -523,8 +508,8 @@ function parseInputDeclarations(value: ExecutionJsonValue, ctx: BoundedDocumentC
     // reach compileTaskSchedulerBindings's invocation tail either) — see
     // ../task-run-reserved-flags.ts's own header.
     //
-    // 0.9.2 review round 2: `target` joins that set from the CLI's DIAGNOSTIC
-    // side rather than its declared-arg side. `rejectRetiredTaskTargetFlag`
+    // `target` joins that set from the CLI's DIAGNOSTIC side rather than its
+    // declared-arg side. `rejectRetiredTaskTargetFlag`
     // (../../commands/tasks/tasks-cli.ts) throws the 0.9 `--target` ->
     // `--bundle` rename hint for every spelling of the name, before
     // parseTaskInputFlags scans argv at all, so an input declared under that
@@ -562,17 +547,17 @@ function parseOutputSchema(value: ExecutionJsonValue, ctx: BoundedDocumentContex
  * output schema anywhere (run-native-task.ts decides status from the exit
  * code alone; the workflow arm freezes a child plan without one), so an
  * authored `output:` there would be a silently unenforced contract — the
- * fifth state the fail-closed rule forbids (0.9.2 review round 2; same
+ * fail-open contract the grammar must not allow (same
  * grammar pattern as `with:` being legal only with `uses: akm/command`).
  */
 function targetConsumesOutputSchema(target: TaskSourceV4Target): boolean {
   return target.kind === "uses" && (target.uses.kind === "command" || target.uses.kind === "builtin-command");
 }
 
-// ── schedule: -> TaskSourceV4ScheduleBinding[] (D2-N5, D2-N6, B-06..B-10, B-38) ──
+// ── schedule: -> TaskSourceV4ScheduleBinding[] ──
 
 /**
- * Every schedule binding must be independently runnable (0.9.2 review round 2).
+ * Every schedule binding must be independently runnable.
  *
  * A scheduled firing supplies NO input flags — `compileTaskSchedulerBindings`
  * (../scheduler-binding.ts) appends only the entry's own
@@ -580,8 +565,8 @@ function targetConsumesOutputSchema(target: TaskSourceV4Target): boolean {
  * tail — so that literal PLUS the declared defaults is the complete value set
  * `akm task run --scheduled` will see, and it is checked there by the very
  * same `applyInputDefaults` + `validateInputs` pair (../run/load-task.ts).
- * A `required: true` declaration may not also carry a `default` (D2-N3,
- * `parseInputDeclaration` above), so an entry that names no value for one can
+ * A `required: true` declaration may not also carry a `default`
+ * (`parseInputDeclaration` above), so an entry that names no value for one can
  * never satisfy the contract, at any hour, ever.
  *
  * The source document alone knows both halves of that contradiction, so it is
@@ -591,11 +576,10 @@ function targetConsumesOutputSchema(target: TaskSourceV4Target): boolean {
  * the DEFAULTED view — that gate is what makes such a schedule unreachable
  * rather than merely ill-advised, and it still guards a task source reaching
  * sync through any other path — but an author should not have to run `akm
- * task sync` to learn that a document contradicts itself (the parse-time
- * rejection p2a's own review log named as the natural fix). Manual `akm task
+ * task sync` to learn that a document contradicts itself. Manual `akm task
  * run` is deliberately unaffected: a manual run takes the value from the
  * input's own `--<name>` flag, so a required, default-less input plus NO
- * `schedule:` stays valid and manual-only (B-06, D2-N6).
+ * `schedule:` stays valid and manual-only.
  *
  * Runs for every entry, AFTER the raw `schedule[i].inputs` check below, so an
  * entry that authors an `inputs:` mapping keeps that check's exact
@@ -638,15 +622,14 @@ function parseScheduleEntry(
       ...entryPath,
       "inputs",
     ]);
-    // Fail-closed exact-name check (code-review finding, task-source-v4.ts:530):
-    // `validateInputs`'s synthetic `{type:"object", properties}` schema (spec
-    // §4.2) deliberately carries no `additionalProperties:false` — that is the
-    // right default for a general-purpose contract validator with other
-    // callers (materializeInputFlags already does its own exact-name check
-    // before ever calling validateInputs, per D3-N3's design) — so relying on
-    // validateInputs alone here would silently accept a typo'd or wholly
-    // undeclared schedule[i].inputs key forever, exactly the fifth state the
-    // fail-closed rule forbids. checkKeys mirrors materializeInputFlags' own
+    // Fail-closed exact-name check: `validateInputs`'s synthetic
+    // `{type:"object", properties}` schema deliberately carries no
+    // `additionalProperties:false` — that is the right default for a
+    // general-purpose contract validator with other callers
+    // (materializeInputFlags already does its own exact-name check before ever
+    // calling validateInputs) — so relying on validateInputs alone here would
+    // silently accept a typo'd or wholly undeclared schedule[i].inputs key
+    // forever. checkKeys mirrors materializeInputFlags' own
     // exact-name rule at the grammar layer: closed against the declared
     // contract, TASK_SOURCE_INVALID at schedule[<i>].inputs.<name>.
     checkKeys(inputsValue, Object.keys(contract), ctx, [...entryPath, "inputs"]);
@@ -654,9 +637,8 @@ function parseScheduleEntry(
     // sourceError call rooted at entryPath, not [...entryPath, "inputs"]: the
     // per-error detail already carries "inputs.<name>" (validateInputs), so
     // adding a SECOND ".inputs" segment to the field path here would render
-    // two path roots in one message (code-review finding, was the bare "$"
-    // default leaking through — see docs/plans/specs/p2a-task-source-v4.md
-    // review-log item 4a).
+    // two path roots in one message (the bare "$" default would otherwise
+    // leak through).
     const errors = validateInputs(contract, inputsValue as Record<string, unknown>, { pathRoot: "inputs" });
     if (errors.length > 0) sourceError(ctx, entryPath, errors.join("; "));
     inputsLiteral = Object.freeze({ ...inputsValue });
@@ -677,8 +659,8 @@ function parseSchedule(
   if (typeof raw === "string") {
     const cron = stringField(raw, ctx, ["schedule"], { nonempty: true }) as string;
     noGithubExpression(cron, ctx, ["schedule"]);
-    // B-08's SHAPE is unchanged — one enabled binding, no inputs — but the
-    // shorthand is a schedule entry like any other, so it is held to the same
+    // The shorthand is one enabled binding with no inputs, but it is a
+    // schedule entry like any other, so it is held to the same
     // runnability contract, at the `schedule` key's own field path (it has
     // neither an ordinal nor an `inputs:` sub-path to point at).
     checkScheduleEntryRunnable(Object.freeze({}), contract, ctx, ["schedule"]);
@@ -695,7 +677,7 @@ function parseSchedule(
   return Object.freeze(bindings);
 }
 
-// ── Top-level key rejection (akm:/on: removal, B-11/B-12; D2-N7) ───────────
+// ── Top-level key rejection (akm:/on: removal) ───────────
 
 function checkTopLevelKeys(input: ExecutionJsonObject, ctx: BoundedDocumentContext): void {
   if (own(input, "akm")) {
@@ -713,9 +695,9 @@ function checkTopLevelKeys(input: ExecutionJsonObject, ctx: BoundedDocumentConte
   checkKeys(input, TASK_SOURCE_V4_TOP_LEVEL_KEYS, ctx, []);
 }
 
-// ── parseTaskSourceV4Document (spec §3.2) ───────────────────────────────────
+// ── parseTaskSourceV4Document ───────────────────────────────────
 
-/** Parse an already-decoded JSON/YAML value as a task source v4 document (spec §3.2). */
+/** Parse an already-decoded JSON/YAML value as a task source v4 document. */
 export function parseTaskSourceV4Document(
   value: unknown,
   options: ParseTaskSourceV4DocumentOptions,
