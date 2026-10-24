@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * D4 (docs/architecture/specs/0.9.0-decisions.md) — conceptId-prefix browse.
+ * ConceptId-prefix browse.
  *
  * Subtree enumeration is spelled in the grammar refs are actually emitted in:
  * `akm search "memories/projecta/"`, not the retired `"memory:projecta/"`.
@@ -16,7 +16,7 @@
  *     truncated to a prefix enumerates its own subtree (the round-trip that
  *     the retired name-matching grammar broke silently);
  *   - `bundle//` and `bundle//<prefix>/` scope enumeration to one bundle,
- *     replacing the removed `akm bundle items` (D5);
+ *     replacing the removed `akm bundle items`;
  *   - the retired `<type>:` spelling no longer enumerates, and says so;
  *   - an explicit `--type` flag wins (branch fires only on the untyped path);
  *   - ordinary keyword queries and bare refs (no trailing slash) are unaffected;
@@ -167,7 +167,7 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
     expect(names).not.toContain("projectalpha/stray-note");
     for (const hit of hits) {
       expect(hit.type).toBe("memory");
-      // F4b: search hits now emit the 0.9.0 conceptId spelling.
+      // Search hits emit the conceptId spelling.
       expect(hit.ref).toBe(`memories/${hit.name}`);
       // Enumeration is a deterministic listing, not a relevance ranking — hits
       // carry the fixed browse score (same contract as the empty-query path).
@@ -362,11 +362,9 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
     expect(result.tip ?? "").toContain("No matching stash assets");
   });
 
-  // The defect D4 exists to fix: the retired grammar matched `namePrefix`
-  // against entry NAMES while every emitted ref is a conceptId, so taking a
-  // ref out of search output and pasting a prefix of it back in silently
-  // degraded to a keyword search. Nothing here hardcodes a spelling — the
-  // prefix is derived from what the previous search actually printed.
+  // Every emitted ref is a conceptId, so a prefix of a ref taken from search
+  // output must enumerate its own subtree. Nothing here hardcodes a spelling —
+  // the prefix is derived from what the previous search actually printed.
   test("a ref emitted by search round-trips back in as a prefix query", async () => {
     const seed = await search({ query: "oauth", source: "local" });
     const ref = seed[0]?.ref ?? "";

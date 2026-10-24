@@ -71,7 +71,11 @@ import {
   upsertIndexDirState,
 } from "../storage/repositories/index-meta-repository";
 import { VACUUM_PENDING_META } from "../storage/repositories/index-schema";
-import { upsertUtilityScore } from "../storage/repositories/index-utility-repository";
+import {
+  replayUserFeedback,
+  setFeedbackScore,
+  upsertUtilityScore,
+} from "../storage/repositories/index-utility-repository";
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "../storage/state-db-integrity";
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
@@ -143,8 +147,8 @@ export interface IndexResponse {
   /**
    * Present when this run auto-detected a bundle's adapter and persisted it
    * to config.json (`bundles.<id>.components.<component>.adapter`) — a
-   * maintenance-command config write that would otherwise be invisible
-   * (R-056). Keyed by bundle id, valued by the detected adapter id.
+   * maintenance-command config write that would otherwise be invisible.
+   * Keyed by bundle id, valued by the detected adapter id.
    */
   configUpdated?: { detectedAdapters: Record<string, string> };
 }
@@ -159,9 +163,8 @@ export interface IndexProgressEvent {
 interface IndexOptions {
   /**
    * The stash directory to index. Resolved once at each command boundary
-   * (WI-9.10 CLI-wide sweep) and threaded in — the indexer no longer reads the
-   * ambient stash-dir resolver. Every caller (source add, wiki, workflow,
-   * setup, ensure-index, tests) already passes it.
+   * and threaded in — the indexer does not read the ambient stash-dir
+   * resolver.
    */
   stashDir: string;
   full?: boolean;
@@ -187,9 +190,8 @@ interface IndexOptions {
    * Whether this run may materialize (clone/pull/fetch) cache-backed sources.
    * Default `true` — the sanctioned materialization callers (`akm index`,
    * source add/update/sync, improve's blocking preflight). A READ command's
-   * inline auto-index passes `false` so query time never touches the network
-   * (spec §14.3 / D11): absent source caches are skipped with a warning instead
-   * of cloned.
+   * inline auto-index passes `false` so query time never touches the network:
+   * absent source caches are skipped with a warning instead of cloned.
    */
   hydrateSources?: boolean;
   /**
@@ -203,7 +205,7 @@ interface IndexOptions {
    * auto-index rather than by an explicit `akm index`.
    *
    * Only affects DISCLOSURE, never behavior. The adapter-detection config
-   * write (R-056) is always reported in the result envelope, but its stderr
+   * write is always reported in the result envelope, but its stderr
    * notice is suppressed for implicit runs: a read command's stderr carries
    * its JSON error envelope, so an extra human-readable line there makes the
    * envelope unparseable for callers doing `JSON.parse(stderr)` — and would
@@ -542,8 +544,7 @@ function isReadableDirectory(root: string): boolean {
  * Detect an adapter for every resolvable source that does not declare one, and
  * persist each detection into `config.json`.
  *
- * R-056: this config write previously had zero disclosure — it appeared in no
- * result, on no stream, and in no doc. The returned `persistedAdapters` records
+ * The returned `persistedAdapters` records
  * exactly which bundle→adapter pairs the mutate callback actually applied, so
  * the caller can surface them in the result envelope; a stderr notice is
  * emitted here. The map is cleared at the top of every callback invocation
@@ -603,14 +604,14 @@ function detectAndPersistBundleAdapters(
 }
 
 async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
-  // R-022: `dryRun` only ever gated the `--clean` stale-entry removal pass
+  // `dryRun` only gates the `--clean` stale-entry removal pass
   // (see `runCleanPass` below) — every other phase (walk, embeddings, FTS,
-  // the adapter-detection config write) ran for real regardless, so
-  // `akm index --dry-run` alone silently performed a full,
+  // the adapter-detection config write) runs for real regardless, so
+  // `akm index --dry-run` alone would silently perform a full,
   // real index. The flag's own docs (`IndexOptions.dryRun` above, and the
-  // CLI help in stash-cli.ts) already scope it to `--clean`; reject the
-  // combination that was never implemented instead of quietly doing
-  // something other than what "dry run" promised. Checked before the writer
+  // CLI help in stash-cli.ts) scope it to `--clean`; reject the
+  // combination instead of quietly doing
+  // something other than what "dry run" promises. Checked before the writer
   // lease is even requested so a bad invocation fails instantly.
   if (options?.dryRun === true && options?.clean !== true) {
     const { UsageError } = await import("../core/errors.js");
@@ -735,9 +736,8 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     }
     const tWalkEnd = Date.now();
 
-    // Metadata enhancement (the LLM pass that used to run here) is retired
-    // (RS-D, 0.9.17-alpha.9) — see CHANGELOG. `timing.llmMs` stays (always
-    // ~0 now) so the JSON shape is unchanged.
+    // The LLM metadata-enhancement pass is retired. `timing.llmMs` stays
+    // (always ~0) so the JSON shape is unchanged.
     const tLlmEnd = Date.now();
 
     if (complete) applyRemovedSources(db, sources, removedSources, isIncremental);
@@ -851,7 +851,7 @@ type DirRecord = {
   /** Walked-set fingerprint taken at scan time (#900); persisted as-is for scanned and unchanged dirs. */
   fingerprint?: DirFingerprint;
   /**
-   * F4a M-core-2: `doc.hash` keyed by recognized-file absolute path, produced by
+   * `doc.hash` keyed by recognized-file absolute path, produced by
    * the per-dir document drain. Read by the persist layer to populate
    * `content_hash`. Absent on skipped dirs (nothing drained).
    */
@@ -859,7 +859,7 @@ type DirRecord = {
   /**
    * `doc.conceptId` keyed by recognized-file absolute path — the OWNING
    * adapter's identity, preferred by the persist layer over akm's
-   * `stashDirFor` re-derivation (D-R3 identity fidelity for non-akm adapters).
+   * `stashDirFor` re-derivation (identity fidelity for non-akm adapters).
    */
   conceptIdByFile?: Map<string, string>;
   /** Adapter id/version folded into incremental directory freshness. */
@@ -941,7 +941,7 @@ function sourceSnapshotRemovals(
 /**
  * Warn ONCE per process (#908) when the chosen adapter for a component
  * entirely skips a top-level directory that holds files the `akm` adapter —
- * the format-neutral superset — would have indexed. `detectAdapterId` now
+ * the format-neutral superset — would have indexed. `detectAdapterId`
  * corrects this for AUTO-DETECTION (a mixed layout detects as `akm`); this
  * covers the case detection cannot see, an EXPLICITLY configured narrow
  * adapter (`components.<name>.adapter: "agent-skills"`, say) sitting next to
@@ -1119,7 +1119,7 @@ function buildSourceScanPlans(
  * {@link persistDirRecords} later writes.
  *
  * The per-dir document drain (`drainDirDocuments` × the component's dispatched
- * `adapter.recognize`, F4a M-core-2) is synchronous, but the walk still runs
+ * `adapter.recognize`) is synchronous, but the walk still runs
  * outside `db.transaction()` so the persist pass can be a single synchronous
  * transaction.
  */
@@ -1188,7 +1188,7 @@ async function scanSourceDirs(
       continue;
     }
 
-    // Owner ruling 2026-07-21: dispatch each component's DETECTED adapter (§4).
+    // Dispatch each component's DETECTED adapter.
     // An unknown adapter id has no `adapterForId` match → skip the whole
     // component with a warning (one bundle = one component = one adapter).
     if (!adapter) {
@@ -1206,8 +1206,8 @@ async function scanSourceDirs(
     }
 
     for (const [dirPath, ctxs] of dirGroups) {
-      // Adapter-owned filtering (owner ruling 2026-07-21): the drain no longer
-      // pre-filters with AKM-stash policy — each adapter's `recognize` claims or
+      // Adapter-owned filtering: the drain does not
+      // pre-filter with AKM-stash policy — each adapter's `recognize` claims or
       // abstains on its own bundle's walked files. The core walk keeps only the
       // universal hygiene `walkStashFlat` already applies (.git/dot-dirs/etc.).
       const indexableFiles = ctxs.map((ctx) => ctx.absPath);
@@ -1245,7 +1245,7 @@ async function scanSourceDirs(
         continue;
       }
 
-      // F4a M-core-2 (the flip): drain the dir's `IndexDocument` stream via the
+      // Drain the dir's `IndexDocument` stream via the
       // component's dispatched `adapter.recognize` (broken workflows dropped-with-
       // warning at the drain layer) and reconstruct the durable `IndexDocument`s.
       drainObserverForTests?.(dirPath, ctxs.length);
@@ -1385,11 +1385,11 @@ function persistDirRecords(
         continue;
       }
 
-      // Diff-persist (F4a M-core-2, spec §14.2): upsert the current file set
+      // Diff-persist: upsert the current file set
       // FIRST (ON CONFLICT preserving `entries.id` so embeddings / utility /
       // usage stay attached to unchanged rows), tracking every upserted
-      // durable `item_ref`, then prune only the departed rows below. Replaces the old
-      // `deleteEntriesByDir` truncate-and-reinsert (which discarded ids).
+      // durable `item_ref`, then prune only the departed rows below. A
+      // truncate-and-reinsert would discard the ids.
       const keptItemRefs = new Set<string>();
 
       // Per-file cursor: a directory is drained whole (one changed file
@@ -1471,8 +1471,7 @@ function persistDirRecords(
 
       // Prune the departed rows: everything under this dir NOT re-upserted above
       // (files deleted, deduped away, or abstained on by the adapter). With
-      // an empty kept-set this deletes every row for the dir — the exact net
-      // effect of the old unconditional `deleteEntriesByDir`, minus the id churn.
+      // an empty kept-set this deletes every row for the dir.
       // (A source whose walk was incomplete never reaches this point.)
       addEntryIds(
         deletedUsageEntryIds,
@@ -1492,7 +1491,7 @@ function persistDirRecords(
         reason: persistedReason,
         // A directory that lost rows to per-source dedup depends on the
         // directories persisted before it, not only on its own files, so it
-        // must keep draining every run (as it did before the gate) until a
+        // must keep draining every run until a
         // drain persists it without dedup. NULL keeps the gate closed.
         rowCount: dedupedRows === 0 ? persistedRows : undefined,
         indexVariant,
@@ -1802,7 +1801,7 @@ function readLookupEntry(db: Database, id: number, fallbackConceptId: string, so
 }
 
 /**
- * Look up a single asset by ref. Spec §6.2 — `akm show` queries this and
+ * Look up a single asset by ref. `akm show` queries this and
  * reads the file from disk. The index is the source of truth for which
  * file corresponds to which ref; the indexer walks `provider.path()` for
  * every configured source, so this query covers all source kinds.
@@ -1826,17 +1825,18 @@ export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
  *   - Compute select_rate = showCount / searchCount, clamped to [0, 1]
  *   - Convert feedback counts into a positive-only feedback_rate
  *   - Update utility via EMA from the stronger of select_rate / feedback_rate
+ *   - Rebuild feedback_score / feedback_count by replaying the entry's feedback
+ *     events from the 0.5 midpoint (search and show history never enter them)
  *
- * Also purges usage_events older than 90 days and ensures the M-1
- * usage_events table exists before querying.
+ * Also purges usage_events older than 90 days.
  *
  * Called during `akm index` after FTS rebuild.
  */
 export function recomputeUtilityScores(db: Database, stateDb: Database): void {
   const EMA_DECAY = 0.7;
 
-  // Purge stale usage events (90-day retention). usage_events lives in state.db
-  // (Chunk-8 WI-8.3); its table is created by state migration 020.
+  // Purge stale usage events (90-day retention). usage_events lives in state.db;
+  // its table is created by state migration 020.
   purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
 
   // Time-proportional decay: apply one round of EMA per elapsed day so
@@ -1851,8 +1851,8 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
   const emaNew = 1 - emaDecay; // complement so weights still sum to 1
 
   // Aggregate explicit user demand per entry_id from state.db's usage_events, then keep only entries
-  // that STILL EXIST in index.db's `entries` (the former in-SQL JOIN is now a
-  // cross-DB filter). This latter check is critical: usage_events has no FK to
+  // that STILL EXIST in index.db's `entries` (a cross-DB filter, since the two
+  // tables live in different databases). This latter check is critical: usage_events has no FK to
   // entries, so its entry_id can become stale (entry deleted, re-keyed, moved
   // between sources). Without it, writing the derived row to utility_scores
   // (which DOES have an FK) raises "FOREIGN KEY constraint failed" and rolls
@@ -1899,6 +1899,10 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
     existingScores.set(row.entry_id, { utility: row.utility, lastUsedAt: row.last_used_at ?? undefined });
   }
 
+  // Search ranks by the feedback-only score, rebuilt here from the feedback
+  // events alone so a reindex reproduces what `akm feedback` wrote.
+  const feedbackByEntry = replayUserFeedback(stateDb);
+
   const entryIds = new Set([...existingScores.keys(), ...usageByEntry.keys()]);
   for (const entryId of entryIds) {
     const row = usageByEntry.get(entryId) ?? {
@@ -1919,10 +1923,9 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
     const utility = prevUtility * emaDecay + effectiveRate * emaNew;
     // `utility_scores.last_used_at` is consumed by salience as the timestamp of
     // the most-recent retrieval. Preserve that meaning by carrying the event's
-    // timestamp through verbatim. The former `effectiveRate > 0.5 ? now : ...`
-    // branch stamped every high-select-rate entry with the index run time,
-    // making unrelated assets look simultaneously fresh and flattening the
-    // recency component of retrieval salience.
+    // timestamp through verbatim. Stamping every high-select-rate entry with
+    // the index run time would make unrelated assets look simultaneously fresh
+    // and flatten the recency component of retrieval salience.
     //
     // `usage_events` is the source of truth within its retention window. A
     // missing row therefore clears legacy/index-time stamps on the next index
@@ -1936,6 +1939,7 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
       selectRate,
       lastUsedAt,
     });
+    setFeedbackScore(db, row.entry_id, feedbackByEntry.get(row.entry_id));
   }
 
   setMeta(db, "last_utility_computed_at", new Date().toISOString());

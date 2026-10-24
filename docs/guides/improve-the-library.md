@@ -14,11 +14,16 @@ AKM creates a proposal -> human or policy reviews the diff -> accept / reject / 
 ## akm feedback
 
 `akm feedback` records a positive or negative signal for any indexed asset.
-The signal is written to the event log and moves the asset's utility score,
-which `akm improve` uses to decide which assets to look at first. Feedback
-does not change `akm search` ranking, which is relevance alone. See
+The signal is written to the event log and moves the asset's scores at once.
+The feedback score adjusts the asset's `akm search` rank within a bounded range
+(about a quarter of its fused score either way, so near-equal matches reorder
+and a clear match still wins), whether or not the asset has been searched or
+shown before; the utility score decides which assets `akm improve` looks at
+first. The feedback score is stored in the index and rebuilt from the last 90
+days of feedback on every reindex, so feedback older than that no longer
+counts. See
 [Architecture: The Improvement Loop](../architecture/improvement.md#utility-scoring)
-for how the score is computed.
+for how the scores are computed.
 
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
 flags the asset, and the next improve run may repair its description, title or

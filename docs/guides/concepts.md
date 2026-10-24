@@ -58,8 +58,9 @@ That is the default (`--detail brief`) output of `akm search`. Search should
 not accumulate show-level detail, and show should not require a prior search
 call.
 
-Search ranks by relevance alone (keyword match, fused with vector similarity
-when semantic search is on) and has no preference for any bundle. A short ref
+Search ranks by relevance (keyword match, fused with vector similarity when
+semantic search is on), adjusted by [feedback](improve-the-library.md#akm-feedback)
+within a bounded range, and has no preference for any bundle. A short ref
 given to `akm show` resolves against the default bundle first, then the
 remaining bundles in installation order. `akm clone` copies an asset into your
 working bundle (or the bundle named by `--bundle`). The copy is a separate

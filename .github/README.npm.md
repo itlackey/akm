@@ -55,7 +55,7 @@ akm show scripts/deploy.sh         # View details and run command
 - **One library for every agent** -- Use the same capability library from Claude Code, OpenCode, Cursor, Aider, Windsurf, or any assistant that can run shell commands.
 - **Load only what the task needs** -- Search or curate a shortlist, then load full content by ref. No giant startup prompt is required.
 - **Package complete capabilities** -- Install and share bundles containing skills, scripts, workflows, agents, instructions, memories, and knowledge -- not just prompt snippets.
-- **Improve through evidence, with review** -- Feedback is recorded against each asset and feeds `akm improve`. A negative report can carry an exact text fix, and `akm improve` repairs metadata. Edits land as diffable proposals you accept, reject or revert, unless you opt in to automatic acceptance (`experimental.improveAutonomy`). Only writable bundles are changed.
+- **Improve through evidence, with review** -- Feedback is recorded against each asset, adjusts its search rank within a bounded range, and feeds `akm improve`. A negative report can carry an exact text fix, and `akm improve` repairs metadata. Edits land as diffable proposals you accept, reject or revert, unless you opt in to automatic acceptance (`experimental.improveAutonomy`). Only writable bundles are changed.
 - **Turn knowledge into repeatable work** -- Run persisted workflows with dispatch, gates, retries, budgets, and resume instead of reconstructing a process from prose every session. Workflows are Experimental.
 
 Search and show only return content; running a workflow, task, script, or

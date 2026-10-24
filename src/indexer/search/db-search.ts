@@ -7,8 +7,10 @@
  *
  * Ranking is two candidate channels fused by reciprocal rank (`ranking.ts`):
  * BM25 over whole documents matching any query word, and the nearest document
- * vectors to the query embedding. Filters narrow the fused list; nothing else
- * reorders it.
+ * vectors to the query embedding. The fused scores are then scaled by one
+ * bounded factor from the feedback score that `akm feedback` moves, read from
+ * `utility_scores` for the fused candidates. Filters narrow the resulting
+ * list; nothing else reorders it.
  */
 
 import path from "node:path";
@@ -46,11 +48,18 @@ import {
 import type { DbVecResult } from "../../storage/repositories/index-entry-types";
 import { searchFts } from "../../storage/repositories/index-fts-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
+import { getUtilityScoresByIds } from "../../storage/repositories/index-utility-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
 import { ensureIndex } from "../ensure-index";
 import { type IndexDocument, isProposedQuality, type StashEntryScope } from "../passes/metadata";
 import { ftsQueryTokens, parseRefPrefixQuery, parseRetiredTypePrefixQuery } from "./fts-query";
-import { type FusedCandidate, type RankedRef, reciprocalRankFusion } from "./ranking";
+import {
+  applyUtilityToFused,
+  type FusedCandidate,
+  feedbackUtilities,
+  type RankedRef,
+  reciprocalRankFusion,
+} from "./ranking";
 import { attachSearchHitAttribution } from "./search-attribution";
 import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
@@ -60,7 +69,7 @@ import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from 
  * existing index as-is (freshness is the writers' job — `indexWrittenAssets`
  * plus full runs), so on installs with no improve cron a hand-edited or
  * git-pulled file stays invisible until someone reindexes. The hint makes that
- * actionable without re-introducing read-triggered reindexing.
+ * actionable.
  */
 const STALE_INDEX_HINT_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -122,10 +131,8 @@ function resolveSearchHitRef(entry: IndexDocument, provenance: IndexedProvenance
  *
  * A remote provider needs BOTH endpoint and model. A LOCAL provider needs
  * neither — `embedding.localModel` selects a transformers model that runs in
- * process. Checking only the remote pair told every local-provider user that
- * "no embedding provider is configured" and pointed them at
- * `akm config set embedding '{"endpoint":...}'`, which is the wrong remedy and
- * hid the real diagnostic recorded in the semantic status.
+ * process — so checking only the remote pair would send local-provider users
+ * to configure an endpoint they do not need.
  */
 function hasConfiguredEmbeddingProvider(config: {
   embedding?: { endpoint?: string; model?: string; localModel?: string };
@@ -149,8 +156,7 @@ export interface SearchLocalInput {
   filters?: StashEntryScope;
   /**
    * When true, entries with `quality === "proposed"` are kept in the result
-   * set. By default (false) they are filtered out after fusion per v1
-   * spec §4.2.
+   * set. By default (false) they are filtered out after fusion.
    */
   includeProposed?: boolean;
   beliefFilter?: BeliefFilterMode;
@@ -159,7 +165,7 @@ export interface SearchLocalInput {
    * the provided `sources`. Set by callers that narrowed `sources` via a
    * `--from <name>` filter so the FTS index (which spans all sources) does
    * not leak hits from sources the caller did not request. Default false
-   * preserves prior behavior for the unnamed default search path.
+   * searches every source.
    */
   restrictToSources?: boolean;
   /**
@@ -273,7 +279,7 @@ async function searchDatabase(
   const defaultExcludes =
     searchType === "any" && !input.includeExcludedTypes ? (config.search?.defaultExcludeTypes ?? ["session"]) : [];
 
-  // D4 — conceptId-prefix queries (`memories/projecta/`, `bundle//`,
+  // ConceptId-prefix queries (`memories/projecta/`, `bundle//`,
   // `bundle//skills/`) translate to a deterministic enumeration narrowed by
   // conceptId instead of a keyword search over their path words. The branch
   // fires only on the untyped path: an explicit `--type` flag expresses
@@ -322,7 +328,9 @@ async function searchDatabase(
 
   const tRank0 = Date.now();
   const vectorCandidates = vector.neighbors ? keepAllowedTypes(db, vector.neighbors, typeFilter, defaultExcludes) : [];
-  const fused = reciprocalRankFusion([lexical, vectorCandidates]);
+  const rrf = reciprocalRankFusion([lexical, vectorCandidates]);
+  const candidateIds = rrf.map(({ id }) => id);
+  const fused = applyUtilityToFused(rrf, feedbackUtilities(getUtilityScoresByIds(db, candidateIds)));
   const selected = selectFusedEntries(db, fused, limit, filterOptions);
   const rankMs = Date.now() - tRank0;
 
@@ -421,8 +429,8 @@ function describeRanks(candidate: FusedCandidate): string[] {
 
 /**
  * The no-hits tip. A query in the retired `<type>:` / `<type>:<prefix>/` browse
- * grammar gets the conceptId spelling that replaces it: without this it comes
- * back empty and silent, which is the failure D4 removed the grammar to avoid.
+ * grammar gets the conceptId spelling that replaces it, so the old query does
+ * not come back empty and silent.
  */
 function emptyResultTip(query: string): string {
   const generic = "No matching stash assets were found. Try a different query or run 'akm index' to rebuild.";
@@ -437,7 +445,7 @@ function emptyResultTip(query: string): string {
 
 /**
  * Enumerate index entries without FTS scoring — the browse path shared by
- * empty/unsearchable queries and D4 conceptId-prefix queries (`memories/`,
+ * empty/unsearchable queries and conceptId-prefix queries (`memories/`,
  * `bundle//`, `bundle//skills/`). Applies the same filters as the scored
  * path (source narrowing, scope, proposed-quality, belief) before the limit
  * slice. Hits carry the fixed browse score 1 in type-then-name order — this is
@@ -450,14 +458,14 @@ async function enumerateEntries(
     /** Types hidden from untyped enumeration (config `defaultExcludeTypes`). */
     excludeTypes: string[];
     /**
-     * D4 conceptId-prefix narrowing (e.g. `"memories/projecta/"`, trailing slash
+     * ConceptId-prefix narrowing (e.g. `"memories/projecta/"`, trailing slash
      * retained for exact `/`-boundary subtree semantics). Compared
      * case-insensitively: on-disk directory names — and therefore conceptIds —
      * may carry mixed case. Empty/undefined keeps every entry.
      */
     conceptIdPrefix?: string;
     /**
-     * D4 bundle narrowing (the `bundle//` half). Undefined spans every bundle;
+     * Bundle narrowing (the `bundle//` half). Undefined spans every bundle;
      * an unknown slug matches nothing rather than widening.
      */
     bundle?: string;
@@ -478,7 +486,7 @@ async function enumerateEntries(
       a.entry.name.localeCompare(b.entry.name) ||
       a.filePath.localeCompare(b.filePath),
   );
-  // D4: narrow to the requested bundle and subtree. Matching is against the
+  // Narrow to the requested bundle and subtree. Matching is against the
   // conceptId — the spelling every emitted `ref` carries — so a ref copied out
   // of search output round-trips back in. `startsWith` on the full
   // slash-retaining prefix is exact: "memories/projecta/" cannot match a
@@ -544,20 +552,20 @@ function applyEntryFilters<T extends { id: number; entry: IndexDocument; filePat
   const scopeFiltered = filters
     ? sourceFiltered.filter((item) => entryMatchesScope(item.entry.scope, filters))
     : sourceFiltered;
-  // Proposed-quality filter (v1 spec §4.2): exclude `quality: "proposed"`
-  // entries unless the caller opts in.
+  // Proposed-quality filter: exclude `quality: "proposed"` entries unless the
+  // caller opts in.
   const qualityFiltered = opts.includeProposed
     ? scopeFiltered
     : scopeFiltered.filter((item) => !isProposedQuality(item.entry.quality));
-  // 03-R3: derived twins inherit their base's demoting belief state BEFORE the
-  // belief filter, so the filter (and the reported hit state) stays consistent
-  // across both paths.
+  // Derived twins inherit their base's demoting belief state BEFORE the belief
+  // filter, so the filter (and the reported hit state) stays consistent across
+  // both paths.
   inheritDerivedTwinBeliefStates(opts.db, qualityFiltered);
   return qualityFiltered.filter((item) => matchBeliefFilter(item.entry.beliefState, opts.beliefFilter));
 }
 
 /**
- * 03-R3: let each `.derived` twin inherit its base memory's demoting belief
+ * Let each `.derived` twin inherit its base memory's demoting belief
  * state, so `--belief` treats a stale flag-free twin like its corrected base.
  * The base carries the flag; its near-duplicate `.derived` twin carries none.
  * Done in-memory at search time — NOT by writing the twin's frontmatter —
@@ -589,11 +597,11 @@ function inheritDerivedTwinBeliefStates(db: Database, items: Array<{ id: number;
 
 function matchBeliefFilter(beliefState: string | undefined, filter: BeliefFilterMode): boolean {
   if (filter === "all") return true;
-  // 03: the belief filter applies to ANY flagged entry, not just memories, so
+  // The belief filter applies to ANY flagged entry, not just memories, so
   // `current`/`historical` filters catch contradicted/superseded KNOWLEDGE too.
   // Unflagged entries (beliefState === undefined) still pass the `current` filter.
   if (filter === "current") {
-    // Phase 1A: `asserted` is a "current" state (stronger authority than `active`);
+    // `asserted` is a "current" state (stronger authority than `active`);
     // `deprecated` is excluded from current results.
     return beliefState === undefined || beliefState === "active" || beliefState === "asserted";
   }
@@ -709,7 +717,7 @@ export async function buildDbHit(input: {
   sources: SearchSource[];
   config?: AkmConfig;
   /**
-   * Phase 5A / Advantage D5: open DB connection threaded into the search-hit
+   * Open DB connection threaded into the search-hit
    * enricher pipeline so the derived-memory enricher can resolve parent→child
    * via the `entries.derived_from` index. Absent for call sites that build
    * hits without a DB — the enricher then skips that step.
@@ -744,7 +752,7 @@ export async function buildDbHit(input: {
     score: input.score,
     ...(input.whyMatched ? { whyMatched: input.whyMatched } : {}),
     ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
-    // Surface optional quality (v1 spec §4.2). Omitted when entry has
+    // Surface optional quality. Omitted when entry has
     // no `quality` field so payloads stay compact for the common case.
     ...(input.entry.quality ? { quality: input.entry.quality } : {}),
     ...(input.entry.beliefState ? { beliefState: input.entry.beliefState } : {}),

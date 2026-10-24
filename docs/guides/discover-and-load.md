@@ -38,7 +38,8 @@ what you're trying to do.
 ## 2. Discover a shortlist
 
 `akm search` queries the unified index and ranks hits by relevance — keyword
-(BM25) and semantic (vector) matches fused into one list:
+(BM25) and semantic (vector) matches fused into one list, with feedback
+adjusting the order of near-equal matches:
 
 ```sh
 akm search "deploy" --type script
@@ -127,7 +128,8 @@ text, so once you have verified the correct fact, attach the exact fix:
 command or file that shows it>"`. That is how a one-off task turns into a
 durable improvement to the shared library rather than a result nobody else
 benefits from. `--positive` records that an asset helped and does not trigger a
-rewrite. Feedback is input to `akm improve`; it does not change search ranking.
+rewrite. Feedback is input to `akm improve`, and it adjusts the asset's search
+rank within a bounded range.
 
 ## 6. Troubleshoot an empty or poor result
 

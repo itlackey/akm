@@ -69,7 +69,7 @@ function validateFeedbackTags(raw: string[]): string[] {
 // ── Lesson strength helper ────────────────────────────────────────────────────
 
 /**
- * Phase 7A: append a feedback ref to a lesson's `lessonStrength[]`
+ * Append a feedback ref to a lesson's `lessonStrength[]`
  * frontmatter array. Returns `{ strength }` (post-update count) on success,
  * or `null` when the lesson cannot be located. Idempotent: if the ref is
  * already credited, no write occurs.
@@ -81,8 +81,7 @@ function validateFeedbackTags(raw: string[]): string[] {
  * `inferenceProcessed`.
  */
 function appendLessonStrength(refInput: AssetRef, feedbackRef: string): { ref: string; strength: number } | null {
-  // Canonical conceptId (`lessons/<name>`, D-R3): `findEntryIdByRef` keys on
-  // the stored `item_ref`.
+  // Canonical conceptId (`lessons/<name>`): `findEntryIdByRef` keys on the stored `item_ref`.
   const conceptId = conceptIdFromTypeName(refInput.type, refInput.name);
   const config = loadConfig();
   let filePath: string | undefined;
@@ -170,10 +169,9 @@ function buildLessonStrengthUpdate(rawBytes: Buffer, feedbackRef: string): { str
 
 /**
  * Result of {@link recordFeedbackUsage}: the raw utility-policy result (when
- * the update ran) plus whether the ranking update was actually applied, and
- * why not when it wasn't. R-034: the caller could not previously distinguish
- * "no update needed" from "update was skipped" — this makes that explicit so
- * `akm feedback`'s response envelope can report it instead of staying silent.
+ * the update ran) plus whether the feedback score was written, and why not when
+ * it wasn't. The response envelope reports the same so a skipped update is not
+ * silent. A written score is what the next `akm search` applies.
  */
 interface RecordFeedbackUsageResult {
   utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
@@ -184,19 +182,17 @@ interface RecordFeedbackUsageResult {
 
 /**
  * Persist the feedback usage-event (state.db) and immediately fold it into the
- * entry's MemRL utility score (index.db). Chunk-8 WI-8.3: usage_events lives in
- * state.db; entries + utility_scores stay in `indexDb`. BOTH positive and
- * negative signals apply the EMA utility update unconditionally and
- * immediately when the source is user-attributed — no `akm index` run is
- * required for either signal to affect search ranking. Uses the bounded-step
- * EMA policy (F-5 / #386, arXiv:2601.03192).
+ * entry's scores in index.db (`indexDb`): the MemRL `utility` that `akm improve`
+ * reads, and the feedback score and count that search ranks by. Positive and
+ * negative signals both apply the bounded-step EMA update at once when the
+ * source is user-attributed, so no `akm index` run is needed for either to
+ * affect the next search (#386, arXiv:2601.03192).
  *
- * The update is intentionally SKIPPED for non-`user` event sources (`improve`,
- * `task`, `audit`, `unknown`) — an anti-self-reinforcement guard that stops an
- * agent or automated pipeline from boosting its own picks. This is by design
- * and must not be removed; R-034 only asks that the skip be surfaced to the
+ * The update is skipped for non-`user` event sources (`improve`, `task`,
+ * `audit`, `unknown`): an anti-self-reinforcement guard that stops an agent or
+ * automated pipeline from boosting its own picks. The skip is surfaced to the
  * caller rather than passing silently. A failed usage-event write fails the
- * command (DATA_DIR_NOT_WRITABLE); a utility-update failure never fails the
+ * command (DATA_DIR_NOT_WRITABLE); a score-update failure never fails the
  * feedback record.
  */
 function recordFeedbackUsage(
@@ -230,8 +226,8 @@ function recordFeedbackUsage(
     }
     if (eventSource !== "user") {
       rankingUpdateSkippedReason =
-        `feedback source is "${eventSource}", not "user" — ranking updates only apply to user-attributed ` +
-        "feedback (anti-self-reinforcement guard; set AKM_EVENT_SOURCE=user to record as user demand).";
+        `feedback source is "${eventSource}", not "user" — the feedback score that search ranks by is written ` +
+        "only for user-attributed feedback (anti-self-reinforcement guard; set AKM_EVENT_SOURCE=user to record as user demand).";
       return;
     }
     try {
@@ -239,8 +235,8 @@ function recordFeedbackUsage(
       utilityResult = applyFeedbackToUtilityScore(indexDb, entryId, pos, neg);
       rankingUpdateApplied = true;
     } catch (err) {
-      // best-effort — feedback recording succeeds even if utility update fails
-      rankingUpdateSkippedReason = `utility update failed: ${err instanceof Error ? err.message : String(err)}`;
+      // best-effort — feedback recording succeeds even if the score update fails
+      rankingUpdateSkippedReason = `feedback score not written: ${err instanceof Error ? err.message : String(err)}`;
     }
   });
   return { utilityResult, rankingUpdateApplied, rankingUpdateSkippedReason };
@@ -511,10 +507,14 @@ export const feedbackCommand = defineJsonCommand({
       "state and nothing replaces it), with --reason and --source: the same proposal sets its\n" +
       "beliefState and, for --superseded-by, adds the ref to supersededBy. `--positive` records\n" +
       "that an asset helped (it raises its ranking) and does not trigger a rewrite.\n\n" +
-      "Both signals adjust the asset's usefulness score right away, in the same\n" +
-      "process: positive feedback raises it, negative lowers it, and recent\n" +
-      "feedback counts for more than old feedback. No reindex is needed — the new\n" +
-      "score affects ranking starting with the very next `akm search`.",
+      "Both signals move the asset's scores right away, in the same process: positive feedback\n" +
+      "raises them and negative lowers them, each batch by at most 0.1. `akm search` scales the\n" +
+      "asset's search score by up to a quarter either way, so a well-rated asset climbs past\n" +
+      "near-equal matches and a poorly-rated one drops below them, while a clear match still wins;\n" +
+      "`akm improve` also uses the utility score when it orders its work. No reindex is needed for\n" +
+      "the change to show in the very next `akm search`. The feedback score is stored in the index\n" +
+      "and rebuilt from the last 90 days of feedback on every reindex, so older feedback no longer\n" +
+      "counts.",
   },
   args: {
     // Optional in citty so run() is invoked even when omitted; we re-validate
@@ -523,13 +523,14 @@ export const feedbackCommand = defineJsonCommand({
     ref: { type: "positional", description: "Asset ref ([bundle//]conceptId, e.g. lessons/deploy)", required: false },
     positive: {
       type: "boolean",
-      description: "Record that the asset helped (raises its ranking immediately; does not trigger a rewrite)",
+      description:
+        "Record that the asset helped (raises its utility score and search rank; does not trigger a rewrite)",
       default: false,
     },
     negative: {
       type: "boolean",
       description:
-        "Flag the asset: lowers its ranking immediately (no reindex needed), and the next improve run may repair its frontmatter from --reason. Attach --replace/--with/--source to correct its text, or --superseded-by/--outdated to mark its history.",
+        "Flag the asset: lowers its utility score and search rank (no reindex needed), and the next improve run may repair its frontmatter from --reason. Attach --replace/--with/--source to correct its text, or --superseded-by/--outdated to mark its history.",
       default: false,
     },
     reason: {
@@ -643,10 +644,9 @@ export const feedbackCommand = defineJsonCommand({
     }
 
     if (args.negative === true && !reason?.trim()) {
-      // F-3 / #384: Default requireReason is now true. Load config to allow
-      // operators to opt out via feedback.requireReason: false in akm.json.
+      // `feedback.requireReason: false` in akm.json downgrades the error to a warning (#384).
       const cfg = loadConfig();
-      const requireReason = cfg.feedback?.requireReason ?? true; // Default: true (F-3 / #384)
+      const requireReason = cfg.feedback?.requireReason ?? true;
       if (requireReason) {
         throw new UsageError(
           "Negative feedback requires --reason: say what is wrong and what should change. " +
@@ -666,12 +666,10 @@ export const feedbackCommand = defineJsonCommand({
       ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
     };
 
-    // Feedback only needs the index to exist, not to be current. A stale index
-    // is fine — the ref lookup works against any populated DB. We do NOT call
-    // ensureIndex here: it either blocks (3+ min inline reindex) or spawns a
-    // background process that holds the writer lock, causing the feedback write
-    // to spin-wait for the full reindex duration. If the DB is absent we give a
-    // clear error below rather than silently triggering a rebuild.
+    // Feedback only needs the index to exist, not to be current: the ref lookup
+    // works against any populated DB. We do NOT call ensureIndex here: an inline
+    // reindex blocks for minutes. If the DB is absent we give a clear error
+    // below rather than silently triggering a rebuild.
     // "Run 'akm index' first" is only true advice for an index that was never
     // built. Told to someone whose index exists but is unreadable it is a lie
     // that sends them to rebuild a file they may not have permission to touch
@@ -685,12 +683,10 @@ export const feedbackCommand = defineJsonCommand({
       );
     }
 
-    // Feedback writes exactly 2 rows (usage_events + utility_score). SQLite
-    // WAL mode + busy_timeout=30s handles concurrent access with an ongoing
-    // `akm improve` run without needing the application-level writer lock.
-    // The lock was originally needed to prevent feedback from racing a
-    // background reindex it spawned — now that ensureIndex is removed, holding
-    // the lock only causes feedback to block for the full improve run duration.
+    // Feedback writes two rows (a usage_events row and the entry's utility_scores
+    // row). SQLite WAL mode and busy_timeout=30s handle concurrent access with an
+    // ongoing `akm improve` run, so no application-level writer lock is held:
+    // it would only make feedback wait for the whole improve run.
     let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
     let rankingUpdateApplied = false;
     let rankingUpdateSkippedReason: string | undefined;
@@ -722,14 +718,11 @@ export const feedbackCommand = defineJsonCommand({
           "ASSET_NOT_FOUND",
         );
       }
-      // Persist the feedback signal into usage_events. Both positive and
-      // negative signals apply the EMA utility update immediately — no
-      // `akm index` run is required for either signal to affect ranking in
-      // search results (see recordFeedbackUsage / applyFeedbackToUtilityScore).
-      // WI-8.5b: the `feedback` / `improve_review_needed` events key on the
-      // resolved entry's fully-qualified item_ref — the SAME durable key the
-      // usage_events row carries and the SAME spelling the signal-delta
-      // correlation reads (buildLatestFeedbackTsMap, collapsed to [item_ref]).
+      // Persist the feedback signal into usage_events and update the entry's
+      // scores at once (see recordFeedbackUsage). The `feedback` and
+      // `improve_review_needed` events key on the resolved entry's
+      // fully-qualified item_ref, the same durable key the usage_events row
+      // carries and the signal-delta correlation reads (buildLatestFeedbackTsMap).
       const itemRef = getItemRefById(db, entryId);
       if (!itemRef) throw new UsageError(`Indexed ref "${ref}" has no durable item ref.`, "INVALID_PROPOSAL");
       durableRef = itemRef;
@@ -804,14 +797,11 @@ export const feedbackCommand = defineJsonCommand({
           })
         : undefined;
 
-    // F-5 / #386: When a high-utility asset crosses below the review threshold,
-    // auto-create a review-needed escalation proposal so a human can confirm
-    // whether the negative feedback is valid before the asset falls out of
-    // the improve loop. Best-effort — failure is logged but does not fail the
-    // feedback command.
-    // Emit a structured event rather than a proposal so the review-needed
-    // signal doesn't risk an accidental asset overwrite if the proposal is
-    // accepted.
+    // When a high-utility asset crosses below the review threshold (#386), emit
+    // a review-needed event so a human can confirm the negative feedback is valid
+    // before the asset falls out of the improve loop. An event rather than a
+    // proposal, so the signal cannot overwrite the asset if accepted.
+    // Best-effort: a failure is logged but does not fail the feedback command.
     if (utilityResult?.crossedReviewThreshold) {
       try {
         appendEvent({
@@ -830,11 +820,11 @@ export const feedbackCommand = defineJsonCommand({
       }
     }
 
-    // Phase 7A / Advantage D4b: --applied-to credits a lesson. When the
-    // target is a `lessons/<name>` ref and the signal is positive, append
-    // the feedback ref to the target lesson's `lessonStrength[]`
-    // frontmatter array (dedup, idempotent). Non-lesson targets are REJECTED
-    // with a loud warning (R-033b) rather than silently doing nothing.
+    // --applied-to credits a lesson. When the target is a `lessons/<name>` ref
+    // and the signal is positive, append the feedback ref to the target
+    // lesson's `lessonStrength[]` frontmatter array (dedup, idempotent).
+    // Non-lesson targets are rejected with a loud warning rather than silently
+    // doing nothing.
     // Failures here are warnings — feedback recording is the primary
     // contract and must not regress on lesson-write errors.
     const appliedToRaw = (args["applied-to"] as string | undefined)?.trim();

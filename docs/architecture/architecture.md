@@ -97,8 +97,8 @@ User-facing item refs are path-identified:
 - markdown-backed items strip `.md` from canonical names
 - `#fragment` is input-only and never stored, and `akm show` is the only command
   that accepts one: on markdown-document items the core resolves it as a
-  section selector (`knowledge/api-guide#authentication`); elsewhere it is an
-  adapter-owned selector opaque to the core
+  section selector (`knowledge/api-guide#authentication`); on any other item
+  `akm show` ignores the fragment, warns, and shows the whole item
 - refs embedded in prose must be fully qualified (`bundle//conceptId`) or a
   native adapter link form — a bare conceptId in prose is ordinary text, and no
   tool rewrites it
@@ -129,7 +129,8 @@ consumed by `akm bundle add` and `akm clone`.
 ## Search Pipeline
 
 There is **one** ranking for all indexed content: reciprocal rank fusion
-(k = 60, equal weights) of two candidate lists, 100 each.
+(k = 60, equal weights) of two candidate lists, 100 each, then one bounded
+utility factor.
 
 1. lexical: BM25 over the whole-document FTS5 table (`entries_fts`, columns
    `name`, `description`, `tags`, `hints`, `content`, equal weights),
@@ -137,11 +138,17 @@ There is **one** ranking for all indexed content: reciprocal rank fusion
 2. vector: the document vectors nearest to the query embedding, embedded
    through the model's embedding profile (`src/llm/embedders/profile.ts`)
 
+The utility factor then multiplies each fused score by
+`1 + 0.5 * (feedback_score - 0.5)`, between 0.75 and 1.25, for entries that
+have feedback (see [Utility Scoring](#utility-scoring)); every other entry
+keeps its fused score. The list is re-sorted with the same tie-break.
+
 Filters (type, source, scope, belief, proposed quality, default-excluded
-types) and one-hit-per-file deduplication narrow the fused list without
-reordering it, and a hit's `score` is its fused score. Of entries with
-identical indexed content only the highest-ranked is kept. Nothing else — name,
-type, tag, graph, usage or belief-state signals — changes the order.
+types) and one-hit-per-file deduplication narrow the resulting list without
+reordering it, and a hit's `score` is its fused score after the utility
+factor. Of entries with identical indexed content only the highest-ranked is
+kept. Apart from the utility factor, nothing — name, type, tag, graph, usage or
+belief-state signals — changes the order.
 
 Notes:
 
@@ -346,12 +353,36 @@ resumed.
 
 ## Utility Scoring
 
-Utility is feedback-driven and rebuilt from `usage_events`. It orders
-improve's salience work; search ranking does not read it.
+`utility_scores` holds two scores per entry, both rebuilt from `usage_events`.
+`utility` orders improve's salience work. `feedback_score` (with
+`feedback_count`) is what search ranks by.
 
+- `akm feedback` moves both at once. `utility` starts from its stored value (or
+  the 0.5 midpoint) and each batch moves it at most 0.1. `feedback_score` is
+  `NULL` and `feedback_count` is 0 until the entry's first feedback; it then
+  starts at the 0.5 midpoint and moves by the same bounded step on feedback
+  alone, and `feedback_count` becomes the number of feedback events behind it
+- `akm index` recomputes `utility` from searches, shows and feedback (starting
+  at 0 and moving toward the asset's select rate), and rebuilds `feedback_score`
+  and `feedback_count` by replaying each entry's user feedback events, oldest
+  first, from the 0.5 midpoint. Search and show history never enter the
+  feedback score, so a reindex or a reset of the stored scores reproduces what
+  `akm feedback` wrote. Usage events are kept for 90 days, so the score is
+  rebuilt from the last 90 days of feedback on reindex, and feedback older than
+  that no longer counts
+- search loads `utility_scores` for the fused candidates in one query and
+  scales each fused score by `1 + 0.5 * (feedback_score - 0.5)`
+  (`UTILITY_RANK_WEIGHT`, `applyUtilityToFused` in
+  `src/indexer/search/ranking.ts`), so a score moves by at most a quarter
+  either way. An entry with no feedback (`feedback_count` 0), or with no row,
+  is neutral: factor 1, fused score unchanged, whatever its search and show
+  history (`feedbackUtilities`)
+- the columns are added in place to an index that predates them; the layout
+  stamp does not change, a read of an older table treats every entry as
+  neutral, and the next `akm feedback` or `akm index` adds them
 - usage history is preserved across schema resets and full rebuilds
 - detached events are re-linked to fresh entry ids by ref
-- decay is time-proportional, not tied to index frequency
+- each index run decays `utility` by at least one day of the 0.7-per-day factor
 
 ---
 

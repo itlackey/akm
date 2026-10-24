@@ -81,8 +81,10 @@ diff are these:
    `--positive` records that the asset helped (it raises its utility score) and does
    not trigger a rewrite.
 2. The feedback event is appended to `state.db`, and the asset's utility
-   score is updated immediately via the bounded-step formula (below) — no
-   reindex required.
+   score and feedback score are updated immediately via the bounded-step
+   formula (below) — no reindex required. The next `akm search` scales that
+   asset's score by the feedback score (see
+   [Architecture: Utility Scoring](architecture.md#utility-scoring)).
 3. `akm improve` selects assets from the one bundle it writes to. A rewrite
    (reflect) is planned only for an asset with negative feedback in the last
    30 days that is newer than the stage's last attempt, or for an explicit ref;
@@ -154,11 +156,23 @@ nextUtil = clamp(currentUtil + FEEDBACK_LR * (reward - currentUtil), 0, 1)
 0.1 in either direction regardless of how lopsided the batch is — `reward` is
 a proportion of the counts, not their magnitude. When a previously
 high-utility asset (utility ≥ 0.5) crosses back below 0.5, the update is
-flagged as a review-threshold crossing so callers can escalate it. Decay is
-time-proportional rather than tied to index frequency, and usage history
-(and the utility it drives) is preserved across schema resets and full index
-rebuilds — see [Architecture: Utility Scoring](architecture.md#utility-scoring)
-for the storage-level summary.
+flagged as a review-threshold crossing so callers can escalate it. Each
+`akm index` recomputes utility from usage events and decays it by at least one
+day of the 0.7-per-day factor, and usage history (and the utility it drives) is
+preserved across schema resets and full index rebuilds.
+
+The same step also moves a second score, `feedback_score`, which starts at the
+0.5 midpoint and moves on feedback alone; `feedback_count` is the number of
+events behind it. Search reads that score through one bounded factor,
+`1 + 0.5 * (feedback_score - 0.5)` (`applyUtilityToFused` in
+`src/indexer/search/ranking.ts`): an asset's fused score moves by at most a
+quarter either way, and an asset with no feedback keeps its fused score. The
+index recomputes `utility` from searches and shows (starting at 0), so search
+does not read it; `feedback_score` is rebuilt on every reindex by replaying the
+last 90 days of feedback events from the midpoint, so older feedback no longer
+counts. See
+[Architecture: Utility Scoring](architecture.md#utility-scoring) for the
+storage-level summary.
 
 ### Strategy inheritance
 

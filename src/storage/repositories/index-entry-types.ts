@@ -5,22 +5,20 @@
 /**
  * Shared row/result/option TYPES for the `index.db` storage repositories.
  *
- * A LEAF types module (WI-5a): the `index.db` repos and the indexer passes that
+ * A LEAF types module: the `index.db` repos and the indexer passes that
  * feed them both import these shapes from here instead of reaching across the
- * storage↔indexer boundary into `db.ts` — which is what used to pin the
- * `db.ts` / `entry-mapper.ts` / `schema.ts` trio inside the import cycle.
+ * storage↔indexer boundary into `db.ts`.
  *
- * `IndexDocument` is the sole cross-layer type dependency and it is intentionally
- * imported type-only from the indexer metadata pass (its rename/relocation is a
- * later slice); nothing here imports a repository, so this module never
- * re-enters a cycle.
+ * `IndexDocument` is the sole cross-layer type dependency and it is
+ * imported type-only from the indexer metadata pass; nothing here imports a
+ * repository, so this module never re-enters a cycle.
  */
 
 import type { IndexDocument } from "../../indexer/passes/metadata";
 
 /**
  * Durable bundle-adapter identity attached to every current `entries` row.
- * `item_ref` is the canonical `<bundle>//<concept-id>` stored spelling (§1.3).
+ * `item_ref` is the canonical `<bundle>//<concept-id>` stored spelling.
  */
 export interface EntryProvenance {
   itemRef: string;
@@ -38,7 +36,7 @@ export interface DbIndexedEntry {
   /** Canonical durable ref from `entries.item_ref`. */
   itemRef: string;
   /**
-   * Chunk-5 flip (Checkpoint A): the durable `concept_id`/`bundle_id` provenance
+   * The durable `concept_id`/`bundle_id` provenance
    * columns, surfaced from the `entries` row so state.db readers can reconstruct
    * the fully-qualified `<bundle>//<concept-id>` key with no extra query.
    * Undefined provenance marks an invalid indexed row.
@@ -132,6 +130,10 @@ export interface UtilityScoreData {
 export interface UtilityScoreRow extends UtilityScoreData {
   entryId: number;
   updatedAt: string;
+  /** Score from feedback alone, on the 0.5 midpoint; undefined until the entry's first feedback. */
+  feedbackScore?: number;
+  /** Feedback events behind `feedbackScore`. */
+  feedbackCount: number;
 }
 
 /**

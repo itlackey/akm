@@ -1,5 +1,5 @@
 /**
- * Phase 5A / Advantage D5 — derived memory as primary retrieval target.
+ * Derived memory as primary retrieval target.
  *
  * Asserts that when a parent memory has a `.derived` child indexed, search
  * for the parent surfaces:
@@ -138,9 +138,9 @@ function buildFixture(): void {
           description: "Distilled Claude style preferences: three-space indent, no semicolons, prefer TypeScript.",
           tags: ["claude", "style", "typescript"],
           searchHints: ["claude style", "three spaces"],
-          // The key field that drives derived_from indexing — the 0.9.0
-          // `memories/<name>` conceptId (Group-C item 2), matching the
-          // `getDerivedForParent` lookup key the enricher now builds.
+          // The key field that drives derived_from indexing: the
+          // `memories/<name>` conceptId, matching the `getDerivedForParent`
+          // lookup key the enricher builds.
           derivedFrom: "memories/claude-prefs",
         },
         filePath: derivedPath,

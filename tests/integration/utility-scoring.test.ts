@@ -1,9 +1,7 @@
 /**
- * Tests for M-2: Utility-Based Re-ranking (MemRL Pattern).
- *
- * Validates utility_scores table creation, upsert/read helpers,
- * utility boost in search scoring, recency decay, cap at 1.5x,
- * recomputeUtilityScores aggregation, and whyMatched reporting.
+ * `utility_scores` (MemRL pattern): table creation, upsert/read helpers, the
+ * rule that search ranks by the feedback score and not by `utility`, and
+ * recomputeUtilityScores aggregation and feedback-score rebuild.
  */
 
 import { Database } from "bun:sqlite";
@@ -15,13 +13,18 @@ import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
+import { replayFeedbackSignals } from "../../src/indexer/feedback/utility-policy";
 import { akmIndex, recomputeUtilityScores } from "../../src/indexer/indexer";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import { ensureUsageEventsSchema } from "../../src/indexer/usage/usage-events";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
-import { getUtilityScore, upsertUtilityScore } from "../../src/storage/repositories/index-utility-repository";
+import {
+  applyFeedbackToUtilityScore,
+  getUtilityScore,
+  upsertUtilityScore,
+} from "../../src/storage/repositories/index-utility-repository";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 import { recordUsageEvent } from "../_helpers/usage-events";
 
@@ -204,7 +207,7 @@ describe("upsertUtilityScore / getUtilityScore", () => {
   });
 });
 
-// ── Test 3: search ranking ignores utility scores ───────────────────────────
+// ── Test 3: `utility` alone does not rank; the feedback score does ──────────
 
 describe("Utility scores and search ranking", () => {
   test("a utility score does not change the order or scores of search hits", async () => {
@@ -253,8 +256,7 @@ describe("recomputeUtilityScores", () => {
   test("aggregates search and show events from usage_events", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
     const db = openIndexDatabase(dbPath);
-    // Chunk-8 WI-8.3: usage_events lives in state.db; entries + utility_scores
-    // stay in index.db (`db`).
+    // usage_events lives in state.db; entries + utility_scores stay in index.db (`db`).
     const stateDb = new Database(":memory:") as unknown as typeof db;
     try {
       const entryId = seedIndexEntry(db, "recompute-test", "/tmp/recompute.sh");
@@ -319,6 +321,64 @@ describe("recomputeUtilityScores", () => {
     }
   });
 
+  test("rebuilds the feedback score from user feedback events alone, in order, from the 0.5 midpoint", () => {
+    const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
+    const db = openIndexDatabase(dbPath);
+    const stateDb = new Database(":memory:") as unknown as typeof db;
+    ensureUsageEventsSchema(stateDb);
+    try {
+      const withFeedback = seedIndexEntry(db, "with-feedback", "/tmp/with-feedback.sh");
+      const retrievedOnly = seedIndexEntry(db, "retrieved-only", "/tmp/retrieved-only.sh");
+      const agentFeedbackOnly = seedIndexEntry(db, "agent-feedback-only", "/tmp/agent-feedback-only.sh");
+      for (const entryId of [withFeedback, retrievedOnly]) {
+        for (let i = 0; i < 4; i++) recordUsageEvent(stateDb, { eventType: "search", entryId });
+        for (let i = 0; i < 4; i++) recordUsageEvent(stateDb, { eventType: "show", entryId });
+      }
+      const insertFeedback = stateDb.prepare(
+        "INSERT INTO usage_events (event_type, entry_id, signal, source) VALUES ('feedback', ?, ?, ?)",
+      );
+      insertFeedback.run(withFeedback, "negative", "user");
+      insertFeedback.run(withFeedback, "positive", "user");
+      insertFeedback.run(withFeedback, "positive", "user");
+      insertFeedback.run(agentFeedbackOnly, "negative", "improve");
+
+      recomputeUtilityScores(db, stateDb);
+
+      const expected = replayFeedbackSignals(["negative", "positive", "positive"]);
+      expect(getUtilityScore(db, withFeedback)).toMatchObject({ feedbackCount: 3 });
+      expect(getUtilityScore(db, withFeedback)?.feedbackScore).toBeCloseTo(expected.score, 12);
+      // Heavy search and show history never seeds a feedback score.
+      expect(getUtilityScore(db, retrievedOnly)).toMatchObject({ searchCount: 4, showCount: 4, feedbackCount: 0 });
+      expect(getUtilityScore(db, retrievedOnly)?.feedbackScore).toBeUndefined();
+      // Feedback attributed to a non-user source is not user demand.
+      expect(getUtilityScore(db, agentFeedbackOnly)?.feedbackCount ?? 0).toBe(0);
+      expect(getUtilityScore(db, agentFeedbackOnly)?.feedbackScore).toBeUndefined();
+    } finally {
+      closeDatabase(db);
+      stateDb.close();
+    }
+  });
+
+  test("a stored feedback score with no feedback event behind it is cleared", () => {
+    const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
+    const db = openIndexDatabase(dbPath);
+    const stateDb = new Database(":memory:") as unknown as typeof db;
+    ensureUsageEventsSchema(stateDb);
+    try {
+      const entryId = seedIndexEntry(db, "orphaned-feedback", "/tmp/orphaned-feedback.sh");
+      applyFeedbackToUtilityScore(db, entryId, 0, 1);
+      expect(getUtilityScore(db, entryId)).toMatchObject({ feedbackCount: 1 });
+
+      recomputeUtilityScores(db, stateDb);
+
+      expect(getUtilityScore(db, entryId)?.feedbackCount).toBe(0);
+      expect(getUtilityScore(db, entryId)?.feedbackScore).toBeUndefined();
+    } finally {
+      closeDatabase(db);
+      stateDb.close();
+    }
+  });
+
   test("recompute clears a synthetic last-used stamp when no retained retrieval event exists", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
     const db = openIndexDatabase(dbPath);
@@ -362,7 +422,7 @@ describe("Production path end-to-end", () => {
     const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThan(0);
 
-    // Verify usage_events have entry_id (usage_events lives in state.db, WI-8.3)
+    // Verify usage_events have entry_id (usage_events lives in state.db)
     const dbPath = getDbPath();
     const db = openIndexDatabase(dbPath);
     const stateDb = openStateDatabase();
@@ -387,7 +447,7 @@ describe("Production path end-to-end", () => {
     }
   });
 
-  // Regression guard: 2026-05-26. usage_events has no FK to entries, so its
+  // Regression guard: usage_events has no FK to entries, so its
   // entry_id can become stale after consolidation/deletion. recomputeUtilityScores
   // used to aggregate by stale entry_id, then upsert into utility_scores (which
   // DOES have an FK), tripping "FOREIGN KEY constraint failed" and rolling back
@@ -408,7 +468,7 @@ describe("Production path end-to-end", () => {
       expect(realId).toBeGreaterThan(0);
 
       // One legitimate event, one stale event whose entry_id was deleted.
-      // usage_events lives in state.db (WI-8.3); the stale entry_id names no
+      // usage_events lives in state.db; the stale entry_id names no
       // row in index.db's entries — the cross-DB filter must drop it.
       stateDb
         .prepare(
@@ -422,7 +482,7 @@ describe("Production path end-to-end", () => {
         )
         .run(staleId, "skills/vaporware");
 
-      // This used to throw FOREIGN KEY constraint failed.
+      // This must not throw FOREIGN KEY constraint failed.
       expect(() => recomputeUtilityScores(db, stateDb)).not.toThrow();
 
       // utility_scores should have the live entry but NOT the stale one.

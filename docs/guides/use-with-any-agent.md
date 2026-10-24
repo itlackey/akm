@@ -64,9 +64,10 @@ feedback, so record nothing for it.
 flags the asset, and the next improve run may repair its description, title or
 `when_to_use` from your reason. Once you have verified the correct fact, attach
 the exact fix with `--replace`, `--with` and `--source`. `--positive` records
-that an asset helped and does not trigger a rewrite. Feedback does not change
-search ranking. See [Improve the Library](improve-the-library.md) for what
-happens to feedback after it's recorded.
+that an asset helped and does not trigger a rewrite. Feedback adjusts the
+asset's search rank within a bounded range. See
+[Improve the Library](improve-the-library.md) for what happens to feedback
+after it's recorded.
 
 ## Compatibility matrix
 

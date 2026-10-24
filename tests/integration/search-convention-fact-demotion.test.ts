@@ -3,32 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * SPEC-6 (docs/architecture/specs/stash-conventions-code-spec.md) — deterministic
- * MEASUREMENT + regression test for convention-fact crowding of domain-term
- * queries, plus the index-capture (document_json) round-trip for the fact
- * `category:` frontmatter key.
+ * Convention facts do not crowd out real domain assets on a domain-term query,
+ * and the fact `category:` frontmatter key round-trips through the index
+ * (document_json).
  *
  * Fixture: a sandbox stash containing the FULL shipped stash-skeleton
  * convention facts (src/assets/stash-skeleton/facts — every file carries
  * `category: convention`) plus one real domain asset at knowledge/auth/.
  *
- * The measurement: for the untyped query "auth", the real knowledge/auth
- * asset must outrank every category:convention fact. If this fails on a tree
- * without the SPEC-6 demotion, crowding is CONFIRMED and this test doubles as
- * the demotion regression test. No LLM, no embeddings (semanticSearchMode
- * "off") — pure FTS + ranking contributors.
- *
- * MEASUREMENT RESULT (2026-07-11, pre-implementation tree): the headline
- * measurement PASSES without any demotion. searchFts is exact-first — the
- * prefix fallback ("auth*" → the facts' "authoring…" tokens) only runs when
- * the exact token query matches NOTHING, and a real knowledge/auth asset
- * always matches "auth" exactly (name + path-derived tag). So convention
- * facts never even co-rank with a real domain asset; they fill the results
- * only when the stash has NO exact match at all (see the companion
- * "facts-only stash" test below). Crowding as hypothesized by the intake item
- * is therefore NOT confirmed. These tests stay as regression pins for that
- * invariant; the capture test (entry.category → document_json) is the RED
- * groundwork SPEC-6/SPEC-8 need either way.
+ * For the untyped query "auth", the real knowledge/auth asset must outrank
+ * every category:convention fact. When the stash has no real auth asset, the
+ * facts are all there is and must still be returned. No LLM, no embeddings
+ * (semanticSearchMode "off") — lexical ranking only.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -66,11 +52,7 @@ interface Hit {
   score?: number;
 }
 
-/**
- * SPEC-6 adds `category?: string` to IndexDocument. Read it through a typed
- * accessor so this file compiles before the implementation lands; the capture
- * test then goes red on the runtime value instead of a compile error.
- */
+/** Read the optional `category` frontmatter field through a typed accessor. */
 function entryCategory(entry: IndexDocument): string | undefined {
   return (entry as IndexDocument & { category?: string }).category;
 }
@@ -183,12 +165,8 @@ describe("SPEC-6 measurement: convention facts vs a real domain asset on an unty
   });
 
   test("measurement evidence: with NO real auth asset, the untyped 'auth' query falls back to prefix expansion and returns the convention facts", async () => {
-    // The one crowding mode the measurement actually found: in a stash where
-    // nothing matches the exact token "auth", the prefix fallback surfaces the
-    // skeleton facts (via their "authoring…" tokens). Rank-time demotion
-    // (SPEC-6's chosen remedy over exclusion) keeps every hit LISTED, so this
-    // fail-open behavior must survive any demotion implementation — facts
-    // remain reachable when they are all there is.
+    // In a stash where only the skeleton facts match "auth", the facts are all
+    // there is: they must stay listed, not be hidden.
     installSkeletonConventionFacts(stashDir);
     saveConfig({ semanticSearchMode: "off" });
     await akmIndex({ stashDir, full: true });
@@ -203,9 +181,8 @@ describe("SPEC-6 measurement: convention facts vs a real domain asset on an unty
     await buildFixture();
 
     // Read the freshly built index back: every skeleton convention fact must
-    // carry its frontmatter `category` on the persisted IndexDocument. This is
-    // the SPEC-6 capture prerequisite — without it neither demotion nor any
-    // category-keyed policy is implementable.
+    // carry its frontmatter `category` on the persisted IndexDocument, which any
+    // category-keyed policy needs.
     const db = openExistingDatabase();
     try {
       const facts = getAllEntries(db, "fact");
@@ -221,10 +198,8 @@ describe("SPEC-6 measurement: convention facts vs a real domain asset on an unty
   test("convention facts stay reachable via typed search (--type fact wins over demotion)", async () => {
     await buildFixture();
 
-    // Typed search is the sanctioned opt-back-in: `--type fact` must surface
-    // the convention facts for the same domain-term query regardless of any
-    // untyped-rank demotion. ("auth" prefix-expands to the facts' "authoring"
-    // tokens once no exact fact match exists.)
+    // Typed search is the way to ask for the convention facts: `--type fact`
+    // must surface them for the same domain-term query.
     const hits = await searchHits(["search", "auth", "--type", "fact", "--format=json", "--limit", "25"]);
     expect(hits.length).toBeGreaterThan(0);
     for (const hit of hits) {
@@ -236,8 +211,7 @@ describe("SPEC-6 measurement: convention facts vs a real domain asset on an unty
   test("exact-name query still surfaces a convention fact in the top 3", async () => {
     await buildFixture();
 
-    // The demotion must NOT hide convention facts from users who ask for them
-    // by name: the exact-name boost (+2.0) dominates the category demotion.
+    // A user who asks for a convention fact by name must find it near the top.
     const hits = await searchHits(["search", "backlinks", "--format=json", "--limit", "25"]);
     const idx = hits.findIndex((h) => h.ref === "facts/conventions/backlinks");
     expect(idx).toBeGreaterThanOrEqual(0);

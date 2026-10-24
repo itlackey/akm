@@ -163,11 +163,28 @@ orphans.
 
 #### `utility_scores`
 
-`entry_id` INTEGER PRIMARY KEY (FK to `entries(id)`, ON DELETE CASCADE),
-`utility`, `show_count`, `search_count`, `select_rate`, `last_used_at`,
-`updated_at`. Recomputed by `akm index` from `state.db` `usage_events` and
-adjusted by `akm feedback`. The improve eligibility code reads it
-(`src/commands/improve/eligibility.ts`); search ranking does not.
+Per-entry usage and feedback scores. A row is written for an entry that has a
+user usage event or feedback.
+
+| Column | Type | Notes |
+|---|---|---|
+| `entry_id` | INTEGER PRIMARY KEY | FK to `entries(id)`, ON DELETE CASCADE |
+| `utility` | REAL NOT NULL DEFAULT 0 | Blend of select rate and feedback; read by the improve eligibility and salience code (`src/commands/improve/eligibility.ts`) |
+| `show_count`, `search_count` | INTEGER NOT NULL DEFAULT 0 | User show and search events |
+| `select_rate` | REAL NOT NULL DEFAULT 0 | `show_count / search_count`, at most 1 |
+| `last_used_at` | TEXT | Newest search, show or curate event |
+| `updated_at` | TEXT NOT NULL | When the row was last written |
+| `feedback_score` | REAL | Score from user feedback alone, on a 0.5 midpoint; NULL until the first feedback. **Search ranks by it** |
+| `feedback_count` | INTEGER NOT NULL DEFAULT 0 | User feedback events behind `feedback_score` |
+
+`akm index` recomputes the row from `state.db` `usage_events`: `utility` from
+searches, shows and feedback, and `feedback_score` / `feedback_count` by
+replaying the entry's feedback events from the last 90 days, oldest first, from
+0.5 (search and show history never enter them). `akm feedback` updates `utility`, `feedback_score`
+and `feedback_count` at once. The two feedback columns were added without a
+layout change: the writable opener, and `akm feedback`, add them in place to an
+older table, and a read of an older table treats every entry as having no
+feedback.
 
 #### `registry_index_cache`
 

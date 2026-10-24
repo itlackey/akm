@@ -36,8 +36,8 @@ export async function enrichSearchHit(hit: SourceSearchHit, ctx: SearchHitContex
 }
 
 /**
- * Phase 5A / Advantage D5 — when a parent memory has a `.derived` child
- * indexed (the LLM-distilled lesson surface), rewrite the parent hit to
+ * When a parent memory has a `.derived` child indexed (the LLM-distilled
+ * lesson surface), rewrite the parent hit to
  * surface the derived child's description / tags AND set `expandTo` to the
  * derived child's ref so callers can fetch it via `akm show <ref>`.
  *
@@ -49,7 +49,7 @@ function surfaceDerivedMemory(hit: SourceSearchHit, db: Database, bundleId: stri
   // it untouched also avoids `<parent>.derived.derived` chains.
   if (hit.name.toLowerCase().endsWith(".derived")) return;
 
-  // Parent ref shape: the 0.9.0 `memories/<name>` conceptId. Re-build from the
+  // Parent ref shape: the `memories/<name>` conceptId. Re-build from the
   // entry's name so we don't depend on whatever wiki/registry prefix `hit.ref`
   // carries. INTERNAL lookup key into `getDerivedForParent`: the `derived_from`
   // column stores this same conceptId grammar.
@@ -69,8 +69,8 @@ function surfaceDerivedMemory(hit: SourceSearchHit, db: Database, bundleId: stri
     hit.tags = derived.entry.tags;
     surfaceFields.push("tags");
   }
-  // `expandTo` is a user-facing `akm show <ref>` target, so emit the 0.9.0
-  // short conceptId grammar (`memories/<name>`).
+  // `expandTo` is a user-facing `akm show <ref>` target, so emit the short
+  // conceptId grammar (`memories/<name>`).
   hit.expandTo = displayRef({ type: "memory", name: derived.entry.name });
   const childRef = getItemRefById(db, derived.id);
   if (childRef && surfaceFields.length > 0) {

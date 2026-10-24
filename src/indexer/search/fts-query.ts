@@ -11,7 +11,7 @@
  * (`akm/eval/retrieval/reports/baseline-2026-09-27.md`): one conjunctive match
  * in a long document suppressed every better OR candidate.
  * `parseRefPrefixQuery` is the one non-FTS helper: it decides whether a raw
- * query should bypass FTS entirely (SPEC-4 ref-prefix enumeration).
+ * query should bypass FTS entirely (ref-prefix enumeration).
  */
 
 /** English function words dropped from the lexical query (the retrieval lab's list). */
@@ -44,7 +44,7 @@ export function ftsOrMatch(tokens: readonly string[]): string {
 }
 
 /**
- * D4 — parse a conceptId-prefix browse query.
+ * Parse a conceptId-prefix browse query.
  *
  * Decides whether a raw query is a subtree-enumeration request rather than an
  * ordinary keyword search. Matching is deliberately conservative: the trimmed
@@ -89,7 +89,7 @@ export function parseRefPrefixQuery(query: string): { bundle?: string; conceptId
 /**
  * Recognize the retired `<type>:` / `<type>:<prefix>/` browse grammar so the
  * caller can name the replacement spelling rather than letting the query
- * degrade silently into a keyword search — the exact silent failure D4 removes.
+ * degrade silently into a keyword search.
  * Shape recognition only; mapping the type to its conceptId root belongs to the
  * caller, which keeps this module dependency-free.
  */

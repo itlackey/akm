@@ -233,6 +233,16 @@ function ensureColumn(db: Database, table: string, column: string, type: string)
   return true;
 }
 
+/**
+ * Add the feedback columns to a `utility_scores` table that predates them.
+ * The layout stamp does not change: like `embeddings.model`, the columns are
+ * added in place, and readers that meet an older table serve it without them.
+ */
+export function ensureUtilityFeedbackColumns(db: Database): void {
+  ensureColumn(db, "utility_scores", "feedback_score", "REAL");
+  ensureColumn(db, "utility_scores", "feedback_count", "INTEGER NOT NULL DEFAULT 0");
+}
+
 export function ensureSchema(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_meta (
@@ -307,18 +317,24 @@ export function ensureSchema(db: Database): void {
 
   // Utility scores (aggregated per-entry utility metrics) — a regenerable
   // cache recomputed from state.db's usage_events on every index run.
+  // `feedback_score` / `feedback_count` are the feedback-only score search
+  // ranks by and the number of feedback events behind it; NULL / 0 until the
+  // entry's first feedback.
   db.exec(`
     CREATE TABLE IF NOT EXISTS utility_scores (
-      entry_id     INTEGER PRIMARY KEY,
-      utility      REAL NOT NULL DEFAULT 0,
-      show_count   INTEGER NOT NULL DEFAULT 0,
-      search_count INTEGER NOT NULL DEFAULT 0,
-      select_rate  REAL NOT NULL DEFAULT 0,
-      last_used_at TEXT,
-      updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      entry_id       INTEGER PRIMARY KEY,
+      utility        REAL NOT NULL DEFAULT 0,
+      show_count     INTEGER NOT NULL DEFAULT 0,
+      search_count   INTEGER NOT NULL DEFAULT 0,
+      select_rate    REAL NOT NULL DEFAULT 0,
+      last_used_at   TEXT,
+      updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+      feedback_score REAL,
+      feedback_count INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (entry_id) REFERENCES entries(id) ON DELETE CASCADE
     );
   `);
+  ensureUtilityFeedbackColumns(db);
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_dir_state (

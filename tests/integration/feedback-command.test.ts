@@ -12,11 +12,10 @@ import { runCliCapture } from "../_helpers/cli";
 import { withTestImproveLlm } from "../_helpers/improve-config";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
-// Migrated from spawnSync("bun", [CLI, ...]) to the shared in-process harness
-// (tests/_helpers/cli.ts). beforeEach already sandboxes AKM_BUNDLE_DIR and the
-// XDG dirs on process.env via the allowlisted sandbox helpers; the harness
-// re-reads config from that env per call, so feedback events land in the same
-// sandboxed stash/DB the test then asserts on. `feedback` is not
+// Drives the shared in-process CLI harness (tests/_helpers/cli.ts).
+// beforeEach sandboxes AKM_BUNDLE_DIR and the XDG dirs on process.env; the
+// harness re-reads config from that env per call, so feedback events land in
+// the same sandboxed stash/DB the test then asserts on. `feedback` is not
 // process.cwd()-dependent.
 
 function writeFile(filePath: string, content: string): void {
@@ -36,9 +35,8 @@ function parseJsonOutput(result: { stdout: string; stderr: string }): Record<str
 
 // Full composite isolation (incl. XDG_DATA_HOME): this file asserts EXACT
 // usage_events row counts against getDbPath(), so it must own its index.db.
-// The previous 3-helper chain left the data dir on the process-shared suite
-// sandbox, where any shard-mate's feedback events leaked into the assertions
-// (the leak surfaced whenever adding a test file reshuffled bun's shards).
+// On the process-shared suite sandbox, a shard-mate's feedback events would
+// leak into the assertions.
 let storage: IsolatedAkmStorage;
 let stashDir = "";
 
@@ -97,8 +95,8 @@ describe("akm feedback", () => {
         )
         .all() as Array<{ entry_ref: string; entry_id: number | null; signal: string }>;
       expect(events).toHaveLength(2);
-      // F4c: usage_events.entry_ref is now the resolved entry's fully-qualified
-      // item_ref (`<bundle>//<conceptId>`), not the legacy `origin//type:name`.
+      // usage_events.entry_ref is the resolved entry's fully-qualified
+      // item_ref (`<bundle>//<conceptId>`).
       expect(events[0]?.entry_ref).toBe("stash//env/prod");
       expect(events[0]?.entry_id).toEqual(expect.any(Number));
       expect(events[0]?.signal).toBe("positive");
@@ -133,8 +131,8 @@ describe("akm feedback", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
 
-    // appendLessonStrength must have LOCATED the lesson in the index (the D-R3
-    // lookup uses the new grammar) and appended the feedback ref.
+    // appendLessonStrength must have located the lesson in the index and
+    // appended the feedback ref.
     const { parseFrontmatter } = await import("../../src/core/asset/frontmatter");
     const raw = fs.readFileSync(path.join(stashDir, "lessons", "deploy-lesson.md"), "utf8");
     const strength = parseFrontmatter(raw).data.lessonStrength;
@@ -208,7 +206,6 @@ describe("akm feedback", () => {
 
     const result = await runCli(["feedback", "memories/missing", "--positive", "--format=json"]);
     // NotFoundError (ref not in index) -> exit 1 / ASSET_NOT_FOUND.
-    // Ground-truthed by probing the actual CLI output before pinning.
     expect(result.status).toBe(1);
     const output = parseJsonOutput(result);
     expect(output.ok).toBe(false);
@@ -217,7 +214,7 @@ describe("akm feedback", () => {
     expect(output.error).toContain("not in the index");
   });
 
-  // ── #284 GAP-HIGH 8: feedback --reason metadata round-trip ──────────────
+  // ── feedback --reason metadata round-trip (#284) ──────────────────────
   test("feedback --reason threads metadata into events.jsonl", async () => {
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
@@ -243,7 +240,7 @@ describe("akm feedback", () => {
     });
 
     // Read events.jsonl directly and verify the note was persisted in metadata.
-    // WI-8.5b: the feedback event keys on the resolved entry's item_ref.
+    // The feedback event keys on the resolved entry's item_ref.
     const { readEvents } = await import("../../src/core/events");
     const { events } = readEvents({ type: "feedback", ref: "stash//memories/deployment-notes" });
     expect(events.length).toBeGreaterThan(0);
@@ -282,8 +279,8 @@ describe("akm feedback", () => {
       const refs = db
         .prepare("SELECT entry_ref FROM usage_events WHERE event_type = 'feedback' ORDER BY entry_ref")
         .all() as Array<{ entry_ref: string }>;
-      // F4c: durable feedback keys are the resolved entries' item_refs, one per
-      // origin — the cross-origin distinction is preserved, never collapsed.
+      // Durable feedback keys are the resolved entries' item_refs, one per
+      // origin: the cross-origin distinction is preserved.
       expect(refs.map((row) => row.entry_ref)).toEqual(["stash//memories/shared", "team//memories/shared"]);
     } finally {
       db.close();
@@ -295,8 +292,8 @@ describe("akm feedback", () => {
     await buildIndex();
 
     // beta.md exists on disk but was NOT indexed — feedback must fail quickly
-    // rather than triggering a blocking inline reindex (which was causing 3+ min
-    // runtimes). The user should run `akm index` to pick up new assets first.
+    // rather than triggering a blocking inline reindex. The user should run
+    // `akm index` to pick up new assets first.
     writeFile(path.join(stashDir, "memories", "beta.md"), "---\ndescription: beta memory\n---\nBeta body.\n");
 
     const result = await runCli(["feedback", "memories/beta", "--positive", "--format=json"]);
@@ -310,7 +307,7 @@ describe("akm feedback", () => {
     expect(parsed.error ?? parsed.message ?? "").toMatch(/not in the index/i);
   });
 
-  // ── R-033a: the `--` separator must end flag parsing for repeatable flags ──
+  // ── the `--` separator must end flag parsing for repeatable flags ────────
   test("--tag values placed AFTER a `--` separator are NOT collected (R-033a)", async () => {
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
@@ -319,8 +316,8 @@ describe("akm feedback", () => {
     await buildIndex();
 
     // Everything after `--` is passthrough/positional, never a flag akm should
-    // interpret. Before the fix, `parseAllFlagValues`/`getAllFlagValues` scanned
-    // straight through a literal `--` and still picked up `--tag leaked:yes`.
+    // interpret: `parseAllFlagValues`/`getAllFlagValues` must stop at a literal
+    // `--` and not pick up `--tag leaked:yes`.
     const result = await runCli([
       "feedback",
       "memories/deployment-notes",
@@ -356,8 +353,7 @@ describe("akm feedback", () => {
     expect(parsed.tags).toEqual(["slice:train"]);
   });
 
-  // ── R-033b: --applied-to on a non-lesson target must warn loudly, not
-  // silently no-op ────────────────────────────────────────────────────────────
+  // ── --applied-to on a non-lesson target must warn loudly, not silently no-op ──
   test("--applied-to on a non-lesson ref warns loudly instead of silently no-opping (R-033b)", async () => {
     writeFile(
       path.join(stashDir, "memories", "deploy-note.md"),
@@ -381,8 +377,8 @@ describe("akm feedback", () => {
     expect(result.stderr).toMatch(/not a lesson/);
   });
 
-  // ── R-034: the response envelope must state whether the ranking update was
-  // applied, and why not when it was skipped ─────────────────────────────────
+  // ── the response envelope must state whether the feedback score was written,
+  // and why not when it was skipped ──────────────────────────────────────────
   test("rankingUpdate.applied is true for default (user) feedback source (R-034)", async () => {
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
@@ -405,9 +401,8 @@ describe("akm feedback", () => {
 
     // AKM_EVENT_SOURCE=agent is not a recognized UsageEventSource, so
     // resolveUsageEventSource() coerces it to "unknown" — still a non-"user"
-    // source, so the anti-self-reinforcement guard must skip the ranking
-    // update. Before the fix this was indistinguishable from the "applied"
-    // case: both envelopes were byte-identical.
+    // source, so the anti-self-reinforcement guard must skip the score update
+    // and the envelope must say so.
     const result = await withEnv({ AKM_EVENT_SOURCE: "agent" }, () =>
       runCli(["feedback", "memories/deployment-notes", "--positive", "--format=json"]),
     );
@@ -419,8 +414,8 @@ describe("akm feedback", () => {
     expect(rankingUpdate.reason).toMatch(/anti-self-reinforcement/);
   });
 
-  // A sandbox that leaves state.db read-only used to get ok:true while the
-  // feedback row was silently dropped. chmod does not restrict root or Windows.
+  // A sandbox that leaves state.db read-only must fail rather than report ok:true
+  // while the feedback row is dropped. chmod does not restrict root or Windows.
   const canMakeReadOnly = process.platform !== "win32" && process.getuid?.() !== 0;
   test.skipIf(!canMakeReadOnly)("fails with DATA_DIR_NOT_WRITABLE when state.db is read-only", async () => {
     writeFile(

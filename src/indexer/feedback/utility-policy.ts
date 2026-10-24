@@ -106,3 +106,24 @@ export function computeNextUtility(
   const crossedReviewThreshold = previousUtility >= HIGH_UTILITY_THRESHOLD && nextUtility < UTILITY_REVIEW_THRESHOLD;
   return { previousUtility, nextUtility, crossedReviewThreshold };
 }
+
+/** The score of an entry with no feedback yet, and the point every feedback step starts from. */
+export const NEUTRAL_UTILITY = 0.5;
+
+/**
+ * Replay an entry's feedback signals, oldest first, from {@link NEUTRAL_UTILITY}.
+ * Each signal takes the step `applyFeedbackToUtilityScore` takes when it is
+ * recorded: {@link computeNextUtility} over the counts so far. A rebuilt score
+ * therefore equals the one the incremental path wrote. Pure.
+ */
+export function replayFeedbackSignals(signals: Iterable<"positive" | "negative">): { score: number; count: number } {
+  let score = NEUTRAL_UTILITY;
+  let positive = 0;
+  let negative = 0;
+  for (const signal of signals) {
+    if (signal === "positive") positive += 1;
+    else negative += 1;
+    score = computeNextUtility(score, positive, negative).nextUtility;
+  }
+  return { score, count: positive + negative };
+}

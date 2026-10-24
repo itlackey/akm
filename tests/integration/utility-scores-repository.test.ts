@@ -1,7 +1,8 @@
 /**
  * `utility_scores` repository: batch reads, and rows surviving a reopen of
  * the index (the CREATE TABLE IF NOT EXISTS schema path). The scores feed
- * improve's salience work; search ranking does not read them.
+ * improve's salience work, and search reads the ones that carry only feedback
+ * (`feedbackUtilities`).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -12,7 +13,10 @@ import { deriveEntryProvenance } from "../../src/indexer/installations";
 import type { Database } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
-import { getUtilityScoresByIds } from "../../src/storage/repositories/index-utility-repository";
+import {
+  applyFeedbackToUtilityScore,
+  getUtilityScoresByIds,
+} from "../../src/storage/repositories/index-utility-repository";
 
 function makeTempDb(label: string): { db: Database; dbPath: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `akm-utility-${label}-`));
@@ -64,6 +68,63 @@ describe("getUtilityScoresByIds", () => {
 
   test("returns an empty map for no ids", () => {
     expect(getUtilityScoresByIds(db, []).size).toBe(0);
+  });
+
+  test("a row with no feedback reads as feedbackCount 0 and no feedback score", () => {
+    seedUtility(db, 1, 0.4);
+    expect(getUtilityScoresByIds(db, [1]).get(1)).toMatchObject({ feedbackCount: 0, feedbackScore: undefined });
+  });
+
+  test("a table that predates the feedback columns reads without them", () => {
+    seedUtility(db, 1, 0.4);
+    db.exec("ALTER TABLE utility_scores DROP COLUMN feedback_score");
+    db.exec("ALTER TABLE utility_scores DROP COLUMN feedback_count");
+    const row = getUtilityScoresByIds(db, [1]).get(1);
+    expect(row).toMatchObject({ utility: 0.4, feedbackCount: 0 });
+    expect(row?.feedbackScore).toBeUndefined();
+  });
+});
+
+describe("applyFeedbackToUtilityScore", () => {
+  let db: Database;
+  let dbPath: string;
+
+  beforeEach(() => {
+    ({ db, dbPath } = makeTempDb("applyfb"));
+    expect(seedSkill(db, "foo")).toBe(1);
+  });
+
+  afterEach(() => {
+    closeDatabase(db);
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+  });
+
+  test("moves utility and the feedback score together, the feedback score from the midpoint", () => {
+    seedUtility(db, 1, 0.9);
+    applyFeedbackToUtilityScore(db, 1, 0, 1);
+    const row = getUtilityScoresByIds(db, [1]).get(1);
+    // utility steps from its stored 0.9; the feedback score steps from 0.5.
+    expect(row?.utility).toBeCloseTo(0.81, 12);
+    expect(row?.feedbackScore).toBeCloseTo(0.45, 12);
+    expect(row?.feedbackCount).toBe(1);
+
+    applyFeedbackToUtilityScore(db, 1, 1, 1);
+    const after = getUtilityScoresByIds(db, [1]).get(1);
+    expect(after?.feedbackScore).toBeCloseTo(0.45 + 0.1 * (0.5 - 0.45), 12);
+    expect(after?.feedbackCount).toBe(2);
+  });
+
+  test("adds the feedback columns to a table that predates them", () => {
+    db.exec("ALTER TABLE utility_scores DROP COLUMN feedback_score");
+    db.exec("ALTER TABLE utility_scores DROP COLUMN feedback_count");
+    applyFeedbackToUtilityScore(db, 1, 1, 0);
+    expect(getUtilityScoresByIds(db, [1]).get(1)).toMatchObject({ feedbackCount: 1 });
+    expect(getUtilityScoresByIds(db, [1]).get(1)?.feedbackScore).toBeCloseTo(0.55, 12);
+  });
+
+  test("with no feedback counts nothing is written", () => {
+    applyFeedbackToUtilityScore(db, 1, 0, 0);
+    expect(getUtilityScoresByIds(db, [1]).size).toBe(0);
   });
 });
 

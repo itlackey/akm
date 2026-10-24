@@ -115,6 +115,9 @@ Run `akm setup --help` for every flag.
 ### index
 
 Build or refresh the search index (`index.db`). Incremental by default.
+`akm index` fetches a bundle only if it has never been materialized on this
+host; it never refreshes one (`akm bundle update` does), and `--full` does not
+change that.
 
 | Flag | Meaning |
 | --- | --- |
@@ -245,8 +248,9 @@ Also: `--belief all|current|historical` (memory belief state),
 `--include-proposed`, `--include-sessions`. A query ending in `/` lists a
 subtree instead of keyword-matching: `akm search "memories/projectA/"`,
 `akm search "team//"`. Local results include `searchMode` (`semantic`,
-`keyword` or `fts-fallback`). Fields per detail level are in
-[Search output fields](#search-output-fields).
+`keyword` or `fts-fallback`). Hits are ordered by keyword and vector
+relevance, and [`akm feedback`](#feedback) adjusts the order within a bounded
+range. Fields per detail level are in [Search output fields](#search-output-fields).
 
 ```sh
 akm search "deploy" --type script --limit 10
@@ -461,8 +465,11 @@ Run `akm config <subcommand> --help` for every flag.
 
 ### feedback
 
-Record whether an asset helped. Feedback changes the asset's usefulness score
-immediately and feeds `akm improve`.
+Record whether an asset helped. Feedback moves the asset's scores immediately.
+The feedback score adjusts the asset's search rank within a bounded range
+(about a quarter of its fused score either way); it is stored in the index and
+rebuilt from the last 90 days of feedback on reindex, so feedback older than
+that no longer counts. The utility score orders `akm improve`'s work.
 
 | Flag | Meaning |
 | --- | --- |

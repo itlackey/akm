@@ -5,9 +5,9 @@ import { type Cleanup, sandboxXdgCacheHome, sandboxXdgDataHome } from "../../_he
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
-// One entry intentionally carries the legacy `curated` boolean to exercise
-// the v1 parse-and-ignore rule (spec §4.2). The cast is necessary because
-// `curated` was removed from `RegistryBundleEntry` in v1.
+// One entry intentionally carries the legacy `curated` boolean to check that
+// the index parser ignores it. The cast is necessary because `curated` is not
+// a field of `RegistryBundleEntry`.
 const FIXTURE_INDEX: RegistryIndex = {
   version: 3,
   updatedAt: "2026-03-09T00:00:00Z",
@@ -35,7 +35,7 @@ const FIXTURE_INDEX: RegistryIndex = {
       assetTypes: ["skill", "command", "knowledge"],
       author: "itlackey",
       license: "CC-BY-4.0",
-      // Legacy v0.6.x field — kept here to verify v1 parse-and-ignore.
+      // Legacy field the parser ignores.
       curated: true,
     } as RegistryIndex["stashes"][number] & { curated: boolean },
     {
@@ -445,9 +445,8 @@ describe("hit shape", () => {
   });
 
   test("legacy `curated` key in registry JSON parses and is silently ignored", async () => {
-    // Spec §4.2: the legacy registry boolean `curated` is removed in v1.
-    // Legacy index JSON containing it MUST parse without error and the key
-    // MUST NOT appear on emitted hits.
+    // Legacy index JSON containing the `curated` boolean must parse without
+    // error, and the key must not appear on emitted hits.
     const srv = serveIndex(FIXTURE_INDEX);
     try {
       const result = await searchRegistry("itlackey", { registries: [{ url: srv.url }] });
@@ -505,7 +504,7 @@ describe("AKM_REGISTRY_URL env var", () => {
     }
   });
 
-  // Problem A: env-based override must preserve provider type
+  // An env-based override must preserve the provider type
   test("provider::url syntax routes to the declared provider type", async () => {
     // Stand up a skills-sh-shaped endpoint
     const skillsSrv = Bun.serve({
@@ -544,12 +543,6 @@ describe("AKM_REGISTRY_URL env var", () => {
       srv.close();
     }
   });
-
-  // "unknown provider type in env var produces warning, not crash" moved into
-  // the parameterized "unknown provider type via %s" test in the "provider
-  // routing" describe below (DUP-10): it asserted the same three things
-  // (empty hits, exactly one warning, warning names the bad provider) as the
-  // options.registries path, just reached through AKM_REGISTRY_URL instead.
 
   test("mixed provider types in comma-separated env var", async () => {
     const staticSrv = serveIndex({
@@ -590,7 +583,7 @@ describe("AKM_REGISTRY_URL env var", () => {
   });
 });
 
-// ── Score normalization (Problem B) ─────────────────────────────────────────
+// ── Score normalization ─────────────────────────────────────────────────────
 
 describe("cross-provider score normalization", () => {
   test("scores from all providers are in [0, 1] after normalization", async () => {
@@ -748,7 +741,7 @@ describe("provenance tagging", () => {
 // ── Provider-based routing ──────────────────────────────────────────────────
 
 describe("provider routing", () => {
-  // DUP-10: one behavior (an unrecognized provider type produces exactly one
+  // One behavior (an unrecognized provider type produces exactly one
   // warning naming it, never a crash, and yields no hits), reached through
   // the two ways a provider type is configured.
   test.each([
@@ -815,7 +808,7 @@ describe("provider routing", () => {
       expect(ids).toContain("npm:deploy-stash");
       expect(ids).toContain("skills-sh:org/skills/deploy-vercel");
 
-      // installRef should be directly usable with `akm add`
+      // installRef should be directly usable with `akm bundle add`
       const npmHit = result.hits.find((h) => h.id === "npm:deploy-stash");
       expect(npmHit?.installRef).toBe("npm:deploy-stash");
       const skillsHit = result.hits.find((h) => h.id === "skills-sh:org/skills/deploy-vercel");
@@ -877,8 +870,8 @@ describe("provider routing", () => {
 // ── Issue #159: incomplete hits must never appear in JSON output ────────────
 
 describe("incomplete hits filter (#159)", () => {
-  // ISOLATION-04: the registry provider map (src/registry/factory.ts)
-  // is a module-level singleton Map, so a registration made here would
+  // The registry provider map (src/registry/factory.ts) is a
+  // module-level singleton Map, so a registration made here would
   // otherwise outlive the test for the rest of the process. Each test below
   // unregisters its synthetic key in a try/finally using the real unregister
   // seam.
@@ -949,8 +942,8 @@ describe("incomplete hits filter (#159)", () => {
     }
   });
 
-  // PR #168 review #9: asset hits with missing/empty `stash.id` or `stash.name`
-  // are also incomplete and must not propagate to JSON output.
+  // Asset hits with missing/empty `stash.id` or `stash.name` are also
+  // incomplete and must not propagate to JSON output.
   test("asset hits with missing or empty stash fields are dropped", async () => {
     const { registerRegistryProvider, unregisterRegistryProvider } = await import("../../../src/registry/factory");
     registerRegistryProvider("incomplete-stash-test", (() => ({

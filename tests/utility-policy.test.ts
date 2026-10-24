@@ -7,6 +7,8 @@ import {
   computeNextUtility,
   FEEDBACK_LR,
   HIGH_UTILITY_THRESHOLD,
+  NEUTRAL_UTILITY,
+  replayFeedbackSignals,
   UTILITY_REVIEW_THRESHOLD,
 } from "../src/indexer/feedback/utility-policy";
 
@@ -74,5 +76,33 @@ describe("computeNextUtility", () => {
     const one = computeNextUtility(0.8, 0, 1).nextUtility;
     const many = computeNextUtility(0.8, 0, 100).nextUtility;
     expect(many).toBeCloseTo(one, 10);
+  });
+});
+
+describe("replayFeedbackSignals", () => {
+  test("no signals leave the neutral midpoint", () => {
+    expect(replayFeedbackSignals([])).toEqual({ score: NEUTRAL_UTILITY, count: 0 });
+  });
+
+  test("replays each signal as the step recorded with the counts so far", () => {
+    // Incremental path: one computeNextUtility step per recorded event, over the running totals.
+    let score = NEUTRAL_UTILITY;
+    score = computeNextUtility(score, 0, 1).nextUtility;
+    score = computeNextUtility(score, 1, 1).nextUtility;
+    score = computeNextUtility(score, 2, 1).nextUtility;
+    expect(replayFeedbackSignals(["negative", "positive", "positive"])).toEqual({ score, count: 3 });
+  });
+
+  test("one negative lands at 0.45 and one positive at 0.55, whatever the retrieval history", () => {
+    expect(replayFeedbackSignals(["negative"]).score).toBeCloseTo(0.45, 12);
+    expect(replayFeedbackSignals(["positive"]).score).toBeCloseTo(0.55, 12);
+  });
+
+  test("stays within 0 and 1 however many signals arrive", () => {
+    const negatives = replayFeedbackSignals(Array.from({ length: 500 }, () => "negative" as const));
+    const positives = replayFeedbackSignals(Array.from({ length: 500 }, () => "positive" as const));
+    expect(negatives.score).toBeGreaterThanOrEqual(0);
+    expect(positives.score).toBeLessThanOrEqual(1);
+    expect(negatives.count).toBe(500);
   });
 });

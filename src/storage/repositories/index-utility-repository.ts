@@ -11,31 +11,57 @@
  */
 
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
-import { computeNextUtility, type FeedbackUtilityResult } from "../../indexer/feedback/utility-policy";
+import {
+  computeNextUtility,
+  type FeedbackUtilityResult,
+  NEUTRAL_UTILITY,
+  replayFeedbackSignals,
+} from "../../indexer/feedback/utility-policy";
 import type { Database, SqlValue } from "../database";
 import type { RetrievalCountOptions, UtilityScoreData, UtilityScoreRow } from "./index-entry-types";
+import { ensureUtilityFeedbackColumns } from "./index-schema";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 
+const feedbackColumnsPresent = new WeakMap<Database, boolean>();
+
 /**
- * Get the utility score for an entry, or undefined if none exists.
+ * Whether `utility_scores` carries the feedback columns. A read of an index the
+ * writable opener has not migrated yet does not; its rows then read as having
+ * no feedback. Only a positive answer is memoized: the columns can appear on a
+ * live connection, never vanish.
  */
-export function getUtilityScore(db: Database, entryId: number): UtilityScoreRow | undefined {
-  const row = db
-    .prepare(
-      "SELECT entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at FROM utility_scores WHERE entry_id = ?",
-    )
-    .get(entryId) as
-    | {
-        entry_id: number;
-        utility: number;
-        show_count: number;
-        search_count: number;
-        select_rate: number;
-        last_used_at: string | null;
-        updated_at: string;
-      }
-    | undefined;
-  if (!row) return undefined;
+function hasFeedbackColumns(db: Database): boolean {
+  if (feedbackColumnsPresent.get(db) === true) return true;
+  let present = false;
+  try {
+    present = (db.prepare("PRAGMA table_info(utility_scores)").all() as Array<{ name: string }>).some(
+      (column) => column.name === "feedback_count",
+    );
+  } catch {
+    present = false;
+  }
+  if (present) feedbackColumnsPresent.set(db, true);
+  return present;
+}
+
+interface UtilityScoreSqlRow {
+  entry_id: number;
+  utility: number;
+  show_count: number;
+  search_count: number;
+  select_rate: number;
+  last_used_at: string | null;
+  updated_at: string;
+  feedback_score?: number | null;
+  feedback_count?: number | null;
+}
+
+function utilityColumns(db: Database): string {
+  const base = "entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at";
+  return hasFeedbackColumns(db) ? `${base}, feedback_score, feedback_count` : base;
+}
+
+function toUtilityScoreRow(row: UtilityScoreSqlRow): UtilityScoreRow {
   return {
     entryId: row.entry_id,
     utility: row.utility,
@@ -44,7 +70,19 @@ export function getUtilityScore(db: Database, entryId: number): UtilityScoreRow 
     selectRate: row.select_rate,
     lastUsedAt: row.last_used_at ?? undefined,
     updatedAt: row.updated_at,
+    feedbackScore: row.feedback_score ?? undefined,
+    feedbackCount: row.feedback_count ?? 0,
   };
+}
+
+/**
+ * Get the utility score for an entry, or undefined if none exists.
+ */
+export function getUtilityScore(db: Database, entryId: number): UtilityScoreRow | undefined {
+  const row = db.prepare(`SELECT ${utilityColumns(db)} FROM utility_scores WHERE entry_id = ?`).get(entryId) as
+    | UtilityScoreSqlRow
+    | undefined;
+  return row ? toUtilityScoreRow(row) : undefined;
 }
 
 /**
@@ -57,29 +95,9 @@ export function getUtilityScoresByIds(db: Database, ids: number[]): Map<number, 
     const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(",");
     const rows = db
-      .prepare(
-        `SELECT entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at FROM utility_scores WHERE entry_id IN (${placeholders})`,
-      )
-      .all(...chunk) as Array<{
-      entry_id: number;
-      utility: number;
-      show_count: number;
-      search_count: number;
-      select_rate: number;
-      last_used_at: string | null;
-      updated_at: string;
-    }>;
-    for (const row of rows) {
-      scores.set(row.entry_id, {
-        entryId: row.entry_id,
-        utility: row.utility,
-        showCount: row.show_count,
-        searchCount: row.search_count,
-        selectRate: row.select_rate,
-        lastUsedAt: row.last_used_at ?? undefined,
-        updatedAt: row.updated_at,
-      });
-    }
+      .prepare(`SELECT ${utilityColumns(db)} FROM utility_scores WHERE entry_id IN (${placeholders})`)
+      .all(...chunk) as UtilityScoreSqlRow[];
+    for (const row of rows) scores.set(row.entry_id, toUtilityScoreRow(row));
   }
   return scores;
 }
@@ -121,9 +139,8 @@ function bareRef(ref: string): string {
 
 /**
  * The bare-form (conceptId) candidate a caller ref matches a stored
- * `usage_events` row under. Post-Chunk-8 every stored row is conceptId-spelled
- * (the one-time §11.4 re-key ran at the migration cutover), so only the conceptId
- * candidate remains — the legacy `type:name` sibling is retired.
+ * `usage_events` row under. Every stored row is conceptId-spelled, so the
+ * conceptId is the only candidate.
  */
 function bareRefCandidates(ref: string): string[] {
   const bare = bareRef(ref.trim());
@@ -149,7 +166,7 @@ function bareRefCandidates(ref: string): string[] {
  * signal here. Summary-only rows with a NULL entry_ref contribute nothing.
  *
  * Machine/eval/unattributed/extension events are excluded: this count feeds
- * salience and ranking, so only explicitly attributed `user` traffic counts.
+ * salience, so only explicitly attributed `user` traffic counts.
  */
 export function getRetrievalCounts(
   indexDb: Database,
@@ -186,8 +203,8 @@ export function getRetrievalCounts(
     // rfind, but stored origins never themselves contain `//`, so a stash ref
     // has exactly one `//` and `substr(... instr ...)` is exact; bare refs have
     // no `//` and are excluded above.
-    // usage_events lives in state.db (Chunk-8 WI-8.3) — this global count needs
-    // no entries join, so it reads state.db directly.
+    // usage_events lives in state.db; this global count needs no entries join,
+    // so it reads state.db directly.
     const rows = stateDb
       .prepare(
         `SELECT
@@ -294,15 +311,17 @@ function getSourceScopedRetrievalCounts(
 }
 
 /**
- * Apply accumulated feedback counts to the utility score of an entry, persisting
- * the result. The bounded-step EMA policy itself (MemRL, F-5 / #386,
- * arXiv:2601.03192) lives in {@link computeNextUtility} (feedback/utility-policy);
- * this function only reads the current utility, applies the policy, and writes
- * the new value.
+ * Apply accumulated feedback counts to an entry's scores, persisting the result.
+ * The bounded-step EMA policy itself (MemRL, #386, arXiv:2601.03192) lives
+ * in {@link computeNextUtility} (feedback/utility-policy); this function only
+ * reads the current scores, applies the policy, and writes the new values.
  *
- * A new entry starts at 0.5 (neutral midpoint) before the EMA step is applied.
- * When there is no feedback (both counts zero) the score is left untouched — no
- * DB write. Returns a {@link FeedbackUtilityResult} so the caller can detect a
+ * Two scores move by the same step. `utility` (which `akm improve` reads) starts
+ * from the stored value, or the 0.5 midpoint for a new entry. `feedback_score`
+ * (which search ranks by) starts from the 0.5 midpoint and moves on feedback
+ * alone, and `feedback_count` becomes the number of events behind it. When there
+ * is no feedback (both counts zero) nothing is written. Returns a
+ * {@link FeedbackUtilityResult} for the `utility` step so the caller can detect a
  * previously high-utility asset crossing below the review threshold and escalate.
  */
 export function applyFeedbackToUtilityScore(
@@ -311,8 +330,9 @@ export function applyFeedbackToUtilityScore(
   positiveCount: number,
   negativeCount: number,
 ): FeedbackUtilityResult {
+  ensureUtilityFeedbackColumns(db);
   const existing = getUtilityScore(db, entryId);
-  const previousUtility = existing?.utility ?? 0.5;
+  const previousUtility = existing?.utility ?? NEUTRAL_UTILITY;
 
   const result = computeNextUtility(previousUtility, positiveCount, negativeCount);
 
@@ -320,16 +340,71 @@ export function applyFeedbackToUtilityScore(
     return result;
   }
 
+  const feedbackScore = computeNextUtility(
+    existing?.feedbackScore ?? NEUTRAL_UTILITY,
+    positiveCount,
+    negativeCount,
+  ).nextUtility;
+  const feedbackCount = positiveCount + negativeCount;
   const now = new Date().toISOString();
   db.prepare(`
-    INSERT INTO utility_scores (entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at)
-    VALUES (?, ?, 0, 0, 0, ?, ?)
+    INSERT INTO utility_scores (entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at, feedback_score, feedback_count)
+    VALUES (?, ?, 0, 0, 0, ?, ?, ?, ?)
     ON CONFLICT(entry_id) DO UPDATE SET
-      utility    = ?,
-      updated_at = ?
-  `).run(entryId, result.nextUtility, now, now, result.nextUtility, now);
+      utility        = ?,
+      updated_at     = ?,
+      feedback_score = ?,
+      feedback_count = ?
+  `).run(
+    entryId,
+    result.nextUtility,
+    now,
+    now,
+    feedbackScore,
+    feedbackCount,
+    result.nextUtility,
+    now,
+    feedbackScore,
+    feedbackCount,
+  );
 
   return result;
+}
+
+/** Store an entry's feedback score and the number of events behind it; `undefined` clears both. */
+export function setFeedbackScore(
+  db: Database,
+  entryId: number,
+  feedback: { score: number; count: number } | undefined,
+): void {
+  db.prepare("UPDATE utility_scores SET feedback_score = ?, feedback_count = ? WHERE entry_id = ?").run(
+    feedback?.score ?? null,
+    feedback?.count ?? 0,
+    entryId,
+  );
+}
+
+/**
+ * Every entry's feedback score, rebuilt from the user-attributed feedback events
+ * in state.db: each entry's signals, oldest first, replayed from the 0.5 midpoint
+ * (see {@link replayFeedbackSignals}). Search and show history never enter it.
+ */
+export function replayUserFeedback(stateDb: Database): Map<number, { score: number; count: number }> {
+  const rows = stateDb
+    .prepare(
+      `SELECT entry_id, signal FROM usage_events
+        WHERE event_type = 'feedback' AND source = 'user' AND entry_id IS NOT NULL
+          AND signal IN ('positive', 'negative')
+        ORDER BY id`,
+    )
+    .all() as Array<{ entry_id: number; signal: "positive" | "negative" }>;
+  const signalsByEntry = new Map<number, Array<"positive" | "negative">>();
+  for (const { entry_id, signal } of rows) {
+    const signals = signalsByEntry.get(entry_id);
+    if (signals) signals.push(signal);
+    else signalsByEntry.set(entry_id, [signal]);
+  }
+  return new Map([...signalsByEntry].map(([entryId, signals]) => [entryId, replayFeedbackSignals(signals)]));
 }
 
 /** One indexed entry with its utility score, or `undefined` scores when it has none. */
