@@ -4,7 +4,7 @@
 
 /**
  * API keys akm holds for the user: `<configDir>/credentials.json`, a flat
- * `{ "<name>": "<key>" }` map (0600, in a 0700 directory), each key stored under
+ * `{ "<name>": "<key>" }` map (0600), each key stored under
  * the name of the block it belongs to: a connection's name, `embedding`, or
  * `curateRerank`. A block whose `apiKey` is a `$VAR` reference reads that
  * variable and never touches this file. The bundle's `secrets/` store is for
