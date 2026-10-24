@@ -127,7 +127,7 @@ describe("shapeSearchHit — local stash hits", () => {
     });
   });
 
-  test("normal adds description and score (and caps description)", () => {
+  test("normal adds ref, description and score (and caps description)", () => {
     const out = shapeSearchHit(fullHit, "normal");
     expect(out).toMatchObject({
       type: "skill",
@@ -136,8 +136,8 @@ describe("shapeSearchHit — local stash hits", () => {
       action: "akm show skills/deploy",
       score: 0.42,
       estimatedTokens: 120,
+      ref: "skills/deploy",
     });
-    expect(out).not.toHaveProperty("ref");
     expect(out).not.toHaveProperty("origin");
     expect(out).not.toHaveProperty("tags");
   });

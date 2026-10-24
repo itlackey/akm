@@ -21,6 +21,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Registry hits from `akm search --from registry|all` carry `installRef` (the ref
   for `akm bundle add`). The brief projection already listed it, but the hit was
   built without it, so `--detail brief` showed only the name and score.
+- `akm search --detail normal` includes `ref` on local hits, as `brief` already
+  did. `normal` was the only level that showed a hit without the ref `akm show`
+  needs.
 
 ## [0.10.261013] - 2026-10-23
 

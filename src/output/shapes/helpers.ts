@@ -330,7 +330,17 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
     // `quality` (v1 spec §4.2) is also surfaced when present so callers
     // can see why a `proposed` entry showed up under `--include-proposed`.
     const shaped = capDescription(
-      pickFields(hit, ["type", "name", "description", "action", "score", "estimatedTokens", "warnings", "quality"]),
+      pickFields(hit, [
+        "type",
+        "name",
+        "ref",
+        "description",
+        "action",
+        "score",
+        "estimatedTokens",
+        "warnings",
+        "quality",
+      ]),
       NORMAL_DESCRIPTION_LIMIT,
     );
     if (Array.isArray(hit.keys) && hit.keys.length > 0) shaped.keys = hit.keys;

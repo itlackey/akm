@@ -102,7 +102,7 @@ describe("output baseline", () => {
     expect(json.hits[0]?.score).toBeDefined();
     expect(typeof json.hits[0]?.description).toBe("string");
     expect(String(json.hits[0]?.description).length).toBeLessThanOrEqual(253); // 250 + "..."
-    expect(Object.keys(json.hits[0] ?? {})).not.toContain("ref");
+    expect(typeof json.hits[0]?.ref).toBe("string");
   });
 
   test("search text output includes score for local hits at normal detail", async () => {
