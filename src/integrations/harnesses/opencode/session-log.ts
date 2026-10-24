@@ -15,13 +15,9 @@ import type { OpenCodeSessionMeta } from "./session-log-types";
 import { hasV1Session, listV1Sessions, readV1Session, V1_TABLES } from "./session-log-v1";
 import { listV2Sessions, readV2Session, V2_TABLES, v2SessionState } from "./session-log-v2";
 
+/** OpenCode's data dir: XDG_DATA_HOME or ~/.local/share on every platform, macOS included (util/src/global-roots.ts). */
 function getOpenCodeBaseDir(): string {
-  // OpenCode honours XDG_DATA_HOME on every platform.
-  if (process.env.XDG_DATA_HOME) return path.join(process.env.XDG_DATA_HOME, "opencode");
-  if (process.platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support", "opencode");
-  }
-  return path.join(os.homedir(), ".local", "share", "opencode");
+  return path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "opencode");
 }
 
 /**
@@ -68,9 +64,9 @@ export class OpenCodeProvider extends AbstractSessionLogProvider implements Sess
     return this.#dbPath(this.#baseDir);
   }
 
-  /** Absolute path to opencode's SQLite store under `base`. */
+  /** Absolute path to opencode's SQLite store under `base`; `OPENCODE_DB` renames it as it does for opencode. */
   #dbPath(base: string): string {
-    return path.join(base, OPENCODE_DB_FILENAME);
+    return path.resolve(base, process.env.OPENCODE_DB || OPENCODE_DB_FILENAME);
   }
 
   /** Classify the store under `location` (default: opencode's data dir) without listing anything. */

@@ -34,6 +34,7 @@ import { LlmCallError } from "../../../../src/llm/client";
 import { formatGateDecisionSummary } from "../../../../src/output/text/proposal-format";
 import { listImproveLedgerRows } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { durableItemRef } from "../../../_helpers/durable-ref";
+import { capturingStdin } from "../../../_helpers/engine-stubs";
 import { makeConfig, quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
 import { type IsolatedAkmStorage, mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
@@ -55,14 +56,14 @@ function asReadableStream(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-function fakeSpawn(stdout: string, stderr: string, exitCode: number): SpawnFn {
+function fakeSpawn(stdout: string, stderr: string, exitCode: number, onStdin?: (text: string) => void): SpawnFn {
   return () => {
     const proc: SpawnedSubprocess = {
       exitCode,
       exited: Promise.resolve(exitCode),
       stdout: asReadableStream(stdout),
       stderr: asReadableStream(stderr),
-      stdin: null,
+      stdin: onStdin ? capturingStdin(onStdin) : null,
       kill: () => undefined,
     };
     return proc;
@@ -975,10 +976,11 @@ describe("Reflect avoid-patterns — run-only guidance reaches the prompt, never
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: Control\n---\n\n${LONG_SOURCE_BODY}\n`;
     let prompt = "";
-    const spawn: SpawnFn = (cmd, opts) => {
-      prompt = cmd.at(-1) ?? "";
-      return fakeSpawn(reflectReply({ description: "Control doc, with a fuller description" }), "", 0)(cmd, opts);
-    };
+    // OpenCode 2 reads its prompt on stdin.
+    const spawn: SpawnFn = (cmd, opts) =>
+      fakeSpawn(reflectReply({ description: "Control doc, with a fuller description" }), "", 0, (text) => {
+        prompt = text;
+      })(cmd, opts);
 
     const result = await akmReflect({
       ref: "knowledge/scaffolding",
@@ -1023,10 +1025,11 @@ describe("Reflect feedback-framing guard — feedback is a signal to investigate
     });
     const payload = reflectReply({ description: "Storage guide, with its layout caveats" });
     let prompt = "";
-    const spawn: SpawnFn = (cmd, opts) => {
-      prompt = cmd.at(-1) ?? "";
-      return fakeSpawn(payload, "", 0)(cmd, opts);
-    };
+    // OpenCode 2 reads its prompt on stdin.
+    const spawn: SpawnFn = (cmd, opts) =>
+      fakeSpawn(payload, "", 0, (text) => {
+        prompt = text;
+      })(cmd, opts);
 
     const result = await akmReflect({
       ref: "knowledge/storage-guide",

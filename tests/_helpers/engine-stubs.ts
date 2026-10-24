@@ -47,8 +47,29 @@ export function serveLlmStub(
 /** What a fake harness binary saw on one call. */
 export interface HarnessCall {
   argv: string[];
+  /** What it read on stdin ("" when nothing was sent). */
+  stdin: string;
   eventSource: string | null;
   cwd: string;
+}
+
+/** The prompt a call carried: on stdin (OpenCode 2), else as its last argument. */
+export function harnessPrompt(call: HarnessCall | undefined): string {
+  return call?.stdin || call?.argv.at(-1) || "";
+}
+
+/** A fake child's stdin that hands what was written to `onText` once akm closes it. */
+export function capturingStdin(onText: (text: string) => void): WritableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  let text = "";
+  return new WritableStream<Uint8Array>({
+    write(chunk) {
+      text += decoder.decode(chunk, { stream: true });
+    },
+    close() {
+      onText(text);
+    },
+  });
 }
 
 /**
@@ -67,7 +88,8 @@ if (argv[0] === "--version") { console.log("opencode v2.0.26"); process.exit(0);
 const countFile = self + ".count";
 const call = (fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, "utf8")) : 0) + 1;
 fs.writeFileSync(countFile, String(call));
-fs.writeFileSync(self + ".call." + call, JSON.stringify({ argv, eventSource: process.env.AKM_EVENT_SOURCE ?? null, cwd: process.cwd() }));
+const stdin = process.stdin.isTTY ? "" : fs.readFileSync(0, "utf8");
+fs.writeFileSync(self + ".call." + call, JSON.stringify({ argv, stdin, eventSource: process.env.AKM_EVENT_SOURCE ?? null, cwd: process.cwd() }));
 const replies = ${JSON.stringify(replies)};
 const text = replies[Math.min(call, replies.length) - 1];
 const format = argv.indexOf("--output-format");

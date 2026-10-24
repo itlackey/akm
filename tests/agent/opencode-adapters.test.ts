@@ -62,14 +62,23 @@ describe("opencode 1 adapter", () => {
 
 describe("opencode 2 adapter", () => {
   test("runs standalone, so no background service is started or left behind", () => {
-    // OpenCode 2 appends what follows `--` to the message it already parsed, so `--` would send the prompt twice.
-    expect(build(2, {}, { prompt: "p" }).argv).toEqual(["opencode", "run", "--standalone", "p"]);
-    expect(build(2, {}, { prompt: "-p" }).argv).toEqual(["opencode", "run", "--standalone", "--", "-p"]);
+    expect(build(2, {}, { prompt: "p" }).argv).toEqual(["opencode", "run", "--standalone"]);
+  });
+
+  test("the prompt goes on stdin, verbatim, once", () => {
+    // OpenCode 2's `run` sends a prompt after `--` twice and quotes a positional one with a space in it.
+    for (const prompt of ["p", "-x leading dash", 'Reply with {"a": "b c"}']) {
+      const cmd = build(2, {}, { prompt });
+      expect(cmd.stdin).toBe(prompt);
+      expect(cmd.argv).not.toContain(prompt);
+      expect(cmd.argv).not.toContain("--");
+    }
+    expect(build(1, {}, { prompt: "p" }).stdin).toBeUndefined();
   });
 
   test("the engine agent default (#1098) reaches --agent, with the model", () => {
     const { argv } = build(2, {}, { prompt: "p", agent: "akm-workflow", model: "a/b#high" });
-    expect(argv).toEqual(["opencode", "run", "--agent", "akm-workflow", "--model", "a/b#high", "--standalone", "p"]);
+    expect(argv).toEqual(["opencode", "run", "--agent", "akm-workflow", "--model", "a/b#high", "--standalone"]);
   });
 
   test("never passes --auto: native approvals stay native", () => {
@@ -83,7 +92,6 @@ describe("opencode 2 adapter", () => {
       "opencode",
       "run",
       "--standalone",
-      "p",
     ]);
     const argv = build(
       2,
@@ -92,7 +100,7 @@ describe("opencode 2 adapter", () => {
         prompt: "p",
       },
     ).argv;
-    expect(argv).toEqual(["opencode", "run", "--server", "http://h:1", "p"]);
+    expect(argv).toEqual(["opencode", "run", "--server", "http://h:1"]);
   });
 
   test("a model named by the request replaces the one in the engine's args", () => {
@@ -104,7 +112,7 @@ describe("opencode 2 adapter", () => {
         model: "a/b",
       },
     ).argv;
-    expect(argv).toEqual(["opencode", "run", "--model", "a/b", "--standalone", "p"]);
+    expect(argv).toEqual(["opencode", "run", "--model", "a/b", "--standalone"]);
   });
 
   test("model work: standalone, the confined agent, the engine's model, and the injected agent definition", () => {
@@ -125,8 +133,8 @@ describe("opencode 2 adapter", () => {
       MODEL_WORK_OPENCODE_AGENT,
       "--model",
       "a/b",
-      "p",
     ]);
+    expect(cmd.stdin).toBe("p");
     const config = JSON.parse(cmd.env?.OPENCODE_CONFIG_CONTENT ?? "null");
     expect(config.agent[MODEL_WORK_OPENCODE_AGENT].options).toEqual({ temperature: 0.2 });
     expect(config.agent[MODEL_WORK_OPENCODE_AGENT].permission).toMatchObject({ "*": "deny", bash: "deny" });

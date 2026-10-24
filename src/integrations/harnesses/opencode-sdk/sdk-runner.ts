@@ -268,8 +268,10 @@ export async function closeServer(): Promise<void> {
  * #564 bug fix (2): the tool list was previously dropped entirely. The CLI
  * builder passes tools as a comma-separated `--allowedTools` flag; the SDK
  * instead wants a per-tool boolean map. A list/comma-string of tool names is
- * treated as an allowlist (each name → true). A structured policy object whose
- * values are already booleans is forwarded as-is.
+ * an allowlist: every other tool is denied first (`"*": false`), since both
+ * majors' default agent allows everything and the last matching rule wins. A
+ * structured policy object whose values are already booleans is forwarded
+ * as-is.
  *
  * Returns `undefined` when there is nothing to forward, so an absent policy
  * leaves the SDK's own defaults untouched (behaviour-preserving for callers
@@ -298,7 +300,7 @@ function toolsToSdkAllowlist(tools: ShowResponse["toolPolicy"]): Record<string, 
     return Object.keys(out).length > 0 ? out : undefined;
   }
   if (names.length === 0) return undefined;
-  const out: Record<string, boolean> = {};
+  const out: Record<string, boolean> = { "*": false };
   for (const n of names) out[n] = true;
   return out;
 }
@@ -320,9 +322,11 @@ function fallbackInference(llmConfig: LlmConnectionConfig | undefined): Executio
  *
  * The model the config routes through `akm-custom` is declared in full, with
  * the dispatch's inference (`../opencode/model-config`): the fallback LLM
- * engine's, under `requestInference`, the request's own. For model work the
- * options go on the confined agent instead of the model, which needs no model
- * named: it runs whichever model opencode picks. A model the user's own opencode
+ * engine's, under `requestInference`, the request's own. For model work on
+ * OpenCode 1 the options go on the confined agent instead of the model, which
+ * needs no model named: it runs whichever model opencode picks. OpenCode 2
+ * never sends an agent's options (its request path reads no `agent.request`),
+ * so there they stay on the declared model. A model the user's own opencode
  * config provides carries none: set inference there.
  */
 export function buildSdkConfig(
@@ -330,13 +334,14 @@ export function buildSdkConfig(
   llmConfig?: LlmConnectionConfig,
   modelWork = false,
   requestInference?: ExecutionJsonObject | null,
+  major: OpencodeMajor = 1,
 ): Record<string, unknown> {
   const endpoint = llmConfig?.endpoint;
   const apiKey = llmConfig?.apiKey;
   const profileModel = profile.model;
   const model = profileModel ?? llmConfig?.model;
   const inference = requestInference === null ? undefined : { ...fallbackInference(llmConfig), ...requestInference };
-  const { entry, agentOptions } = opencodeInferenceConfig(inference, modelWork);
+  const { entry, agentOptions } = opencodeInferenceConfig(inference, modelWork && major === 1);
 
   const sdkConfig: Record<string, unknown> = {};
   if (model) sdkConfig.model = model;
@@ -690,7 +695,7 @@ function getOrStartServer(
   inference?: ExecutionJsonObject | null,
 ): { promise: Promise<SdkServer>; release(): void } {
   if (_testServer) return { promise: Promise.resolve(_testServer), release() {} };
-  const sdkConfig = buildSdkConfig(profile, llmConfig, modelWork, inference);
+  const sdkConfig = buildSdkConfig(profile, llmConfig, modelWork, inference, adapter.major);
   const serverEnv = buildServerEnv(profile, sdkConfig, env, envSource, modelWork);
   const key = serverRegistryKey(adapter, profile, serverEnv);
   let entry = _servers.get(key);
@@ -818,7 +823,9 @@ function rejectPermissionRequests(
         if (event.parentId !== undefined && sessions.has(event.parentId)) sessions.add(event.id);
         continue;
       }
-      if (!sessions.has(event.sessionId)) continue;
+      const ownsUnowned =
+        event.kind === "permission" && event.unowned !== undefined && event.unowned.directory === spec.directory;
+      if (!sessions.has(event.sessionId) && !ownsUnowned) continue;
       if (event.kind === "retry") {
         const retryAt = event.next === undefined ? "unknown time" : new Date(event.next).toISOString();
         notes.push(
@@ -835,7 +842,11 @@ function rejectPermissionRequests(
       }
       if (answered.has(event.requestId)) continue;
       answered.add(event.requestId);
-      notes.push(`permission requested: ${event.description}; auto-rejecting`);
+      notes.push(
+        event.form
+          ? `${event.description} form opened; cancelling`
+          : `permission requested: ${event.description}; auto-rejecting`,
+      );
       adapter.rejectPermission(client, event, spec).catch((err) => {
         notes.push(`permission reply for ${event.requestId} failed: ${errorText(err)}`);
       });

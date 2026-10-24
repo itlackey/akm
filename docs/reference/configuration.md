@@ -170,8 +170,11 @@ with the raw output. To run a particular OpenCode, set the engine's `bin`, e.g.
 
 **Permissions in a dispatch.** akm answers every OpenCode permission request of a
 dispatch with "reject" (there is no one to approve it), and the rejection reaches
-the model as a tool error. akm changes no OpenCode permission default, so what
-gets asked is OpenCode's own setting:
+the model as a tool error. On OpenCode 2 it carries the message `opencode run`
+sends, so the model continues without the action; a question the model asks (the
+`question` tool) or an MCP elicitation is cancelled the same way, so it never
+waits for an answer. akm changes no OpenCode permission default, so what gets
+asked is OpenCode's own setting:
 
 - **OpenCode 1** asks before reading or writing outside the project directory
   (`external_directory`), so akm rejects it.
@@ -181,9 +184,7 @@ gets asked is OpenCode's own setting:
   `"permissions": [{"action": "external_directory", "resource": "*", "effect": "ask"}]`
   (`"read"` and `"shell"` are actions too).
 
-On OpenCode 2 a rejection ends the turn: the dispatch returns `ok: false` with
-`reason: "aborted"` and the declined tool call in `error`. On OpenCode 1 the model
-carries on.
+On both majors the model carries on after a rejection.
 
 On an engine without `timeoutMs`, model work (an improve process, a quality or
 triage judge, or an index pass) stops after 600 seconds, whatever the engine's
@@ -199,17 +200,21 @@ explicit allow-all. The default is an empty list. Asset frontmatter cannot set
 `workspace`, `environment`, or opaque `runtime` values; those belong to local
 engine configuration or workflow environment bindings.
 
-Tool names reach the harness as written, so use the harness's own names. On
-`opencode-sdk` with OpenCode 2 that means OpenCode 2's names: `shell` (not
-`bash`), `edit` (not `write` or `patch`) and `subagent` (not `task`). A name
-OpenCode 2 does not have matches nothing, so `tools: { bash: false }` leaves
-`shell` allowed.
+Tool names reach the harness as written, so use the harness's own names. A
+list of names is an allowlist: on `opencode-sdk` every other tool is denied. On
+`opencode-sdk`, a name only the other OpenCode major has is refused before
+dispatch, since it would match nothing there: on OpenCode 2 write `shell` (not
+`bash`), `edit` (not `write`, `patch` or `apply_patch`) and `subagent` (not
+`task`); on OpenCode 1, `bash` and `task`. Other names, such as a typo or a
+plugin's tool, cannot be checked and still match nothing when the harness has
+no such tool.
 
 `platform: "opencode-sdk"` needs the **`opencode` binary** on PATH (or a `bin`
-pointing at it). akm bundles `@opencode-ai/sdk`, but that package is an HTTP
-client with no dependencies — it spawns `opencode serve` and talks to it — so
-the npm dependency alone does not make the platform usable. Install the binary
-with `npm i -g opencode-ai` or opencode's own installer.
+pointing at it). akm bundles `@opencode-ai/sdk` and `@opencode/client`, but
+those are HTTP clients — akm spawns `opencode serve` and talks to it — so the
+npm dependencies alone do not make the platform usable. Install OpenCode 2 with
+`npm i -g @opencode/cli` or opencode's own installer (`opencode-ai` is
+OpenCode 1).
 
 ### Inference on an agent engine
 
@@ -218,12 +223,15 @@ model in your own opencode config, which akm leaves as it is. akm carries
 inference (`temperature`, `reasoningEffort`, `enableThinking`, `maxTokens`,
 `contextLength`) into opencode only where it writes opencode's config itself:
 
-- **Model work on `opencode` and `opencode-sdk`:** an improve process's `llm`
-  overlay becomes the options of the `akm-model-work` agent that runs the
-  dispatch, so opencode's own title call on the same model keeps its defaults.
-  Only OpenCode 1 sends an agent's options to the model; OpenCode 2 (2.0 and
-  2.1) ignores them, so on OpenCode 2 set inference on the model in your opencode
-  config instead.
+- **Model work on `opencode` and `opencode-sdk`:** on OpenCode 1, an improve
+  process's `llm` overlay becomes the options of the `akm-model-work` agent that
+  runs the dispatch, so opencode's own title call on the same model keeps its
+  defaults. OpenCode 2 never sends an agent's options, so there the overlay goes
+  on the model akm declares under `akm-custom` (an `opencode-sdk` engine's
+  `llmEngine` fallback, below). OpenCode 2.0 sends only `reasoningEffort` from a
+  model's options; 2.1 sends them all. Model work on the `opencode` CLI path, or
+  on a model from your own opencode config, carries none on OpenCode 2: set
+  inference on the model in your opencode config.
 - **An `opencode-sdk` engine's `llmEngine` fallback:** the model akm declares for
   it under `akm-custom` carries the fallback's inference and the request's.
   `maxTokens` and `contextLength` become `limit.output` and `limit.context`, and

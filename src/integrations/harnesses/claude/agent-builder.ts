@@ -78,7 +78,8 @@ export const claudeBuilder: AgentCommandBuilder = {
   lower: createAgentRequestLowerer({
     adapter: "claude",
     personaChannel: "native",
-    tools: "all",
+    // `--allowedTools` takes names; a boolean map has no Claude spelling.
+    tools: "flat",
   }),
   build(profile, req) {
     const modelWork = req.modelWork === true;

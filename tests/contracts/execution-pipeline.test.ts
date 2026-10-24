@@ -40,19 +40,33 @@ function exitedWith(stdout: string): SpawnedSubprocess {
   return { exitCode: 0, exited: Promise.resolve(0), stdout: stream(stdout), stderr: stream(""), kill() {} };
 }
 
-/** Resolve, build and run one execution, returning the argv and env the child would get. */
-async function spawnedFor(input: ResolveExecutionInput): Promise<{ argv: string[]; env: Record<string, string> }> {
+/** Resolve, build and run one execution, returning the argv, env and stdin the child would get. */
+async function spawnedFor(
+  input: ResolveExecutionInput,
+): Promise<{ argv: string[]; env: Record<string, string>; stdin: string | undefined }> {
   const resolved = resolveExecution(input);
   let argv: string[] = [];
   let env: Record<string, string> = {};
+  let stdin: string | undefined;
   const spawn: SpawnFn = (cmd, options) => {
     argv = cmd;
     env = options.env ?? {};
-    return exitedWith("done");
+    const proc = exitedWith("done");
+    if (options.stdin !== "pipe") return proc;
+    stdin = "";
+    const decoder = new TextDecoder();
+    return {
+      ...proc,
+      stdin: new WritableStream<Uint8Array>({
+        write(chunk) {
+          stdin += decoder.decode(chunk, { stream: true });
+        },
+      }),
+    };
   };
   const result = await runExecution(buildExecution(resolved.request, resolved.runner), { runOptions: { spawn } });
   expect(result.ok).toBe(true);
-  return { argv, env };
+  return { argv, env, stdin };
 }
 
 function config(partial: Record<string, unknown>): AkmConfig {
@@ -116,19 +130,15 @@ describe("agent engines: config engine → argv", () => {
     ]);
   });
 
-  test("opencode 2 runs standalone, with the persona composed into its prompt", async () => {
+  test("opencode 2 runs standalone, with the persona composed into its prompt on stdin", async () => {
     fakeOpencodeMajor(2);
-    const { argv } = await spawnedFor({
+    const { argv, stdin } = await spawnedFor({
       content: "Review the diff.",
       config: config({ engines: { oc: { kind: "agent", platform: "opencode" } }, defaults: { engine: "oc" } }),
       persona: reviewer(),
     });
-    expect(argv).toEqual([
-      "opencode",
-      "run",
-      "--standalone",
-      "<AKM_PERSONA>\nYou review carefully.\n</AKM_PERSONA>\n\nReview the diff.",
-    ]);
+    expect(argv).toEqual(["opencode", "run", "--standalone"]);
+    expect(stdin).toBe("<AKM_PERSONA>\nYou review carefully.\n</AKM_PERSONA>\n\nReview the diff.");
   });
 
   test("opencode replaces its profile model flag with the resolved one", async () => {
@@ -151,7 +161,7 @@ describe("agent engines: config engine → argv", () => {
         defaults: { engine: "oc" },
       }),
     });
-    expect(argv).toEqual(["opencode", "run", "--model", "opencode/claude-sonnet-4-6", "--standalone", "Summarise."]);
+    expect(argv).toEqual(["opencode", "run", "--model", "opencode/claude-sonnet-4-6", "--standalone"]);
   });
 
   test("pi passes an exact model through untouched and composes nothing it has no channel for", async () => {
@@ -451,6 +461,31 @@ describe("tool authorization is capped by execution.allowedTools", () => {
     const denied = resolveExecution({ content: "x", config: allowed, current: { tools: ["Bash"] } });
     expect(denied.request.authorization.status).toBe("denied");
     expect(() => buildExecution(denied.request, denied.runner)).toThrow(/not authorized/);
+  });
+
+  test("opencode-sdk refuses a tool name only the other OpenCode major has, and names this major's", () => {
+    const engines = { oc: { kind: "agent", platform: "opencode-sdk" } };
+    const policy = config({ engines, defaults: { engine: "oc" }, execution: { allowedTools: ["*"] } });
+    const build = (tools: unknown) => {
+      const resolved = resolveExecution({ content: "x", config: policy, current: { tools: tools as never } });
+      return () => buildExecution(resolved.request, resolved.runner);
+    };
+    fakeOpencodeMajor(2);
+    expect(build({ bash: false })).toThrow(/OpenCode 2 has no tool named "bash".*"bash" is "shell"/);
+    expect(build(["read", "task"])).toThrow(/"task" is "subagent"/);
+    expect(build({ shell: false, edit: true })).not.toThrow();
+    fakeOpencodeMajor(1);
+    expect(build({ shell: false })).toThrow(/OpenCode 1 has no tool named "shell".*"shell" is "bash"/);
+    expect(build({ bash: false })).not.toThrow();
+  });
+
+  test("claude refuses a boolean tool map: --allowedTools takes names", () => {
+    const resolved = resolveExecution({
+      content: "x",
+      config: config({ engines, defaults: { engine: "claude" }, execution: { allowedTools: ["*"] } }),
+      current: { tools: { Bash: false } as never },
+    });
+    expect(() => buildExecution(resolved.request, resolved.runner)).toThrow(/cannot enforce/);
   });
 
   test("a runner-only resolution has no allowlist, so any tool selection is denied", () => {

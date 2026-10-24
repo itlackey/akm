@@ -18,13 +18,13 @@ import { OpenCodeProvider } from "../../src/integrations/harnesses/opencode/sess
 import { openDatabase } from "../../src/storage/database";
 
 const V1_DDL = `
-CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, title TEXT NOT NULL, directory TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL);
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, title TEXT NOT NULL, directory TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL);
 CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
 CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
 `;
 
 const V2_DDL = `
-CREATE TABLE session_v2 (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, fork_session_id TEXT, directory TEXT NOT NULL, title TEXT, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL);
+CREATE TABLE session_v2 (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, fork_session_id TEXT, directory TEXT NOT NULL, title TEXT, agent TEXT, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL);
 CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
 `;
 
@@ -58,8 +58,23 @@ function firstSession(provider: OpenCodeProvider, location: string) {
   return summary;
 }
 
-function v1Session(db: Db, id: string, directory: string, created: number, texts: Array<[string, string]>): void {
-  db.run("INSERT INTO session VALUES (?, 'p', ?, ?, ?, ?)", id, `v1 ${id}`, directory, created, created + 100);
+function v1Session(
+  db: Db,
+  id: string,
+  directory: string,
+  created: number,
+  texts: Array<[string, string]>,
+  parent: string | null = null,
+): void {
+  db.run(
+    "INSERT INTO session (id, project_id, parent_id, title, directory, time_created, time_updated) VALUES (?, 'p', ?, ?, ?, ?, ?)",
+    id,
+    parent,
+    `v1 ${id}`,
+    directory,
+    created,
+    created + 100,
+  );
   texts.forEach(([role, text], i) => {
     const mid = `msg_${id}_${i}`;
     db.run(
@@ -95,8 +110,21 @@ function v2Message(db: Db, session: string, seq: number, type: string, data: Rec
   );
 }
 
-function v2Session(db: Db, id: string, directory: string, updated = 5000): void {
-  db.run("INSERT INTO session_v2 VALUES (?, 'p', NULL, NULL, ?, NULL, 1000, ?)", id, directory, updated);
+function v2Session(
+  db: Db,
+  id: string,
+  directory: string,
+  updated = 5000,
+  extra: { parent?: string; agent?: string } = {},
+): void {
+  db.run(
+    "INSERT INTO session_v2 (id, project_id, parent_id, directory, agent, time_created, time_updated) VALUES (?, 'p', ?, ?, ?, 1000, ?)",
+    id,
+    extra.parent ?? null,
+    directory,
+    extra.agent ?? null,
+    updated,
+  );
 }
 
 function build(base: string, ddl: string, fill: (db: Db) => void): string {
@@ -126,6 +154,79 @@ describe("OpenCode V1 store", () => {
       ["assistant", "hello"],
     ]);
     expect(warnings).toEqual([]);
+  });
+});
+
+describe("sessions that are not the user's", () => {
+  test("a subagent's child session and akm's own model work are not listed (V2)", () => {
+    const base = makeBase();
+    build(base, V2_DDL, (db) => {
+      v2Session(db, "ses_user", "/work/b", 5000, { agent: "build" });
+      v2Session(db, "ses_child", "/work/b", 5001, { parent: "ses_user" });
+      v2Session(db, "ses_mw", "/tmp/mw", 5002, { agent: "akm-model-work" });
+    });
+    expect(new OpenCodeProvider().listSessions({ location: base }).map((s) => s.sessionId)).toEqual(["ses_user"]);
+  });
+
+  test("a subagent's child session is not listed (V1)", () => {
+    const base = makeBase();
+    build(base, V1_DDL, (db) => {
+      v1Session(db, "ses_user", "/work/a", 2000, [["user", "hi"]]);
+      v1Session(db, "ses_child", "/work/a", 2001, [["user", "You are a subagent"]], "ses_user");
+    });
+    expect(new OpenCodeProvider().listSessions({ location: base }).map((s) => s.sessionId)).toEqual(["ses_user"]);
+  });
+});
+
+describe("the akm plugin's tools in a V2 session", () => {
+  test("remember and feedback calls count as saved; search, show and curate calls are left out", () => {
+    const base = makeBase();
+    build(base, V2_DDL, (db) => {
+      v2Session(db, "ses_p", "/work/p");
+      v2Message(db, "ses_p", 1, "user", { text: "fix the deploy", time: { created: 1001 } });
+      const tool = (id: string, name: string, input: Record<string, unknown>) => ({
+        type: "tool",
+        id,
+        name,
+        state: { status: "completed", input, content: [{ type: "text", text: `{"ok":true,"from":"${name}"}` }] },
+        time: { created: 1002 },
+      });
+      v2Message(db, "ses_p", 2, "assistant", {
+        time: { created: 1002 },
+        content: [
+          tool("t1", "akm_search", { query: "deploy" }),
+          tool("t2", "akm_show", { ref: "skills/deploy" }),
+          tool("t3", "akm_curate", { task: "deploy" }),
+          tool("t4", "akm_remember", { content: "Deploys need the VPN" }),
+          tool("t5", "akm_feedback", { ref: "skills/deploy", sentiment: "negative", note: "missed the VPN step" }),
+        ],
+      });
+    });
+    const provider = new OpenCodeProvider();
+    const read = provider.readSession(firstSession(provider, base));
+    expect(read.inlineRefs).toEqual([
+      { kind: "remember", text: "Deploys need the VPN", ts: 1002 },
+      { kind: "feedback", ref: "skills/deploy", text: "missed the VPN step", ts: 1002 },
+    ]);
+    const text = read.events.map((e) => e.text).join("\n");
+    for (const name of ["akm_search", "akm_show", "akm_curate"]) expect(text).not.toContain(name);
+    expect(text).toContain("[tool:akm_remember]");
+  });
+});
+
+describe("OPENCODE_DB", () => {
+  test("names the store file under the data dir, as it does for opencode", () => {
+    const base = makeBase();
+    const dbPath = build(base, V2_DDL, (db) => v2Session(db, "ses_named", "/work/n"));
+    fs.renameSync(dbPath, path.join(base, "custom.db"));
+    const previous = process.env.OPENCODE_DB;
+    process.env.OPENCODE_DB = "custom.db";
+    try {
+      expect(new OpenCodeProvider().listSessions({ location: base }).map((s) => s.sessionId)).toEqual(["ses_named"]);
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODE_DB;
+      else process.env.OPENCODE_DB = previous;
+    }
   });
 });
 

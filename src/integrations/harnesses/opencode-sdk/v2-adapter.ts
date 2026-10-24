@@ -21,8 +21,9 @@
  *     rules) and the title are `session.create` fields. The prompt carries only
  *     text, so the system text is a session instruction entry.
  *   - `session.prompt` only enqueues. `session.wait` blocks until the session is
- *     idle, and `session.context` then holds the turn: our user message, the
- *     assistant messages and a closing `idle` message with the outcome.
+ *     idle, and the session's messages (`session.message.list`) then hold the
+ *     turn: our user message, the assistant messages and a closing `idle`
+ *     message with the outcome.
  *   - Cancellation is `session.interrupt`; permission requests are answered with
  *     `permission.reply`; the event stream is global, so events are matched to
  *     the dispatch's sessions by id.
@@ -35,7 +36,7 @@ import { randomBytes } from "node:crypto";
 import { OpenCode, type OpenCodeClient, type SessionMessageAssistant, type SessionMessageInfo } from "@opencode/client";
 import { isRecord, toErrorMessage } from "../../../core/common";
 import { sleep } from "../../../runtime";
-import type { AgentTokenUsage } from "../../agent/spawn";
+import type { AgentFailureReason, AgentTokenUsage } from "../../agent/spawn";
 import { parseOpencodeMajor } from "../opencode/version";
 import {
   type OpencodeWireAdapter,
@@ -53,6 +54,14 @@ const SYSTEM_INSTRUCTION_KEY = "akm.system";
 const SERVER_USERNAME = "opencode";
 
 const POLL_INTERVAL_MS = 100;
+/** The session that owns OpenCode 2's MCP elicitations until they move to a real one. */
+const GLOBAL_FORM_SESSION_ID = "global";
+const QUESTION_CANCELLED_FEEDBACK =
+  "This non-interactive run cannot ask the user questions, so the question was cancelled. Continue without an answer; make reasonable assumptions and state them.";
+const PERMISSION_REJECTED_FEEDBACK =
+  "This non-interactive run cannot ask the user for permission, so the request was rejected. Continue without this action.";
+/** The largest page `session.message.list` serves. */
+const MESSAGE_PAGE_SIZE = 200;
 
 /** One finished turn, read from `session.context`. */
 export interface V2Turn {
@@ -98,16 +107,57 @@ export function v2InterruptedTurn(messages: readonly SessionMessageInfo[], userI
     : undefined;
 }
 
+/**
+ * A step OpenCode 2 continues in the next step: one cut off at the output limit
+ * (2.0.29+, core/src/session/runner/llm.ts `OutputLimit`), or one whose stream
+ * broke after output had started (`Continue`, "without repeating completed
+ * content"; runner/step.ts marks it `finish: "error"`).
+ */
+function continuedStep(a: SessionMessageAssistant): boolean {
+  if (a.finish === "length") return true;
+  return (
+    a.finish === "error" && (a.error?.type === "provider.transport" || a.error?.type === "provider.invalid-output")
+  );
+}
+
+/**
+ * The session's messages from the user message `userId` on, oldest first (all of
+ * them while that message is not there yet). Read newest first from the full
+ * timeline (`session.message.list`), not `session.context`, which holds only the
+ * messages after the last compaction: one inside the turn would hide the turn's
+ * own message, and the dispatch would wait for it until its deadline.
+ */
+async function messagesSince(
+  c: OpenCodeClient,
+  sessionID: string,
+  userId: string,
+  signal: AbortSignal,
+): Promise<SessionMessageInfo[]> {
+  const newestFirst: SessionMessageInfo[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await c.message.list(
+      cursor ? { sessionID, limit: MESSAGE_PAGE_SIZE, cursor } : { sessionID, limit: MESSAGE_PAGE_SIZE, order: "desc" },
+      { signal },
+    );
+    for (const message of page.data) {
+      newestFirst.push(message);
+      if (message.id === userId) return newestFirst.reverse();
+    }
+    cursor = page.cursor.next ?? undefined;
+    if (!cursor) return newestFirst.reverse();
+  }
+}
+
 /** Decode a finished turn into the answer, the usage of every step and the failure, if any. */
 function v2PromptResult(turn: V2Turn): WirePromptResult {
-  // OpenCode 2.0.29+ continues a reply cut off at the output limit in a new
-  // step, so the answer is the last text plus the cut-off texts right before it.
+  // The answer is the last text plus the text of the steps it continues.
   const lastText = (a: SessionMessageAssistant) => a.content.filter((c) => c.type === "text").at(-1)?.text;
   const texts: string[] = [];
   for (let i = turn.assistants.length - 1; i >= 0; i--) {
     const assistant = turn.assistants[i] as SessionMessageAssistant;
     const part = lastText(assistant);
-    if (texts.length > 0 && assistant.finish !== "length") break;
+    if (texts.length > 0 && !continuedStep(assistant)) break;
     if (part !== undefined) texts.unshift(part);
   }
   const text = texts.join("");
@@ -128,6 +178,14 @@ function v2PromptResult(turn: V2Turn): WirePromptResult {
   };
 }
 
+/** OpenCode 2 error types (ai/src/provider-error.ts) with an akm failure reason of their own. */
+const FAILURE_REASONS: Readonly<Record<string, AgentFailureReason>> = {
+  "provider.quota": "llm_rate_limit",
+  "provider.free-limit": "llm_rate_limit",
+  "provider.rate-limit": "llm_rate_limit",
+  "provider.content-filter": "llm_content_filter",
+};
+
 function v2Failure(turn: V2Turn): WireFailure | undefined {
   if (turn.outcome === "interrupted") {
     // Say why when the last step says so, e.g. "Step interrupted: The user declined this tool call".
@@ -140,11 +198,12 @@ function v2Failure(turn: V2Turn): WireFailure | undefined {
   }
   const last = turn.assistants.at(-1);
   if (turn.outcome === "failed") {
-    const error = [...turn.assistants].reverse().find((a) => a.error)?.error ?? turn.error;
+    // The idle message's error is what failed the turn; an earlier step's may have been recovered from.
+    const error = turn.error ?? [...turn.assistants].reverse().find((a) => a.error)?.error;
     if (error?.type === "output-limit")
       return { reason: "parse_error", message: `OpenCode reply was cut off at the output limit (${error.message})` };
     return {
-      reason: "non_zero_exit",
+      reason: (error && FAILURE_REASONS[error.type]) ?? "non_zero_exit",
       message: error ? `${error.type}: ${error.message}` : "OpenCode session failed",
     };
   }
@@ -218,7 +277,7 @@ export const V2_ADAPTER: OpencodeWireAdapter = {
     const user = await c.session.prompt({ sessionID: sessionId, text }, { signal });
     for (;;) {
       await c.session.wait({ sessionID: sessionId }, { signal });
-      const messages = await c.session.context({ sessionID: sessionId }, { signal });
+      const messages = await messagesSince(c, sessionId, user.id, signal);
       const turn = v2Turn(messages, user.id) ?? v2InterruptedTurn(messages, user.id);
       if (turn) return v2PromptResult(turn);
       // `wait` can return before the queued prompt starts; look again.
@@ -285,14 +344,48 @@ export const V2_ADAPTER: OpencodeWireAdapter = {
         description: `${String(action ?? "unknown")} (${patterns.join(", ")})`,
       };
     }
+    // The `question` tool and MCP elicitations wait for a form reply nobody can give here.
+    if (raw.type === "form.created" && isRecord(data.form)) {
+      const { id, sessionID, metadata } = data.form;
+      if (typeof id !== "string" || typeof sessionID !== "string") return undefined;
+      const kind = isRecord(metadata) && typeof metadata.kind === "string" ? metadata.kind : "form";
+      const location = isRecord(raw.location) ? raw.location : undefined;
+      return {
+        kind: "permission",
+        requestId: id,
+        sessionId: sessionID,
+        description: kind,
+        form: { question: kind === "question" },
+        ...(sessionID === GLOBAL_FORM_SESSION_ID && typeof location?.directory === "string"
+          ? { unowned: { directory: location.directory } }
+          : {}),
+      };
+    }
     return undefined;
   },
 
+  // Both answers carry the message `opencode run` sends (cli/src/run/noninteractive.ts), so the model
+  // reads why and continues without the action or the answer.
   async rejectPermission(client, event) {
-    await (client as OpenCodeClient).permission.reply({
+    const c = client as OpenCodeClient;
+    if (event.form) {
+      await c.session.form.cancel(
+        {
+          sessionID: event.sessionId,
+          formID: event.requestId,
+          ...(event.form.question ? { message: QUESTION_CANCELLED_FEEDBACK } : {}),
+        },
+        ...(event.unowned
+          ? [{ headers: { "x-opencode-directory": encodeURIComponent(event.unowned.directory) } }]
+          : []),
+      );
+      return;
+    }
+    await c.permission.reply({
       sessionID: event.sessionId,
       requestID: event.requestId,
       decision: "reject",
+      message: PERMISSION_REJECTED_FEEDBACK,
     });
   },
 };

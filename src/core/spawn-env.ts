@@ -86,6 +86,8 @@ export const XDG_BASE_DIR_ENV_PASSTHROUGH = [
 export const OPENCODE_ENV_PASSTHROUGH = [
   "OPENCODE_API_KEY",
   "OPENCODE_CONFIG",
+  // OpenCode 2's global config directory (util/src/global.ts); `akm setup` reads it too.
+  "OPENCODE_CONFIG_DIR",
   ...XDG_BASE_DIR_ENV_PASSTHROUGH,
 ] as const;
 

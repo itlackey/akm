@@ -556,7 +556,7 @@ or CI image, either install opencode and let the fallback apply, or choose an
 engine explicitly:
 
 ```sh
-npm i -g opencode-ai           # fallback route: puts `opencode` on PATH
+npm i -g @opencode/cli         # fallback route: puts `opencode` on PATH
 # ...or pick an engine yourself:
 akm config set engines.claude '{"kind":"agent","platform":"claude"}'
 akm config set defaults.engine claude

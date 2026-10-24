@@ -30,6 +30,7 @@ import {
 } from "../../../../src/integrations/agent/conversation-fallback";
 import { FALLBACK_ANNOUNCEMENT } from "../../../../src/integrations/agent/engine-fallback";
 import { durableItemRef } from "../../../_helpers/durable-ref";
+import { capturingStdin } from "../../../_helpers/engine-stubs";
 import { quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
 import {
   type Cleanup,
@@ -71,29 +72,31 @@ function asReadableStream(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-function fakeSpawn(stdout: string, stderr: string, exitCode: number): SpawnFn {
+function fakeSpawn(stdout: string, stderr: string, exitCode: number, onStdin?: (text: string) => void): SpawnFn {
   return () => {
     const proc: SpawnedSubprocess = {
       exitCode,
       exited: Promise.resolve(exitCode),
       stdout: asReadableStream(stdout),
       stderr: asReadableStream(stderr),
-      stdin: null,
+      stdin: onStdin ? capturingStdin(onStdin) : null,
       kill: () => undefined,
     };
     return proc;
   };
 }
 
+/** A fake spawn that hands `capture` each call's prompt: its stdin (OpenCode 2), else its last argument. */
 function fakeSpawnWithCapture(
   stdout: string,
   stderr: string,
   exitCode: number,
-  capture: (cmd: string[]) => void,
+  capture: (prompt: string, cmd: string[]) => void,
 ): SpawnFn {
-  return (cmd) => {
-    capture(cmd);
-    return fakeSpawn(stdout, stderr, exitCode)(cmd, {});
+  return (cmd, opts) => {
+    if (opts.stdin !== "pipe") capture(cmd.at(-1) ?? "", cmd);
+    const onStdin = opts.stdin === "pipe" ? (text: string) => capture(text, cmd) : undefined;
+    return fakeSpawn(stdout, stderr, exitCode, onStdin)(cmd, opts);
   };
 }
 
@@ -160,10 +163,9 @@ describe("akm reflect", () => {
   test("self-refine preserves direct conversation roles through the agent fallback lowerer", async () => {
     const stash = makeStashDir();
     const prompts: string[] = [];
-    const spawn: SpawnFn = (cmd) => {
-      prompts.push(cmd.at(-1) ?? "");
-      return fakeSpawn(VALID_LESSON_PAYLOAD, "", 0)(cmd, {});
-    };
+    const spawn = fakeSpawnWithCapture(VALID_LESSON_PAYLOAD, "", 0, (prompt) => {
+      prompts.push(prompt);
+    });
 
     const result = await akmReflect({
       ref: "lessons/rg-over-grep",
@@ -216,8 +218,8 @@ describe("akm reflect", () => {
       stashDir: selected,
       config: quietQualityGateConfig(),
       runAgentOptions: {
-        spawn: fakeSpawnWithCapture(VALID_LESSON_PAYLOAD, "", 0, (cmd) => {
-          prompt = cmd.at(-1) ?? "";
+        spawn: fakeSpawnWithCapture(VALID_LESSON_PAYLOAD, "", 0, (captured) => {
+          prompt = captured;
         }),
       },
     });
@@ -244,8 +246,8 @@ describe("akm reflect", () => {
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: {
-        spawn: fakeSpawnWithCapture("not json", "", 0, (cmd) => {
-          prompt ||= cmd.at(-1) ?? "";
+        spawn: fakeSpawnWithCapture("not json", "", 0, (captured) => {
+          prompt ||= captured;
         }),
       },
     });
@@ -467,8 +469,8 @@ describe("akm reflect", () => {
       // The asset the reply names, read once it has named it.
       assetContent: LESSON_SOURCE,
       runAgentOptions: {
-        spawn: fakeSpawnWithCapture(unscoped, "", 0, (cmd) => {
-          prompt = cmd.at(-1) ?? "";
+        spawn: fakeSpawnWithCapture(unscoped, "", 0, (captured) => {
+          prompt = captured;
         }),
       },
     });
@@ -489,7 +491,7 @@ describe("akm reflect", () => {
 
   test("asks an agent for the same JSON reply as an LLM: its schema is the output schema", async () => {
     const stash = makeStashDir();
-    let capturedCmd: string[] = [];
+    let capturedPrompt = "";
     let capturedStdoutMode: string | undefined;
     let capturedStderrMode: string | undefined;
     const result = await akmReflect({
@@ -500,10 +502,11 @@ describe("akm reflect", () => {
       assetContent: LESSON_SOURCE,
       runAgentOptions: {
         spawn: (cmd, opts) => {
-          capturedCmd = cmd;
           capturedStdoutMode = opts.stdout;
           capturedStderrMode = opts.stderr;
-          return fakeSpawn(VALID_LESSON_PAYLOAD, "", 0)(cmd, opts);
+          return fakeSpawnWithCapture(VALID_LESSON_PAYLOAD, "", 0, (prompt) => {
+            capturedPrompt = prompt;
+          })(cmd, opts);
         },
       },
     });
@@ -513,7 +516,7 @@ describe("akm reflect", () => {
     expect(capturedStderrMode).toBe("pipe");
     // Under the model-work tool policy an agent edits only its own scratch directory, so the
     // proposal comes back on stdout, as the JSON object an LLM engine gets natively.
-    const prompt = capturedCmd.at(-1) ?? "";
+    const prompt = capturedPrompt;
     expect(prompt).toContain("Task / focus: Tighten the guidance");
     expect(prompt).toContain("Respond only through the provider's native JSON schema.");
     expect(

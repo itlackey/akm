@@ -148,7 +148,7 @@ describe("runOpencodeSdk — #564 bug fix (1): systemPrompt forwarding", () => {
 });
 
 describe("runOpencodeSdk — #564 bug fix (2): tools forwarding", () => {
-  test("forwards a tool list as a {name: true} allowlist map", async () => {
+  test("forwards a tool list as an allowlist that denies every other tool", async () => {
     const capture: PromptCapture = {};
     const fake = makeFakeServer(capture);
     __setTestServer(fake.server as never);
@@ -159,7 +159,8 @@ describe("runOpencodeSdk — #564 bug fix (2): tools forwarding", () => {
     });
 
     expect(res.ok).toBe(true);
-    expect(capture.body?.tools).toEqual({ read: true, write: true });
+    // An allowlist: every other tool is denied first.
+    expect(capture.body?.tools).toEqual({ "*": false, read: true, write: true });
   });
 
   test("forwards a comma-separated tool string as an allowlist map", async () => {
@@ -172,7 +173,7 @@ describe("runOpencodeSdk — #564 bug fix (2): tools forwarding", () => {
       timeoutMs: null,
     });
 
-    expect(capture.body?.tools).toEqual({ read: true, write: true, bash: true });
+    expect(capture.body?.tools).toEqual({ "*": false, read: true, write: true, bash: true });
   });
 
   test("omits tools when none are provided (behaviour-preserving)", async () => {
@@ -607,6 +608,24 @@ describe("buildSdkConfig — inference", () => {
     expect(agent?.options).toEqual({ temperature: 0.2, reasoningEffort: "low" });
     expect(agent?.permission).toMatchObject({ "*": "deny", bash: "deny" });
     expect(models(config)).toEqual({ "stub-model": { limit: { context: 120000, output: 4096 } } });
+  });
+
+  // OpenCode 2 never sends an agent's options (its request path reads no
+  // `agent.request`), so there the declared model carries them instead.
+  test("model work on OpenCode 2: the declared model carries the options, and the agent none", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const inference = { temperature: 0.2, reasoningEffort: "low", maxTokens: 4096, contextLength: 120000 };
+    const config = buildSdkConfig(baseProfile, { endpoint, model: "stub-model" }, true, inference, 2);
+
+    const agent = (config.agent as Record<string, { options?: unknown; permission: unknown }>)["akm-model-work"];
+    expect(agent?.options).toBeUndefined();
+    expect(agent?.permission).toMatchObject({ "*": "deny" });
+    expect(models(config)).toEqual({
+      "stub-model": {
+        options: { temperature: 0.2, reasoningEffort: "low" },
+        limit: { context: 120000, output: 4096 },
+      },
+    });
   });
 
   // The model-work agent runs whichever model opencode picks, so it carries the
@@ -1146,7 +1165,7 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
   // A provider that reads its key from the environment (OpenCode Go: OPENCODE_API_KEY) failed with
   // "Unexpected server error" because the SDK server never received it. It gets the same OpenCode
   // names the `opencode` CLI profile passes, and a different key value starts another server.
-  test("OPENCODE_API_KEY and OPENCODE_CONFIG reach the server, nothing else does, and a different key starts another one", async () => {
+  test("OPENCODE_API_KEY, OPENCODE_CONFIG and OPENCODE_CONFIG_DIR reach the server, nothing else does, and a different key starts another one", async () => {
     const environments: Record<string, string>[] = [];
     __setServerFactory(((options: { env: Record<string, string> }) => {
       environments.push(options.env);
@@ -1157,6 +1176,7 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
       PATH: "/safe/bin",
       OPENCODE_API_KEY: key,
       OPENCODE_CONFIG: "/safe/opencode.json",
+      OPENCODE_CONFIG_DIR: "/safe/opencode-config",
       OPENAI_API_KEY: "must-not-leak",
       AMBIENT_CLOUD_TOKEN: "must-not-leak",
     });
@@ -1171,6 +1191,7 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
       PATH: "/safe/bin",
       OPENCODE_API_KEY: "key-a",
       OPENCODE_CONFIG: "/safe/opencode.json",
+      OPENCODE_CONFIG_DIR: "/safe/opencode-config",
       OPENCODE_CONFIG_CONTENT: "{}",
     });
     expect(environments[1]?.OPENCODE_API_KEY).toBe("key-b");

@@ -42,12 +42,14 @@ import { detectOpencodeMajor } from "./version";
 const STANDALONE_FLAG = "--standalone";
 
 /**
- * The prompt argument. OpenCode 2's `run` appends everything after `--` to the
- * positional message it already parsed, so the prompt would reach the model
- * twice; `--` stays only where a leading `-` needs it.
+ * How the prompt reaches `run`. OpenCode 2 sends a positional prompt twice when
+ * it follows `--` (cli/src/commands/handlers/run.ts appends the args after `--`
+ * to the message it already parsed) and quotes any argument with a space in it
+ * (run/run.ts `formatMessage`), so on major 2 the prompt goes on stdin, which
+ * `run` reads verbatim. OpenCode 1 takes it after `--`.
  */
-function promptArgs(major: 1 | 2, prompt: string): string[] {
-  return major === 2 && !prompt.startsWith("-") ? [prompt] : ["--", prompt];
+function withPrompt(major: 1 | 2, argv: string[], prompt: string): Pick<BuiltCommand, "argv" | "stdin"> {
+  return major === 2 ? { argv, stdin: prompt } : { argv: [...argv, "--", prompt] };
 }
 
 function standalone(major: 1 | 2, flags: readonly string[]): string[] {
@@ -118,15 +120,18 @@ export const opencodeBuilder: AgentCommandBuilder = {
       const model = req.model ?? modelFromArgs(profile.args);
       const { agentOptions } = opencodeInferenceConfig(req.inference, true);
       return {
-        argv: [
-          profile.bin,
-          "run",
-          ...standalone(major, []),
-          "--agent",
-          MODEL_WORK_OPENCODE_AGENT,
-          ...(model ? ["--model", model] : []),
-          ...promptArgs(major, req.prompt),
-        ],
+        ...withPrompt(
+          major,
+          [
+            profile.bin,
+            "run",
+            ...standalone(major, []),
+            "--agent",
+            MODEL_WORK_OPENCODE_AGENT,
+            ...(model ? ["--model", model] : []),
+          ],
+          req.prompt,
+        ),
         env: {
           ...modelWorkPluginEnv(),
           OPENCODE_CONFIG_CONTENT: JSON.stringify(modelWorkOpencodeConfig(agentOptions)),
@@ -134,6 +139,6 @@ export const opencodeBuilder: AgentCommandBuilder = {
       };
     }
     const flags = ordinaryFlags(profile, req);
-    return { argv: [profile.bin, ...flags, ...standalone(major, flags), ...promptArgs(major, req.prompt)] };
+    return withPrompt(major, [profile.bin, ...flags, ...standalone(major, flags)], req.prompt);
   },
 };

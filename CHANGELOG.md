@@ -12,23 +12,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   2.1.4 (with Effect 4.0.1), and its real-binary tests pass against OpenCode 2.1.4
   and 2.0.26, so OpenCode 2.0 keeps working. Session history and extraction read
   sessions written by 2.1 as before.
+- A tool list on an `opencode-sdk` engine is now an allowlist (#1244): every
+  other tool is denied. It used to only allow the listed tools on top of the
+  agent's own allow-everything default, so it restricted nothing.
+- `opencode-sdk` refuses a tool name only the other OpenCode major has, before
+  dispatch (#1244). OpenCode 2 renamed `bash` to `shell`, `write`/`patch` to
+  `edit` and `task` to `subagent`, and a name it does not have matches nothing,
+  so `tools: { bash: false }` left the shell allowed. The error names the right
+  tool. A `claude` engine refuses a true/false tool map, which `--allowedTools`
+  cannot express.
+- On OpenCode 2, a rejected permission request and a question the model asks
+  carry the message `opencode run` sends, so the model continues without the
+  action or the answer (#1244). A rejection used to end the dispatch as
+  `aborted`.
+- On OpenCode 2, model work's inference (temperature, reasoning effort,
+  thinking) goes on the model akm declares for an `opencode-sdk` engine's LLM
+  fallback (#1244). OpenCode 2 never sends an agent's options, so it reached no
+  model. OpenCode 2.0 sends only the reasoning effort from there; 2.1 sends all.
+- Session history and extraction leave out a subagent's child session, which is
+  part of its parent's session, and akm's own model-work sessions on OpenCode 2
+  (#1244). An `akm_remember` or `akm_feedback` call through the OpenCode 2 plugin
+  now counts as already saved, as the `akm remember` command does, and the
+  plugin's search, show and curate calls are left out.
+- OpenCode install hints name OpenCode 2 (`npm i -g @opencode/cli`) (#1244).
 
 ### Fixed
 
+- An `akm agent` dispatch on OpenCode 2 no longer waits until its deadline (by
+  default forever) when OpenCode compacts the session during the turn (#1244).
+  akm looked for its prompt only in the messages after the last compaction.
+- An `akm agent` dispatch on OpenCode 2 no longer hangs when the model uses the
+  `question` tool or an MCP server asks for input (#1244). akm now cancels the
+  form, as `opencode run` does.
 - On OpenCode 2.0.29 and later, a reply cut off at the output limit is the whole
-  reply again (#1244). OpenCode now continues such a reply in a new step, and akm
-  returned only the continuation. akm now joins the cut-off text and its
-  continuation. A reply still cut off after OpenCode's continuations is reported
-  as cut off at the output limit, not as a bare "OpenCode session failed".
-- `akm agent` on the OpenCode 2 CLI path no longer sends the prompt twice (#1244).
-  OpenCode 2's `run` appends whatever follows `--` to the message it already read,
-  so akm passes the prompt without `--` (unless it starts with `-`).
+  reply again (#1244). OpenCode continues such a reply in a new step, and akm
+  returned only the continuation. akm now joins them, and also keeps the start
+  of a reply whose stream broke and that OpenCode continued. A reply still cut
+  off after OpenCode's continuations is reported as cut off at the output limit.
+- A failed OpenCode 2 turn reports the error that failed it (#1244): a usage,
+  quota or rate limit is `llm_rate_limit`, a content filter
+  `llm_content_filter`.
+- The OpenCode 2 CLI path sends the prompt on stdin (#1244). On the command line
+  OpenCode 2 sent it twice and wrapped it in quotes with every `"` escaped, which
+  altered JSON in model-work prompts. Sending a stdin payload to a child also
+  works under Bun now; it never reached the child before.
 - Model work on OpenCode 2 can no longer write into your stash (#1244). The
   stash's edit-deny rule only matched OpenCode 1's path form.
-- `akm agent` on OpenCode 2 reports provider retries and stops on a usage limit
-  again (#1244). It listened for an event OpenCode 2 never sends.
-- `akm proposal extract --type opencode` and session listing find OpenCode's
-  sessions when `XDG_DATA_HOME` is set, as OpenCode itself does (#1244).
+- `akm agent` on OpenCode 2 notes provider retries again (#1244). It listened
+  for an event OpenCode 2 never sends.
+- OpenCode sessions are found where OpenCode keeps them on every platform:
+  `XDG_DATA_HOME`, or `~/.local/share`, macOS included (#1244). akm looked in
+  `~/Library/Application Support` on macOS and ignored `XDG_DATA_HOME`. It also
+  follows `OPENCODE_DB` now.
+- An `opencode-sdk` engine passes `OPENCODE_CONFIG_DIR` to OpenCode (#1244), so
+  the server sees the providers and plugins configured there.
 
 ## [0.10.261013] - 2026-10-23
 

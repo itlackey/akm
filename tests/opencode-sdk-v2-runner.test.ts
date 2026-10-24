@@ -43,6 +43,9 @@ const profile: AgentProfile = {
 type Msg = Record<string, unknown>;
 
 const USER = { id: "msg-user", type: "user", text: "p" };
+/** The feedback `opencode run` sends with a rejection, so the model continues without the action. */
+const REJECTED =
+  "This non-interactive run cannot ask the user for permission, so the request was rejected. Continue without this action.";
 const IDLE_OK = { id: "msg-idle", type: "idle", outcome: "succeeded" };
 const assistant = (id: string, text: string, extra: Msg = {}): Msg => ({
   id,
@@ -85,8 +88,10 @@ function eventFeed() {
 }
 
 interface FakeOptions {
-  /** What `session.context` returns on each call (the last entry repeats). */
+  /** The session's message timeline, oldest first, on each read (the last entry repeats). */
   contexts?: Msg[][];
+  /** Page size `message.list` serves (default: the requested limit). */
+  pageSize?: number;
   promptImpl?: () => Promise<unknown>;
   waitImpl?: () => Promise<void>;
   feed?: ReturnType<typeof eventFeed>;
@@ -99,12 +104,26 @@ function makeFakeV2(opts: FakeOptions = {}) {
     put: [] as Msg[],
     interrupt: [] as Msg[],
     reply: [] as Msg[],
+    cancel: [] as { input: Msg; options?: unknown }[],
+    list: [] as Msg[],
     remove: 0,
   };
   const feed = opts.feed ?? eventFeed();
   const contexts = opts.contexts ?? [[USER, assistant("msg-a", "ok-response"), IDLE_OK]];
   let contextCall = 0;
+  let timeline: Msg[] = [];
   const client = {
+    // `session.message.list`, newest first, paged by an opaque cursor.
+    message: {
+      list: async (input: { limit?: number; cursor?: string }) => {
+        calls.list.push(input);
+        if (input.cursor === undefined) timeline = contexts[Math.min(contextCall++, contexts.length - 1)] ?? [];
+        const newest = [...timeline].reverse();
+        const start = input.cursor === undefined ? 0 : Number(input.cursor);
+        const end = start + (opts.pageSize ?? input.limit ?? 200);
+        return { data: newest.slice(start, end), cursor: end < newest.length ? { next: String(end) } : {} };
+      },
+    },
     session: {
       create: async (input: Msg) => {
         calls.create.push(input);
@@ -118,7 +137,15 @@ function makeFakeV2(opts: FakeOptions = {}) {
       wait: async () => {
         if (opts.waitImpl) await opts.waitImpl();
       },
-      context: async () => contexts[Math.min(contextCall++, contexts.length - 1)],
+      // Only the messages after the last compaction: akm must not read the turn from here.
+      context: async () => {
+        throw new Error("session.context read");
+      },
+      form: {
+        cancel: async (input: Msg, options?: unknown) => {
+          calls.cancel.push({ input, ...(options ? { options } : {}) });
+        },
+      },
       interrupt: async (input: Msg) => {
         calls.interrupt.push(input);
         return { interrupted: true };
@@ -185,7 +212,9 @@ describe("OpenCode 2 adapter — session and result", () => {
         title: "akm",
         agent: "Review-Team.Exact",
         location: { directory: "/work/tree" },
+        // A list is an allowlist: every other tool is denied first, and the last matching rule wins.
         permissions: [
+          { action: "*", resource: "*", effect: "deny" },
           { action: "read", resource: "*", effect: "allow" },
           { action: "grep", resource: "*", effect: "allow" },
         ],
@@ -202,14 +231,14 @@ describe("OpenCode 2 adapter — session and result", () => {
     const fake = makeFakeV2();
     __setTestServer(fake.server as never);
     await runOpencodeSdk(profile, "p", {
-      dispatch: { prompt: "p", tools: { bash: false, read: true } as never },
+      dispatch: { prompt: "p", tools: { shell: false, read: true } as never },
       timeoutMs: null,
     });
     expect(fake.calls.create).toEqual([
       {
         title: "akm",
         permissions: [
-          { action: "bash", resource: "*", effect: "deny" },
+          { action: "shell", resource: "*", effect: "deny" },
           { action: "read", resource: "*", effect: "allow" },
         ],
       },
@@ -348,7 +377,9 @@ describe("OpenCode 2 adapter — failures", () => {
     expect(res.error).toContain("Step interrupted");
     expect(res.error).toContain("The user declined this tool call");
     expect(res.stderr).toContain("permission requested: shell (date); auto-rejecting");
-    expect(fake.calls.reply).toEqual([{ sessionID: "sess-v2", requestID: "perm-1", decision: "reject" }]);
+    expect(fake.calls.reply).toEqual([
+      { sessionID: "sess-v2", requestID: "perm-1", decision: "reject", message: REJECTED },
+    ]);
     expect(res.sessionId).toBe("sess-v2");
   });
 
@@ -375,6 +406,108 @@ describe("OpenCode 2 adapter — failures", () => {
     expect(res.ok).toBe(false);
     expect(res.reason).toBe("parse_error");
     expect(res.stdout).toBe("partial");
+  });
+
+  test("a turn with a compaction inside it is still found and answered", async () => {
+    // `session.context` would hold only what follows the compaction, without our user message.
+    const fake = makeFakeV2({
+      contexts: [
+        [
+          USER,
+          assistant("msg-a", "", { content: [], finish: "tool-calls" }),
+          { id: "msg-c", type: "compaction", status: "completed", auto: true },
+          assistant("msg-b", "final"),
+          IDLE_OK,
+        ],
+      ],
+    });
+    __setTestServer(fake.server as never);
+    const res = await runOpencodeSdk(profile, "p", { timeoutMs: null });
+    expect(res.ok).toBe(true);
+    expect(res.stdout).toBe("final");
+  });
+
+  test("the turn is found across pages of a long history, newest first", async () => {
+    const older = Array.from({ length: 5 }, (_, i) => ({ id: `msg-old-${i}`, type: "user", text: "earlier" }));
+    const fake = makeFakeV2({
+      pageSize: 2,
+      contexts: [[...older, USER, assistant("msg-a", "late answer"), IDLE_OK]],
+    });
+    __setTestServer(fake.server as never);
+    const res = await runOpencodeSdk(profile, "p", { timeoutMs: null });
+    expect(res.stdout).toBe("late answer");
+    expect(fake.calls.list[0]).toMatchObject({ sessionID: "sess-v2", order: "desc" });
+    // Paging stops at our user message: the older history is never read.
+    expect(fake.calls.list).toHaveLength(2);
+  });
+
+  test("the idle message's error is the turn's failure, not an earlier step's recovered one", async () => {
+    const fake = makeFakeV2({
+      contexts: [
+        [
+          USER,
+          assistant("msg-a", "a", {
+            finish: "error",
+            error: { type: "provider.transport", message: "Connection lost" },
+          }),
+          assistant("msg-b", "b", { finish: "length" }),
+          {
+            id: "msg-idle",
+            type: "idle",
+            outcome: "failed",
+            error: { type: "output-limit", message: "Response still truncated" },
+          },
+        ],
+      ],
+    });
+    __setTestServer(fake.server as never);
+    const res = await runOpencodeSdk(profile, "p", { timeoutMs: null });
+    expect(res.reason).toBe("parse_error");
+    expect(res.error).toContain("cut off at the output limit");
+  });
+
+  test("a reply whose stream broke and that OpenCode continued keeps the text from before the break", async () => {
+    const fake = makeFakeV2({
+      contexts: [
+        [
+          USER,
+          assistant("msg-a", "HEAD-", {
+            finish: "error",
+            error: { type: "provider.transport", message: "Connection lost" },
+          }),
+          {
+            id: "msg-syn",
+            type: "synthetic",
+            text: "Continue from where you left off without repeating completed content.",
+          },
+          assistant("msg-b", "TAIL", { finish: "stop" }),
+          IDLE_OK,
+        ],
+      ],
+    });
+    __setTestServer(fake.server as never);
+    const res = await runOpencodeSdk(profile, "p", { timeoutMs: null });
+    expect(res.ok).toBe(true);
+    expect(res.stdout).toBe("HEAD-TAIL");
+  });
+
+  test("a provider content filter fails the turn as llm_content_filter", async () => {
+    const fake = makeFakeV2({
+      contexts: [
+        [
+          USER,
+          {
+            id: "msg-idle",
+            type: "idle",
+            outcome: "failed",
+            error: { type: "provider.content-filter", message: "blocked" },
+          },
+        ],
+      ],
+    });
+    __setTestServer(fake.server as never);
+    const res = await runOpencodeSdk(profile, "p", { timeoutMs: null });
+    expect(res.reason).toBe("llm_content_filter");
   });
 
   test("a reply OpenCode continues after the output limit is the cut-off text plus its continuation", async () => {
@@ -436,7 +569,7 @@ describe("OpenCode 2 adapter — failures", () => {
     });
     __setTestServer(fake.server as never);
     const res = await runOpencodeSdk(profile, "p", { timeoutMs: null });
-    expect(res.reason).toBe("non_zero_exit");
+    expect(res.reason).toBe("llm_rate_limit");
     expect(res.error).toBe("provider.free-limit: limit");
   });
 
@@ -502,11 +635,47 @@ describe("OpenCode 2 adapter — permission requests and retries", () => {
 
     expect(res.ok).toBe(true);
     expect(fake.calls.reply).toEqual([
-      { sessionID: "sess-v2", requestID: "perm-1", decision: "reject" },
-      { sessionID: "sub-1", requestID: "perm-2", decision: "reject" },
+      { sessionID: "sess-v2", requestID: "perm-1", decision: "reject", message: REJECTED },
+      { sessionID: "sub-1", requestID: "perm-2", decision: "reject", message: REJECTED },
     ]);
     expect(res.stderr).toContain("permission requested: external_directory (/etc/*); auto-rejecting");
     expect(fake.feed.closed()).toBe(1);
+  });
+
+  test("cancels the question tool's form with a message, and an unowned form in the dispatch's directory; other sessions' forms are left alone", async () => {
+    const feed = eventFeed();
+    const form = (id: string, sessionID: string, kind: string, directory = "/work/tree") => ({
+      type: "form.created",
+      location: { directory },
+      data: { form: { id, sessionID, metadata: { kind } } },
+    });
+    const fake = makeFakeV2({
+      feed,
+      waitImpl: async () => {
+        feed.push(form("form-q", "sess-v2", "question"));
+        feed.push(form("form-mcp", "global", "mcp-elicitation"));
+        feed.push(form("form-elsewhere", "global", "mcp-elicitation", "/other/dir"));
+        feed.push(form("form-other", "someone-else", "question"));
+        await new Promise((r) => setTimeout(r, 30));
+      },
+    });
+    __setTestServer(fake.server as never);
+    const res = await runOpencodeSdk(profile, "p", { cwd: "/work/tree", timeoutMs: null });
+    expect(res.ok).toBe(true);
+    expect(fake.calls.cancel).toEqual([
+      {
+        input: {
+          sessionID: "sess-v2",
+          formID: "form-q",
+          message:
+            "This non-interactive run cannot ask the user questions, so the question was cancelled. Continue without an answer; make reasonable assumptions and state them.",
+        },
+      },
+      {
+        input: { sessionID: "global", formID: "form-mcp" },
+        options: { headers: { "x-opencode-directory": encodeURIComponent("/work/tree") } },
+      },
+    ]);
   });
 
   test("a failed subscription does not fail the dispatch and is recorded", async () => {

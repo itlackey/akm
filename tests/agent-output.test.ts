@@ -331,10 +331,14 @@ describe("--format jsonl", () => {
       path.join(stashDir, "agents", "reviewer.md"),
       "---\ndescription: Reviewer\n---\nRendered system prompt.\n",
     );
+    // A stand-in OpenCode 2 that prints its arguments and then the prompt it reads on stdin.
+    const bin = path.join(stashDir, "fake-opencode");
+    writeFile(bin, '#!/bin/sh\n[ "$1" = "--version" ] && { echo "opencode v2.1.4"; exit 0; }\necho "$@"\ncat\n');
+    fs.chmodSync(bin, 0o755);
     const config = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { test: { kind: "agent", platform: "opencode", bin: "/bin/echo" } },
+      engines: { test: { kind: "agent", platform: "opencode", bin } },
       defaults: { engine: "test" },
     };
     const runtime = makeCliRuntime();

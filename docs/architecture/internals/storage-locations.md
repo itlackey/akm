@@ -856,8 +856,7 @@ These paths are read by `akm improve` to scan for repeated failure patterns in a
 | Path | Agent |
 |---|---|
 | `~/.claude/projects/**/*.jsonl` | Claude Code |
-| `~/.local/share/opencode/` (Linux) | OpenCode |
-| `~/Library/Application Support/opencode/` (macOS) | OpenCode |
+| `$XDG_DATA_HOME/opencode/` (`~/.local/share/opencode/` by default, on every platform) | OpenCode |
 | `$CODEX_HOME/sessions/**/rollout-*.jsonl` (`~/.codex/sessions/` by default) | Codex |
 
 ---

@@ -21,17 +21,22 @@ import { warnOnce } from "../../../core/warn";
 import type { Database } from "../../../storage/database";
 import { extractInlineRefMentions } from "../../session-logs/inline-refs";
 import type { InlineRefMention, SessionEvent } from "../../session-logs/types";
+import { MODEL_WORK_OPENCODE_AGENT } from "./model-work-agent";
 import { type OpenCodeSessionMeta, type OpenCodeSessionRead, type SessionRow, toMeta } from "./session-log-types";
 
 export const V2_TABLES = ["session_v2", "session_message"] as const;
 
-/** Every V2 session updated at or after `sinceMs`, newest first. Throws on an incompatible schema. */
+/**
+ * Every V2 session updated at or after `sinceMs`, newest first. Throws on an incompatible schema.
+ * A subagent's child session (`parent_id`) is part of its parent's session, and akm's own model
+ * work (its `akm-model-work` agent) is akm's prompts, not the user's: neither is listed.
+ */
 export function listV2Sessions(db: Database, sinceMs: number): OpenCodeSessionMeta[] {
   const rows = db
     .prepare<SessionRow>(
-      "SELECT id, title, directory, time_created, time_updated FROM session_v2 WHERE time_updated >= ? ORDER BY time_updated DESC",
+      "SELECT id, title, directory, time_created, time_updated FROM session_v2 WHERE time_updated >= ? AND parent_id IS NULL AND (agent IS NULL OR agent <> ?) ORDER BY time_updated DESC",
     )
-    .all(sinceMs);
+    .all(sinceMs, MODEL_WORK_OPENCODE_AGENT);
   return rows.map((r) => toMeta(r, r.id));
 }
 
@@ -78,6 +83,21 @@ function structuredErrorText(err: unknown): string {
   const e = asObject(err);
   if (typeof e?.message === "string") return e.message;
   return typeof e?.type === "string" ? e.type : "error";
+}
+
+/** The akm plugin's read tools (opencode-shared/tools.ts). */
+const AKM_READ_TOOLS = new Set(["akm_search", "akm_show", "akm_curate"]);
+
+/** What an akm plugin `akm_remember` / `akm_feedback` call saved, as the shell form's inline mention would say. */
+function akmToolMentions(name: string, input: Json | undefined, ts: number | undefined): InlineRefMention[] {
+  const at = ts !== undefined ? { ts } : {};
+  if (name === "akm_remember" && typeof input?.content === "string" && input.content.trim()) {
+    return [{ kind: "remember", text: input.content, ...at }];
+  }
+  if (name === "akm_feedback" && typeof input?.ref === "string" && input.ref) {
+    return [{ kind: "feedback", ref: input.ref, text: typeof input.note === "string" ? input.note : "", ...at }];
+  }
+  return [];
 }
 
 /**
@@ -129,8 +149,11 @@ export function readV2Session(db: Database, harness: string, sessionId: string, 
         if (tool?.type !== "tool") continue;
         const state = asObject(tool.state);
         const name = typeof tool.name === "string" ? tool.name : "tool";
+        // The akm plugin's reads are lookups, not session content; its writes are what the agent already saved.
+        if (AKM_READ_TOOLS.has(name)) continue;
         const toolTime = asObject(tool.time);
         const callTs = asNumber(toolTime?.created) ?? ts;
+        inlineRefs.push(...akmToolMentions(name, asObject(state?.input), callTs));
         push("assistant", `[tool:${name}] ${toolInputText(state?.input)}`, callTs);
         // Streaming/running calls are incomplete history: the call is kept, no result is invented.
         const doneTs = asNumber(toolTime?.completed) ?? callTs;

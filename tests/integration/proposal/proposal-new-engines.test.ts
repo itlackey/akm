@@ -17,7 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { listProposals } from "../../../src/commands/proposal/repository";
 import { type CliResult, runCliCapture } from "../../_helpers/cli";
-import { clearHarnessCalls, fakeHarness, harnessCalls, serveLlmStub } from "../../_helpers/engine-stubs";
+import { clearHarnessCalls, fakeHarness, harnessCalls, harnessPrompt, serveLlmStub } from "../../_helpers/engine-stubs";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -162,7 +162,7 @@ describe("a reply that is not a proposal gets one corrective retry", () => {
 
     expectProposalCreated(result, "opencode-repair");
     expect(calls("plain-repair")).toHaveLength(2);
-    expect(calls("plain-repair")[1]?.argv.at(-1)).toContain("failed validation");
+    expect(harnessPrompt(calls("plain-repair")[1])).toContain("failed validation");
   });
 
   test.each([

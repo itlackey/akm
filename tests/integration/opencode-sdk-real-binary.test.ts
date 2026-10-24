@@ -202,7 +202,7 @@ describe.skipIf(!V2_BIN)("OpenCode 2 adapter on the real binary (AKM_OPENCODE_V2
     expect((await fetch(new URL("/api/server/info", verdict.url))).status).toBe(401);
 
     const client = await V2_ADAPTER.connect(verdict.url, auth.credentials);
-    const sessionId = await V2_ADAPTER.createSession(client, { directory, tools: { bash: false } });
+    const sessionId = await V2_ADAPTER.createSession(client, { directory, tools: { shell: false } });
     expect(sessionId).toMatch(/^ses_/);
 
     const watcher = await watch(V2_ADAPTER, client, directory);
@@ -210,7 +210,7 @@ describe.skipIf(!V2_BIN)("OpenCode 2 adapter on the real binary (AKM_OPENCODE_V2
     const typed = client as import("@opencode/client").OpenCodeClient;
     const session = await typed.session.get({ sessionID: sessionId as string });
     expect(session.location?.directory).toBe(directory);
-    expect(session.permissions).toEqual([{ action: "bash", resource: "*", effect: "deny" }]);
+    expect(session.permissions).toEqual([{ action: "shell", resource: "*", effect: "deny" }]);
 
     // A session whose rules ask about external directories, as OpenCode's default agent does.
     const asking = await typed.session.create({

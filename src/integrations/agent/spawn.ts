@@ -247,11 +247,13 @@ export async function runAgent(
   // provided; otherwise use the direct positional-prompt form.
   let builtArgv: readonly string[];
   let builtEnv: Record<string, string> | undefined;
+  let stdin = options.stdin;
   if (options.dispatch !== undefined) {
     const builder = getCommandBuilder(profile.platform ?? profile.name, options.builderRegistry);
     const built = builder.build(profile, options.dispatch);
     builtArgv = built.argv;
     builtEnv = built.env;
+    stdin ??= built.stdin;
   } else {
     const positionalArgs: string[] = [...profile.args, ...(options.args ?? [])];
     if (prompt !== undefined) positionalArgs.push(prompt);
@@ -291,7 +293,7 @@ export async function runAgent(
     capture: stdioMode === "captured",
     env,
     ...(options.cwd ? { cwd: options.cwd } : {}),
-    ...(options.stdin !== undefined ? { stdin: options.stdin } : {}),
+    ...(stdin !== undefined ? { stdin } : {}),
     timeoutMs,
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.spawn ? { spawnFn: options.spawn } : {}),

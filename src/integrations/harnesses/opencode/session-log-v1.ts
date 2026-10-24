@@ -24,7 +24,8 @@ export const V1_TABLES = ["session"] as const;
 export function listV1Sessions(db: Database, sinceMs: number): OpenCodeSessionMeta[] {
   const rows = db
     .prepare<SessionRow>(
-      "SELECT id, title, directory, time_created, time_updated FROM session WHERE time_updated >= ? ORDER BY time_updated DESC",
+      // A subagent's child session (`parent_id`) is part of its parent's session, not a session of the user's.
+      "SELECT id, title, directory, time_created, time_updated FROM session WHERE time_updated >= ? AND parent_id IS NULL ORDER BY time_updated DESC",
     )
     .all(sinceMs);
   return rows.map((r) => toMeta(r, r.id));

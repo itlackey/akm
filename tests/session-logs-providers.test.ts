@@ -593,7 +593,7 @@ function writeOpenCodeDb(base: string, sessions: OpenCodeDbSession[]): string {
   const dbPath = path.join(base, "opencode.db");
   const db = openDatabase(dbPath, { create: true });
   db.exec(
-    "CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, title TEXT, directory TEXT, time_created INTEGER, time_updated INTEGER);",
+    "CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, title TEXT, directory TEXT, time_created INTEGER, time_updated INTEGER);",
   );
   db.exec("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);");
   db.exec(

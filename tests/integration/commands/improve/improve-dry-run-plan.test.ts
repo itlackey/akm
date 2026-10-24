@@ -822,6 +822,7 @@ describe("#800 effective dry-run planner", () => {
       writer.exec(`
         CREATE TABLE session (
           id TEXT PRIMARY KEY,
+          parent_id TEXT,
           title TEXT,
           directory TEXT,
           time_created INTEGER,

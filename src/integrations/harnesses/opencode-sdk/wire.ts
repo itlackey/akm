@@ -80,6 +80,16 @@ export type WireEvent =
       readonly sessionId: string;
       /** Human-readable "<permission> (<patterns>)". */
       readonly description: string;
+      /**
+       * An OpenCode 2 form (the `question` tool, an MCP elicitation) rather than
+       * a permission request. `question` says whether it is the question tool.
+       */
+      readonly form?: { readonly question: boolean };
+      /**
+       * Set when no session owns the request (OpenCode 2's "global" MCP
+       * elicitations): the dispatch working in `directory` answers it.
+       */
+      readonly unowned?: { readonly directory: string };
     };
 
 /** What {@link OpencodeWireAdapter.authorize} decides for one spawned server. */

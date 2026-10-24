@@ -26,6 +26,7 @@ import {
   fakeHarness,
   type HarnessCall,
   harnessCalls,
+  harnessPrompt,
   serveLlmStub,
 } from "../../../_helpers/engine-stubs";
 import { reflectReply } from "../../../_helpers/factories";
@@ -109,7 +110,7 @@ const opencodeCalls = (scenario: string): HarnessCall[] => harnessCalls(path.joi
 const OPENCODE: Transport = {
   name: "opencode",
   engine: (scenario) => ({ kind: "agent", platform: "opencode", bin: path.join(bins.dir, scenario) }),
-  prompts: (scenario) => opencodeCalls(scenario).map((call) => call.argv.at(-1) ?? ""),
+  prompts: (scenario) => opencodeCalls(scenario).map(harnessPrompt),
 };
 
 const TRANSPORTS: [string, Transport][] = [LLM, OPENCODE].map((transport) => [transport.name, transport]);

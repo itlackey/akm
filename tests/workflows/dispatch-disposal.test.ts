@@ -357,11 +357,17 @@ describe("engine run via the SDK runner closes its server on completion (end-to-
               return { id: "msg-user" };
             },
             wait: async () => {},
-            context: async () => [
-              { id: "msg-user", type: "user", text: "p" },
-              { id: "msg-a", type: "assistant", content: [{ type: "text", text: "sdk-done" }] },
-              { id: "msg-idle", type: "idle", outcome: "succeeded" },
-            ],
+          },
+          // The session's messages, newest first.
+          message: {
+            list: async () => ({
+              data: [
+                { id: "msg-idle", type: "idle", outcome: "succeeded" },
+                { id: "msg-a", type: "assistant", content: [{ type: "text", text: "sdk-done" }] },
+                { id: "msg-user", type: "user", text: "p" },
+              ],
+              cursor: {},
+            }),
           },
         },
         server: {

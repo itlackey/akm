@@ -39,7 +39,7 @@ export const NO_ENGINE_REMEDY =
   '`akm config set engines.claude \'{"kind":"agent","platform":"claude"}\'` ' +
   "then `akm config set defaults.engine claude`. " +
   `Installing the \`${OPENCODE_SDK_SERVER_BIN}\` binary also works ` +
-  "(`npm i -g opencode-ai`) — akm falls back to it automatically.";
+  "(`npm i -g @opencode/cli`) — akm falls back to it automatically.";
 
 export interface EngineFallbackResult {
   /** Config to resolve against — the input verbatim unless the fallback applied. */

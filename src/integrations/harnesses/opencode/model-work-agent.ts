@@ -54,6 +54,9 @@ function modelWorkPermission(stash: string | undefined) {
     grep: "allow",
     glob: "allow",
     // OpenCode 1 matches the path without its leading slash, OpenCode 2 the absolute path.
+    // OpenCode 2 gives a path inside the session directory or its git worktree a relative
+    // resource, which neither rule matches; model work runs in a fresh scratch directory,
+    // so the stash is never inside it.
     edit: { "*": "allow", ...(stash ? { [`${stash.slice(1)}/*`]: "deny", [`${stash}/*`]: "deny" } : {}) },
     external_directory: {
       ...(stash ? { [`${stash}/*`]: "allow" } : {}),
