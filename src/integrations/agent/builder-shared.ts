@@ -154,4 +154,3 @@ export function modelFromArgs(args: readonly string[]): string | undefined {
   }
   return model;
 }
-

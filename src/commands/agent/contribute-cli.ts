@@ -48,8 +48,7 @@ export const agentCommand = defineCommand({
     ...GLOBAL_OUTPUT_ARGS,
     "agent-ref": {
       type: "positional",
-      description:
-        "Optional agent asset ref (e.g. agents/code-reviewer). Resolves persona and model defaults.",
+      description: "Optional agent asset ref (e.g. agents/code-reviewer). Resolves persona and model defaults.",
       required: false,
     },
     prompt: { type: "string", description: "Task prompt to pass to the agent" },
