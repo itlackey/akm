@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
-import { resolveEngine } from "../src/integrations/agent/engine-resolution";
+import { resolveTarget } from "../src/integrations/agent/resolution";
 import { opencodeBuilder } from "../src/integrations/harnesses/opencode/agent-builder";
 import {
   _setOpencodeVersionProbeForTests,
@@ -58,7 +58,7 @@ describe("parseOpencodeMajor", () => {
 });
 
 describe("resolveOpencodeBin", () => {
-  test("prefers opencode2 when it is on PATH and the engine names no bin", () => {
+  test("prefers opencode2 when it is on PATH and the harness names no bin", () => {
     expect(resolveOpencodeBin(undefined, onPath("opencode", "opencode2"))).toBe("opencode2");
   });
 
@@ -130,17 +130,17 @@ describe("the OpenCode 1 CLI harness", () => {
     expect(() => opencodeBuilder.build(profile("oc-new"), { prompt: "p" })).toThrow(/opencode-sdk/);
   });
 
-  test("an engine with no bin runs opencode; one with a bin keeps it", () => {
+  test("a harness with no bin runs opencode; one with a bin keeps it", () => {
     const config = {
-      engines: {
-        plain: { kind: "agent", platform: "opencode" },
-        pinned: { kind: "agent", platform: "opencode", bin: "/opt/oc1/opencode" },
+      harnesses: {
+        plain: { platform: "opencode" },
+        pinned: { platform: "opencode", bin: "/opt/oc1/opencode" },
       },
     } as never;
-    const plain = resolveEngine("plain", config);
-    const pinned = resolveEngine("pinned", config);
-    if (plain.kind !== "agent" || pinned.kind !== "agent") throw new Error("expected agent runners");
-    expect(plain.profile.bin).toBe("opencode");
-    expect(pinned.profile.bin).toBe("/opt/oc1/opencode");
+    const plain = resolveTarget({ config, layers: [{ harness: "plain" }] });
+    const pinned = resolveTarget({ config, layers: [{ harness: "pinned" }] });
+    if (plain.kind !== "harness" || pinned.kind !== "harness") throw new Error("expected harness runners");
+    expect(plain.bin).toBe("opencode");
+    expect(pinned.bin).toBe("/opt/oc1/opencode");
   });
 });

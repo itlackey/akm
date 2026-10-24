@@ -39,7 +39,7 @@ describe("detectAgentCliProfiles", () => {
       {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        engines: { rover: { kind: "agent", platform: "opencode", bin: "rover-cli" } },
+        harnesses: { rover: { platform: "opencode", bin: "rover-cli" } },
       },
       whichOnly(["rover-cli"]),
     );
@@ -121,8 +121,7 @@ describe("stepAgentCliDetection (setup wizard)", () => {
       {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        defaults: { engine: "aider" },
-        engines: { aider: { kind: "agent", platform: "opencode", args: ["--no-auto-commits"] } },
+        harnesses: { aider: { args: ["--no-auto-commits"] } },
       },
       () => [
         { name: "claude", bin: "claude", available: true },
@@ -130,6 +129,6 @@ describe("stepAgentCliDetection (setup wizard)", () => {
       ],
     );
     expect(result.agent?.default).toBe("aider");
-    expect(result.agent?.engines?.aider?.args).toEqual(["--no-auto-commits"]);
+    expect(result.agent?.harnesses?.aider?.args).toEqual(["--no-auto-commits"]);
   });
 });

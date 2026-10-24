@@ -298,6 +298,9 @@ describe("the timeout", () => {
     expect(harnessFor(config, [{ harness: "claude" }]).timeoutMs).toBeNull();
     expect(harnessFor(config, [{ harness: "slow" }]).timeoutMs).toBe(30_000);
     expect(harnessFor(config, [{ harness: "claude" }], true).timeoutMs).toBe(600_000);
+    // A harness that says `null` itself stays unbounded, model work included.
+    const unbounded = configOf({ harnesses: { claude: { timeoutMs: null } } });
+    expect(harnessFor(unbounded, [], true).timeoutMs).toBeNull();
     expect(harnessFor(config, [{ harness: "slow" }, { timeout: "1m" }]).timeoutMs).toBe(60_000);
   });
 

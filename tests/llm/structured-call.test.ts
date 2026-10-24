@@ -22,13 +22,10 @@
 
 import { describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
-import { ConfigError } from "../../src/core/errors";
 import type { SpawnedSubprocess } from "../../src/core/subprocess";
 import type { LoweringNotice } from "../../src/execution/resolved-request";
-import { resolveEngine } from "../../src/integrations/agent/engine-resolution";
-import type { RunnerSpec } from "../../src/integrations/agent/runner";
-import { assertRunnerCredentials } from "../../src/integrations/agent/runner-dispatch";
-import type { ChatCompletionConfig, ChatMessage } from "../../src/llm/client";
+import type { ConnectionRunner, HarnessRunner } from "../../src/integrations/agent/runner";
+import type { ChatMessage } from "../../src/llm/client";
 import { LlmCallError } from "../../src/llm/client";
 import {
   callStructured,
@@ -37,10 +34,6 @@ import {
   resolveStructuredCurrent,
 } from "../../src/llm/structured-call";
 import { mutateScopedEnv, withEnv } from "../_helpers/sandbox";
-
-// Minimal LLM profile config. `chatCompletion` is replaced by the injected
-// fake, so transport fields are irrelevant.
-const PROFILE: ChatCompletionConfig = { endpoint: "http://x", model: "m" };
 
 const MESSAGES: ChatMessage[] = [
   { role: "system", content: "sys" },
@@ -51,11 +44,21 @@ const MESSAGES: ChatMessage[] = [
 // (FEATURE_LOCATION default is `?? true`). Used as the GATED akmConfig.
 const GATED: AkmConfig = {} as AkmConfig;
 
-function runner(
-  connection: ChatCompletionConfig = PROFILE,
-  extra: Partial<Extract<RunnerSpec, { kind: "llm" }>> = {},
-): Extract<RunnerSpec, { kind: "llm" }> {
-  return { kind: "llm", engine: "structured-test", connection, ...extra };
+// A connection runner. `chatCompletion` is replaced by the injected fake, so transport fields are irrelevant.
+function runner(extra: Partial<ConnectionRunner> = {}): ConnectionRunner {
+  return {
+    kind: "connection",
+    name: "structured-test",
+    endpoint: "http://x",
+    model: "m",
+    request: {},
+    timeoutMs: 600_000,
+    ...extra,
+  };
+}
+
+function harness(platform: string, bin: string): HarnessRunner {
+  return { kind: "harness", name: `structured-${platform}`, platform, bin, args: [], timeoutMs: 600_000 };
 }
 
 describe("callStructured contract", () => {
@@ -372,41 +375,12 @@ describe("callStructured contract", () => {
     expect(presentCaseOptions?.timeoutMs).toBeNull();
   });
 
-  test("(11b) model work is bounded: a runner with no timeout of its own gets 600 s, whatever its kind", () => {
-    const agent: RunnerSpec = {
-      kind: "agent",
-      engine: "structured-agent",
-      profile: {
-        name: "structured-agent",
-        platform: "opencode",
-        bin: "opencode",
-        args: [],
-        stdio: "captured",
-        envPassthrough: [],
-        parseOutput: "text",
-      },
-    };
-    expect(resolveStructuredCurrent(undefined, undefined, agent)).toEqual({ timeout: 600_000 });
-    expect(resolveStructuredCurrent(undefined, undefined, runner())).toEqual({ timeout: 600_000 });
-    expect(resolveStructuredCurrent(undefined, undefined, { ...agent, timeoutMs: 1_234 })).toBeUndefined();
-    expect(resolveStructuredCurrent(undefined, undefined, { ...agent, timeoutMs: null })).toBeUndefined();
-    expect(resolveStructuredCurrent(undefined, { timeoutMs: 5 }, agent)).toEqual({ timeout: 5 });
-    expect(resolveStructuredCurrent({ timeout: 9 }, undefined, agent)).toEqual({ timeout: 9 });
-  });
-
-  test("(11b') a configured agent or SDK engine that sets no timeoutMs gets the 600 s bound too", () => {
-    const config = {
-      configVersion: "0.9.0",
-      engines: {
-        cc: { kind: "agent", platform: "claude" },
-        sdk: { kind: "agent", platform: "opencode-sdk" },
-        unbounded: { kind: "agent", platform: "claude", timeoutMs: null },
-      },
-    } as unknown as AkmConfig;
-    expect(resolveStructuredCurrent(undefined, undefined, resolveEngine("cc", config))).toEqual({ timeout: 600_000 });
-    expect(resolveStructuredCurrent(undefined, undefined, resolveEngine("sdk", config))).toEqual({ timeout: 600_000 });
-    // An engine's own timeoutMs, null included, still applies.
-    expect(resolveStructuredCurrent(undefined, undefined, resolveEngine("unbounded", config))).toBeUndefined();
+  test("(11b) the request names a timeout only when the caller does; the runner brings the 600 s default itself", () => {
+    expect(resolveStructuredCurrent(undefined, undefined)).toBeUndefined();
+    expect(resolveStructuredCurrent(undefined, { timeoutMs: 5 })).toEqual({ timeout: 5 });
+    expect(resolveStructuredCurrent(undefined, { timeoutMs: undefined })).toEqual({ timeout: null });
+    expect(resolveStructuredCurrent({ timeout: 9 }, undefined)).toEqual({ timeout: 9 });
+    expect(resolveStructuredCurrent({ timeout: 9 }, { timeoutMs: 5 })).toEqual({ timeout: 5 });
   });
 
   test("(11c) the feature gate's timeout aborts the dispatch it bounds", async () => {
@@ -445,7 +419,8 @@ describe("callStructured contract", () => {
     const result = await callStructured<string>({
       feature: "memory_inference",
       akmConfig: GATED,
-      runner: runner({ ...PROFILE, supportsJsonSchema: false }),
+      runner: runner(),
+      current: { inference: { supportsJsonSchema: false } },
       messages: MESSAGES,
       request: {
         responseSchema: { type: "object" },
@@ -469,7 +444,7 @@ describe("callStructured contract", () => {
     expect(notices).toEqual([
       expect.objectContaining({
         code: "untranslated-field",
-        adapter: "llm",
+        adapter: "connection",
         field: "outputSchema",
       }),
     ]);
@@ -494,20 +469,8 @@ describe("callStructured contract", () => {
     });
     expect({ value, chatRan }).toEqual({ value: "answer", chatRan: true });
 
-    // An agent engine that cannot confine the policy is refused before anything runs.
-    const codex: RunnerSpec = {
-      kind: "agent",
-      engine: "structured-codex",
-      profile: {
-        name: "structured-codex",
-        platform: "codex",
-        bin: "codex-must-not-run",
-        args: [],
-        stdio: "captured",
-        envPassthrough: [],
-        parseOutput: "text",
-      },
-    };
+    // A harness that cannot confine the policy is refused before anything runs.
+    const codex = harness("codex", "codex-must-not-run");
     const refused = callStructured<string>({
       feature: "memory_inference",
       akmConfig: GATED,
@@ -521,20 +484,8 @@ describe("callStructured contract", () => {
   });
 
   test("(13b) an agent dispatch gets the caller's environment and spawn seam, and its failure keeps the dispatch's own result", async () => {
-    const claude: RunnerSpec = {
-      kind: "agent",
-      engine: "structured-claude",
-      profile: {
-        name: "structured-claude",
-        platform: "claude",
-        // Never run: the spawn seam stands in for it.
-        bin: "/nonexistent/structured-claude",
-        args: [],
-        stdio: "captured",
-        envPassthrough: [],
-        parseOutput: "text",
-      },
-    };
+    // Never run: the spawn seam stands in for it.
+    const claude = harness("claude", "/nonexistent/structured-claude");
     const text = (value: string) =>
       new ReadableStream<Uint8Array>({
         start(controller) {
@@ -577,41 +528,6 @@ describe("callStructured contract", () => {
     });
   });
 
-  test("(13c) an SDK dispatch runs through the runSdk seam", async () => {
-    const sdk: RunnerSpec = {
-      kind: "sdk",
-      engine: "structured-sdk",
-      profile: {
-        name: "structured-sdk",
-        platform: "opencode-sdk",
-        // Never run: the runSdk seam stands in for it.
-        bin: "/nonexistent/structured-sdk",
-        args: [],
-        stdio: "captured",
-        envPassthrough: [],
-        parseOutput: "text",
-      },
-    };
-    const prompts: string[] = [];
-    const value = await callStructured<string>({
-      feature: "memory_inference",
-      runner: sdk,
-      messages: [{ role: "user", content: "judge this" }],
-      request: {
-        runSdk: async (_profile, prompt) => {
-          prompts.push(prompt);
-          return { ok: true, exitCode: 0, stdout: "answer", stderr: "", durationMs: 1 };
-        },
-      },
-      parse: (raw) => raw ?? "",
-      onError: () => "ERR",
-      fallback: "FB",
-    });
-
-    expect(value).toBe("answer");
-    expect(prompts).toEqual(["judge this"]);
-  });
-
   test("(14) a provider failure is credential-redacted before ungated propagation", async () => {
     const secret = "structured-secret-sentinel";
     let thrown: unknown;
@@ -619,7 +535,7 @@ describe("callStructured contract", () => {
       try {
         await callStructured<string>({
           feature: "memory_inference",
-          runner: runner(PROFILE, { credential: { names: ["AKM_STRUCTURED_SECRET"], required: true } }),
+          runner: runner({ apiKey: "$AKM_STRUCTURED_SECRET" }),
           messages: [{ role: "user", content: "redact failures" }],
           request: {
             chat: async () => {
@@ -640,61 +556,40 @@ describe("callStructured contract", () => {
     expect(String(thrown)).toContain("[REDACTED]");
   });
 
-  test("(15) a missing required symbolic credential remains a hard config failure", async () => {
-    let chatRan = false;
+  test("(15) a key variable that is unset sends the call without a key, and does not fail it", async () => {
+    let apiKey: string | undefined = "unset";
     let onErrorCalls = 0;
-    let onFallbackCalls = 0;
-    let thrown: unknown;
 
-    await withEnv({ AKM_STRUCTURED_REQUIRED_SECRET: undefined }, async () => {
-      try {
-        await callStructured<string>({
-          feature: "memory_inference",
-          akmConfig: GATED,
-          runner: runner(PROFILE, {
-            credential: { names: ["AKM_STRUCTURED_REQUIRED_SECRET"], required: true },
-          }),
-          messages: [{ role: "user", content: "must fail before provider dispatch" }],
-          request: {
-            chat: async () => {
-              chatRan = true;
-              return "wrong";
-            },
+    const value = await withEnv({ AKM_STRUCTURED_REQUIRED_SECRET: undefined }, () =>
+      callStructured<string>({
+        feature: "memory_inference",
+        akmConfig: GATED,
+        runner: runner({ apiKey: "$AKM_STRUCTURED_REQUIRED_SECRET" }),
+        messages: [{ role: "user", content: "no key is sent" }],
+        request: {
+          chat: async (connection) => {
+            apiKey = connection.apiKey;
+            return "answered";
           },
-          parse: (raw) => raw ?? "",
-          onError: () => {
-            onErrorCalls += 1;
-            return "SWALLOWED";
-          },
-          fallback: "FB",
-          onFallback: () => {
-            onFallbackCalls += 1;
-          },
-        });
-      } catch (error) {
-        thrown = error;
-      }
-    });
-
-    expect(thrown).toBeInstanceOf(ConfigError);
-    expect((thrown as ConfigError).code).toBe("INVALID_CONFIG_FILE");
-    expect((thrown as ConfigError).message).toBe(
-      "Required engine credential AKM_STRUCTURED_REQUIRED_SECRET is not set.",
+        },
+        parse: (raw) => raw ?? "",
+        onError: () => {
+          onErrorCalls += 1;
+          return "SWALLOWED";
+        },
+        fallback: "FB",
+      }),
     );
-    expect(chatRan).toBe(false);
+
+    expect(value).toBe("answered");
+    expect(apiKey).toBeUndefined();
     expect(onErrorCalls).toBe(0);
-    expect(onFallbackCalls).toBe(0);
   });
 
-  test("(16) one preflighted runner serves different messages, models, inference, schemas, and timeouts", async () => {
+  test("(16) one resolved runner serves different messages, models, inference, schemas, and timeouts", async () => {
     const secret = "structured-lease-original-092";
     const replacement = "structured-lease-replacement-092";
-    const selectedRunner = runner(
-      { ...PROFILE, supportsJsonSchema: true },
-      {
-        credential: { names: ["AKM_STRUCTURED_LEASE_KEY"], required: true },
-      },
-    );
+    const selectedRunner = runner({ apiKey: "$AKM_STRUCTURED_LEASE_KEY" });
     const observed: Array<{
       apiKey: string | undefined;
       model: string;
@@ -705,7 +600,6 @@ describe("callStructured contract", () => {
     }> = [];
 
     await withEnv({ AKM_STRUCTURED_LEASE_KEY: secret }, async () => {
-      assertRunnerCredentials(selectedRunner);
       // Credentials are read at each dispatch, so a rotated key takes effect.
       mutateScopedEnv("AKM_STRUCTURED_LEASE_KEY", replacement);
       const dispatch = (model: string, message: string, temperature: number, timeoutMs: number) =>

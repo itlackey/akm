@@ -7,11 +7,8 @@ import { renderUsage } from "citty";
 import { akmAgentDispatch } from "../../src/commands/agent/agent-dispatch";
 import { agentCommand } from "../../src/commands/agent/contribute-cli";
 import type { AkmConfig } from "../../src/core/config/config-types";
-import { _setWarnSinkForTests } from "../../src/core/warn";
-import { FALLBACK_ANNOUNCEMENT } from "../../src/integrations/agent/engine-fallback";
 import { executeInteractiveAgentInvocation } from "../../src/integrations/agent/runner-dispatch";
 import { withEnv } from "../_helpers/sandbox";
-import { overrideSeam } from "../_helpers/seams";
 
 describe("akm agent CLI help", () => {
   test("does not expose workflow flattening or tool policy", async () => {
@@ -33,7 +30,7 @@ describe("akmAgentDispatch engine capability", () => {
           config: {
             configVersion: "0.9.0",
             semanticSearchMode: "off",
-            engines: { native: { kind: "agent", platform: "claude", bin: "/bin/true" } },
+            harnesses: { native: { platform: "claude", bin: "/bin/true" } },
           },
           engine: "native",
           timeoutMs: 0,
@@ -76,44 +73,39 @@ describe("akmAgentDispatch engine capability", () => {
     }
   });
 
-  test("shared prompt-free lowering preserves the SDK profile stdio and rejects LLM engines before dispatch", async () => {
+  test("a connection launches akm's own runtime, captured, with no prompt of its own", async () => {
     const sdkCalls: unknown[] = [];
-    await executeInteractiveAgentInvocation(
+    const launched = await executeInteractiveAgentInvocation(
       {
         config: {
           configVersion: "0.9.0",
           semanticSearchMode: "off",
-          engines: { sdk: { kind: "agent", platform: "opencode-sdk", bin: "/bin/true" } },
+          connections: { lab: { endpoint: "https://example.invalid/v1", models: { fast: "fixture" } } },
         },
-        engine: "sdk",
+        engine: "lab",
       },
       {
-        runSdk: async (profile, prompt, options) => {
-          sdkCalls.push({ profile: profile.name, prompt, options });
+        runSdk: async (profile, prompt, options, connection) => {
+          sdkCalls.push({ profile: profile.name, prompt, options, model: connection?.model });
           return { ok: true, exitCode: 0, stdout: "", stderr: "", durationMs: 1 };
         },
       },
     );
+    expect(launched.engine).toBe("lab");
     expect(sdkCalls).toHaveLength(1);
     expect(sdkCalls[0]).toMatchObject({
-      profile: "sdk",
+      profile: "lab",
       prompt: "",
       options: { stdio: "captured", parseOutput: "text" },
+      model: "fixture",
     });
+  });
 
+  test("nothing configured is AGENT_NOT_CONFIGURED before any dispatch", async () => {
     let dispatches = 0;
     await expect(
       executeInteractiveAgentInvocation(
-        {
-          config: {
-            configVersion: "0.9.0",
-            semanticSearchMode: "off",
-            engines: {
-              llm: { kind: "llm", endpoint: "https://example.invalid/v1/chat/completions", model: "fixture" },
-            },
-          },
-          engine: "llm",
-        },
+        { config: { configVersion: "0.9.0", semanticSearchMode: "off" } },
         {
           runAgent: async () => {
             dispatches += 1;
@@ -121,7 +113,7 @@ describe("akmAgentDispatch engine capability", () => {
           },
         },
       ),
-    ).rejects.toThrow(/LLM engine.*requires an agent engine/i);
+    ).rejects.toMatchObject({ code: "AGENT_NOT_CONFIGURED" });
     expect(dispatches).toBe(0);
   });
 
@@ -129,10 +121,9 @@ describe("akmAgentDispatch engine capability", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: {
-        native: { kind: "agent", platform: "claude", bin: "/bin/true" },
+      harnesses: {
+        native: { platform: "claude", bin: "/bin/true" },
       },
-      defaults: { engine: "native" },
     };
     const calls: unknown[] = [];
     const result = await akmAgentDispatch(
@@ -256,10 +247,9 @@ describe("akmAgentDispatch engine capability", () => {
       agentConfig: {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        engines: {
-          "test-agent": { kind: "agent", platform: "aider", bin: "/bin/true" },
+        harnesses: {
+          "test-agent": { platform: "aider", bin: "/bin/true" },
         },
-        defaults: { engine: "test-agent" },
       },
     });
     expect(result).toEqual({
@@ -274,19 +264,17 @@ describe("akmAgentDispatch engine capability", () => {
     });
   });
 
-  test("delegates direct LLM prompt work instead of applying an agent-only capability gate", async () => {
+  test("delegates a connection's prompt work instead of applying a harness-only capability gate", async () => {
     const calls: unknown[] = [];
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "auto" as const,
-      engines: {
+      connections: {
         fast: {
-          kind: "llm" as const,
           endpoint: "https://example.test/v1/chat/completions",
-          model: "test",
+          models: { fast: "test" },
         },
       },
-      defaults: { engine: "fast" },
     };
     const result = await akmAgentDispatch(
       { engine: "fast", prompt: "hello", agentConfig: config },
@@ -319,10 +307,9 @@ describe("akmAgentDispatch engine capability", () => {
       agentConfig: {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        engines: {
-          "test-agent": { kind: "agent", platform: "aider", bin: "/bin/false" },
+        harnesses: {
+          "test-agent": { platform: "aider", bin: "/bin/false" },
         },
-        defaults: { engine: "test-agent" },
       },
     });
 
@@ -330,39 +317,13 @@ describe("akmAgentDispatch engine capability", () => {
     expect(parsed).toMatchObject({ schemaVersion: 2, ok: false, shape: "agent-result" });
     expect(result).toMatchObject({ schemaVersion: 2, ok: false, shape: "agent-result", exitCode: 1 });
   });
-
-  test("the implicit engine fallback is announced, never silent — result warnings + warn()", async () => {
-    const warned: string[] = [];
-    overrideSeam(_setWarnSinkForTests, (level, args) => {
-      if (level === "warn") warned.push(args.map(String).join(" "));
-    });
-
-    const result = await akmAgentDispatch({
-      prompt: "hello",
-      agentConfig: {
-        configVersion: "0.9.0",
-        semanticSearchMode: "auto",
-        // No defaults.engine: withEngineFallback must select the opencode-sdk
-        // entry. Operator-configured wins over synthesis, and the pinned
-        // absolute bin keeps the probe (and the dispatch) off the real
-        // opencode binary and PATH.
-        engines: {
-          "opencode-sdk": { kind: "agent", platform: "aider", bin: "/bin/true" },
-        },
-      },
-    });
-
-    expect(result.engine).toBe("opencode-sdk");
-    expect(result.warnings).toEqual([FALLBACK_ANNOUNCEMENT]);
-    expect(warned).toContain(FALLBACK_ANNOUNCEMENT);
-  });
 });
 
 describe("akm agent --prompt is free text, not a template", () => {
   const agentConfig = {
     configVersion: "0.9.0",
     semanticSearchMode: "off",
-    engines: { native: { kind: "agent", platform: "claude", bin: "/bin/true" } },
+    harnesses: { native: { platform: "claude", bin: "/bin/true" } },
   } as unknown as AkmConfig;
 
   // A prompt is a person's prose. akm substitutes nothing in it, so the

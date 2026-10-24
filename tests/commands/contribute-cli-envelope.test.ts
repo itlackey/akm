@@ -21,7 +21,6 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { FALLBACK_ANNOUNCEMENT } from "../../src/integrations/agent/engine-fallback";
 import { runCliStatus as runCli } from "../_helpers/cli";
 import { installFakeOpencodeHost } from "../_helpers/fake-opencode-host";
 import { type Cleanup, sandboxStashDir, withEnv, writeSandboxConfig } from "../_helpers/sandbox";
@@ -40,15 +39,24 @@ afterEach(() => {
 });
 
 describe("akm contribution cluster — JSON envelope snapshot (WS6)", () => {
-  test("agent (no engine): falls back to the announced opencode-sdk engine (exit 0)", async () => {
-    // With no engine configured, `akm agent` runs on the embedded OpenCode, with no binary or PATH check.
+  test("agent (nothing configured): {ok:false} AGENT_NOT_CONFIGURED naming `akm setup` on stderr", async () => {
+    const { stderr, status } = await withEnv({ PATH: "" }, () => runCli(["agent"]));
+    expect(status).not.toBe(0);
+    const env = JSON.parse(stderr);
+    expect(env).toMatchObject({ ok: false, code: "AGENT_NOT_CONFIGURED" });
+    expect(env.hint).toContain("akm setup");
+  });
+
+  test("agent (a connection configured): runs on akm's own runtime, with no binary or PATH check (exit 0)", async () => {
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      connections: { lab: { endpoint: "http://127.0.0.1:1/v1", models: { fast: "fixture" } } },
+    });
     const host = installFakeOpencodeHost({ reply: () => "hello" });
-    const { stdout, stderr, status } = await withEnv({ PATH: "" }, () => runCli(["agent"]));
+    const { stdout, status } = await withEnv({ PATH: "" }, () => runCli(["agent"]));
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
-    expect(env).toMatchObject({ ok: true, engine: "opencode-sdk", stdout: "hello" });
-    expect(env.warnings).toContain(FALLBACK_ANNOUNCEMENT);
-    expect(stderr).toContain(FALLBACK_ANNOUNCEMENT);
+    expect(env).toMatchObject({ ok: true, engine: "lab", stdout: "hello" });
     expect(host.calls).toHaveLength(1);
   });
 

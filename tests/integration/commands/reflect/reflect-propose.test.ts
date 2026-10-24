@@ -19,19 +19,15 @@ import path from "node:path";
 import { akmReflect, REFLECT_JSON_SCHEMA } from "../../../../src/commands/improve/reflect";
 import { akmPropose } from "../../../../src/commands/proposal/propose";
 import { listProposals } from "../../../../src/commands/proposal/repository";
-import type { AkmConfig } from "../../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../../src/core/events";
 import type { SpawnedSubprocess, SpawnFn } from "../../../../src/core/subprocess";
-import { _setWarnSinkForTests } from "../../../../src/core/warn";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import {
   CONVERSATION_FALLBACK_BEGIN,
   CONVERSATION_FALLBACK_END,
 } from "../../../../src/integrations/agent/conversation-fallback";
-import { FALLBACK_ANNOUNCEMENT } from "../../../../src/integrations/agent/engine-fallback";
 import { durableItemRef } from "../../../_helpers/durable-ref";
 import { quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
-import { installFakeOpencodeHost } from "../../../_helpers/fake-opencode-host";
 import {
   type Cleanup,
   sandboxXdgCacheHome,
@@ -39,7 +35,6 @@ import {
   sandboxXdgDataHome,
   withEnv,
 } from "../../../_helpers/sandbox";
-import { overrideSeam } from "../../../_helpers/seams";
 
 // ── Setup ──────────────────────────────────────────────────────────────────
 
@@ -528,41 +523,25 @@ describe("akm reflect", () => {
 // ── propose ────────────────────────────────────────────────────────────────
 
 describe("akm propose", () => {
-  test("missing required credential leaves proposal and event state untouched", async () => {
+  test("nothing configured leaves proposal and event state untouched", async () => {
     const stash = makeStashDir();
-    const config = quietQualityGateConfig();
-    config.engines = {
-      required: {
-        kind: "llm",
-        endpoint: "https://example.invalid/v1/chat/completions",
-        model: "never-dispatched",
-        apiKey: "$AKM_PROPOSE_REQUIRED_KEY",
-      },
-    };
-    config.defaults = { ...config.defaults, engine: "required" };
     let spawnCalls = 0;
 
-    await withEnv({ AKM_PROPOSE_REQUIRED_KEY: undefined }, async () => {
-      await expect(
-        akmPropose({
-          type: "skill",
-          name: "credential-boundary",
-          task: "Author a skill without mutating state before dispatch",
-          stashDir: stash,
-          agentConfig: config,
-          runAgentOptions: {
-            spawn: () => {
-              spawnCalls += 1;
-              throw new Error("required-credential proposal reached transport");
-            },
+    await expect(
+      akmPropose({
+        type: "skill",
+        name: "nothing-configured",
+        task: "Author a skill without mutating state before dispatch",
+        stashDir: stash,
+        agentConfig: { configVersion: "0.9.0", semanticSearchMode: "off" },
+        runAgentOptions: {
+          spawn: () => {
+            spawnCalls += 1;
+            throw new Error("unconfigured proposal reached transport");
           },
-        }),
-      ).rejects.toMatchObject({
-        name: "ConfigError",
-        code: "INVALID_CONFIG_FILE",
-        message: "Required engine credential AKM_PROPOSE_REQUIRED_KEY is not set.",
-      });
-    });
+        },
+      }),
+    ).rejects.toMatchObject({ name: "ConfigError", code: "AGENT_NOT_CONFIGURED" });
 
     expect(spawnCalls).toBe(0);
     expect(fs.readdirSync(xdgDataDir, { recursive: true })).toEqual([]);
@@ -805,74 +784,5 @@ describe("akm propose", () => {
     const queued = listProposals(stash, { status: "pending" });
     expect(queued.length).toBe(1);
     expect(queued[0]?.ref).toBe(durableItemRef(stash, "skill", "hello"));
-  });
-});
-
-// ── implicit engine fallback announcement (announced, never silent) ────────
-
-/**
- * A config with NO `defaults.engine` so `withEngineFallback` must synthesize the
- * `opencode-sdk` entry. It needs no binary; a scripted embedded OpenCode answers.
- */
-function fallbackEligibleConfig(): AkmConfig {
-  return {
-    configVersion: "0.9.0",
-    semanticSearchMode: "auto",
-    improve: {
-      strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } },
-    },
-  } as AkmConfig;
-}
-
-function captureWarnings(): string[] {
-  const warned: string[] = [];
-  overrideSeam(_setWarnSinkForTests, (level, args) => {
-    if (level === "warn") warned.push(args.map(String).join(" "));
-  });
-  return warned;
-}
-
-describe("engine fallback announcement on propose/reflect", () => {
-  test("propose announces the fallback engine via warn()", async () => {
-    const stash = makeStashDir();
-    const warned = captureWarnings();
-    installFakeOpencodeHost({ reply: () => VALID_SKILL_PAYLOAD });
-    const result = await akmPropose({
-      type: "skill",
-      name: "hello",
-      task: "Say hi politely",
-      stashDir: stash,
-      agentConfig: fallbackEligibleConfig(),
-    });
-    expect(result.engine).toBe("opencode-sdk");
-    expect(warned).toContain(FALLBACK_ANNOUNCEMENT);
-  });
-
-  test("propose with a configured default engine stays silent", async () => {
-    const stash = makeStashDir();
-    const warned = captureWarnings();
-    await akmPropose({
-      type: "skill",
-      name: "hello",
-      task: "Say hi politely",
-      stashDir: stash,
-      agentConfig: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
-    });
-    expect(warned).not.toContain(FALLBACK_ANNOUNCEMENT);
-  });
-
-  test("reflect announces the fallback engine via warn()", async () => {
-    const stash = makeStashDir();
-    const warned = captureWarnings();
-    installFakeOpencodeHost({ reply: () => VALID_LESSON_PAYLOAD });
-    const result = await akmReflect({
-      ref: "lessons/rg-over-grep",
-      assetContent: LESSON_SOURCE,
-      stashDir: stash,
-      config: fallbackEligibleConfig(),
-    });
-    expect(result.ok).toBe(true);
-    expect(warned).toContain(FALLBACK_ANNOUNCEMENT);
   });
 });
