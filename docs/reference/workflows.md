@@ -8,7 +8,7 @@ replaying completed units.
 
 The `akm workflow` surface, the workflow asset format and the workflow engine
 are Experimental; see [STABILITY.md](../../STABILITY.md). Workflow steps run as
-the invoking user. See [Architecture: Core Principles](../architecture/akm-core-principles.md)
+the invoking user. See [Architecture: Invariants](../architecture/architecture.md#invariants)
 for where workflows sit among AKM's execution surfaces.
 
 This page is a short map. The full contract lives across four pages, split by

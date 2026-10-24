@@ -29,7 +29,7 @@ Feedback is recorded against each asset and feeds `akm improve`. A negative repo
 ### Turn knowledge into repeatable work
 Run persisted workflows with dispatch, gates, retries, budgets, and resume instead of reconstructing a process from prose every session. Workflows are Experimental.
 
-Search and show only return content; running a workflow, task, script, or agent is a separate command. See [Core Principles](docs/architecture/akm-core-principles.md).
+Search and show only return content; running a workflow, task, script, or agent is a separate command. See the invariants in [Architecture](docs/architecture/architecture.md#invariants).
 
 ## Install
 

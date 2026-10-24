@@ -4,6 +4,63 @@ akm is a Bun-based CLI for discovering and using agent assets from local
 filesystem sources, cache-backed sources (git, website, npm), and registry
 catalogs. This page summarizes how it is put together.
 
+## Invariants
+
+These behaviors hold across every command. Each names the test that pins
+it; one that names none is held by review. The rules for how the code
+itself is written are in [Core Principles](akm-core-principles.md).
+
+- **Files are the truth.** Capabilities are files in bundles. `index.db` is
+  a derived view that `akm index` rebuilds; `state.db` holds akm's
+  bookkeeping (events, proposals, runs, salience), never capability
+  content; `logs.db` holds purgeable log lines. Every change akm makes to a
+  capability lands as a file: an accepted proposal becomes the asset, memory
+  inference writes derived children, retirement leaves an archive and a
+  tombstone, extraction writes session assets. Pinned by
+  `tests/integration/indexer/ensure-index-serve.test.ts`.
+- **One local retrieval layer.** Every source materializes to disk and is
+  indexed the same way; `show` resolves through the index and reads from
+  disk. Registry results are opt-in and arrive in `registryHits`, never
+  merged into `hits`. Pinned by the `SourceProvider` interface in
+  `src/sources/provider.ts` and `tests/integration/output-baseline.test.ts`.
+- **Discovery chooses, show delivers.** `search` and `curate` return enough
+  to pick an asset and a `ref` at every detail level and shape; `show`
+  returns the payload; agent-shaped results also carry `path` and
+  `editable`. Pinned by `tests/output-shapes-unit.test.ts` and
+  `tests/output-baseline.test.ts`.
+- **Refs are path identities.** `[bundle//]conceptId`, with `#fragment`
+  accepted by `show` only. A short ref resolves against `defaultBundle`,
+  then the remaining bundles in installation order. A rename is a new
+  identity. Pinned by `tests/asset-ref.test.ts`, `tests/resolve-ref.test.ts`
+  and `tests/contracts/ref-resolver-contract.test.ts`.
+- **Execution happens only through named surfaces.** Workflow runs, tasks,
+  agent and command dispatch, `env run` and `secret run`, the improve and
+  proposal processes, index passes, and fetcher modules in the working
+  bundle's `scripts/wiki-fetchers/` directory during website sync. `search`
+  and `show` execute nothing; a script runs only as a task or workflow
+  target. Held by review.
+- **Improvement is review-first.** Proposals are the unit of change. With
+  `experimental.improveAutonomy` on, three lanes act without a person
+  (memory inference, memory cleanup, triage in promote mode). Regardless,
+  `improve` writes session assets, purges graced archives, commits accepted
+  proposals and auto-syncs a git-backed bundle. Pinned by
+  `tests/improve-plan-autonomy-wiring.test.ts` and
+  `tests/config-experimental-improve-autonomy.test.ts`.
+- **Writes resolve one way.** `--target`, then `defaultWriteTarget`, then
+  the working bundle, then an error. A destination that is not writable is
+  an error, never a fallback. Env and secret values are never printed.
+  Pinned by `tests/integration/write/write-source.test.ts`,
+  `tests/integration/env/env.test.ts` and
+  `tests/integration/secret/secret-indexing.test.ts`.
+- **Output is for automation first.** `--format json`, `--detail brief` and
+  `--shape human` by default; failures are `{ok, error, code}` on stderr
+  with a stable exit code. Pinned by
+  `tests/integration/output-baseline.test.ts`.
+- **Host authority is local and never inferred.** Inherited config shares
+  portable policy only; a disabled bundle is inert; the default bundle is
+  explicit. Pinned by `tests/config.test.ts` and
+  `tests/core/activation-policy.test.ts`.
+
 ---
 
 ## Asset Types

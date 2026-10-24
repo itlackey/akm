@@ -1,160 +1,201 @@
 # akm Core Principles
 
-akm is a portable capability library for AI agents — give every coding agent
-the capabilities your team has already built. It indexes existing agent
-assets in place, loads only what a task needs, packages capabilities into
-shareable bundles, improves the library through reviewable proposals, and
-runs durable workflows, locally and without tying the library to one
-assistant.
+How akm is built. These are the rules the code, the tests and the
+documentation in this repository follow. What akm does for a user is
+described in [Architecture](architecture.md); the product invariants that
+used to live here are its "Invariants" section.
+
+Each principle states the rule, why it exists, and what enforces it. A rule
+with nothing enforcing it is held by review, and says so.
 
 ## Precedence
 
-When two principles collide, the one that protects a user's files and data wins, then the one that
-keeps output lean, then everything else. When the code violates a principle, the code is wrong.
-The exception is a principle this document marks as a goal not yet reached.
+When two principles pull against each other: a user's data comes first,
+then honesty (code and documentation that do what they say), then
+simplicity, then convenience. A principle marked as a goal not yet reached
+does not make the code wrong where it falls short; it names the work.
 
 ## Principles
 
-### 1. Files are the truth
+### 1. Delete before you add
 
-Capabilities are ordinary files in bundles. The index (`index.db`) is a derived view that
-`akm index` rebuilds from those files, and the only other authoritative store is `state.db`
-(events, proposals, runs, salience); `logs.db` holds purgeable task log lines. Every change akm makes to a
-capability lands as a file inside a bundle: an accepted proposal becomes the asset, memory
-inference writes derived children, retirement leaves an archive and a tombstone, and extraction
-writes session assets. `state.db` holds akm's bookkeeping about those files, never the
-capabilities themselves.
+The default answer to a new guard, cap, version gate, option, mode or layer
+is no. A guard survives only if it has demonstrably helped a real user, its
+failure mode costs less than the hazard it prevents, and the operation is
+not already behind a deliberate human command. "This hazard is
+conceivable" is not a reason. When something must change, remove the limit
+first, degrade with a warning second, abort last. Machinery that prevents
+data loss or corruption, such as backups, atomic writes, write-path
+validation and path containment, is exempt.
 
-Cost: The index can lag the files until `akm index` runs, and anything held only in `state.db` does not travel with a bundle.
+Why: every footgun this codebase has removed was a guard added because a
+hazard was conceivable; the limits made the tool refuse to do its job
+more often than they protected anyone.
 
-Enforced by: `tests/integration/indexer/ensure-index-serve.test.ts` (a missing index rebuilds from the files); the rule that akm's own writes land as files is not enforced; relies on review.
+Enforced by: review. The worked examples in `AGENTS.md` are the precedent.
 
-### 2. One local retrieval layer
+### 2. One place per policy
 
-Every configured source, whatever its kind, materializes to a directory on disk, and the indexer
-walks those directories the same way. `search`, `curate` and `show` therefore behave the same
-wherever a file came from, and `show` resolves through the index and reads from disk. Registries
-are a separate, read-only catalog of installable bundles: their results are opt-in and appear in
-`registryHits`, never merged into source `hits`.
+A rule lives in exactly one module and everything else calls it. Write
+destinations branch on source kind only in `src/core/write-source.ts`.
+Fan-out widths are decided once in `src/workflows/concurrency-policy.ts`.
+Child-process environment allowlists come from `src/core/spawn-env.ts`.
+Every agent harness registers once in `HARNESS_REGISTRY`
+(`src/integrations/harnesses/index.ts`) and core imports the registry, not
+a harness. Runtime-specific APIs (`bun:sqlite`, `Bun.*`) are reached only
+through `src/storage/database.ts` and `src/runtime.ts`.
 
-Cost: A source must be synced to disk before it is searchable, so there are no remote-only sources and no live queries against an upstream.
+Why: a policy copied into three places drifts into three policies, and
+the drift is invisible until a user hits the one that differs.
 
-Enforced by: the `SourceProvider` interface in `src/sources/provider.ts` (it has a name, kind, path and optional sync, and no query method; adding one is a visible interface change) and `tests/integration/output-baseline.test.ts` (registry hits arrive in `registryHits`).
+Enforced by: the construction-time drift guard on `HARNESS_REGISTRY` and
+`tests/harnesses-registry.test.ts`; `scripts/lint-secret-resolver-boundary.ts`
+for secret reads; `tests/contracts/module-boundaries.test.ts` for the
+module table. The write chokepoint and the no-direct-harness-imports rule
+are held by review; the opencode-sdk path still bypasses the second one in
+the config schema, setup, health, the engine fallback and workflow
+teardown, which is open work.
 
-### 3. Discovery chooses, show delivers, the file is the last resort
+### 3. Decide once, then freeze
 
-`search` and `curate` return enough to pick an asset and a `ref` to act on; `show` returns the
-payload. The `ref` is present in every search, curate and show result, at every detail level and in
-every shape. Agent-shaped search, show and curate results also carry the file `path` and whether it is
-`editable`, for anything `show` does not deliver.
+Anything that changes what a durable run does is resolved when the run is
+created and journaled with it: the plan, the resolved request, the engine,
+the fan-out width, the parameter snapshot. A resumed run reads the journal,
+never config, model aliases or credentials. Editing config changes the next
+run, not the one in flight.
 
-Cost: Default search results carry no description, so a caller sometimes needs a second call to choose between near matches.
+Why: a run that can change underneath itself cannot be resumed, reasoned
+about, or reproduced.
 
-Enforced by: `tests/output-shapes-unit.test.ts` (fields per detail level and shape) and `tests/integration/output-baseline.test.ts` (default search and show output).
+Enforced by: `tests/workflows/child-plan-immutability.test.ts`,
+`tests/workflows/immutable-execution-v4-red.test.ts`,
+`tests/concurrency-defaults.test.ts`.
 
-### 4. Refs are path identities, passed back unchanged
+### 4. Readers tolerate the past and refuse only the future
 
-A ref names an asset: an optional bundle, `//`, then the slash-separated concept id of the
-asset inside that bundle. `show` also accepts a `#fragment` that selects a section; every other
-boundary rejects it. A ref without a bundle resolves against `defaultBundle`, then the remaining
-bundles in installation-priority order. A person may type a short ref; an agent hands back the refs akm emitted
-rather than parsing or rebuilding them. Renaming or moving an asset gives it a new identity.
+Data an older release wrote is read: converted in memory, warned about
+once, and left for `akm migrate apply` to rewrite on disk. The migrator is
+the on-disk rewrite path, never a precondition for reading. The only data a
+reader refuses is data a newer release wrote, and the refusal names the
+upgrade. No config object is strict: an unknown key at any depth is kept,
+named once, and round-trips through ordinary writes.
 
-Cost: A rename or move orphans the feedback and usage history recorded against the old ref.
+Why: an upgrade that strands a user's data on the first command is worse
+than any inconsistency it was guarding against.
 
-Enforced by: `tests/asset-ref.test.ts` and `tests/resolve-ref.test.ts` (grammar, resolution order, fragment boundary) and `tests/contracts/ref-resolver-contract.test.ts` (ref to file mapping).
+Enforced by: `tests/integration/upgrade-rehearsal/`, which installs the
+previous release, builds real state, and runs the candidate against it.
+[Persisted-Data Compatibility](persisted-data-compat.md) is the per-format
+contract; every format change adds its old shape to the rehearsal.
 
-### 5. Execution happens only through named surfaces
+### 5. Runtime code never invents authority
 
-akm runs code only through: workflow runs, tasks (including scheduled ones), agent and command
-dispatch, `env run` and `secret run` (read a value and inject it into a child process), the
-improve and proposal processes, index passes, and fetcher modules in the working bundle's
-`scripts/wiki-fetchers/` directory, imported during any website sync. `search` and `show` never
-execute anything. A script runs only as a task or workflow target; `show` returns its run hint
-as text. `upgrade`, `health` and source sync run tools akm itself chooses, such as git, npm and
-the harness CLIs; none of that is indexed content.
+Sources, defaults, registries, credentials, scheduled tasks and execution
+policy come from this host's own config. Inherited config (`extends`)
+shares portable policy only. A disabled bundle is inert for reads, writes,
+indexing and execution. The default bundle is carried explicitly, never
+inferred from array position. The single exception, a config without
+`scheduler.enabled` adopting the scheduler rows akm already wrote on this
+host, is documented and is the only one.
 
-Cost: Running anything new means adding a named surface here, and a fetcher module in the working bundle runs whenever a website source syncs, with no separate approval.
+Why: a tool that fills in trust decisions on its own becomes impossible to
+audit, and every "helpful" inference is a path a bundle author can abuse.
 
-Enforced by: not enforced; relies on review.
+Enforced by: `tests/config.test.ts` (`HOST_LOCAL_CONFIG_KEYS` in
+`src/core/config/config.ts`) and `tests/core/activation-policy.test.ts`.
 
-### 6. Improvement is review-first
+### 6. Safe defaults, narrow overrides
 
-Proposals are the unit of change: `improve` stages reflect, distill, consolidate and extract output
-as proposals that a person accepts, rejects or reverts. With `experimental.improveAutonomy` on,
-three lanes act without a person: memory inference, memory cleanup, and triage in `promote` mode,
-where the drain accepts the proposals an LLM judge passed and the retire proposals the
-consolidation pair pass itself staged. Regardless of that setting, `improve` writes session assets,
-purges retirement archives past their grace period, commits accepted proposals, and by default
-commits and pushes a git-backed bundle at the end of a run.
+Defaults work for the lowest common denominator: a slow local model on a
+single-threaded server. No `max_tokens` is sent unless configured, one
+timeout knob, concurrency one for a loopback endpoint, no per-call tuning
+knobs without a strong reason. An override that weakens a safety rule names
+exactly one risk: `--allow-insecure-transport` is for plain HTTP and
+nothing else, `--allow-dangerous-env-keys` is for reviewed
+process-hijacking environment keys and nothing else. There is no combined
+bypass.
 
-Cost: Unattended improvement is slower and the proposal queue needs tending.
+Why: a knob nobody needed is a surface nobody tested; a combined bypass is
+a flag people cargo-cult.
 
-Enforced by: `tests/improve-plan-autonomy-wiring.test.ts` and `tests/config-experimental-improve-autonomy.test.ts` (the gate and its default of off); the always-on writes are not enforced; relies on review.
+Enforced by: `tests/concurrency-defaults.test.ts`,
+`tests/env-run-dangerous-key-block.test.ts`; the rest is review.
 
-### 7. Writes go through one chokepoint and resolve one way
+### 7. A contract is a test or a lint, or it is a preference
 
-`src/core/write-source.ts` is the only module that branches on a source's kind for writes. A
-destination resolves in one order: the `--target` flag, then `defaultWriteTarget`, then the
-working bundle (`defaultBundle`), then an error. A destination that is not writable is an error,
-never a fallback to another source. akm never prints env and secret values: `list`, `show` and
-search return names only, and values reach a child process through `env run` and `secret run`
-or a file through `env export --out`.
+Output shapes, exit codes, the ref grammar, the module table, the engine
+boundary, documentation examples that name real commands and flags, shipped
+assets that carry no dead refs: each is pinned. A rule that matters gets a
+pin in `tests/contracts/`, a unit test, or a script in the `lint` chain. A
+rule nobody pinned is a preference and may be changed without ceremony.
 
-Cost: A write with no usable destination stops and asks for one instead of guessing.
+Why: this repository's documentation drifted from its code for months
+because the documents said "normative" and nothing checked.
 
-Enforced by: `tests/integration/write/write-source.test.ts` (resolution order and the non-writable error), `tests/integration/env/env.test.ts` and `tests/integration/secret/secret-indexing.test.ts` (values stay out of the index and `show`); the single-chokepoint rule is not enforced; relies on review.
+Enforced by: `bun run lint` (`scripts/lint-doc-examples.ts`,
+`scripts/lint-shipped-assets.ts`, `scripts/lint-secret-resolver-boundary.ts`),
+`tests/contracts/`, `tests/output-shapes-unit.test.ts`.
 
-### 8. Output is for automation first
+### 8. The suite is green by default and isolated by construction
 
-The defaults are `--format json`, `--detail brief` and `--shape human`. The human shape is the
-default projection and the agent shape (`--shape agent`) is opt-in and Experimental. Fuller detail
-is opt-in, and failures print as `{ok, error, code}` on stderr with a stable exit code.
+`test:unit` and `test:integration` report zero failures at all times; a red
+run is a real break, never noise to route around, and a test that must be
+disabled is disabled explicitly with a linked issue. A test that opens a
+real database, touches the network, or spawns a process lives under
+`tests/integration/`; everything else lives under `tests/`. Tests never
+touch the developer's home: the preload sandboxes `HOME` and `XDG_*`,
+restores `cwd` and `fetch`, and throws when a test leaks any of them.
 
-Cost: Default output is terse for a person at a terminal, who asks for `--format text` or `--detail normal` to see more.
+Why: a suite that is "usually green" is a suite nobody trusts, and a test
+that reads a developer's real config passes on one machine and fails on
+the next.
 
-Enforced by: `tests/integration/output-baseline.test.ts` (default JSON for search and show) and `tests/output-shapes-unit.test.ts`.
+Enforced by: `tests/_preload.ts` (the tripwire), `scripts/test-unit.sh`
+and `scripts/test-integration.sh` (the split), `TEST_ISOLATION_MISSING` in
+`src/core/paths.ts`.
 
-### 9. Harnesses are plural and registered in one place
+### 9. Prose lives in files; comments say why
 
-Any number of agent harnesses may exist. Each registers once in `HARNESS_REGISTRY`
-(`src/integrations/harnesses/index.ts`), and core code imports the registry, not a harness. That
-is a goal not yet reached: today the opencode-sdk path is still special-cased in the config
-schema, setup, health, the implicit engine fallback and workflow teardown, setup's config import
-reads two harnesses directly, and the SDK is a hard dependency; closing that gap is open work.
+Multi-line markdown, XML or prose belongs in a standalone file next to the
+module that uses it, imported as text and filled with `{{PLACEHOLDER}}`
+tokens. A code comment explains a constraint or a decision the code cannot
+show; it does not cite plans, specs, review rounds or history, and it does
+not restate the line beneath it.
 
-Cost: A new harness has to fit the shared registry shape, which a one-off integration would not.
+Why: templates inside template literals cannot be edited without touching
+source, and a comment that points at a document nobody can find is noise
+that looks like information.
 
-Enforced by: the construction-time drift guard on `HARNESS_REGISTRY` for registration; the no-direct-imports rule is not enforced; relies on review.
+Enforced by: review.
 
-### 10. Host authority is local and never inferred
+### 10. Documentation describes the product that exists
 
-Inherited config (`extends`) shares portable policy only; sources, defaults, registries, scheduler,
-execution and experimental state, credentials and connections stay in the host's own config.
-Installing a bundle does not schedule its tasks, a disabled bundle is inert for reads, writes,
-indexing and execution, and the default bundle is carried explicitly, never inferred from position.
-Runtime code fills in no authority on its own, except that a config without `scheduler.enabled`
-adopts the scheduler entries akm already wrote on this host.
+One current-truth document per subsystem; no second one is forked. Plans,
+decision records, review registers and future-work promises do not live
+under `docs/`. Code is cited by file and symbol, not line number. A
+document claims no guarantee the code does not enforce, and names no
+command, flag or file that does not exist. When code and documentation
+disagree, one of them is fixed in the same change, never left for later.
 
-Cost: A shared config cannot set up a new machine end to end; each host still declares its own sources, credentials and scheduled tasks.
+Why: a user who reads a stale page loses more time than if the page had
+not existed, and a "normative" document the code ignores teaches
+contributors that documents do not matter.
 
-Enforced by: `tests/config.test.ts` (inherited host-local keys are dropped, `HOST_LOCAL_CONFIG_KEYS` in `src/core/config/config.ts`) and `tests/core/activation-policy.test.ts`.
+Enforced by: `scripts/lint-doc-examples.ts` (every command and flag in a
+doc exists), the npm pack check in
+`tests/integration/install/npm-pack-contents.test.ts` (no dead link ships),
+`tests/contracts/` (pinned sections of `architecture.md`, `cli.md` and
+`configuration.md`).
 
-### 11. Guards must earn their place
+### 11. CLI-only, Bun-first
 
-A guard, cap, version gate or fencing check stays only if it has demonstrably helped a real user.
-It also stays only if its failure mode costs less than the hazard it prevents. And it stays only
-if the operation is not already gated behind a deliberate human command. When something must
-change, remove the limit first, degrade with a warning second and abort last; machinery that
-prevents data loss or corruption is exempt.
+This package is a command-line tool. There is no public API, no barrel
+exports and no `exports` map; `src/cli.ts` dispatches and commands live
+under `src/commands/`. Bun is the runtime and the toolchain; Node 22 is
+only the npm bootstrap. Anything that would become an API for other
+programs is a separate decision, not an incidental export.
 
-Cost: Some conceivable hazards go unguarded, and a removed guard can let a bad input through.
+Why: an accidental API is a compatibility promise nobody agreed to make.
 
-Enforced by: not enforced; relies on review.
-
-## What akm does not do
-
-- replace MCP or assistant-native skills; it complements them
-- require agents to understand source layouts or provider internals
-- publish to registries; registries are read-only catalogs
-- serve remote-only sources; every source is materialized on disk first
+Enforced by: `package.json` (no `exports` map, Bun scripts),
+`tests/contracts/module-boundaries.test.ts`.

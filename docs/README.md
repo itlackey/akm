@@ -48,7 +48,7 @@ also has its own README indexing everything inside it: [Guides](guides/README.md
 - [Registry](reference/registry.md) -- Registries, search, hosting, and managing sources
 - [Website Sources](reference/website-sources.md) -- The fetcher API for crawling and importing URLs
 - [Data & Telemetry](reference/data-and-telemetry.md) -- What akm reads and writes on your machine
-- [Architecture](architecture/architecture.md) and [Core Principles](architecture/akm-core-principles.md) -- How akm fits together and the principles it follows; [the architecture index](architecture/README.md) lists the rest
+- [Architecture](architecture/architecture.md) -- How akm fits together, and the invariants every command keeps; [Core Principles](architecture/akm-core-principles.md) -- How the code, tests and docs in this repo are built; [the architecture index](architecture/README.md) lists the subsystem references
 
 ## Migration
 

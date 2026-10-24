@@ -96,7 +96,7 @@ This is the retrieval loop: **connect** a source, **index** it, **curate** a
 shortlist for a task, **show** the full payload, **use/run** it, send
 **feedback**, and let accumulated signal become a **proposal**. Search and
 show only return content; running a script, workflow, task or agent is a
-separate command. See [Core Principles](../architecture/akm-core-principles.md).
+separate command. See the invariants in [Architecture](../architecture/architecture.md#invariants).
 
 ## See also
 

@@ -156,7 +156,7 @@ asset — a `run` command plus optional `cwd` and `setup` for scripts, a
 `#<heading-slug>` to a ref for one section).
 
 `show` hands your agent the payload; running it is a separate step. See
-[Core Principles](../architecture/akm-core-principles.md).
+the invariants in [Architecture](../architecture/architecture.md#invariants).
 
 ## 7. Tell your agent about akm
 
