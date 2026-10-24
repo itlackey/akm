@@ -19,10 +19,11 @@ The exception is a principle this document marks as a goal not yet reached.
 
 Capabilities are ordinary files in bundles. The index (`index.db`) is a derived view that
 `akm index` rebuilds from those files, and the only other authoritative store is `state.db`
-(events, proposals, runs, salience); `logs.db` holds purgeable task log lines. akm's own writes
-land as files inside bundles and never around them: accepted proposals become assets, memory
+(events, proposals, runs, salience); `logs.db` holds purgeable task log lines. Every change akm makes to a
+capability lands as a file inside a bundle: an accepted proposal becomes the asset, memory
 inference writes derived children, retirement leaves an archive and a tombstone, and extraction
-writes session assets.
+writes session assets. `state.db` holds akm's bookkeeping about those files, never the
+capabilities themselves.
 
 Cost: The index can lag the files until `akm index` runs, and anything held only in `state.db` does not travel with a bundle.
 
@@ -38,7 +39,7 @@ are a separate, read-only catalog of installable bundles: their results are opt-
 
 Cost: A source must be synced to disk before it is searchable, so there are no remote-only sources and no live queries against an upstream.
 
-Enforced by: the `SourceProvider` interface in `src/sources/provider.ts` (checked by the typecheck: a provider has a name, kind, path and optional sync, and no query methods) and `tests/integration/output-baseline.test.ts` (registry hits arrive in `registryHits`).
+Enforced by: the `SourceProvider` interface in `src/sources/provider.ts` (it has a name, kind, path and optional sync, and no query method; adding one is a visible interface change) and `tests/integration/output-baseline.test.ts` (registry hits arrive in `registryHits`).
 
 ### 3. Discovery chooses, show delivers, the file is the last resort
 
@@ -54,11 +55,11 @@ Enforced by: `tests/output-shapes-unit.test.ts` (fields per detail level and sha
 
 ### 4. Refs are path identities, passed back unchanged
 
-A ref names a file: an optional bundle, `//`, then the slash-separated concept id of the file
-inside that bundle. `show` also accepts a `#fragment` that selects a section; every other
+A ref names an asset: an optional bundle, `//`, then the slash-separated concept id of the
+asset inside that bundle. `show` also accepts a `#fragment` that selects a section; every other
 boundary rejects it. A ref without a bundle resolves against `defaultBundle`, then the remaining
-bundles in installation-priority order. Callers hand back the refs akm emitted and do not build or
-parse them, and renaming or moving a file gives it a new identity.
+bundles in installation-priority order. A person may type a short ref; an agent hands back the refs akm emitted
+rather than parsing or rebuilding them. Renaming or moving an asset gives it a new identity.
 
 Cost: A rename or move orphans the feedback and usage history recorded against the old ref.
 
@@ -68,11 +69,11 @@ Enforced by: `tests/asset-ref.test.ts` and `tests/resolve-ref.test.ts` (grammar,
 
 akm runs code only through: workflow runs, tasks (including scheduled ones), agent and command
 dispatch, `env run` and `secret run` (read a value and inject it into a child process), the
-improve and proposal processes, index passes, and fetcher modules placed in the working bundle's `scripts/wiki-fetchers/`
-directory, which are imported during any website sync. `search` and `show` never execute anything. A script runs only as a task or
-workflow target, and `show` returns its run hint as text. The `upgrade`, `health` and
-source-sync commands also invoke external tools of akm's choosing, which is not indexed content
-running.
+improve and proposal processes, index passes, and fetcher modules in the working bundle's
+`scripts/wiki-fetchers/` directory, imported during any website sync. `search` and `show` never
+execute anything. A script runs only as a task or workflow target; `show` returns its run hint
+as text. `upgrade`, `health` and source sync run tools akm itself chooses, such as git, npm and
+the harness CLIs; none of that is indexed content.
 
 Cost: Running anything new means adding a named surface here, and a fetcher module in the working bundle runs whenever a website source syncs, with no separate approval.
 
