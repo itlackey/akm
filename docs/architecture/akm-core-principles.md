@@ -2,7 +2,8 @@
 
 How akm is built. These are the rules the code, the tests and the
 documentation in this repository follow. What akm does for a user is
-described in [Architecture](architecture.md).
+described in [Architecture](architecture.md), whose "Invariants" section
+lists the behaviors every command keeps.
 
 Each principle states the rule, why it exists, and what enforces it. A rule
 with nothing enforcing it is held by review, and says so.
