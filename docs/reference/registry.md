@@ -106,9 +106,6 @@ akm search "deploy" --from registry
 
 # Search both the local bundle library and registries
 akm search "deploy" --from all
-
-# Include asset-level results from v3 indexes
-akm search "deploy" --from registry --assets
 ```
 
 ### Search Results
@@ -125,20 +122,6 @@ Each registry hit includes:
 | `quality` | Optional provenance marker — `"generated"`, `"curated"`, or `"proposed"`. Replaces the legacy `curated` boolean removed in 0.7.0 |
 
 Use `--detail full` to include ranking metadata like `score`.
-
-### The `--assets` Flag
-
-When a registry publishes a v3 index (see below), `akm search --from
-registry` can return individual asset-level hits in addition to bundle-level
-hits. Pass `--assets` to enable this:
-
-```bash
-akm search "code review" --from registry --assets
-```
-
-Asset hits include `assetType`, `assetName`, `description`, and the parent
-`stash` information, so you can install the right bundle and immediately know
-which asset to use.
 
 ## Discovery Filtering
 
@@ -419,9 +402,9 @@ official registry.
 ## Registry Index v3
 
 Version 3 of the registry index schema is the only format `akm-cli >=
-0.6.0` parses. It carries an `assets` array on each bundle entry so
-clients can perform asset-level search without installing the bundle
-first.
+0.6.0` parses. It carries an `assets` array on each bundle entry that
+describes the assets the bundle contains. `akm search --from registry` matches
+bundles; it does not return asset-level hits.
 
 ```json
 {

@@ -51,6 +51,10 @@ describe("rejects undeclared flags", () => {
     expect(errorFor(["search", "foo", "--full"]).code).toBe("UNKNOWN_FLAG");
   });
 
+  test("`akm search --assets` is gone: nothing ever printed its asset hits", () => {
+    expect(errorFor(["search", "foo", "--from", "registry", "--assets"]).code).toBe("UNKNOWN_FLAG");
+  });
+
   test("rejects both the space and equals spellings", () => {
     expect(errorFor(["show", "knowledge/a", "--jsn"]).code).toBe("UNKNOWN_FLAG");
     expect(errorFor(["show", "knowledge/a", "--jsn=1"]).code).toBe("UNKNOWN_FLAG");

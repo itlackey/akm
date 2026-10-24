@@ -15,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   A configured npm bundle with no lock entry is skipped by `akm index` with one
   warning naming `akm bundle update`, instead of hitting the npm registry on
   every index run.
+- `akm search --assets` is removed. It asked registries for asset-level hits,
+  but `akm search` never put them in its output, so the flag printed nothing; the
+  registry providers' asset scoring and the `assetHits` response field go with it.
 
 ## [0.10.261013] - 2026-10-23
 

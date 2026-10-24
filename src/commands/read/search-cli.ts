@@ -56,11 +56,6 @@ export const searchCommand = defineJsonCommand({
     },
     limit: { type: "string", description: "Maximum number of results" },
     from: { type: "string", description: "Search source (local|registry|all)", default: "local" },
-    assets: {
-      type: "boolean",
-      description: "Include asset-level search results (only meaningful with --from registry|all)",
-      default: false,
-    },
     filter: scopeFilterArg,
     "include-proposed": {
       type: "boolean",
@@ -87,7 +82,6 @@ export const searchCommand = defineJsonCommand({
     const includeProposed = args["include-proposed"] === true;
     const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
     const includeSessions = args["include-sessions"];
-    const assets = args.assets === true;
     const outputMode = getOutputMode();
     const result = await akmSearch({
       query,
@@ -98,7 +92,6 @@ export const searchCommand = defineJsonCommand({
       includeProposed,
       belief,
       includeSessions,
-      assets,
       eventSource: resolveUsageEventSource(),
       attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
     });

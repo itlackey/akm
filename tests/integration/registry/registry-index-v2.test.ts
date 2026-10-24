@@ -127,17 +127,6 @@ describe("parser: v1 index compatibility", () => {
       srv.close();
     }
   });
-
-  test("v1 index returns no assetHits even when includeAssets is true", async () => {
-    const srv = serveIndex(V1_INDEX);
-    try {
-      const result = await searchRegistry("legacy", { registries: [{ url: srv.url }], includeAssets: true });
-      expect(result.hits.length).toBe(1);
-      expect(result.assetHits).toBeUndefined();
-    } finally {
-      srv.close();
-    }
-  });
 });
 
 // ── Parser: v2 index with assets ────────────────────────────────────────────
@@ -154,107 +143,12 @@ describe("parser: v2 index with assets", () => {
       srv.close();
     }
   });
-
-  test("v2 index returns assetHits when includeAssets is true", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("deploy", { registries: [{ url: srv.url }], includeAssets: true });
-      expect(result.warnings).toEqual([]);
-      expect(result.assetHits).toBeDefined();
-      expect(result.assetHits?.length).toBeGreaterThan(0);
-
-      const deployHit = result.assetHits?.find((h) => h.assetName === "deploy.sh");
-      expect(deployHit).toBeDefined();
-      expect(deployHit?.type).toBe("registry-asset");
-      expect(deployHit?.assetType).toBe("script");
-      expect(deployHit?.description).toBe("Deploy the application");
-      expect(deployHit?.estimatedTokens).toBe(64);
-      expect(deployHit?.stash.id).toBe("github:owner/my-stash");
-      expect(deployHit?.stash.name).toBe("My Stash");
-      expect(deployHit?.action).toBe("akm bundle add github:owner/my-stash");
-    } finally {
-      srv.close();
-    }
-  });
 });
 
-// ── Asset-level search ──────────────────────────────────────────────────────
+// ── Install refs ────────────────────────────────────────────────────────────
 
-describe("asset-level search", () => {
-  test("asset search returns hits with stash provenance", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("code-review", {
-        registries: [{ url: srv.url, name: "test-reg" }],
-        includeAssets: true,
-      });
-      expect(result.warnings).toEqual([]);
-      expect(result.assetHits).toBeDefined();
-      const reviewHit = result.assetHits?.find((h) => h.assetName === "code-review");
-      expect(reviewHit).toBeDefined();
-      expect(reviewHit?.stash.id).toBe("github:owner/my-stash");
-      expect(reviewHit?.registryName).toBe("test-reg");
-    } finally {
-      srv.close();
-    }
-  });
-
-  test("stashes without assets are silently skipped in asset search", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("utility", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
-      // "utility" matches the no-assets-stash but not any asset
-      // Asset hits should not include anything from stashes without assets
-      expect(result.assetHits).toBeUndefined();
-    } finally {
-      srv.close();
-    }
-  });
-
-  test("stashes with empty assets array are silently skipped in asset search", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("test", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
-      // "test" only matches the empty-assets-stash tag, which has no assets
-      expect(result.assetHits).toBeUndefined();
-    } finally {
-      srv.close();
-    }
-  });
-
-  test("no asset hits when includeAssets is false (default)", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("deploy", { registries: [{ url: srv.url }] });
-      expect(result.assetHits).toBeUndefined();
-    } finally {
-      srv.close();
-    }
-  });
-
-  test("asset search scores by name match", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("deploy.sh", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
-      expect(result.assetHits).toBeDefined();
-      expect(result.assetHits?.length).toBeGreaterThan(0);
-      // The deploy.sh asset should score higher than code-review for this query
-      expect(result.assetHits![0]!.assetName).toBe("deploy.sh");
-    } finally {
-      srv.close();
-    }
-  });
-
-  test("local source stash uses file: prefix in action string", async () => {
+describe("install refs", () => {
+  test("local source stash uses file: prefix in installRef", async () => {
     const localIndex: RegistryIndex = {
       version: 3,
       updatedAt: "2026-03-12T00:00:00Z",
@@ -266,48 +160,16 @@ describe("asset-level search", () => {
           ref: "/home/user/stashes/my-local-stash",
           source: "local",
           tags: ["local", "dev"],
-          assets: [
-            {
-              type: "script",
-              name: "setup.sh",
-              description: "Setup script for local development",
-              tags: ["setup"],
-            },
-          ],
         },
       ],
     };
     const srv = serveIndex(localIndex);
     try {
-      const result = await searchRegistry("setup", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
+      const result = await searchRegistry("local", { registries: [{ url: srv.url }] });
       expect(result.warnings).toEqual([]);
-      expect(result.assetHits).toBeDefined();
-      expect(result.assetHits?.length).toBe(1);
-      const hit = result.assetHits?.[0];
-      expect(hit).toBeDefined();
-      expect(hit?.assetName).toBe("setup.sh");
-      expect(hit?.stash.id).toBe("local:my-local-stash");
+      expect(result.hits.length).toBe(1);
       // Local source should use file: prefix, not "github:"
-      expect(hit?.action).toBe("akm bundle add file:/home/user/stashes/my-local-stash");
-      expect(hit?.action).not.toContain("github:");
-    } finally {
-      srv.close();
-    }
-  });
-
-  test("asset search scores by tag match", async () => {
-    const srv = serveIndex(V2_INDEX);
-    try {
-      const result = await searchRegistry("quality", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
-      expect(result.assetHits).toBeDefined();
-      const qualityHit = result.assetHits?.find((h) => h.assetName === "code-review");
-      expect(qualityHit).toBeDefined();
+      expect(result.hits[0]!.installRef).toBe("file:/home/user/stashes/my-local-stash");
     } finally {
       srv.close();
     }
@@ -332,13 +194,8 @@ describe("edge cases", () => {
     };
     const srv = serveIndex(index);
     try {
-      const result = await searchRegistry("plain", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
+      const result = await searchRegistry("plain", { registries: [{ url: srv.url }] });
       expect(result.hits.length).toBe(1);
-      // No asset hits because the stash has no assets
-      expect(result.assetHits).toBeUndefined();
     } finally {
       srv.close();
     }
@@ -360,18 +217,14 @@ describe("edge cases", () => {
     };
     const srv = serveIndex(index);
     try {
-      const result = await searchRegistry("empty", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
+      const result = await searchRegistry("empty", { registries: [{ url: srv.url }] });
       expect(result.hits.length).toBe(1);
-      expect(result.assetHits).toBeUndefined();
     } finally {
       srv.close();
     }
   });
 
-  test("asset with invalid structure is skipped", async () => {
+  test("asset entries with invalid structure do not break the stash hit", async () => {
     // biome-ignore lint/suspicious/noExplicitAny: testing invalid input
     const index: any = {
       version: 3,
@@ -394,13 +247,10 @@ describe("edge cases", () => {
     };
     const srv = serveIndex(index);
     try {
-      const result = await searchRegistry("good", {
-        registries: [{ url: srv.url }],
-        includeAssets: true,
-      });
-      expect(result.assetHits).toBeDefined();
-      expect(result.assetHits?.length).toBe(1);
-      expect(result.assetHits![0]!.assetName).toBe("good.sh");
+      const result = await searchRegistry("bad", { registries: [{ url: srv.url }] });
+      expect(result.warnings).toEqual([]);
+      expect(result.hits.length).toBe(1);
+      expect(result.hits[0]!.id).toBe("npm:bad-assets");
     } finally {
       srv.close();
     }
@@ -415,18 +265,11 @@ describe("edge cases", () => {
           { url: srv1.url, name: "v1-reg" },
           { url: srv2.url, name: "v2-reg" },
         ],
-        includeAssets: true,
       });
       // Both v1 stash hits and v2 stash hits should be present
       const ids = result.hits.map((h) => h.id);
       expect(ids).toContain("npm:legacy-stash");
       expect(ids).toContain("github:owner/my-stash");
-
-      // Asset hits should come only from v2
-      expect(result.assetHits).toBeDefined();
-      const assetKitIds = result.assetHits?.map((h) => h.stash.id);
-      expect(assetKitIds).toContain("github:owner/my-stash");
-      expect(assetKitIds).not.toContain("npm:legacy-stash");
     } finally {
       srv1.close();
       srv2.close();

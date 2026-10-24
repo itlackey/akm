@@ -617,7 +617,6 @@ kept.
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter by asset type. Free-form and unvalidated — an unknown type returns no hits. Also accepts any adapter-defined type (e.g. `website`) — see [Bundle Types](bundle-types.md) for the open types each adapter emits. |
 | `--limit` | number | `20` | Maximum results |
 | `--from` | `local`, `registry`, `all` | `local` | Where to search |
-| `--assets` | flag | `false` | Include asset-level registry results (only meaningful with `--from registry\|all`; folds in the retired `akm registry search --assets`) |
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--belief` | `all`, `current`, `historical` | `current` | Belief filter on any asset. `current` keeps unflagged/active/asserted assets; `historical` keeps deprecated/contradicted/superseded/archived assets. Labels do not establish truth. |

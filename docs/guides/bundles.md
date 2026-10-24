@@ -312,7 +312,6 @@ don't know about yet. The official registry ships pre-configured.
 ```sh
 akm registry list                             # See configured registries
 akm search "deploy" --from registry           # Search registry bundles by topic
-akm search "code review" --from registry --assets  # Include asset-level hits
 akm registry add https://example.com/registry/index.json --name my-team
 akm registry remove my-team
 ```
