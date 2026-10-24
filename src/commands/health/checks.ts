@@ -27,12 +27,6 @@ import {
   userModelMapPath,
 } from "../../integrations/agent/model-map";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import {
-  detectOpencodeMajor,
-  type OpencodeVersionInfo,
-  resolveOpencodeBin,
-} from "../../integrations/harnesses/opencode/version";
-import { OPENCODE_CLIENT_PACKAGE } from "../../integrations/harnesses/opencode-sdk/wire";
 import { probeEndpointOnce } from "../../llm/client";
 import type { ExtractOutcomeCount } from "../../storage/repositories/extract-sessions-repository";
 import {
@@ -181,7 +175,6 @@ export interface DefaultEngineProbeDependencies {
   loadConfig?: () => AkmConfig;
   resolveEngine?: (name: string, config: AkmConfig) => RunnerSpec;
   spawnSync?: typeof spawnSync;
-  resolvePackage?: (name: string) => string;
   which?: WhichFn;
   env?: NodeJS.ProcessEnv;
   /**
@@ -349,36 +342,6 @@ async function runConfiguredEngineProbe(
   const env = deps.env ?? process.env;
   const configuredEngine = config.engines?.[engineName];
   if (configuredEngine?.kind === "agent" && configuredEngine.platform === "opencode-sdk") {
-    const binary = resolveOpencodeBin(configuredEngine.bin);
-    let detected: OpencodeVersionInfo;
-    try {
-      detected = detectOpencodeMajor(binary, {
-        probe: (bin) => {
-          const run = (deps.spawnSync ?? spawnSync)(bin, ["--version"], { encoding: "utf8", timeout: 5_000 });
-          return (run.status ?? 1) === 0 ? String(run.stdout ?? "").trim() : undefined;
-        },
-      });
-    } catch {
-      return {
-        name: checkName,
-        kind: "deterministic",
-        status: "warn",
-        confidence: "high",
-        message: `SDK engine "${engineName}" executable availability could not be checked.`,
-        evidence: { engine: engineName, runtimeKind: "sdk", binaryAvailable: false },
-      };
-    }
-    const binaryAvailable = detected.runnable;
-    // The client package of the OpenCode major the binary reports; never the other major's.
-    const clientPackage = OPENCODE_CLIENT_PACKAGE[detected.major];
-    let packageAvailable = false;
-    try {
-      const resolvePackage = deps.resolvePackage ?? ((name: string) => import.meta.resolve(name));
-      resolvePackage(clientPackage);
-      packageAvailable = true;
-    } catch {
-      packageAvailable = false;
-    }
     const fallbackEngine = configuredEngine.llmEngine;
     let fallback: Extract<RunnerSpec, { kind: "llm" }> | undefined;
     let fallbackCredential: Extract<RunnerSpec, { kind: "llm" }>["credential"];
@@ -422,8 +385,6 @@ async function runConfiguredEngineProbe(
       ? findSuppliedByEnvAsset(fallbackCredential, deps)
       : null;
     const missing = [
-      !packageAvailable ? `${clientPackage} package` : undefined,
-      !binaryAvailable ? `${binary} binary` : undefined,
       fallbackEngine && !fallback ? "configured fallback LLM connection" : undefined,
       !fallbackCredentialAvailable
         ? fallbackSuppliedByEnvAsset
@@ -435,12 +396,6 @@ async function runConfiguredEngineProbe(
       engine: engineName,
       platform: configuredEngine.platform,
       runtimeKind: "sdk",
-      binary,
-      binaryAvailable,
-      package: clientPackage,
-      detectedVersion: detected.version || null,
-      detectedMajor: detected.major,
-      packageAvailable,
       model: effectiveModel ?? null,
       configuredModel: configuredModel ?? null,
       modelSource: configuredModel ? "sdk" : effectiveModel ? "fallback" : null,
@@ -707,10 +662,9 @@ function configuredEnginesProjection(
 }
 
 export async function runDefaultEngineProbe(deps: DefaultEngineProbeDependencies = {}): Promise<HealthCheckResult> {
-  // Probe the effective view: an install with no `defaults.engine` but a usable
-  // opencode binary DOES have a working default, and reporting otherwise would
-  // contradict what `workflow run` / `task run` actually do.
-  const { config } = withEngineFallback(deps.loadConfig?.() ?? loadConfig(), deps.which);
+  // Probe the effective view: an install with no `defaults.engine` falls back to
+  // the bundled OpenCode SDK, as `workflow run` / `task run` do.
+  const { config } = withEngineFallback(deps.loadConfig?.() ?? loadConfig());
   return runConfiguredEngineProbe(
     "default-engine",
     config.defaults?.engine,
@@ -761,7 +715,7 @@ export async function runHealthEngineProbes(
   deps: DefaultEngineProbeDependencies = {},
 ): Promise<HealthEngineProbeResults> {
   const configured = deps.loadConfig?.() ?? loadConfig();
-  const effective = withEngineFallback(configured, deps.which).config;
+  const effective = withEngineFallback(configured).config;
   const defaultEngineName = effective.defaults?.engine;
   const defaultLlmEngineName = configured.defaults?.llmEngine;
   const explicitEngineNames = Object.keys(configured.engines ?? {}).sort();

@@ -47,12 +47,7 @@ import {
 import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import { getHarness } from "../harnesses";
 import { DEFAULT_LLM_TIMEOUT_MS } from "./config";
-import {
-  FALLBACK_ENGINE_NAME,
-  fallbackEngineConfig,
-  NO_ENGINE_MESSAGE_SUFFIX,
-  NO_ENGINE_REMEDY,
-} from "./engine-fallback";
+import { FALLBACK_ENGINE_NAME, fallbackEngineConfig } from "./engine-fallback";
 import { configuredEngine, resolveEngine } from "./engine-resolution";
 import { engineModelAndInference, loadModelMap, type ResolvedModelMapV1, resolveModelMapAlias } from "./model-map";
 import { extensionFields, hasToolSelection, untranslated } from "./request-lowering";
@@ -276,16 +271,12 @@ function selectEngine(
       fallback: false,
     };
   }
-  const fallback = fallbackEngineConfig(config);
-  if (fallback) {
-    return {
-      name: FALLBACK_ENGINE_NAME,
-      engine: fallback,
-      provenance: { layer: FALLBACK_ENGINE_NAME, kind: "fallback", via: "fallback" },
-      fallback: true,
-    };
-  }
-  throw new ConfigError(`Execution ${NO_ENGINE_MESSAGE_SUFFIX}`, "INVALID_CONFIG_FILE", NO_ENGINE_REMEDY);
+  return {
+    name: FALLBACK_ENGINE_NAME,
+    engine: fallbackEngineConfig(config),
+    provenance: { layer: FALLBACK_ENGINE_NAME, kind: "fallback", via: "fallback" },
+    fallback: true,
+  };
 }
 
 function parseTimeout(value: unknown): number | null {

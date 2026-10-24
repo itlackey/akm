@@ -26,7 +26,7 @@ import { MODEL_WORK_POLICY_ID } from "../../execution/source";
 import { chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { getHarness } from "../harnesses";
-import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
+import { closeOpencodeSdk as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
 import { type AgentResultExtraction, modelFromArgs } from "./builder-shared";
 import {
   lookupApiKeyFileValue,

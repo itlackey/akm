@@ -22,9 +22,8 @@ import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
 import {
+  FALLBACK_ENGINE_NAME,
   fallbackAnnouncement,
-  NO_ENGINE_MESSAGE_SUFFIX,
-  NO_ENGINE_REMEDY,
   withEngineFallback,
 } from "../../integrations/agent/engine-fallback";
 import { executeInteractiveAgentInvocation } from "../../integrations/agent/runner-dispatch";
@@ -141,13 +140,11 @@ export async function akmAgentDispatch(
   // Same implicit opencode-sdk fallback the workflow and task surfaces apply,
   // so an engine-less install is usable everywhere or nowhere — not a mix.
   const { config: agentConfig, fallbackEngineName } = withEngineFallback(options.agentConfig);
-  const engineName = options.engine ?? agentConfig.defaults?.engine;
+  const engineName = options.engine ?? agentConfig.defaults?.engine ?? FALLBACK_ENGINE_NAME;
   // Announced, never silent: `options.engine` outranks the default, so the
   // fallback is only reportable when it is the engine actually selected.
   const engineAnnouncement = fallbackAnnouncement(fallbackEngineName, engineName);
   if (engineAnnouncement) warn(engineAnnouncement);
-  if (!engineName)
-    throw new UsageError(`agent ${NO_ENGINE_MESSAGE_SUFFIX} ${NO_ENGINE_REMEDY}`, "MISSING_REQUIRED_ARGUMENT");
   const executeInteractive = seams.executeInteractive ?? executeInteractiveAgentInvocation;
   const execution = await executeInteractive({
     config: agentConfig,

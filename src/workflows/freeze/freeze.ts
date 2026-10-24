@@ -12,9 +12,7 @@
 
 import { createHash } from "node:crypto";
 import type { AkmConfig } from "../../core/config/config";
-import { ConfigError, UsageError } from "../../core/errors";
-import { warn } from "../../core/warn";
-import { NO_ENGINE_MESSAGE_SUFFIX } from "../../integrations/agent/engine-fallback";
+import { UsageError } from "../../core/errors";
 import { resolveExecution } from "../../integrations/agent/execution";
 import { checkWorkflowPlan } from "../compile";
 import { defaultMapConcurrency, workflowMaxConcurrency } from "../concurrency-policy";
@@ -74,16 +72,8 @@ export async function freezeWorkflow(
     let frozenJudge: FrozenWorkflowCommandTarget | null = null;
     if (step.gate.criteria.length > 0) {
       const judge = resolveJudge(source, step.gate.criteria[0] ?? "", context);
-      if (judge) {
-        frozenJudge = judge.target as FrozenWorkflowCommandTarget;
-        engineAnnouncement ??= judge.engineAnnouncement;
-      } else {
-        warn(
-          `Workflow step "${step.stepId}" has completion criteria but no verification engine is available ` +
-            "(set workflow.judgeEngine, defaults.engine, or install an opencode-sdk binary). The step will block " +
-            "for `akm workflow resume` once it is reached.",
-        );
-      }
+      frozenJudge = judge.target as FrozenWorkflowCommandTarget;
+      engineAnnouncement ??= judge.engineAnnouncement;
     }
     steps.push({ ...frozenStep, root, gate: { ...step.gate, frozenJudge } });
   }
@@ -110,20 +100,15 @@ async function resolveStep(source: FreezeStep, context: ResolutionContext): Prom
   return commandDispatch(source, baseUnit, source.with, context);
 }
 
-/** The gate judge's frozen command target, or undefined when no engine is available and none is configured. */
-function resolveJudge(source: FreezeStep, rubric: string, context: ResolutionContext): ResolvedDispatch | undefined {
+/** The gate judge's frozen command target. */
+function resolveJudge(source: FreezeStep, rubric: string, context: ResolutionContext): ResolvedDispatch {
   const configuredEngine = context.config.workflow?.judgeEngine;
-  try {
-    const prepared = resolveExecution({
-      content: rubric.trim() || "Judge workflow completion.",
-      config: context.config,
-      ...(configuredEngine ? { current: { engine: configuredEngine } } : {}),
-    });
-    return commandResult(source, { onError: "fail", source: source.source }, prepared, context);
-  } catch (err) {
-    if (configuredEngine || !(err instanceof ConfigError && err.message.includes(NO_ENGINE_MESSAGE_SUFFIX))) throw err;
-    return undefined;
-  }
+  const prepared = resolveExecution({
+    content: rubric.trim() || "Judge workflow completion.",
+    config: context.config,
+    ...(configuredEngine ? { current: { engine: configuredEngine } } : {}),
+  });
+  return commandResult(source, { onError: "fail", source: source.source }, prepared, context);
 }
 
 function frozenRoot(

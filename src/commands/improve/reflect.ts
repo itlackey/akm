@@ -36,12 +36,7 @@ import { warn, warnOnce } from "../../core/warn";
 import { lookup } from "../../indexer/indexer";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
-import {
-  fallbackAnnouncement,
-  NO_ENGINE_MESSAGE_SUFFIX,
-  NO_ENGINE_REMEDY,
-  withEngineFallback,
-} from "../../integrations/agent/engine-fallback";
+import { fallbackAnnouncement, withEngineFallback } from "../../integrations/agent/engine-fallback";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import {
   buildReflectOutputRepairPrompt,
@@ -846,9 +841,6 @@ function resolveReflectRunner(options: AkmReflectOptions): {
     const defaultEngine = engineConfig.defaults?.engine;
     const announcement = fallbackAnnouncement(fallbackEngineName, defaultEngine);
     if (announcement) warn(announcement);
-    if (!defaultEngine) {
-      throw new ConfigError(`reflect ${NO_ENGINE_MESSAGE_SUFFIX} ${NO_ENGINE_REMEDY}`, "INVALID_CONFIG_FILE");
-    }
     lowered = lower({ content: "reflect engine selection", config });
   }
   const runnerSpec = lowered.runner;

@@ -25,7 +25,8 @@ import childProcess from "node:child_process";
 import { warnOnce } from "../../../core/warn";
 import { defaultWhich } from "../../agent/detect";
 import { OPENCODE_SDK_SERVER_BIN } from "../../agent/profiles";
-import type { OpencodeMajor } from "../opencode-sdk/wire";
+/** The OpenCode major a binary reports, as akm uses it. */
+export type OpencodeMajor = 1 | 2;
 
 /** OpenCode 2's own alias for its binary; it can sit next to an OpenCode 1 `opencode` on PATH. */
 export const OPENCODE2_BIN = "opencode2";
