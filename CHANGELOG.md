@@ -29,6 +29,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and `akm search --type env` work in a default bundle. The indexer lists the
   git-ignored files under those two directories in addition to the tracked and
   untracked ones; values still never reach the index.
+- `akm health --no-probe` also skips the `plugin-version` newest-tag lookup (a
+  `git ls-remote` against the plugin marketplace). With probing off the row
+  reports `unknown` ("not probed") instead of "up to date", and the local
+  version-range check still runs.
 
 ## [0.10.261013] - 2026-10-23
 
