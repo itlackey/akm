@@ -3,37 +3,25 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P2b Lane A — PRE-ATTEMPT resolution of `with:` bindings on `uses:
- * tasks/<ref>` workflow steps (docs/plans/specs/p2b-input-bindings.md §2.3,
- * §3.6, B-31..B-34). Freeze-time normalization (§2.2) lives in
+ * PRE-ATTEMPT resolution of `with:` bindings on `uses: tasks/<ref>` workflow
+ * steps (rows B-31..B-34 in test names). Freeze-time normalization lives in
  * tests/workflows/task-input-bindings.test.ts; this file starts where that
  * one ends — a REAL frozen plan whose target already carries `inputBindings`
  * — and exercises `computeStepWorkList` (`src/workflows/exec/step-work.ts`),
  * the SAME pure function the native executor calls immediately before
- * `reserveUnitAttempt` (native-executor.ts:588,1021).
+ * `reserveUnitAttempt`.
  *
  * Pattern: `startWorkflowRun` against an isolated stash (freeze only — no
  * dispatch), then `computeStepWorkList(plan.steps[i], {runId, params,
  * stepOutputs})` with HAND-BUILT `stepOutputs`/`params`, exactly as
  * tests/integration/workflows/chaos.test.ts's `fullWorkList` and
- * tests/integration/workflows/gate-artifacts.test.ts's `loop1Hash` already
- * do for other step-work scenarios — no live dispatcher needed to prove a
- * reference resolves (or fails to) against a given prior-step output. The one
- * exception is the "no attempt row was journaled" integration proof (B-32),
- * which drives a REAL run through `runWorkflowSteps` (params-validation.test.ts's
- * own `dispatcher: async () => ({ok:true,...})` seam) and reads the durable
- * attempt-accounting row back.
- *
- * RED TODAY: `computeStepWorkList` has no awareness of `inputBindings` at
- * all yet (§3.6 lands in Implement) — until the freeze-side work lands too
- * (A-N6, A-N3, A-N7; see task-input-bindings.test.ts's header), no fixture
- * below even reaches a frozen plan with a non-empty `inputBindings`, so
- * every reference-resolution assertion here is vacuously wrong today (a
- * reference binding is simply absent from the frozen target, and
- * `computeStepWorkList` ignores it either way). This is a RUNTIME gap, not a
- * type-level one — no `@ts-expect-error` is needed in this file: every
- * symbol referenced (`computeStepWorkList`, `runWorkflowSteps`,
- * `getAttemptAccounting`, `decodeWorkflowPlan`) already exists today.
+ * tests/integration/workflows/gate-artifacts.test.ts's `loop1Hash` do for
+ * other step-work scenarios — no live dispatcher needed to prove a reference
+ * resolves (or fails to) against a given prior-step output. The one exception
+ * is the "no attempt row was journaled" integration proof (B-32), which
+ * drives a REAL run through `runWorkflowSteps`
+ * (params-validation.test.ts's own `dispatcher: async () => ({ok:true,...})`
+ * seam) and reads the durable attempt-accounting row back.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -150,15 +138,14 @@ describe("P2b pre-attempt — a reference resolves successfully against a prior 
 
     // The resolved reference's VALUE ("all" — not the {from: ...} shape it
     // was authored as) must reach the dispatched unit's own delivery surface,
-    // not merely satisfy the ok/unit-count check above (P2b test-review
-    // finding #1): an implementation that resolves+validates the reference
-    // and then DROPS it from the effective input map before building context
-    // would still pass every assertion before this one. The composed
-    // target here is `uses: commands/review` (a command/LLM target), so its
-    // delivery surface is the assembled prompt's "## Task inputs" block
-    // (§4.2/B-38), not AKM_TASK_INPUTS — effective inputs are the resolved
-    // reference (scope: "all"), the authored literal (ticket: "T-1"), and
-    // the untouched default (strict: true); files/meta stay absent (B-20).
+    // not merely satisfy the ok/unit-count check above: an implementation that
+    // resolves+validates the reference and then DROPS it from the effective
+    // input map before building context would still pass every assertion
+    // before this one. The composed target here is `uses: commands/review` (a
+    // command/LLM target), so its delivery surface is the assembled prompt's
+    // "## Task inputs" block, not AKM_TASK_INPUTS — effective inputs are the
+    // resolved reference (scope: "all"), the authored literal (ticket: "T-1"),
+    // and the untouched default (strict: true); files/meta stay absent (B-20).
     const prompt = computed.list.units[0]?.prompt ?? "";
     expect(prompt).toContain("## Task inputs");
     expect(prompt).toContain(canonicalInputJson({ ticket: "T-1", scope: "all", strict: true }));
@@ -199,39 +186,37 @@ describe("P2b pre-attempt — a resolved reference violating its declared schema
     expect(computed.error).toContain("steps.collect.output.scope");
     expect(computed.error).toContain("is not one of");
 
-    // Code-review finding: the pre-attempt schema check used to path-root
-    // the inner validateInputs call at `binding.name` itself, which doubled
-    // the input name in the rendered path (e.g. "scope.scope: ..." for an
-    // input named "scope") since validateInputs already re-roots its `$`
-    // prefix at the SAME name. Guard against that regression directly.
+    // The pre-attempt schema check must not path-root the inner validateInputs
+    // call at `binding.name` itself: that would double the input name in the
+    // rendered path (e.g. "scope.scope: ..." for an input named "scope"), since
+    // validateInputs already re-roots its `$` prefix at the SAME name. Guard
+    // against that regression directly.
     expect(computed.error).not.toContain("scope.scope");
   });
 
   // Deliberately steps-based, not params-based: GitHub-shaped YAML's
-  // ROOT_KEYS (github-yaml.ts:36) is exactly ["name", "on", "jobs"] — there
-  // is no way to author a typed `params:` declaration in this front end at
-  // all ("workflow_dispatch inputs are not supported for local execution.",
-  // github-yaml.ts:366) — and a `{from: "params.<name>"}}` reference needs
-  // ONE that's declared (A-N4: checked against the workflow's OWN
-  // `paramSchemas` at freeze, B-18). Markdown declares typed params but has
-  // no `uses:`/`with:` step composition surface at all (its own STEP_KEYS
-  // are id/unit/map/route/inputs/output/gate — see this file's B-27 sibling
-  // comment in task-input-bindings.test.ts). A `uses: tasks/<ref>` step
-  // binding `{from: "params.…"}}` is therefore unreachable from either front
-  // end and cannot be exercised end-to-end; this proof uses the
-  // steps-rooted grammar instead, driving a REAL two-step run so a REAL
-  // attempt-accounting row is there to prove the failing unit's is empty.
+  // ROOT_KEYS (github-yaml.ts) is exactly ["name", "on", "jobs"] — there is no
+  // way to author a typed `params:` declaration in this front end at all
+  // ("workflow_dispatch inputs are not supported for local execution.") — and
+  // a `{from: "params.<name>"}}` reference needs ONE that's declared (checked
+  // against the workflow's OWN `paramSchemas` at freeze). Markdown declares
+  // typed params but has no `uses:`/`with:` step composition surface at all
+  // (its own STEP_KEYS are id/unit/map/route/inputs/output/gate — see
+  // task-input-bindings.test.ts). A `uses: tasks/<ref>` step binding
+  // `{from: "params.…"}}` is therefore unreachable from either front end and
+  // cannot be exercised end-to-end; this proof uses the steps-rooted grammar
+  // instead, driving a REAL two-step run so a REAL attempt-accounting row is
+  // there to prove the failing unit's is empty.
   // "collect" is itself an `akm/command` step driven by the stub dispatcher
   // below — it necessarily journals its own dispatch attempt before the
   // `dispatch` step is ever reached (computeStepWorkList runs per step at
-  // dispatch time, native-executor.ts:588, i.e. AFTER "collect" already ran)
-  // — so the run-wide attempt table is never empty; only the failing unit's
-  // row set is. The referenced path ("collect" ran, but never produces a
-  // "scope" property under ANY shape its output could take) fails
-  // PRE-ATTEMPT regardless of whether the failure mode is "did not resolve"
-  // or "violates the schema" — both are computeStepWorkList returning
-  // {ok:false} before any unit is built for the `dispatch` step, which is
-  // the one fact this test needs.
+  // dispatch time, i.e. AFTER "collect" already ran) — so the run-wide attempt
+  // table is never empty; only the failing unit's row set is. The referenced
+  // path ("collect" ran, but never produces a "scope" property under ANY shape
+  // its output could take) fails PRE-ATTEMPT regardless of whether the failure
+  // mode is "did not resolve" or "violates the schema" — both are
+  // computeStepWorkList returning {ok:false} before any unit is built for the
+  // `dispatch` step, which is the one fact this test needs.
   test("the real engine never reserves a dispatch attempt for the failing unit — its attempt row set stays empty (B-32, before reserveUnitAttempt)", async () => {
     writeCentralTaskFixture();
     writeWorkflow("attempt-gate", [

@@ -3,13 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * D7 — all six `--format` values work on every non-exempt command.
- *
- * Before D7 there were three inconsistent failure modes on a contract
- * `STABILITY.md` calls Stable: `md` silently emitted the JSON envelope
- * everywhere except `akm health`, `html` threw `INVALID_FLAG_VALUE` everywhere
- * except `akm health`, and `akm health` reached neither through `output()`
- * because it intercepted the format itself.
+ * All six `--format` values work on every non-exempt command — a contract
+ * `STABILITY.md` calls Stable. The failure modes this guards: `md` silently
+ * emitting the JSON envelope, `html` throwing `INVALID_FLAG_VALUE`, and
+ * `akm health` reaching neither format through `output()` because it
+ * intercepted the format itself.
  *
  * This suite is deliberately table-driven over real commands rather than over
  * hand-picked payloads: a new command inherits the coverage, and the failure it
@@ -87,7 +85,7 @@ describe("every --format value produces real output on every read command", () =
         }
         if (format === "md") {
           // Must not be the JSON envelope wearing a markdown flag — that silent
-          // wrong-format output is exactly what D7 removed.
+          // wrong-format output is exactly what this suite guards against.
           expect(result.stdout.trimStart().startsWith("{")).toBe(false);
         }
         if (format === "text") {
@@ -98,14 +96,13 @@ describe("every --format value produces real output on every read command", () =
           // non-empty output for `text` — see `renderGenericText` in
           // `output()`'s `text` case, src/cli/shared.ts).
           expect(result.stdout.trimStart().startsWith("{")).toBe(false);
-          // Stronger than the `md` guard above on purpose: an earlier cut of
-          // this fallback reused `renderGenericMarkdown` for `text`, which
-          // passed the JSON-envelope check above while still emitting `#`
-          // heading markers, `_..._` emphasis, and `| ... |` table syntax —
-          // markdown wearing a text flag instead of JSON wearing one. Assert
-          // no markdown heading-marker line at all, which is exactly what
-          // that reuse would have produced for every top-level and nested
-          // key (`renderGenericMarkdown` headers each key it recurses into).
+          // Stronger than the `md` guard above on purpose: a fallback that reused
+          // `renderGenericMarkdown` for `text` would pass the JSON-envelope check above
+          // while still emitting `#` heading markers, `_..._` emphasis, and `| ... |`
+          // table syntax — markdown wearing a text flag instead of JSON wearing one.
+          // Assert no markdown heading-marker line at all, which is exactly what that
+          // reuse would have produced for every top-level and nested key
+          // (`renderGenericMarkdown` headers each key it recurses into).
           expect(result.stdout).not.toMatch(/^#{1,6}\s/m);
         }
         if (format === "json") {
@@ -125,10 +122,8 @@ describe("html is no longer health-only", () => {
   });
 
   test("a mutating command completes its write under --format html", async () => {
-    // The pre-D7 ordering hazard inverted: `html` used to be rejected at
-    // startup, so this exited 2 without writing. It must now both write and
-    // render — and the earlier bug where it wrote and THEN threw must not
-    // return either.
+    // `--format html` with `--output` must both write and render: it must neither
+    // be rejected at startup (exit 2 without writing) nor write and THEN throw.
     const result = await runCliCapture(["remember", "html format probe", "--format=html"]);
 
     expect(result.code).toBe(0);

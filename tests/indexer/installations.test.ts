@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Chunk 5 M-a — `deriveInstallations` (`src/indexer/installations.ts`):
- * SearchSource[] → BundleInstallation[] derivation (spec §1.1/§1.2).
+ * `deriveInstallations` (`src/indexer/installations.ts`): SearchSource[] →
+ * BundleInstallation[] derivation.
  *
  * Exercised against the frozen fixture roots the conformance suite uses so the
  * ordered `looksLikeRoot` probe is checked over real bundle layouts:
@@ -19,10 +19,10 @@ import { slugForRegistryId } from "../../src/core/bundle-id";
 import { deriveBundleId, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import type { SearchSource } from "../../src/indexer/search/search-source";
 
-// NO registry setup: the registry is a static frozen map (normative §12.6)
-// populated at module load, so `deriveInstallations`'s ordered `looksLikeRoot`
-// probe runs in production with the full built-in set WITHOUT any registration
-// call. These tests assert exactly that production path.
+// NO registry setup: the registry is a static frozen map populated at module
+// load, so `deriveInstallations`'s ordered `looksLikeRoot` probe runs in
+// production with the full built-in set WITHOUT any registration call. These
+// tests assert exactly that production path.
 
 const AKM_ROOT = path.resolve(__dirname, "../fixtures/stashes/all-types");
 const OKF_ROOT = path.resolve(__dirname, "../fixtures/bundles/okf-sample");
@@ -80,18 +80,17 @@ describe("deriveInstallations — adapter selection (ordered §1.2 probe)", () =
   });
 
   test("a root no probe claims falls back to akm (recorded deviation from spec §1.2(3)'s okf)", () => {
-    // FALLBACK_ADAPTER_ID is `akm`, not the spec §1.2(3) `okf`, as the
-    // status-quo-preserving / workspace-root-discipline choice in this
-    // pre-config-adapter transitional model (see installations.ts). Pins that
-    // decision so a future 0.9.1 flip to `okf` is a deliberate, visible change.
+    // FALLBACK_ADAPTER_ID is `akm`, not `okf`, as the status-quo-preserving /
+    // workspace-root-discipline choice (see installations.ts). Pins that decision
+    // so a future flip to `okf` is a deliberate, visible change.
     const [inst] = deriveInstallations([{ path: "/nonexistent/empty/root" }]);
     expect(inst!.components[0]!.adapter).toBe("akm");
   });
 
   test("the ordered probe is genuinely consulted in production — non-akm roots no longer all collapse to akm", () => {
-    // The pre-wiring bug: an empty registry made EVERY source fall back to
-    // `akm`. Now distinct bundle shapes resolve to distinct adapters through
-    // the same `deriveInstallations` call sites production uses.
+    // An empty registry would make EVERY source fall back to `akm`; distinct
+    // bundle shapes must resolve to distinct adapters through the same
+    // `deriveInstallations` call sites production uses.
     const adapters = deriveInstallations([
       { path: AKM_ROOT, writable: true },
       { path: OKF_ROOT },

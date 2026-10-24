@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { detectSecretShapedParams } from "../../src/workflows/exec/param-secrets";
 
 /**
- * PR #714 review round 2, #13 — best-effort secret-shaped-param detection.
+ * Best-effort secret-shaped-param detection (#714).
  * Params are declared non-secret (hashed into every unit prompt, cannot be
  * redacted), so this is a WARN-only nudge toward env bindings. It must catch the
  * obvious credential shapes without drowning ordinary params in false positives.

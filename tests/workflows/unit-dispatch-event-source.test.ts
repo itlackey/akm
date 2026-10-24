@@ -3,34 +3,30 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Code-review regression, round 2 (spec docs/plans/specs/p1b-model-extraction.md
- * §5.2 point 2). A prior code-review pass fixed a gap where `dispatchWorkflowExecution`
- * (src/workflows/exec/unit-dispatch.ts) never forwarded its resolved provenance
- * `eventSource` into `runExecution`'s options at all, so a
- * "command" (agent/sdk) frozen target's dispatched child never observed
- * `AKM_EVENT_SOURCE`. That fix forwarded the value UNCONDITIONALLY.
+ * Regression for `dispatchWorkflowExecution`
+ * (src/workflows/exec/unit-dispatch.ts) forwarding its resolved provenance
+ * `eventSource` into `runExecution`'s options, so a "command" (agent/sdk)
+ * frozen target's dispatched child observes `AKM_EVENT_SOURCE`. The value must
+ * NOT be forwarded unconditionally.
  *
  * `runExecution` applies a forwarded value as
  * `env: { ...execution.options.env, AKM_EVENT_SOURCE: eventSource }`
  * (src/integrations/agent/runner-dispatch.ts) — an unconditional
  * override of that one key. `lowered.options.env` IS the unit's own
  * authored/resolved `env:` binding (`UnitDispatchRequest.env`, folded in by
- * `prepareWorkflowExecution`), so the unconditional forward let the
+ * `prepareWorkflowExecution`), so an unconditional forward would let the
  * provenance stamp win over an authored `env: { AKM_EVENT_SOURCE: ... }`
- * binding — inverting the precedence pre-P1b had (the child env was built
- * from ambient passthrough with the authored binding applied LAST, at
- * highest precedence) and disagreeing with the sibling "script"/"shell" arm:
- * `exec-unit.ts`'s own `childEnv` stamps its allowlisted base only when the
- * name is absent there, strictly BEFORE the bindings overlay runs, so an
- * authored binding always wins there.
+ * binding — inverting the precedence (the child env is built from ambient
+ * passthrough with the authored binding applied LAST, at highest precedence)
+ * and disagreeing with the sibling "script"/"shell" arm: `exec-unit.ts`'s own
+ * `childEnv` stamps its allowlisted base only when the name is absent there,
+ * strictly BEFORE the bindings overlay runs, so an authored binding always wins
+ * there.
  *
  * `dispatchWorkflowExecution` itself has no injectable
- * `runAgent`/`runSdk`/`chat` seam — a prior remediation recorded this
- * as the reason its real dispatch has no end-to-end test (P1b spec Review
- * log) — so this pins the fix at the exact point the decision is made: the
- * exported `forwardedDispatchEventSource` predicate that
- * `dispatchWorkflowExecution` calls before building
- * `runExecution`'s options.
+ * `runAgent`/`runSdk`/`chat` seam, so this pins the fix at the exact point the
+ * decision is made: the exported `forwardedDispatchEventSource` predicate that
+ * `dispatchWorkflowExecution` calls before building `runExecution`'s options.
  */
 
 import { describe, expect, test } from "bun:test";

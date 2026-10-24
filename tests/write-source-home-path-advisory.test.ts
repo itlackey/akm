@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Tests for the write-time absolute-host-path advisory (review 13, D1 lint half).
+ * Tests for the write-time absolute-host-path advisory.
  *
  * The advisory is a NON-FATAL warning emitted when an asset written through
  * `writeAssetToSource` embeds an absolute host home path (`/home/<user>/…` or

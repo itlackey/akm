@@ -7,13 +7,12 @@ import {
   parseBundleRef,
 } from "../src/core/asset/asset-ref";
 
-// ── Bundle-scoped ref grammar (0.9.0, spec §11.1) ────────────────────────────
+// ── Bundle-scoped ref grammar ────────────────────────────────────────────────
 //
 // `[bundle//]conceptId[#fragment]` is the only ref grammar. `type` is not part
-// of identity; the ref is a bundle-scoped path id. The invariant intents — name
+// of identity; the ref is a bundle-scoped path id. Covered below: name
 // validation (empty / null-byte / absolute / traversal / drive-letter),
-// backslash normalization, origin↔bundle boundary, and round-trip — are all
-// preserved below against the surviving bundle API.
+// backslash normalization, origin↔bundle boundary, and round-trip.
 
 describe("makeBundleRef", () => {
   test("short form — no bundle", () => {

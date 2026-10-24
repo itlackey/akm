@@ -3,56 +3,41 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Tests-first contract for P1b's typed `prepareScriptTarget()` (spec
- * docs/plans/specs/p1b-model-extraction.md §4.3), which REPLACES
- * `directScript`'s synthetic-task-YAML fabrication
- * (src/workflows/ir/source-freeze-v4.ts:288-311, R-02) with a typed preparer
- * that shares its byte/interpreter capture with `prepareTaskV3Execution`'s
- * script arm (runtime-v3.ts:440-457) instead of duplicating it.
+ * Contract for the typed `prepareScriptTarget()`, which replaces
+ * `directScript`'s synthetic-task-YAML fabrication with a typed preparer that
+ * shares its byte/interpreter capture with `prepareTaskV3Execution`'s script
+ * arm instead of duplicating it.
  *
- * Two independent things are pinned here, both RED until the replacement
- * lands:
+ * Two independent things are pinned here:
  *
- *   1. Behavioral parity ("before/after shape"): `prepareScriptTarget()`,
- *      called directly with the script's owned identity (ref/file/
- *      bundleRoot — the exact input shape spec §4.3 assigns it), produces
- *      the same ref/sha256/interpreter/byteLength/extension/bytesBase64/
- *      cwdIdentity/cwd that today's CURRENT production path (directScript +
- *      prepareTaskV3Execution) freezes for the identical script — the full
- *      set spec §4.3 requires byte-identical, not only the four it names by
- *      example. cwdIdentity/cwd are load-bearing (they feed
- *      freezeExecutableIdentity and gitIdentity at the call site,
- *      source-freeze-v4.ts:322,338) and, unlike the other fields, captured
- *      from the script's BUNDLE ROOT today (runtime-v3.ts:445), one level
- *      above the script file — a preparer using the script's own dirname
- *      instead would change frozen-plan bytes silently. The "before" values
- *      are captured by actually running the P0 R-02 fixture workflow
- *      (tests/workflows/characterization-classification.test.ts:307-338)
- *      through today's real `startWorkflowRun` → frozen-plan path, not a
- *      hand-typed guess — so the pin is provably against CURRENT behavior.
- *   2. Mechanism removal (grep-provable, spec §4.3/§9): the synthetic-YAML
- *      fabrication — the literal `schedule: "@daily"` string, the synthetic
- *      `version: 3\nuses:` task-document template, and the `parseTaskV3Yaml`
- *      call fed a `${asset.path}#${step.id}` fragment filePath — is gone from
- *      EVERY file under src/, not merely from source-freeze-v4.ts's source
- *      text. Spec §4.3/§9's acceptance criteria are literal `rg -F ... src/`
- *      greps over the WHOLE tree (`rg -F 'schedule: "@daily"' src/`, `rg -F
- *      'version: 3\nuses:' src/` — both zero hits), so a single-file scan
- *      only proves the fabrication MOVED (e.g. relocated verbatim into the
- *      new prepare/ module), not that it is GONE — this file therefore walks
- *      every src/**\/*.ts file. `src/tasks/prepare/prepare-script-target.ts`
- *      is additionally scanned structurally (imports + call expressions) for
- *      any use of `parseTaskV3Yaml` at all, since a preparer achieving the
- *      same before/after byte parity by fabricating a DIFFERENTLY WORDED
- *      synthetic document (dodging the literal-string scans above) would
- *      still violate spec §4.3's "no parseTaskV3Yaml call" requirement.
+ *   1. Behavioral parity: `prepareScriptTarget()`, called directly with the
+ *      script's owned identity (ref/file/bundleRoot), produces the same
+ *      ref/sha256/interpreter/byteLength/extension/bytesBase64/cwdIdentity/cwd
+ *      that the production path (directScript + prepareTaskV3Execution) freezes
+ *      for the identical script. cwdIdentity/cwd are load-bearing (they feed
+ *      freezeExecutableIdentity and gitIdentity at the call site) and are
+ *      captured from the script's BUNDLE ROOT, one level above the script file
+ *      — a preparer using the script's own dirname instead would change
+ *      frozen-plan bytes silently. The "before" values are captured by actually
+ *      running the fixture workflow through the real `startWorkflowRun` →
+ *      frozen-plan path, not a hand-typed guess.
+ *   2. Mechanism removal: the synthetic-YAML fabrication — the literal
+ *      `schedule: "@daily"` string, the synthetic `version: 3\nuses:`
+ *      task-document template, and the `parseTaskV3Yaml` call fed a
+ *      `${asset.path}#${step.id}` fragment filePath — is gone from EVERY file
+ *      under src/, not merely from source-freeze-v4.ts's source text. A
+ *      single-file scan only proves the fabrication MOVED (e.g. relocated
+ *      verbatim into the new prepare/ module), not that it is GONE — this file
+ *      therefore walks every src/**\/*.ts file.
+ *      `src/tasks/prepare/prepare-script-target.ts` is additionally scanned
+ *      structurally (imports + call expressions) for any use of
+ *      `parseTaskV3Yaml` at all, since a preparer achieving the same
+ *      before/after byte parity by fabricating a DIFFERENTLY WORDED synthetic
+ *      document (dodging the literal-string scans) would still violate the "no
+ *      parseTaskV3Yaml call" requirement.
  *
- * `prepareScriptTarget` is loaded through a non-literal dynamic-import path
- * so this file stays type-checkable (`bunx tsc --noEmit` clean) before the
- * module exists — see tests/workflows/environment-v4-red.test.ts for the
- * established convention this mirrors. Section 1's fixture keeps this file
- * green on the *setup* side today (the CURRENT production path still works);
- * only the "after" half and the source-text scan are red.
+ * `prepareScriptTarget` is loaded through a non-literal dynamic-import path so
+ * this file stays type-checkable.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -70,12 +55,9 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfi
 const PREPARE_SCRIPT_TARGET_MODULE: string = "../../src/tasks/prepare/prepare-script-target";
 
 /**
- * Hand-declared from spec §4.3's exact signature (no CURRENT symbol of this
- * name/shape exists to derive a `typeof` from — unlike prepare-split.test.ts,
- * which can tie its moved-function type to today's runtime-v3.ts export).
- * Field types otherwise borrow real, CURRENT project types
- * (`TaskV3ScriptInterpreter`, `FrozenDirectoryIdentity`) so this is not a
- * pure guess.
+ * Hand-declared: `prepareScriptTarget` is loaded through a dynamic import, so
+ * there is no static symbol to derive a `typeof` from. Field types borrow real
+ * project types (`TaskV3ScriptInterpreter`, `FrozenDirectoryIdentity`).
  */
 interface PreparedScriptTarget {
   readonly ref: string;
@@ -83,7 +65,7 @@ interface PreparedScriptTarget {
    * `TaskV3ScriptInterpreter` at the source (scriptInterpreter()'s return
    * type), but widened to `string` here to match `before.interpreter`
    * (`FrozenWorkflowScriptTarget.interpreter: string`,
-   * src/workflows/ir/schema-v4.ts:104) — the two are compared directly below.
+   * src/workflows/ir/schema-v4.ts) — the two are compared directly below.
    */
   readonly interpreter: string;
   readonly extension: string;
@@ -121,10 +103,9 @@ interface ParseTaskV3YamlUsage {
 
 /**
  * Structural scan for "does this module import or call parseTaskV3Yaml at
- * all" — AST-based (same style as the purity ratchet in
- * tests/tasks/parse-v3-adapter.test.ts:423) rather than a text-substring
- * guess, so it catches a re-fabrication that dodges the literal-string scans
- * below by wording the synthetic document differently.
+ * all" — AST-based rather than a text-substring guess, so it catches a
+ * re-fabrication that dodges the literal-string scans below by wording the
+ * synthetic document differently.
  */
 function scanForParseTaskV3YamlUsage(filePath: string): ParseTaskV3YamlUsage {
   const source = ts.createSourceFile(filePath, fs.readFileSync(filePath, "utf8"), ts.ScriptTarget.Latest, true);
@@ -171,10 +152,8 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
     });
 
     test("ref / sha256 / interpreter / byteLength are byte-identical to today's directScript output, for the P0 R-02 script fixture", async () => {
-      // "Before": the CURRENT production path — the identical fixture used
-      // by characterization-classification.test.ts's R-02 test — proves
-      // what today's directScript()+prepareTaskV3Execution actually freeze,
-      // rather than asserting against a hand-typed guess.
+      // "Before": the production path (directScript()+prepareTaskV3Execution) run
+      // for real, rather than asserting against a hand-typed guess.
       write(storage.stashDir, "scripts/exact.sh", scriptBytes);
       write(
         storage.stashDir,
@@ -205,11 +184,10 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
       expect(Buffer.from(before.bytesBase64, "base64").toString("utf8")).toBe(scriptBytes);
       expect(before.interpreter).toBe("sh");
 
-      // "After": prepareScriptTarget(), called directly with the script's
-      // own owned identity (ref/file/bundleRoot) — the exact input shape
-      // spec §4.3 assigns it (owned.ref/owned.file/owned.root), with a
-      // plain filesystem read standing in for the collector's readBytes
-      // (both read the identical bytes off the identical path).
+      // "After": prepareScriptTarget(), called directly with the script's own owned
+      // identity (owned.ref/owned.file/owned.root), with a plain filesystem read
+      // standing in for the collector's readBytes (both read the identical bytes off
+      // the identical path).
       const { prepareScriptTarget } = await prepareScriptTargetModule();
       const scriptFile = path.join(storage.stashDir, "scripts", "exact.sh");
       const after = prepareScriptTarget({
@@ -219,28 +197,22 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
         readFile: (file) => fs.readFileSync(file),
       });
 
-      // The four fields the spec names explicitly.
       expect(after.ref).toBe(before.ref);
       expect(after.sha256).toBe(before.contentHash);
       expect(after.interpreter).toBe(before.interpreter);
       expect(after.byteLength).toBe(before.byteLength);
-      // The remaining fields spec §4.3 requires byte-identical (the full set
-      // scriptResult() actually reads into FrozenWorkflowScriptTarget) —
-      // including cwdIdentity/cwd, which B-23 and spec §4.3 both list and
-      // which are load-bearing at the call site: scriptResult() freezes
-      // `prepared.cwdIdentity` verbatim onto FrozenWorkflowScriptTarget,
-      // feeds `prepared.cwdIdentity.realCwd` into
-      // freezeExecutableIdentity({cwd: ...}) for the executable identity,
-      // and feeds `prepared.cwdIdentity.realRoot` into gitIdentity()
-      // (source-freeze-v4.ts:322,335,338). Today's script arm captures that
-      // identity from the script's BUNDLE ROOT
-      // (runtime-v3.ts:445's `captureDirectoryIdentity(resolved.bundleRoot)`),
-      // one level above the script file itself — a preparer that captured
-      // the script's own dirname instead would silently change frozen-plan
-      // bytes while still passing every assertion above it, since nothing
-      // else in the suite pins cwdIdentity for a script step (the P0 pin at
-      // tests/workflows/characterization-classification.test.ts:307-338
-      // asserts only ref/bytes/interpreter).
+      // The remaining fields (the full set scriptResult() actually reads into
+      // FrozenWorkflowScriptTarget) — including cwdIdentity/cwd, which are
+      // load-bearing at the call site: scriptResult() freezes `prepared.cwdIdentity`
+      // verbatim onto FrozenWorkflowScriptTarget, feeds
+      // `prepared.cwdIdentity.realCwd` into freezeExecutableIdentity({cwd: ...}) for
+      // the executable identity, and feeds `prepared.cwdIdentity.realRoot` into
+      // gitIdentity(). The script arm captures that identity from the script's
+      // BUNDLE ROOT (`captureDirectoryIdentity(resolved.bundleRoot)`), one level
+      // above the script file itself — a preparer that captured the script's own
+      // dirname instead would silently change frozen-plan bytes while still passing
+      // every assertion above it, since nothing else in the suite pins cwdIdentity
+      // for a script step.
       expect(after.extension).toBe(before.extension);
       expect(after.bytesBase64).toBe(before.bytesBase64);
       expect(Buffer.from(after.bytesBase64, "base64").toString("utf8")).toBe(scriptBytes);
@@ -250,14 +222,12 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
   });
 
   describe("the synthetic-YAML fabrication is gone from src/, not merely relocated (grep-provable, spec §4.3/§9)", () => {
-    // Spec §4.3/§9's acceptance criteria are literal `rg -F` greps over ALL of
-    // src/ (`rg -F 'schedule: "@daily"' src/`, `rg -F 'version: 3\nuses:' src/`
-    // — both zero hits), not a scan scoped to source-freeze-v4.ts alone.
-    // Reading only that one file proves the fabrication MOVED (e.g. a
-    // byte-for-byte copy relocated into the new prepare/ module would pass a
-    // single-file scan of source-freeze-v4.ts trivially), not that it is
-    // GONE — so this walks every src/**\/*.ts file, the same convention as
-    // scripts/lint-import-cycles.ts's walkTsFiles / scripts/lint-license-headers.ts's collectTs.
+    // The check is a literal `rg -F` equivalent over ALL of src/
+    // (`rg -F 'schedule: "@daily"' src/`, `rg -F 'version: 3\nuses:' src/` — both
+    // zero hits), not a scan scoped to source-freeze-v4.ts alone. Reading only
+    // that one file proves the fabrication MOVED (e.g. a byte-for-byte copy
+    // relocated into the new prepare/ module would pass trivially), not that it is
+    // GONE — so this walks every src/**\/*.ts file.
     const SRC_ROOT = path.resolve(import.meta.dir, "../../src");
 
     function walkTsFiles(dir: string): string[] {
@@ -282,24 +252,22 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
         .map(([relPath]) => relPath);
     }
 
-    // CHARACTERIZATION-INVERSE (red today, per P1b spec §4.3's acceptance
-    // criterion: "rg -F 'schedule: \"@daily\"' src/ ... return zero hits").
-    // Today's directScript() (source-freeze-v4.ts:296-298) fabricates
+    // The former directScript() fabricated
     //   `version: 3\nuses: ${owned.ref}\nakm:\n  schedule: "@daily"\n`
-    // purely to satisfy R-06 (exactly-one-scheduling-source) on a document
+    // purely to satisfy the exactly-one-scheduling-source rule on a document
     // nothing ever schedules. prepareScriptTarget() never builds a task
     // document at all, so this literal has nothing left to appear in — ANY
-    // file under src/, including a relocated copy of today's trick.
+    // file under src/, including a relocated copy of the old trick.
     test("the literal fabricated schedule string is absent from every file under src/", () => {
       const offenders = offendersMatching((content) => content.includes('schedule: "@daily"'));
       expect(offenders).toEqual([]);
     });
 
-    // Today's directScript() (source-freeze-v4.ts:297-299) builds
+    // The former directScript() built
     //   filePath: `${context.asset.path}#${source.id}`
-    // and feeds it, with the fabricated YAML above, through parseTaskV3Yaml.
-    // Spec §4.3: prepareScriptTarget has "no parseTaskV3Yaml call, ... no
-    // fabricated filePath fragment (${asset.path}#${step.id})".
+    // and fed it, with the fabricated YAML above, through parseTaskV3Yaml.
+    // prepareScriptTarget has no parseTaskV3Yaml call and no fabricated filePath
+    // fragment (${asset.path}#${step.id}).
     test("the fabricated fragment filePath fed to parseTaskV3Yaml is absent from every file under src/", () => {
       // Expressed as a regex rather than a plain string literal so biome's
       // noTemplateCurlyInString rule (a forgotten-backtick guard) does not
@@ -317,22 +285,21 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
       expect(callOffenders).toEqual([]);
     });
 
-    // Weaker, content-scoped restatement of the second acceptance grep
-    // (`rg -F 'version: 3\nuses:' src/` → zero hits) so a passing run is
-    // legible without shelling out to ripgrep from inside the test.
+    // Content-scoped restatement of the second grep
+    // (`rg -F 'version: 3\nuses:' src/` → zero hits), legible without shelling out
+    // to ripgrep from inside the test.
     test("the synthetic 'version: 3' task-document template is absent from every file under src/", () => {
       const offenders = offendersMatching((content) => content.includes("version: 3\\nuses:"));
       expect(offenders).toEqual([]);
     });
 
-    // NEW (test-review finding): the three scans above prove the fabrication
-    // is gone from src/ TEXT, but a preparer could still reach the exact same
-    // "before/after" parity (section 1 above) by fabricating a DIFFERENTLY
-    // WORDED synthetic document — e.g. spelling the schedule some other way —
-    // and re-parsing it through parseTaskV3Yaml, which spec §4.3 forbids
-    // outright regardless of wording ("no parseTaskV3Yaml call"). So
-    // prepareScriptTarget's own module is scanned STRUCTURALLY (import
-    // specifiers + call expressions) for any use of parseTaskV3Yaml at all.
+    // The three scans above prove the fabrication is gone from src/ TEXT, but a
+    // preparer could still reach the exact same "before/after" parity (section 1
+    // above) by fabricating a DIFFERENTLY WORDED synthetic document — e.g.
+    // spelling the schedule some other way — and re-parsing it through
+    // parseTaskV3Yaml, which is forbidden outright regardless of wording. So
+    // prepareScriptTarget's own module is scanned STRUCTURALLY (import specifiers
+    // + call expressions) for any use of parseTaskV3Yaml at all.
     describe("src/tasks/prepare/prepare-script-target.ts never imports or calls parseTaskV3Yaml (spec §4.3)", () => {
       const PREPARE_SCRIPT_TARGET_FILE = path.join(SRC_ROOT, "tasks/prepare/prepare-script-target.ts");
 
@@ -349,20 +316,15 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
       });
     });
 
-    // NEW (test-review finding): the AST scan above proves
-    // prepare-script-target.ts's own module never imports/calls
-    // parseTaskV3Yaml, but nothing pinned that directScript's CALL SITE
-    // (source-freeze-v4.ts:288-312, where today's fabrication actually
-    // lives) stopped fabricating and started calling the replacement. A
-    // whole-file ban on source-freeze-v4.ts would be WRONG — taskDispatch
-    // (the same file, a few lines above directScript) legitimately calls
-    // parseTaskV3Yaml on a REAL task document read off disk
-    // (source-freeze-v4.ts:233 at head) — R-02/spec §4.3 is only about
-    // directScript's SYNTHETIC document, never about taskDispatch's real
-    // one. So this scans directScript's function BODY specifically: the
-    // same "locate the named function, then walk only its subtree"
-    // technique as scanForParseTaskV3YamlUsage above, generalized from
-    // "does this MODULE call X" to "does this FUNCTION call X".
+    // The AST scan above proves prepare-script-target.ts's own module never
+    // imports/calls parseTaskV3Yaml, but nothing else pins that directScript's CALL
+    // SITE stopped fabricating and started calling the replacement. A whole-file
+    // ban on the call site's file would be WRONG — taskDispatch (the same file)
+    // legitimately parses a REAL task document read off disk — the ban is only
+    // about directScript's SYNTHETIC document. So this scans directScript's
+    // function BODY specifically: the same "locate the named function, then walk
+    // only its subtree" technique as scanForParseTaskV3YamlUsage above,
+    // generalized from "does this MODULE call X" to "does this FUNCTION call X".
     describe("src/workflows/freeze/targets/{script,task}.ts, post P2b split: directScript has no parseTaskV3Yaml call, a prepareScriptTarget call instead (spec §4.3)", () => {
       const SCRIPT_TARGET_FILE = path.join(SRC_ROOT, "workflows/freeze/targets/script.ts");
       const TASK_TARGET_FILE = path.join(SRC_ROOT, "workflows/freeze/targets/task.ts");
@@ -415,25 +377,14 @@ describe("prepareScriptTarget — replaces directScript's synthetic-YAML fabrica
         );
       });
 
-      // Sanity contrast (spec §4.3's parenthetical: "a whole-file ban is
-      // wrong there — taskDispatch legitimately calls parseTaskV3Yaml"):
-      // proves the scan above is genuinely function-scoped, not accidentally
-      // whole-file in disguise — if it were whole-file, this fixture would
-      // make a directScript-only ban indistinguishable from a file-wide one.
-      //
-      // UPDATED (P2b A-N6, spec docs/plans/specs/p2b-input-bindings.md §1.7):
-      // recorded in the Review log as a consequence of F-A4, not a named §7
-      // flip itself — F-A1's split commit re-pointed only the path constants
-      // above, never this assertion. A-N6 lifted LC-N1's deferral and routed
-      // taskDispatch through parseTaskSource, which parses BOTH task source
-      // versions once — taskDispatch no longer calls parseTaskV3Yaml
-      // directly at all, so the ORIGINAL assertion is unreachable (verified:
-      // it is not in taskDispatch's own call set). The direct call
-      // taskDispatch now makes toward real-document parsing is
-      // resolveTaskForComposition (this file, its sibling), which itself
-      // calls parseTaskSource — so the same "locate the function, walk only
-      // its subtree" technique is applied one hop further to keep proving
-      // the scan is function-scoped, not file-wide.
+      // Sanity contrast: proves the scan above is genuinely function-scoped, not
+      // accidentally whole-file in disguise. taskDispatch routes through
+      // parseTaskSource (which parses the task source once) rather than calling
+      // parseTaskV3Yaml directly; the call it makes toward real-document parsing is
+      // resolveTaskForComposition (this file, its sibling), which itself calls
+      // parseTaskSource — so the same "locate the function, walk only its subtree"
+      // technique is applied one hop further to keep proving the scan is
+      // function-scoped, not file-wide.
       test("taskDispatch (the same file, unrelated to R-02) still legitimately resolves a real document via resolveTaskForComposition -> parseTaskSource(...)", () => {
         const scan = scanFunctionCalls(TASK_TARGET_FILE, "taskDispatch");
         expect(scan.functionFound, "taskDispatch function declaration not found in task.ts").toBe(true);

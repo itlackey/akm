@@ -122,7 +122,7 @@ describe("config schema drift pins", () => {
     }
     expect(props.defaultBundle).toEqual({ type: "string", minLength: 1 });
     expect(props.writable).toBeUndefined();
-    // `bindings` (Tier B) is never part of the accepted config surface.
+    // `bindings` is never part of the accepted config surface.
     expect(props.bindings).toBeUndefined();
   });
 

@@ -23,7 +23,7 @@ function bundle(id: string, concepts: string[]): RefResolutionBundle {
   return { id, hasConcept: (conceptId) => set.has(conceptId) };
 }
 
-// ── resolveRef (D-R4) ───────────────────────────────────────────────────────
+// ── resolveRef ──────────────────────────────────────────────────────────────
 
 describe("resolveRef", () => {
   test("default-bundle hit — short ref resolves to defaultBundle when present there", () => {
@@ -121,7 +121,7 @@ describe("typeNameFromConceptId", () => {
   });
 });
 
-// ── parseRefInput (F1b input-boundary parser) ───────────────────────────────
+// ── parseRefInput (input-boundary parser) ───────────────────────────────────
 
 describe("parseRefInput", () => {
   test("bare concept ids project to type/name values", () => {
@@ -139,14 +139,11 @@ describe("parseRefInput", () => {
     });
   });
 
-  // Q-07/D11 — the ref-parser seam accepts opaque adapter conceptIds. Prior to
-  // this, ANY conceptId whose leading segment was not an AKM placement stashDir
-  // threw here — rejecting perfectly valid adapter-emitted conceptIds (OKF
-  // items, website pages, wiki pageKinds, adapter `instruction` docs) in every
-  // ref-consuming command except `show` (which bypasses this parser). This
-  // test used to pin the OLD (defect) behavior — a NotFoundError for
-  // "notatype/thing" — and is UPDATED here to pin the corrected D11 behavior:
-  // a well-formed `<segment>/<rest>` conceptId is accepted as opaque data.
+  // The ref-parser seam accepts opaque adapter conceptIds: a well-formed
+  // `<segment>/<rest>` conceptId is accepted as opaque data even when its leading
+  // segment is not an AKM placement stashDir, so valid adapter-emitted conceptIds
+  // (OKF items, website pages, wiki pageKinds, adapter `instruction` docs) are
+  // not rejected by ref-consuming commands.
   test("new-grammar conceptId with an unknown-but-well-formed prefix → accepted as opaque data (D11)", () => {
     expect(parseRefInput("notatype/thing")).toEqual({ type: "notatype", name: "notatype/thing", origin: undefined });
     expect(parseRefInput("tables/customers")).toEqual({
@@ -207,7 +204,7 @@ describe("parseRefInput", () => {
   });
 
   test("D11 does NOT re-accept the retired colon `type:name` grammar (Q-02)", () => {
-    // No slash at all after the colon — already rejected pre-D11 too.
+    // No slash at all after the colon.
     expect(() => parseRefInput("skill:code-review")).toThrow(NotFoundError);
     expect(() => parseRefInput("knowledge:guide.md")).toThrow(NotFoundError);
     // A slash appears in the NAME after the colon — this is exactly the shape
@@ -280,10 +277,9 @@ describe("displayRef (F4b output-spelling rule)", () => {
   });
 
   test("non-default bundle → bundle//conceptId (WI-8.5c: always the new grammar)", () => {
-    // Post-Chunk-8 the config migration assigned every source a legal slug bundle
-    // id, so a non-default bundle always displays as the new `bundle//conceptId`
-    // grammar — the legacy `origin//type:name` arm is retired. A raw non-slug
-    // registryId reaching here (edge case) is emitted verbatim as the bundle.
+    // Every source has a legal slug bundle id, so a non-default bundle always
+    // displays as `bundle//conceptId`. A raw non-slug registryId reaching here
+    // (edge case) is emitted verbatim as the bundle.
     expect(displayRef({ type: "agent", name: "helper", bundleId: "github:evil/pack" })).toBe(
       "github:evil/pack//agents/helper",
     );

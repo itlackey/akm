@@ -3,32 +3,20 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3a Lane B — the ONE recursive child-workflow resolver (docs/plans/specs/
- * p3a-plan-v5-child-freeze.md §4, §6 F-B1…F-B4, §7 new-suites table: this
- * file owns rows B-04…B-25; B-01…B-03 are covered by the AUTHORIZED flips in
- * tests/workflows/characterization-classification.test.ts,
- * tests/workflows/source-ir-contract.test.ts, and
- * tests/execution/target-ref.test.ts, not duplicated here).
+ * The ONE recursive child-workflow resolver:
+ * `src/workflows/freeze/targets/child-workflow.ts` is the single resolver both
+ * forms route to — a direct `uses: workflows/<ref>` step (via
+ * `src/workflows/source-ir/semantics.ts`) and a task-wrapped one (via
+ * `src/workflows/freeze/targets/task.ts`) both route to `childWorkflowDispatch`.
+ * Rows B-04…B-25 in test names.
  *
- * Implemented: `src/workflows/freeze/targets/child-workflow.ts` is the ONE
- * resolver both forms route to — `src/workflows/source-ir/semantics.ts` no
- * longer throws `nested-workflow-unsupported` for a direct
- * `uses: workflows/<ref>` step, and `src/workflows/freeze/targets/task.ts`
- * no longer throws "A workflow task step cannot compose a nested workflow
- * target." for a task-wrapped one — both former throw sites now route to
- * `childWorkflowDispatch` instead.
- *
- * `FrozenWorkflowTarget` (src/workflows/ir/schema-v4.ts) is today's closed
- * `command | shell | script` union; it gains a fourth member,
  * `FrozenChildWorkflowTarget` (kind "child-workflow"; fields ref, planHash,
- * frozenPlan, contentHash, via, taskRef?, inputBindings?, spec §3.5), in
- * Implement. Every access to one of those NEW fields is isolated behind the
- * single `childWorkflowFields` helper below (mirroring
- * tests/workflows/task-input-bindings.test.ts's `frozenInputBindings`
- * pattern) so Implement removes each directive as its own line becomes
- * type-valid, not one per call site across this file. Structural assertions
- * that only need to check a SUBSET of a target's shape use `toMatchObject`
- * instead, whose `subset: object` parameter is untyped and needs no pin.
+ * frozenPlan, contentHash, via, taskRef?, inputBindings?) is a member of the
+ * `FrozenWorkflowTarget` union (src/workflows/ir/schema-v4.ts). Access to its
+ * fields goes through the single `childWorkflowFields` helper below (mirroring
+ * tests/workflows/task-input-bindings.test.ts's `frozenInputBindings` pattern)
+ * so the narrowing lives in one place. Structural assertions that only need to
+ * check a SUBSET of a target's shape use `toMatchObject` instead.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -152,11 +140,9 @@ async function expectNoRunRowWritten(): Promise<void> {
 }
 
 /**
- * §3.5: `FrozenWorkflowTarget` gains a `child-workflow` member,
- * `FrozenChildWorkflowTarget`, in Implement (kind, ref, planHash, frozenPlan,
- * contentHash, via, taskRef?, inputBindings?). `kind` and `inputBindings`
- * already exist on today's command|shell|script union and need no pin; the
- * rest do not exist on any current variant.
+ * Narrows a `FrozenWorkflowTarget` to its `child-workflow` member and returns
+ * the fields this file asserts on (`kind` and `inputBindings` exist on every
+ * variant; the rest are specific to the child-workflow member).
  */
 function childWorkflowFields(target: FrozenWorkflowTarget | undefined): {
   readonly ref: string;
@@ -169,12 +155,10 @@ function childWorkflowFields(target: FrozenWorkflowTarget | undefined): {
   readonly inputBindings: readonly TaskInputBinding[] | undefined;
 } {
   if (!target) throw new Error("childWorkflowFields: target is undefined");
-  // Implement landed `FrozenChildWorkflowTarget` as a proper discriminated
-  // union member (schema-v4.ts A-N1): `command`/`shell`/`script` do not carry
-  // ref/planHash/frozenPlan/via/taskRef, so TypeScript only admits the access
-  // below once `kind` narrows `target`. This narrows for the whole function;
-  // every red-phase `@ts-expect-error` pin below is now genuinely unused and
-  // is removed, per this file's own header comment above.
+  // `FrozenChildWorkflowTarget` is a discriminated union member (schema-v4.ts):
+  // `command`/`shell`/`script` do not carry ref/planHash/frozenPlan/via/taskRef,
+  // so TypeScript only admits the access below once `kind` narrows `target`.
+  // This narrows for the whole function.
   if (target.kind !== "child-workflow") {
     throw new Error(`childWorkflowFields: expected a child-workflow target, got ${target.kind}`);
   }
@@ -183,9 +167,8 @@ function childWorkflowFields(target: FrozenWorkflowTarget | undefined): {
     planHash: target.planHash,
     frozenPlanIrVersion: target.frozenPlan.irVersion,
     frozenPlanTitle: target.frozenPlan.title,
-    // contentHash already exists (as `string`) on all three current
-    // FrozenWorkflowTarget variants — no pin needed for the access itself,
-    // only for the NEW "child-workflow" preimage §3.5 defines for it.
+    // contentHash exists (as `string`) on every FrozenWorkflowTarget variant, so
+    // it needs no narrowing.
     contentHash: target.contentHash,
     via: target.via,
     taskRef: target.taskRef,
@@ -193,7 +176,7 @@ function childWorkflowFields(target: FrozenWorkflowTarget | undefined): {
   };
 }
 
-// ── Direct child workflows — uses: workflows/<ref> (spec §2.4, rows B-04…B-11) ─
+// ── Direct child workflows — uses: workflows/<ref> (rows B-04…B-11) ─────────
 
 describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", () => {
   function writeChild(): void {
@@ -288,24 +271,21 @@ describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", 
 });
 
 // ── Task-wrapped child workflows — uses: tasks/<t>, t targets a workflow ────
-// ── (spec §2.5, rows B-12…B-17; the v4-declared-inputs case, B-13, is the ──
-// ── AUTHORIZED flip in tests/workflows/task-input-bindings.test.ts) ─────────
+// ── (rows B-12…B-17; the v4-declared-inputs case, B-13, is in ───────────────
+// ── tests/workflows/task-input-bindings.test.ts) ────────────────────────────
 
 describe("task-wrapped child workflows — uses: tasks/<t> where t targets a workflow (rows B-12, B-14, B-15)", () => {
   function writeChild(): void {
     write("workflows/child.md", paramWorkflowDoc());
   }
 
-  // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2, row B-28, F-A2.29)
-  // retired task source v3 acceptance — a task's own `with:` on a workflow
-  // target no longer exists as a grammar at all (v4 accepts `with:` only
-  // alongside `uses: akm/command`, R-R2 resolved by deletion, spec §8).
-  // Converted to a task source v4 wrapper that declares a typed `inputs:`
-  // with a default value instead: `resolveTaskForComposition`'s bindings are
-  // computed from the wrapper's OWN declared-input contract regardless of
-  // whether the composing step authors a `with:` (it cannot, on a task
-  // target), so the child's params still arrive as a literal binding — just
-  // sourced from the input's `default:` rather than an authored `with:`.
+  // A task's own `with:` on a workflow target is not a grammar (task source v4
+  // accepts `with:` only alongside `uses: akm/command`), so the wrapper declares
+  // a typed `inputs:` with a default value instead:
+  // `resolveTaskForComposition`'s bindings are computed from the wrapper's OWN
+  // declared-input contract regardless of whether the composing step authors a
+  // `with:` (it cannot, on a task target), so the child's params arrive as a
+  // literal binding sourced from the input's `default:`.
   test("B-12/B-14: a task whose own uses: targets a workflow freezes to a child-workflow target, via task, and the task's own declared input default becomes the child's params", async () => {
     writeChild();
     write(
@@ -355,12 +335,12 @@ describe("task-wrapped child workflows — uses: tasks/<t> where t targets a wor
   });
 });
 
-// ── Code-review finding: a composing step's own env: has no path into a ────
-// ── child run (the frozen environment is the CHILD's own, not the parent ───
-// ── step's) — src/workflows/freeze/targets/child-workflow.ts's ─────────────
-// ── assertNoStepEnvironment. Distinct from B-15 above: B-15 is the ─────────
-// ── task DOCUMENT's own top-level env:; this is env: authored on the ───────
-// ── WORKFLOW STEP that composes a child, direct or task-wrapped. ───────────
+// A composing step's own env: has no path into a child run (the frozen
+// environment is the CHILD's own, not the parent step's) —
+// src/workflows/freeze/targets/child-workflow.ts's assertNoStepEnvironment.
+// Distinct from B-15 above: B-15 is the task DOCUMENT's own top-level env:;
+// this is env: authored on the WORKFLOW STEP that composes a child, direct or
+// task-wrapped.
 
 describe("a step composing a child workflow that also authors env: warns instead of refusing to freeze", () => {
   function writeChild(): void {
@@ -444,10 +424,8 @@ describe("a step composing a child workflow that also authors env: warns instead
 describe("direct and task-wrapped composition of the SAME child lower to the same target shape, modulo identity fields", () => {
   test("a direct step and a task-wrapped step composing the same child with the same effective params freeze to structurally equal child-workflow targets — only via/taskRef (and contentHash, whose preimage covers them) differ", async () => {
     write("workflows/shared-child.md", paramWorkflowDoc());
-    // P4 (spec §3.2, row B-28, F-A2.29): the wrapper's own with: is retired
-    // along with task source v3 — a declared input default reaches the
-    // identical literal binding the direct step's authored with: does, which
-    // is exactly the equality this test proves.
+    // A declared input default reaches the identical literal binding the direct
+    // step's authored with: does, which is exactly the equality this test proves.
     write(
       "tasks/shared-wrapper.yml",
       [
@@ -494,8 +472,7 @@ describe("direct and task-wrapped composition of the SAME child lower to the sam
   });
 });
 
-// ── Composition bounds — depth, cycle, aggregate size (spec §4.5, §2.6, ────
-// ── rows B-18…B-25) ──────────────────────────────────────────────────────
+// ── Composition bounds — depth, cycle, aggregate size (rows B-18…B-25) ─────
 
 describe("composition bounds — depth, cycle, aggregate embedded size (rows B-18…B-25)", () => {
   /**

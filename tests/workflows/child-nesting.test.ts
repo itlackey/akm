@@ -3,28 +3,17 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3b Lane A TESTS — provenance threading and recursive nesting
- * (docs/plans/specs/p3b-child-executor.md §2.4 "Cancellation, provenance,
- * nesting" rows A-31…A-36; §3.3.1 "The exact runWorkflowSteps options",
- * §3.6). This file owns ONLY these six rows (A-28…A-30 belong to
- * tests/integration/workflows/child-cancellation.test.ts, per the spec's own
- * §7 new-suites table).
- *
- * GREEN: this file's one import of `driveChildWorkflowUnit` from
- * `src/workflows/exec/child-workflow.ts` resolves normally; `bunx tsc
- * --noEmit` stays green. Before Implement created that module, the import
- * carried the established `@ts-expect-error` red-phase directive (see
- * tests/integration/workflows/child-execution.test.ts's file header for the
- * full rationale) and every test below failed as a block at the bun:test
- * *runtime*; Implement removed the directive the moment the module was
- * created.
+ * Provenance threading and recursive nesting for `driveChildWorkflowUnit`
+ * (`src/workflows/exec/child-workflow.ts`): rows A-31…A-36 in test names.
+ * Cancellation (A-28…A-30) is covered by
+ * tests/integration/workflows/child-cancellation.test.ts.
  *
  * A-31…A-34 use a spy on `runWorkflowSteps` (the reuse seam) to capture the
  * EXACT options object `driveChildWorkflowUnit` calls it with, mirroring
- * tests/integration/workflows/child-execution.test.ts's A-24/A-25 technique
- * — the precise, call-shape-level way to pin "threaded verbatim" claims.
- * A-33 additionally drives a REAL gated child directly, since "an injected
- * fake serves child units and child judges" is an end-to-end claim a captured
+ * tests/integration/workflows/child-execution.test.ts's A-24/A-25 technique —
+ * the precise, call-shape-level way to pin "threaded verbatim" claims. A-33
+ * additionally drives a REAL gated child directly, since "an injected fake
+ * serves child units and child judges" is an end-to-end claim a captured
  * options object alone cannot prove. A-35 drives three real, nested levels
  * directly. A-36 is a structural/textual pin, not a runtime behavior.
  */
@@ -413,8 +402,8 @@ describe("A-35 — a child that itself composes a grandchild drives recursively"
 
     // The CHILD's own plan composes the grandchild on its one step — built by
     // hand (freezeWorkflow has no `uses:` composition support of its own; the
-    // real freeze/targets/child-workflow.ts resolver is Lane B/P3a's, not
-    // under test here), mirroring tests/workflows/hash-v6.test.ts's and
+    // real freeze/targets/child-workflow.ts resolver is not under test here),
+    // mirroring tests/workflows/hash-v6.test.ts's and
     // tests/workflows/child-executor-seam.test.ts's established
     // stepPlanWithTarget convention.
     const childStepPlan: WorkflowPlanStep = {
@@ -475,12 +464,10 @@ describe("A-35 — a child that itself composes a grandchild drives recursively"
 describe("A-36 — the executor adds no depth bound of its own", () => {
   test("A-36: src/workflows/exec/child-workflow.ts never references the freeze-time composition-depth limit", () => {
     const file = path.resolve(import.meta.dir, "../../src/workflows/exec/child-workflow.ts");
-    // Depth is bounded at FREEZE (and re-bounded at decode) — P3a §4.5, row
-    // A-23. A second, executor-side depth counter/bound here would be a
-    // review-blocking addition (spec §2.4 row A-36) — this pin fails loudly
-    // if `child-workflow.ts` ever grows one.
+    // Depth is bounded at FREEZE (and re-bounded at decode). A second,
+    // executor-side depth counter/bound here would be a mistake — this pin fails
+    // loudly if `child-workflow.ts` ever grows one.
     if (!fs.existsSync(file)) {
-      // RED today for the ordinary reason: the module does not exist yet.
       throw new Error(`expected ${file} to exist`);
     }
     const source = fs.readFileSync(file, "utf8");

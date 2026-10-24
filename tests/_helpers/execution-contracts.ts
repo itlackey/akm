@@ -1,10 +1,10 @@
 /**
- * Test-only support for the 0.9.2 execution-contract characterization suite.
+ * Test-only support for the execution-contract characterization suite.
  *
  * Nothing in `src/` imports this module. The normalized request below is a
- * comparison projection, not the production resolved-request type planned by
- * WP1. It intentionally removes entry-point envelopes, timestamps, and other
- * transport details while retaining dispatch-significant values.
+ * comparison projection, not the production resolved-request type. It
+ * intentionally removes entry-point envelopes, timestamps, and other transport
+ * details while retaining dispatch-significant values.
  */
 
 import { createHash } from "node:crypto";
@@ -174,7 +174,7 @@ export function canonicalResolvedRequestForTest(input: TestResolvedRequestInput)
   return `${JSON.stringify(normalizeResolvedRequestForTest(input))}\n`;
 }
 
-/** Project the production WP1 request without branching on its engine kind. */
+/** Project the production request without branching on its engine kind. */
 export function projectResolvedExecutionRequestForTest(request: ResolvedExecutionRequestV1): TestResolvedRequestInput {
   const effort = request.inference?.reasoningEffort;
   return {

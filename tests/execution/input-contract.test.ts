@@ -3,58 +3,26 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P2a Lane B — the shared input contract (`src/execution/input-contract.ts`).
+ * The shared input contract (`src/execution/input-contract.ts`).
  *
- * See docs/plans/specs/p2a-task-source-v4.md §4 (Lane B) for the binding
- * design; §1.3 D3, and the disambiguations D3-N1 (import boundary),
- * D3-N2 (canonical JSON byte-equality), and D3-N3 (injected diagnostics
- * vocabulary) in §1.5. Row IDs (B-30, B-31, B-39) are the spec's §2 behavior
- * table. This lane owns ONLY this file.
- *
- * `src/execution/input-contract.ts` does not exist on disk yet — it is
- * Implement's job to create it by generalizing `src/workflows/ir/params.ts`
- * (§4.3). Every reference below to a symbol that module will export once
- * created is a genuine RED-phase reference. Per this phase's convention
- * (established in P1b, `@ts-expect-error P1b red-phase`, commit `ddceaa9`),
- * the single import of that not-yet-existing module below carries one
- * `// @ts-expect-error P2a red-phase: …` directive so `bunx tsc --noEmit`
- * stays green through the RED window: TypeScript reports exactly one
- * diagnostic for an unresolvable module specifier (on the import
- * declaration itself), and every name it introduces is typed `any` for the
- * rest of the file, so no further per-usage directive is needed — and none
- * is added, since a directive on a line with no diagnostic is itself a tsc
- * error ("Unused '@ts-expect-error' directive"). Implement removes the one
- * directive the moment the import resolves.
- *
- * At the bun:test *runtime* (as opposed to tsc), a static top-level import of
- * a module that is not yet on disk fails module resolution when this file is
- * loaded, so every test below is expected to fail as a block during the RED
- * window — that is the intended, and only, RED signal this file produces
- * before Implement lands the module.
- *
- * Three groups, plus a fourth that is deliberately NOT red:
+ * Four groups:
  *
  *   1. The four pure functions' own behavior: `applyInputDefaults`,
  *      `validateInputs`, `materializeInputFlags`, `canonicalInputJson` /
  *      `canonicalInputHash` — each against `src/execution/input-contract.ts`
  *      directly, with no workflow or task machinery involved.
- *   2. `INPUT_NAME_PATTERN` parity with today's (still-exported, unmoved)
- *      `PROGRAM_PARAM_NAME_PATTERN` (D3-N1).
+ *   2. `INPUT_NAME_PATTERN` parity with the still-exported
+ *      `PROGRAM_PARAM_NAME_PATTERN`.
  *   3. The "delegation guarantee": `validateWorkflowParams` and
- *      `materializeWorkflowParameterFlags` — imported from the EXISTING,
- *      already-implemented `src/workflows/ir/params.ts`, unmodified by this
- *      lane's tests — keep their exact current `.message`/`.code`/`.hint()`
- *      byte-identically once params.ts becomes a thin consumer of this
- *      module (§4.3). This group is NOT red: it pins CURRENT behavior so
- *      that Implement's refactor of params.ts cannot silently drift it.
+ *      `materializeWorkflowParameterFlags` — imported from
+ *      `src/workflows/ir/params.ts` — keep their exact
+ *      `.message`/`.code`/`.hint()` byte-identically now that params.ts is a
+ *      thin consumer of this module.
  *   4. Purity: a text/AST import scan of `src/execution/input-contract.ts`
- *      itself, asserting it imports only the D3-N1 allowlist (`node:crypto`,
+ *      itself, asserting it imports only the allowlist (`node:crypto`,
  *      `src/core/errors`, `src/core/json-schema`, `src/execution/**`) and
  *      specifically none of `node:fs`, storage/db, config, or
- *      `src/workflows/**`. This group needs no `@ts-expect-error`: it reads
- *      the file as text/AST, not as an ES module, so it is RED today for the
- *      ordinary reason that the file does not exist yet (`fs.readFileSync`
- *      throws `ENOENT`), not a TypeScript one.
+ *      `src/workflows/**`.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -100,7 +68,7 @@ function sha256Hex(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-// ── applyInputDefaults (§4.2) ────────────────────────────────────────────────
+// ── applyInputDefaults ───────────────────────────────────────────────────────
 
 describe("applyInputDefaults (§4.2) — defaults are additive, supplied values always win", () => {
   test("applies a declared default when the input is absent from values", () => {
@@ -155,20 +123,14 @@ describe("applyInputDefaults (§4.2) — defaults are additive, supplied values 
   });
 });
 
-// ── validateInputs (§4.2) ────────────────────────────────────────────────────
+// ── validateInputs ───────────────────────────────────────────────────────────
 
 /**
- * A structural mirror of `InputDeclaration`/`InputContract` (§4.2), used only
- * by the two oracle helpers below. During the RED window `InputContract` is
- * itself an unresolved type (see the file docstring), and TypeScript widens
- * `Object.entries()` over an unresolved-type-annotated value to
- * `[string, unknown][]` rather than `[string, any][]` — so these two helpers
- * (which genuinely iterate a contract's entries, unlike every other test
- * below, which only ever passes a contract *into* the real, `any`-typed
- * functions under test) declare their own concrete parameter type instead.
- * It is not a competing source of truth: every fixture built elsewhere in
- * this file is still typed as the real, imported `InputContract`, and this
- * local shape must stay structurally identical to it.
+ * A structural mirror of `InputDeclaration`/`InputContract`, used only by the
+ * two oracle helpers below, which genuinely iterate a contract's entries. It is
+ * not a competing source of truth: every fixture built elsewhere in this file
+ * is typed as the real, imported `InputContract`, and this local shape must
+ * stay structurally identical to it.
  */
 interface ContractFixtureDeclaration {
   readonly schema: Record<string, unknown>;
@@ -177,7 +139,7 @@ interface ContractFixtureDeclaration {
 }
 type ContractFixture = Readonly<Record<string, ContractFixtureDeclaration>>;
 
-/** The same synthetic `{type:"object",properties:<schemas>}` §4.2 says validateInputs builds. */
+/** The same synthetic `{type:"object",properties:<schemas>}` schema validateInputs builds. */
 function syntheticObjectSchema(contract: ContractFixture): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
   for (const [name, declaration] of Object.entries(contract)) {
@@ -189,8 +151,8 @@ function syntheticObjectSchema(contract: ContractFixture): Record<string, unknow
 /**
  * Independent oracle for validateInputs' expected output, built from already-
  * trusted `validateJsonSchemaSubset` plus the exact "additionally appends"
- * wording §4.2 quotes verbatim — not a re-implementation of the function
- * under test, since it never imports or calls it.
+ * wording — not a re-implementation of the function under test, since it never
+ * imports or calls it.
  */
 function expectedValidateInputsErrors(
   contract: ContractFixture,
@@ -289,7 +251,7 @@ describe("validateInputs (§4.2) — path-prefixed error strings", () => {
   });
 });
 
-// ── materializeInputFlags (§4.2, D3-N3) ──────────────────────────────────────
+// ── materializeInputFlags ────────────────────────────────────────────────────
 
 interface DiagnosticsProbe {
   readonly diagnostics: InputFlagDiagnostics;
@@ -395,7 +357,7 @@ describe("materializeInputFlags (§4.2, D3-N3) — exact-name matching and coerc
   test("exact-name matching: a name that fails the input-name pattern is unknown even if it happened to be a contract key", () => {
     // Mirrors materializeWorkflowParameterFlags: the flag name is checked
     // against the name pattern independently of contract membership
-    // (params.ts:46, `!PROGRAM_PARAM_NAME_PATTERN.test(flag.name) || !declared.has(flag.name)`).
+    // (`!PROGRAM_PARAM_NAME_PATTERN.test(flag.name) || !declared.has(flag.name)` in params.ts).
     const probe = probeDiagnostics();
     const contract = { "in-put": { schema: { type: "string" }, required: false } } as InputContract;
     const err = thrown(() => materializeInputFlags(contract, [{ name: "in-put", value: "x" }], probe.diagnostics));
@@ -517,7 +479,7 @@ describe("materializeInputFlags (§4.2, D3-N3) — exact-name matching and coerc
     });
   });
 
-  // Regression (finding F1): `materializeFlagValues` took the array-grouping
+  // Regression: `materializeFlagValues` took the array-grouping
   // branch whenever "array" appeared ANYWHERE in a union type — even when the
   // union also permits a scalar type that a single, non-bracketed value could
   // satisfy directly. A single `--x hello` against `type:["array","string"]`
@@ -586,9 +548,9 @@ describe("materializeInputFlags (§4.2, D3-N3) — exact-name matching and coerc
   });
 });
 
-// ── canonicalInputJson / canonicalInputHash (D3-N2, B-39) ────────────────────
+// ── canonicalInputJson / canonicalInputHash ──────────────────────────────────
 
-/** Nested objects, arrays, null, unicode keys, and insertion-order permutations — D3-N2's named categories. */
+/** Nested objects, arrays, null, unicode keys, and insertion-order permutations. */
 const CANONICAL_JSON_FIXTURES: readonly unknown[] = [
   {},
   { outer: { z: 1, a: 2 }, list: [3, 1, 2] },
@@ -651,13 +613,13 @@ describe("canonicalInputHash (D3-N2, B-39)", () => {
   test("is NOT stable across a string/number or string/boolean spelling — the hash does not normalize types", () => {
     expect(canonicalInputHash({ version: "1" })).not.toBe(canonicalInputHash({ version: 1 }));
     expect(canonicalInputHash({ flag: "true" })).not.toBe(canonicalInputHash({ flag: true }));
-    // The "001 stays a string" contract (B-30) at the hash layer: a numeric-
+    // The "001 stays a string" contract at the hash layer: a numeric-
     // looking string must not collapse onto the number it resembles.
     expect(canonicalInputHash({ version: "001" })).not.toBe(canonicalInputHash({ version: 1 }));
   });
 });
 
-// ── INPUT_NAME_PATTERN (D3-N1) ───────────────────────────────────────────────
+// ── INPUT_NAME_PATTERN ───────────────────────────────────────────────────────
 
 describe("INPUT_NAME_PATTERN (D3-N1) — same grammar as today's PROGRAM_PARAM_NAME_PATTERN", () => {
   test("accepts/rejects the same identifier shapes as PROGRAM_PARAM_NAME_PATTERN", () => {
@@ -679,19 +641,15 @@ describe("INPUT_NAME_PATTERN (D3-N1) — same grammar as today's PROGRAM_PARAM_N
   });
 });
 
-// ── Delegation guarantee: params.ts stays byte-identical (§4.3) ─────────────
+// ── Delegation guarantee: params.ts stays byte-identical ────────────────────
 //
-// NOT a red-phase group: `validateWorkflowParams` and
-// `materializeWorkflowParameterFlags` already exist and already produce these
-// exact strings/codes/hints today, before params.ts is touched. These tests
-// pin that CURRENT behavior precisely (full `.message`/`.code`/`.hint()`
-// equality, not a `.toThrow(substring)` match) specifically so that once
-// Implement turns params.ts into a thin consumer of
-// `src/execution/input-contract.ts` (§4.3), any drift in the wrapper's
-// observable contract is caught here — independent of, and in addition to,
-// `tests/workflows/workflow-param-flags.test.ts` and
-// `tests/integration/workflows/params-validation.test.ts`, which this lane
-// does not own and must stay byte-unchanged.
+// `validateWorkflowParams` and `materializeWorkflowParameterFlags` are pinned
+// precisely (full `.message`/`.code`/`.hint()` equality, not a
+// `.toThrow(substring)` match) so that any drift in the wrapper's observable
+// contract — now that params.ts is a thin consumer of
+// `src/execution/input-contract.ts` — is caught here, independent of, and in
+// addition to, `tests/workflows/workflow-param-flags.test.ts` and
+// `tests/integration/workflows/params-validation.test.ts`.
 
 describe("delegation guarantee — materializeWorkflowParameterFlags keeps its exact current messages/codes/hints", () => {
   test("unknown flag: exact message, UNKNOWN_FLAG code, and the sorted 'Declared parameters' hint", () => {
@@ -769,10 +727,7 @@ describe("delegation guarantee — validateWorkflowParams keeps its exact curren
 
 // ── Purity: src/execution/input-contract.ts's own import boundary ──────────
 //
-// Not a TypeScript red-phase group (see the file docstring) — reads the
-// source file as text/AST, so it is RED today because the file does not
-// exist (`fs.readFileSync` throws `ENOENT`), the ordinary way a not-yet-
-// written file makes a test fail.
+// Reads the source file as text/AST, not as an ES module.
 
 /** Top-level `import ... from "..."` and `export ... from "..."` module specifiers in a TypeScript source file. */
 function importedModuleSpecifiers(filePath: string): string[] {
@@ -794,7 +749,7 @@ const EXECUTION_ROOT = path.resolve(ROOT, "src/execution");
 const CORE_ERRORS = path.resolve(ROOT, "src/core/errors");
 const CORE_JSON_SCHEMA = path.resolve(ROOT, "src/core/json-schema");
 
-/** D3-N1's exact allowlist: node:crypto, src/core/errors, src/core/json-schema, src/execution/**. */
+/** The exact allowlist: node:crypto, src/core/errors, src/core/json-schema, src/execution/**. */
 function isAllowedInputContractSpecifier(specifier: string): boolean {
   if (specifier === "node:crypto") return true;
   if (!specifier.startsWith(".")) return false;
@@ -837,42 +792,30 @@ describe("purity — src/execution/input-contract.ts imports only the D3-N1 allo
     expect(specifiers.some((specifier) => /\bconfig\b/.test(specifier))).toBe(false);
   });
 
-  test("imports nothing from src/workflows/** (D3-N1: execution must not import workflows)", () => {
+  test("imports nothing from src/workflows/** (execution must not import workflows)", () => {
     const specifiers = importedModuleSpecifiers(INPUT_CONTRACT_PATH);
     expect(specifiers.some((specifier) => /workflows/.test(specifier))).toBe(false);
   });
 
-  test("keeps params.ts's pure-module header line, and names this spec plus D3-N1/D3-N2", () => {
+  test("keeps params.ts's pure-module header line", () => {
     const sourceText = fs.readFileSync(INPUT_CONTRACT_PATH, "utf8");
     expect(sourceText).toContain("Pure module: no IO, no engine imports.");
-    expect(sourceText).toContain("D3-N1");
-    expect(sourceText).toContain("D3-N2");
   });
 });
 
-// ── Structure: src/workflows/ir/params.ts becomes a THIN CONSUMER (§4.3, §9) ─
+// ── Structure: src/workflows/ir/params.ts is a THIN CONSUMER ────────────────
 //
-// Test-review remediation (finding recorded against
-// tests/execution/input-contract.test.ts:678): the "delegation guarantee"
-// group above pins ONLY the wrappers' observable strings/codes/hints, which
-// an UNTOUCHED params.ts — one that adds this file and leaves its OWN
-// duplicate coercion/validation logic in place — satisfies trivially, since
-// nothing routes through the new module at all. §9's structure criterion is
-// explicit: "src/workflows/ir/params.ts contains no coercion or validation
-// logic of its own — only the plan→contract adapter, the diagnostics
-// vocabulary, and the three re-exported wrappers." This is the mirror image
-// of the purity scan directly above — same `importedModuleSpecifiers` helper,
-// pointed at params.ts instead of input-contract.ts — plus a declaration scan
-// proving the four private coercion helpers (`coerceFlagValue`, `schemaTypes`,
-// `materializeFlagValues`, `parseJsonFlag`) are GONE from params.ts, not
-// merely unused.
-//
-// NOT a red-phase group in the tsc sense (params.ts already exists and
-// compiles today) — it reads params.ts as text/AST, so it is genuinely RED
-// right now for the ordinary reason that params.ts has not been rewritten
-// yet: it imports nothing from ../../execution/input-contract, and it still
-// declares all four helpers itself (src/workflows/ir/params.ts:78-160, read
-// directly above by the "delegation guarantee" group's own module import).
+// The "delegation guarantee" group above pins ONLY the wrappers' observable
+// strings/codes/hints, which a params.ts that kept its OWN duplicate
+// coercion/validation logic would satisfy trivially, since nothing would route
+// through the new module at all. The structure criterion is explicit:
+// params.ts contains no coercion or validation logic of its own — only the
+// plan→contract adapter, the diagnostics vocabulary, and the three re-exported
+// wrappers. This is the mirror image of the purity scan directly above — same
+// `importedModuleSpecifiers` helper, pointed at params.ts instead of
+// input-contract.ts — plus a declaration scan proving the four private
+// coercion helpers (`coerceFlagValue`, `schemaTypes`, `materializeFlagValues`,
+// `parseJsonFlag`) are GONE from params.ts, not merely unused.
 
 const PARAMS_TS_PATH = path.join(ROOT, "src/workflows/ir/params.ts");
 const INPUT_CONTRACT_MODULE = path.resolve(EXECUTION_ROOT, "input-contract");

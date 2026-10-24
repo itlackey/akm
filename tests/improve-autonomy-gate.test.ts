@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * D8 — the autonomy gate's decision layer.
+ * The autonomy gate's decision layer.
  *
  * `akm improve` stays on; what is gated is the lanes that mutate assets without
  * review. The shipped `default` strategy enables several of those, so with the

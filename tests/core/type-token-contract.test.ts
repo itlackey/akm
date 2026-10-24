@@ -3,23 +3,17 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Chunk 1.5 (WI-1.5.1, D1.5-3) — §12.3 replacement contract tests for the
- * open type token. Lands in the SAME commit as the closed-union deletion so
- * the exhaustiveness guard never gaps (plan §15 rule 4 / brief trap 1).
+ * Contract tests for the open type token.
  *
- * Proves the new model end to end:
+ * Proves the model end to end:
  *   (a) an open/foreign token is ACCEPTED as data by `validateStashEntry`
- *       and the `akm` adapter's `recognize` gate (which replaced the deleted
- *       flat-walk matcher pass in the F4 engine swap);
+ *       and the `akm` adapter's `recognize` gate;
  *   (b) `KNOWN_TYPES` exhaustiveness — `TYPE_PRESENTATION` compile-covers
  *       all 14 known types;
  *   (c) `presentationFor` returns the generic fallback for an unknown type;
  *   (d) retired AKM types remain rejected by AKM's legacy ref parser, but the
  *       format-neutral index projection accepts them when another adapter owns
  *       those open type values.
- *
- * Replaces (not just deletes) the taxonomy-pin tests identified in
- * `docs/design/execution/chunk-1.5/anchors.md` §D.1.
  */
 
 import { describe, expect, test } from "bun:test";

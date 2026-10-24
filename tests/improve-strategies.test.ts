@@ -127,9 +127,9 @@ describe("resolveImproveStrategy", () => {
   });
 });
 
-// WIKI (R12): reflect's excludeRefPrefixes filter keeps raw wiki-ingest
-// snapshots (type `knowledge`, so allowedTypes alone can't exclude them) out
-// of reflect without affecting distill/consolidate.
+// reflect's excludeRefPrefixes filter keeps raw wiki-ingest snapshots (type
+// `knowledge`, so allowedTypes alone can't exclude them) out of reflect without
+// affecting distill/consolidate.
 describe("shouldSkipRef excludeRefPrefixes (reflect only)", () => {
   function strategyWithExcluded(excludeRefPrefixes: string[]) {
     return resolveImproveStrategy("default", {
@@ -225,9 +225,9 @@ describe("resolveImprovePlan", () => {
       semanticSearchMode: "off",
       engines: { default: llm },
       defaults: { llmEngine: "default" },
-      // D8 — `consolidate` and `memoryInference` are only *enabled* when autonomy
-      // is opted into; without this the gate disables them and they resolve no
-      // runner, which is the gate working rather than the preflight failing.
+      // `consolidate` and `memoryInference` are only *enabled* when autonomy is
+      // opted into; without this the gate disables them and they resolve no runner,
+      // which is the gate working rather than the preflight failing.
       experimental: { improveAutonomy: true },
       improve: {
         strategies: {
@@ -485,9 +485,9 @@ describe("resolveImprovePlan", () => {
     expect(unavailable?.configKey).toBe("improve.strategies.credential-test.processes.reflect.engine");
     expect(unavailable?.reason).toContain('engine "private"');
     expect(unavailable?.reason).toContain("$PRIVATE_957_TOKEN");
-    // #800/#957 round 3 — the structurally resolved engine/model still show up
-    // on the engineUnavailable entry even though `runner` stays null; no
-    // contextLength was configured on "private", so it stays unset.
+    // #800/#957 — the structurally resolved engine/model still show up on the
+    // engineUnavailable entry even though `runner` stays null; no contextLength
+    // was configured on "private", so it stays unset.
     expect(unavailable?.engine).toBe("private");
     expect(unavailable?.model).toBe("private-model");
     expect(unavailable?.contextLength).toBeUndefined();

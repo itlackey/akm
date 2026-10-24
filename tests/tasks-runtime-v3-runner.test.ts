@@ -76,14 +76,10 @@ describe("task runner mutation boundary", () => {
     // fails naming `akm migrate apply`, the one place it is converted.
     ["v2", 'version: 2\nschedule: "@daily"\ncommand: echo legacy\n', "akm migrate apply"],
     ["v3", 'version: 3\nrun: echo legacy\nschedule: "@daily"\n', "akm migrate apply"],
-    // P4 (spec §3.2.2, row B-17): the bounded YAML front end's sourceLabel is
-    // "task source" now, not "task v3 source".
+    // The bounded YAML front end's sourceLabel is "task source".
     ["malformed", 'version: 4\nrun: [unterminated\nschedule: "@daily"\n', "Invalid task source"],
-    // P4 FLIP (docs/plans/specs/p4-deletions-closeout.md §3.1, row B-04,
-    // F-A1.14): the locator grammar is deleted from classifyTaskSourceV4Uses,
-    // so a github-action-shaped uses: fails at PARSE with task source v4's
-    // own B-11 message, not the old prepare-side "remote action acquisition
-    // is unsupported" arm.
+    // The locator grammar does not exist in classifyTaskSourceV4Uses, so a
+    // github-action-shaped uses: fails at PARSE with task source v4's own message.
     [
       "remote action",
       'version: 4\nuses: actions/checkout@v4\nschedule: "@daily"\n',
@@ -128,12 +124,7 @@ describe("task runner mutation boundary", () => {
       bundleName: "fixture",
       scheduled: true,
     });
-    // D8 (spec docs/plans/specs/p1b-model-extraction.md §5.3, §6 F-2):
-    // corollary of the authorized result-vocabulary flip — a shell dispatch
-    // now reports "shell", not the former shared "command" string. This is
-    // the one necessary follow-on edit G-1's stashDir->bundleDir rename does
-    // not itself cover; every other line in this file's diff is that
-    // mechanical substitution.
+    // A shell dispatch reports target kind "shell".
     expect(result).toMatchObject({ status: "failed", target: { kind: "shell" }, detail: { exitCode: 7 } });
     expect(readTaskHistory({ id: "fails" })).toHaveLength(1);
     expect(logFiles().some((file) => file.endsWith(".log"))).toBe(true);
@@ -162,12 +153,8 @@ describe("task runner mutation boundary", () => {
         "",
       ].join("\n"),
     );
-    // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, F-A2.5): the
-    // wrapping task fixture converts to task source v4 — task source version
-    // is orthogonal to this rejection, which fires at workflow compilation.
-    // FLIPPED in P4 (§3.3, row B-34, F-A3.5): the rejection now fires at
-    // PARSE (multi-job-unsupported), not at compileWorkflowPlan's deleted
-    // "exactly one source-IR job" check — this document never reaches it.
+    // The wrapping task fixture is task source v4 — task source version is
+    // orthogonal to this rejection, which fires at PARSE (multi-job-unsupported).
     writeTask("multi", 'version: 4\nuses: workflows/multi\nschedule: "@daily"\n');
 
     await expect(
@@ -284,9 +271,7 @@ describe("task runner mutation boundary", () => {
       bundleName: "fixture",
       scheduled: true,
     });
-    // D8 (spec §5.3, §6 F-2) corollary — a script dispatch now reports
-    // "script", not the former shared "command" string. See the comment at
-    // this file's other vocabulary-corollary edit.
+    // A script dispatch reports target kind "script".
     expect(result).toMatchObject({ status: "completed", target: { kind: "script" } });
     expect(fs.readFileSync(result.log, "utf8")).toContain("qualified");
     expect(readTaskHistory({ id: "qualified" })).toHaveLength(1);

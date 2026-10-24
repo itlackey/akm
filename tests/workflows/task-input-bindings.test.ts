@@ -4,54 +4,29 @@
 
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: `\${{ … }}` is
 // tested here as literal, hostile content a nested with: value must still
-// reject (B-27) — never workflow expression grammar (spec §2.3), matching
+// reject (B-27) — never workflow expression grammar, matching
 // tests/integration/workflows/chaos.test.ts's own directive/rationale.
 
 /**
- * P2b Lane A — FREEZE-TIME `with:` bindings on `uses: tasks/<ref>` workflow
- * steps (docs/plans/specs/p2b-input-bindings.md §2.2, §3.2-§3.5, §7 F-A2/F-A3
- * B-N1..B-N4 not applicable here — this file is the freeze matrix only;
- * pre-attempt resolution lives in
- * tests/integration/workflows/task-binding-resolution.test.ts).
+ * FREEZE-TIME `with:` bindings on `uses: tasks/<ref>` workflow steps. This file
+ * is the freeze matrix only; pre-attempt resolution lives in
+ * tests/workflows/task-binding-resolution.test.ts.
  *
  * Sandbox/freeze pattern follows tests/workflows/with-rejection.test.ts and
  * tests/workflows/task-source-v4-deferral.test.ts (withIsolatedAkmStorage +
  * writeWorkflowTestConfig + akmIndex + startWorkflowRun +
  * decodeWorkflowPlan).
  *
- * RED TODAY, for two independent, already-understood reasons the spec names
- * explicitly (A-N6, A-N3):
+ * `FrozenWorkflowTarget`'s `inputBindings` field is read through the single
+ * `frozenInputBindings` helper below so the access lives in one place.
  *
- *   1. LC-N1 (p2a §1.5): taskDispatch still peeks a target task source's
- *      `version` and throws UsageError/TASK_SOURCE_INVALID for ANY `version:
- *      4` task composed from a workflow step, `with:` or not. Every fixture
- *      below composes a version: 4 task, so every test in this file is RED
- *      until A-N6's deferral lift lands.
- *   2. P1a's fail-closed guard (source-freeze-v4.ts:226) still rejects EVERY
- *      `with:` on a `uses: tasks/<ref>` step unconditionally with
- *      UsageError/COMPOSITION_INVALID ("task-call inputs are not supported
- *      yet"), regardless of shape or the target's declared inputs.
- *   3. `scalarRecord` (source-ir/schema.ts:389) still rejects ANY non-scalar
- *      `with:` value on ANY target, including a task step — so every fixture
- *      using a nested `{from: ...}` or object-shaped with: value is
- *      additionally RED at COMPILE time (a plain `Error`, wrapped into
- *      UsageError/INVALID_FLAG_VALUE by resolveWorkflowSourceV4) until A-N3's
- *      task-scoped decode widening lands.
- *
- * Every test asserts the state Implement must produce; none of these are RED
- * because a referenced API fails to TYPE-CHECK — `FrozenWorkflowTarget`'s
- * `inputBindings` field (A-N7) is the ONE not-yet-existing symbol accessed
- * here, isolated behind the single `frozenInputBindings` helper below so
- * Implement removes ONE `@ts-expect-error` directive, not one per call site.
- *
- * Message text for every NEW `INPUT_BINDING_INVALID` rejection is authored by
- * this test file (the spec pins the FACTS a message must carry — B-11..B-18 —
- * never exact bytes for these, unlike the LC-N1/COMPOSITION_INVALID strings
- * quoted verbatim elsewhere). Assertions below therefore use `.toContain(...)`
- * against the pinned facts rather than `.toBe(...)` against invented prose,
- * so Implement is free to choose its own exact wording as long as the named
- * facts (step id, target ref, offending key, declared-name set, schema-error
- * detail, "earlier step" / "declared workflow param") are present.
+ * Message text for every `INPUT_BINDING_INVALID` rejection is authored by this
+ * test file: the contract pins the FACTS a message must carry, never exact
+ * bytes. Assertions below therefore use `.toContain(...)` against the pinned
+ * facts rather than `.toBe(...)` against invented prose, so the implementation
+ * is free to choose its own exact wording as long as the named facts (step id,
+ * target ref, offending key, declared-name set, schema-error detail, "earlier
+ * step" / "declared workflow param") are present.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -162,9 +137,8 @@ function stepTarget(plan: ReturnType<typeof decodeWorkflowPlan>, index: number):
 }
 
 /**
- * A-N7: `FrozenWorkflowTarget` gains an optional `inputBindings` field in
- * Implement. Isolated here so ONE directive is removed, not one per call
- * site, once schema-v4.ts's three target interfaces grow the field.
+ * `FrozenWorkflowTarget`'s optional `inputBindings` field, read through one
+ * helper so the access lives in one place.
  */
 function frozenInputBindings(target: FrozenWorkflowTarget | undefined): readonly TaskInputBinding[] | undefined {
   return target?.inputBindings;
@@ -211,8 +185,8 @@ describe("P2b freeze-time — literal and reference bindings normalize into inpu
     const target = stepTarget(plan, 0);
     expect(target?.kind).toBe("command");
 
-    // scope/strict get their declared defaults (B-19); files/meta stay absent
-    // (B-20: optional, no default, not supplied) — sorted by name.
+    // scope/strict get their declared defaults; files/meta stay absent
+    // (optional, no default, not supplied) — sorted by name.
     expect(frozenInputBindings(target)).toEqual([
       { kind: "literal", name: "scope", value: "changed" },
       { kind: "literal", name: "strict", value: true },
@@ -571,30 +545,23 @@ describe("P2b compile-time — structured with: values are a task/workflow bindi
 
 describe("P2b freeze-time — no merge semantics across a two-level task -> workflow -> task composition chain (B-29, A-N4)", () => {
   /**
-   * §3.5's actual chain, not two sibling steps of one workflow (a prior
-   * draft of this suite used two siblings — that proves independence
-   * between unrelated call sites, but nothing about a CHAIN, i.e. a task
-   * that is itself composed reachable from a step that composes a further,
-   * inner task).
+   * A chain, not two sibling steps of one workflow (two siblings prove
+   * independence between unrelated call sites, but nothing about a CHAIN, i.e.
+   * a task that is itself composed reachable from a step that composes a
+   * further, inner task).
    *
-   * The ONLY reachable two-level shape is TASK (top-level, `akm task run
-   * task-outer-chain`) -> workflow -> STEP composing an inner task. A
-   * WORKFLOW-STEP-driven chain — step composes task X, X's own `uses:` is
-   * ALSO a workflow — is rejected on its first hop by taskDispatch's
-   * existing nested-workflow guard (B-30); routing the top-level hop
-   * through `akm task run` instead (§4.3, B-40: a v4 task's `uses:
-   * workflows/<ref>` delivers its effective inputs as the child run's
-   * params) is the only way around that guard, so task-outer-chain.yml
-   * below is a genuine TASK (no `with:` — D2-N1: `with:` on a v4 document is
-   * legal only on `uses: akm/command`), not a workflow step.
+   * The two-level shape modelled here is TASK (top-level, `akm task run
+   * task-outer-chain`) -> workflow -> STEP composing an inner task. A v4
+   * task's `uses: workflows/<ref>` delivers its effective inputs as the child
+   * run's params, so task-outer-chain.yml below is a genuine TASK (no `with:`
+   * — `with:` on a v4 document is legal only on `uses: akm/command`), not a
+   * workflow step.
    *
-   * task-outer-chain.yml is never executed by this file (freeze-time only —
-   * pre-attempt/delivery lives in
-   * tests/integration/workflows/task-binding-resolution.test.ts): freezing
-   * chain-child.yml (below) is a wholly separate operation from preparing
-   * task-outer-chain.yml, and neither test needs the outer task to run for
-   * that fact to be provable — chain-child.yml freezes identically whether
-   * or not task-outer-chain.yml exists at all, which is precisely the
+   * task-outer-chain.yml is never executed by this file (freeze-time only):
+   * freezing chain-child.yml (below) is a wholly separate operation from
+   * preparing task-outer-chain.yml, and neither test needs the outer task to
+   * run for that fact to be provable — chain-child.yml freezes identically
+   * whether or not task-outer-chain.yml exists at all, which is precisely the
    * "nothing merges, forwards, or shadows" claim B-29 makes.
    */
   function writeChainFixtures(): void {
@@ -648,12 +615,10 @@ describe("P2b freeze-time — no merge semantics across a two-level task -> work
     writeChainFixtures();
     // "scope" is the exact name task-outer-chain.yml declares, and — were
     // the outer task actually run — the exact param name its effective
-    // inputs would populate on THIS workflow's run (§4.3, B-40). The
-    // freeze-time structural check for a `param` arm (A-N4, §3.3 point 8)
-    // consults only the workflow CURRENTLY being frozen's own paramSchemas
-    // (schema-v4.ts:163) — and chain-child-ref.yml, being GitHub-shaped
-    // YAML, has no params: authoring surface at all (github-yaml.ts's
-    // ROOT_KEYS is exactly ["name", "on", "jobs"]) — so this reference is
+    // inputs would populate on THIS workflow's run. The freeze-time structural
+    // check for a `param` arm consults only the workflow CURRENTLY being
+    // frozen's own paramSchemas — and chain-child-ref.yml, being GitHub-shaped
+    // YAML, has no params: authoring surface at all — so this reference is
     // rejected as undeclared, proving the check never reaches past this
     // workflow's own (here, empty) declared params to the outer task's
     // declared input names, name coincidence notwithstanding.
@@ -676,24 +641,17 @@ describe("P2b freeze-time — no merge semantics across a two-level task -> work
 
 describe("P3a — a task-wrapped workflow target now composes to a child-workflow target (B-30 FLIPS in P3a; row B-12/B-13)", () => {
   /**
-   * P3a FLIP (docs/plans/specs/p3a-plan-v5-child-freeze.md §1.5/§6 F-B4, rows
-   * B-12/B-13): before P3a, the nested-workflow guard's ONLY pin was
-   * tests/workflows/characterization-classification.test.ts, reached through
-   * the v3-only `parseTaskV3Yaml` / `prepareTaskV3Execution` path
-   * (now src/workflows/freeze/targets/task.ts:116,149, A-N3's corrected line
-   * numbers) — the SAME two call sites this file's B-30 block pinned for the
-   * v4 arm once A-N6 lifted LC-N1. P3a REPLACES both throw sites with routing
-   * to the ONE childWorkflowDispatch resolver (spec §4.2): a version: 4 task
-   * step whose OWN target is `uses: workflows/<ref>` no longer rejects at
-   * all — it freezes to a `{kind: "child-workflow", via: "task"}` target,
-   * `taskRef` naming the composing task's qualified ref, and the task's
-   * effective inputs (its declared defaults, overridden by any authored
-   * `with:`) become the child's params via `inputBindings` (A-N8: the SAME
-   * `freezeTaskInputBindings` normalizer, re-bound against the child's own
-   * declared `params:`). `workflows/inner` therefore declares a `scope`
-   * param (in the markdown-frontmatter authoring surface, which — unlike
-   * GitHub-YAML — has one) matching `tasks/nested-v4.yml`'s declared
-   * `scope` input, so the re-bind has a real contract to bind against.
+   * A version: 4 task step whose OWN target is `uses: workflows/<ref>` freezes
+   * to a `{kind: "child-workflow", via: "task"}` target (routed to the ONE
+   * childWorkflowDispatch resolver), `taskRef` naming the composing task's
+   * qualified ref, and the task's effective inputs (its declared defaults,
+   * overridden by any authored `with:`) become the child's params via
+   * `inputBindings` (the SAME `freezeTaskInputBindings` normalizer, re-bound
+   * against the child's own declared `params:`). `workflows/inner` therefore
+   * declares a `scope` param (in the markdown-frontmatter authoring surface,
+   * which — unlike GitHub-YAML — has one) matching `tasks/nested-v4.yml`'s
+   * declared `scope` input, so the re-bind has a real contract to bind
+   * against.
    */
   function writeNestedFixtures(): void {
     write(
@@ -766,8 +724,8 @@ describe("P3a — a task-wrapped workflow target now composes to a child-workflo
       via: "task",
       taskRef: expect.stringContaining("tasks/nested-v4"),
     });
-    // The bound input reaches the child as an inputBindings entry (F-B4):
-    // the authored with.scope overrides the task's declared default.
+    // The bound input reaches the child as an inputBindings entry: the authored
+    // with.scope overrides the task's declared default.
     expect(frozenInputBindings(target)).toEqual([{ kind: "literal", name: "scope", value: "urgent" }]);
   });
 });
@@ -805,7 +763,7 @@ describe("P2b freeze-time — hash coverage: a changed binding changes the unit 
     const planA = decodeWorkflowPlan(JSON.parse((await planRow(runA.run.id))?.plan_json ?? "null"));
     const planB = decodeWorkflowPlan(JSON.parse((await planRow(runB.run.id))?.plan_json ?? "null"));
 
-    // Computed TWO ways (once per frozen plan) and compared, per §1.1(4).
+    // Computed TWO ways (once per frozen plan) and compared.
     expect(unitHash(planA, runA.run.id)).not.toBe(unitHash(planB, runB.run.id));
   });
 
@@ -850,15 +808,14 @@ describe("P2b freeze-time — hash coverage: a changed binding changes the unit 
   });
 
   test("R-R15 (hashVersion 7): changing a reference binding's RESOLVED value — same from path, changed upstream output — changes the unit input hash; an unchanged value keeps it byte-stable", async () => {
-    // The case B-41/B-42 could not cover: both of those vary the FROZEN
-    // binding (a literal's value, a reference's from path), which lives
-    // inside frozenTarget and was hashed all along. Here ONE frozen plan is
-    // hashed against two different upstream outputs, so the only thing that
-    // changes is what `from: steps.collect.output.a` RESOLVES to — exactly
-    // the value the unit actually receives (prompt "## Task inputs" block /
-    // AKM_TASK_INPUTS / childParams). Under hashVersion 6 these two hashes
-    // were IDENTICAL (R-R15); the taskInputs preimage field makes them differ,
-    // so the recorded (informational) input hash tells the two asks apart.
+    // The case B-41/B-42 do not cover: both of those vary the FROZEN binding (a
+    // literal's value, a reference's from path), which lives inside frozenTarget.
+    // Here ONE frozen plan is hashed against two different upstream outputs, so
+    // the only thing that changes is what `from: steps.collect.output.a` RESOLVES
+    // to — exactly the value the unit actually receives (prompt "## Task inputs"
+    // block / AKM_TASK_INPUTS / childParams). The taskInputs preimage field makes
+    // the two hashes differ, so the recorded (informational) input hash tells the
+    // two asks apart.
     writeCentralTaskFixture();
     writeWorkflow("case-resolved", [
       "      - id: collect",

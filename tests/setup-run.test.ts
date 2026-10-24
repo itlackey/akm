@@ -32,7 +32,7 @@ const DEFAULT_REGISTRY_URLS = [
 // misaligned queue fails with the full transcript instead of dying silently.
 //
 // To re-capture the wizard's real prompt sequence after a flow change, run:
-//   SETUP_RUN_CAPTURE=1 bun test tests/integration/setup-run.test.ts
+//   SETUP_RUN_CAPTURE=1 bun test tests/setup-run.test.ts
 // Capture mode answers drained queues with safe defaults and prints the full
 // trace instead of throwing, so one run reveals the whole sequence.
 const CAPTURE = process.env.SETUP_RUN_CAPTURE === "1";
@@ -282,7 +282,7 @@ describe("runSetupWizard", () => {
     await runSetupWizard();
 
     const saved = readSavedConfig();
-    // 0.9.0 (spec §10.1): the primary stash is the defaultBundle's path.
+    // The primary stash is the defaultBundle's path.
     const savedBundles = saved.bundles as Record<string, { path?: string }> | undefined;
     expect(savedBundles?.[saved.defaultBundle as string]?.path).toBe(DEFAULT_STASH_DIR);
     expect("stashDir" in saved).toBe(false);

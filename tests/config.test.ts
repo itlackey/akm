@@ -95,8 +95,7 @@ describe("getConfigPath", () => {
     // Defense against CI environments where AKM_BUNDLE_DIR is inherited
     // from outer test isolation: if it points at a transient path,
     // getConfigDir's isolation rule fires and overrides the HOME-based
-    // fallback this test is verifying (the 2026-05-23
-    // setup-clobbers-user-config incident).
+    // fallback this test is verifying.
     delete process.env.AKM_BUNDLE_DIR;
     const home = sandboxHome();
 
@@ -134,12 +133,11 @@ describe("loadConfig", () => {
     expect(loadConfig()).toEqual(DEFAULT_CONFIG);
   });
 
-  // Owner ruling 9 (R-039), deliberately pinning the NEW default: a bare
-  // install (no config.json) must never silently pull the ~130 MB local
-  // embedding model on first index, so `semanticSearchMode` defaults to
-  // "off". This was previously "auto" — the interactive `akm setup` wizard
-  // is the only place that still pre-selects semantic search ON (see
-  // tests/setup-wizard.test.ts), with a warning, before saving a config.
+  // A bare install (no config.json) must never silently pull the ~130 MB local
+  // embedding model on first index, so `semanticSearchMode` defaults to "off".
+  // The interactive `akm setup` wizard is the only place that pre-selects
+  // semantic search ON (see tests/setup-wizard.test.ts), with a warning, before
+  // saving a config.
   test("defaults semanticSearchMode to 'off' for a bare/headless install (R-039)", () => {
     expect(DEFAULT_CONFIG.semanticSearchMode).toBe("off");
     expect(loadConfig().semanticSearchMode).toBe("off");
@@ -203,9 +201,8 @@ describe("loadConfig", () => {
   });
 
   test("project-level .akm/config.json is no longer merged (single-layer load)", () => {
-    // Multi-layer project config was removed; only the user-level config is
-    // read. A project-level file under cwd-ancestors does not contribute
-    // settings.
+    // Only the user-level config is read. A project-level file under
+    // cwd-ancestors does not contribute settings.
     const projectDir = makeTmpDir();
     const restoreCwd = process.cwd();
     try {
@@ -220,7 +217,6 @@ describe("loadConfig", () => {
       process.chdir(projectDir);
       const loaded = loadConfig();
       expect(loaded.semanticSearchMode).toBe("auto");
-      // sources from project config are ignored
       expect(loaded.sources).toBeUndefined();
     } finally {
       process.chdir(restoreCwd);
@@ -400,19 +396,13 @@ describe("saveConfig", () => {
   });
 
   test("prunes config backups to the 5 most-recent (#459)", () => {
-    // RUNTIME-09: this loop used to busy-spin ~10ms between saves "so each
-    // backup gets a unique filename [for] mtimeMs, what we sort on". Verified
-    // that reasoning was backwards: `backupExistingConfig` de-collides
-    // *filenames* itself (src/core/config/config-io.ts:121-133, an EEXIST
-    // retry loop appending -1/-2/... to the ISO-millisecond timestamp), while
-    // `pruneOldBackups` (config-io.ts:147-174) sorts on `mtimeMs` and keeps
-    // only the newest 5 via `slice(MAX_CONFIG_BACKUPS)` — a COUNT-based cut
-    // that holds regardless of how mtimeMs ties break, so tied timestamps
-    // were never a correctness risk for this test's assertions (≤5 remain,
-    // config.latest.json exists). Empirically confirmed too: measured
-    // mtimeMs across 10 back-to-back saves already differs at sub-millisecond
-    // resolution (real filesystem, no spin needed), and 150 repeated runs of
-    // this exact loop without the spin were 150/150 green. 10 saves → up to
+    // The saves run back to back with no delay between them.
+    // `backupExistingConfig` de-collides *filenames* itself (an EEXIST retry loop
+    // appending -1/-2/... to the ISO-millisecond timestamp), while
+    // `pruneOldBackups` sorts on `mtimeMs` and keeps only the newest 5 via
+    // `slice(MAX_CONFIG_BACKUPS)` — a COUNT-based cut that holds regardless of how
+    // mtimeMs ties break, so tied timestamps are no correctness risk for this
+    // test's assertions (≤5 remain, config.latest.json exists). 10 saves → up to
     // 10 distinct backup files, but at most 5 should remain.
     for (let i = 0; i < 10; i++) {
       saveConfig({ semanticSearchMode: i % 2 === 0 ? "off" : "auto" });
@@ -423,7 +413,6 @@ describe("saveConfig", () => {
       .readdirSync(backupDir)
       .filter((name) => name.startsWith("config-") && name.endsWith(".json") && name !== "config.latest.json");
     expect(timestamped.length).toBeLessThanOrEqual(5);
-    // config.latest.json is always preserved
     expect(fs.existsSync(path.join(backupDir, "config.latest.json"))).toBe(true);
   });
 });
@@ -448,7 +437,7 @@ describe("updateConfig", () => {
   });
 
   test("writes only user config and ignores any project-level .akm/config.json", () => {
-    // Project-level config files are no longer merged (single-layer load).
+    // Project-level config files are not merged (single-layer load).
     // updateConfig writes to the user-level file; project-level files are
     // left untouched and their settings have no effect on loadConfig().
     const projectDir = makeTmpDir();
@@ -462,7 +451,6 @@ describe("updateConfig", () => {
       process.chdir(projectDir);
       updateConfig({ semanticSearchMode: "off" });
 
-      // Project sources are NOT merged in.
       expect(loadConfig().sources).toBeUndefined();
       expect(loadUserConfig().sources).toBeUndefined();
       expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8"))).not.toHaveProperty("stashes");
@@ -671,8 +659,8 @@ describe("getImproveProcessConfig", () => {
   });
 
   test("returns undefined when no strategy was selected", () => {
-    // Post-WI-9.1 the signature cannot even receive a config, so "does not
-    // implicitly consult configured strategies" is guaranteed by construction.
+    // The signature cannot receive a config, so "does not implicitly consult
+    // configured strategies" is guaranteed by construction.
     expect(getImproveProcessConfig("reflect")).toBeUndefined();
   });
 
@@ -701,10 +689,9 @@ describe("components.*.adapter validation (#909)", () => {
       },
       defaultBundle: "main",
     });
-    // RED on old code: an unknown adapter silently fell back to `akm` at
-    // detect-time — loadConfig() never threw, and `akm bundle list` reported
-    // "akm" as if it had been configured (#909). GREEN on the fix: config
-    // load itself rejects it.
+    // An unknown adapter used to fall back silently to `akm` at detect-time —
+    // loadConfig() never threw, and `akm bundle list` reported "akm" as if it had
+    // been configured (#909). Config load itself now rejects it.
     let thrown: unknown;
     try {
       loadConfig();
@@ -1192,13 +1179,12 @@ describe("extends inheritance (#945)", () => {
   });
 
   test("config get extends returns the locally configured ref (not silently dropped)", () => {
-    // Deliberate deviation from a literal "strip extends before validation"
-    // reading: `mutateConfig` (config set/unset) reads the EFFECTIVE config as
-    // `current` and writes a mutated copy of the SAME object back to the local
-    // file (pre-existing behavior — see DEFAULT_CONFIG baking into config.json
-    // on any write). Stripping `extends` from the effective object would mean
-    // any `config set` after adopting `extends` silently deletes the
-    // directive from disk. Keeping it lets it round-trip.
+    // `mutateConfig` (config set/unset) reads the EFFECTIVE config as `current`
+    // and writes a mutated copy of the SAME object back to the local file (see
+    // DEFAULT_CONFIG baking into config.json on any write). Stripping `extends`
+    // from the effective object would mean any `config set` after adopting
+    // `extends` silently deletes the directive from disk. Keeping it lets it
+    // round-trip.
     const dir = path.dirname(getConfigPath());
     writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 7 }));
     writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
@@ -1252,11 +1238,10 @@ describe("extends inheritance (#945)", () => {
   });
 
   test("config set on an unrelated key after adopting extends does not duplicate the base's fields into the local file", () => {
-    // Round-1 review finding: mutateConfig used to write the entire
-    // extends-merged EFFECTIVE config back to the local file on any
-    // `config set`/`unset`, baking every inherited field (engines,
-    // improve.strategies, ...) into the local file on the very next
-    // ordinary write — defeating the whole point of `extends`.
+    // `mutateConfig` must not write the entire extends-merged EFFECTIVE config
+    // back to the local file on any `config set`/`unset`: that would bake every
+    // inherited field (engines, improve.strategies, ...) into the local file on
+    // the very next ordinary write, defeating the whole point of `extends`.
     const dir = path.dirname(getConfigPath());
     writeRawConfig(
       path.join(dir, "base.json"),

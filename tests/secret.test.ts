@@ -7,7 +7,7 @@
  *
  * Everything here runs in-process via the shared harness. The stdin path
  * (default `secret set` pipes the value through process.stdin, which the
- * harness cannot feed) lives in tests/integration/secret-stdin.test.ts.
+ * harness cannot feed) lives in tests/integration/secret/secret-stdin.test.ts.
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -185,21 +185,18 @@ describe("secret list", () => {
   });
 });
 
-// `akm secret remove` was REMOVED from the CLI in 0.9.0 (R-027 / D-49): an
-// audit found it resolved a ref through a DIFFERENT stash-selection path than
-// `secret path` (also removed), so a lookup and a deletion could silently
-// target different files. The owner's ruling was to drop both subcommands
-// rather than reconcile the resolvers. The regression coverage proving the
-// removed spellings fail loudly (real-subprocess exit code, since citty's own
-// "Unknown command" CLIError is only reclassified to exit 2 in the real entry
-// point — the in-process harness used throughout this file maps it to a
-// different code) lives in tests/integration/secret-path-run.test.ts.
+// `akm secret remove` and `akm secret path` do not exist: `remove` resolved a
+// ref through a DIFFERENT stash-selection path than `path`, so a lookup and a
+// deletion could silently target different files. The regression coverage
+// proving the removed spellings fail loudly (real-subprocess exit code, since
+// citty's own "Unknown command" CLIError is only reclassified to exit 2 in the
+// real entry point — the in-process harness used throughout this file maps it
+// to a different code) lives in
+// tests/integration/secret/secret-path-run.test.ts.
 
 describe("colon ref spelling removed (Q-08)", () => {
-  // Exercised via `secret run` (still a live subcommand) rather than the now-
-  // removed `secret path` — both routed the ref through the same
-  // parseSecretRef/assertNotColonRef check (src/core/env-secret-ref.ts), so
-  // the rejection behaviour under test is unchanged by the D-49 removal.
+  // Exercised via `secret run`: it routes the ref through the
+  // parseSecretRef/assertNotColonRef check (src/core/env-secret-ref.ts).
   test("`secret:<name>` fails loudly naming the slash replacement, instead of a confusing not-found", async () => {
     const stashDir = makeStash();
     setSecret(path.join(stashDir, "secrets", "deploy-key"), Buffer.from("the-actual-secret-value"));
@@ -240,9 +237,9 @@ describe("colon ref spelling removed (Q-08)", () => {
     // `secret run`'s success path ends in an unconditional `process.exit`,
     // which the in-process test harness's exit shim converts into a thrown
     // "error" that `runWithJsonErrors` re-wraps as a JSON envelope — a
-    // pre-existing harness limitation unrelated to ref resolution (see
-    // tests/integration/secret-run.test.ts's docstring on why its happy path
-    // requires a real subprocess). `secret set` exercises the identical
+    // harness limitation unrelated to ref resolution (see
+    // tests/integration/secret/secret-run.test.ts's docstring on why its happy
+    // path requires a real subprocess). `secret set` exercises the identical
     // parseSecretRef resolution without that exit call.
     const stashDir = makeStash();
     const fp = path.join(stashDir, "secrets", "deploy-key");

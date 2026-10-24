@@ -22,8 +22,7 @@ describe("parseDuration", () => {
   });
 
   test("parses months as a 30-day approximation with uppercase `M`", () => {
-    // `m` = minutes, `M` = months — the CLI-wide canonical grammar. (`m` here
-    // formerly meant months; it is now minutes, with `M` reserved for months.)
+    // `m` = minutes, `M` = months — the CLI-wide canonical grammar.
     expect(parseDuration("3M")).toBe(3 * 30 * 24 * 60 * 60 * 1000);
   });
 
@@ -68,11 +67,9 @@ describe("buildMemoryFrontmatter — YAML injection guard", () => {
   });
 
   test("description containing newlines + forged tags cannot inject extra keys", () => {
-    // Pre-fix this string would have been emitted as:
-    //   description: nice
-    //   tags: [pwned]
-    // …producing two real frontmatter keys. With yaml.stringify it is
-    // safely quoted as a single string value.
+    // A naive serializer would emit this string as `description: nice` and
+    // `tags: [pwned]`, producing two real frontmatter keys. With yaml.stringify it
+    // is safely quoted as a single string value.
     const malicious = "nice\ntags: [pwned]";
     const out = buildMemoryFrontmatter({ description: malicious, tags: ["expected"] });
     const parsed = yamlParse(out.replace(/^---\n/, "").replace(/\n---$/, "")) as Record<string, unknown>;
@@ -100,9 +97,7 @@ describe("buildMemoryFrontmatter — YAML injection guard", () => {
     expect(parsed.tags).toEqual(["x"]);
   });
 
-  // Precondition for consolidate-wave2-e.test.ts's D4 deletion (Phase 2
-  // triage): the exact empty-string input, distinct from the whitespace-only
-  // case above.
+  // The exact empty-string input, distinct from the whitespace-only case above.
   test("omits an empty-string description", () => {
     const out = buildMemoryFrontmatter({ description: "", tags: ["x"] });
     const parsed = yamlParse(out.replace(/^---\n/, "").replace(/\n---$/, "")) as Record<string, unknown>;

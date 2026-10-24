@@ -3,33 +3,19 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Test-review remediation (spec docs/plans/specs/p2a-task-source-v4.md §3.6,
- * B-36, B-37) for the finding recorded against
- * docs/plans/specs/p2a-task-source-v4.md:530: only 1 of the 7 §3.6 "ROUTE"
- * call sites (`run/load-task.ts`) was exercised anywhere in the RED-phase
- * commit. `tests/integration/lint-task-yaml.test.ts` (F-2) and
- * `tests/tasks/scheduler-binding.test.ts` stay byte-unchanged, so this v4
- * coverage lands as a new file, and `scheduler-sync.ts:480` is covered
- * separately in tests/integration/tasks-scheduler-sync-v4.test.ts (B-07/B-38)
- * rather than duplicated here.
+ * Each call site routed through `parseTaskSource` (which accepts exactly one
+ * version) is exercised against a `version: 4` document: `run/load-task.ts`,
+ * `akm-lint.ts` taskDiagnostics, `akm-task-adapter.ts` validate() +
+ * looksLikeRoot(), `akm-metadata.ts` foldRecognizedMetadata, and the "task"
+ * canonical proposal validator.
  *
- * Each call site below is now routed through `parseTaskSource`, which
- * accepts exactly one version (spec docs/plans/specs/p4-deletions-closeout.md
- * §7.2, F-A2.14: "every call site now has exactly one accepted version") —
- * every test in this file exercises that call site against a `version: 4`
- * document.
- *
- * `src/commands/tasks/tasks.ts:189` (§3.6's remaining ROUTE call site,
- * `akmTasksAdd` re-parsing the YAML `renderTaskYaml` just rendered) is not
- * duplicated here: P4 moved `akm task add` to AUTHOR task source v4 directly
- * (`--params` projects into typed `inputs:`, spec row B-20), so
- * `renderTaskYaml` now always emits `version: 4` and this call site always
- * exercises the v4 arm — the "v4 arm is unreachable in production" premise
- * that used to justify excluding it no longer holds. Real coverage already
- * exists through `akmTasksAdd`'s own round trip
- * (tests/integration/commands/tasks-write-target.test.ts and
- * tests/integration/commands/tasks-lifecycle.test.ts both call it directly,
- * un-mocked), so adding a smoke test here would only duplicate that.
+ * `tests/lint-task-yaml.test.ts` and `tests/tasks/scheduler-binding.test.ts`
+ * cover other call sites, and the scheduler-sync call site is covered in
+ * tests/tasks-scheduler-sync-v4.test.ts rather than duplicated here.
+ * `akmTasksAdd` (which re-parses the YAML `renderTaskYaml` just rendered,
+ * always `version: 4`) is not duplicated here either: its own round trip is
+ * covered un-mocked by tests/commands/tasks-write-target.test.ts and
+ * tests/commands/tasks-lifecycle.test.ts.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -63,9 +49,9 @@ function component(root: string, adapter: string): BundleComponent {
 }
 
 const VALID_V4_TASK = ["version: 4", "run: echo hi", "shell: sh", ""].join("\n");
-const INVALID_V4_TASK = ["version: 4", "uses: commands/x", "run: echo x", ""].join("\n"); // B-16: both uses and run
+const INVALID_V4_TASK = ["version: 4", "uses: commands/x", "run: echo x", ""].join("\n"); // both uses and run
 
-// ── akm-lint.ts:317 — taskDiagnostics (B-36) ────────────────────────────────
+// ── akm-lint.ts — taskDiagnostics ───────────────────────────────────────────
 
 describe("taskDiagnostics — akm lint on a version: 4 source (B-36, akm-lint.ts:317)", () => {
   test("a valid version: 4 source yields NO invalid-task-yaml diagnostic", () => {
@@ -77,15 +63,14 @@ describe("taskDiagnostics — akm lint on a version: 4 source (B-36, akm-lint.ts
     const diagnostics = taskDiagnostics("tasks/nightly.yml", INVALID_V4_TASK);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.issue).toBe("invalid-task-yaml");
-    // The v4 grammar's B-16 detail is byte-identical to v3's (§3.2 item 2) —
-    // what distinguishes a routed v4 failure from a stale "must be exactly
-    // 3" mis-route is the "task source v4" label this exact detail rides on.
+    // What distinguishes a routed v4 failure from a stale "must be exactly 3"
+    // mis-route is the "task source v4" label this detail rides on.
     expect(diagnostics[0]?.detail).toMatch(/exactly one/i);
     expect(diagnostics[0]?.detail).toMatch(/task source v4/i);
   });
 });
 
-// ── akm-task-adapter.ts:99,164 — validate() + looksLikeRoot() ──────────────
+// ── akm-task-adapter.ts — validate() + looksLikeRoot() ─────────────────────
 
 describe("akmTaskAdapter.validate() — a version: 4 source (akm-task-adapter.ts:99)", () => {
   test("a valid version: 4 .yml yields zero diagnostics", async () => {
@@ -143,15 +128,14 @@ describe("akmTaskAdapter.looksLikeRoot() — a version: 4 root (akm-task-adapter
   });
 });
 
-// ── akm-metadata.ts:242 — foldRecognizedMetadata (B-37) ─────────────────────
+// ── akm-metadata.ts — foldRecognizedMetadata ───────────────────────────────
 //
 // FoldedMetadata (akm-metadata.ts) has no `name` field — `IndexDocument.name`
 // is set by the CALLING recognizer from the conceptId/filename, not by this
-// fold, for v3 tasks today and unchanged by this phase's routing. This block
-// therefore scopes B-37's "name/description/tags/when_to_use" claim to the
-// three fields the fold CAN carry: description, tags, and the when_to_use
-// searchHint (mirroring the lesson-md/memory-md cases' own
-// `applyFrontmatterDescriptionAndTags` + `when_to_use:` hint pattern).
+// fold. This block therefore covers the three fields the fold CAN carry:
+// description, tags, and the when_to_use searchHint (mirroring the
+// lesson-md/memory-md cases' own `applyFrontmatterDescriptionAndTags` +
+// `when_to_use:` hint pattern).
 
 describe("foldRecognizedMetadata('task-yaml', …) — a version: 4 task's top-level keys (B-37, akm-metadata.ts:242)", () => {
   test("description, tags, and a when_to_use: searchHint are extracted from the v4 document's TOP-LEVEL keys", () => {
@@ -177,7 +161,7 @@ describe("foldRecognizedMetadata('task-yaml', …) — a version: 4 task's top-l
     expect(entry.description).toBe("Nightly v4 review");
     expect(entry.tags).toContain("contract");
     expect(entry.tags).toContain("review");
-    // Still applies unconditionally, same as v3 (unaffected by this phase).
+    // Still applies unconditionally.
     expect(entry.tags).toContain("task");
     expect(entry.tags).toContain("scheduled");
     expect(entry.searchHints).toContain("when_to_use:Run every weeknight");
@@ -193,7 +177,7 @@ describe("foldRecognizedMetadata('task-yaml', …) — a version: 4 task's top-l
   });
 });
 
-// ── proposal-validators.ts:76 — the "task" canonical proposal validator ────
+// ── proposal-validators.ts — the "task" canonical proposal validator ───────
 
 describe("the canonical task proposal validator consumes a version: 4 proposal body (smoke, proposal-validators.ts:76)", () => {
   const canonicalValidator = defaultProposalValidators.find((v) => v.name === "canonical-asset-proposal-validator");

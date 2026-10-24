@@ -5,39 +5,16 @@
 /**
  * Schema-drift gate for `schemas/akm-task.json`.
  *
- * P2a (spec docs/plans/specs/p2a-task-source-v4.md §5.3, §6 F-1) turned the
- * published schema into a two-arm `oneOf` at the document root: "arm 1:
- * the v3 object"; "arm 2: the v4 object". P4
- * (docs/plans/specs/p4-deletions-closeout.md §3.2) retires task source v3
- * acceptance from `src` entirely, and the published schema's v3 arm goes
- * with it (per the commit-2 F-A1.12 flip's own forward note: "the v3 arm
- * itself is removed from the published schema in commit 3") — the schema
- * flattens back to a single document shape, task source v4's, at the
- * document root. `definitions` stays shared and mostly unchanged: it was
- * never split per-arm, so the v4-only definitions it already held (
- * `taskSourceV4ScheduleEntry`, `inputDeclaration`, …) need no rewiring.
+ * The published schema is a single document shape — task source v4's — at the
+ * document root. `definitions` is shared.
  *
- * Every v3-only test this file used to carry — the strict v3 top-level
- * vocabulary, the `akm:`/`on:` closed shapes, the "exactly one scheduling
- * source" allOf, and the production-parser-agreement check that called the
- * now-migrator-only `parseTaskV3Yaml`/`classifyTaskV3Uses` — is DELETED, not
- * flipped: its subject (the v3 arm) no longer exists in the published
- * schema. The one test P0/F-1 marked "stays as-is" (the runtime-constraints
- * test) survives, re-tightened from "names both parsers" back to naming only
- * `task-source-v4.ts` now that only one parser is authoritative. Every
- * v4-focused test below is unchanged in intent, just re-rooted at the schema
- * document itself instead of `v4Arm(schema)` — there is only one arm left to
- * root at.
- *
- * Every v4 assertion is derived from task source v4's exported constants
+ * Every assertion is derived from task source v4's exported constants
  * (`TASK_SOURCE_V4_VERSION`, `TASK_SOURCE_V4_TOP_LEVEL_KEYS`,
  * `TASK_SOURCE_V4_SCHEDULE_KEYS`, `TASK_INPUT_DECLARATION_KEYS`) or from
- * existing shared bounds (`TASK_V3_MAX_SCHEDULES`) —
- * never restated as literals — per the task brief's binding instruction. The
- * `TASK_V3_MAX_*` bound constants keep that name (they are shared,
- * version-agnostic bounded-document primitives task source v4 itself still
- * imports, spec §3.2.3) even though the schema they bound no longer has a
- * v3 arm.
+ * existing shared bounds (`TASK_V3_MAX_SCHEDULES`) — never restated as
+ * literals. The `TASK_V3_MAX_*` bound constants keep that name (they are
+ * shared, version-agnostic bounded-document primitives task source v4 itself
+ * imports).
  */
 
 import { expect, test } from "bun:test";
@@ -84,10 +61,8 @@ test("published task schema pins the exact task source v4 top-level key set (D2-
   expect(Object.keys(schema.properties).sort()).toEqual([...TASK_SOURCE_V4_TOP_LEVEL_KEYS].sort());
   expect(schema.oneOf).toHaveLength(3);
   expect(pkg.files).toContain("schemas");
-  // D2-N7: the akm: bag and the on: trigger block are gone in v4 — the
-  // published schema is single-arm now (P4 deleted the v3 arm), so this is
-  // simply "not in the top-level property set" rather than "not in the v4
-  // arm specifically."
+  // The akm: bag and the on: trigger block do not exist in v4: they are simply
+  // not in the top-level property set.
   expect(TASK_SOURCE_V4_TOP_LEVEL_KEYS).not.toContain("akm");
   expect(TASK_SOURCE_V4_TOP_LEVEL_KEYS).not.toContain("on");
   expect(Object.keys(schema.properties)).not.toContain("akm");
@@ -124,10 +99,9 @@ test("every published pattern is valid ECMAScript and the executable-ref pattern
     expect(executableRef.test(candidate), candidate).toBe(false);
     expect(() => classifyTaskSourceV4Uses(candidate), candidate).toThrow();
   }
-  // P4 (docs/plans/specs/p4-deletions-closeout.md §3.1.2, F-A1.11): the
-  // githubActionRef definition and its probes are deleted along with the
-  // locator grammar itself — every github-locator-shaped value is exactly as
-  // rejected by the production classifier as any other unrecognized shape.
+  // There is no githubActionRef definition: every github-locator-shaped value is
+  // rejected by the production classifier exactly as any other unrecognized shape
+  // is.
   for (const candidate of [
     "actions/checkout@v4",
     "owner/repo@@v1",
@@ -149,9 +123,7 @@ test("every published pattern is valid ECMAScript and the executable-ref pattern
 test("published schema declares the authoritative runtime-only resource constraints", () => {
   const schema = readTaskSchema();
   const constraints = schema["x-akm-runtimeConstraints"] as Record<string, unknown>;
-  // P4 re-tightens this from P2a's "names both parsers" (task source v3 was
-  // still accepted then) back to naming only the one parser `src` accepts
-  // today.
+  // Names only the one parser `src` accepts.
   expect(constraints.authoritativeParser).toBe("src/tasks/source/task-source-v4.ts");
   expect(constraints.maxSourceUtf8Bytes).toBe(1_048_576);
   expect(constraints.maxStringUtf8Bytes).toBe(TASK_V3_MAX_STRING_BYTES);
@@ -189,8 +161,7 @@ test("published outputSchema grammar rejects keywords the runtime subset cannot 
   expect(validate(unsupported), JSON.stringify(validate.errors)).toBe(false);
 });
 
-// ── the v4 arm's own tests — unchanged in intent, re-rooted at the schema ──
-// ── document itself now that it is the only arm left (P4 §3.2) ─────────────
+// ── task source v4 tests, rooted at the schema document itself ─────────────
 
 test("published task schema's root oneOf rejects an akm: or on: key — retired task-v3 vocabulary, D2-N7", () => {
   const schema = readTaskSchema();
@@ -209,10 +180,8 @@ test("published task schema's root oneOf rejects an akm: or on: key — retired 
   );
 });
 
-// P4 (docs/plans/specs/p4-deletions-closeout.md §3.1.2/§3.2, F-A1.12): the
-// githubActionRef definition and both $refs to it were deleted from the
-// published schema in commit 2; the v3 arm's own rejection half this test
-// used to pin here is gone in commit 3 along with the arm itself.
+// The schema has no githubActionRef definition; a github-action uses: shape is
+// rejected.
 test("published task schema rejects a github-action uses: shape (B-13)", () => {
   const schema = readTaskSchema();
   const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
@@ -238,7 +207,7 @@ test("published task schema's schedule: bounds at TASK_V3_MAX_SCHEDULES and clos
   expect(validate({ ...base, schedule: atBound }), `schedule: at exactly ${TASK_V3_MAX_SCHEDULES} entries`).toBe(true);
   expect(validate({ ...base, schedule: overBound }), `schedule: one entry over ${TASK_V3_MAX_SCHEDULES}`).toBe(false);
 
-  // String shorthand (D2): one enabled binding, no inputs.
+  // String shorthand: one enabled binding, no inputs.
   expect(validate({ ...base, schedule: "0 8 * * 1" })).toBe(true);
 
   // Every TASK_SOURCE_V4_SCHEDULE_KEYS key is accepted on one entry...
@@ -258,11 +227,10 @@ test("published task schema's input declarations are closed to TASK_INPUT_DECLAR
   const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
   const base = { version: TASK_SOURCE_V4_VERSION, run: "echo hi" };
 
-  // Sample values for every key TASK_INPUT_DECLARATION_KEYS lists (spec
-  // §1.5 D2-N3), each offered one at a time alongside a bare `type: "string"`
-  // base so a bad sample for one key cannot mask a real rejection of
-  // another. Values are illustrative only — the SET of keys under test comes
-  // from the constant, not from this map.
+  // Sample values for every key TASK_INPUT_DECLARATION_KEYS lists, each offered
+  // one at a time alongside a bare `type: "string"` base so a bad sample for one
+  // key cannot mask a real rejection of another. Values are illustrative only —
+  // the SET of keys under test comes from the constant, not from this map.
   const sampleValueByKey: Readonly<Record<string, unknown>> = {
     type: "string",
     enum: ["a", "b"],
@@ -309,10 +277,10 @@ test("published task schema's input declarations are closed to TASK_INPUT_DECLAR
     "an input declaration with an unlisted keyword must be rejected",
   ).toBe(false);
 
-  // D2-N3: `required` at the declaration root is the boolean flag, not JSON
-  // Schema's `required` ARRAY — the array shape must be rejected here even
-  // though it is a perfectly ordinary keyword one level down (inside
-  // `properties`, tested implicitly above via the `properties` sample).
+  // `required` at the declaration root is the boolean flag, not JSON Schema's
+  // `required` ARRAY — the array shape must be rejected here even though it is a
+  // perfectly ordinary keyword one level down (inside `properties`, tested
+  // implicitly above via the `properties` sample).
   expect(
     validate({ ...base, inputs: { x: { type: "string", required: ["x"] } } }),
     "declaration-root required: must be boolean, not an array",
@@ -349,13 +317,12 @@ test("published task schema's output: rejects null (schema/parser agreement)", (
   ).toBe(true);
 });
 
-// 0.9.2 review round 2: c09ad27b made parseTaskSourceV4 reject `output:` on
-// every target whose runtime never consumes it (`targetConsumesOutputSchema`
-// — only `uses: commands/<ref>` and `uses: akm/command` do), but the
-// published schema still accepted it everywhere, so an author's editor
-// green-lit a document `akm task run` refuses to load. `schemas/` ships in
-// package.json `files` and is served at the `$id` URL, so that divergence is
-// user-visible, not editor-only.
+// parseTaskSourceV4 rejects `output:` on every target whose runtime never
+// consumes it (`targetConsumesOutputSchema` — only `uses: commands/<ref>` and
+// `uses: akm/command` do), so the published schema must reject it there too,
+// or an author's editor would green-light a document `akm task run` refuses to
+// load. `schemas/` ships in package.json `files` and is served at the `$id`
+// URL, so that divergence would be user-visible, not editor-only.
 test("published task schema's output: is legal only on a command target, exactly as targetConsumesOutputSchema decides (schema/parser agreement)", () => {
   const schema = readTaskSchema();
   const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
@@ -373,7 +340,7 @@ test("published task schema's output: is legal only on a command target, exactly
   }
 
   // The three kinds that carry no output schema anywhere — the schema must
-  // now refuse each, and the production parser must agree.
+  // refuse each, and the production parser must agree.
   for (const target of [
     { run: "echo hi", shell: "sh" },
     { uses: "scripts/deploy" },
@@ -466,7 +433,7 @@ test("published task schema's inputs: rejects every name akm task run reserves f
     ).toBe(false);
   }
 
-  // A name that is NOT reserved must still validate — the fix must not have
-  // over-tightened `propertyNames` into rejecting everything.
+  // A name that is NOT reserved must still validate — `propertyNames` must not be
+  // over-tightened into rejecting everything.
   expect(validate({ ...base, inputs: { ticket: { type: "string" } } }), JSON.stringify(validate.errors)).toBe(true);
 });

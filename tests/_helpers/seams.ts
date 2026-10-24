@@ -4,7 +4,7 @@
  * Tests never call a `_set…ForTests` setter directly — they go through
  * `overrideSeam` / `withSeam` so the harness can restore every active seam
  * automatically (tests/_preload.ts calls `resetAllSeams()` before and after
- * every test). See docs/architecture/specs/di-seams-plan.md.
+ * every test).
  */
 type SeamSetter<T> = (fake: T | undefined) => void;
 
@@ -14,8 +14,7 @@ const active = new Set<SeamSetter<unknown>>();
 /**
  * Install a fake for the current test. Restoration is automatic: the
  * tests/_preload.ts afterEach calls resetAllSeams(). Use this for
- * file-scoped or beforeEach-scoped fakes (the common case, mirroring
- * today's top-of-file mock.module blocks).
+ * file-scoped or beforeEach-scoped fakes (the common case).
  */
 export function overrideSeam<T>(set: SeamSetter<T>, fake: T): void {
   set(fake);

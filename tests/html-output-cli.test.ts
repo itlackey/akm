@@ -6,12 +6,10 @@
  * CLI-level coverage for `--format html` and the global `--output <path>`
  * flag (#582), driven through the in-process harness.
  *
- * `--format html` works on every command (D7). `akm health` renders its bespoke
- * report by registering a renderer; every other command falls back to a generic
- * rendering of its shaped envelope. This reverses chunk-9 WI-9.4c, which had
- * removed the HTML fallback and left `html` rejected everywhere except health —
- * the replacement fallback is a real rendering, not the JSON-in-<pre> template
- * that decision deleted.
+ * `--format html` works on every command. `akm health` renders its bespoke
+ * report by registering a renderer; every other command falls back to a
+ * generic rendering of its shaped envelope — a real rendering, not a
+ * JSON-in-<pre> template.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -55,7 +53,7 @@ describe("--format html on non-health commands", () => {
     // The generic renderer titles the document with the command name, which is
     // how you can tell it apart from a registered bespoke renderer.
     expect(stdout).toContain("proposal-list");
-    // Not the JSON-in-<pre> template WI-9.4c deleted.
+    // Not a JSON-in-<pre> template.
     expect(stdout).not.toMatch(/<pre>\s*\{/);
   });
 
@@ -134,9 +132,8 @@ describe("akm health --report", () => {
   });
 
   test("the report dataset is format-independent: --format json carries the same data", async () => {
-    // The pre-D7 design made the full report reachable ONLY as html — the
-    // format determined what data you could have. --report is a data flag, so
-    // the identical dataset must come back as ordinary JSON.
+    // --report is a data flag, not a format: the identical dataset must come back
+    // as ordinary JSON, so the format does not determine what data you can have.
     const { code, stdout } = await runCliCapture(["health", "--report", "--format", "json"]);
     expect([0, 4]).toContain(code);
     const parsed = JSON.parse(stdout);

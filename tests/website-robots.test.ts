@@ -3,11 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P1 — robots.txt compliance: pure-function and policy-layer unit tests.
+ * robots.txt compliance: pure-function and policy-layer unit tests.
  *
- * Authoritative spec: docs/plans/specs/p1-robots.md. Row IDs in test names
- * (P-xx, D-xx, M-xx, L-xx, F-xx, G-xx) refer to that spec's behavior tables
- * (§4.1–§4.7) so failures can be traced back to the exact requirement.
+ * Test names carry a row id prefix (P-xx parsing, D-xx crawl-delay, M-xx
+ * pattern matching, L-xx policy, F-xx loading) so failures can be traced to the
+ * exact requirement.
  *
  * No real network: `loadRobotsTxt` tests go through `withMockedFetch`, and
  * every non-IP-literal hostname passes an injected `resolveHostname` stub so
@@ -61,7 +61,7 @@ beforeEach(() => {
   });
 });
 
-// ── §2 Constants (pin these exactly) ────────────────────────────────────────
+// ── Constants (pin these exactly) ───────────────────────────────────────────
 
 describe("robots.ts constants", () => {
   test("pins the exact values specified in §2 of the spec", () => {
@@ -79,7 +79,7 @@ describe("robots.ts constants", () => {
   });
 });
 
-// ── §4.1 parseRobotsTxt — grouping and directives (P-01…P-24) ──────────────
+// ── parseRobotsTxt — grouping and directives (P-01…P-24) ───────────────────
 
 describe("parseRobotsTxt — grouping and directives", () => {
   test("P-01: empty input yields the empty rule set", () => {
@@ -198,7 +198,7 @@ describe("parseRobotsTxt — grouping and directives", () => {
   });
 });
 
-// ── §4.2 parseRobotsTxt — Crawl-delay (D-01…D-12) ───────────────────────────
+// ── parseRobotsTxt — Crawl-delay (D-01…D-12) ────────────────────────────────
 
 describe("parseRobotsTxt — Crawl-delay", () => {
   test.each([
@@ -227,7 +227,7 @@ describe("parseRobotsTxt — Crawl-delay", () => {
   });
 });
 
-// ── §4.3 isPathAllowedByRobots — pattern matching (M-01…M-32) ──────────────
+// ── isPathAllowedByRobots — pattern matching (M-01…M-32) ───────────────────
 
 function ruleSet(rules: Array<{ kind: RobotsRuleKind; pattern: string }>): RobotsRuleSet {
   return {
@@ -380,7 +380,7 @@ describe("isPathAllowedByRobots", () => {
     expect(isPathAllowedByRobots(rules, "not a url")).toBe(true);
   });
 
-  // §6.4 ReDoS / pattern-collapse: consecutive '*' must collapse to a single
+  // ReDoS / pattern-collapse: consecutive '*' must collapse to a single
   // '.*' per run, not one '.*' per '*'. A naive `pattern.replace(/\*/g, ".*")`
   // (one '.*' per star, uncollapsed) compiles a regex with 40 sequential
   // '.*' groups; matched against a long string containing none of the
@@ -391,10 +391,10 @@ describe("isPathAllowedByRobots", () => {
   // how many literal '*' characters appear in the pattern.
   //
   // The time budget is enforced via bun's own per-test `timeout` (not a
-  // manual `Date.now()`/`performance.now()` delta assertion, which
-  // `scripts/lint-tests-isolation.ts` bans as flake-prone): a correct
-  // (collapsed) implementation resolves in well under a millisecond, while a
-  // naive uncollapsed one blows this budget by many orders of magnitude.
+  // manual `Date.now()`/`performance.now()` delta assertion, which is
+  // flake-prone): a correct (collapsed) implementation resolves in well under a
+  // millisecond, while a naive uncollapsed one blows this budget by many orders
+  // of magnitude.
   test(
     "§6.4: a pathological run of consecutive '*' resolves quickly, not via catastrophic backtracking",
     () => {
@@ -416,13 +416,12 @@ describe("isPathAllowedByRobots", () => {
     { timeout: 100 },
   );
 
-  // §6.4 ReDoS regression (review finding robots.ts:211): collapsing
-  // consecutive '*' does NOT defeat this shape. Here the wildcards are
-  // separated by a short literal ("a"), so there is nothing to collapse —
-  // a regex-based matcher built as `/^\/(?:.*a){N}$/`-equivalent from
-  // `/*a*a*a*a*a*a*a*a$` forces the engine to explore an exponential number
-  // of ways to split a long, non-matching path across N '.*' groups before
-  // concluding failure. Measured against the old implementation: 8
+  // ReDoS regression: collapsing consecutive '*' does NOT defeat this shape.
+  // Here the wildcards are separated by a short literal ("a"), so there is
+  // nothing to collapse — a regex-based matcher built as
+  // `/^\/(?:.*a){N}$/`-equivalent from `/*a*a*a*a*a*a*a*a$` forces the engine to
+  // explore an exponential number of ways to split a long, non-matching path
+  // across N '.*' groups before concluding failure. A regex matcher measured 8
   // wildcards ~217ms, 10 ~2.8s, 11 ~7.5s, 12 ~19.9s (~2.7x per added
   // wildcard) — i.e. it never returns for realistic wildcard counts well
   // within the 512 KiB robots.txt cap. A non-backtracking matcher resolves
@@ -456,7 +455,7 @@ describe("isPathAllowedByRobots", () => {
   );
 });
 
-// ── §4.4 createRobotsPolicy / createAllowAllRobotsPolicy (L-01…L-04) ───────
+// ── createRobotsPolicy / createAllowAllRobotsPolicy (L-01…L-04) ─────────────
 
 function loaderReturning(outcome: RobotsFetchOutcome): { load: RobotsTxtLoader; calls: string[] } {
   const calls: string[] = [];
@@ -542,7 +541,7 @@ describe("createAllowAllRobotsPolicy", () => {
   });
 });
 
-// ── §4.5 loadRobotsTxt (F-01…F-12) ──────────────────────────────────────────
+// ── loadRobotsTxt (F-01…F-12) ───────────────────────────────────────────────
 
 const ROBOTS_URL = "https://example.test/robots.txt";
 // No real DNS: a fixed public-looking answer, matching website-ssrf.test.ts's

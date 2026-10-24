@@ -7,10 +7,9 @@
  * the translation table, the blocked catalog, and classification/generation
  * determinism, driven off the fixture corpus at
  * tests/fixtures/execution-contracts/tasks/v3-to-v4/ (deterministic|blocked
- * split, mirroring tests/tasks/migrate-v2-to-v3.test.ts and the tasks/v2
- * manifest.json shape). It runs only under `akm migrate apply`
- * (`scripts/akm-migrate/migrate/task-files.ts`, tests/migrate/task-files.test.ts):
- * the runtime reads only task source v4.
+ * split, like tests/tasks/migrate-v2-to-v4.test.ts). It runs only under
+ * `akm migrate apply` (`scripts/akm-migrate/migrate/task-files.ts`,
+ * tests/migrate/task-files.test.ts): the runtime reads only task source v4.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -27,7 +26,7 @@ import {
 } from "../_helpers/execution-contracts";
 
 // ─────────────────────────────────────────────────────────────────────────
-// "pure task v3 to v4 migration planner" — mirrors tests/tasks/migrate-v2-to-v3.test.ts
+// "pure task v3 to v4 migration planner"
 // ─────────────────────────────────────────────────────────────────────────
 
 const ROOT = path.join(EXECUTION_CONTRACT_FIXTURES, "tasks/v3-to-v4");
@@ -155,12 +154,12 @@ describe("pure task v3 to v4 migration planner", () => {
     });
   });
 
-  // F3: the frozen v3 reader accepts `akm.outputSchema: null` verbatim as
-  // "no schema" (task-source-v3-frozen.ts:256-258), but v4's `output:` has
-  // no null form — parseOutputSchema always requires a mapping. Emitting
-  // `output: null` used to fail the real parseTaskSourceV4 prevalidation and
-  // block a valid, previously-runnable v3 file. Omitting the key entirely is
-  // the faithful v4 equivalent of an explicit v3 null.
+  // The frozen v3 reader accepts `akm.outputSchema: null` verbatim as "no
+  // schema", but v4's `output:` has no null form — parseOutputSchema always
+  // requires a mapping. Emitting `output: null` would fail the real
+  // parseTaskSourceV4 prevalidation and block a valid, previously-runnable v3
+  // file. Omitting the key entirely is the faithful v4 equivalent of an explicit
+  // v3 null.
   test("treats akm.outputSchema: null as no schema — the output: key is omitted, not emitted as null", () => {
     const yaml = [
       "version: 3",
@@ -178,17 +177,15 @@ describe("pure task v3 to v4 migration planner", () => {
     expect(parseTaskSourceV4({ yaml: outcome.after.toString("utf8"), filePath: outcome.filePath }).version).toBe(4);
   });
 
-  // Review round 1: task source v4 accepts `output:` only on a command target
-  // (`targetConsumesOutputSchema`, src/tasks/source/task-source-v4.ts), while
-  // the frozen v3 reader accepted `akm.outputSchema` on ANY target kind
-  // (task-source-v3-frozen.ts:256-263) — and on run:/scripts//workflows/ it
-  // was equally inert there. Hoisting it unconditionally emitted bytes the
-  // real parseTaskSourceV4 prevalidation rejects, so a valid, previously-
-  // runnable v3 file blocked with `generated-v4-validation-failed` (a blocked
-  // file is skipped rather than aborting the rest of the plan, but it would
-  // still never migrate on its own). Spec rows B-66 / §5.3 make the
-  // outcome `changed` unconditionally: drop the already-inert field and say so
-  // in a notice.
+  // Task source v4 accepts `output:` only on a command target
+  // (`targetConsumesOutputSchema`, src/tasks/source/task-source-v4.ts), while the
+  // frozen v3 reader accepted `akm.outputSchema` on ANY target kind — where it was
+  // inert on run:/scripts//workflows/. Hoisting it unconditionally would emit
+  // bytes the real parseTaskSourceV4 prevalidation rejects, so a valid,
+  // previously-runnable v3 file would block with `generated-v4-validation-failed`
+  // (a blocked file is skipped rather than aborting the rest of the plan, but it
+  // would still never migrate on its own). The outcome is therefore `changed`
+  // unconditionally: drop the already-inert field and say so in a notice.
   test("drops akm.outputSchema on a non-command target with a notice instead of blocking the file", () => {
     const cases = [
       { target: 'run: "echo hi"', label: "run" },
@@ -220,7 +217,7 @@ describe("pure task v3 to v4 migration planner", () => {
   });
 
   // The control for the case above: a command target still hoists the schema
-  // AND carries no drop notice, so the fix cannot silently widen into one.
+  // AND carries no drop notice, so the drop cannot silently widen into one.
   test("still hoists akm.outputSchema to output: on uses: akm/command, with no drop notice", () => {
     const yaml = [
       "version: 3",
@@ -283,8 +280,7 @@ describe("pure task v3 to v4 migration planner", () => {
   // document) rejects "exactly one scheduling source" ambiguity itself
   // (task-source-v3-frozen.ts's compileTriggers), before the raw-record
   // hoist logic below ever runs its own equivalent check — so this reports
-  // the pre-check's generic reason, exactly like the production chain
-  // already did end to end before this planner existed as one function.
+  // the pre-check's generic reason.
   test("blocks a v3 document authoring both akm.schedule and on: at once, without touching its bytes", () => {
     const yaml = [
       "version: 3",
@@ -310,12 +306,11 @@ describe("pure task v3 to v4 migration planner", () => {
     expect(outcome.reason).toMatch(/akm|unknown|unrecognized|invalid/i);
   });
 
-  // F2: the frozen v3 reader rejects `on: {}` outright — "on must declare
-  // schedule and/or workflow_dispatch." (task-source-v3-frozen.ts:396). A v3
-  // document the oracle itself refuses to parse must never be laundered into
-  // runnable v4 bytes; a schedule-less, trigger-less `on: {}` must block, not
-  // fall through to the manual-dispatch notice as if workflow_dispatch had
-  // actually been declared.
+  // The frozen v3 reader rejects `on: {}` outright — "on must declare schedule
+  // and/or workflow_dispatch." A v3 document the oracle itself refuses to parse
+  // must never be laundered into runnable v4 bytes; a schedule-less,
+  // trigger-less `on: {}` must block, not fall through to the manual-dispatch
+  // notice as if workflow_dispatch had actually been declared.
   test("blocks a v3 document whose on: declares no keys, instead of silently emitting a schedule-less v4 task", () => {
     const yaml = ["version: 3", "uses: commands/publish-report", "on: {}", ""].join("\n");
     const outcome = planTaskToV4File(memoryInput(yaml));
@@ -324,9 +319,9 @@ describe("pure task v3 to v4 migration planner", () => {
     expect(outcome.before.toString("utf8")).toBe(yaml);
   });
 
-  // F2: the frozen v3 reader also rejects a non-empty on.workflow_dispatch —
-  // "must be null or an empty mapping; inputs are unsupported."
-  // (task-source-v3-frozen.ts:426). Same fail-closed requirement as above.
+  // The frozen v3 reader also rejects a non-empty on.workflow_dispatch — "must
+  // be null or an empty mapping; inputs are unsupported." Same fail-closed
+  // requirement as above.
   test("blocks a v3 document whose on.workflow_dispatch carries inputs, mirroring the frozen v3 reader's own rejection", () => {
     const yaml = [
       "version: 3",

@@ -5,8 +5,8 @@
 /**
  * Shared in-memory object factories for tests.
  *
- * These build canonical test doubles (proposal rows, agent profiles, config
- * objects) that were previously copy-pasted verbatim across many test files.
+ * These build canonical test doubles: proposal rows, agent profiles, config
+ * objects.
  */
 
 import type { Proposal } from "../../src/commands/proposal/repository";
@@ -18,11 +18,12 @@ import type { AgentProfile } from "../../src/integrations/agent/profiles";
  * MECHANICS tests that don't exercise the judge.
  *
  * The gate defaults ON (`lesson_quality_gate` → `distill.qualityGate.enabled
- * ?? true`), and after 07 P0-2 it fails CLOSED when the judge can't render a
- * verdict — which is exactly the case in the test sandbox (no LLM is selected,
- * so the gate rejects before any chat call). Passing this as `options.config` skips the gate so these tests stay
- * focused on reflect/distill mechanics. The dedicated fail-closed behavior is
- * covered by `tests/commands/improve/quality-gate-fail-closed.test.ts`.
+ * ?? true`) and fails CLOSED when the judge can't render a verdict — which is
+ * exactly the case in the test sandbox (no LLM is selected, so the gate rejects
+ * before any chat call). Passing this as `options.config` skips the gate so
+ * these tests stay focused on reflect/distill mechanics. The dedicated
+ * fail-closed behavior is covered by
+ * `tests/commands/improve/quality-gate-fail-closed.test.ts`.
  *
  * The fixture includes a named agent engine because reflect resolves through
  * the same strict engine boundary in tests and production.
@@ -63,8 +64,8 @@ export function reflectReply(
 }
 
 /**
- * The single-entry `FileChange[]` a payload-shaped proposal fixture carries
- * (WI-6.2 envelope): one `update` whose `after` IS the payload content.
+ * The single-entry `FileChange[]` a payload-shaped proposal fixture carries:
+ * one `update` whose `after` IS the payload content.
  */
 export function payloadChanges(content: string): Proposal["changes"] {
   return [{ path: "lessons/proposal.md", after: content, op: "update" }];
@@ -106,9 +107,9 @@ export function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile
 
 /**
  * A minimal single-bundle config pointing at `stashDir` (#37: the old
- * `stashDir`/`sources`/`installed` trio is hard-rejected by the 0.9.0 schema;
- * the primary bundle keeps the historical "stash" key so `defaultWriteTarget`
- * and `--from stash` (named-source) pins keep resolving).
+ * `stashDir`/`sources`/`installed` trio is hard-rejected by the schema; the
+ * primary bundle keeps the historical "stash" key so `defaultWriteTarget` and
+ * `--from stash` (named-source) pins keep resolving).
  */
 export function makeConfig(stashDir: string): AkmConfig {
   const bundles = { stash: { path: stashDir, writable: true } } as AkmConfig["bundles"];

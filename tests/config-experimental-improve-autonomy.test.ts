@@ -3,18 +3,17 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * D8 — the `experimental.improveAutonomy` opt-in key.
+ * The `experimental.improveAutonomy` opt-in key.
  *
- * Before D8 this key was documented but did not exist: it was absent from the
- * schema, read nowhere in the runtime, and `akm config set
- * experimental.improveAutonomy true` failed with `Unknown config key`. The
- * documentation therefore inverted the safety posture — an operator could read
- * that autonomy required an opt-in, never set the key, and conclude they were
+ * The key must exist in the schema, be read by the runtime, and be settable
+ * with `akm config set experimental.improveAutonomy true`. If it were not,
+ * documentation saying autonomy requires an opt-in would invert the safety
+ * posture: an operator could never set the key and conclude they were
  * review-first while consolidate was deleting files.
  *
  * These pin the key's existence and its default. The gating behaviour itself is
- * pinned by `tests/integration/improve-autonomy-gate.test.ts`, which asserts on
- * the filesystem rather than on this flag.
+ * pinned by `tests/improve-autonomy-gate.test.ts`, which asserts on the
+ * filesystem rather than on this flag.
  */
 
 import { describe, expect, test } from "bun:test";

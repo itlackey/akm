@@ -41,13 +41,13 @@ function makeCliRuntime(): CliRuntime {
   };
 }
 
-// In-process replacement for the former spawnSync("bun", [CLI, ...]). Calls use
-// isolated XDG dirs (cache/config/data/state) and may share them when a fixture
-// needs an index produced by an earlier CLI invocation with the same stash,
-// installed via the allowlisted `withEnv` wrapper so the env is restored after
-// the run and the per-test isolation tripwire stays satisfied. The harness
-// (runCliCapture) resets the config/output singletons per call, matching
-// fresh-subprocess semantics. Throws on a non-zero exit, like the spawn version.
+// Runs the CLI in-process. Calls use isolated XDG dirs (cache/config/data/state)
+// and may share them when a fixture needs an index produced by an earlier CLI
+// invocation with the same stash, installed via the allowlisted `withEnv`
+// wrapper so the env is restored after the run and the per-test isolation
+// tripwire stays satisfied. The harness (runCliCapture) resets the config/output
+// singletons per call, matching fresh-subprocess semantics. Throws on a
+// non-zero exit.
 async function runCli(
   stashDir: string,
   args: string[],
@@ -104,7 +104,6 @@ describe("--shape agent field projection", () => {
     if (!hit) throw new Error("expected a matching search hit");
     const keys = Object.keys(hit);
 
-    // Must have these agent-essential fields (when present)
     expect(keys).toContain("name");
     expect(keys).toContain("type");
     expect(keys).toContain("action");
@@ -137,12 +136,10 @@ describe("--shape agent field projection", () => {
     const output = await runCli(stashDir, ["search", "architect", "--format=json", "--shape=agent"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
-    // Top-level envelope must not have these
     expect(json).not.toHaveProperty("schemaVersion");
     expect(json).not.toHaveProperty("stashDir");
     expect(json).not.toHaveProperty("timing");
 
-    // Hits must not have these
     const hits = json.hits as Array<Record<string, unknown>>;
     for (const hit of hits) {
       expect(hit).not.toHaveProperty("whyMatched");
@@ -157,7 +154,6 @@ describe("--shape agent field projection", () => {
     const output = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--shape=agent"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
-    // Must have essential fields
     expect(json).toHaveProperty("name");
     expect(json).toHaveProperty("type");
 
@@ -174,13 +170,11 @@ describe("--shape agent field projection", () => {
   test("--shape agent show output keeps content/run/action", async () => {
     const stashDir = makeStash();
 
-    // Command has template content
     const cmdOutput = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--shape=agent"]);
     const cmdJson = JSON.parse(cmdOutput) as Record<string, unknown>;
     expect(cmdJson).toHaveProperty("template");
     expect(cmdJson).toHaveProperty("action");
 
-    // Script has run field
     const scriptOutput = await runCli(stashDir, ["show", "scripts/deploy.sh", "--format=json", "--shape=agent"]);
     const scriptJson = JSON.parse(scriptOutput) as Record<string, unknown>;
     expect(scriptJson).toHaveProperty("run");
@@ -201,7 +195,6 @@ describe("--shape agent field projection", () => {
     expect(hit).toHaveProperty("type");
     expect(hit).toHaveProperty("action");
 
-    // Default show still has origin
     const showOutput = await runCli(stashDir, ["show", "commands/release.md", "--format=json"]);
     const showJson = JSON.parse(showOutput) as Record<string, unknown>;
     expect(showJson).toHaveProperty("origin");
@@ -248,13 +241,6 @@ describe("--shape agent field projection", () => {
   }, 30_000);
 });
 
-// WS2 ("--shape agent is the canonical spelling") removed (D1): it was a
-// strict subset of the "--shape agent field projection" describe block above
-// (:78-113 covers the same allowedKeys set plus essential-field checks;
-// :135-152 and :154-168 cover show fields + `template`). Its private
-// makeStash helper was local to the deleted describe block and needed no
-// separate removal.
-
 describe("--format jsonl", () => {
   function makeStash(): string {
     const stashDir = makeTempDir("akm-jsonl-stash-");
@@ -268,12 +254,11 @@ describe("--format jsonl", () => {
 
   test("JSONL format outputs one JSON object per line for search hits", async () => {
     const stashDir = makeStash();
-    // QA #14: empty query now rejects; use a real keyword that matches stash assets.
-    // Use "architect" since architect.md has that word in both name and content.
+    // An empty query rejects; use a real keyword that matches stash assets.
+    // "architect" appears in both the name and the content of architect.md.
     const output = await runCli(stashDir, ["search", "architect", "--format=jsonl"]);
     const lines = output.split("\n").filter((line) => line.trim().length > 0);
 
-    // Should have at least 1 hit
     expect(lines.length).toBeGreaterThanOrEqual(1);
 
     // Each line must be its own object, not wrapped in an envelope
@@ -319,7 +304,6 @@ describe("--format jsonl", () => {
       for (const key of Object.keys(parsed)) {
         expect(allowedKeys.has(key)).toBe(true);
       }
-      // Must not have stripped fields
       expect(parsed).not.toHaveProperty("origin");
       expect(parsed).not.toHaveProperty("whyMatched");
     }

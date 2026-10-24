@@ -3,13 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm lint` fail-closed behavior (§24.2 "Lint" release gate).
+ * `akm lint` fail-closed behavior.
  *
- * A mistyped invocation used to scan nothing and report a clean
- * `ok:true, flagged:0`: an unknown `--type` (e.g. singular "workflow")
- * filtered the sweep to zero directories, and a nonexistent `--dir` walked
- * nothing — both silently passing scripted `--fail-on-flagged` gates. Both
- * are now usage errors.
+ * A mistyped invocation must not scan nothing and report a clean
+ * `ok:true, flagged:0`: an unknown `--type` (e.g. singular "workflow") would
+ * filter the sweep to zero directories, and a nonexistent `--dir` would walk
+ * nothing — both silently passing scripted `--fail-on-flagged` gates. Both are
+ * usage errors.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

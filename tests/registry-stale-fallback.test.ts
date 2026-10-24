@@ -3,13 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Registry stale-cache fallback past TTL (§24.2 "Durability" release gate).
+ * Registry stale-cache fallback past TTL.
  *
- * The fetch skeleton's stale fallback used to consult only the TTL-filtered
- * row: once the cached index aged past `ttlMs`, an unreachable registry
- * hard-failed `akm search --from registry` / `akm registry list` even though
- * a perfectly serviceable index sat in the cache. A failed fetch now serves
- * the expired row too — loudly, via warn().
+ * The fetch skeleton's stale fallback must not consult only the TTL-filtered
+ * row: once the cached index ages past `ttlMs`, an unreachable registry would
+ * hard-fail `akm search --from registry` / `akm registry list` even though a
+ * perfectly serviceable index sits in the cache. A failed fetch serves the
+ * expired row too — loudly, via warn().
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

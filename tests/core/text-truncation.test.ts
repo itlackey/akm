@@ -1,8 +1,8 @@
 /**
  * Tests for src/core/text-truncation.ts — the shared truncation-detection
  * helper used by `distill` and `consolidate`. The vocabulary is the union of
- * the two prior command-local sets; behaviour must be at least as strict as
- * either prior implementation.
+ * distill's and consolidate's trailing-word sets; behaviour must be at least
+ * as strict as either.
  */
 import { describe, expect, it } from "bun:test";
 import { isValidDescription } from "../../src/commands/proposal/validators/proposal-quality-validators";
@@ -41,19 +41,18 @@ describe("detectTruncatedDescription — shared truncation heuristic", () => {
     expect(detectTruncatedDescription("Before deleting any legacy CSS rule, verify shared.css has")).not.toBeNull();
     // case-insensitive lookup
     expect(detectTruncatedDescription("Closes with The")).not.toBeNull();
-    // Folded from tests/integration/commands/consolidate/consolidate-pipeline-fixes.test.ts (D3):
-    // a real truncation observed in consolidate proposal output, ending on "be".
+    // A real truncation observed in consolidate proposal output, ending on "be".
     expect(
       detectTruncatedDescription("Eval tasks must create a genuine knowledge gap — the skill must be"),
     ).not.toBeNull();
   });
 
   it("includes both distill-only and consolidate-only legacy words in the union", () => {
-    // Words that were only in distill's prior set:
+    // Words that came from distill's set:
     for (const w of ["into", "onto", "upon", "via", "per", "than", "do", "does", "did"]) {
       expect(TRUNCATION_TRAILING_WORDS.has(w)).toBe(true);
     }
-    // Words that were only in consolidate's prior regex:
+    // Words that came from consolidate's regex:
     expect(TRUNCATION_TRAILING_WORDS.has("so")).toBe(true);
   });
 

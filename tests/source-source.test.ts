@@ -19,7 +19,7 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sand
 
 /**
  * Seed a lock-backed registry-managed source (a git/npm `bundles` entry + its
- * §10.2 lock entry) the way `akm add` persists it.
+ * lock entry) the way `akm add` persists it.
  */
 function seedManagedBundle(
   key: string,
@@ -80,8 +80,8 @@ describe("resolveSourceEntries", () => {
       for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
         fs.mkdirSync(path.join(repoRoot, sub), { recursive: true });
       }
-      // 0.9.0 (spec §10.2): the resolved content root lives in the lock — the
-      // content/-subdir resolution happens at install time, not at resolve time.
+      // The resolved content root lives in the lock — the content/-subdir
+      // resolution happens at install time, not at resolve time.
       seedManagedBundle(
         "git-root",
         { git: "https://example.test/repo.git" },
@@ -258,7 +258,7 @@ describe("resolveSourceEntries", () => {
       const unresolved = sources.find((source) => source.registryId === "escaping");
       expect(sources[0]?.path).toBe(stashDir);
       expect(unresolved).toMatchObject({ unresolved: true, registryId: "escaping" });
-      // itlackey/akm#890: the placeholder now lives under $CACHE, keyed by the
+      // itlackey/akm#890: the placeholder lives under $CACHE, keyed by the
       // bundle root, never under the bundle root (or the escaped root) itself.
       expect(unresolved?.path.startsWith(`${getUnresolvedSourcesDir(bundleRoot)}${path.sep}`)).toBe(true);
       expect(unresolved?.path.startsWith(`${bundleRoot}${path.sep}`)).toBe(false);
@@ -563,17 +563,16 @@ describe("ensureSourceCaches", () => {
     // Mock the mirror (no network) and verify the current website bundle is
     // projected into a provider and synchronized.
     //
-    // RUNTIME-05: the URL must NOT be under the `.invalid` TLD. `.invalid` is
-    // rejected synchronously by assertWebsiteRequestUrl
-    // (src/sources/snapshot-fetchers/website-ingest.ts:677-679) inside the
-    // website provider FACTORY (src/sources/providers/website.ts:16-18) — i.e.
-    // before `sync()`/`ensureWebsiteMirror` is ever reached. With the old
-    // `example.invalid` URL, `ensureSourceCaches` caught that construction
-    // error and warned+continued (src/indexer/search/search-source.ts:362-371),
-    // so the mocked mirror below would never actually be called — this test
-    // would silently stop proving "website entries are processed" at all.
-    // `.test` (used by the neighbouring tests in this describe) is not
-    // special-cased there, so the mocked path is genuinely exercised.
+    // The URL must NOT be under the `.invalid` TLD. `.invalid` is rejected
+    // synchronously by assertWebsiteRequestUrl
+    // (src/sources/snapshot-fetchers/website-ingest.ts) inside the website
+    // provider FACTORY (src/sources/providers/website.ts) — i.e. before
+    // `sync()`/`ensureWebsiteMirror` is ever reached. `ensureSourceCaches` catches
+    // that construction error and warns+continues, so the mocked mirror below
+    // would never actually be called and this test would silently stop proving
+    // "website entries are processed" at all. `.test` (used by the neighbouring
+    // tests in this describe) is not special-cased there, so the mocked path is
+    // genuinely exercised.
     const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
       rootDir: "/tmp/root",
       stashDir: "/tmp/stash",
@@ -591,10 +590,9 @@ describe("ensureSourceCaches", () => {
     }
   });
 
-  // R2 bug fix: npm sources are cache-backed too, but the old type-gated loops
-  // only handled git-stash + website, so an npm source's cache was NEVER
-  // refreshed. After routing through the provider registry's polymorphic
-  // sync(), every cache-backed kind (including npm) must be refreshed.
+  // npm sources are cache-backed too: routing through the provider registry's
+  // polymorphic sync() must refresh every cache-backed kind (including npm), not
+  // just git and website.
   test("npm sources are refreshed (R2: routes through provider sync())", async () => {
     const npmSyncSpy = spyOn(NpmSourceProvider.prototype, "sync").mockResolvedValue(undefined);
     // Avoid real git/website network in the same run.

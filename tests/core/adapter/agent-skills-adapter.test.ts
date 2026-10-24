@@ -8,7 +8,7 @@
  * Drives the adapter over `tests/fixtures/bundles/agent-skills/` and asserts the
  * four authored goldens under `tests/fixtures/format-family-goldens/agent-skills/`.
  * Exercises RECOGNITION ≠ VALIDATION: the two invalid skills still recognize;
- * their §4.5 violations surface only in `validate`.
+ * their violations surface only in `validate`.
  */
 
 import { describe, expect, test } from "bun:test";

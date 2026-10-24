@@ -22,11 +22,10 @@ import {
 } from "../../src/workflows/resource-limits";
 
 /**
- * `schemas/akm-workflow.json` stays in sync with the TypeScript vocabulary
- * (workflow-format-unification, spec §2.5) — the closed-key JSON Schema
- * replaces the old hand-maintained frontmatter allowlist, but its enum
- * vocabularies and patterns must never drift from `program/schema.ts`'s
- * exported constants, which the parser (`parser.ts`) actually enforces.
+ * `schemas/akm-workflow.json` stays in sync with the TypeScript vocabulary: the
+ * closed-key JSON Schema's enum vocabularies and patterns must never drift from
+ * `program/schema.ts`'s exported constants, which the parser (`parser.ts`)
+ * actually enforces.
  */
 describe("schemas/akm-workflow.json stays in sync with the TS vocabulary", () => {
   const schemaPath = path.resolve(import.meta.dir, "../../schemas/akm-workflow.json");

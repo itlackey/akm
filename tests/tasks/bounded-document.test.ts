@@ -4,20 +4,14 @@
 
 /**
  * `src/tasks/source/bounded-document.ts` — the version-agnostic bounded YAML
- * front end shared by task source v4's own parser and (frozen, vendored)
- * task v3's — renders every source label its callers supply through the
- * SAME shared funnel (D2-N4, spec docs/plans/specs/p2a-task-source-v4.md
- * §3.1).
+ * front end — renders every source label its callers supply through the SAME
+ * shared funnel.
  *
- * P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.2/§3.2.3, row B-17,
- * F-A2.11) retires task source v3 acceptance from `src/tasks/source-v3.ts`
- * entirely — the "task v3 source" label this file used to pin died with it.
- * Two DISTINCT labels remain in real production use today, and this file
- * pins both:
+ * Two DISTINCT labels are in real production use, and this file pins both:
  *
  *   1. `"task source"` — `src/tasks/source/parse-task-source.ts`'s own
  *      version-agnostic front end, for a failure that happens BEFORE the
- *      document's `version:` is even known (row B-17).
+ *      document's `version:` is even known.
  *   2. `"task source v4"` — `src/tasks/source/task-source-v4.ts`'s own
  *      internal label, for a field-level failure once routing has confirmed
  *      `version: 4`.
@@ -31,19 +25,6 @@
  * describe block below it, prove the two labels are a PURE substitution —
  * same wording, ordering, and file/line suffix — by running the identical
  * input through the identical assertion with only the label swapped.
- *
- * The former THIRD describe block here — an AST scan proving
- * `src/tasks/source-v3.ts` imported the D2-N4 helper set from
- * `./source/bounded-document` rather than keeping a local copy — is DELETED,
- * not flipped: `source-v3.ts`'s shrink (P4 §3.2.3) removed the field-parsing
- * logic that check was guarding entirely; the module's surviving purpose is
- * the prepare seam's document vocabulary (types only), which imports no
- * D2-N4 helper at all. `task-source-v4.ts` is the extraction's real home
- * now, but it is a deliberately NOT byte-identical sibling for two of the
- * eleven original helpers (`parseTimeout`/`parseTools` became
- * `parseTimeoutTopLevel`/`parseToolsTopLevel` there — the file's own header
- * records why), so re-pointing the same helper list at it would assert
- * something the design never promised.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -57,7 +38,7 @@ import {
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
 import { parseTaskSourceV4, parseTaskSourceV4Document } from "../../src/tasks/source/task-source-v4";
 
-/** Reused verbatim from the deleted tests/tasks/source-v3.test.ts's hostile-YAML `test.each` list (an aliased mapping) — converted to task source v4. */
+/** A hostile-YAML fixture: an aliased mapping. */
 const ALIASED_YAML = "version: 4\nuses: commands/a\ninputs: &a {}\ncopy: *a\n";
 const FILE_PATH = "/bundle/tasks/hostile.yml";
 
@@ -158,33 +139,20 @@ describe("sourceError — the per-field funnel renders both source labels via it
 });
 
 /**
- * Ported from the deleted tests/tasks/source-v3.test.ts's
- * "task v3 hostile input and resource bounds" describe block (commit
- * 09691628 deleted the v3 parser it directly exercised — parseTaskV3Document
- * / parseTaskV3Yaml). Review finding
- * (docs/plans/specs/p4-deletions-closeout.md review, on this file): that
- * describe block's real subject was never the v3 grammar — it was this
- * file's own bounded-document front end (assertBoundedTaskYamlDocument,
- * cloneBoundedJson, readBoundedTaskSourceYaml), which P4 did NOT delete and
- * which parseTaskSourceV4 / parseTaskSourceV4Document still route through on
- * every parse. Deleting the suite alongside the v3 parser left the Proxy /
- * prototype / accessor / cycle / depth / byte-bound / hostile-YAML guards
- * this front end enforces with zero regression coverage anywhere in the
- * repo.
+ * Hostile input and resource bounds for this file's bounded-document front end
+ * (assertBoundedTaskYamlDocument, cloneBoundedJson, readBoundedTaskSourceYaml),
+ * which parseTaskSourceV4 / parseTaskSourceV4Document route through on every
+ * parse: the Proxy / prototype / accessor / cycle / depth / byte-bound /
+ * hostile-YAML guards.
  *
- * Every case below is the original assertion, unchanged, retargeted at the
- * task source v4 entry points: `parseTaskV3Document` -> `parseTaskSourceV4Document`,
- * `parseTaskV3Yaml` -> `parseTaskSourceV4`, each fixture's version number
- * bumped from the retired generation to 4, and the v3-only akm-bag schedule
- * scaffolding dropped (task source v4 has no mandatory scheduling field, so a
- * bare `{version: 4, uses: "commands/x"}` is already a structurally valid
- * base — simpler than v3's `scheduled()` helper needed). Every hostile-shape
- * assertion fires inside `cloneBoundedJson`'s recursive clone/bound pass
- * (object fixtures) or `assertBoundedTaskYamlDocument`'s AST walk (YAML
- * fixtures) — both run BEFORE `parseTaskSourceV4Document` ever reaches
- * target/field semantics (`parseTarget`'s with-on-command guard included),
- * so which top-level field a hostile value sits under does not change what
- * throws first.
+ * Every hostile-shape assertion fires inside `cloneBoundedJson`'s recursive
+ * clone/bound pass (object fixtures) or `assertBoundedTaskYamlDocument`'s AST
+ * walk (YAML fixtures) — both run BEFORE `parseTaskSourceV4Document` ever
+ * reaches target/field semantics (`parseTarget`'s with-on-command guard
+ * included), so which top-level field a hostile value sits under does not
+ * change what throws first. Task source v4 has no mandatory scheduling field,
+ * so a bare `{version: 4, uses: "commands/x"}` is already a structurally valid
+ * base.
  */
 describe("task source v4 hostile input and resource bounds", () => {
   test("rejects custom prototypes, accessors, non-enumerable fields, and symbols without invoking code", () => {

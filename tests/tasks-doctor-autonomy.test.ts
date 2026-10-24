@@ -3,17 +3,17 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * D8 — `akm task doctor` reports the autonomy gate.
+ * `akm task doctor` reports the autonomy gate.
  *
  * `tasks doctor` is where an operator checks what a scheduled `akm improve` will
  * actually do. Two requirements follow from that:
  *
  *  1. It must list the lanes the gate is suppressing.
  *  2. Its existing `improveTriage.applyMode` must report the EFFECTIVE mode, not
- *     the strategy's raw value. It resolved the raw strategy before D8, so a
- *     `promote` strategy under a review-first config would have reported
- *     "promote" while the run used "queue" — a doctor command lying about the
- *     thing it exists to diagnose.
+ *     the strategy's raw value. Reporting the raw strategy would show a
+ *     `promote` strategy under a review-first config as "promote" while the run
+ *     used "queue" — a doctor command lying about the thing it exists to
+ *     diagnose.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

@@ -60,11 +60,8 @@ describe("migration help", () => {
   test("the 0.9.2 terminal note points task-v2 users at the fail-closed migration", () => {
     const result = renderMigrationHelp("v0.9.2", undefined);
     expect(result).toContain("# akm v0.9.2 migration notes");
-    // P4 (docs/plans/specs/p4-deletions-closeout.md §4.7, F-A2.28) rewrote
-    // the 0.9.2 release notes off the capitalized "Task v3" proper-noun
-    // wording onto "task source v4" (the destination) / "task-v3" (the
-    // retired generation, §0.1's one permitted bare "task v3" form) — this
-    // pin follows the rewrite rather than the retired string.
+    // The 0.9.2 release notes name "task source v4" (the destination) and
+    // "task-v3" (the retired generation); this pin follows that wording.
     expect(result).toContain("task source v4");
     expect(result).toContain("TASK_SCHEMA_VERSION_UNSUPPORTED");
     expect(result).toContain("akm migrate apply --dry-run");
@@ -149,23 +146,20 @@ describe("migration help", () => {
   });
 
   test("dist build resolves release-notes relative to the compiled module", () => {
-    // VALUE-07: the previous version of this test reimplemented the
-    // path-resolution logic under test and got it wrong — it resolved only
-    // ONE directory level up from a flat `<pkg>/dist`, so it could never
-    // fail even if production's traversal broke. Production's
-    // `releaseNotesDir()` (src/commands/sources/migration-help.ts) computes
-    // `path.resolve(getDirname(import.meta.url), "../../../docs/migration/release-notes")`
-    // — THREE levels up — because `tsc` (see package.json "build") mirrors
-    // `src/` into `dist/` 1:1, so the compiled module really lives three
-    // levels deep at `<pkg>/dist/commands/sources/migration-help.js`.
+    // Production's `releaseNotesDir()` (src/commands/sources/migration-help.ts)
+    // computes `path.resolve(getDirname(import.meta.url),
+    // "../../../docs/migration/release-notes")` — THREE levels up — because `tsc`
+    // (see package.json "build") mirrors `src/` into `dist/` 1:1, so the compiled
+    // module really lives three levels deep at
+    // `<pkg>/dist/commands/sources/migration-help.js`.
     //
-    // This rewrite extracts the literal traversal string straight out of the
-    // production source (so it can't silently drift from what production
-    // actually does) and applies it at a module directory that mirrors the
-    // REAL `dist/commands/sources` nesting (a structural fact independent of
-    // that literal). If production's traversal depth ever stops matching the
-    // real src/dist nesting, `resolved` points at a directory that doesn't
-    // exist in this fixture and the test fails.
+    // This test extracts the literal traversal string straight out of the
+    // production source (so it can't silently drift from what production actually
+    // does) and applies it at a module directory that mirrors the REAL
+    // `dist/commands/sources` nesting (a structural fact independent of that
+    // literal). If production's traversal depth ever stops matching the real
+    // src/dist nesting, `resolved` points at a directory that doesn't exist in
+    // this fixture and the test fails.
     const migrationHelpSrcPath = path.join(PROJECT_ROOT, "src", "commands", "sources", "migration-help.ts");
     const migrationHelpSrc = fs.readFileSync(migrationHelpSrcPath, "utf8");
     const traversalMatch = migrationHelpSrc.match(/path\.resolve\(getDirname\(import\.meta\.url\),\s*"([^"]+)"\)/);

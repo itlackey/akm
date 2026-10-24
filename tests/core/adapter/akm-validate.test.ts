@@ -3,18 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * WI-C gate — the `akm` adapter's per-`type` `validate`
- * (`src/core/adapter/adapters/akm-adapter.ts` + `akm-lint.ts`), implementing
- * `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §6 as a behavior-preserving
- * port of `src/commands/lint/*`'s type linters.
+ * Gate for the `akm` adapter's per-`type` `validate`
+ * (`src/core/adapter/adapters/akm-adapter.ts` + `akm-lint.ts`), a
+ * behavior-preserving port of `src/commands/lint/*`'s type linters.
  *
  * The FROZEN lint golden (`tests/fixtures/goldens/lint/all-types.json`,
  * `perType`) is the conformance gate. This suite asserts:
  *
  *   1. CLEAN parity — validate over every all-types fixture file produces
  *      EXACTLY the golden's `perType` issues (all empty), for all 13 types
- *      (incl. the DefaultLinter-only script/secret/session and the
- *      workflow-program-yaml form; wiki retired in chunk 4), plus skill's empty
+ *      (incl. the DefaultLinter-only script/secret/session), plus skill's empty
  *      `lintDirectoryIssues`;
  *   2. POSITIVE per-type findings — a dirty input per representative linter
  *      fires its diagnostic (missing-skill-md / invalid-task-yaml /
@@ -102,9 +100,7 @@ describe("akm adapter — validate reproduces the lint golden perType (clean, §
       }
       asserted += 1;
     }
-    // All 13 perType keys exercised (wiki retired in chunk 4; the separate
-    // workflowProgramYaml entry collapsed into the one workflow entry when the
-    // YAML program format was unified away — workflow-format-unification §3).
+    // All 13 perType keys exercised.
     expect(asserted).toBe(Object.keys(LINT_GOLDEN.perType).length);
     expect(asserted).toBe(13);
   });
@@ -156,11 +152,8 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
     expect(issues(diags)).not.toContain("missing-skill-md");
   });
 
-  // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2, F-A2.21) FLIPs every
-  // "v3 parsing" case below to its task source v4 equivalent, and adds one
-  // new case pinning row B-14 (a genuine version: 3 document now fails the
-  // SAME TASK_SCHEMA_VERSION_UNSUPPORTED way version: 2 already did, row
-  // B-15).
+  // Task cases use the task source v4 form: a genuine `version: 3` document
+  // fails with TASK_SCHEMA_VERSION_UNSUPPORTED, the same way `version: 2` does.
   test("invalid-task-yaml — a task missing the version field (canonical source parser)", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
@@ -186,7 +179,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
   // The runtime reads only task source v4 (#987): what `akm migrate apply`
   // rewrites — a retired schedule[].enabled, a v2/v3 document — is flagged
   // naming that command. The migrator reports any shape it cannot convert
-  // itself (tests/tasks/migrate-v2-to-v3.test.ts).
+  // itself (tests/tasks/migrate-v2-to-v4.test.ts).
   test("a task with source-owned schedule[].enabled is flagged naming `akm migrate apply`", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
@@ -235,9 +228,9 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
     const hit = diags.find((d) => d.issue === "dangerous-env-key");
     expect(hit).toBeDefined();
     expect(hit?.detail).toContain("LD_PRELOAD");
-    // Canonical 0.9.0 ref grammar — the retired `env:danger` colon spelling is
-    // rejected by the ref parser, so a user copying it off this security
-    // finding hit ASSET_NOT_FOUND.
+    // The finding quotes the canonical ref: the retired `env:danger` colon spelling
+    // is rejected by the ref parser, so a user copying it off this security
+    // finding would hit ASSET_NOT_FOUND.
     expect(hit?.detail).toContain("Ref: env/danger");
     expect(hit?.fixed).toBe(false);
   });

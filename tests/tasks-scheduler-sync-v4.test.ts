@@ -74,8 +74,8 @@ describe("whole-set task source v4 scheduler sync planning — B-07 (manual-only
       ["version: 4", "run: echo manual-only", "shell: sh", ""].join("\n"),
     );
 
-    // Today this REJECTS (see file header) — the assertion that it resolves
-    // at all is the B-07 pin, independent of the shape assertions below.
+    // The assertion that it resolves at all is the pin here, independent of the
+    // shape assertions below.
     const prepared = await compileSchedulerSources({
       sourceRoot: bundleRoot,
       adapterId: "akm",
@@ -109,11 +109,8 @@ describe("whole-set task source v4 scheduler sync planning — B-07 (manual-only
     expect(plan.unchanged).toEqual([]);
   });
 
-  // P4 FLIP (docs/plans/specs/p4-deletions-closeout.md §7.2, F-A2.33): the
-  // "v3 alongside v4 coexistence" case this used to pin is no longer
-  // expressible — task source v3 is gone, so both tasks in the mixed set are
-  // now version: 4. The behavior proved (a manual-only task contributes
-  // nothing while a scheduled sibling still installs) is unchanged.
+  // A manual-only task contributes nothing while a scheduled sibling still
+  // installs; both tasks in the mixed set are version: 4.
   test("a manual-only version: 4 task alongside a normally-scheduled version: 4 task: the scheduled task still installs, the manual-only task contributes nothing", async () => {
     const bundleRoot = root();
     write(
@@ -244,11 +241,8 @@ describe("whole-set task source v4 scheduler sync planning — sources `akm migr
 });
 
 describe("whole-set task source v4 scheduler sync planning — B-45/F-B2 (schedule[i].inputs delivered as a sorted invocation tail)", () => {
-  // P2b Lane B flip (spec docs/plans/specs/p2b-input-bindings.md §4.4, §7
-  // F-B2): the P2a B-38 gap this describe block used to pin ("validated but
-  // not yet delivered", single per-task warn, byte-identical fixed tail) is
-  // now CLOSED — schedule[i].inputs are delivered through the compiled
-  // binding's own invocation tail, so there is nothing left to warn about.
+  // schedule[i].inputs are delivered through the compiled binding's own
+  // invocation tail, so there is nothing to warn about.
   test("schedule[i].inputs non-empty compiles a sorted --<name> <value> tail per entry — no warn, and each entry's tail reflects its OWN inputs", async () => {
     const bundleRoot = root();
     write(
@@ -287,7 +281,7 @@ describe("whole-set task source v4 scheduler sync planning — B-45/F-B2 (schedu
       expectedSignature: (binding) => `sig:${binding.id}`,
     });
 
-    // No warn: the gap the old warn announced is closed.
+    // No warn.
     expect(warnCalls).toEqual([]);
 
     // Each compiled binding carries its OWN schedule entry's inputs as a
@@ -372,12 +366,12 @@ describe("whole-set task source v4 scheduler sync planning — B-45/F-B2 (schedu
     // The scheduled invocation tail carries only the entry's own
     // `schedule[i].inputs` (scheduler-binding.ts), and a `required: true`
     // declaration may not carry a `default`, so this schedule could never
-    // run. sync's own projectability proof (scheduler-sync.ts) still holds
-    // an independent copy of the check over the DEFAULTED view; what changed
-    // is that the contradiction is now caught by `parseTaskSource` itself, so
-    // the failure names the offending `schedule` FIELD PATH rather than only
-    // the task ref, and an author sees it without running `akm task sync`.
-    // #867: this is still a per-source parse failure — it degrades rather
+    // run. `parseTaskSource` itself catches the contradiction, so the failure
+    // names the offending `schedule` FIELD PATH rather than only the task ref, and
+    // an author sees it without running `akm task sync` (sync's own
+    // projectability proof in scheduler-sync.ts still holds an independent copy
+    // of the check over the DEFAULTED view).
+    // #867: this is a per-source parse failure — it degrades rather
     // than rejecting the whole (empty, here) desired set.
     const prepared = await compileSchedulerSources({
       sourceRoot: bundleRoot,
@@ -391,11 +385,7 @@ describe("whole-set task source v4 scheduler sync planning — B-45/F-B2 (schedu
   });
 });
 
-// ── Ported from the deleted tests/integration/tasks-scheduler-sync-v3.test.ts ──
-// ── (spec docs/plans/specs/p4-deletions-closeout.md §3.2.7, F-A2.6): the ───────
-// ── generic whole-set CAS/collision/composition mechanics below never depended ─
-// ── on task source version — only the task fixtures convert to v4; every ───────
-// ── assertion is unchanged from the deleted file. ───────────────────────────────
+// ── Generic whole-set CAS/collision/composition mechanics ─────────────────────
 
 describe("whole-set scheduler sync planning — task+workflow composition and CAS mechanics (ported, F-A2.6)", () => {
   test("compiles task and workflow schedules together and never installs workflow_dispatch", async () => {
@@ -551,10 +541,8 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
 
   test("accepts the workflow-only tasks target through canonical step authority", async () => {
     const bundleRoot = root();
-    // Manual-only (D2-N6): a task source v4 document with no schedule: is
-    // reached only through a workflow step's uses: tasks/child, never
-    // scheduled directly — the v3 fixture's `on: {workflow_dispatch: {}}`
-    // meant exactly the same thing.
+    // Manual-only: a task source v4 document with no schedule: is reached only
+    // through a workflow step's uses: tasks/child, never scheduled directly.
     write(path.join(bundleRoot, "tasks", "child.yml"), "version: 4\nrun: echo child\nshell: sh\n");
     write(
       path.join(bundleRoot, "workflows", "parent.yml"),
@@ -584,16 +572,10 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
     expect(plan.desired[0]?.logicalSource).toEqual({ kind: "workflow", ref: "team//workflows/parent" });
   });
 
-  // P4 (docs/plans/specs/p4-deletions-closeout.md §3.1, row B-05): the
-  // GitHub Action locator grammar this used to pin
-  // (`actions/checkout@v4` -> `remote-action-acquisition-out-of-scope`, then
-  // F-A1.15's flip to `unsupported-uses-target`) is deleted along with this
-  // file's v3 predecessor. `docker://` proves the SAME ordering invariant
-  // (a workflow-step uses: rejection fires before any scheduler signature
-  // call) using a still-generic, permanently-rejected ref shape (row
-  // B-06..B-08, untouched by A1/A2) — the locator-specific rejection message
-  // itself stays pinned in tests/execution/target-ref.test.ts and
-  // tests/workflows/characterization-classification.test.ts.
+  // `docker://` proves the ordering invariant (a workflow-step uses: rejection
+  // fires before any scheduler signature call) using a generic,
+  // permanently-rejected ref shape; the locator-specific rejection message
+  // itself stays pinned in tests/execution/target-ref.test.ts.
   test("rejects an unsupported workflow-step uses: target before scheduler signatures or mutation preparation", async () => {
     const bundleRoot = root();
     write(
@@ -835,9 +817,9 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
   test("#867: one invalid desired task degrades (reported, excluded) instead of poisoning the whole plan; a valid peer still reconciles", async () => {
     const bundleRoot = root();
     write(path.join(bundleRoot, "tasks", "a-valid.yml"), "version: 4\nrun: echo yes\nshell: sh\nschedule: '@daily'\n");
-    // A still-version-2 sibling fails TASK_SCHEMA_VERSION_UNSUPPORTED — before
-    // #867, this ONE bad sibling rejected the whole desired set; now it is
-    // dropped and reported, and `a-valid` still reconciles.
+    // A still-version-2 sibling fails TASK_SCHEMA_VERSION_UNSUPPORTED — this ONE
+    // bad sibling is dropped and reported (#867) rather than rejecting the whole
+    // desired set, and `a-valid` still reconciles.
     write(path.join(bundleRoot, "tasks", "b-invalid.yml"), "version: 2\nschedule: '@daily'\ncommand: echo no\n");
     let signatures = 0;
 
@@ -1033,10 +1015,10 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
     const componentRoot = root();
     const bundleAPath = "/home/user/work/akm";
     const bundleBPath = "/home/user/personal/akm";
-    // Both bundles resolve to the same unconfigured display name ("akm" —
-    // the lowercased directory basename, bundle-id.ts:10-18) because
-    // ensureUniqueId only dedupes within its OWN config's bundle set
-    // (bundle-id.ts:46) and has no visibility into the other bundle.
+    // Both bundles resolve to the same unconfigured display name ("akm" — the
+    // lowercased directory basename, bundle-id.ts) because ensureUniqueId only
+    // dedupes within its OWN config's bundle set and has no visibility into the
+    // other bundle.
     const foreignInvocation = ["task", "run", "akm-dogfood-091-capture", "--bundle", "akm", "--scheduled"];
     const foreignEntry = {
       id: "akm-dogfood-091-capture",

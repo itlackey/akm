@@ -223,11 +223,10 @@ describe("0.9 config contract", () => {
   });
 
   // #852 (following #815): `extraParams.reasoning_effort` was the documented
-  // 0.9.1 workaround for LM Studio, where `enableThinking` is a no-op.
-  // `reasoningEffort` became a first-class — and therefore protected — field
-  // in 0.9.2. AGENTS.md cites this exact guard as already fixed to
-  // warn-and-auto-lift; loads onto the first-class field in memory, warning
-  // once and naming `akm migrate apply` as the way to persist it.
+  // workaround for LM Studio, where `enableThinking` is a no-op.
+  // `reasoningEffort` is now a first-class — and therefore protected — field, so
+  // the legacy key warns and auto-lifts: it loads onto the first-class field in
+  // memory, warning once and naming `akm migrate apply` as the way to persist it.
   test("loads a legacy reasoning_effort extraParams override by lifting it, naming akm migrate apply in the warning", () => {
     writeConfig({
       configVersion: "0.9.0",

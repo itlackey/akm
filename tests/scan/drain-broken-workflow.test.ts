@@ -3,14 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Chunk 5 F4a M-core-2 (item 3) — drain-layer broken-workflow drop.
+ * Drain-layer broken-workflow drop.
  *
  * The `akm` adapter's `recognize`/`foldRecognizedMetadata` SWALLOWS a workflow
  * parse error (returns a document with just the base metadata), so a broken
- * workflow would silently index through the raw recognize path. The live
- * pipeline dropped it via the renderer contributor's throw → skip-with-warning.
- * `drainDirDocuments` restores that drop: it re-runs the workflow parser and
- * drops the entry with a `Skipped workflow …` warning.
+ * workflow would silently index through the raw recognize path.
+ * `drainDirDocuments` drops it: it re-runs the workflow parser and drops the
+ * entry with a `Skipped workflow …` warning.
  *
  * This pins the GAP directly (recognize alone does NOT drop; the drain does),
  * complementing the end-to-end coverage in
@@ -144,10 +143,8 @@ describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
       expect(drained.entries.map(({ name }) => name)).toEqual(["good"]);
       expect(drained.warnings).toHaveLength(1);
       expect(drained.warnings[0]).toContain(badPath);
-      // P4 FLIP (docs/plans/specs/p4-deletions-closeout.md §3.1, row B-05,
-      // F-A1.19): the locator grammar is deleted — this now rejects as an
-      // unrecognized ref shape, not the old "Remote action acquisition"
-      // wording.
+      // The locator grammar does not exist: this rejects as an unrecognized ref
+      // shape.
       expect(drained.warnings[0]).toContain("Target ref");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

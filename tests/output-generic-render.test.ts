@@ -3,13 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * D7 — generic `md` / `html` rendering of a shaped output envelope.
+ * Generic `md` / `html` rendering of a shaped output envelope.
  *
  * These are the fallbacks that make all six `--format` values work on every
- * command: before D7, `md` silently emitted the JSON envelope everywhere
- * except `akm health` and `html` threw everywhere except `akm health`. A
- * command with no registered renderer must now still produce a real rendering
- * of its own envelope — not JSON wearing a `.md` extension, and not a throw.
+ * command. A command with no registered renderer must still produce a real
+ * rendering of its own envelope — not JSON wearing a `.md` extension, and not
+ * a throw.
  *
  * The bar these pin is deliberately behavioural rather than cosmetic: every
  * RESULT value present in the envelope must be present in the output, arrays

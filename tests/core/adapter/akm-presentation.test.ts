@@ -3,19 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * WI-C gate — the `TYPE_PRESENTATION` renderer/action data table
- * (`src/core/type-presentation.ts`), implementing
- * `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §2.
+ * Gate for the `TYPE_PRESENTATION` renderer/action data table
+ * (`src/core/type-presentation.ts`).
  *
- * §2 makes renderer/action a DATA TABLE keyed on the open `type`. This suite
- * pins that `TYPE_PRESENTATION` reproduces the renderer NAMES + action-builder
- * OUTPUTS VERBATIM — chunk-3 made `TYPE_PRESENTATION` the SINGLE SOURCE OF TRUTH
- * (the old mutable renderer/action registry it was ported from is deleted), so
- * this suite now holds an INDEPENDENT FROZEN SNAPSHOT of those exact values
- * (`EXPECTED_RENDERER` / `ACTION_BUILDERS` below, copied verbatim from the
- * retired `asset-registry.ts`) and asserts the live table cannot drift from it —
- * and that every known type's renderer NAME agrees with the FROZEN Chunk-0b
- * recognition golden. The fixture/goldens are not modified.
+ * Renderer/action is a DATA TABLE keyed on the open `type`, and
+ * `TYPE_PRESENTATION` is its single source of truth. This suite holds an
+ * INDEPENDENT FROZEN SNAPSHOT of the renderer NAMES + action-builder OUTPUTS
+ * (the `TYPE_TO_RENDERER` / `ACTION_BUILDERS` tables below) and asserts the live
+ * table cannot drift from it — and that every known type's renderer NAME agrees
+ * with the frozen recognition golden. The fixture/goldens are not modified.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -24,9 +20,8 @@ import path from "node:path";
 import { KNOWN_TYPES } from "../../../src/core/recognition-util";
 import { allowsFragmentRef, presentationFor, TYPE_PRESENTATION } from "../../../src/core/type-presentation";
 
-// Frozen snapshot of the renderer names the retired `asset-registry.ts`
-// `TYPE_TO_RENDERER` held — the drift-guard oracle `TYPE_PRESENTATION` must
-// reproduce for every known type.
+// Frozen snapshot of the renderer names — the drift-guard oracle
+// `TYPE_PRESENTATION` must reproduce for every known type.
 const TYPE_TO_RENDERER: Record<string, string> = {
   script: "script-source",
   skill: "skill-md",
@@ -44,7 +39,7 @@ const TYPE_TO_RENDERER: Record<string, string> = {
   instruction: "knowledge-md",
 };
 
-/** POSIX-shell single-quote — copied verbatim from the retired asset-registry action-builder chain. */
+/** POSIX-shell single-quote. */
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -52,9 +47,8 @@ function buildWorkflowAction(ref: string): string {
   return `Start or resume execution with \`akm workflow run ${shellQuote(ref)}\`.`;
 }
 
-// Frozen snapshot of the action builders the retired `asset-registry.ts`
-// `ACTION_BUILDERS` held — reproduced verbatim so this suite pins
-// `TYPE_PRESENTATION`'s action outputs against an independent copy.
+// Frozen snapshot of the action builders — an independent copy that pins
+// `TYPE_PRESENTATION`'s action outputs.
 const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   script: (ref) => `akm show ${ref} -> execute the run command`,
   skill: (ref) => `akm show ${ref} -> follow the instructions`,
@@ -100,9 +94,8 @@ describe("TYPE_PRESENTATION — renderer NAMES reproduce TYPE_TO_RENDERER verbat
   });
 
   test("the 6 static-only mappings (script/skill/command/agent/knowledge/memory) are present", () => {
-    // These carried NO `rendererName` on their old asset-spec (§6) — they lived
-    // only in TYPE_TO_RENDERER/ACTION_BUILDERS, so their presence is the whole
-    // point of the port.
+    // These types get their renderer only from the static TYPE_PRESENTATION
+    // table, so their presence is what this checks.
     const expected: Record<string, string> = {
       script: "script-source",
       skill: "skill-md",
@@ -163,7 +156,7 @@ describe("TYPE_PRESENTATION — renderer NAMES agree with the frozen recognition
       // The YAML workflow *program* uses a distinct renderer FORM
       // (workflow-program-yaml), not the `workflow` type's default renderer —
       // it is not a TYPE_PRESENTATION entry (the table keys on `type`, and
-      // workflow's type-default is workflow-md). Documented §2 exception.
+      // workflow's type-default is workflow-md).
       if (entry.renderer === "workflow-program-yaml") {
         expect(entry.type).toBe("workflow");
         continue;
@@ -171,8 +164,8 @@ describe("TYPE_PRESENTATION — renderer NAMES agree with the frozen recognition
       expect(presentationFor(entry.type).renderer, `renderer for ${relPath} (${entry.type})`).toBe(entry.renderer);
       asserted += 1;
     }
-    // 13 type-representative entries pinned (wiki retired in chunk 4; the
-    // workflow-program-yaml program-form is the skipped exception).
+    // 13 type-representative entries pinned; the workflow-program-yaml program
+    // form is the skipped exception.
     expect(asserted).toBe(13);
   });
 });

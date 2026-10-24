@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #562 — the unified HARNESS_REGISTRY is the single source of truth replacing
- * the three previously-disconnected registries (session-logs index, agent
- * profiles, config/setup platform strings).
+ * #562 — HARNESS_REGISTRY is the single source of truth for harness ids across
+ * session-logs, agent profiles, and config/setup platform strings.
  *
  * These tests pin:
  *   1. registry membership + capability-derived sublists,
@@ -25,9 +24,9 @@ import {
   VALID_HARNESS_IDS,
 } from "../src/integrations/harnesses";
 
-// The full registry membership, in registration order: the pre-unification
-// trio first (pinned prefix — the generated JSON-schema enum must not reorder),
-// then the seven P2 harness adapters (plan §"Capability matrix").
+// The full registry membership, in registration order: the first three ids are
+// a pinned prefix (the generated JSON-schema enum must not reorder them),
+// followed by the remaining harness adapters.
 const ALL_HARNESS_IDS = [
   "opencode",
   "claude",
@@ -119,13 +118,13 @@ describe("workflow-engine descriptor fields (P2, plan §'Capability matrix')", (
     expect(sdk.identityEnv).toBeUndefined();
   });
 
-  // WI-9.7 (H1): the sessionLogs↔sessionLogProvider PAIRING (a session-log-
-  // capable harness has a provider factory, and a non-session-log harness has
-  // none) is now enforced by the `AkmHarness` discriminated union at compile
-  // time — `HARNESS_REGISTRY`'s `satisfies readonly AkmHarness[]` check would
-  // fail to build if any entry got this wrong. What's left to test at runtime
-  // is the part the type system can't see: whether a provider's own `name`
-  // string actually points back to the harness that produced it.
+  // The sessionLogs↔sessionLogProvider PAIRING (a session-log-capable harness
+  // has a provider factory, and a non-session-log harness has none) is enforced
+  // at compile time by the `AkmHarness` discriminated union —
+  // `HARNESS_REGISTRY`'s `satisfies readonly AkmHarness[]` check fails to build
+  // if any entry gets this wrong. What's left to test at runtime is the part the
+  // type system can't see: whether a provider's own `name` string actually
+  // points back to the harness that produced it.
   it("every sessionLogs-capable harness's provider name resolves back to it", () => {
     for (const h of SESSION_LOG_HARNESSES) {
       const provider = h.sessionLogProvider();

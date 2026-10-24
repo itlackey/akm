@@ -78,8 +78,8 @@ test("validateStashEntry parses quality, confidence, source, and aliases", () =>
   expect(result?.quality).toBe("curated");
   expect(result?.confidence).toBe(1);
   expect(result?.source).toBe("manual");
-  // R4.6: de-pluralization heuristic removed; FTS5 porter stemmer handles stemming.
-  // "linters" is preserved as-is; "linter" is no longer generated.
+  // FTS5 porter stemmer handles stemming (no de-pluralization heuristic):
+  // "linters" is preserved as-is; "linter" is not generated.
   expect(result?.aliases).toEqual(["lint", "linters"]);
 });
 
@@ -475,20 +475,15 @@ test("validateStashEntry preserves captureMode, whenToUse, lessonStrength, evide
   expect(result?.evidenceSources).toEqual(["memories/x"]);
 });
 
-// ── SPEC-6: fact `category` capture into the index ───────────────────────────
+// ── fact `category` capture into the index ───────────────────────────────────
 //
 // Convention facts are selected for prompt injection by their `category:`
-// frontmatter (resolveStashStandards), but the indexer never captured that key
-// onto IndexDocument — so no rank-time or filter policy can see it. SPEC-6 step 1
-// (docs/architecture/specs/stash-conventions-code-spec.md) captures it in
-// applyCuratedFrontmatter (alongside beliefState) and whitelists it through
-// validateStashEntry so it survives the document_json projection.
+// frontmatter (resolveStashStandards), so the indexer captures that key onto
+// IndexDocument in applyCuratedFrontmatter (alongside beliefState) and
+// whitelists it through validateStashEntry so it survives the document_json
+// projection.
 
-/**
- * SPEC-6 adds `category?: string` to IndexDocument. Read it through a typed
- * accessor so this file still compiles before the implementation lands; the
- * dependent tests then go red on the runtime value instead of a compile error.
- */
+/** Typed accessor for the `category` field on an IndexDocument. */
 function entryCategory(entry: IndexDocument | null | undefined): string | undefined {
   return (entry as (IndexDocument & { category?: string }) | null | undefined)?.category;
 }
@@ -545,9 +540,8 @@ test("recognize populates entry.category from fact frontmatter (SPEC-6 end-to-en
 });
 
 test("category is NOT folded into FTS search fields — capture only (SPEC-6 pin)", () => {
-  // SPEC-6 shipped `category` as capture-only metadata: the CHANGELOG claims
-  // "search results and ranking are unchanged". Pin that claim directly so a
-  // future buildSearchFields edit (e.g. SPEC-8's content-field work) cannot
+  // `category` is capture-only metadata: search results and ranking are
+  // unchanged. Pin that directly so a future buildSearchFields edit cannot
   // silently start indexing the category value. The sentinel token appears
   // nowhere else on the entry, so any leak into a field is unambiguous.
   const base: IndexDocument = {
@@ -564,16 +558,14 @@ test("category is NOT folded into FTS search fields — capture only (SPEC-6 pin
   expect(buildSearchText(withCategory)).not.toContain("sentinelcategorytoken");
 });
 
-// ── SPEC-2: merge path-derived scope/domain tokens into tags ─────────────────
+// ── merge path-derived scope/domain tokens into tags ─────────────────────────
 //
 // The stash-organization conventions require the directory (scope/domain)
 // tokens of a nested asset to reach the tags column even when the author set
 // explicit tags. Tokens are derived from the canonical ref subpath
 // (canonicalName) during recognize, independent of where the stash root is
-// anchored. Filename tokens are
-// deliberately NOT merged when explicit tags exist (they already live in the
-// FTS name column and aliases). See
-// docs/architecture/specs/stash-conventions-code-spec.md SPEC-2.
+// anchored. Filename tokens are deliberately NOT merged when explicit tags
+// exist (they already live in the FTS name column and aliases).
 
 /** Frontmatter memory doc with an explicit tags list. */
 function memoryDocWithTags(tags: string[]): string {
@@ -584,12 +576,7 @@ function sortedTags(entry: IndexDocument | undefined): string[] {
   return [...(entry?.tags ?? [])].sort();
 }
 
-/**
- * SPEC-2 introduces an exported pure helper on the metadata pass. Loaded
- * dynamically so this file still compiles (and unrelated tests still run)
- * before the implementation lands; each dependent test goes red with a clear
- * missing-export error instead of a module-load failure.
- */
+/** The exported pure helper on the metadata pass, loaded dynamically. */
 async function loadExtractDirTagsFromName(): Promise<(name: string) => string[]> {
   const mod = (await import("../src/indexer/passes/metadata")) as unknown as Record<string, unknown>;
   const fn = mod.extractDirTagsFromName;
@@ -649,8 +636,8 @@ test("recognize keeps the empty-tags path-derived fallback unchanged for nested 
 
   const stash = recognizeStashEntries(memRoot, [file]);
   expect(stash.entries).toHaveLength(1);
-  // Byte-compat with today's extractTagsFromPath fallback: directory AND
-  // filename tokens, deduped.
+  // Same as the extractTagsFromPath fallback: directory AND filename tokens,
+  // deduped.
   expect(sortedTags(stash.entries[0])).toEqual(["auth", "projecta", "tip"]);
 });
 

@@ -5,22 +5,13 @@
 /**
  * `akm lint --type workflows` structural coverage.
  *
- * Ported for workflow-format-unification: the YAML workflow *program*
- * (`.yaml`/`.yml`) this file originally covered is deleted as a distinct
- * on-disk format (spec §3). `akm commands/lint/index.ts` now collects only
- * `.md` files for the `workflows` subdir ("workflows, one markdown format
- * now, is .md") — a stray `.yaml`/`.yml` file under `workflows/` is not
- * scanned at all, so there is no lint-time equivalent of "a YAML program is
- * malformed" left to pin. Surviving coverage (clean workflow → no findings;
- * a structurally-broken workflow → a parse-stage finding; independence
- * across files in the same stash) is folded into unified-format markdown
- * fixtures below. The former compile-stage reference case is restored against
- * the unified markdown format. One case from the original file has no home
- * under the new format and is intentionally NOT re-created:
- *   - "a markdown workflow alongside a broken program: each is checked
- *     independently" — folded below as two markdown files (one clean, one
- *     broken) instead of markdown-vs-YAML, since YAML is no longer part of
- *     the surface at all.
+ * `commands/lint/index.ts` collects only `.md` files for the `workflows` subdir
+ * (workflows are one markdown format) — a stray `.yaml`/`.yml` file under
+ * `workflows/` is not scanned at all, so there is no lint-time equivalent of
+ * "a YAML program is malformed" to pin. Coverage: clean workflow → no
+ * findings; a structurally-broken workflow → a parse-stage finding; a
+ * compile-stage reference case; independence across files in the same stash
+ * (one clean markdown file, one broken).
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -54,12 +45,10 @@ afterEach(() => {
  * Compiles cleanly but emits exactly one advisory: `map.over` references
  * `params.itmes`, a param the `params:` block does not declare.
  *
- * Replaces CLEAN_WORKFLOW as the warning fixture. CLEAN_WORKFLOW used to warn
- * only because its step declared no `output:` schema — the advisory #886
- * deleted for firing on every step while guarding nothing. These tests are
- * about the warnings CHANNEL, not that warning, so they need any document
- * that compiles clean and warns once. This one describes a real typo, so it
- * will not be deleted out from under the suite the same way.
+ * These tests are about the warnings CHANNEL, not that warning, so they need
+ * any document that compiles clean and warns once. This one describes a real
+ * typo, so it will not be deleted out from under the suite the way the
+ * no-output-schema advisory was (#886).
  */
 const WARNS_WORKFLOW = [
   "---",
@@ -231,16 +220,16 @@ describe("akm lint --type workflows", () => {
   });
 });
 
-// ── Bug 9 regression: engine names that used to be decoder-only now fail lint ─
+// ── Engine names that were decoder-only now fail lint ────────────────────────
 //
 // Engine names were only bounded by the strict current frozen-plan decoder,
 // so `akm lint` passed and `workflow run` later failed with an unlocated
-// "Invalid frozen workflow plan: …". The parser now enforces the shared
+// "Invalid frozen workflow plan: …". The parser enforces the shared
 // engine-name grammar (src/workflows/resource-limits.ts) with line-anchored
 // messages, which lint surfaces as `invalid-workflow-structure` findings.
-// `gate.max_loops` and `map.concurrency` no longer have an authoring-time
-// ceiling (v096/caps): the former is unbounded, the latter clamps instead of
-// rejecting, so neither is a lint finding anymore.
+// `gate.max_loops` and `map.concurrency` have no authoring-time ceiling (the
+// former is unbounded, the latter clamps instead of rejecting), so neither is
+// a lint finding.
 describe("akm lint — decoder-only bounds now fail at lint time", () => {
   test("an engine name outside the frozen-plan grammar is a lint finding", async () => {
     const stashDir = makeTempStash();
@@ -269,15 +258,14 @@ describe("akm lint — decoder-only bounds now fail at lint time", () => {
   });
 });
 
-// ── Bug 9 regression: compile warnings surface through lint output ───────────
+// ── compile warnings surface through lint output ─────────────────────────────
 //
 // `compileWorkflowPlan` emits non-fatal warnings (reference to an undeclared
-// param; gate.max_loops on an exec step), and its doc comment claims they
-// surface in lint output — but the lint path used to drop `compiled.warnings`
-// entirely, so they only ever appeared at run start. They now travel in the
-// result's separate `warnings` channel (issue code `workflow-warning`), which
-// is exactly what `akm lint --format json` serializes (lint is a passthrough
-// output shape) — kept out of `flagged` so `--fail-on-flagged` is unaffected.
+// param; gate.max_loops on an exec step), and they must surface in lint
+// output rather than only at run start. They travel in the result's separate
+// `warnings` channel (issue code `workflow-warning`), which is exactly what
+// `akm lint --format json` serializes (lint is a passthrough output shape) —
+// kept out of `flagged` so `--fail-on-flagged` is unaffected.
 describe("akm lint — workflow compile warnings surface as warnings (non-fatal)", () => {
   test("a reference to an undeclared param is a workflow-warning too", async () => {
     const stashDir = makeTempStash();
@@ -309,8 +297,7 @@ describe("akm lint — workflow compile warnings surface as warnings (non-fatal)
     const warnings = result.warnings.filter((i) => i.issue === "workflow-warning");
     expect(warnings).toHaveLength(1);
     expect(warnings[0]!.detail).toContain('"params.itmes" references a param not declared in `params:`');
-    // Absorbed from the deleted no-output-schema test (#886): an advisory is
-    // reported as unfixed, names its file, and counts ONLY under
+    // An advisory is reported as unfixed, names its file, and counts ONLY under
     // summary.warnings — never flagged, so --fail-on-flagged stays unaffected.
     expect(warnings[0]).toMatchObject({ issue: "workflow-warning", fixed: false });
     expect(warnings[0]!.file).toContain("typo-param.md");
@@ -342,12 +329,11 @@ describe("akm lint — workflow compile warnings surface as warnings (non-fatal)
 
 // ── Line anchors: lint findings carry the source line ────────────────────────
 //
-// `WorkflowError` has always been line-anchored (`workflow create` renders
-// `path:line — message`), but `akm lint` DROPPED `err.line`, so an author
-// linting a 300-line workflow got a message with no location. `LintIssue` /
-// `Diagnostic` now carry an OPTIONAL `line`, populated from the workflow
-// frontend and rendered by both the human formatter (`file:line`) and the JSON
-// output. Non-workflow lint sources have no line and are unchanged.
+// `WorkflowError` is line-anchored (`workflow create` renders
+// `path:line — message`), and `LintIssue` / `Diagnostic` carry an OPTIONAL
+// `line`, populated from the workflow frontend and rendered by both the human
+// formatter (`file:line`) and the JSON output, so an author linting a 300-line
+// workflow gets a location. Non-workflow lint sources have no line.
 describe("akm lint — workflow findings carry a line number", () => {
   /** A workflow whose ONLY error is on a known line (`gate:`, line 8). */
   const BROKEN_AT_LINE_8 = [

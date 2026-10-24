@@ -107,7 +107,7 @@ describe("createWorkflowAsset — clean stash (issue #157)", () => {
     const srcDir = makeTempDir("akm-issue157-src-");
 
     const srcPath = path.join(srcDir, "release.md");
-    // Unified-format fixture (frontmatter graph + `## <id>` body — spec §2.2).
+    // Unified-format fixture (frontmatter graph + `## <id>` body).
     const content = `---
 type: workflow
 description: A release workflow

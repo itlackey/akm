@@ -28,7 +28,7 @@ function createProposal(stashDir: string, input: CreateProposalInput) {
   });
 }
 
-/** The durable `proposals.ref` item_ref (WI-8.5a): `<bundle>//<conceptId>`. */
+/** The durable `proposals.ref` item_ref: `<bundle>//<conceptId>`. */
 function durableRef(stashDir: string, type: string, name: string): string {
   const bundleId = bundleIdFor(stashDir);
   return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
@@ -84,11 +84,10 @@ describe("createProposal validation", () => {
       caught = err as { code?: string; message?: string };
     }
     expect(caught?.code).toBe("INVALID_PROPOSAL");
-    // Post-Chunk-5/8 ref-grammar flip: `parseRefInput` is new-grammar only, so
-    // a legacy `type:name` conceptId (`bogusType:foo` — no `<stash-subdir>/`
-    // segment) fails at the parse boundary with a not-found ("has no known
-    // asset-type prefix"), which createProposal wraps as INVALID_PROPOSAL. Same
-    // rejection code as before, new-grammar message.
+    // `parseRefInput` accepts the conceptId grammar only, so a legacy `type:name`
+    // conceptId (`bogusType:foo` — no `<stash-subdir>/` segment) fails at the parse
+    // boundary with a not-found ("has no known asset-type prefix"), which
+    // createProposal wraps as INVALID_PROPOSAL.
     expect(caught?.message).toMatch(/has no known asset-type prefix/i);
   });
 
@@ -152,12 +151,9 @@ describe("createProposal validation", () => {
     });
   });
 
-  // Ported for workflow-format-unification: the old grammar's authoring
-  // mistake ("numbered step headings", e.g. "## Step 1: Validate inputs")
-  // has no equivalent under the unified grammar's single rule — every
-  // level-2 heading must be `## <declared-step-id>` exactly (spec §2.2 body
-  // rule 1). A heading that doesn't match a declared step id is now
-  // "Unexpected level-2 heading ...", pinned below with the new parser's
+  // Every level-2 heading must be `## <declared-step-id>` exactly. A heading
+  // that doesn't match a declared step id (e.g. a numbered "## Step 1: Validate
+  // inputs") is "Unexpected level-2 heading ...", pinned below with the parser's
   // real message rather than an invented one.
   test("rejects a workflow whose body heading doesn't match a declared step id before queueing", () => {
     const stash = makeStashDir();

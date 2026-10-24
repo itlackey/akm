@@ -7,17 +7,8 @@ import { parseWorkflowParameterFlags } from "../../src/commands/workflow-cli";
 import { materializeWorkflowParameterFlags } from "../../src/workflows/ir/params";
 import type { WorkflowPlan as WorkflowPlanGraph } from "../../src/workflows/plan";
 
-// F-A11 (docs/plans/specs/p3a-plan-v5-child-freeze.md §6): mechanical value
-// bump only, no assertion in this file changes. `parameterPlan()` is
-// explicitly typed as WorkflowPlan, so — unlike the two `unknown`-fed
-// fixture builders F-A9/F-A10 flip — the literal itself is type-checked
-// against `irVersion`'s still-literal-4 field type today, hence the pin
-// below. materializeWorkflowParameterFlags/contractFromPlan
-// (src/workflows/ir/params.ts:50-57) read only `params`/`paramSchemas` and
-// never inspect `irVersion` at runtime, so this flip has zero behavioral
-// effect — it exists solely so Implement's type narrowing to literal 5 does
-// not turn this pre-existing, not-in-§6-at-the-time file into an unauthorized
-// edit for the Implement lane to make.
+// materializeWorkflowParameterFlags/contractFromPlan read only
+// `params`/`paramSchemas` and never inspect `irVersion` at runtime.
 function parameterPlan(): WorkflowPlanGraph {
   return {
     irVersion: 5,

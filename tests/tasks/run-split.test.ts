@@ -3,44 +3,29 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * STRUCTURAL contract for P1b's `src/tasks/run/**` split (spec
- * docs/plans/specs/p1b-model-extraction.md §5.1, §9 "Structure"). Sibling to
- * `tests/tasks/prepare-split.test.ts` (Lane B's caller-shape parity contract)
- * but for Lane C, and narrower in scope on purpose: Lane C's *behavior* is
- * already pinned exhaustively elsewhere — the flipped P0 characterization
- * files (tasks-provenance-characterization.test.ts,
- * tasks-legacy-vocabulary-characterization.test.ts), the two P1b files
- * (tasks-provenance-context.test.ts, tasks-result-vocabulary.test.ts), and
- * cli-errors.test.ts. What NONE of those files pins is whether
- * `src/tasks/run/**` actually holds the real logic, independent of any other
- * module — an implementation that lands every authorized behavior flip
- * without the split modules actually exporting real runtime logic passes
- * every one of them. This file exists to close exactly that gap:
+ * STRUCTURAL contract for the `src/tasks/run/**` split. Sibling to
+ * `tests/tasks/prepare-split.test.ts` (the caller-shape parity contract), but
+ * narrower in scope on purpose: the *behavior* of `src/tasks/run/**` is pinned
+ * exhaustively elsewhere (the tasks provenance, result-vocabulary and
+ * cli-errors tests). What none of those pins is whether `src/tasks/run/**`
+ * actually holds the real logic, independent of any other module — an
+ * implementation that lands every authorized behavior without the split
+ * modules actually exporting real runtime logic passes every one of them. This
+ * file exists to close exactly that gap:
  *
- *   (a) each spec §5.1 module under src/tasks/run/** loads and exports its
- *       named responsibility: run-task.ts -> runTask, attempt-lifecycle.ts ->
+ *   (a) each module under src/tasks/run/** loads and exports its named
+ *       responsibility: run-task.ts -> runTask, attempt-lifecycle.ts ->
  *       recordTaskAttemptFailure, task-history.ts -> readTaskHistory,
  *       task-result.ts -> exitCodeForStatus, task-log.ts -> scrubDbLines,
- *       provenance.ts -> a context factory matching D5's construction. The
- *       remaining four modules (load-task.ts, run-native-task.ts,
- *       run-workflow-task.ts, run-command-task.ts) hold helpers with no
- *       spec-committed exported name, so pinning one here would force an
- *       implementation choice the spec never made; they get a weaker but
- *       still real "exists and exports actual runtime logic, not an empty
- *       stub" check instead.
- *   (b) `src/tasks/runner.ts` — the 1177-line-at-head module `src/tasks/run/**`
- *       was split out of, kept alive afterward only as a re-export compat
- *       shim (spec §9: "runner.ts contains no logic — only re-exports") —
- *       does not exist. P4 (docs/plans/specs/p4-deletions-closeout.md
- *       §3.2.7, row B-26, F-A2.16) deleted it once every caller was rewired
- *       to import `src/tasks/run/**` directly; its own former "no function/
- *       class declarations of its own" AST scan and the "no file under
- *       src/tasks/run/** imports runner.ts" one-way-rule scan (spec §5.1)
- *       both collapse into this one, strictly stronger claim — a module that
- *       does not exist cannot be imported by anything that still compiles.
- *
- * Every module below is real, shipped production code (no longer test-first
- * red-phase authoring) — imported directly, by literal path, typed for real.
+ *       provenance.ts -> a context factory. The remaining four modules
+ *       (load-task.ts, run-native-task.ts, run-workflow-task.ts,
+ *       run-command-task.ts) hold helpers with no committed exported name, so
+ *       pinning one here would force an implementation choice; they get a
+ *       weaker but still real "exists and exports actual runtime logic, not an
+ *       empty stub" check instead.
+ *   (b) `src/tasks/runner.ts` — the module `src/tasks/run/**` was split out of
+ *       — does not exist. A module that does not exist cannot be imported by
+ *       anything that still compiles.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -58,7 +43,7 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 const RUNNER_FILE = path.join(ROOT, "src/tasks/runner.ts");
 const RUN_DIR = path.join(ROOT, "src/tasks/run");
 
-// ── (a) each §5.1 module loads and exports its named responsibility ────────
+// ── (a) each module loads and exports its named responsibility ─────────────
 
 describe("src/tasks/run/** — each named module exports its spec §5.1 responsibility", () => {
   test("run/run-task.ts exports runTask", () => {
@@ -89,13 +74,12 @@ describe("src/tasks/run/** — each named module exports its spec §5.1 responsi
 
 describe("src/tasks/run/** — the remaining §5.1 modules export real runtime logic, not an empty stub (spec §5.1)", () => {
   // load-task.ts / run-native-task.ts / run-workflow-task.ts /
-  // run-command-task.ts hold helpers with no spec-committed exported name
+  // run-command-task.ts hold helpers with no committed exported name
   // (loadPreparedTask-shaped orchestration; shellCommand/
   // resolveLeadingBareAkmCommand/quoteShellArgument; runWorkflowTask/
   // mapWorkflowStatus/renderWorkflowLog; runPreparedCommandTask/
-  // renderPromptLog). This checks the weaker, still-real thing the spec DOES
-  // commit to: the file exists and exports at least one RUNTIME (non
-  // type-only) declaration.
+  // renderPromptLog). This checks the weaker, still-real thing: the file exists
+  // and exports at least one RUNTIME (non type-only) declaration.
   const MODULE_FILES: ReadonlyArray<readonly [label: string, filePath: string]> = [
     ["run/load-task.ts", path.join(RUN_DIR, "load-task.ts")],
     ["run/run-native-task.ts", path.join(RUN_DIR, "run-native-task.ts")],

@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * WI-A gate — the reference `okf` adapter
- * (`src/core/adapter/adapters/okf-adapter.ts`), implementing
- * `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §5 / §5.1 / §9.
+ * Gate for the reference `okf` adapter
+ * (`src/core/adapter/adapters/okf-adapter.ts`).
  *
  * Recognition is driven off a real, conformant OKF fixture bundle
  * (`tests/fixtures/bundles/okf-sample/`) via the core `buildFileContext`
@@ -77,7 +76,7 @@ describe("okf adapter — metadata", () => {
   });
 });
 
-// ── recognize: `type` from frontmatter (§5.1 BINDING) ────────────────────────
+// ── recognize: `type` from frontmatter ───────────────────────────────────────
 
 describe("okf adapter — recognize reads `type` from frontmatter", () => {
   test("free-form OKF type is read verbatim from frontmatter", () => {
@@ -216,7 +215,7 @@ describe("okf adapter — v0.2 `updated` precedence: generated.at over legacy ti
   });
 });
 
-// ── recognize: v0.2 trust/provenance/lifecycle families (§0.1, okf-support.md v0.2 note) ─
+// ── recognize: v0.2 trust/provenance/lifecycle families (okf-support.md v0.2 note) ─
 
 describe("okf adapter — v0.2 provenance family: generated/verified/sources land under the NAMESPACED `provenance` field (D1.3 collision avoidance)", () => {
   test("generated {by, at} populates provenance.generatedBy / provenance.generatedAt", () => {
@@ -307,9 +306,9 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
       },
       { resource: "gs://acme-bucket/q3/events.parquet" },
     ]);
-    // The PRE-EXISTING AKM-native `sources: string[]` field (wiki citations, D1.3
-    // collision) must NEVER be populated by the okf adapter — it is a completely
-    // different field from `provenance.sources`.
+    // The PRE-EXISTING AKM-native `sources: string[]` field (wiki citations) must
+    // NEVER be populated by the okf adapter — it is a completely different field
+    // from `provenance.sources`.
     expect(doc?.sources).toBeUndefined();
   });
 
@@ -449,7 +448,7 @@ describe("okf adapter — v0.2 provenance family: generated/verified/sources lan
   });
 });
 
-// ── links: both OKF forms (§9) ───────────────────────────────────────────────
+// ── links: both OKF forms ────────────────────────────────────────────────────
 
 describe("okf adapter — OKF link resolution, both forms (§9)", () => {
   test("`/`-rooted and relative links both resolve to component-root-relative conceptIds", () => {
@@ -520,7 +519,7 @@ describe("okf adapter — placement / probe", () => {
   });
 });
 
-// ── validate: LENIENT (§5) ───────────────────────────────────────────────────
+// ── validate: LENIENT ────────────────────────────────────────────────────────
 
 function change(relPath: string, after: string): FileChange {
   return { path: relPath, op: "update", after };
@@ -641,16 +640,13 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
   });
 });
 
-// ── Format-family goldens (#730 D3.3) ───────────────────────────────────────
+// ── Format-family goldens (#730) ────────────────────────────────────────────
 //
-// OKF was the only BUILTIN_ADAPTERS entry without a
-// tests/fixtures/format-family-goldens/<family>/ directory (scripts/lint-
-// goldens-presence.ts triage). Mirrors the shape the other nine families use
+// Mirrors the shape the other format families use
 // (recognition/placement/renderer/lint.json), driven off the SAME frozen
-// tests/fixtures/bundles/okf-sample/ fixture the tests above already use —
-// unlike those nine (authored ahead of their adapters as spec-authored
-// targets), this golden captures the OKF adapter's REAL, already-shipped
-// output (`specificationGolden: false`, a real `capturedAtHead`).
+// tests/fixtures/bundles/okf-sample/ fixture the tests above use. This golden
+// captures the OKF adapter's REAL output (`specificationGolden: false`, a real
+// `capturedAtHead`).
 
 describe("okf adapter — recognition golden", () => {
   const golden = loadGolden("recognition");

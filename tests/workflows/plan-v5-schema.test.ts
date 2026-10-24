@@ -38,7 +38,7 @@ function freshUnitPlan(sourcePath: string) {
   return { ...JSON.parse(canonicalPlanJson(freezeWorkflow(ONE_STEP_MD, sourcePath))), irVersion: 5 };
 }
 
-/** §3.5's exact `contentHash` formula. */
+/** The exact `contentHash` formula. */
 function childContentHash(fields: {
   ref: string;
   planHash: string;
@@ -60,7 +60,7 @@ function childContentHash(fields: {
     .digest("hex");
 }
 
-/** A structurally-correct `FrozenChildWorkflowTarget` (§3.5), as plain JSON. */
+/** A structurally-correct `FrozenChildWorkflowTarget`, as plain JSON. */
 function buildChildTarget(options: {
   ref?: string;
   planHash: string;

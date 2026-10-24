@@ -18,8 +18,8 @@ import type { SummaryJudge } from "../../src/workflows/validate-summary";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 /**
- * Process-lifecycle disposal (owner finding 4 — a successful engine-driven run
- * with LIVE agent dispatch hung the CLI until the 10-minute tool timeout).
+ * Process-lifecycle disposal: a successful engine-driven run with LIVE agent
+ * dispatch hung the CLI until the 10-minute tool timeout.
  *
  * Root cause: the SDK dispatch path caches `opencode serve` CHILD PROCESSES in
  * a per-env registry for reuse across units. Each live child is an OS handle
@@ -58,7 +58,7 @@ function writeProgram(name: string, markdown: string): void {
 }
 
 // Unified-format one-step workflow (frontmatter graph + `## <id>` body; gate
-// rubric in the body's `### gate`, control key in frontmatter — spec §2.2/§2.4).
+// rubric in the body's `### gate`, control key in frontmatter).
 const oneStep = (_name: string, withGate = false): string =>
   [
     "---",
@@ -326,9 +326,9 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
 // No `dispatcher` seam here — the run goes through the REAL native-executor →
 // runner-dispatch → runOpencodeSdk → getOrStartServer path, backed by a fake
 // `createOpencode` factory (there is no `opencode` binary in the sandbox). The
-// fake server's `close()` is a spy: before the fix the engine never drains, so
-// the server stays open past the run; after the fix the engine `finally` closes
-// it the moment the run resolves — the exact hang the owner observed, headless.
+// fake server's `close()` is a spy: without the drain the server would stay
+// open past the run; with it the engine `finally` closes it the moment the run
+// resolves — the exact hang observed, headless.
 
 describe("engine run via the SDK runner closes its server on completion (end-to-end)", () => {
   afterEach(() => {
