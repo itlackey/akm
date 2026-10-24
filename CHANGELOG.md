@@ -24,6 +24,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm search --detail normal` includes `ref` on local hits, as `brief` already
   did. `normal` was the only level that showed a hit without the ref `akm show`
   needs.
+- Env and secret files are indexed even when the bundle's `.gitignore` hides them
+  (`akm bundle create` ignores `env/` and `secrets/`), so `akm show env/<name>`
+  and `akm search --type env` work in a default bundle. The indexer lists the
+  git-ignored files under those two directories in addition to the tracked and
+  untracked ones; values still never reach the index.
 
 ## [0.10.261013] - 2026-10-23
 
