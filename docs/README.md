@@ -66,7 +66,7 @@ Working on akm itself, not just using it.
 - [Website Sources](reference/website-sources.md) -- The pluggable fetcher API for URL-based knowledge reads
 - [Data & Telemetry](reference/data-and-telemetry.md) -- Exactly what akm reads and writes on your machine (no remote telemetry)
 - [Architecture Overview](architecture/architecture.md) -- How akm's bundles, cache, index, and registries fit together
-- [Core Principles](architecture/akm-core-principles.md) -- Design principles and constraints
+- [Core Principles](architecture/akm-core-principles.md) -- How the code, tests and docs in this repo are built: the engineering rules and what enforces each
 - [Adapters](architecture/adapters.md) -- How akm picks an adapter, indexes, validates, and writes into a bundle
 - [The Workflow Engine](architecture/workflow-engine.md) -- How a frozen plan is stored, dispatched, and resumed without replaying completed units
 - [The Improvement Loop](architecture/improvement.md) -- How a feedback signal becomes a ranking change, and how evidence becomes a proposal
@@ -81,8 +81,7 @@ AKM retrieves every supported capability type. It directly orchestrates
 defined execution surfaces such as workflows, agent dispatch, tasks, and
 guarded subprocess injection. It does not blindly execute arbitrary indexed
 content merely because that content appears in search results. See
-[Core Principles](architecture/akm-core-principles.md) for the full boundary,
-and [The Improvement Loop](architecture/improvement.md) for how that boundary
+[The Improvement Loop](architecture/improvement.md) for how that boundary
 applies to akm's own self-generated changes.
 
 ## Posts

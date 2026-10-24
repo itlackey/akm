@@ -3,7 +3,7 @@
 How akm is built: system overview, normative specs, and subsystem internals.
 
 - [Architecture](architecture.md) -- How akm's bundles, cache, index, and registries fit together
-- [Core Principles](akm-core-principles.md) -- Design principles and constraints
+- [Core Principles](akm-core-principles.md) -- How the code, tests and docs in this repo are built: the engineering rules and what enforces each
 - [Adapters](adapters.md) -- The `BundleAdapter` contract: what a bundle's files *are*, how they're indexed, linted, and written
 - [Architecture: The Workflow Engine](workflow-engine.md) -- How a workflow compiles to a frozen plan, persists run/unit state, dispatches work, and resumes without replaying completed steps
 - [Architecture: The Improvement Loop](improvement.md) -- Purpose and boundary of the improvement loop

@@ -11,9 +11,7 @@ interruption without replaying completed units.
 
 Workflows are one of the execution surfaces AKM directly orchestrates: AKM
 retrieves every supported capability type, but a workflow's declared steps —
-not arbitrary indexed content — are what actually gets dispatched. See
-[Architecture: Core Principles](https://github.com/itlackey/akm/blob/main/docs/architecture/akm-core-principles.md) for
-that boundary.
+not arbitrary indexed content — are what actually gets dispatched.
 
 This page is a short map. The full contract now lives across four pages,
 split by what you're doing:
