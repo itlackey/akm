@@ -38,14 +38,9 @@ import { appendEvent, type EventsContext } from "../../core/events";
 import { escapeJsonStringControls, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 import { info, warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import {
-  assertRunnerCredentials,
-  type RunExecutionOptions,
-  runExecution,
-} from "../../integrations/agent/runner-dispatch";
+import { type RunExecutionOptions, runExecution } from "../../integrations/agent/runner-dispatch";
 import {
   NEIGHBOUR_EXCERPT_CHARS,
   NEIGHBOUR_NOTE_COUNT,
@@ -123,12 +118,9 @@ export interface JudgmentVerdict {
   reason: string;
 }
 
-/** Test seams for the judgment dispatch (LLM, agent and SDK transports). */
+/** Test seams for the judgment dispatch (chat, harness and runtime transports). */
 export interface JudgmentSeams {
-  chat?: (
-    config: Extract<RunnerSpec, { kind: "llm" }>,
-    messages: Parameters<NonNullable<RunExecutionOptions["chat"]>>[1],
-  ) => Promise<string>;
+  chat?: RunExecutionOptions["chat"];
   runAgentFn?: NonNullable<RunExecutionOptions["runAgent"]>;
   runSdkFn?: NonNullable<RunExecutionOptions["runSdk"]>;
 }
@@ -345,24 +337,14 @@ async function dispatchJudgment(
 ): Promise<{ verdict: JudgmentVerdict | null; notices: readonly Readonly<LoweringNotice>[]; error?: string }> {
   let notices: readonly Readonly<LoweringNotice>[] = [];
   try {
-    // Model work is bounded on every runner kind: one with no timeout of its own gets the default.
     // The judgment runs under the model-work tool policy.
-    const prepared = resolveExecution({
-      content: prompt,
-      runner,
-      current: Object.hasOwn(runner, "timeoutMs") ? {} : { timeout: DEFAULT_LLM_TIMEOUT_MS },
-      modelWork: true,
-    });
+    const prepared = resolveExecution({ content: prompt, runner, modelWork: true });
     const lowered = buildExecution(prepared.request, prepared.runner);
     notices = lowered.notices;
-    const chat = seams.chat;
-    const llmRunner = lowered.runner.kind === "llm" ? lowered.runner : undefined;
     const result = await runExecution(lowered, {
       ...(seams.runAgentFn ? { runAgent: seams.runAgentFn } : {}),
       ...(seams.runSdkFn ? { runSdk: seams.runSdkFn } : {}),
-      ...(chat && llmRunner
-        ? { chat: async (connection, messages) => chat({ ...llmRunner, connection }, messages) }
-        : {}),
+      ...(seams.chat ? { chat: seams.chat } : {}),
     });
     if (!result.ok) return { verdict: null, notices, error: result.error ?? result.reason ?? "unknown error" };
     return { verdict: parseJudgmentVerdict(result.stdout), notices };
@@ -631,13 +613,13 @@ async function drainPending(
   }
 
   if (opts.judgment && result.deferred.some((d) => d.reason === "needs-judgment")) {
-    // Symbolic credentials, and the runner's model-work tool policy, are checked before any gate, reject or promote.
+    // The runner's model-work tool policy is checked before any gate, reject or promote.
     const prepared = resolveExecution({
       content: "Validate the selected proposal judgment runner before mutation.",
       runner: opts.judgment,
       modelWork: true,
     });
-    assertRunnerCredentials(buildExecution(prepared.request, prepared.runner).runner);
+    buildExecution(prepared.request, prepared.runner);
   }
 
   for (const id of empties) {

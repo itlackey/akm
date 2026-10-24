@@ -156,11 +156,14 @@ function recordDispatchUsage(execution: BuiltExecution, result: AgentRunResult):
   });
 }
 
-/** The chat connection a connection runner stands for: its key read now, and the request's portable settings on top. */
-function chatConnection(
+/**
+ * The chat connection a connection runner stands for: its key read now, and the
+ * request's portable settings on top. The one place a connection's key is read for a call.
+ */
+export function materializeConnection(
   runner: ConnectionRunner,
-  inference: LlmInference | null | undefined,
-  envSource: NodeJS.ProcessEnv,
+  inference?: LlmInference | null,
+  envSource: NodeJS.ProcessEnv = process.env,
 ): ChatCompletionConfig {
   const apiKey = resolveApiKey(runner.apiKey, runner.name, envSource);
   return {
@@ -195,7 +198,7 @@ async function dispatchRunner(
   if (runner.kind === "harness") {
     result = await (seams.runAgent ?? runAgent)(profile ?? harnessProfile(runner), prompt, opts);
   } else {
-    const connection = chatConnection(runner, inference, envSource);
+    const connection = materializeConnection(runner, inference, envSource);
     if (connection.apiKey) secrets.push(connection.apiKey);
     result = llm
       ? await llm(connection, opts)
@@ -317,14 +320,14 @@ async function runBuiltExecution(
 export interface InteractiveAgentInvocationOptions {
   readonly config: AkmConfig;
   /** The harness (or connection) to launch; omitted means the default. */
-  readonly name?: string;
+  readonly engine?: string;
   readonly timeoutMs?: number;
   readonly cwd?: string;
 }
 
 export interface InteractiveAgentInvocationResult {
   /** What was launched: the name of the harness or connection. */
-  readonly name: string;
+  readonly engine: string;
   readonly result: AgentRunResult;
 }
 
@@ -335,7 +338,7 @@ export async function executeInteractiveAgentInvocation(
 ): Promise<InteractiveAgentInvocationResult> {
   const runner = resolveTarget({
     config: input.config,
-    layers: input.name === undefined ? [] : [{ engine: input.name }],
+    layers: input.engine === undefined ? [] : [{ engine: input.engine }],
   });
   const opts: RunAgentOptions = {
     stdio: runner.kind === "connection" ? "captured" : "interactive",
@@ -347,7 +350,7 @@ export async function executeInteractiveAgentInvocation(
         ? { cwd: runner.workspace }
         : {}),
   };
-  return { name: runner.name, result: await dispatchRunner({ runner }, "", opts, seams) };
+  return { engine: runner.name, result: await dispatchRunner({ runner }, "", opts, seams) };
 }
 
 /**

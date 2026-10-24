@@ -36,15 +36,14 @@ import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString } from "../../../core/common";
 import { concurrentMap } from "../../../core/concurrent";
-import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
+import type { AkmConfig } from "../../../core/config/config";
 import type { ConsolidatePairJudgeLabel, ConsolidatePairPassResult } from "../../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../../core/parse";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { warnOnce } from "../../../core/warn";
 import { sameScope, scopeFromFrontmatter } from "../../../indexer/passes/metadata";
-import { type RunnerSpec, runnerLlmConnection } from "../../../integrations/agent/runner";
-import { assertRunnerCredentials } from "../../../integrations/agent/runner-dispatch";
-import type { ChatCompletionOptions, ChatMessage } from "../../../llm/client";
+import type { RunnerSpec } from "../../../integrations/agent/runner";
+import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../../../llm/client";
 import { runGit } from "../../../sources/providers/git-install";
 import type { Database } from "../../../storage/database";
 import {
@@ -635,7 +634,7 @@ export function decideRetirement(
 
 /** Transport override for tests (matches `CallStructuredRequest["chat"]`); production callers leave it unset. */
 export type PairJudgeChat = (
-  connection: LlmConnectionConfig,
+  connection: ChatCompletionConfig,
   messages: ChatMessage[],
   options?: ChatCompletionOptions,
 ) => Promise<string>;
@@ -1051,16 +1050,10 @@ export async function runConsolidatePairPass(
   // one would mean the pair is never retried.
   const failedInitiators = new Set<string>();
   if (judgeable.length > 0) {
-    // The promote pass validates opts.llmRunner's credentials once, but only
-    // when it has memories to dispatch — the pair pass can still have work
-    // when that pool is empty, so it validates independently before its
-    // first real dispatch. A test-injected chat seam bypasses the transport
-    // entirely and needs no credential.
-    if (!seams.chat) assertRunnerCredentials(llmRunner);
     const results = await concurrentMap(
       judgeable,
       (candidate) => judgeOne(ctx, candidate),
-      runnerLlmConnection(llmRunner)?.concurrency ?? 1,
+      (llmRunner.kind === "connection" ? llmRunner.concurrency : undefined) ?? 1,
       { signal: opts.signal },
     );
     results.forEach((r, idx) => {

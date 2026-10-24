@@ -9,19 +9,20 @@
  * A stage keeps only its prompt, its parse shape and its target rule.
  */
 
-import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import type { EventsContext } from "../../core/events";
+import { thinkingSetting } from "../../core/llm-inference";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { defaultFeedback } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import type { RejectedProposalContext } from "../../integrations/agent/prompts";
-import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
+import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { AgentRunResult } from "../../integrations/agent/spawn";
-import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
+import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import type { LlmFeatureKey } from "../../llm/feature-gate";
 import {
   type CallStructuredRequest,
@@ -78,7 +79,6 @@ export function stageRunner(
   if (Object.hasOwn(frozen, "llmRunner")) return frozen.llmRunner ?? undefined;
   const resolved = resolveImproveExecution({
     config,
-    profile,
     process: getImproveProcessConfig(processName, profile),
     processName,
   });
@@ -178,9 +178,7 @@ export async function callStageOnce(call: StageLlmCall): Promise<StageLlmOutcome
     // Usage is credited to the engine that serves the call, which for a gate's own judge
     // (#1011) is not the stage's planned engine.
     const stage = currentLlmStage();
-    const raw = await (stage === undefined
-      ? dispatch()
-      : withLlmStage(stage, dispatch, { engine: call.runner.engine }));
+    const raw = await (stage === undefined ? dispatch() : withLlmStage(stage, dispatch, { engine: call.runner.name }));
     return raw === undefined ? (failure ?? { ok: false, reason: "error" }) : { ok: true, raw };
   } catch (err) {
     if (err instanceof ConfigError) throw err;
@@ -203,7 +201,7 @@ export function attributeStage<T>(
   process: keyof typeof STAGE_LABELS,
   fn: () => T,
 ): T {
-  return withLlmStage(STAGE_LABELS[process], fn, { engine: plan?.processes[process].runner?.engine, process });
+  return withLlmStage(STAGE_LABELS[process], fn, { engine: plan?.processes[process].runner?.name, process });
 }
 
 /** How many prior rejected proposals are shown to the model as "don't repeat this". */
@@ -303,7 +301,7 @@ export interface QualityJudgeResult {
 }
 
 type QualityJudgeChat = (
-  connection: LlmConnectionConfig,
+  connection: ChatCompletionConfig,
   messages: ChatMessage[],
   options?: ChatCompletionOptions,
 ) => Promise<string>;
@@ -326,17 +324,16 @@ export function resolveQualityGateJudge(
   const process = profile?.processes?.[processName];
   const gate = process?.qualityGate;
   if (!gate || gate.enabled === false) return undefined;
-  if (!["engine", "model", "timeoutMs", "llm"].some((key) => Object.hasOwn(gate, key))) return undefined;
+  if (!["connection", "harness", "model", "timeoutMs", "llm"].some((key) => Object.hasOwn(gate, key))) return undefined;
   const resolved = resolveImproveExecution({
     config,
     processName: `${processName}-quality-judge`,
-    ...(profile ? { profile } : {}),
     ...(process ? { process } : {}),
     current: gate,
   });
   if (!resolved) {
     throw new ConfigError(
-      `The ${processName} quality gate's judge has no engine. Set processes.${processName}.qualityGate.engine.`,
+      `The ${processName} quality gate's judge has no connection or harness. Set processes.${processName}.qualityGate.connection.`,
       "INVALID_CONFIG_FILE",
     );
   }
@@ -619,8 +616,8 @@ async function runQualityJudge(
     system: "Return only valid JSON. No prose.",
     prompt,
     request: {
-      // Off unless the judge's own engine enables thinking (a slower, separate judge engine, #1011).
-      enableThinking: runnerLlmConnection(runner)?.enableThinking === true,
+      // Off unless the judge's own connection enables thinking (a slower, separate judge, #1011).
+      enableThinking: runner.kind === "connection" && thinkingSetting(runner.request) === true,
       temperature: 0,
       responseSchema: judgeResponseSchema(keys),
       ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
@@ -667,8 +664,8 @@ export function runReflectQualityJudge(
   chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  // A judge on an agent engine gets the tool rules; the runner is the frozen one or none.
-  const tools = options.llmRunner && options.llmRunner.kind !== "llm" ? { ref: options.ref } : undefined;
+  // A judge on a harness gets the tool rules; the runner is the frozen one or none.
+  const tools = options.llmRunner && options.llmRunner.kind !== "connection" ? { ref: options.ref } : undefined;
   const prompt = buildReflectJudgePrompt(candidateContent, sourceContent, feedback, tools);
   return runQualityJudge("proposal_quality_gate", config, prompt, REFLECT_JUDGE_CRITERIA, chat, options);
 }

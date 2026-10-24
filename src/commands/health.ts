@@ -7,6 +7,7 @@ import path from "node:path";
 import { daysToMs, resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
+import { thinkingSetting } from "../core/llm-inference";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
 import {
@@ -346,8 +347,8 @@ function gatherEgressConfigPhase(): EgressConfigPhase {
   try {
     const config = loadConfig();
     egressConfigView = config as EgressConfigView;
-    thinkingOffEngines = Object.entries(config.engines ?? {})
-      .filter(([, engine]) => engine.kind === "llm" && engine.enableThinking === false)
+    thinkingOffEngines = Object.entries(config.connections ?? {})
+      .filter(([, connection]) => thinkingSetting(connection) === false)
       .map(([name]) => name);
   } catch {
     // fall through with undefined/empty

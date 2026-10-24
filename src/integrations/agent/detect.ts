@@ -136,15 +136,14 @@ export function _setAgentDetectForTests(fakes?: AgentDetectOverridesForTests): v
 export function detectAgentCliProfiles(agent?: AkmConfig, whichFn: WhichFn = defaultWhich): AgentDetectionResult[] {
   if (detectOverrides?.detectAgentCliProfiles) return detectOverrides.detectAgentCliProfiles(agent, whichFn);
   const profilesByName = new Map(Object.values(listBuiltinAgentProfiles()).map((profile) => [profile.name, profile]));
-  for (const [name, engine] of Object.entries(agent?.engines ?? {})) {
-    // The embedded OpenCode has no CLI to find.
-    if (engine.kind !== "agent" || engine.platform === "opencode-sdk") continue;
-    const builtin = getBuiltinAgentProfile(engine.platform);
+  for (const [name, harness] of Object.entries(agent?.harnesses ?? {})) {
+    const platform = harness.platform ?? name;
+    const builtin = getBuiltinAgentProfile(platform);
     profilesByName.set(name, {
       name,
-      platform: engine.platform,
-      bin: engine.bin ?? builtin?.bin ?? engine.platform,
-      args: engine.args ?? builtin?.args ?? [],
+      platform,
+      bin: harness.bin ?? builtin?.bin ?? platform,
+      args: harness.args ?? builtin?.args ?? [],
       stdio: "captured",
       envPassthrough: builtin?.envPassthrough ?? [],
       parseOutput: "text",

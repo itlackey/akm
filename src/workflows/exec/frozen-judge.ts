@@ -117,7 +117,7 @@ export function frozenSummaryJudge(
     // injected dispatcher is not trusted to supply prompt/body-free messages.
     warnLoweringNotices(lowered.notices);
     if (!outcome.ok) {
-      throw new Error(outcome.error || `Verification engine "${target.request.engine.name}" failed.`);
+      throw new Error(outcome.error || `Verification judge "${target.request.target.name}" failed.`);
     }
     return outcome.text ?? "";
   };

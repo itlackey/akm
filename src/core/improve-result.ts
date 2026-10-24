@@ -212,7 +212,6 @@ function validateProactivePlan(value: unknown): void {
 function validateProcessRoutingRows(value: unknown): void {
   if (!Array.isArray(value)) fail("plan.processes must be an array");
   const canonicalNames: readonly string[] = IMPROVE_PROCESS_NAMES;
-  const engineKinds = new Set(["llm", "agent", "sdk"]);
   const seen = new Set<string>();
   for (const row of value) {
     if (!isRecord(row)) fail("plan.processes entries must be objects");
@@ -241,8 +240,9 @@ function validateProcessRoutingRows(value: unknown): void {
     if (typeof row.enabled !== "boolean") fail("plan.processes.enabled must be a boolean");
     if (row.engine !== undefined && typeof row.engine !== "string") fail("plan.processes.engine must be a string");
     if (row.model !== undefined && typeof row.model !== "string") fail("plan.processes.model must be a string");
-    if (row.engineKind !== undefined && (typeof row.engineKind !== "string" || !engineKinds.has(row.engineKind))) {
-      fail("plan.processes.engineKind is invalid");
+    // "connection" or "harness" now; a run recorded by an earlier release said "llm", "agent" or "sdk".
+    if (row.engineKind !== undefined && typeof row.engineKind !== "string") {
+      fail("plan.processes.engineKind must be a string");
     }
     validateLoweringNotices(row.notices);
     if (row.unavailable !== undefined) {

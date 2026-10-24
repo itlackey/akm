@@ -64,8 +64,7 @@ import { warn } from "../../core/warn";
 import { beginWriteProvenance, recordWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
 import { type WriteTargetSource, writeAssetToSource } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
-import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
+import type { RunnerSpec } from "../../integrations/agent/runner";
 import { isProcessEnabled } from "../../llm/feature-gate";
 import { type ResolvedIndexPassExecution, resolveIndexPassExecution } from "../../llm/index-passes";
 import type { DerivedMemoryDraft, MemoryInferNoChange, MemoryInferTelemetry } from "../../llm/memory-infer";
@@ -530,12 +529,8 @@ async function runMemoryInferencePassBody(
   result.considered = pending.length;
   if (pending.length === 0) return completeResult();
 
-  // Classify the whole batch without mutation. Required credentials are
-  // materialized only when at least one record will actually dispatch; this
-  // keeps aborted, existing-child, and validated-cache-only batches available
-  // offline while preserving all-or-nothing preflight for mixed batches.
+  // Classify the whole batch without mutation.
   const plans = pending.map((record) => planPendingMemoryRecord(record, { signal, db, reEnrich }));
-  if (plans.some((plan) => plan.kind === "model")) assertRunnerCredentials(llmRunner);
 
   let processed = 0;
   const total = pending.length;
@@ -561,7 +556,7 @@ async function runMemoryInferencePassBody(
       }),
     // Caller-set connection concurrency or 1: `resolveLlmEngineUse` does
     // not forward `engines.<name>.concurrency`, so config cannot raise this.
-    runnerLlmConnection(llmRunner)?.concurrency ?? 1,
+    (llmRunner.kind === "connection" ? llmRunner.concurrency : undefined) ?? 1,
   );
   if (configFailure) throw configFailure;
 

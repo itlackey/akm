@@ -23,9 +23,8 @@
  */
 
 import type { AkmConfig } from "../../core/config/config-types";
-import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
-import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
+import type { ExecutionJsonObject } from "../../execution/json";
 import {
   createInlineResolvedCommand,
   createResolvedExecutionRequest,
@@ -42,7 +41,7 @@ import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import { getHarness } from "../harnesses";
 import { type AgentProfile, harnessProfile, runtimeProfile } from "./profiles";
 import { untranslated } from "./request-lowering";
-import { parseTimeout, resolveTarget } from "./resolution";
+import { mergeLayerInference, parseTimeout, resolveTarget, withReasoningEffort } from "./resolution";
 import { decodeFrozenRunnerSpec, type RunnerSpec } from "./runner";
 import type { RunAgentOptions } from "./spawn";
 
@@ -58,7 +57,8 @@ type LayerKind = "agent" | "command" | "invocation-defaults" | "current";
 export interface ExecutionFieldProvenance {
   readonly layer: string;
   readonly kind: LayerKind | "installation";
-  readonly via: "explicit" | "source";
+  /** `default` marks a value no layer or configuration set, so the caller's own policy may replace it. */
+  readonly via: "explicit" | "source" | "default";
 }
 
 export interface ResolveExecutionInput {
@@ -132,35 +132,24 @@ function explicit(layer: Layer): ExecutionFieldProvenance {
   return { layer: layer.id, kind: layer.kind, via: "explicit" };
 }
 
-/**
- * Reasoning effort has one word in a request: `reasoningEffort`, which is what
- * the LLM request body calls it. `effort` is the same setting as an asset's
- * `effort:` frontmatter spells it, and becomes `reasoningEffort` here, in the one
- * place every layer's inference is merged, so the nearest layer wins whichever
- * word it used. When one inference object has both, `reasoningEffort` wins.
- */
-function withReasoningEffort(inference: ExecutionJsonObject): ExecutionJsonObject {
-  if (!Object.hasOwn(inference, "effort")) return inference;
-  const { effort, ...rest } = inference;
-  return Object.hasOwn(rest, "reasoningEffort") ? rest : { ...rest, reasoningEffort: effort as ExecutionJsonValue };
-}
-
-function mergeInference(
-  current: ExecutionJsonObject | null | undefined,
-  layerInference: ExecutionJsonObject | null,
-  source: ExecutionFieldProvenance,
+/** Record which layer set each inference key, mirroring {@link mergeLayerInference}. */
+function recordInferenceProvenance(
+  layers: readonly Layer[],
   provenance: Record<string, ExecutionFieldProvenance>,
-): ExecutionJsonObject | null {
-  provenance["/inference"] = source;
-  if (layerInference === null) {
-    for (const key of Object.keys(provenance)) if (key.startsWith("/inference/")) delete provenance[key];
-    return null;
+): void {
+  for (const layer of layers) {
+    if (!has(layer.values, "inference")) continue;
+    const source = explicit(layer);
+    provenance["/inference"] = source;
+    const inference = layer.values.inference ?? null;
+    if (inference === null) {
+      for (const key of Object.keys(provenance)) if (key.startsWith("/inference/")) delete provenance[key];
+      continue;
+    }
+    for (const key of Object.keys(withReasoningEffort(inference))) {
+      provenance[`/inference/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`] = source;
+    }
   }
-  const next = withReasoningEffort(layerInference);
-  for (const key of Object.keys(next)) {
-    provenance[`/inference/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`] = source;
-  }
-  return deepMergeConfig(current ?? {}, next as Record<string, unknown>) as ExecutionJsonObject;
 }
 
 /** A journaled runner under this call's layers: the nearest layer's timeout and (exact) model replace its own. */
@@ -242,12 +231,8 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
     };
   }
 
-  let inference: ExecutionJsonObject | null | undefined;
-  for (const layer of layers) {
-    if (has(layer.values, "inference")) {
-      inference = mergeInference(inference, layer.values.inference ?? null, explicit(layer), provenance);
-    }
-  }
+  const inference = mergeLayerInference(layers.map((layer) => layer.values));
+  recordInferenceProvenance(layers, provenance);
 
   const select = (key: keyof UnresolvedExecutionDefaults, field: string): Layer | undefined => {
     const layer = nearest(layers, key);
@@ -263,7 +248,15 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
     : runner.kind === "harness"
       ? runner.workspace
       : undefined;
-  if (!timeoutLayer) provenance["runtime.timeoutMs"] = { layer: runner.name, kind: "installation", via: "explicit" };
+  if (!timeoutLayer) {
+    const targets = runner.kind === "connection" ? input.config?.connections : input.config?.harnesses;
+    const configured = input.config === undefined || Object.hasOwn(targets?.[runner.name] ?? {}, "timeoutMs");
+    provenance["runtime.timeoutMs"] = {
+      layer: runner.name,
+      kind: "installation",
+      via: configured ? "explicit" : "default",
+    };
+  }
 
   const request = createResolvedExecutionRequest({
     command,

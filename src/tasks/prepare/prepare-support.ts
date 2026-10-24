@@ -156,9 +156,9 @@ export function validatePreparedCommand(
   context: PrepareTaskV3ExecutionContext,
 ): PreparedCommandInvocation {
   const { request } = invocation;
-  if (!request.engine.name) {
+  if (!request.target.name) {
     throw new ConfigError(
-      `Task ${JSON.stringify(context.taskRef)} has no resolved execution engine. Configure defaults.engine or akm.engine before running it.`,
+      `Task ${JSON.stringify(context.taskRef)} has no resolved connection or harness. Run \`akm setup\`, or set akm.connection or akm.harness before running it.`,
       "INVALID_CONFIG_FILE",
     );
   }

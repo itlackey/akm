@@ -36,8 +36,6 @@ export interface FrozenWorkflow {
   readonly plan: WorkflowPlan;
   /** Non-fatal advisories from `checkWorkflowPlan`. */
   readonly warnings: WorkflowError[];
-  /** The implicit engine fallback, announced once at run creation. */
-  readonly engineAnnouncement?: string;
 }
 
 /** Resolve and freeze one workflow (and, recursively, every child it composes). */
@@ -61,19 +59,16 @@ export async function freezeWorkflow(
     refPath,
     freezeChild: (child, childRefPath) => freezeWorkflow(child, config, childRefPath),
   };
-  let engineAnnouncement: string | undefined;
   const steps: WorkflowPlanStep[] = [];
   for (const step of compiled.steps) {
     const { spec, ...frozenStep } = step;
     const source: FreezeStep = { ...(spec ?? { source: { path: asset.path, start: 1, end: 1 } }), id: step.stepId };
     const resolved = await resolveStep(source, context);
-    engineAnnouncement ??= resolved.engineAnnouncement;
     const root = frozenRoot(step.stepId, source, resolved, compiled, config);
     let frozenJudge: FrozenWorkflowCommandTarget | null = null;
     if (step.gate.criteria.length > 0) {
       const judge = resolveJudge(source, step.gate.criteria[0] ?? "", context);
       frozenJudge = judge.target as FrozenWorkflowCommandTarget;
-      engineAnnouncement ??= judge.engineAnnouncement;
     }
     steps.push({ ...frozenStep, root, gate: { ...step.gate, frozenJudge } });
   }
@@ -87,7 +82,7 @@ export async function freezeWorkflow(
     sourceHash: asset.sourceHash,
     steps,
   };
-  return { plan, warnings: checked.warnings, ...(engineAnnouncement ? { engineAnnouncement } : {}) };
+  return { plan, warnings: checked.warnings };
 }
 
 async function resolveStep(source: FreezeStep, context: ResolutionContext): Promise<ResolvedDispatch> {
@@ -100,13 +95,12 @@ async function resolveStep(source: FreezeStep, context: ResolutionContext): Prom
   return commandDispatch(source, baseUnit, source.with, context);
 }
 
-/** The gate judge's frozen command target. */
+/** The gate judge's frozen command target: a model call, so it runs where model work runs. */
 function resolveJudge(source: FreezeStep, rubric: string, context: ResolutionContext): ResolvedDispatch {
-  const configuredEngine = context.config.workflow?.judgeEngine;
   const prepared = resolveExecution({
     content: rubric.trim() || "Judge workflow completion.",
     config: context.config,
-    ...(configuredEngine ? { current: { engine: configuredEngine } } : {}),
+    modelWork: true,
   });
   return commandResult(source, { onError: "fail", source: source.source }, prepared, context);
 }

@@ -25,14 +25,14 @@
 import type { z } from "zod";
 // Harness ids derive from the harness registry; nothing the registry imports
 // reaches `core/config` at runtime, so there is no cycle.
-import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "../../integrations/harnesses";
+import { VALID_HARNESS_IDS } from "../../integrations/harnesses";
 
 /**
  * Canonical list of valid agent harness / platform ids, derived from the harness
  * registry so the harness `platform` check and setup's `DetectedHarness` union
  * cannot drift.
  */
-export { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS };
+export { VALID_HARNESS_IDS };
 
 /** Union of valid harness ids, derived from {@link VALID_HARNESS_IDS}. */
 export type HarnessId = (typeof VALID_HARNESS_IDS)[number];

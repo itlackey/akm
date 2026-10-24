@@ -442,9 +442,7 @@ function buildStepWorkUnit(ctx: StepWorkUnitContext, unitId: string, item: unkno
         // `inputBindings`, when non-empty — see StepWorkUnitContext.taskInputs.
         ...(taskInputs && Object.keys(taskInputs).length > 0 ? { taskInputs } : {}),
         ...(input.gateFeedback ? { gateFeedback: input.gateFeedback } : {}),
-        // An agent or SDK transport's request lowering appends the schema
-        // instruction itself; a direct-LLM unit carries it in its prompt.
-        ...(template.schema && ctx.runner === "llm" ? { schema: template.schema } : {}),
+        // Request lowering appends the schema instruction itself.
         instructions: template.instructions,
       });
   const inputHash = computeUnitInputHash(ctx, item);
@@ -460,7 +458,7 @@ function buildStepWorkUnit(ctx: StepWorkUnitContext, unitId: string, item: unkno
     frozenTarget: target,
     environment: template.environment,
     ...(frozenExec ? { execContext: buildExecContextEnv({ ctx, unitId, item, index }) } : {}),
-    ...(target.kind === "command" && target.request.model?.resolved ? { model: target.request.model.resolved } : {}),
+    ...(target.kind === "command" && target.request.model?.model ? { model: target.request.model.model } : {}),
     timeoutMs: ctx.timeoutMs,
     ...(template.schema ? { schema: template.schema } : {}),
     ...(template.retry ? { retry: template.retry } : {}),
@@ -1368,7 +1366,7 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
     return blockFinalizedStep(
       input,
       "this step declares completion criteria but no verification judge is available " +
-        "(the frozen plan resolves no judge — set workflow.judgeEngine, or restore the judge configuration)",
+        "(the frozen plan resolves no judge — configure a connection or harness with `akm setup`, or restore the judge configuration)",
     );
   }
 
@@ -1394,7 +1392,7 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
   const summaryJudge: SummaryJudge | null = innerJudge
     ? async (prompt) => {
         if (gateTarget) {
-          const engineName = gateTarget.request.engine.name;
+          const engineName = gateTarget.request.target.name;
           if (!engineName) throw new Error(`Gate ${stepId} has no frozen engine identity.`);
           gateUnit = {
             runId,
@@ -1402,7 +1400,7 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
             stepId,
             loop: gateLoop,
             engine: engineName,
-            model: gateTarget.request.model?.resolved ?? null,
+            model: gateTarget.request.model?.model ?? null,
             runner: gateTarget.runner.kind,
             // The gate prefix rides the unit prefix's version — unit and gate
             // hashVersion are one vocabulary (p3a §0.1; the R-R15 fix moved

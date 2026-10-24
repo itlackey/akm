@@ -674,8 +674,8 @@ async function reserveJournaledDispatch(
         parentUnitId: workUnit.isFanOut ? `${plan.stepId}.map` : null,
         phase: "unit",
         runner: workUnit.runner,
-        engine: target.kind === "command" ? target.request.engine.name : null,
-        model: target.kind === "command" ? (target.request.model?.resolved ?? null) : null,
+        engine: target.kind === "command" ? target.request.target.name : null,
+        model: target.kind === "command" ? (target.request.model?.model ?? null) : null,
         inputHash,
         now: startedAt,
       }).attempt;

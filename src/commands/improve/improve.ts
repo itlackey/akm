@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
+import { collectCredentialValues } from "../../core/config/credentials";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { LockOwnership } from "../../core/file-lock";
@@ -36,7 +37,6 @@ import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { akmIndex } from "../../indexer/indexer";
 import { countPendingMemoriesNeedingDecision } from "../../indexer/passes/memory-inference";
 import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
-import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { type LlmUsageRecord, withLlmStage } from "../../llm/usage-telemetry";
 import {
@@ -467,13 +467,9 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
   const scope: ImproveScope = resolveImproveScope(options.scope);
   const config = options.config ?? loadConfig();
   const configuredImproveProfile = resolveImproveStrategy(options.strategy, config).config;
-  // A dry run never dispatches, so an all-disabled strategy must not abort it.
   const resolvedPlan =
     options.resolvedPlan ??
-    resolveImprovePlan(options.strategy, config, {
-      repairValidationFailures: options.repairValidationFailures,
-      allowAllDisabled: options.dryRun,
-    });
+    resolveImprovePlan(options.strategy, config, { repairValidationFailures: options.repairValidationFailures });
   const selectedStrategy = resolvedPlan.strategy;
   const improveProfile = selectedStrategy.config;
   const configuredLimits = {
@@ -540,7 +536,7 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
     config,
     resolvedPlan,
     selectedStrategy,
-    improveSensitiveValues: collectEngineCredentialValues(config),
+    improveSensitiveValues: collectCredentialValues(config),
     improveProfile,
     configuredImproveProfile,
     configuredLimits,
@@ -888,7 +884,7 @@ async function runTriagePrePass(run: ImproveRunSetup): Promise<DrainResult | und
           excludeIds: new Set<string>(),
           judgment: resolvedPlan.triageJudgment,
         }),
-      { engine: resolvedPlan.triageJudgment?.engine, process: "triage.judgment" },
+      { engine: resolvedPlan.triageJudgment?.name, process: "triage.judgment" },
     );
   } catch (err) {
     warn(`[improve] triage pre-pass failed (non-fatal): ${errMessage(err)}`);

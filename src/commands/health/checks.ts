@@ -3,30 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { spawnSync } from "node:child_process";
-import { type AkmConfig, type LlmConnectionConfig, loadConfig } from "../../core/config/config";
+import { type AkmConfig, defaultConnection, defaultHarness, loadConfig } from "../../core/config/config";
+import { resolveApiKey } from "../../core/config/credentials";
+import { envReferenceName } from "../../core/config/schema/primitives";
 import { listEnvsRecursive } from "../../core/env-secret-ref";
-import { ConfigError } from "../../core/errors";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
 import { listPendingStateMigrations, type StateDatabaseMigrationReport } from "../../core/state-db";
-import { withEngineFallback } from "../../integrations/agent/engine-fallback";
-import {
-  type CredentialDescriptor,
-  isLlmCredentialAvailable,
-  resolveEngine,
-} from "../../integrations/agent/engine-resolution";
-import { executionEngineDefinitionsFromConfig } from "../../integrations/agent/execution";
-import {
-  type LoadedModelMap,
-  type LoadModelMapOptions,
-  loadModelMap,
-  mergeModelMapLayers,
-  parseModelMapLayer,
-  readInstalledModelMapText,
-  resolveModelMapAlias,
-  userModelMapPath,
-} from "../../integrations/agent/model-map";
+import { resolveTarget } from "../../integrations/agent/resolution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { probeEndpointOnce } from "../../llm/client";
+import { type ChatCompletionConfig, probeEndpointOnce } from "../../llm/client";
 import type { ExtractOutcomeCount } from "../../storage/repositories/extract-sessions-repository";
 import {
   STATE_DB_FREELIST_WARN_RATIO,
@@ -101,8 +86,7 @@ export interface HealthCheckContext {
   /** Engine availability collected once and shared by its three registry projections. */
   engineProbes: HealthEngineProbeResults;
   /**
-   * #949: names of configured `kind: "llm"` engines with `enableThinking:
-   * false`, resolved once from config. Feeds `thinking-control`, which never
+   * #949: names of configured connections with thinking turned off, resolved once from config. Feeds `thinking-control`, which never
    * re-loads config itself (checks are pure projections of this context).
    */
   thinkingOffEngines: string[];
@@ -172,12 +156,12 @@ export interface HealthCheck {
  */
 export interface DefaultEngineProbeDependencies {
   loadConfig?: () => AkmConfig;
+  /** Resolve a configured connection or harness by name; defaults to the real resolver. */
   resolveEngine?: (name: string, config: AkmConfig) => RunnerSpec;
   spawnSync?: typeof spawnSync;
   env?: NodeJS.ProcessEnv;
   /**
-   * #914: reachability seam for a `kind: "llm"` runner's connection and an
-   * SDK runner's LLM fallback connection. Absent ⇒ no probe runs and the
+   * #914: reachability seam for a connection's endpoint. Absent ⇒ no probe runs and the
    * check says reachability was not probed, which keeps every caller that
    * does not opt in (the whole test suite included) offline.
    */
@@ -200,7 +184,7 @@ export interface ReachabilityResult {
   reachable: boolean;
   error?: string;
 }
-export type ReachabilityProbe = (connection: LlmConnectionConfig) => Promise<ReachabilityResult>;
+export type ReachabilityProbe = (connection: Pick<ChatCompletionConfig, "endpoint">) => Promise<ReachabilityResult>;
 
 /**
  * Endpoint → probe, scoped to one health invocation so engine names that
@@ -211,7 +195,7 @@ type ReachabilityCache = Map<string, Promise<ReachabilityResult>>;
 
 /** Probe one connection's reachability, once per endpoint; `undefined` when no probe seam is supplied. */
 function probeConnectionReachable(
-  connection: LlmConnectionConfig,
+  connection: Pick<ChatCompletionConfig, "endpoint">,
   deps: DefaultEngineProbeDependencies,
   cache: ReachabilityCache,
 ): Promise<ReachabilityResult | undefined> {
@@ -241,30 +225,10 @@ function escalateDefaultLlmEngineFailure(result: HealthCheckResult): HealthCheck
 /** Rolling window the `session-extraction` check reads from the extract ledger (#914). */
 export const SESSION_EXTRACTION_LEDGER_WINDOW_DAYS = 7;
 
-export interface SelectedModelAliasesProbeDependencies extends LoadModelMapOptions {
-  loadConfig?: () => AkmConfig;
-  loadModelMap?: (options: LoadModelMapOptions) => LoadedModelMap;
-}
-
 export interface HealthEngineProbeResults {
   readonly defaultEngine: HealthCheckResult;
   readonly defaultLlmEngine: HealthCheckResult;
   readonly configuredEngines: HealthCheckResult;
-}
-
-/**
- * Delegates to {@link isLlmCredentialAvailable} (#953) so `akm health` and the
- * improve-strategy probe (#957 builds on this same helper) share one
- * non-throwing "is a credential present" check with the real dispatch
- * boundary — env value, file-backed (#905), or secret-store-backed (#953).
- */
-function credentialAvailable(
-  credential: CredentialDescriptor | undefined,
-  env: NodeJS.ProcessEnv,
-  apiKeyFile?: string,
-  apiKeySecretRef?: string,
-): boolean {
-  return isLlmCredentialAvailable({ credential, apiKeyFile, apiKeySecretRef }, env);
 }
 
 /**
@@ -318,6 +282,11 @@ function withMemoizedEnvAssets(deps: DefaultEngineProbeDependencies): DefaultEng
   return { ...deps, listEnvAssets: () => (cached ??= listEnvAssets()) };
 }
 
+/** A connection or harness by its configured name, resolved as it is when it is chosen. */
+function resolveConfigured(name: string, config: AkmConfig): RunnerSpec {
+  return resolveTarget({ config, layers: [config.connections?.[name] ? { connection: name } : { harness: name }] });
+}
+
 async function runConfiguredEngineProbe(
   checkName: string,
   engineName: string | undefined,
@@ -333,168 +302,72 @@ async function runConfiguredEngineProbe(
       confidence: "high",
       message:
         checkName === "default-llm-engine"
-          ? "No default LLM engine is configured."
-          : "No default engine is configured.",
+          ? "No default connection is configured."
+          : "No default harness or connection is configured.",
     };
   }
   const env = deps.env ?? process.env;
-  const configuredEngine = config.engines?.[engineName];
-  if (configuredEngine?.kind === "agent" && configuredEngine.platform === "opencode-sdk") {
-    const fallbackEngine = configuredEngine.llmEngine;
-    let fallback: Extract<RunnerSpec, { kind: "llm" }> | undefined;
-    let fallbackCredential: Extract<RunnerSpec, { kind: "llm" }>["credential"];
-    let fallbackApiKeyFile: string | undefined;
-    let fallbackApiKeySecretRef: string | undefined;
-    let sdkRunner: Extract<RunnerSpec, { kind: "sdk" }> | undefined;
-    const resolve = deps.resolveEngine ?? resolveEngine;
-    try {
-      const resolved = resolve(engineName, config);
-      if (resolved.kind === "sdk") sdkRunner = resolved;
-    } catch {
-      sdkRunner = undefined;
-    }
-    if (sdkRunner?.fallbackConnection && fallbackEngine) {
-      fallback = { kind: "llm", engine: fallbackEngine, connection: sdkRunner.fallbackConnection };
-      fallbackCredential = sdkRunner.fallbackCredential;
-      fallbackApiKeyFile = sdkRunner.fallbackApiKeyFile;
-      fallbackApiKeySecretRef = sdkRunner.fallbackApiKeySecretRef;
-    } else if (fallbackEngine) {
-      try {
-        const resolved = resolve(fallbackEngine, config);
-        if (resolved.kind === "llm") {
-          fallback = resolved;
-          fallbackCredential = resolved.credential;
-          fallbackApiKeyFile = resolved.apiKeyFile;
-          fallbackApiKeySecretRef = resolved.apiKeySecretRef;
-        }
-      } catch {
-        fallback = undefined;
-      }
-    }
-    const configuredModel = configuredEngine.model;
-    const effectiveModel = sdkRunner?.profile.model ?? configuredModel ?? fallback?.connection.model;
-    const fallbackCredentialAvailable = credentialAvailable(
-      fallbackCredential,
-      env,
-      fallbackApiKeyFile,
-      fallbackApiKeySecretRef,
-    );
-    const fallbackSuppliedByEnvAsset = !fallbackCredentialAvailable
-      ? findSuppliedByEnvAsset(fallbackCredential, deps)
-      : null;
-    const missing = [
-      fallbackEngine && !fallback ? "configured fallback LLM connection" : undefined,
-      !fallbackCredentialAvailable
-        ? fallbackSuppliedByEnvAsset
-          ? `required fallback credential (available via env asset ${fallbackSuppliedByEnvAsset}; run under it: akm env run ${fallbackSuppliedByEnvAsset} -- ...)`
-          : "required fallback credential"
-        : undefined,
-    ].filter((value): value is string => value !== undefined);
-    const sdkEvidence = {
-      engine: engineName,
-      platform: configuredEngine.platform,
-      runtimeKind: "sdk",
-      model: effectiveModel ?? null,
-      configuredModel: configuredModel ?? null,
-      modelSource: configuredModel ? "sdk" : effectiveModel ? "fallback" : null,
-      fallbackEngine: fallbackEngine ?? null,
-      fallbackEndpoint: fallback?.connection.endpoint ?? null,
-      fallbackModel: fallback?.connection.model ?? null,
-      requiredCredentialAvailable: fallbackCredentialAvailable,
-      suppliedByEnvAsset: fallbackSuppliedByEnvAsset,
-    };
-    if (missing.length > 0) {
-      return {
-        name: checkName,
-        kind: "deterministic",
-        status: "warn",
-        confidence: "high",
-        message: `SDK engine "${engineName}" is incomplete: missing ${missing.join(", ")}.`,
-        evidence: sdkEvidence,
-      };
-    }
-    // The SDK's LLM fallback is the only endpoint this engine talks to;
-    // probe it once every local precondition above is satisfied (#914).
-    const reach = fallback ? await probeConnectionReachable(fallback.connection, deps, reachabilityCache) : undefined;
-    return {
-      name: checkName,
-      kind: "deterministic",
-      status: reach && !reach.reachable ? "warn" : "pass",
-      confidence: "high",
-      message: !fallback
-        ? `SDK engine "${engineName}" is available.`
-        : !reach
-          ? `SDK engine "${engineName}" is available. Reachability was not probed.`
-          : reach.reachable
-            ? `SDK engine "${engineName}" is available and its LLM fallback is reachable.`
-            : `SDK engine "${engineName}" is available, but its LLM fallback is not reachable: ${reach.error ?? "unknown error"}`,
-      evidence: fallback ? { ...sdkEvidence, ...reachabilityEvidence(reach) } : sdkEvidence,
-    };
-  }
   try {
-    const runner = (deps.resolveEngine ?? resolveEngine)(engineName, config);
-    if (runner.kind === "llm") {
-      const requiredCredentialAvailable = credentialAvailable(
-        runner.credential,
-        env,
-        runner.apiKeyFile,
-        runner.apiKeySecretRef,
-      );
-      const llmEvidence = {
+    const runner = (deps.resolveEngine ?? resolveConfigured)(engineName, config);
+    if (runner.kind === "connection") {
+      // A `$VAR` key whose variable is unset sends no key; a stored key or none is not a missing requirement.
+      const variable = envReferenceName(runner.apiKey ?? "");
+      const requiredCredentialAvailable =
+        variable === undefined || resolveApiKey(runner.apiKey, runner.name, env, true) !== undefined;
+      const connectionEvidence = {
         engine: engineName,
         platform: null,
-        runtimeKind: "llm",
-        model: runner.connection.model,
-        endpoint: runner.connection.endpoint,
+        runtimeKind: "connection",
+        model: runner.model,
+        endpoint: runner.endpoint,
         requiredCredentialAvailable,
       };
       if (!requiredCredentialAvailable) {
         // #950: a missing-in-shell credential is common when the operator's
         // real workflow is `akm env run env/lab -- akm improve` — name the env
         // asset that supplies it (never the variable name) so the warn is
-        // actionable instead of looking like a broken engine.
-        const suppliedByEnvAsset = findSuppliedByEnvAsset(runner.credential, deps);
+        // actionable instead of looking like a broken connection.
+        const suppliedByEnvAsset = findSuppliedByEnvAsset(variable ? { names: [variable] } : undefined, deps);
         return {
           name: checkName,
           kind: "deterministic",
           status: "warn",
           confidence: "high",
           message: suppliedByEnvAsset
-            ? `LLM engine "${engineName}" is configured, but its required credential is not available in this shell; env asset ${suppliedByEnvAsset} supplies it — run under it (akm env run ${suppliedByEnvAsset} -- ...).`
-            : `LLM engine "${engineName}" is configured, but its required credential is unavailable.`,
-          evidence: { ...llmEvidence, suppliedByEnvAsset },
+            ? `Connection "${engineName}" is configured, but its key is not available in this shell; env asset ${suppliedByEnvAsset} supplies it — run under it (akm env run ${suppliedByEnvAsset} -- ...).`
+            : `Connection "${engineName}" is configured, but its key is unavailable.`,
+          evidence: { ...connectionEvidence, suppliedByEnvAsset },
         };
       }
-      const reach = await probeConnectionReachable(runner.connection, deps, reachabilityCache);
+      const reach = await probeConnectionReachable(runner, deps, reachabilityCache);
       return {
         name: checkName,
         kind: "deterministic",
         status: reach && !reach.reachable ? "warn" : "pass",
         confidence: "high",
         message: !reach
-          ? `LLM engine "${engineName}" is configured. Reachability was not probed.`
+          ? `Connection "${engineName}" is configured. Reachability was not probed.`
           : reach.reachable
-            ? `LLM engine "${engineName}" is configured and reachable.`
-            : `LLM engine "${engineName}" is not reachable: ${reach.error ?? "unknown error"}`,
-        evidence: { ...llmEvidence, ...reachabilityEvidence(reach) },
+            ? `Connection "${engineName}" is configured and reachable.`
+            : `Connection "${engineName}" is not reachable: ${reach.error ?? "unknown error"}`,
+        evidence: { ...connectionEvidence, ...reachabilityEvidence(reach) },
       };
     }
-    const profile = runner.profile;
-    if (runner.kind === "sdk") throw new Error(`SDK engine "${engineName}" has no matching SDK config.`);
-    const version = (deps.spawnSync ?? spawnSync)(profile.bin, ["--version"], { encoding: "utf8", timeout: 5_000 });
+    const evidence = {
+      engine: engineName,
+      platform: runner.platform,
+      runtimeKind: "harness",
+      model: runner.model ?? null,
+    };
+    const version = (deps.spawnSync ?? spawnSync)(runner.bin, ["--version"], { encoding: "utf8", timeout: 5_000 });
     if ((version.status ?? 1) !== 0) {
       return {
         name: checkName,
         kind: "deterministic",
         status: "warn",
         confidence: "medium",
-        message: `Agent engine "${engineName}" was found but \`--version\` failed.`,
-        evidence: {
-          engine: engineName,
-          platform: profile.platform ?? null,
-          runtimeKind: "agent",
-          model: profile.model ?? null,
-        },
+        message: `Harness "${engineName}" was found but \`--version\` failed.`,
+        evidence,
       };
     }
     return {
@@ -502,13 +375,8 @@ async function runConfiguredEngineProbe(
       kind: "deterministic",
       status: "pass",
       confidence: "high",
-      message: `Agent engine "${engineName}" is available.`,
-      evidence: {
-        engine: engineName,
-        platform: profile.platform ?? null,
-        runtimeKind: "agent",
-        model: profile.model ?? null,
-      },
+      message: `Harness "${engineName}" is available.`,
+      evidence,
     };
   } catch (error) {
     return {
@@ -552,7 +420,9 @@ function unconfiguredEngineProbe(name: "default-engine" | "default-llm-engine"):
     status: "unknown",
     confidence: "high",
     message:
-      name === "default-llm-engine" ? "No default LLM engine is configured." : "No default engine is configured.",
+      name === "default-llm-engine"
+        ? "No default connection is configured."
+        : "No default harness or connection is configured.",
   };
 }
 
@@ -659,13 +529,21 @@ function configuredEnginesProjection(
   };
 }
 
+/** The default agent target: the default harness, else the default connection (agent work then runs on akm's own runtime). */
+function defaultAgentEngineName(config: AkmConfig): string | undefined {
+  return (defaultHarness(config) ?? defaultConnection(config))?.name;
+}
+
+/** The default model-work target: the default connection, else the default harness. */
+function defaultModelEngineName(config: AkmConfig): string | undefined {
+  return (defaultConnection(config) ?? defaultHarness(config))?.name;
+}
+
 export async function runDefaultEngineProbe(deps: DefaultEngineProbeDependencies = {}): Promise<HealthCheckResult> {
-  // Probe the effective view: an install with no `defaults.engine` falls back to
-  // the bundled OpenCode SDK, as `workflow run` / `task run` do.
-  const { config } = withEngineFallback(deps.loadConfig?.() ?? loadConfig());
+  const config = deps.loadConfig?.() ?? loadConfig();
   return runConfiguredEngineProbe(
     "default-engine",
-    config.defaults?.engine,
+    defaultAgentEngineName(config),
     config,
     withMemoizedEnvAssets(deps),
     new Map(),
@@ -674,7 +552,7 @@ export async function runDefaultEngineProbe(deps: DefaultEngineProbeDependencies
 
 export async function runDefaultLlmEngineProbe(deps: DefaultEngineProbeDependencies = {}): Promise<HealthCheckResult> {
   const config = deps.loadConfig?.() ?? loadConfig();
-  const engineName = config.defaults?.llmEngine;
+  const engineName = defaultModelEngineName(config);
   if (!engineName) return unconfiguredEngineProbe("default-llm-engine");
   const result = await runConfiguredEngineProbe(
     "configured-engine",
@@ -686,10 +564,15 @@ export async function runDefaultLlmEngineProbe(deps: DefaultEngineProbeDependenc
   return projectSelectedEngineProbe(new Map([[engineName, result]]), engineName, "default-llm-engine");
 }
 
-/** Probe every explicitly configured engine without exposing connection or model material. */
+/** The names of every configured connection and harness. */
+function configuredEngineNames(config: AkmConfig): string[] {
+  return [...Object.keys(config.connections ?? {}), ...Object.keys(config.harnesses ?? {})].sort();
+}
+
+/** Probe every explicitly configured connection and harness without exposing connection or model material. */
 export async function runConfiguredEnginesProbe(deps: DefaultEngineProbeDependencies = {}): Promise<HealthCheckResult> {
   const config = deps.loadConfig?.() ?? loadConfig();
-  const engineNames = Object.keys(config.engines ?? {}).sort();
+  const engineNames = configuredEngineNames(config);
   const cache: ReachabilityCache = new Map();
   const runDeps = withMemoizedEnvAssets(deps);
   const availability = new Map(
@@ -705,18 +588,17 @@ export async function runConfiguredEnginesProbe(deps: DefaultEngineProbeDependen
 
 /**
  * Build the per-health-run availability snapshot. Each distinct selected or
- * explicitly configured engine is probed once (reachability probes further
- * de-duped by endpoint, see {@link ReachabilityCache}); the three public
- * checks are projections of that immutable result set.
+ * explicitly configured connection or harness is probed once (reachability
+ * probes further de-duped by endpoint, see {@link ReachabilityCache}); the
+ * three public checks are projections of that immutable result set.
  */
 export async function runHealthEngineProbes(
   deps: DefaultEngineProbeDependencies = {},
 ): Promise<HealthEngineProbeResults> {
   const configured = deps.loadConfig?.() ?? loadConfig();
-  const effective = withEngineFallback(configured).config;
-  const defaultEngineName = effective.defaults?.engine;
-  const defaultLlmEngineName = configured.defaults?.llmEngine;
-  const explicitEngineNames = Object.keys(configured.engines ?? {}).sort();
+  const defaultEngineName = defaultAgentEngineName(configured);
+  const defaultLlmEngineName = defaultModelEngineName(configured);
+  const explicitEngineNames = configuredEngineNames(configured);
   const probeNames = [...new Set([...explicitEngineNames, defaultEngineName, defaultLlmEngineName])]
     .filter((name): name is string => name !== undefined)
     .sort();
@@ -726,7 +608,7 @@ export async function runHealthEngineProbes(
     await Promise.all(
       probeNames.map(
         async (engine) =>
-          [engine, await runConfiguredEngineProbe("configured-engine", engine, effective, runDeps, cache)] as const,
+          [engine, await runConfiguredEngineProbe("configured-engine", engine, configured, runDeps, cache)] as const,
       ),
     ),
   );
@@ -764,34 +646,19 @@ export function probeActiveImproveStrategy(
   deps: DefaultEngineProbeDependencies = {},
 ): ActiveImproveStrategyProbeResult {
   const config = deps.loadConfig?.() ?? loadConfig();
-  const strategyName = config.defaults?.improveStrategy ?? "default";
-  const env = deps.env ?? process.env;
+  const strategyName = config.improve?.strategy ?? "default";
   try {
-    // #957: credential availability (including the triage-judgment engine) is
-    // now derived once, inside `buildImprovePlan` itself — the same
-    // `plan.engineUnavailable` the real `improve` run reads to skip processes
-    // and populate `AkmImproveResult.skippedProcesses`. This check is a pure
-    // projection of that list rather than its own re-derivation.
-    //
-    // `allowAllDisabled: true` because a strategy left with every process
-    // disabled purely by credential unavailability must still come back as
-    // an inspectable plan here, not a thrown ConfigError — the
-    // `allRequiredUnavailable`/`fail` logic below needs `plan.engineUnavailable`
-    // to run this check's fail path instead of falling into the generic
-    // catch block's warn/unknown fallback (round 2 finding on #957). A
-    // strategy with no engine configured at all still throws (see
-    // `allowAllDisabled`'s doc comment) and keeps hitting that catch block,
-    // unchanged from before this fix.
-    const plan = resolveImprovePlan(strategyName, config, { env, allowAllDisabled: true });
+    // The same `plan.engineUnavailable` the real `improve` run reads to skip processes
+    // and populate `AkmImproveResult.skippedProcesses`: this check is a pure projection of it.
+    const plan = resolveImprovePlan(strategyName, config);
     const unavailableProcesses = plan.engineUnavailable.map((item) => item.process);
-    // #913: name the engine each process actually resolved to, so a
-    // strategy-level `engine` pin that shadows `defaults.llmEngine` is
-    // visible on `akm health` instead of requiring config archaeology.
+    // #913: name the connection or harness each process actually resolved to, so a
+    // per-process pin that shadows the default is visible on `akm health`.
     const engines: Record<string, string> = {};
     for (const [name, process] of Object.entries(plan.processes)) {
-      if (process.enabled && process.runner) engines[name] = process.runner.engine;
+      if (process.enabled && process.runner) engines[name] = process.runner.name;
     }
-    if (plan.triageJudgment) engines["triage.judgment"] = plan.triageJudgment.engine;
+    if (plan.triageJudgment) engines["triage.judgment"] = plan.triageJudgment.name;
     const engineList = Object.entries(engines)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([process, engine]) => `${process}: "${engine}"`)
@@ -809,22 +676,16 @@ export function probeActiveImproveStrategy(
     );
     const availableModelProcessNames = modelProcessNames.filter((name) => plan.processes[name].enabled);
     const allRequiredUnavailable = requiredModelProcessNames.length > 0 && availableModelProcessNames.length === 0;
-    // No engine configured at all (no unavailable item carries a resolved engine)
-    // is "not set up yet", not a broken credential: it keeps the unknown/warn
-    // result it had when the plan threw for it. Engine-free deterministic triage
-    // (#1143) now lets such a plan resolve, so this has to be explicit.
-    const noEngineConfigured = plan.engineUnavailable.length > 0 && plan.engineUnavailable.every((i) => !i.engine);
     const explicitlyConfigured =
-      config.defaults?.improveStrategy !== undefined || Object.keys(config.improve?.strategies ?? {}).length > 0;
+      config.improve?.strategy !== undefined || Object.keys(config.improve?.strategies ?? {}).length > 0;
+    // Every unavailable process is one with no connection or harness: "not set up yet" unless the user chose a strategy.
     const status =
       unavailableProcesses.length === 0
         ? "pass"
         : allRequiredUnavailable
-          ? noEngineConfigured
-            ? explicitlyConfigured
-              ? "warn"
-              : "unknown"
-            : "fail"
+          ? explicitlyConfigured
+            ? "warn"
+            : "unknown"
           : "warn";
     return {
       check: {
@@ -837,7 +698,7 @@ export function probeActiveImproveStrategy(
             ? `Active improve strategy "${plan.strategy.name}" has available process engines${engineList ? ` (${engineList})` : ""}.`
             : allRequiredUnavailable
               ? `Active improve strategy "${plan.strategy.name}" cannot run any LLM-backed process; the nightly run would be a no-op: ${unavailableProcesses.join(", ")}${engineList ? ` (engines: ${engineList})` : ""}.`
-              : `Active improve strategy "${plan.strategy.name}" has unavailable required credentials for: ${unavailableProcesses.join(", ")}${engineList ? ` (engines: ${engineList})` : ""}.`,
+              : `Active improve strategy "${plan.strategy.name}" has no connection or harness for: ${unavailableProcesses.join(", ")}${engineList ? ` (engines: ${engineList})` : ""}.`,
         evidence: {
           strategy: plan.strategy.name,
           unavailableProcesses,
@@ -848,7 +709,7 @@ export function probeActiveImproveStrategy(
     };
   } catch (error) {
     const explicitlyConfigured =
-      config.defaults?.improveStrategy !== undefined || Object.keys(config.improve?.strategies ?? {}).length > 0;
+      config.improve?.strategy !== undefined || Object.keys(config.improve?.strategies ?? {}).length > 0;
     return {
       check: {
         name: "active-improve-strategy",
@@ -951,152 +812,6 @@ function projectEngineLastUsedCheck(
     confidence: "high",
     message,
     evidence: { engines: entries },
-  };
-}
-
-export interface RunModelMapProbeDependencies extends LoadModelMapOptions {
-  loadConfig?: () => AkmConfig;
-}
-
-/**
- * Validate the immutable installed model map and optional user overlay.
- * Installed corruption is a package defect (fail); a bad optional user file
- * (including an `engine`-backed profile referencing a missing/broken engine,
- * once resolved against real `config.engines` — #946) is operator-fixable
- * configuration (warn); absence is the normal state.
- */
-export function runModelMapProbe(options: RunModelMapProbeDependencies = {}): HealthCheckResult {
-  let installedText: string;
-  try {
-    installedText = readInstalledModelMapText(options);
-    mergeModelMapLayers(parseModelMapLayer(installedText, "installed models.json"));
-  } catch (error) {
-    return {
-      name: "model-map-files",
-      kind: "deterministic",
-      status: "fail",
-      confidence: "high",
-      message: `Installed models.json is invalid; this AKM installation cannot resolve model aliases: ${error instanceof Error ? error.message : String(error)}`,
-      evidence: { installedSource: "package asset" },
-    };
-  }
-
-  // Load config OUTSIDE the models.json try/catch below: a broken
-  // config.json must surface as a config problem reported by the config
-  // checks, never get misreported as a models.json warning carrying the
-  // config error's own text. When config fails to load, validate the model
-  // map shape-only (no `engine` resolution), matching pre-#946 behavior.
-  let engines: AkmConfig["engines"] | undefined;
-  try {
-    engines = (options.loadConfig?.() ?? loadConfig()).engines;
-  } catch {
-    engines = undefined;
-  }
-
-  try {
-    const loaded = loadModelMap({ ...options, installedText, engines });
-    return {
-      name: "model-map-files",
-      kind: "deterministic",
-      status: "pass",
-      confidence: "high",
-      message:
-        loaded.userStatus === "loaded"
-          ? `Installed defaults and user models.json at ${loaded.userPath} are valid.`
-          : "Installed model defaults are valid; no optional user models.json is present.",
-      evidence: {
-        installedSource: "package asset",
-        userPath: loaded.userPath,
-        userStatus: loaded.userStatus,
-        aliases: Object.keys(loaded.map.aliases).sort(),
-      },
-    };
-  } catch (error) {
-    const hint = error instanceof ConfigError ? error.hint() : undefined;
-    return {
-      name: "model-map-files",
-      kind: "deterministic",
-      status: "warn",
-      confidence: "high",
-      message: `${error instanceof Error ? error.message : String(error)}${hint ? ` ${hint}` : ""}`,
-      evidence: {
-        installedSource: "package asset",
-        userPath: userModelMapPath(options.env),
-        userStatus: "invalid",
-      },
-    };
-  }
-}
-
-/**
- * Check model selections owned by configured engines against the common model
- * map. Unknown identifiers are deliberate exact-model pass-throughs; only an
- * alias known somewhere in the map but absent for the selected engine warns.
- */
-export function runSelectedModelAliasesProbe(deps: SelectedModelAliasesProbeDependencies = {}): HealthCheckResult {
-  const config = deps.loadConfig?.() ?? loadConfig();
-  const definitions = executionEngineDefinitionsFromConfig(config);
-  const selected = Object.entries(definitions)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .flatMap(([engine, definition]) => {
-      const model = definition.defaults?.model;
-      const modelMapKey = definition.modelMapKey ?? definition.selection.platform ?? definition.selection.name;
-      return typeof model === "string" ? [{ engine, alias: model, modelMapKey }] : [];
-    });
-  if (selected.length === 0) {
-    return {
-      name: "selected-model-aliases",
-      kind: "deterministic",
-      status: "unknown",
-      confidence: "high",
-      message: "No configured engines select a model.",
-      evidence: { checked: [], missing: [] },
-    };
-  }
-
-  let modelMap: LoadedModelMap;
-  try {
-    modelMap = (deps.loadModelMap ?? loadModelMap)({
-      env: deps.env,
-      installedText: deps.installedText,
-      engines: config.engines,
-    });
-  } catch {
-    return {
-      name: "selected-model-aliases",
-      kind: "deterministic",
-      status: "unknown",
-      confidence: "high",
-      message: "Configured model selections could not be checked because the model map is invalid.",
-      evidence: { checked: [], missing: [] },
-    };
-  }
-
-  const outcomes = selected.map(({ engine, alias, modelMapKey }) => {
-    try {
-      const resolution = resolveModelMapAlias(alias, modelMapKey, modelMap.map);
-      if (resolution.interpretation === "alias") {
-        return { kind: "alias" as const, evidence: { engine, alias, modelMapKey } };
-      }
-      return resolution.unmappedForEngine
-        ? { kind: "missing" as const, evidence: { engine, alias, modelMapKey } }
-        : { kind: "exact" as const };
-    } catch {
-      return { kind: "missing" as const, evidence: { engine, alias, modelMapKey } };
-    }
-  });
-  const checked = outcomes.flatMap((outcome) => (outcome.kind === "exact" ? [] : [outcome.evidence]));
-  const missing = outcomes.flatMap((outcome) => (outcome.kind === "missing" ? [outcome.evidence] : []));
-  return {
-    name: "selected-model-aliases",
-    kind: "deterministic",
-    status: missing.length === 0 ? "pass" : "warn",
-    confidence: "high",
-    message:
-      missing.length === 0
-        ? `All ${selected.length} configured model selections resolve for their selected engines.`
-        : `${missing.length} of ${selected.length} configured model selections ${missing.length === 1 ? "has" : "have"} no mapping for ${missing.length === 1 ? "its" : "their"} selected engine${missing.length === 1 ? "" : "s"}.`,
-    evidence: { checked, missing },
   };
 }
 
@@ -1320,16 +1035,6 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     name: "default-engine",
     channel: "hard",
     run: (ctx) => ctx.engineProbes.defaultEngine,
-  },
-  {
-    name: "model-map-files",
-    channel: "hard",
-    run: () => runModelMapProbe(),
-  },
-  {
-    name: "selected-model-aliases",
-    channel: "hard",
-    run: () => runSelectedModelAliasesProbe(),
   },
   {
     name: "default-llm-engine",

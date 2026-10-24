@@ -39,7 +39,7 @@ export const commandRunCommand = defineJsonCommand({
       type: "string",
       description: "Override the command's agent selector with a portable agent ref or native harness selector",
     },
-    engine: { type: "string", description: "Override the selected execution engine" },
+    engine: { type: "string", description: "Run on this harness (or connection), by name" },
     model: { type: "string", description: "Override the selected model alias or exact model identifier" },
     "timeout-ms": { type: "string", description: "Override the execution timeout in milliseconds" },
     cwd: { type: "string", description: "Override the execution workspace/current working directory" },

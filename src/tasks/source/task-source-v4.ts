@@ -53,6 +53,7 @@ import {
 } from "../../execution/input-contract";
 import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
 import { EXECUTION_MAX_TIMEOUT_MS } from "../../execution/limits";
+import { warnRetiredEngineKey } from "../../execution/source";
 import { classifyTargetRef } from "../../execution/target-ref";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { WORKFLOW_ENV_VAR_NAME_PATTERN, WORKFLOW_MAX_SCHEMA_BYTES } from "../../workflows/resource-limits";
@@ -388,6 +389,7 @@ function parseExecutionControls(input: ExecutionJsonObject, ctx: BoundedDocument
   const out: Record<string, unknown> = {};
   for (const key of ["agent", "connection", "harness", "engine", "model"] as const) {
     if (own(input, key)) out[key] = nullableSelectorTopLevel(input[key], ctx, key);
+    if (key === "engine" && own(input, key)) warnRetiredEngineKey();
   }
   if (own(input, "inference")) {
     const inference = presentJsonValue(input.inference, ctx, ["inference"]);

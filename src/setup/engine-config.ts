@@ -2,113 +2,92 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { AkmConfig, EngineConfig, LlmConnectionConfig } from "../core/config/config";
-import { ConfigError } from "../core/errors";
+import { type AkmConfig, defaultConnection, defaultHarness, type HarnessConfig } from "../core/config/config";
+import { resolveApiKey } from "../core/config/credentials";
+import type { ChatCompletionConfig } from "../llm/client";
 
-type AgentEngine = Extract<EngineConfig, { kind: "agent" }>;
+/** An OpenAI-compatible connection as setup holds it while it runs: where it is and the model picked for every alias. */
+export interface SetupConnection {
+  /** Which preset or harness it came from; a label for the prompts, never written to config. */
+  provider?: string;
+  endpoint: string;
+  model: string;
+  /** A `$VAR` reference; setup never writes a literal key. */
+  apiKey?: string;
+}
 
-/** Agent engines selected by setup, already in the persisted 0.9 shape. */
-export interface AgentEngineSelection {
+/** Harnesses selected by setup, already in the persisted shape. */
+export interface HarnessSelection {
+  /** The platform (and so the name) of the harness agent work should run on. */
   default?: string;
-  engines?: Record<string, EngineConfig>;
+  harnesses?: Record<string, HarnessConfig>;
   /** Explicit setup choice to disable agentic features. */
   disabled?: true;
 }
 
-export function readCurrentLlmEngine(config: AkmConfig): LlmConnectionConfig | undefined {
-  const name = config.defaults?.llmEngine;
-  const engine = name ? config.engines?.[name] : undefined;
-  if (!engine || engine.kind !== "llm") return undefined;
-  const { kind: _kind, timeoutMs, ...connection } = engine;
+/** The connection a probe sends: its key read now (setup holds a `$VAR` reference), nothing else. */
+export function probeConnection(llm: SetupConnection): ChatCompletionConfig {
+  const apiKey = resolveApiKey(llm.apiKey, "default");
+  return { endpoint: llm.endpoint, model: llm.model, ...(apiKey ? { apiKey } : {}) };
+}
+
+const STANDARD_ALIASES = ["fast", "balanced", "reasoning"] as const;
+
+export function readCurrentLlmEngine(config: AkmConfig): SetupConnection | undefined {
+  const found = defaultConnection(config);
+  const entry = found ? Object.values(found.connection.models ?? {})[0] : undefined;
+  if (!found || entry === undefined) return undefined;
   return {
-    ...connection,
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    endpoint: found.connection.endpoint,
+    model: typeof entry === "string" ? entry : entry.model,
+    ...(found.connection.apiKey ? { apiKey: found.connection.apiKey } : {}),
   };
 }
 
-export function readAgentEngineSelection(config: AkmConfig): AgentEngineSelection | undefined {
-  const engines: Record<string, AgentEngine> = {};
-  for (const [name, engine] of Object.entries(config.engines ?? {})) {
-    if (engine.kind === "agent") engines[name] = { ...engine };
-  }
-  const defaultName = config.defaults?.engine;
-  const defaultIsAgent = defaultName && config.engines?.[defaultName]?.kind === "agent";
-  if (Object.keys(engines).length === 0 && !defaultIsAgent) return undefined;
-  return { ...(defaultIsAgent ? { default: defaultName } : {}), engines };
+export function readAgentEngineSelection(config: AkmConfig): HarnessSelection | undefined {
+  const harnesses = { ...(config.harnesses ?? {}) };
+  if (Object.keys(harnesses).length === 0) return undefined;
+  return { default: defaultHarness(config)?.name, harnesses };
 }
 
-/** Write an OpenAI-compatible connection as a named LLM engine. */
-export function writeLlmEngine(config: AkmConfig, llm: LlmConnectionConfig | undefined): Partial<AkmConfig> {
-  const name = config.defaults?.llmEngine ?? "default";
+/** Write an OpenAI-compatible connection as the default connection. */
+export function writeLlmEngine(config: AkmConfig, llm: SetupConnection | undefined): Partial<AkmConfig> {
+  const name = defaultConnection(config)?.name ?? "default";
+  const connections = { ...(config.connections ?? {}) };
   if (!llm) {
-    const engines = { ...(config.engines ?? {}) };
-    if (engines[name]?.kind === "llm") delete engines[name];
-    const defaults = { ...(config.defaults ?? {}) };
-    delete defaults.llmEngine;
-    if (defaults.engine === name) delete defaults.engine;
-    return { engines, defaults };
+    delete connections[name];
+    return { connections };
   }
-  if (config.engines?.[name] && config.engines[name].kind !== "llm") {
-    throw new ConfigError(
-      `Cannot configure LLM engine ${JSON.stringify(name)} because that name belongs to an agent engine.`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
-  const endpoint = llm.endpoint.endsWith("/chat/completions")
-    ? llm.endpoint
-    : `${llm.endpoint.replace(/\/$/, "")}/chat/completions`;
-  return {
-    engines: {
-      ...(config.engines ?? {}),
-      [name]: {
-        ...llm,
-        kind: "llm",
-        endpoint,
-      },
-    },
-    defaults: { ...(config.defaults ?? {}), engine: config.defaults?.engine ?? name, llmEngine: name },
+  const existing = connections[name];
+  const models = {
+    ...(existing?.models ?? {}),
+    ...Object.fromEntries(STANDARD_ALIASES.map((alias) => [alias, llm.model])),
   };
+  connections[name] = {
+    ...existing,
+    endpoint: llm.endpoint,
+    models,
+    ...(llm.apiKey ? { apiKey: llm.apiKey } : {}),
+  };
+  return { connections };
 }
 
-/** Merge setup-selected agent engines without translating profile-shaped data. */
-export function writeAgentEngines(config: AkmConfig, selection: AgentEngineSelection | undefined): Partial<AkmConfig> {
-  for (const [name, engine] of Object.entries(selection?.engines ?? {})) {
-    const existing = config.engines?.[name];
-    if (existing && existing.kind !== engine.kind) {
-      throw new ConfigError(
-        `Cannot configure ${engine.kind} engine ${JSON.stringify(name)} because that name belongs to an ${existing.kind} engine.`,
-        "INVALID_CONFIG_FILE",
-      );
+/** Merge setup-selected harnesses; the one agent work should run on is the lone harness, or the one named `default`. */
+export function writeAgentEngines(config: AkmConfig, selection: HarnessSelection | undefined): Partial<AkmConfig> {
+  if (selection?.disabled) return { harnesses: {} };
+  const harnesses = { ...(config.harnesses ?? {}), ...(selection?.harnesses ?? {}) };
+  const chosen = selection?.default;
+  if (chosen) {
+    harnesses[chosen] ??= {};
+    if (Object.keys(harnesses).length > 1 && chosen !== "default") {
+      const { [chosen]: entry, ...rest } = harnesses;
+      return { harnesses: { ...rest, default: { platform: chosen, ...entry } as HarnessConfig } };
     }
   }
-  const defaults = { ...(config.defaults ?? {}) };
-  if (selection?.disabled) {
-    const currentDefault = defaults.engine;
-    if (currentDefault && config.engines?.[currentDefault]?.kind === "agent") {
-      const llmDefault = defaults.llmEngine;
-      if (llmDefault && config.engines?.[llmDefault]?.kind === "llm") defaults.engine = llmDefault;
-      else delete defaults.engine;
-    }
-  }
-  if (selection?.default) defaults.engine = selection.default;
-  const engines = { ...(config.engines ?? {}), ...(selection?.engines ?? {}) };
-  const selectedEngine = selection?.default ? engines[selection.default] : undefined;
-  if (selection?.default && selectedEngine && selectedEngine.kind !== "agent") {
-    throw new ConfigError(
-      `Cannot select agent engine ${JSON.stringify(selection.default)} because that name belongs to an LLM engine.`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
-  if (selection?.default && !engines[selection.default]) {
-    engines[selection.default] = {
-      kind: "agent",
-      platform: selection.default as AgentEngine["platform"],
-    };
-  }
-  return { engines, defaults };
+  return { harnesses };
 }
 
-export function cloneLlmConnection(llm?: LlmConnectionConfig): LlmConnectionConfig | undefined {
+export function cloneLlmConnection(llm?: SetupConnection): SetupConnection | undefined {
   if (!llm) return undefined;
-  return JSON.parse(JSON.stringify(llm)) as LlmConnectionConfig;
+  return JSON.parse(JSON.stringify(llm)) as SetupConnection;
 }

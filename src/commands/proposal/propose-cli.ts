@@ -57,7 +57,10 @@ export const proposeCommand = defineCommand({
       description:
         "Configured writable bundle to queue the proposal for and draw convention facts from (default: the working bundle)",
     },
-    engine: { type: "string", description: "Engine to use (defaults to defaults.engine)" },
+    engine: {
+      type: "string",
+      description: "Harness (or connection) to use, by name (defaults to the default harness)",
+    },
     "timeout-ms": { type: "string", description: "Override the engine timeout in milliseconds" },
   },
   async run({ args }) {

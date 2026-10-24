@@ -30,7 +30,6 @@ import { resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveEntryProvenance } from "../../indexer/installations";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
-import { fallbackAnnouncement } from "../../integrations/agent/engine-fallback";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import {
   type AgentProposalPayload,
@@ -39,7 +38,6 @@ import {
   validateProposalPayload,
 } from "../../integrations/agent/prompts";
 import {
-  assertRunnerCredentials,
   collectDispatchSensitiveValues,
   runExecution,
   unwrapHarnessReply,
@@ -153,17 +151,11 @@ async function dispatchProposalPrompt(
     const prepared = resolveExecution({ content, config, current });
     return { prepared, lowered: buildExecution(prepared.request, prepared.runner) };
   };
+  // Resolution and lowering come before the entry event opens durable state; provider and
+  // runtime failures occur after it, preserving the command-attempt observability contract.
   const { prepared, lowered } = lower(prompt);
-  const engineName = prepared.request.engine.name;
-  const announcement = fallbackAnnouncement(prepared.fallbackEngineName, engineName);
-  if (announcement) warn(announcement);
-
-  // Validate every required symbolic credential before the entry event opens
-  // durable state. Provider/runtime failures still occur after the event,
-  // preserving the command-attempt observability contract. The dispatch reads
-  // the same caller environment.
+  const engineName = prepared.request.target.name;
   const envSource = options.runAgentOptions?.envSource;
-  assertRunnerCredentials(lowered.runner, envSource);
   onDispatchReady();
   options.onDispatchReady?.();
   // runStructured dispatches at least once, so a returned or DISPATCH_FAILED exchange has a result.
@@ -188,7 +180,7 @@ async function dispatchProposalPrompt(
     ...(reply ? { reply } : {}),
     durationMs: results.reduce((total, result) => total + result.durationMs, 0),
     engineName,
-    ...(lowered.runner.kind === "llm" ? {} : { engineBin: lowered.runner.profile.bin }),
+    ...(lowered.runner.kind === "harness" ? { engineBin: lowered.runner.bin } : {}),
     notices: lowered.notices,
     sensitiveValues: collectDispatchSensitiveValues(lowered.runner, {}, envSource),
   };

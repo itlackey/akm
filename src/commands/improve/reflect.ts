@@ -35,8 +35,6 @@ import { resolveStandardsContext } from "../../core/standards/resolve-standards-
 import { warn, warnOnce } from "../../core/warn";
 import { lookup } from "../../indexer/indexer";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
-import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
-import { fallbackAnnouncement, withEngineFallback } from "../../integrations/agent/engine-fallback";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import {
   buildReflectOutputRepairPrompt,
@@ -45,12 +43,8 @@ import {
   type ReflectOutputMode,
   type ReflectPromptInput,
 } from "../../integrations/agent/prompts";
-import { type RunnerSpec, runnerIsLlm } from "../../integrations/agent/runner";
-import {
-  assertRunnerCredentials,
-  collectDispatchSensitiveValues,
-  type RunExecutionOptions,
-} from "../../integrations/agent/runner-dispatch";
+import type { RunnerSpec } from "../../integrations/agent/runner";
+import { collectDispatchSensitiveValues, type RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported, LlmCallError } from "../../llm/client";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import type { EligibilitySource } from "../proposal/proposal-types";
@@ -87,7 +81,7 @@ export interface AkmReflectOptions {
   ref?: string;
   /** Task hint passed through to the prompt. */
   task?: string;
-  /** Named engine override (defaults to `defaults.engine`). */
+  /** Connection (or harness) override, by name. */
   engine?: string;
   timeoutMs?: number;
   /** Shared improve deadline for dispatch and judging. */
@@ -362,11 +356,11 @@ export const REFLECT_UNSCOPED_JSON_SCHEMA: Record<string, unknown> = {
 };
 
 /**
- * Frame for JSON Schema unless the LLM connection disabled it or already proved
+ * Frame for JSON Schema unless the connection already proved
  * this process that it rejects it (the transport retries plain text on a 4xx).
  */
-function wantsJsonSchemaOutput(connection: { endpoint: string; model: string; supportsJsonSchema?: boolean }): boolean {
-  return connection.supportsJsonSchema !== false && !isJsonSchemaKnownUnsupported(connection);
+function wantsJsonSchemaOutput(connection: { endpoint: string; model: string }): boolean {
+  return !isJsonSchemaKnownUnsupported(connection);
 }
 
 /** Injected between the prior draft and the refinement request (self-refine). */
@@ -515,12 +509,7 @@ function parseFramedReflectOutput(raw: string, targetRef: string | undefined): R
 export async function runReflectIteration(opts: RunReflectIterationOptions): Promise<AgentRunResult> {
   const start = Date.now();
   let repairAttempts = 0;
-  // Model work is bounded: with no timeout from the caller or the runner, the default.
-  const configuredTimeout = Object.hasOwn(opts, "timeoutMs")
-    ? (opts.timeoutMs ?? null)
-    : Object.hasOwn(opts.runner, "timeoutMs")
-      ? (opts.runner.timeoutMs ?? null)
-      : DEFAULT_LLM_TIMEOUT_MS;
+  const configuredTimeout = Object.hasOwn(opts, "timeoutMs") ? (opts.timeoutMs ?? null) : opts.runner.timeoutMs;
   const deadline = typeof configuredTimeout === "number" ? start + configuredTimeout : undefined;
   const messages: ChatMessage[] = [{ role: "user", content: opts.prompt ?? "" }];
   if (opts.priorDraft !== undefined && opts.iteration > 0) {
@@ -573,7 +562,7 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
       ...(opts.onNotices ? { onNotices: opts.onNotices } : {}),
     });
     if (!outcome.ok) {
-      if (!runnerIsLlm(opts.runner)) dispatched = outcome.result;
+      if (opts.runner.kind !== "connection") dispatched = outcome.result;
       throw outcome.reason === "timeout"
         ? new LlmCallError(outcome.error ?? "timeout", "timeout")
         : new Error(outcome.error ?? "dispatch failed");
@@ -799,10 +788,9 @@ async function resolveReflectSource(
 }
 
 /**
- * The single engine for this invocation: `--engine`, the improve strategy's
- * reflect process, or `defaults.engine` (announced when it falls back to the
- * SDK binary). Whatever its kind, reflect runs it under the model-work tool
- * policy.
+ * The single connection or harness for this invocation: `--engine`, the improve
+ * strategy's reflect process, or the default. Whatever its kind, reflect runs it
+ * under the model-work tool policy.
  */
 function resolveReflectRunner(options: AkmReflectOptions): {
   config: AkmConfig;
@@ -812,46 +800,43 @@ function resolveReflectRunner(options: AkmReflectOptions): {
   notices: readonly Notice[];
 } {
   const config = options.config ?? loadConfig();
-  const activeStrategy =
-    options.improveProfile ?? config.improve?.strategies?.[config.defaults?.improveStrategy ?? "default"];
+  const activeStrategy = options.improveProfile ?? config.improve?.strategies?.[config.improve?.strategy ?? "default"];
   const lower = (selection: Parameters<typeof resolveExecution>[0]) => {
     const prepared = resolveExecution(selection);
     return buildExecution(prepared.request, prepared.runner);
   };
   let lowered: { runner: RunnerSpec; notices: readonly Notice[] };
   if (options.engine) {
-    lowered = lower({ content: "reflect engine selection", config, current: { engine: options.engine } });
+    lowered = lower({
+      content: "reflect engine selection",
+      config,
+      current: { engine: options.engine },
+      modelWork: true,
+    });
   } else if (options.improveProfile) {
     const resolved = resolveImproveExecution({
       config,
-      profile: activeStrategy,
       process: activeStrategy?.processes?.reflect,
       processName: "reflect",
     });
     if (!resolved) {
       throw new ConfigError(
-        "Reflect requires an engine for the active improve strategy.",
+        "Reflect requires a connection or harness for the active improve strategy.",
         "LLM_NOT_CONFIGURED",
-        "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine.",
+        "Run `akm setup`, or set improve.connection or improve.strategies.<name>.processes.reflect.connection.",
       );
     }
     lowered = resolved;
   } else {
-    const { config: engineConfig, fallbackEngineName } = withEngineFallback(config);
-    const defaultEngine = engineConfig.defaults?.engine;
-    const announcement = fallbackAnnouncement(fallbackEngineName, defaultEngine);
-    if (announcement) warn(announcement);
-    lowered = lower({ content: "reflect engine selection", config });
+    lowered = lower({ content: "reflect engine selection", config, modelWork: true });
   }
   const runnerSpec = lowered.runner;
-  const engineName = runnerSpec.engine ?? options.engine;
-  if (!engineName) throw new ConfigError("Reflect requires a named engine.", "INVALID_CONFIG_FILE");
-  return { config, activeStrategy, runnerSpec, engineName, notices: lowered.notices };
+  return { config, activeStrategy, runnerSpec, engineName: runnerSpec.name, notices: lowered.notices };
 }
 
 /**
- * Lower a runner under the model-work tool policy and check its credentials,
- * so a bad transport, or one that cannot confine the policy, fails before any work.
+ * Lower a runner under the model-work tool policy, so a bad transport, or one
+ * that cannot confine the policy, fails before any work.
  */
 function preflightReflectDispatch(runnerSpec: RunnerSpec, onNotices: (notices: readonly Notice[]) => void): void {
   const prepared = resolveExecution({
@@ -861,7 +846,6 @@ function preflightReflectDispatch(runnerSpec: RunnerSpec, onNotices: (notices: r
   });
   const lowered = buildExecution(prepared.request, prepared.runner);
   onNotices(lowered.notices);
-  assertRunnerCredentials(lowered.runner);
 }
 
 /**
@@ -870,8 +854,8 @@ function preflightReflectDispatch(runnerSpec: RunnerSpec, onNotices: (notices: r
  * the other half for the reply. Never below the flat floor.
  */
 function computeReflectContentBudgetChars(promptInput: ReflectPromptInput, runnerSpec: RunnerSpec): number | undefined {
-  if (!runnerIsLlm(runnerSpec) || !promptInput.assetContent?.trim()) return undefined;
-  const window = (runnerSpec.connection.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS) * CHARS_PER_TOKEN;
+  if (runnerSpec.kind !== "connection" || !promptInput.assetContent?.trim()) return undefined;
+  const window = (runnerSpec.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS) * CHARS_PER_TOKEN;
   const overhead = buildReflectPrompt({ ...promptInput, contentBudgetChars: 0 }).prompt.length;
   return Math.max(REFLECT_CONTENT_CAP, Math.floor((window - overhead) / 2));
 }
@@ -913,9 +897,9 @@ function buildReflectPromptText(args: {
 }): { prompt: string; outputMode: ReflectOutputMode } {
   const { options, parsedRef, assetContent, sources, runnerSpec, priorDraft } = args;
   const { feedback, schemaHints, rejectedProposals, standardsContext } = sources;
-  // An LLM engine that rejects JSON Schema gets the framed contract; every other engine gets the JSON object.
+  // A connection that rejects JSON Schema gets the framed contract; a harness gets the JSON object.
   const outputMode: ReflectOutputMode =
-    runnerIsLlm(runnerSpec) && !wantsJsonSchemaOutput(runnerSpec.connection) ? "framed_markdown" : "json_schema";
+    runnerSpec.kind === "connection" && !wantsJsonSchemaOutput(runnerSpec) ? "framed_markdown" : "json_schema";
   const input: ReflectPromptInput = {
     ...(options.ref ? { ref: options.ref } : {}),
     ...(parsedRef?.type ? { type: parsedRef.type } : {}),
@@ -959,14 +943,15 @@ async function runReflectRefineIterations(args: {
   let result = {} as AgentRunResult;
   let priorDraft: string | undefined;
   let repairAttempts = 0;
-  // Only an agent or SDK engine runs a child process, with an environment and spawn or SDK seams.
-  const childProcess = runnerIsLlm(runnerSpec)
-    ? {}
-    : {
-        ...(Object.keys(agentEnv).length > 0 ? { environment: agentEnv } : {}),
-        ...(options.runSdk ? { runSdk: options.runSdk } : {}),
-        ...(options.runAgentOptions ? { runOptions: options.runAgentOptions } : {}),
-      };
+  // Only a harness (or the internal runtime) runs a child process, with an environment and spawn or SDK seams.
+  const childProcess =
+    runnerSpec.kind === "connection"
+      ? {}
+      : {
+          ...(Object.keys(agentEnv).length > 0 ? { environment: agentEnv } : {}),
+          ...(options.runSdk ? { runSdk: options.runSdk } : {}),
+          ...(options.runAgentOptions ? { runOptions: options.runAgentOptions } : {}),
+        };
   for (let iter = 0; iter < maxRefineIters; iter++) {
     const { prompt, outputMode } = buildReflectPromptText({
       options,
@@ -1233,7 +1218,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     const gateJudge = resolveQualityGateJudge(config, activeStrategy, "reflect", notices.add);
     if (gateJudge) {
       judgeRunner = gateJudge;
-    } else if (runnerIsLlm(runnerSpec)) {
+    } else if (runnerSpec.kind === "connection") {
       judgeRunner = runnerSpec;
     } else {
       const resolved = resolveImproveExecution({ config, processName: "reflect_proposal_quality-judge" });
@@ -1245,7 +1230,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   if (skippedNoJudge) {
     warnOnce(
       "reflect-quality-gate-no-judge",
-      "Reflect proposal quality gate has no engine configured to judge proposals (set defaults.llmEngine). Skipping the gate for this run; the proposal is queued for human review instead.",
+      "Reflect proposal quality gate has no connection or harness to judge proposals (run `akm setup`). Skipping the gate for this run; the proposal is queued for human review instead.",
     );
   }
   preflightReflectDispatch(runnerSpec, notices.add);
@@ -1272,7 +1257,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
           schemaVersion: 2,
           ...(options.ref ? { ref: options.ref } : {}),
           engine: engineName,
-          error: enoentHintMessage(runnerIsLlm(runnerSpec) ? engineName : runnerSpec.profile.bin),
+          error: enoentHintMessage(runnerSpec.kind === "connection" ? engineName : runnerSpec.bin),
           ...notices.fields(),
         };
       }

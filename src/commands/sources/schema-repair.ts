@@ -29,7 +29,6 @@ import { info } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import type { ChatMessage, chatCompletion } from "../../llm/client";
 import { callStructured } from "../../llm/structured-call";
 import { isLedgerBlocked, ledgerKey, loadLedgerSnapshot } from "../improve/ledger";
@@ -215,7 +214,6 @@ export async function runSchemaRepairPass(
     return { repairs, repairedRefs };
   }
 
-  assertRunnerCredentials(llmRunner);
   for (const repair of pendingErrors) {
     appendEvent({
       eventType: "schema_repair_invoked",

@@ -101,7 +101,10 @@ export function resolveApiKey(
 }
 
 /** Every key the config can resolve now, for redaction. */
-export function collectCredentialValues(config: AkmConfig, env: NodeJS.ProcessEnv = process.env): string[] {
+export function collectCredentialValues(
+  config: Pick<AkmConfig, "connections" | "embedding" | "search">,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
   const keys = Object.entries(config.connections ?? {}).map(([name, c]) => resolveApiKey(c.apiKey, name, env, true));
   keys.push(
     resolveApiKey(config.embedding?.apiKey, "embedding", env, true),

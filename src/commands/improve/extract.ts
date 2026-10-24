@@ -18,7 +18,7 @@ import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
-import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -43,11 +43,10 @@ import { warn, warnVerbose } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
-import type { ChatMessage } from "../../llm/client";
+import type { ChatCompletionConfig, ChatMessage } from "../../llm/client";
 import type { Database } from "../../storage/database";
 import {
   type ExtractedSessionRow,
@@ -172,7 +171,7 @@ export interface AkmExtractOptions {
   harnesses?: SessionLogHarness[];
   /** Test seam: transport override. */
   chat?: (
-    config: LlmProfileConfig,
+    config: ChatCompletionConfig,
     messages: ChatMessage[],
     options?: { timeoutMs?: number | null; responseSchema?: Record<string, unknown>; signal?: AbortSignal },
   ) => Promise<string>;
@@ -221,7 +220,6 @@ export function resolveStandaloneExtractPlan(
   const process = cloneAndFreeze(getImproveProcessConfig("extract", selected.config) ?? {});
   const resolved = resolveImproveExecution({
     config,
-    profile: selected.config,
     process,
     current: {
       ...(selection.engine ? { engine: selection.engine } : {}),
@@ -231,19 +229,19 @@ export function resolveStandaloneExtractPlan(
   });
   if (!resolved) {
     throw new ConfigError(
-      "No engine configured for extract. Set defaults.llmEngine, pass --engine, or select an improve strategy with processes.extract.engine.",
+      "No connection or harness is configured for extract. Run `akm setup`, pass --engine, or set improve.connection or processes.extract.connection.",
       "LLM_NOT_CONFIGURED",
     );
   }
   const runner = resolved.runner;
   return Object.freeze({
     strategy: selected.name,
-    engine: runner.engine as string,
+    engine: runner.name,
     // An explicit `akm extract` runs regardless of the strategy's improve-stage toggle.
     enabled: true,
     process,
     runner: cloneAndFreeze(runner),
-    timeoutMs: Object.hasOwn(runner, "timeoutMs") ? (runner.timeoutMs ?? null) : 600_000,
+    timeoutMs: runner.timeoutMs,
     embeddingConfig: cloneAndFreeze(config.embedding),
     ...(resolved.notices.length > 0 ? { notices: cloneAndFreeze(resolved.notices) } : {}),
   });
@@ -290,7 +288,7 @@ function emptyExtractResult(args: {
     sessions: [],
     warnings: [args.warning],
     durationMs: Date.now() - args.startMs,
-    ...(args.llmRunner ? { engine: args.llmRunner.engine, engineKind: args.llmRunner.kind } : {}),
+    ...(args.llmRunner ? { engine: args.llmRunner.name, engineKind: args.llmRunner.kind } : {}),
   };
 }
 
@@ -860,7 +858,7 @@ async function runExtractSessionLoop(
     deferred: 0,
   };
   const account = (result: ExtractSessionOutcome): ExtractedSessionResult => {
-    const stamped: ExtractedSessionResult = { ...result, engine: run.llmRunner.engine };
+    const stamped: ExtractedSessionResult = { ...result, engine: run.llmRunner.name };
     tally.sessions.push(stamped);
     const preempted = ["read_failed", "too_short", "already_extracted", "locked_concurrent"].includes(
       result.skipReason ?? "",
@@ -1026,13 +1024,13 @@ function resolveExtractRun(
   } else if (options.llmRunner) {
     llmRunner = options.llmRunner;
   } else {
-    const resolved = resolveImproveExecution({ config, profile: activeProfile, process, processName: "extract" });
+    const resolved = resolveImproveExecution({ config, process, processName: "extract" });
     llmRunner = resolved?.runner;
     if (resolved) notices.add(resolved.notices);
   }
   if (!llmRunner) {
     throw new ConfigError(
-      "No engine configured for extract. Set defaults.llmEngine or improve.strategies.<name>.processes.extract.engine.",
+      "No connection or harness is configured for extract. Run `akm setup`, or set improve.connection or improve.strategies.<name>.processes.extract.connection.",
       "LLM_NOT_CONFIGURED",
     );
   }
@@ -1041,9 +1039,7 @@ function resolveExtractRun(
     ? options.resolvedPlan.timeoutMs
     : Object.hasOwn(options, "timeoutMs")
       ? (options.timeoutMs ?? null)
-      : Object.hasOwn(runner, "timeoutMs")
-        ? (runner.timeoutMs ?? null)
-        : 600_000;
+      : runner.timeoutMs;
   const triage = (process as { triage?: { enabled?: boolean; minScore?: number } } | undefined)?.triage;
   // The default summary generator fails open: no summary, no session asset.
   const generate: SessionSummaryGenerator = async (data) => {
@@ -1222,8 +1218,6 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     locking: tracking && !dryRun && !options.stateDb,
   });
   const modelPlanCount = planned.plans.filter((plan) => plan.kind === "model").length;
-  // Credentials are materialized once, after every read-only gate and before live state or a lock.
-  if (modelPlanCount > 0) assertRunnerCredentials(llmRunner);
 
   let stateDb: Database | undefined;
   let tally: ExtractLoopTally;
@@ -1275,7 +1269,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     const n = counts[reason];
     if (n)
       topLevelWarnings.push(
-        `${n} of ${tally.sessions.length} sessions skipped: ${reason} (engine "${llmRunner.engine}")`,
+        `${n} of ${tally.sessions.length} sessions skipped: ${reason} (engine "${llmRunner.name}")`,
       );
   }
   if (modelPlanCount > 0 && resolved.gates.triage.enabled && tally.triageEvaluated > 0) {
@@ -1307,7 +1301,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     durationMs: Date.now() - startMs,
     ...notices.fields(),
     ...(Object.keys(counts).length > 0 ? { skipReasons: counts } : {}),
-    engine: llmRunner.engine,
+    engine: llmRunner.name,
     engineKind: llmRunner.kind,
   };
 }

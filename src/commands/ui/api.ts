@@ -361,10 +361,13 @@ function config() {
     value,
     source: configSource(path),
   }));
-  const engines = Object.entries((effective.engines ?? {}) as Record<string, unknown>).map(([name, engine]) => ({
-    name,
-    ...(engine as Record<string, unknown>),
-  }));
+  const named = (kind: "connection" | "harness", entries: unknown) =>
+    Object.entries((entries ?? {}) as Record<string, unknown>).map(([name, entry]) => ({
+      name,
+      kind,
+      ...(entry as Record<string, unknown>),
+    }));
+  const engines = [...named("connection", effective.connections), ...named("harness", effective.harnesses)];
   const env = Object.keys(process.env)
     .filter((name) => name.startsWith("AKM_"))
     .sort()

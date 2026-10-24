@@ -57,7 +57,10 @@ export const agentCommand = defineCommand({
       description: "Read the task prompt from stdin (mutually exclusive with --prompt)",
       default: false,
     },
-    engine: { type: "string", description: "Agent engine to use (default: defaults.engine)" },
+    engine: {
+      type: "string",
+      description: "Harness (or connection) to use, by name (default: the default harness)",
+    },
     model: {
       type: "string",
       description:

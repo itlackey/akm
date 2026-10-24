@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { AkmConfig, IndexPassConfig } from "../core/config/config";
+import { ConfigError } from "../core/errors";
 import { cloneExecutionJsonObject } from "../execution/json";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../execution/source";
@@ -21,11 +22,11 @@ function own(value: object | undefined, key: PropertyKey): boolean {
   return value !== undefined && Object.hasOwn(value, key);
 }
 
-/** Adapt one index invocation layer into the shared execution vocabulary. */
-function indexExecutionDefaults(layer: IndexPassConfig | undefined): UnresolvedExecutionDefaults {
+/** Adapt one index layer (the index-wide settings, or one pass's) into the shared execution vocabulary. */
+function indexExecutionDefaults(layer: Partial<IndexPassConfig> | undefined): UnresolvedExecutionDefaults {
   if (!layer) return {};
   return {
-    ...(own(layer, "engine") ? { engine: layer.engine } : {}),
+    ...(own(layer, "connection") ? { connection: layer.connection } : {}),
     ...(own(layer, "model") ? { model: layer.model } : {}),
     ...(own(layer, "timeoutMs") ? { timeout: layer.timeoutMs } : {}),
     ...(own(layer, "llm") && layer.llm !== undefined
@@ -35,29 +36,29 @@ function indexExecutionDefaults(layer: IndexPassConfig | undefined): UnresolvedE
 }
 
 /**
- * Resolve standalone index passes from the index section only. Improve
- * strategies own improve-triggered calls and are intentionally not consulted.
+ * Resolve standalone index passes from the index section only (the index-wide
+ * settings, then the pass's own). Improve strategies own improve-triggered calls
+ * and are intentionally not consulted. No runner when the pass is off or no
+ * connection or harness is configured.
  */
 export function resolveIndexPassExecution(passName: string, config: AkmConfig): ResolvedIndexPassExecution {
   const pass = config.index?.[passName] as IndexPassConfig | undefined;
   if (pass?.enabled === false) return Object.freeze({ runner: undefined, notices: NO_LOWERING_NOTICES });
-  const defaults = config.index?.defaults as IndexPassConfig | undefined;
-  const fallbackLlmEngine = config.defaults?.llmEngine;
-  const selectedEngine = pass?.engine ?? defaults?.engine ?? fallbackLlmEngine;
-  if (!selectedEngine) return Object.freeze({ runner: undefined, notices: NO_LOWERING_NOTICES });
-
-  const invocationDefaults = {
-    ...indexExecutionDefaults(defaults),
-    ...(!own(defaults, "engine") && fallbackLlmEngine ? { engine: fallbackLlmEngine } : {}),
-  } satisfies UnresolvedExecutionDefaults;
-  // Under the model-work tool policy, so an engine that cannot confine it is refused here.
-  const prepared = resolveExecution({
-    content: "",
-    config,
-    invocationDefaults,
-    current: indexExecutionDefaults(pass),
-    modelWork: true,
-  });
-  const lowered = buildExecution(prepared.request, prepared.runner);
-  return Object.freeze({ runner: lowered.runner, notices: lowered.notices });
+  try {
+    // Under the model-work tool policy, so a harness that cannot confine it is refused here.
+    const prepared = resolveExecution({
+      content: "",
+      config,
+      invocationDefaults: indexExecutionDefaults(config.index as Partial<IndexPassConfig> | undefined),
+      current: indexExecutionDefaults(pass),
+      modelWork: true,
+    });
+    const lowered = buildExecution(prepared.request, prepared.runner);
+    return Object.freeze({ runner: lowered.runner, notices: lowered.notices });
+  } catch (error) {
+    if (error instanceof ConfigError && error.code === "LLM_NOT_CONFIGURED") {
+      return Object.freeze({ runner: undefined, notices: NO_LOWERING_NOTICES });
+    }
+    throw error;
+  }
 }

@@ -20,14 +20,12 @@ import {
 } from "../../execution/source";
 import { recordIndexedShowUsage } from "../../indexer/usage/show-usage";
 import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
-import { fallbackAnnouncement } from "../../integrations/agent/engine-fallback";
 import {
   buildExecution,
   type ExecutionFieldProvenance,
   type ResolvedExecution,
   resolveExecution,
 } from "../../integrations/agent/execution";
-import type { ResolvedModelMapV1 } from "../../integrations/agent/model-map";
 import { type RunExecutionOptions, runExecution } from "../../integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../integrations/agent/spawn";
 import { parseBuiltinCommandAction } from "./builtin-action";
@@ -47,7 +45,6 @@ export type CommandExecutionSourceLoader = (
 export interface PrepareCommandInvocationOptions {
   readonly action: unknown;
   readonly config: AkmConfig;
-  readonly modelMap?: ResolvedModelMapV1;
   readonly sourceLoader?: CommandExecutionSourceLoader;
   /** Optional index lookup capability; dry-run supplies a read-only isolated snapshot lookup. */
   readonly sourceLookup?: ExecutionSourceLookup;
@@ -238,7 +235,6 @@ export async function prepareCommandInvocation(
     },
     ...(options.invocationDefaults ? { invocationDefaults: options.invocationDefaults } : {}),
     ...(options.current ? { current: options.current } : {}),
-    ...(options.modelMap ? { modelMap: options.modelMap } : {}),
   });
 }
 
@@ -249,37 +245,28 @@ function compareText(left: string, right: string): number {
 const DIAGNOSTIC_PROVENANCE_FIELDS = new Set([
   "/inference",
   "agent",
-  "authorization",
   "command",
-  "engine",
-  "engine.requested",
   "model",
   "outputSchema",
   "persona",
   "runtime.environment",
-  "runtime.settings",
   "runtime.timeoutMs",
   "runtime.workspace",
+  "target",
 ]);
 
 const DIAGNOSTIC_NOTICE_FIELDS = new Set([
   "agent",
   "command.content",
-  "command.extensions",
   "conversation",
-  "engine",
-  "engine.extensions",
-  "extensions",
   "inference",
   "model",
   "outputSchema",
   "persona",
-  "persona.extensions",
   "runtime.environment",
-  "runtime.extensions",
-  "runtime.settings",
   "runtime.timeoutMs",
   "runtime.workspace",
+  "target",
 ]);
 
 function canonicalDiagnosticProvenanceField(field: string): string | undefined {
@@ -342,7 +329,7 @@ function safeDiagnosticNotice(notice: Readonly<LoweringNotice>): Readonly<Comman
         severity: "info",
         adapter: notice.adapter,
         field: "persona",
-        message: "The selected engine has no native persona channel; AKM composed the persona into the prompt.",
+        message: "The selected harness has no native persona channel; AKM composed the persona into the prompt.",
       });
     default:
       return undefined;
@@ -371,7 +358,7 @@ export function inspectPreparedCommandInvocation(prepared: PreparedCommandInvoca
     shape: "command-dry-run",
     ok: true,
     dryRun: true,
-    engine: prepared.request.engine.name,
+    engine: prepared.request.target.name,
     provenance: diagnosticProvenance(prepared.provenance),
     notices: diagnosticNotices(built.notices),
   };
@@ -406,7 +393,7 @@ export async function dispatchPreparedCommandInvocation(
 ): Promise<CommandDispatchResult> {
   const { request } = prepared;
   const built = buildExecution(request, prepared.runner);
-  const selectedEngine = request.engine.name;
+  const selectedEngine = request.target.name;
   const result = await runExecution(built, runOptionsFor(options));
   const consumedRefs = new Set<string>();
   if (request.command.source) consumedRefs.add(request.command.source.ref);
@@ -417,8 +404,7 @@ export async function dispatchPreparedCommandInvocation(
   // own default is "user").
   const eventSource = resolveUsageEventSource(process.env, options.eventSource ?? "user");
   for (const ref of consumedRefs) recordIndexedShowUsage(ref, eventSource);
-  const announcement = fallbackAnnouncement(prepared.fallbackEngineName, selectedEngine);
-  return resultEnvelope(result, selectedEngine, announcement ? [announcement] : [], built.notices);
+  return resultEnvelope(result, selectedEngine, [], built.notices);
 }
 
 export async function executeCommandInvocation(

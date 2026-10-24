@@ -11,31 +11,30 @@
  */
 
 import * as p from "../../cli/clack";
-import type { LlmConnectionConfig } from "../../core/config/config";
 import { probeLlmReachable } from "../../llm/client";
 import type { LMStudioDetectionResult } from "../detect";
+import { probeConnection, type SetupConnection } from "../engine-config";
 import { prompt, promptOrBack } from "../prompt";
 
 // ── Derive-config ───────────────────────────────────────────────────────────
 
 /** Standard chat-connection config shared by every provider branch. */
 export function llmConnection(
-  provider: LlmConnectionConfig["provider"],
+  provider: string,
   endpoint: string,
   model: string,
-  extra?: Partial<LlmConnectionConfig>,
-): LlmConnectionConfig {
+  extra?: Partial<SetupConnection>,
+): SetupConnection {
   return {
     provider,
     endpoint,
     model,
-    temperature: 0.3,
     ...(extra ?? {}),
   };
 }
 
 /** The "Keep current: ..." select option appended when a connection exists. */
-export function keepCurrentOption(current: LlmConnectionConfig): { value: string; label: string; hint?: string } {
+export function keepCurrentOption(current: SetupConnection): { value: string; label: string; hint?: string } {
   return {
     value: "keep",
     label: `Keep current: ${current.provider ?? current.endpoint}`,
@@ -142,10 +141,10 @@ export async function promptApiKeyEnvVarName(): Promise<string | null> {
  * and falls back once per call on a 4xx (see `llm/client.ts`), so there is
  * no verdict for setup to determine or persist here.
  */
-export async function probeLlmConnection(llm: LlmConnectionConfig): Promise<void> {
+export async function probeLlmConnection(llm: SetupConnection): Promise<void> {
   const probeSpin = p.spinner();
   probeSpin.start("Probing LLM connectivity...");
-  const probe = await probeLlmReachable(llm);
+  const probe = await probeLlmReachable(probeConnection(llm));
   if (probe.reachable) {
     probeSpin.stop("LLM reachable.");
   } else {

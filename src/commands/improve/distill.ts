@@ -39,7 +39,6 @@ import { warn, warnVerbose } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import type { chatCompletion } from "../../llm/client";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
@@ -527,9 +526,6 @@ async function distill(
   // A reinforced memory graduates to knowledge without a generation call.
   const promotion = targetKind === "lesson" ? null : await planPromotion(run, feedbackEvents);
   if (promotion) {
-    if (run.runner && promotion.existing) assertRunnerCredentials(run.runner);
-    const judge = run.judgeRunner ?? run.runner;
-    if (judge && qualityGateEnabled(run)) assertRunnerCredentials(judge);
     const promoted = await promoteToKnowledge(run, promotion);
     stampInputSalience(run);
     return promoted;

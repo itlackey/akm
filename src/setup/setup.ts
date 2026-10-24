@@ -23,16 +23,12 @@ import { isDeepStrictEqual } from "node:util";
 import * as p from "../cli/clack";
 import { akmInit } from "../commands/sources/init";
 import { deriveBundleIds } from "../core/bundle-id";
-import type {
-  AkmConfig,
-  BundleConfigEntry,
-  EmbeddingConnectionConfig,
-  LlmConnectionConfig,
-  SourceConfigEntry,
-} from "../core/config/config";
+import type { AkmConfig, BundleConfigEntry, EmbeddingConnectionConfig, SourceConfigEntry } from "../core/config/config";
 import {
   bundleEntryToSourceEntry,
   DEFAULT_CONFIG,
+  defaultConnection,
+  defaultHarness,
   loadUserConfig,
   mutateConfigWithPrecommit,
   parseAndValidateConfigText,
@@ -58,7 +54,13 @@ import {
   renderDetectionSummary,
 } from "./detect";
 import { upsertDetectedAgentEngine, upsertDetectedLlmEngine, verifyOpenAiCompatibleEndpoint } from "./detected-engines";
-import { readCurrentLlmEngine, writeAgentEngines, writeLlmEngine } from "./engine-config";
+import {
+  probeConnection,
+  readCurrentLlmEngine,
+  type SetupConnection,
+  writeAgentEngines,
+  writeLlmEngine,
+} from "./engine-config";
 import { detectHarnessConfigs } from "./harness-config-import";
 import { bail, prompt } from "./prompt";
 import { PROVIDER_DEFAULTS } from "./providers";
@@ -664,7 +666,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
       `Semantic search:  ${semanticSearchMode.mode}`,
       `Registries:       ${effectiveRegistries.filter((r) => r.enabled !== false).length} enabled`,
       `Bundle sources:   ${allStashes.length}`,
-      `Agent default:    ${newConfig.defaults?.engine ?? "disabled"}`,
+      `Agent default:    ${defaultHarness(newConfig)?.name ?? (defaultConnection(newConfig) ? "akm runtime" : "disabled")}`,
       `Output:           ${newConfig.output?.format ?? "json"} / ${newConfig.output?.detail ?? "brief"}`,
     ].join("\n"),
     "Configuration Summary",
@@ -798,7 +800,7 @@ export async function runSetupWithDefaults(opts: {
   if (!readCurrentLlmEngine(ctx.config as AkmConfig) && opts.probe) {
     const liveLocal = env.localServers.find((s) => s.available && s.defaultModel);
     if (liveLocal?.defaultModel) {
-      const llm: LlmConnectionConfig = {
+      const llm: SetupConnection = {
         provider: "local",
         endpoint: `${liveLocal.baseUrl.replace(/\/$/, "")}/v1/chat/completions`,
         model: liveLocal.defaultModel,
@@ -826,7 +828,7 @@ export async function runSetupWithDefaults(opts: {
   }
 
   // Auto-detect the agent harness if not already configured
-  if (!ctx.config.defaults?.engine && env.harness !== "none") {
+  if (!defaultHarness(ctx.config as AkmConfig) && env.harness !== "none") {
     ctx.apply(upsertDetectedAgentEngine(ctx.config as AkmConfig, env.harness).config);
   }
 
@@ -868,7 +870,7 @@ export async function runDetectOnly(): Promise<DetectedEnvironment> {
  * to merge. Never includes an API key value.
  */
 export function deriveRecommendedConfig(env: DetectedEnvironment): {
-  llm?: LlmConnectionConfig;
+  llm?: SetupConnection;
   llmApiKeyEnvVar?: string;
   embedding?: EmbeddingConnectionConfig;
   agentDefault?: string;
@@ -1093,7 +1095,7 @@ export async function runSetupFromConfig(opts: {
     });
     await runSetupSteps(steps, ctx);
     if (!ctx.config.primaryPath) ctx.apply({ primaryPath: stashDir });
-    if (!ctx.config.defaults?.engine) {
+    if (!defaultHarness(ctx.config as AkmConfig)) {
       const harness = await detectHarness();
       if (harness !== "none") ctx.apply(upsertDetectedAgentEngine(ctx.config as AkmConfig, harness).config);
     }
@@ -1113,7 +1115,7 @@ export async function runSetupFromConfig(opts: {
   const mergedLlm = readCurrentLlmEngine(finalizedMerged);
   if (opts.probe && mergedLlm) {
     try {
-      const reach = await probeLlmReachable(mergedLlm);
+      const reach = await probeLlmReachable(probeConnection(mergedLlm));
       if (!reach.reachable) {
         warn(`[akm setup] LLM endpoint not reachable${reach.error ? `: ${reach.error}` : ""}.`);
       }

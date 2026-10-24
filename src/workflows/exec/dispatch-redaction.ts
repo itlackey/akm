@@ -8,17 +8,12 @@
  * A leaf module, so the judge path reuses it without an import cycle.
  */
 
-import {
-  collectSensitiveValues,
-  isEnvPassthroughValueSafeToExpose,
-  redactSensitiveText,
-  redactSensitiveValue,
-} from "../../core/redaction";
-import { lookupApiKeyFileValue, lookupApiKeySecretRefValue } from "../../integrations/agent/engine-resolution";
+import { collectSensitiveValues, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import { collectDispatchSensitiveValues } from "../../integrations/agent/runner-dispatch";
 import type { UnitDispatcher } from "./unit-dispatch";
 
-/** The engine pair a dispatch may draw credentials from. `StepWorkUnit` satisfies it structurally. */
+/** What a dispatch may draw credentials from. `StepWorkUnit` satisfies it structurally. */
 export interface DispatchSecretSources {
   runner?: RunnerSpec;
   /** Secret values substituted by the frozen-environment materializer. */
@@ -29,52 +24,12 @@ export interface DispatchSecretSources {
  * Every exact value that must never reach the journal from one dispatch: the
  * secrets substituted into the unit's env bindings (`dispatch.sensitiveValues`;
  * the rest of an env asset is configuration and reaches the journal as is), the
- * engine's (and SDK fallback's) credential from env, file, or secret store, and
- * unsafe passthrough values. Read at call time, so collect no earlier than the
- * dispatch being scrubbed.
+ * runner's credential and unsafe passthrough values. Read at call time, so
+ * collect no earlier than the dispatch being scrubbed.
  */
 export function collectWorkflowDispatchSensitiveValues(dispatch: DispatchSecretSources): string[] {
   const values = new Set<string>(dispatch.sensitiveValues ?? []);
-  const addCredential = (runner: RunnerSpec | undefined): void => {
-    if (!runner) return;
-    if (runner.kind === "llm") {
-      for (const name of runner.credential?.names ?? []) {
-        const value = process.env[name]?.trim();
-        if (value) values.add(value);
-      }
-      // #905: file-backed credential — best-effort read, never throws, so a
-      // broken apiKeyFile is reported by the real dispatch, not this collector.
-      if (runner.apiKeyFile) {
-        const value = lookupApiKeyFileValue(runner.apiKeyFile);
-        if (value) values.add(value);
-      }
-      // #953: secret-store-backed credential — same best-effort rationale.
-      if (runner.apiKeySecretRef) {
-        const value = lookupApiKeySecretRefValue(runner.apiKeySecretRef);
-        if (value) values.add(value);
-      }
-      return;
-    }
-    for (const name of runner.profile.envPassthrough ?? []) {
-      const value = process.env[name];
-      if (!isEnvPassthroughValueSafeToExpose(name, value) && value) values.add(value);
-    }
-    if (runner.kind === "sdk") {
-      for (const name of runner.fallbackCredential?.names ?? []) {
-        const value = process.env[name]?.trim();
-        if (value) values.add(value);
-      }
-      if (runner.fallbackApiKeyFile) {
-        const value = lookupApiKeyFileValue(runner.fallbackApiKeyFile);
-        if (value) values.add(value);
-      }
-      if (runner.fallbackApiKeySecretRef) {
-        const value = lookupApiKeySecretRefValue(runner.fallbackApiKeySecretRef);
-        if (value) values.add(value);
-      }
-    }
-  };
-  addCredential(dispatch.runner);
+  for (const value of dispatch.runner ? collectDispatchSensitiveValues(dispatch.runner, {}) : []) values.add(value);
   return collectSensitiveValues(values);
 }
 

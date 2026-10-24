@@ -24,7 +24,13 @@ import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
-import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
+import {
+  defaultConnection,
+  defaultHarness,
+  loadConfig,
+  mutateConfig,
+  resetConfigCache,
+} from "../../core/config/config";
 import { bundleKeyForContentRoot, resolveConfiguredSources } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
@@ -43,7 +49,6 @@ import {
 } from "../../core/write-source";
 import type { InputFlag } from "../../execution/input-contract";
 import { deriveInstallations } from "../../indexer/installations";
-import { withEngineFallback } from "../../integrations/agent/engine-fallback";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
@@ -862,21 +867,19 @@ export async function akmTasksDoctor(
     }
   }
   const bindings = groupInstalledBindings(installed);
-  // Report the EFFECTIVE engine view — the same one the runner resolves —
-  // so doctor never says "no engine" on an install where tasks actually run.
-  const { config } = withEngineFallback(loadConfig());
-  const defaultEngine = config.defaults?.engine;
-  const engines = Object.keys(config.engines ?? {});
+  // Report the EFFECTIVE view — the default harness (else connection) agent work runs on, and what is configured.
+  const config = loadConfig();
+  const defaultEngine = (defaultHarness(config) ?? defaultConnection(config))?.name;
+  const engines = [...Object.keys(config.connections ?? {}), ...Object.keys(config.harnesses ?? {})];
 
   // §6.1: surface the effective triage settings for the default improve
   // strategy. The struct is a fixed shape, so this is a deliberate addition.
-  const improveStrategyName =
-    typeof config.defaults?.improveStrategy === "string" ? config.defaults.improveStrategy : "default";
+  const improveStrategyName = config.improve?.strategy ?? "default";
   // D8 — report the EFFECTIVE strategy, not the raw one. Resolving the raw
   // strategy here would report `applyMode: "promote"` for a promote strategy
   // under a review-first config, while the run actually uses "queue" — a doctor
   // command lying about the thing it exists to diagnose.
-  const rawStrategy = resolveImproveStrategy(config.defaults?.improveStrategy, config).config;
+  const rawStrategy = resolveImproveStrategy(config.improve?.strategy, config).config;
   const { config: effectiveStrategy, gated } = applyAutonomyGate(rawStrategy, config);
   const autonomyEnabled = isImproveAutonomyEnabled(config);
   // Memory cleanup has no strategy flag to downgrade, so add that direct lane

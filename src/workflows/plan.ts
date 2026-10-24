@@ -18,9 +18,9 @@
  * a stored plan back into this type, from this release or an earlier one.
  */
 
+import type { LlmInference as LlmInvocationOverrides } from "../core/llm-inference";
 import type { TaskInputBinding } from "../execution/input-contract";
 import type { ResolvedExecutionRequestV1 } from "../execution/resolved-request";
-import type { LlmInvocationOverrides } from "../integrations/agent/engine-resolution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 
 /**
@@ -47,7 +47,7 @@ export interface WorkflowError {
 
 export type WorkflowOnError = "fail" | "continue";
 export type WorkflowReducer = "collect" | "vote";
-export type WorkflowRuntimeKind = "llm" | "agent" | "sdk" | "exec";
+export type WorkflowRuntimeKind = "connection" | "harness" | "exec";
 
 export interface WorkflowRetry {
   max: number;

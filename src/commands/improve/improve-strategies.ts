@@ -16,11 +16,7 @@ import {
 } from "../../core/config/engine-semantics";
 import { ConfigError } from "../../core/errors";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import {
-  describeLlmCredentialAvailability,
-  type LlmCredentialAvailability,
-} from "../../integrations/agent/engine-resolution";
-import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
+import type { RunnerSpec } from "../../integrations/agent/runner";
 import { applyAutonomyGate, type GatedLane } from "./autonomy-gate";
 import { resolveImproveExecution } from "./execution";
 import { stripBundle } from "./ledger";
@@ -109,7 +105,7 @@ if (BUILTIN_IMPROVE_STRATEGY_NAMES.some((name) => !(name in BUILTIN_STRATEGIES))
 }
 
 export function resolveImproveStrategy(name: string | undefined, config: AkmConfig): SelectedStrategy {
-  const selectedName = name ?? config.defaults?.improveStrategy ?? "default";
+  const selectedName = name ?? config.improve?.strategy ?? "default";
   const userStrategies = config.improve?.strategies ?? {};
   // graph-refresh named a specific, common retirement — refuse it
   // unconditionally, even when `improve.strategies["graph-refresh"]` still
@@ -192,17 +188,6 @@ export interface EngineUnavailableProcess {
   process: EngineUnavailableProcessName;
   configKey: string;
   reason: string;
-  /**
-   * Structurally resolved routing metadata for the credential-unavailable case only
-   * (a working engine whose secret isn't reachable here) — never set for the
-   * no-engine-configured case, where these values were never resolved. `runner`
-   * stays `null` on the process itself so dispatch can never see a credential-less
-   * runner; a dry-run preview reads these instead when it needs to show what
-   * resolution decided without materializing the credential (#800/#957).
-   */
-  engine?: string;
-  model?: string;
-  contextLength?: number;
 }
 
 /**
@@ -249,15 +234,15 @@ export interface ResolvedImprovePlan {
 export interface ProcessRoutingRow {
   process: EngineUnavailableProcessName;
   enabled: boolean;
-  /** Resolved engine name, when this process resolved a runner. */
+  /** Name of the connection or harness this process resolved to. */
   engine?: string;
-  /** Resolved model, for an llm-kind runner only. */
+  /** Resolved model, when the runner names one. */
   model?: string;
-  /** Kind of the resolved runner: "llm", "agent" or "sdk". */
+  /** Kind of the resolved runner: "connection" or "harness". */
   engineKind?: RunnerSpec["kind"];
   /** This process's own lowering notices (not the run's deduped flat pool). */
   notices: readonly Readonly<LoweringNotice>[];
-  /** Set when the strategy enabled this process but its engine/credential could not be resolved. */
+  /** Set when the strategy enabled this process but no connection or harness is configured for it. */
   unavailable?: { configKey: string; reason: string };
   /** Count of this run's effective refs the process would act on (`shouldSkipRef`). reflect/distill/consolidate only. */
   eligibleRefs?: number;
@@ -282,20 +267,11 @@ export function projectResolvedProcessRouting(plan: ResolvedImprovePlan): Proces
       enabled: process.enabled,
       ...(process.runner
         ? {
-            engine: process.runner.engine,
-            model: runnerLlmConnection(process.runner)?.model,
+            engine: process.runner.name,
+            ...(process.runner.model !== undefined ? { model: process.runner.model } : {}),
             engineKind: process.runner.kind,
           }
-        : // #800/#957 round 3 — a credential-unavailable process never carries a
-          // runner, but its structurally resolved engine/model is still worth
-          // showing in the routing table (dry-run preview, health probe).
-          unavailable?.engine
-          ? {
-              engine: unavailable.engine,
-              ...(unavailable.model ? { model: unavailable.model } : {}),
-              engineKind: "llm",
-            }
-          : {}),
+        : {}),
       notices: process.notices ?? [],
       ...(unavailable ? { unavailable: { configKey: unavailable.configKey, reason: unavailable.reason } } : {}),
     });
@@ -307,9 +283,9 @@ export function projectResolvedProcessRouting(plan: ResolvedImprovePlan): Proces
       enabled: plan.triageJudgment !== null,
       ...(plan.triageJudgment
         ? {
-            engine: plan.triageJudgment.engine,
+            engine: plan.triageJudgment.name,
             engineKind: plan.triageJudgment.kind,
-            ...(plan.triageJudgment.kind === "llm" ? { model: plan.triageJudgment.connection.model } : {}),
+            ...(plan.triageJudgment.model !== undefined ? { model: plan.triageJudgment.model } : {}),
           }
         : {}),
       notices: plan.triageJudgmentNotices ?? [],
@@ -336,28 +312,7 @@ export function cloneAndFreeze<T>(value: T): Readonly<T> {
 export function resolveImprovePlan(
   name: string | undefined,
   config: AkmConfig,
-  options: {
-    repairValidationFailures?: boolean;
-    env?: NodeJS.ProcessEnv;
-    /**
-     * Skip the "no improve process can run" throw below when every process
-     * ends up disabled purely because its (otherwise-resolved) engine's
-     * credential is unavailable in this environment, and return the plan
-     * (with `engineUnavailable` populated) instead of throwing. A strategy
-     * where at least one process never resolved an engine at all still
-     * throws even with this set — that is the guard's original, pre-#957
-     * condition (a genuinely unconfigured install), not the "credential
-     * exists but isn't reachable from here" case this option exists for.
-     * Callers that only inspect the plan structurally —
-     * `runActiveImproveStrategyProbe` (#957) — need the credential-only case
-     * to be inspectable rather than thrown, so the same total-no-op
-     * detection the real run uses can also drive the health check's `fail`
-     * status. Callers that act on the plan (`improve-cli.ts`, `improve.ts`)
-     * leave this unset so a totally unusable strategy still aborts as it
-     * always has.
-     */
-    allowAllDisabled?: boolean;
-  } = {},
+  options: { repairValidationFailures?: boolean } = {},
 ): ResolvedImprovePlan {
   const selected = resolveImproveStrategy(name, config);
   // D8 — gate autonomy BEFORE the plan is built, so every downstream consumer
@@ -368,47 +323,13 @@ export function resolveImprovePlan(
   return { ...buildImprovePlan(strategy, config, options), autonomyGated: gated };
 }
 
-/** Describe why a resolved-but-uncredentialed runner belongs in `engineUnavailable` (#957). */
-function credentialUnavailableReason(engineName: string, status: { reason: string }): string {
-  return `requires a credential that is not available in this process's environment (engine "${engineName}": ${status.reason})`;
-}
-
-/**
- * Whether the credential akm reads for `runner` is reachable in `env`: an LLM
- * engine's own, or an SDK engine's LLM fallback. An agent CLI reads its own.
- */
-function runnerCredentialStatus(runner: RunnerSpec, env: NodeJS.ProcessEnv): LlmCredentialAvailability {
-  if (runner.kind === "llm") return describeLlmCredentialAvailability(runner, env);
-  if (runner.kind === "sdk") {
-    return describeLlmCredentialAvailability(
-      {
-        credential: runner.fallbackCredential,
-        apiKeyFile: runner.fallbackApiKeyFile,
-        apiKeySecretRef: runner.fallbackApiKeySecretRef,
-      },
-      env,
-    );
-  }
-  return { available: true };
-}
-
 function buildImprovePlan(
   strategy: SelectedStrategy,
   config: AkmConfig,
-  options: { repairValidationFailures?: boolean; env?: NodeJS.ProcessEnv; allowAllDisabled?: boolean },
+  options: { repairValidationFailures?: boolean },
 ): Omit<ResolvedImprovePlan, "autonomyGated"> {
-  const env = options.env ?? process.env;
   const processes = {} as Record<ImproveProcessName, ResolvedImproveProcess>;
   const engineUnavailable: EngineUnavailableProcess[] = [];
-  // #957 round 2 — distinguishes "credential unavailable" (a working engine
-  // whose secret isn't in this environment) from "no engine selected at all"
-  // among the pushes below, so `allowAllDisabled` can bypass the ConfigError
-  // only for the former. The latter is the guard's original, pre-#957
-  // condition and must keep hard-aborting for every caller, including a
-  // health probe with `allowAllDisabled` set — a totally unconfigured
-  // install is not the credential-in-the-wrong-environment case this option
-  // exists for.
-  let anyEngineNotConfigured = false;
   for (const processName of IMPROVE_PROCESS_NAMES) {
     const sourceProcessConfig = strategy.config.processes?.[processName] ?? {};
     const enabled = sourceProcessConfig.enabled === true;
@@ -421,49 +342,17 @@ function buildImprovePlan(
     // Validation itself is structural and always runs. Only its optional repair
     // step needs a model, so disabling repair must not create an LLM preflight.
     const skipsRepairEngine = processName === "validation" && options.repairValidationFailures === false;
-    // #957: a resolved-but-uncredentialed runner is folded into the same
-    // "no engine" branch below — set here so the shared push/continue block
-    // can tell the two apart in its reason text.
-    let credentialUnavailableMessage: string | undefined;
-    // #800/#957 round 3 — the structurally resolved engine/model/contextLength
-    // for the credential-unavailable case only, so a dry-run preview can read
-    // what resolution decided (e.g. the consolidation chunk-size estimate)
-    // without the runner ever carrying a credential-less connection forward.
-    let credentialUnavailableRouting: { engine: string; model?: string; contextLength?: number } | undefined;
     if (!skipsRepairEngine) {
-      const resolved = resolveImproveExecution({
-        config,
-        profile: strategy.config,
-        process: sourceProcessConfig,
-        processName,
-      });
+      const resolved = resolveImproveExecution({ config, process: sourceProcessConfig, processName });
       runner = resolved?.runner ?? null;
       notices = resolved?.notices ?? [];
-      if (runner) {
-        const credentialStatus = runnerCredentialStatus(runner, env);
-        if (!credentialStatus.available) {
-          const connection = runnerLlmConnection(runner);
-          credentialUnavailableMessage = credentialUnavailableReason(runner.engine, credentialStatus);
-          credentialUnavailableRouting = {
-            engine: runner.engine,
-            ...(connection?.model !== undefined ? { model: connection.model } : {}),
-            ...(connection?.contextLength !== undefined ? { contextLength: connection.contextLength } : {}),
-          };
-          runner = null;
-          notices = [];
-        }
-      }
     }
     if (!runner && !skipsRepairEngine) {
-      const configKey = `improve.strategies.${strategy.name}.processes.${processName}.engine`;
-      if (!credentialUnavailableMessage) anyEngineNotConfigured = true;
+      const configKey = `improve.strategies.${strategy.name}.processes.${processName}.connection`;
       engineUnavailable.push({
         process: processName,
         configKey,
-        reason:
-          credentialUnavailableMessage ??
-          `requires an engine that is not configured. Set defaults.llmEngine or ${configKey}`,
-        ...credentialUnavailableRouting,
+        reason: `requires a connection or harness that is not configured. Run \`akm setup\`, or set ${configKey}`,
       });
       processes[processName] = Object.freeze({
         enabled: false,
@@ -484,12 +373,11 @@ function buildImprovePlan(
   if (
     engineUnavailable.length > 0 &&
     // proactiveMaintenance uses no engine: it is a selector, so it alone does not keep a run alive.
-    !IMPROVE_ENGINE_PROCESSES.some((name) => processes[name].enabled) &&
-    (!options.allowAllDisabled || anyEngineNotConfigured)
+    !IMPROVE_ENGINE_PROCESSES.some((name) => processes[name].enabled)
   ) {
     const names = engineUnavailable.map((item) => `"${item.process}"`).join(", ");
     throw new ConfigError(
-      `No improve process can run: ${names} ${engineUnavailable.length === 1 ? "requires" : "require"} an engine that is not configured. Set defaults.llmEngine, or the per-process engine key named for each.`,
+      `No improve process can run: ${names} ${engineUnavailable.length === 1 ? "requires" : "require"} a connection or harness that is not configured. Run \`akm setup\`, or set improve.connection or improve.harness.`,
       "LLM_NOT_CONFIGURED",
     );
   }
@@ -500,35 +388,17 @@ function buildImprovePlan(
     processes.triage.enabled && judgmentEnabled
       ? resolveImproveExecution({
           config,
-          profile: strategy.config,
           process: triage,
           current: triage.judgment,
           processName: "triage-judgment",
         })
       : null;
-  let triageJudgment = triageJudgmentResolution?.runner ?? null;
+  const triageJudgment = triageJudgmentResolution?.runner ?? null;
   if (processes.triage.enabled && judgmentEnabled && !triageJudgment) {
     throw new ConfigError(
-      `Enabled improve triage judgment requires an engine. Set defaults.llmEngine or improve.strategies.${strategy.name}.processes.triage.judgment.engine.`,
+      `Enabled improve triage judgment requires a connection or harness. Run \`akm setup\`, or set improve.connection or improve.strategies.${strategy.name}.processes.triage.judgment.connection.`,
       "LLM_NOT_CONFIGURED",
     );
-  }
-  // #957: same credential-unavailable treatment as the main per-process loop
-  // above — a triage judgment engine that resolves structurally but whose
-  // credential (or, for an SDK judgment, its LLM fallback credential) is
-  // unavailable in this process's environment is folded into
-  // `engineUnavailable` under the reserved `"triage.judgment"` process name
-  // instead of silently reaching dispatch with a doomed credential.
-  if (triageJudgment) {
-    const credentialStatus = runnerCredentialStatus(triageJudgment, env);
-    if (!credentialStatus.available) {
-      engineUnavailable.push({
-        process: "triage.judgment",
-        configKey: `improve.strategies.${strategy.name}.processes.triage.judgment.engine`,
-        reason: credentialUnavailableReason(triageJudgment.engine, credentialStatus),
-      });
-      triageJudgment = null;
-    }
   }
   const frozenProcesses = Object.freeze(processes);
   const frozenStrategy: SelectedStrategy = Object.freeze({

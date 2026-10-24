@@ -7,8 +7,9 @@ import { defineCommand } from "citty";
 import { findCittyTopLevelCommandIndex, getStringArg, hasSubcommand, parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { type AssetRef, isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
-import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
+import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
+import { collectCredentialValues } from "../../core/config/credentials";
 import { ConfigError, UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
 import { getRunLogDir } from "../../core/paths";
@@ -17,13 +18,8 @@ import { clearLogFile, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import { defaultWhich } from "../../integrations/agent/detect";
-import {
-  collectEngineCredentialValues,
-  materializeLlmConnection,
-  type ResolvedLlmUse,
-} from "../../integrations/agent/engine-resolution";
-import { llmUseFromRunner, sdkFallbackUseFromRunner } from "../../integrations/agent/runner";
-import { probeLlmReachable } from "../../llm/client";
+import { materializeConnection } from "../../integrations/agent/runner-dispatch";
+import { type ChatCompletionConfig, probeLlmReachable } from "../../llm/client";
 import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/html-render";
 import { readStdin } from "../../runtime";
@@ -70,18 +66,15 @@ function assertRequiredEnginesAvailable(plan: ResolvedImprovePlan): void {
 }
 
 /**
- * One engine `--require-engines` must prove usable, in the way its kind
- * allows: an LLM connection gets one short completion, and an agent harness
- * must resolve on PATH. An `opencode-sdk` engine runs embedded, so only its
- * LLM fallback is probed, when it has one.
+ * One connection or harness `--require-engines` must prove usable, in the way
+ * its kind allows: a connection gets one short completion, and a harness's
+ * binary must resolve on PATH.
  */
 interface RequiredEngineTarget {
   process: EngineUnavailableProcessName;
   engine: string;
-  connection?: LlmConnectionConfig;
+  connection?: ChatCompletionConfig;
   bin?: string;
-  /** Why the connection could not be built: its credential is required and missing. */
-  error?: string;
 }
 
 /** Every engine the plan would dispatch to, triage's judgment engine included. */
@@ -89,39 +82,11 @@ function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngine
   const runners = (Object.entries(plan.processes) as [EngineUnavailableProcessName, ResolvedImproveProcess][])
     .flatMap(([processName, process]) => (process.runner ? [[processName, process.runner] as const] : []))
     .concat(plan.triageJudgment ? [["triage.judgment", plan.triageJudgment] as const] : []);
-  return runners.map(([processName, runner]) => {
-    // The runner's own timeout, else the connection's (sdkFallbackUseFromRunner already does this).
-    const use =
-      runner.kind === "llm"
-        ? {
-            ...llmUseFromRunner(runner),
-            timeoutMs: runner.timeoutMs !== undefined ? runner.timeoutMs : (runner.connection.timeoutMs ?? null),
-          }
-        : runner.kind === "sdk"
-          ? sdkFallbackUseFromRunner(runner)
-          : undefined;
-    return {
-      process: processName,
-      engine: runner.engine,
-      ...(runner.kind === "agent" ? { bin: runner.profile.bin } : {}),
-      ...(use ? probeConnection(use) : {}),
-    };
-  });
-}
-
-/**
- * The connection the probe sends, built as a dispatch builds it: the runner
- * keeps its credential symbolic, so the key is read and injected here, or the
- * probe would go out without one.
- */
-function probeConnection(
-  use: ResolvedLlmUse,
-): { connection: LlmConnectionConfig } | { connection: LlmConnectionConfig; error: string } {
-  try {
-    return { connection: materializeLlmConnection(use) };
-  } catch (err) {
-    return { connection: use.connection, error: err instanceof Error ? err.message : String(err) };
-  }
+  return runners.map(([processName, runner]) => ({
+    process: processName,
+    engine: runner.name,
+    ...(runner.kind === "harness" ? { bin: runner.bin } : { connection: materializeConnection(runner) }),
+  }));
 }
 
 /**
@@ -131,7 +96,7 @@ function probeConnection(
  * improve run on 2026-09-27 against a reachable endpoint; the cap still ends a
  * hung endpoint (#957) long before a run's own multi-minute calls would.
  */
-export function requiredEngineProbeTimeoutMs(connection: LlmConnectionConfig): number {
+export function requiredEngineProbeTimeoutMs(connection: ChatCompletionConfig): number {
   return Math.min(connection.timeoutMs ?? DEFAULT_LLM_TIMEOUT_MS, REQUIRED_ENGINE_PROBE_MAX_MS);
 }
 
@@ -146,8 +111,9 @@ const REQUIRED_ENGINE_PROBE_MAX_MS = 120_000;
  */
 export async function assertRequiredEnginesReachable(
   plan: ResolvedImprovePlan,
-  probeReachable: (connection: LlmConnectionConfig) => Promise<{ reachable: boolean; error?: string }> = (connection) =>
-    probeLlmReachable(connection, requiredEngineProbeTimeoutMs(connection)),
+  probeReachable: (connection: ChatCompletionConfig) => Promise<{ reachable: boolean; error?: string }> = (
+    connection,
+  ) => probeLlmReachable(connection, requiredEngineProbeTimeoutMs(connection)),
   which: (bin: string) => string | undefined = defaultWhich,
 ): Promise<EngineProbeOutcome[]> {
   const targets = collectRequiredEngineTargets(plan);
@@ -156,7 +122,7 @@ export async function assertRequiredEnginesReachable(
     string,
     Promise<{ reach: { reachable: boolean; error?: string }; latencyMs: number }>
   >();
-  const probeConnectionOnce = (connection: LlmConnectionConfig) => {
+  const probeConnectionOnce = (connection: ChatCompletionConfig) => {
     const key = `${connection.endpoint.replace(/\/+$/, "")}|${connection.model}`;
     let pending = probesByConnection.get(key);
     if (!pending) {
@@ -172,7 +138,6 @@ export async function assertRequiredEnginesReachable(
         return { ...target, reach: { reachable: false, error: `${target.bin} is not on PATH` }, latencyMs: 0 };
       }
       if (!target.connection) return { ...target, reach: { reachable: true }, latencyMs: 0 };
-      if (target.error) return { ...target, reach: { reachable: false, error: target.error }, latencyMs: 0 };
       return { ...target, ...(await probeConnectionOnce(target.connection)) };
     }),
   );
@@ -288,7 +253,7 @@ const improveJudgeCommand = defineJsonCommand({
     );
     if (!judge) {
       throw new ConfigError(
-        "`akm improve judge` judges with the reflect quality gate's engine. Set processes.reflect.qualityGate.engine.",
+        "`akm improve judge` judges with the reflect quality gate's connection or harness. Set processes.reflect.qualityGate.connection.",
         "INVALID_CONFIG_FILE",
       );
     }
@@ -298,7 +263,7 @@ const improveJudgeCommand = defineJsonCommand({
       llmRunner: judge,
       ...(typeof ref === "string" && ref ? { ref } : {}),
     });
-    output("improve-judge", { engine: judge.engine, ...verdict });
+    output("improve-judge", { engine: judge.name, ...verdict });
   },
 });
 
@@ -420,7 +385,7 @@ export const improveCommand = defineCommand({
           : resolveWriteTarget(effectiveConfig, targetArg, { flag: IMPROVE_TARGET_FLAG });
       // Every model-backed process resolves before any side effect; a dry run
       // never dispatches, so it tolerates every process being disabled.
-      const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig, { allowAllDisabled: Boolean(dryRun) });
+      const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig);
       if (args["show-prompt"]) {
         if (!scopeArg || !scopeRef) {
           throw new UsageError(
@@ -437,7 +402,7 @@ export const improveCommand = defineCommand({
         engineProbe = await assertRequiredEnginesReachable(resolvedPlan);
       }
       const selectedStrategyName = resolvedPlan.strategy.name;
-      const sensitiveValues = collectEngineCredentialValues(effectiveConfig);
+      const sensitiveValues = collectCredentialValues(effectiveConfig);
       // Only flags actually passed override the strategy's `sync` block.
       const syncFlag = args.sync;
       const pushFlag = args.push;

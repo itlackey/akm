@@ -25,7 +25,7 @@ import type { AkmConfig } from "../core/config/config";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { warn } from "../core/warn";
 import type { LoweringNotice } from "../execution/resolved-request";
-import { type RunnerSpec, runnerLlmConnection } from "../integrations/agent/runner";
+import type { RunnerSpec } from "../integrations/agent/runner";
 import type { TryLlmFeatureFallbackEvent } from "./feature-gate";
 import { callStructured } from "./structured-call";
 
@@ -102,6 +102,12 @@ export const DERIVED_MEMORY_JSON_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/** The temperature a connection's request fields set, if any. */
+function configuredTemperature(runner: RunnerSpec): number | undefined {
+  const temperature = runner.kind === "connection" ? runner.request.temperature : undefined;
+  return typeof temperature === "number" ? temperature : undefined;
+}
+
 /**
  * Compress a single memory into one derived memory via the configured LLM.
  * `body` is the pass's effective input (a `Source context:` section, then the
@@ -148,9 +154,9 @@ export async function compressMemoryToDerivedMemory(
       { role: "user", content: userPrompt },
     ],
     request: {
-      // The engine's or the process's configured temperature; 0.1 only when neither sets one.
-      temperature: runnerLlmConnection(llmRunner)?.temperature ?? 0.1,
-      ...(Object.hasOwn(llmRunner, "timeoutMs") ? { timeoutMs: llmRunner.timeoutMs } : {}),
+      // The connection's or the process's configured temperature; 0.1 only when neither sets one.
+      temperature: configuredTemperature(llmRunner) ?? 0.1,
+      timeoutMs: llmRunner.timeoutMs,
       signal,
       responseSchema: DERIVED_MEMORY_JSON_SCHEMA as unknown as Record<string, unknown>,
       onRetryAttempt,

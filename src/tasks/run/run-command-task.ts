@@ -55,12 +55,19 @@ export async function runPreparedCommandTask(input: {
     // into the dispatched engine's child env and the recorded usage events.
     eventSource: provenance.eventSource,
   };
-  // Unset anywhere (task `timeout:`, command asset, engine) → the unattended
-  // default; an explicit value or `null` (opt-out) already sits on the request.
-  const { request, runner } = task.invocation;
-  const unset = !Object.hasOwn(request.runtime, "timeoutMs") && runner.timeoutMs === undefined;
+  // Unset anywhere (task `timeout:`, command asset, connection or harness) → the
+  // unattended default; an explicit value or `null` (opt-out) was set by one of them.
+  const { runner, request, provenance: provenances } = task.invocation;
+  const unset = provenances["runtime.timeoutMs"]?.via === "default";
   const invocation = unset
-    ? { ...task.invocation, runner: { ...runner, timeoutMs: DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } }
+    ? {
+        ...task.invocation,
+        request: {
+          ...request,
+          runtime: { ...request.runtime, timeoutMs: DEFAULT_SCHEDULED_TASK_TIMEOUT_MS },
+        },
+        runner: { ...runner, timeoutMs: DEFAULT_SCHEDULED_TASK_TIMEOUT_MS },
+      }
     : task.invocation;
   const result = await dispatchPreparedCommandInvocation(invocation, dispatchOptions);
   const engineName = result.engine;

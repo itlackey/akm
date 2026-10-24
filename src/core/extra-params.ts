@@ -36,7 +36,7 @@ const CREDENTIAL_KEYS = new Set<string>(EXTRA_PARAMS_CREDENTIAL_KEYS);
 // leaves the reader stuck (#852). Every protected key gets a one-line remedy
 // baked into its issue message.
 
-/** normalizeExtraParamKey(key) -> the first-class engine field it shadows. */
+/** normalizeExtraParamKey(key) -> the first-class setting it shadows. */
 const LEGACY_EXTRA_PARAMS_FIELD: Readonly<Record<string, string>> = {
   model: "model",
   temperature: "temperature",
@@ -51,14 +51,14 @@ const EXTRA_PARAMS_NO_FIELD_REMEDY: Readonly<Record<string, string>> = {
   responseformat: "AKM controls the response format internally — remove it from extraParams",
   stream: "AKM controls streaming internally — remove it from extraParams",
   streamoptions: "AKM controls streaming internally — remove it from extraParams",
-  chattemplatekwargs: "set engines.<name>.enableThinking instead of chat_template_kwargs.enable_thinking",
+  chattemplatekwargs: "set enableThinking instead of chat_template_kwargs.enable_thinking",
 };
 
 function protectedKeyRemedy(normalized: string): string | undefined {
   const field = LEGACY_EXTRA_PARAMS_FIELD[normalized];
   if (field) {
     const note = normalized === "reasoningeffort" ? " (moved to a first-class field in 0.9.2)" : "";
-    return `set engines.<name>.${field} instead${note}`;
+    return `set ${field} instead${note}`;
   }
   return EXTRA_PARAMS_NO_FIELD_REMEDY[normalized];
 }

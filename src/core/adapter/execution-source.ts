@@ -18,6 +18,7 @@ import {
   createAdapterRenderedExecutionSource,
   type ExecutionSourceIdentity,
   type UnresolvedExecutionDefaults,
+  warnRetiredEngineKey,
 } from "../../execution/source";
 import { UsageError } from "../errors";
 import { warnOnce } from "../warn";
@@ -206,6 +207,7 @@ export function executionDefaultsFromFrontmatter(
     const namespaced = own(namespace, key) ? nullableString(namespace[key], `frontmatter.akm.${key}`) : undefined;
     if (topLevel !== undefined) out[key] = topLevel;
     else if (namespaced !== undefined) out[key] = namespaced;
+    if (key === "engine" && out.engine !== undefined) warnRetiredEngineKey();
   }
   if (own(frontmatter, "model")) {
     out.model = nullableString(frontmatter.model, "frontmatter.model");

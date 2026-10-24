@@ -206,7 +206,10 @@ const tasksAddCommand = defineJsonCommand({
       description:
         'Exact shell string to run on the schedule (no AI agent), e.g. "akm improve --strategy consolidate".',
     },
-    engine: { type: "string", description: "Engine to use for prompt targets (default: defaults.engine)" },
+    engine: {
+      type: "string",
+      description: "Harness (or connection) to use for prompt targets, by name (default: the default harness)",
+    },
     model: { type: "string", description: "Model override for prompt targets" },
     "timeout-ms": { type: "string", description: "Positive timeout in milliseconds for prompt or command targets" },
     params: { type: "string", description: "Workflow params as a JSON object" },

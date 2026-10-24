@@ -23,9 +23,12 @@
 import path from "node:path";
 import { type AkmConfig, defaultConnection, defaultHarness } from "../../core/config/config";
 import type { ConnectionConfig, HarnessConfig } from "../../core/config/config-types";
+import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
+import { inferenceWireFields, type LlmInference } from "../../core/llm-inference";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warnOnce } from "../../core/warn";
+import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
 import { EXECUTION_MAX_TIMEOUT_MS } from "../../execution/limits";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import { getHarness, HARNESS_NATIVE_AGENT_IDS } from "../harnesses";
@@ -86,6 +89,36 @@ export function parseTimeout(value: unknown): number | null {
   return milliseconds;
 }
 
+// ── Inference ───────────────────────────────────────────────────────────────
+
+/**
+ * Reasoning effort has one word in a request: `reasoningEffort`, which is what
+ * the LLM request body calls it. `effort` is the same setting as an asset's
+ * `effort:` frontmatter spells it, and becomes `reasoningEffort` here, in the one
+ * place every layer's inference is merged, so the nearest layer wins whichever
+ * word it used. When one inference object has both, `reasoningEffort` wins.
+ */
+export function withReasoningEffort(inference: ExecutionJsonObject): ExecutionJsonObject {
+  if (!Object.hasOwn(inference, "effort")) return inference;
+  const { effort, ...rest } = inference;
+  return Object.hasOwn(rest, "reasoningEffort") ? rest : { ...rest, reasoningEffort: effort as ExecutionJsonValue };
+}
+
+/** The layers' portable inference merged, nearest wins; a layer that sets `null` clears what is farther. */
+export function mergeLayerInference(
+  layers: readonly UnresolvedExecutionDefaults[],
+): ExecutionJsonObject | null | undefined {
+  let merged: ExecutionJsonObject | null | undefined;
+  for (const layer of layers) {
+    if (layer.inference === undefined) continue;
+    merged =
+      layer.inference === null
+        ? null
+        : (deepMergeConfig(merged ?? {}, withReasoningEffort(layer.inference)) as ExecutionJsonObject);
+  }
+  return merged;
+}
+
 // ── Target ──────────────────────────────────────────────────────────────────
 
 type Target =
@@ -106,10 +139,9 @@ function namedByLayers(
       const name = layer[kind];
       if (typeof name === "string" && name) return { kind, name };
     }
-    // `engine` is the retired spelling: a connection by that name, else a harness.
+    // `engine` is the retired spelling (and the name `--engine` takes): a connection by that name, else a harness.
     const engine = layer.engine;
     if (typeof engine === "string" && engine) {
-      warnOnce("resolution:engine-retired", "`engine` is retired; use `connection:` or `harness:`.");
       return {
         kind: config.harnesses?.[engine] && !config.connections?.[engine] ? "harness" : "connection",
         name: engine,
@@ -190,12 +222,6 @@ function layerTimeout(layers: readonly UnresolvedExecutionDefaults[]): number | 
   return value === undefined ? undefined : parseTimeout(value);
 }
 
-function layerContextLength(layers: readonly UnresolvedExecutionDefaults[]): number | undefined {
-  const inference = nearest(layers, "inference");
-  const value = inference && typeof inference === "object" ? inference.contextLength : undefined;
-  return typeof value === "number" ? value : undefined;
-}
-
 function connectionRunner(
   name: string,
   connection: ConnectionConfig,
@@ -214,13 +240,14 @@ function connectionRunner(
   const connectionFields = Object.fromEntries(
     Object.entries(connection).filter(([key]) => !CONNECTION_OWNED_KEYS.has(key)),
   );
-  const contextLength = layerContextLength(layers) ?? connection.contextLength;
+  const inference = mergeLayerInference(layers) as LlmInference | null | undefined;
+  const contextLength = inference?.contextLength ?? connection.contextLength;
   return {
     kind: "connection",
     name,
     endpoint: connection.endpoint,
     model,
-    request: { ...connectionFields, ...entryFields },
+    request: { ...connectionFields, ...entryFields, ...inferenceWireFields(inference ?? undefined) },
     ...(connection.apiKey !== undefined ? { apiKey: connection.apiKey } : {}),
     ...(contextLength !== undefined ? { contextLength } : {}),
     ...(connection.concurrency !== undefined ? { concurrency: connection.concurrency } : {}),

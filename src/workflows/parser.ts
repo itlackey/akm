@@ -41,6 +41,7 @@ import { isRecord } from "../core/common";
 import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
 import { checkJsonSchemaDefinition, JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS } from "../core/json-schema";
 import { INPUT_NAME_PATTERN } from "../execution/input-contract";
+import { warnRetiredEngineKey } from "../execution/source";
 import { classifyTargetRef } from "../execution/target-ref";
 import {
   type SourceRef,
@@ -132,7 +133,7 @@ interface ProgramStep {
   source: SourceRef;
 }
 
-type LlmInvocationOverrides = import("../integrations/agent/engine-resolution").LlmInvocationOverrides;
+type LlmInvocationOverrides = import("../core/llm-inference").LlmInference;
 
 /** Envelope keys every AKM markdown asset carries ($ref'd from schemas/akm-asset-envelope.json). */
 const ENVELOPE_KEYS = [
@@ -671,6 +672,7 @@ function parseDefaults(ctx: Ctx, raw: unknown): ProgramDefaults | undefined {
     if (raw[key] === undefined) continue;
     const name = parseEngineName(ctx, raw[key], [...path, key], `"defaults.${key}"`);
     if (name !== undefined) defaults[key] = name;
+    if (key === "engine") warnRetiredEngineKey();
   }
   if (raw.model !== undefined) {
     if (typeof raw.model === "string" && raw.model.trim() !== "") defaults.model = raw.model.trim();
@@ -865,6 +867,7 @@ function parseUnit(
     if (raw[key] === undefined) continue;
     const name = parseEngineName(ctx, raw[key], [...path, key], `${stepLabel} "${key}"`);
     if (name !== undefined) unit[key] = name;
+    if (key === "engine") warnRetiredEngineKey();
   }
   if (raw.model !== undefined) {
     if (typeof raw.model === "string" && raw.model.trim() !== "") unit.model = raw.model.trim();

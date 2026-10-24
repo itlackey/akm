@@ -40,8 +40,7 @@ import { type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-s
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
-import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
-import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
+import type { RunnerSpec } from "../../integrations/agent/runner";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 import type { Database } from "../../storage/database";
 import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
@@ -773,7 +772,7 @@ async function planConsolidation(
   // 500 body chars per memory keep the judgement useful; chunk size varies instead.
   const bodyTruncation = 500;
   const chunkSize = computeSafeChunkSize(
-    (llmRunner && runnerLlmConnection(llmRunner)?.contextLength) ?? DEFAULT_CONTEXT_LENGTH_TOKENS,
+    (llmRunner?.kind === "connection" ? llmRunner.contextLength : undefined) ?? DEFAULT_CONTEXT_LENGTH_TOKENS,
     bodyTruncation,
     opts.maxChunkSize,
   );
@@ -795,7 +794,6 @@ async function planConsolidation(
     Array.from({ length: Math.ceil(list.length / chunkSize) }, (_, i) =>
       list.slice(i * chunkSize, (i + 1) * chunkSize),
     );
-  if (llmRunner && budgeted.length > 0) assertRunnerCredentials(llmRunner);
   const { ordered, embedTelemetry } = await clusterMemoriesBySimilarity(budgeted, config, stateDb, opts.signal);
   const chunks = slice(ordered);
   const pendingProposalBodyHashes = loadPendingConsolidateProposalHashes(stashDir, opts.proposalsCtx);

@@ -292,12 +292,12 @@ function resolveExecutionSettings(document: PreparableTaskDocument): ExecutionSe
     commandLayer: { id: "task-explain", values: {} },
     ...(Object.keys(current).length > 0 ? { current } : {}),
   });
-  const engine = prepared.request.engine;
+  const target = prepared.request.target;
   return {
     engine: {
-      name: engine.name,
-      kind: engine.kind,
-      ...(Object.hasOwn(engine, "platform") ? { platform: engine.platform } : {}),
+      name: target.name,
+      kind: target.kind,
+      ...(target.platform !== undefined ? { platform: target.platform } : {}),
     },
     ...(prepared.request.model !== undefined ? { model: prepared.request.model } : {}),
     ...(prepared.request.runtime.timeoutMs !== undefined ? { timeoutMs: prepared.request.runtime.timeoutMs } : {}),

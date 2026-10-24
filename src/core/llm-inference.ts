@@ -15,6 +15,15 @@ import type { LlmInvocationOverridesSchema } from "./config/schema/primitives";
 
 export type LlmInference = z.infer<typeof LlmInvocationOverridesSchema>;
 
+/** Whether a request's fields turn thinking on or off, in either of the two spellings an endpoint reads; `undefined` when they say nothing. */
+export function thinkingSetting(request: Readonly<Record<string, unknown>>): boolean | undefined {
+  const kwargs = request.chat_template_kwargs;
+  const nested =
+    typeof kwargs === "object" && kwargs !== null ? (kwargs as Record<string, unknown>).enable_thinking : undefined;
+  const value = request.enable_thinking ?? nested;
+  return typeof value === "boolean" ? value : undefined;
+}
+
 /** The wire fields for `inference`, in the order the request lists them. `contextLength` and `supportsJsonSchema` are not request fields. */
 export function inferenceWireFields(inference: LlmInference | undefined): Record<string, unknown> {
   if (!inference) return {};

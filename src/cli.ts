@@ -194,7 +194,7 @@ const setupCommand = defineCommand({
     config: {
       type: "string",
       description:
-        'Config JSON to apply non-interactively, e.g. \'{"engines":{"local":{"kind":"llm","endpoint":"...","model":"..."}},"defaults":{"llmEngine":"local"}}\'',
+        'Config JSON to apply non-interactively, e.g. \'{"connections":{"default":{"endpoint":"...","models":{"fast":"...","balanced":"...","reasoning":"..."}}}}\'',
     },
     from: {
       type: "string",
@@ -338,7 +338,7 @@ const healthCommand = defineCommand({
       type: "boolean",
       default: true,
       description:
-        "Probe default-llm-engine / configured-engines reachability, check for a newer akm release, look up the newest Claude plugin tag, and check the scheduler's recorded akm binary version (on by default).",
+        "Probe configured connections and harnesses for reachability, check for a newer akm release, look up the newest Claude plugin tag, and check the scheduler's recorded akm binary version (on by default).",
       negativeDescription:
         "Skip the reachability probes, the update check, the Claude plugin tag lookup, and the scheduler-binary version check (for an offline or air-gapped host).",
     },

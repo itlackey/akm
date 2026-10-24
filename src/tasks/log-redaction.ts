@@ -63,8 +63,9 @@
  * name none of the rules recognise.
  */
 
+import type { AkmConfig } from "../core/config/config-types";
+import { collectCredentialValues } from "../core/config/credentials";
 import { collectSensitiveValues, isEnvPassthroughValueSafeToExpose } from "../core/redaction";
-import { collectEngineCredentialValues, type EngineResolutionConfig } from "../integrations/agent/engine-resolution";
 
 /**
  * Shortest value an INFERRED (name-heuristic) match may contribute as a
@@ -105,21 +106,8 @@ export function isInferredSecretName(name: string): boolean {
   return KNOWN_SECRET_NAMES.has(name.toUpperCase()) || INFERRED_SECRET_NAME.test(name);
 }
 
-/**
- * The config this module reads: engine resolution's own view (so the engine
- * credential recipes stay defined in exactly one place), plus the embedding key
- * that view does not cover.
- */
-export interface TaskLogRedactionConfig extends EngineResolutionConfig {
-  embedding?: { apiKey?: string };
-}
-
-/** Resolve `${VAR}` / `$VAR` to the variable NAME, or undefined for anything else. */
-function envRefName(spec: string | undefined): string | undefined {
-  if (!spec) return undefined;
-  const match = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/.exec(spec.trim());
-  return match?.[1];
-}
+/** The config this module reads: the blocks that hold an `apiKey`. */
+export type TaskLogRedactionConfig = Pick<AkmConfig, "connections" | "embedding" | "search">;
 
 /**
  * Every value that must be scrubbed from one task's persisted output.
@@ -145,11 +133,9 @@ export function collectTaskLogSensitiveValues(input: {
     if (trimmed.length > 0) values.add(trimmed);
   };
 
-  // (1) Declared by config — engine credentials, via the collector the prompt
-  // path already uses, plus the embedding key it does not cover.
+  // (1) Declared by config — every key a connection, the embedder or the reranker can resolve.
   if (config) {
-    for (const value of collectEngineCredentialValues(config, env)) values.add(value);
-    addDeclared(env[envRefName(config.embedding?.apiKey) ?? "AKM_EMBED_API_KEY"]);
+    for (const value of collectCredentialValues(config, env)) values.add(value);
   }
 
   // (2) Declared by the task's `redact:` list — names only, never values.

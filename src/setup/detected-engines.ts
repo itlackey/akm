@@ -2,7 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { AkmConfig, EngineConfig, HarnessId } from "../core/config/config";
+import {
+  type AkmConfig,
+  type ConnectionConfig,
+  defaultConnection,
+  type HarnessConfig,
+  type HarnessId,
+} from "../core/config/config";
 
 const CHAT_SUFFIX = "/chat/completions";
 
@@ -20,10 +26,15 @@ export function normalizeChatCompletionsEndpoint(input: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
-export function engineFingerprint(engine: EngineConfig): string {
-  return engine.kind === "llm"
-    ? `llm:${normalizeChatCompletionsEndpoint(engine.endpoint)}`
-    : `agent:${engine.platform}`;
+/** What identifies a configured connection (its canonical endpoint) or harness (its platform). */
+export function engineFingerprint(
+  entry:
+    | { kind: "connection"; connection: ConnectionConfig }
+    | { kind: "harness"; name: string; harness: HarnessConfig },
+): string {
+  return entry.kind === "connection"
+    ? `llm:${normalizeChatCompletionsEndpoint(entry.connection.endpoint)}`
+    : `agent:${entry.harness.platform ?? entry.name}`;
 }
 
 export interface VerifyLlmCandidate {
@@ -86,71 +97,60 @@ function slug(value: string): string {
   return normalized && /^[a-z]/.test(normalized) ? normalized : "local";
 }
 
-function availableName(config: AkmConfig, preferred: string, fingerprint: string): string {
-  for (const [name, engine] of Object.entries(config.engines ?? {}).sort(([left], [right]) =>
-    left.localeCompare(right),
-  )) {
-    if (engineFingerprint(engine) === fingerprint) return name;
+/** The name of the entry already holding `fingerprint`, else the first free name built from `preferred`. */
+function availableName(
+  entries: Record<string, unknown>,
+  fingerprintOf: (name: string) => string,
+  preferred: string,
+  fingerprint: string,
+): string {
+  for (const name of Object.keys(entries).sort()) {
+    if (fingerprintOf(name) === fingerprint) return name;
   }
   const base = slug(preferred);
-  if (!config.engines?.[base]) return base;
+  if (!entries[base]) return base;
   for (let suffix = 2; ; suffix++) {
     const candidate = `${base}-${suffix}`;
-    if (!config.engines?.[candidate]) return candidate;
+    if (!entries[candidate]) return candidate;
   }
 }
 
-/** Insert or reuse an LLM engine by canonical endpoint without modifying a match. */
+/** Insert or reuse a connection by canonical endpoint without modifying a match. The first one is named `default`. */
 export function upsertDetectedLlmEngine(
   config: AkmConfig,
   candidate: { provider: string; endpoint: string; model: string; apiKeyEnvVar?: string },
 ): { config: AkmConfig; name: string; reused: boolean } {
   const endpoint = normalizeChatCompletionsEndpoint(candidate.endpoint);
   const fingerprint = `llm:${endpoint}`;
-  const name = availableName(config, candidate.provider, fingerprint);
-  const existing = config.engines?.[name];
-  const reused = existing !== undefined && engineFingerprint(existing) === fingerprint;
-  const engines = reused
-    ? config.engines
-    : {
-        ...(config.engines ?? {}),
-        [name]: {
-          kind: "llm" as const,
-          provider: candidate.provider,
-          endpoint,
-          model: candidate.model,
-          ...(candidate.apiKeyEnvVar ? { apiKey: `\${${candidate.apiKeyEnvVar}}` } : {}),
-        },
-      };
-  const defaults = { ...(config.defaults ?? {}) };
-  const currentDefault = defaults.llmEngine;
-  if (
-    !currentDefault ||
-    (config.engines?.[currentDefault] && engineFingerprint(config.engines[currentDefault]) === fingerprint)
-  ) {
-    defaults.llmEngine = name;
-  }
-  if (!defaults.engine) defaults.engine = defaults.llmEngine ?? name;
-  return { config: { ...config, engines, defaults }, name, reused };
+  const connections = config.connections ?? {};
+  const fingerprintOf = (name: string) =>
+    engineFingerprint({ kind: "connection", connection: connections[name] as ConnectionConfig });
+  const name =
+    Object.keys(connections).length === 0
+      ? "default"
+      : availableName(connections, fingerprintOf, candidate.provider, fingerprint);
+  const reused = connections[name] !== undefined && fingerprintOf(name) === fingerprint;
+  if (reused) return { config, name, reused };
+  const connection: ConnectionConfig = {
+    endpoint,
+    models: { fast: candidate.model, balanced: candidate.model, reasoning: candidate.model },
+    ...(candidate.apiKeyEnvVar ? { apiKey: `$${candidate.apiKeyEnvVar}` } : {}),
+  };
+  return { config: { ...config, connections: { ...connections, [name]: connection } }, name, reused };
 }
 
-/** Insert or reuse an agent engine by canonical platform without modifying a match. */
+/** Insert or reuse a harness by canonical platform without modifying a match. */
 export function upsertDetectedAgentEngine(
   config: AkmConfig,
   platform: HarnessId,
 ): { config: AkmConfig; name: string; reused: boolean } {
   const fingerprint = `agent:${platform}`;
-  const name = availableName(config, platform, fingerprint);
-  const existing = config.engines?.[name];
-  const reused = existing !== undefined && engineFingerprint(existing) === fingerprint;
-  const engines = reused ? config.engines : { ...(config.engines ?? {}), [name]: { kind: "agent" as const, platform } };
-  const defaults = { ...(config.defaults ?? {}) };
-  const currentDefault = defaults.engine;
-  if (
-    !currentDefault ||
-    (config.engines?.[currentDefault] && engineFingerprint(config.engines[currentDefault]) === fingerprint)
-  ) {
-    defaults.engine = name;
-  }
-  return { config: { ...config, engines, defaults }, name, reused };
+  const harnesses = config.harnesses ?? {};
+  const fingerprintOf = (name: string) =>
+    engineFingerprint({ kind: "harness", name, harness: harnesses[name] as HarnessConfig });
+  const name = availableName(harnesses, fingerprintOf, platform, fingerprint);
+  const reused = harnesses[name] !== undefined && fingerprintOf(name) === fingerprint;
+  if (reused) return { config, name, reused };
+  const harness: HarnessConfig = name === platform ? {} : { platform };
+  return { config: { ...config, harnesses: { ...harnesses, [name]: harness } }, name, reused };
 }

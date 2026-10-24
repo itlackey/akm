@@ -40,7 +40,6 @@ import type { AkmConfig } from "../core/config/config";
 import { ConfigError } from "../core/errors";
 import type { LoweringNotice, ResolvedConversationMessage } from "../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../execution/source";
-import { DEFAULT_LLM_TIMEOUT_MS } from "../integrations/agent/config";
 import { buildExecution, resolveExecution } from "../integrations/agent/execution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 import { type RunExecutionOptions, runExecution } from "../integrations/agent/runner-dispatch";
@@ -172,13 +171,10 @@ function own(value: object | undefined, key: PropertyKey): boolean {
 
 /**
  * @internal Exact request-to-cascade projection, exported for presence-semantics contracts.
- * Model work is bounded: with no timeout from the request or the runner, it
- * gets {@link DEFAULT_LLM_TIMEOUT_MS} on every runner kind.
  */
 export function resolveStructuredCurrent(
   current: UnresolvedExecutionDefaults | undefined,
   request: CallStructuredRequest | undefined,
-  runner?: RunnerSpec,
 ): UnresolvedExecutionDefaults | undefined {
   const out: Record<string, unknown> = current ? { ...current } : {};
   const requestHasInference =
@@ -199,9 +195,6 @@ export function resolveStructuredCurrent(
     out.outputSchema = request.responseSchema;
   }
   if (own(request, "timeoutMs")) out.timeout = request?.timeoutMs ?? null;
-  else if (runner && !Object.hasOwn(runner, "timeoutMs") && !own(current, "timeout")) {
-    out.timeout = DEFAULT_LLM_TIMEOUT_MS;
-  }
   return Object.keys(out).length > 0 ? (out as UnresolvedExecutionDefaults) : undefined;
 }
 
@@ -261,7 +254,7 @@ export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise
       content: terminal.content,
       conversation: terminal.conversation,
       runner,
-      current: resolveStructuredCurrent(opts.current, request, runner),
+      current: resolveStructuredCurrent(opts.current, request),
       modelWork: true,
     });
     const lowered = buildExecution(prepared.request, prepared.runner);

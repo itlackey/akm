@@ -5,7 +5,7 @@
 /**
  * `akm agent [--engine <name>] [--prompt <text>]`
  *
- * Dispatch an agent by named engine, optionally injecting an inline prompt.
+ * Dispatch an agent on a named harness (or connection), optionally injecting an inline prompt.
  * Stored commands execute only through `akm command run`; workflows execute
  * only through the workflow runtime.
  *
@@ -21,11 +21,6 @@ import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
-import {
-  FALLBACK_ENGINE_NAME,
-  fallbackAnnouncement,
-  withEngineFallback,
-} from "../../integrations/agent/engine-fallback";
 import { executeInteractiveAgentInvocation } from "../../integrations/agent/runner-dispatch";
 import { executeCommandInvocation, type PrepareCommandInvocationOptions } from "../command/command-execution";
 
@@ -63,11 +58,7 @@ export interface AkmAgentDispatchResult {
   reason?: string;
   /** The harness's own session id when it exposes one (kept in the harness's history, #1100). */
   sessionId?: string;
-  /**
-   * Non-fatal announcements — today only the implicit `opencode-sdk` engine
-   * fallback (`integrations/agent/engine-fallback.ts`), surfaced here so JSON
-   * consumers see it alongside the stderr `warn()`.
-   */
+  /** Non-fatal announcements, surfaced here so JSON consumers see them alongside the stderr `warn()`. */
   warnings?: readonly string[];
   /** Secret-free optimistic-lowering diagnostics from the selected engine adapter. */
   notices?: readonly Readonly<LoweringNotice>[];
@@ -121,7 +112,7 @@ export async function akmAgentDispatch(
   seams: AkmAgentDispatchSeams = {},
 ): Promise<AkmAgentDispatchResult> {
   if (!options.agentConfig)
-    throw new UsageError("agent requires a valid config with an agent engine.", "MISSING_REQUIRED_ARGUMENT");
+    throw new UsageError("agent requires a valid config with a harness or connection.", "MISSING_REQUIRED_ARGUMENT");
 
   rejectInvalidAgentRef(options.agentRef);
 
@@ -136,18 +127,10 @@ export async function akmAgentDispatch(
     return delegateCanonicalCommand(options, seams, { content: options.prompt });
   }
 
-  // Same implicit opencode-sdk fallback the workflow and task surfaces apply,
-  // so an engine-less install is usable everywhere or nowhere — not a mix.
-  const { config: agentConfig, fallbackEngineName } = withEngineFallback(options.agentConfig);
-  const engineName = options.engine ?? agentConfig.defaults?.engine ?? FALLBACK_ENGINE_NAME;
-  // Announced, never silent: `options.engine` outranks the default, so the
-  // fallback is only reportable when it is the engine actually selected.
-  const engineAnnouncement = fallbackAnnouncement(fallbackEngineName, engineName);
-  if (engineAnnouncement) warn(engineAnnouncement);
   const executeInteractive = seams.executeInteractive ?? executeInteractiveAgentInvocation;
   const execution = await executeInteractive({
-    config: agentConfig,
-    engine: engineName,
+    config: options.agentConfig,
+    ...(options.engine !== undefined ? { engine: options.engine } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
   });
@@ -164,6 +147,5 @@ export async function akmAgentDispatch(
     durationMs: result.durationMs,
     ...(result.error !== undefined ? { error: result.error } : {}),
     ...(result.reason !== undefined ? { reason: result.reason } : {}),
-    ...(engineAnnouncement ? { warnings: [engineAnnouncement] } : {}),
   };
 }

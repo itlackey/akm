@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { warnOnce } from "../core/warn";
 import { cloneExecutionJsonObject, type ExecutionJsonObject } from "./json";
 
 export const EXECUTION_SOURCE_SCHEMA_VERSION = 1 as const;
@@ -19,6 +20,11 @@ export interface ExecutionSourceIdentity {
   readonly file: string;
   /** SHA-256 of the authoritative native file bytes decoded as UTF-8. */
   readonly hash: string;
+}
+
+/** What an asset that still says `engine:` is told, once. */
+export function warnRetiredEngineKey(): void {
+  warnOnce("asset-engine-key-retired", "`engine` is retired; use `connection:` or `harness:`.");
 }
 
 /** Ordinary defaults contributed by one command or persona source layer. */

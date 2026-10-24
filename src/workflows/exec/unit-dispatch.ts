@@ -137,14 +137,14 @@ export async function dispatchWorkflowExecution(
   );
   const notices = lowered.notices.length > 0 ? lowered.notices : undefined;
 
-  if (request.env && Object.keys(request.env).length > 0 && lowered.runner.kind === "llm") {
+  if (request.env && Object.keys(request.env).length > 0 && lowered.profile === undefined) {
     return {
       ok: false,
       text: "",
       failureReason: "env_unsupported",
       error:
         `unit ${JSON.stringify(request.unitId)} declares env bindings, which require a child process ` +
-        `(agent or sdk runner) — the "llm" runner cannot inject a per-unit child environment.`,
+        `(a harness or the internal runtime) — a direct model call cannot inject a per-unit child environment.`,
       ...(notices ? { notices } : {}),
     };
   }

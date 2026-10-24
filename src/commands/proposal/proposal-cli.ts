@@ -530,7 +530,6 @@ const proposalDrainCommand = defineJsonCommand({
       args.judgment === true || (args.strategy !== undefined && triageConfig?.judgment?.enabled === true)
         ? resolveImproveExecution({
             config: cfg,
-            profile: selectedStrategy.config,
             process: triageConfig,
             current: triageConfig?.judgment,
             processName: "proposal-triage-judgment",
@@ -568,7 +567,7 @@ const proposalDrainCommand = defineJsonCommand({
       applyMode,
       dryRun,
       strategy: selectedStrategy.name,
-      judgmentEngine: judgment?.engine ?? null,
+      judgmentEngine: judgment?.name ?? null,
       judgmentKind: judgment?.kind ?? null,
       ...(notices ? { notices } : {}),
       promoted: result.promoted,

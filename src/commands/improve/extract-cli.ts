@@ -71,11 +71,11 @@ export const extractCommand = defineJsonCommand({
     },
     engine: {
       type: "string",
-      description: "Named LLM engine for this invocation. Mutually exclusive with --strategy.",
+      description: "Connection (or harness) to use for this invocation, by name. Mutually exclusive with --strategy.",
     },
     strategy: {
       type: "string",
-      description: "Improve strategy supplying extract behavior and engine. Mutually exclusive with --engine.",
+      description: "Improve strategy supplying extract behavior. Mutually exclusive with --engine.",
     },
   },
   async run({ args }) {

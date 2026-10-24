@@ -27,10 +27,8 @@
  */
 
 import { fetchWithTimeout, readBodyWithByteCap } from "../core/common";
-import { resolveSecret } from "../core/config/config";
-import { isApiKeyReference } from "../core/config/schema/primitives";
+import { resolveApiKey } from "../core/config/credentials";
 import { redactErrorBody, redactSensitiveText } from "../core/redaction";
-import { resolveSecretFromStore } from "../sources/snapshot-fetchers/secret-seam";
 
 /** Mirrors `CurateRerankConfigSchema` (`core/config/schema/search.ts`) — kept as a plain interface here to avoid this transport module depending on the Zod schema module. */
 export interface CurateRerankConfig {
@@ -84,10 +82,7 @@ export async function rerankDocuments(
   }
   if (documents.length === 0) return [];
 
-  const resolvedKey =
-    config.apiKey && isApiKeyReference(config.apiKey)
-      ? resolveSecret(config.apiKey, resolveSecretFromStore)
-      : config.apiKey;
+  const resolvedKey = resolveApiKey(config.apiKey, "curateRerank");
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (resolvedKey) headers.Authorization = `Bearer ${resolvedKey}`;
 

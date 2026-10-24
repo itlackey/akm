@@ -11,7 +11,7 @@ import * as p from "../../cli/clack";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import { type AgentDetectionResult, detectAgentCliProfiles, pickDefaultAgentProfile } from "../../integrations/agent";
 import { detectAgentPlatforms } from "../detect";
-import { type AgentEngineSelection, readAgentEngineSelection } from "../engine-config";
+import { type HarnessSelection, readAgentEngineSelection } from "../engine-config";
 import { prompt } from "../prompt";
 import type { SetupDraftConfig } from "../steps";
 
@@ -91,7 +91,7 @@ export function printCapabilitySummary(smallModelSkipped: boolean, agentConfigur
  */
 export interface AgentSetupResult {
   /** Updated agent config block, or `undefined` if the user has nothing installed and no existing block. */
-  agent?: AgentEngineSelection;
+  agent?: HarnessSelection;
   /** Per-profile detection results, available to the UI for display. */
   detections: AgentDetectionResult[];
 }
@@ -99,7 +99,7 @@ export interface AgentSetupResult {
 export async function stepAgentSelection(
   current: AkmConfig,
   detections: AgentDetectionResult[],
-): Promise<AgentEngineSelection | undefined> {
+): Promise<HarnessSelection | undefined> {
   const currentAgentBlock = readAgentEngineSelection(current);
   const available = detections.filter((d) => d.available);
   if (available.length === 0) {
@@ -123,7 +123,7 @@ export async function stepAgentSelection(
   );
 
   if (selectedDefault === "disabled") {
-    if (!currentAgentBlock?.engines) {
+    if (!currentAgentBlock?.harnesses) {
       return undefined;
     }
     return {
@@ -161,7 +161,7 @@ export function stepAgentCliDetection(
     return { detections };
   }
 
-  const agent: AgentEngineSelection = {
+  const agent: HarnessSelection = {
     ...(currentAgentBlock ?? {}),
     ...(defaultName ? { default: defaultName } : {}),
   };

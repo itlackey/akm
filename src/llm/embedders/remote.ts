@@ -11,13 +11,11 @@
 
 import { abortableDelay, backoffDelay, fetchWithTimeout, isHttpUrl, readBodyWithByteCap } from "../../core/common";
 import { concurrentMap } from "../../core/concurrent";
-import { type EmbeddingConnectionConfig, resolveSecret } from "../../core/config/config";
-import { ENV_REFERENCE_PATTERN } from "../../core/config/schema/primitives";
+import type { EmbeddingConnectionConfig } from "../../core/config/config";
+import { readCredential, resolveApiKey } from "../../core/config/credentials";
 import { defaultConcurrencyForEndpoint } from "../../core/loopback";
 import { redactErrorBody, redactSensitiveText } from "../../core/redaction";
-import { isRefToken } from "../../core/ref-token";
 import { warnVerbose } from "../../core/warn";
-import { resolveSecretFromStore } from "../../sources/snapshot-fetchers/secret-seam";
 import type { Embedder, EmbeddingVector } from "./types";
 
 /**
@@ -968,7 +966,7 @@ export class RemoteEmbedder implements Embedder {
 
   private buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const resolvedKey = resolveSecret(this.config.apiKey, resolveSecretFromStore);
+    const resolvedKey = resolveApiKey(this.config.apiKey, "embedding");
     if (resolvedKey) {
       headers.Authorization = `Bearer ${resolvedKey}`;
     }
@@ -985,7 +983,7 @@ export class RemoteEmbedder implements Embedder {
    * far unredacted and uncapped, at readBodyWithByteCap's 10 MB default.
    */
   private safeErrorBody(body: string): string {
-    const resolvedKey = resolveSecret(this.config.apiKey, resolveSecretFromStore);
+    const resolvedKey = resolveApiKey(this.config.apiKey, "embedding");
     return redactSensitiveText(redactErrorBody(body), resolvedKey ? [resolvedKey] : []);
   }
 }
@@ -1074,8 +1072,6 @@ export function hasRemoteEndpoint(config: EmbeddingConnectionConfig): boolean {
  * self-diagnose that without ever surfacing the secret itself.
  */
 export function describeEmbeddingCredential(apiKey: string | undefined): string {
-  if (!apiKey) return "none configured";
-  if (isRefToken(apiKey)) return `${apiKey} (store)`;
-  if (ENV_REFERENCE_PATTERN.test(apiKey)) return `${apiKey} (env)`;
-  return "literal apiKey";
+  if (apiKey) return `${apiKey} (env)`;
+  return readCredential("embedding") ? "credentials.json" : "none configured";
 }
