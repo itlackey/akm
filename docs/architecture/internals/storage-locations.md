@@ -773,8 +773,8 @@ adapter recognizes — `schema.md` + `pages/` is the probe) contains:
 | Path | Contents | TTL / Retention |
 |---|---|---|
 | `$CACHE/registry/<src>/<id>/<ver>/` | Downloaded bundle packages (npm tarballs + extracted trees) | No TTL |
-| `$CACHE/registry/<src>/<id>/repo/` | Git mirror working trees for git-sourced bundles | 12h fresh; 7d stale |
-| `$CACHE/registry-index/website-<sha256-16>/` | Scraped website content as knowledge markdown files + `manifest.json` freshness marker | 12h fresh; 7d stale |
+| `$CACHE/registry/<src>/<id>/repo/` | Git mirror working trees for git-sourced bundles | None; refreshed by `akm bundle update` |
+| `$CACHE/registry-index/website-<sha256-16>/` | Scraped website content as knowledge markdown files + `manifest.json` marker that the snapshot was materialized | None; re-crawled by `akm bundle update` |
 | `$CACHE/registry-build/build-<random>/` | Temp archive extraction for registry index building | Deleted in `finally` after each run |
 | `$CACHE/tasks/logs/<task-id>/` | Per-run stdout/stderr log files (`<ISO-ts>.log`) | No cleanup |
 | `$CACHE/bin/rg` | Auto-downloaded ripgrep binary | Permanent |

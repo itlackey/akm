@@ -1,7 +1,6 @@
 # Manual QA Fixtures
 
-These fixtures support the authoritative manual test runbook at
-`docs/architecture/testing/manual-testing-checklist.md`.
+These fixtures support manual testing of the CLI.
 
 - `bundle/` supplements the fixed 18-entry ranking baseline with workflow,
   task, agent, command, `.meta`, and fragment-addressing cases.
@@ -17,5 +16,4 @@ These fixtures support the authoritative manual test runbook at
 - `seed-proposals.ts` creates fixed proposal queue cases in an already-isolated
   configured bundle.
 
-Never run the mutating fixtures against a real bundle. The runbook's sandbox
-setup is a prerequisite.
+Never run the mutating fixtures against a real bundle.

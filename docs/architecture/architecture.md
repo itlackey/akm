@@ -100,9 +100,7 @@ User-facing item refs are path-identified:
 - a rename is delete plus create: the new path is a new identity and learned
   state does not follow it
 
-See [`specs/ref.md`](./specs/ref.md) for the normative grammar and
-[`specs/0.9.0-decisions.md`](./specs/0.9.0-decisions.md) for the rationale
-behind the 0.9.0 changes.
+See [`specs/ref.md`](./specs/ref.md) for the normative grammar.
 
 Each indexed entry stores that identity as `item_ref`, with `bundle_id` and
 `concept_id` provenance, and stores its absolute materialized local file as
@@ -389,14 +387,6 @@ scripts tell "akm threw unexpectedly" apart from an ordinary `NotFoundError`
 ---
 
 ## Engine Boundary
-
-The approved target semantics that connect native agent and command assets to
-this engine boundary are specified in
-[Agent, Command, Engine, and Model Resolution](specs/agent-command-engine-model-design.md).
-The WP2/WP3 model-map and common-cascade path, WP4 command surface, WP5 runtime
-lowering convergence, WP6 task v3, and WP7 source-to-frozen durable workflow
-IR are implemented. Direct commands, task execution, and new workflow freezes
-share this boundary.
 
 Public execution selection uses named `engines`, never profiles. An engine is
 either `kind: "llm"` (an OpenAI-compatible chat-completions connection) or

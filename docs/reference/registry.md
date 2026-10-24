@@ -95,8 +95,6 @@ is no longer reachable in 0.9.2; publish it at a publicly routable HTTPS
 endpoint. The only private-network compatibility exception is an npm mirror
 explicitly selected with `AKM_NPM_REGISTRY`; metadata and tarball requests may
 reach that configured mirror, but not link-local or cloud-metadata addresses.
-See [Registry network boundary](../architecture/internals/registry-network-boundary.md)
-for the complete policy and DNS guarantee.
 
 ## Searching Registries
 
@@ -108,9 +106,6 @@ akm search "deploy" --from registry
 
 # Search both the local bundle library and registries
 akm search "deploy" --from all
-
-# Include asset-level results from v3 indexes
-akm search "deploy" --from registry --assets
 ```
 
 ### Search Results
@@ -124,23 +119,10 @@ Each registry hit includes:
 | `id` | Unique identifier (e.g. `npm:@scope/bundle`) |
 | `description` | Summary from the registry |
 | `action` | Ready-to-run next step such as `akm bundle add ... -> then search again` |
+| `installRef` | The ref to pass to `akm bundle add` to install the bundle. Present at every `--detail` level |
 | `quality` | Optional provenance marker — `"generated"`, `"curated"`, or `"proposed"`. Replaces the legacy `curated` boolean removed in 0.7.0 |
 
 Use `--detail full` to include ranking metadata like `score`.
-
-### The `--assets` Flag
-
-When a registry publishes a v3 index (see below), `akm search --from
-registry` can return individual asset-level hits in addition to bundle-level
-hits. Pass `--assets` to enable this:
-
-```bash
-akm search "code review" --from registry --assets
-```
-
-Asset hits include `assetType`, `assetName`, `description`, and the parent
-`stash` information, so you can install the right bundle and immediately know
-which asset to use.
 
 ## Discovery Filtering
 
@@ -153,9 +135,7 @@ relevant, the registry enforces tag-based filtering:
 > **0.6.0 breaking change:** `akm-cli >= 0.6.0` indexes only the
 > `akm-stash` keyword / topic. The pre-0.6.0 `akm-kit` and `agentikit`
 > keywords/topics are **not** honored as fallbacks. Publishers migrating
-> from 0.5.x must add the new tag — see the
-> [migration guide](../migration/v0.5-to-v0.6.md) for the step-by-step
-> publisher checklist.
+> from 0.5.x must add the new tag.
 
 If you are publishing a bundle, add these tags so it can be discovered:
 
@@ -423,9 +403,9 @@ official registry.
 ## Registry Index v3
 
 Version 3 of the registry index schema is the only format `akm-cli >=
-0.6.0` parses. It carries an `assets` array on each bundle entry so
-clients can perform asset-level search without installing the bundle
-first.
+0.6.0` parses. It carries an `assets` array on each bundle entry that
+describes the assets the bundle contains. `akm search --from registry` matches
+bundles; it does not return asset-level hits.
 
 ```json
 {
@@ -461,8 +441,7 @@ Each asset entry supports:
 The 0.6.0 release dropped support for the legacy v1 / v2 indexes;
 publishers must regenerate `index.json` with the
 `scripts/build-registry-index.ts` maintainer script
-or the [akm-registry](https://github.com/itlackey/akm-registry) tooling
-(see the [v0.5 → v0.6 migration guide](../migration/v0.5-to-v0.6.md)). akm
+or the [akm-registry](https://github.com/itlackey/akm-registry) tooling. akm
 treats unknown fields inside a v3 entry as forward-compatible.
 
 ## Cache Layout

@@ -60,6 +60,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `toolPolicy` in `akm show`, the harness builders' tool flags, and recognizing
   a file as an agent by its `tools:` key. Restrict an agent's tools in the
   harness's own agent definition and select it with the engine's `agent`.
+- Bundles are fetched when added and on `akm bundle update`. `akm index` no
+  longer re-fetches a git or website bundle after twelve hours, `--full` does
+  not force a fetch, and a failed forced refresh reports the failure instead of
+  serving the old copy for up to seven days (the previous copy stays on disk).
+  A configured npm bundle with no lock entry is skipped by `akm index` with one
+  warning naming `akm bundle update`, instead of hitting the npm registry on
+  every index run.
+- `akm search --assets` is removed. It asked registries for asset-level hits,
+  but `akm search` never put them in its output, so the flag printed nothing; the
+  registry providers' asset scoring and the `assetHits` response field go with it.
+- Registry hits from `akm search --from registry|all` carry `installRef` (the ref
+  for `akm bundle add`). The brief projection already listed it, but the hit was
+  built without it, so `--detail brief` showed only the name and score.
+- `akm search --detail normal` includes `ref` on local hits, as `brief` already
+  did. `normal` was the only level that showed a hit without the ref `akm show`
+  needs.
+- Env and secret files are indexed even when the bundle's `.gitignore` hides them
+  (`akm bundle create` ignores `env/` and `secrets/`), so `akm show env/<name>`
+  and `akm search --type env` work in a default bundle. The indexer lists the
+  git-ignored files under those two directories in addition to the tracked and
+  untracked ones; values still never reach the index.
+- `akm health --no-probe` also skips the `plugin-version` newest-tag lookup (a
+  `git ls-remote` against the plugin marketplace). With probing off the row
+  reports `unknown` ("not probed") instead of "up to date", and the local
+  version-range check still runs.
+- `akm task doctor` no longer reports `historyDir`. It named `$CACHE/tasks/history`,
+  which does not exist now that task run history lives in `state.db`.
+- Four user-facing messages no longer cite deleted spec sections: the lesson
+  frontmatter error from `akm distill` ("See v1 spec §13"), the two `agent-skills`
+  lint details ("spec §4.5"), the bundle-identity-drift warning ("spec §11.5") and
+  the unknown-`quality` warning ("v1 spec §4.2").
 
 ## [0.10.261013] - 2026-10-23
 

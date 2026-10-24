@@ -9,9 +9,6 @@ owns its native multi-file semantics, xrefs, citations, and validation.
   DEV-7; its adapter is Chunk 4, but its golden is authored here so Chunk 4 has
   its target).
 - **Goldens:** `tests/fixtures/format-family-goldens/llm-wiki/{recognition,placement,lint,renderer}.json`
-- **Spec:** `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §7 (llm-wiki row), §6
-  (wiki-page row), §0.2 (wiki asset-type dies; adapter first-class), §1.2 (probe
-  = schema.md + pages/), §9 (links).
 - **Grounding:** `src/wiki/wiki.ts`, `src/assets/wiki/*-template.md`.
 
 Files: `schema.md`, `index.md`, `log.md` (reserved), `raw/2026-07-http-rfc.md`

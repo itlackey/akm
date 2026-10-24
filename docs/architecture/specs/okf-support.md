@@ -2,16 +2,16 @@
 
 **Status:** DECIDED (0.9.0). OKF is a first-class format supported by AKM
 through the built-in `okf` adapter. First-class means every applicable case in
-the conformance runbook passes end to end; adapter-local recognition alone is
-not sufficient.
+the OKF conformance contract passes end to end; adapter-local recognition alone
+is not sufficient.
 
 ## The decision
 
 OKF is AKM's least-common-denominator format for Markdown concepts and generic
 read behavior. AKM can install, recognize, index, search, and show conformant
 OKF bundles without converting them to an AKM-native layout. OKF support is
-held to the observable conformance contract in the
-[OKF v0.2 conformance runbook](../testing/okf-v0.2-conformance-runbook.md).
+held to the observable conformance contract that
+`tests/integration/okf-conformance.test.ts` exercises end to end.
 
 That baseline does not make OKF AKM's database schema or force non-Markdown
 formats through Markdown. In particular, OKF is **not**:
@@ -93,7 +93,7 @@ breaking-with-fallback change: `timestamp` is superseded by `generated.at`,
 with consumers permitted (and expected) to fall back to the legacy
 `timestamp` field when `generated`/`generated.at` is absent. The decision
 above is unchanged by this update — the `okf` adapter remains **consumer-only**
-and the read/write split stays exactly where §5/§5.1 already drew it:
+and the read/write split stays exactly where the decision above drew it:
 
 - **Read side (any OKF bundle, third-party or AKM-authored):** the `okf`
   adapter parses the full v0.2 family — `generated.at` (with the `timestamp`
@@ -105,8 +105,7 @@ and the read/write split stays exactly where §5/§5.1 already drew it:
   `staleAfter`, `okfVersion`) rather than overloading the three AKM-native
   fields that already occupy adjacent names: `sources?: string[]` (wiki
   citation strings), `generation?: number` (consolidation merge depth), and
-  the existing `quality: "generated"` enum value. See
-  `akm-0.9.0-bundle-adapter-spec.md` §0.1 for the full mapping.
+  the existing `quality: "generated"` enum value.
 - **Write side (AKM-native assets only, through the proposal path):** since
   AKM Markdown is already an OKF-compatible superset (the progressive-
   enhancement contract above), the new provenance fields are *written* only
@@ -138,11 +137,10 @@ and the read/write split stays exactly where §5/§5.1 already drew it:
 
 OKF is a month-old, single-vendor **Draft** with no governance body; AKM
 vendors a frozen copy of the spec rules it implements rather than tracking
-upstream live. See the conformance runbook for the pinned upstream reference.
+upstream live.
 
 ## See also
 
-- [`akm-0.9.0-bundle-adapter-spec.md`](./akm-0.9.0-bundle-adapter-spec.md)
-  defines the concrete `okf` and `akm` adapter boundaries.
+- [Adapters](../adapters.md) describes the adapter contract, the probe order,
+  and the write allowlist.
 - [`ref.md`](./ref.md) defines the cross-format ref grammar.
-- [`0.9.0-decisions.md`](./0.9.0-decisions.md) records this positioning as D11.

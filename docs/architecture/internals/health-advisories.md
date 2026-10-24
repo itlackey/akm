@@ -44,7 +44,7 @@ changes.
 | `cli-version` | (#950) Compares the installed akm-cli version against the latest GitHub release (the same source `akm upgrade` trusts). `--probe`-gated: `unknown` "not probed" with `--no-probe`; offline/rate-limited also degrades to `unknown`, never a false `warn`. | Run `akm upgrade` when a newer release is reported. An `unknown` result carries no staleness claim either way — check manually if it matters. |
 | `engine-last-used` | (#950) For every engine bound to an enabled process in the active improve strategy, checks `llm_usage` for a call in the last 30 days (independent of `--since`). `unknown` when no engine is bound, or when no improve run has been recorded (started) in that window at all (a fresh install). | A `warn` names the idle engine and the process it is bound to. Configured, reachable, and credentialed is not the same as actually used — investigate why the bound process is not invoking it (disabled downstream, misrouted, or genuinely unused). |
 | `scheduler-binary` | (#953) Reads the scheduler's recorded akm invocation for the installed tasks (the same binding `task sync`/`task doctor` already read — no crontab/launchd/schtasks text parsing) and runs it with `--version`, compared against the running CLI's version. `--probe`-gated: `unknown` "not probed" with `--no-probe`. `unknown` when no scheduled task is installed or the recorded binary cannot be executed. | A `warn` names both versions — upgrading akm through a different installer than the one active at the last `task sync` left the schedule pointed at the old binary; run `akm task sync` to rebind it. |
-| `plugin-version` / `opencode-plugin-version` | (itlackey/akm#832,) `plugin-version` reports each installed Claude Code harness plugin's version and its declared `AKM_VERSION_RANGE` admission of the running CLI. `opencode-plugin-version` does the same for the OpenCode plugin's own bundled `akm-cli` (read from its `package.json`, never executed) — it runs in-process and shares the host's databases, so its lag matters the same way. Neither is `--probe`-gated. | A `warn` names the stale/out-of-range plugin and the update command (`claude plugin update <ref>` for the Claude plugin; update the OpenCode plugin for the bundled copy). |
+| `plugin-version` / `opencode-plugin-version` | (itlackey/akm#832,) `plugin-version` reports each installed Claude Code harness plugin's version and its declared `AKM_VERSION_RANGE` admission of the running CLI. `opencode-plugin-version` does the same for the OpenCode plugin's own bundled `akm-cli` (read from its `package.json`, never executed) — it runs in-process and shares the host's databases, so its lag matters the same way. `plugin-version`'s newest-tag lookup is `--probe`-gated: with `--no-probe` its row is `unknown` ("not probed") and only the local range check still runs. `opencode-plugin-version` reads local files only and is never gated. | A `warn` names the stale/out-of-range plugin and the update command (`claude plugin update <ref>` for the Claude plugin; update the OpenCode plugin for the bundled copy). |
 
 > Adjudicated states (`outcome-proxy-dead`, `enrichment-lane-minting`)
 > are the before/after instrument for the 12-D1 minting shutdown — do not "fix" them by retuning.
@@ -96,9 +96,9 @@ wrapper; the check still `warn`s (the credential genuinely is unavailable in
 bare "unavailable".
 
 `akm health` makes at most two network calls, both best-effort and silent on
-failure: `plugin-version`'s `git ls-remote` (unconditional, predates
-`--probe`) and `cli-version`'s GitHub-release lookup (gated behind
-`--probe`/`--no-probe`, same flag as engine reachability). See
+failure and both gated behind `--probe`/`--no-probe`, the same flag as engine
+reachability: `plugin-version`'s `git ls-remote` and `cli-version`'s
+GitHub-release lookup. See
 `src/commands/health/plugin-staleness.ts` and
 `src/commands/health/version-drift.ts` for the discipline each follows.
 

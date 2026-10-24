@@ -217,8 +217,12 @@ describe("output baseline", () => {
       const registryHit = (json.registryHits ?? []).find((hit) => hit.name === "deploy-stash");
 
       expect(localHit?.action).toBeTruthy();
-      // QA #28: registry brief no longer includes action (use installRef instead)
-      expect(registryHit?.name).toBeTruthy();
+      // QA #28: registry brief carries the install ref instead of the action text
+      expect(registryHit).toEqual({
+        name: "deploy-stash",
+        installRef: "npm:@scope/deploy-stash",
+        score: expect.any(Number),
+      });
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }

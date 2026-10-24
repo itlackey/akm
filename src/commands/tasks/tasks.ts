@@ -29,7 +29,7 @@ import { bundleKeyForContentRoot, resolveConfiguredSources } from "../../core/co
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { getTaskHistoryDir, getTaskLogDir } from "../../core/paths";
+import { getTaskLogDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import {
   assertBundleNotDisabled,
@@ -811,7 +811,6 @@ export interface TasksDoctorResult {
   }>;
   remediation?: "akm task sync --rebind";
   logDir: string;
-  historyDir: string;
   engine: { defaultEngine?: string; available: string[] };
   scheduleSubset: string;
   warnings: string[];
@@ -906,7 +905,6 @@ export async function akmTasksDoctor(
       ? { remediation: "akm task sync --rebind" as const }
       : {}),
     logDir: getTaskLogDir(),
-    historyDir: getTaskHistoryDir(),
     engine: { defaultEngine, available: engines },
     scheduleSubset: SCHEDULE_SUPPORTED_SUBSET_HINT,
     warnings,

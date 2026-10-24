@@ -402,8 +402,7 @@ for scripted use.
   least settled part and are kept only in that simple form; `akm workflow list
   --children` goes with them.
 
-  Per-key status today, from the Outcome section of
-  `docs/plans/0.10-workflows.md`. It stands until the promote-or-remove
+  Per-key status today. It stands until the promote-or-remove
   decision in [#1096](https://github.com/itlackey/akm/issues/1096); every key
   is still Experimental until then.
 
@@ -572,22 +571,6 @@ These changes are planned and will land in a known future release. They
 are not part of the current stability contract; you should plan migrations
 around them.
 
-**The 0.9.0 decision record is fully shipped.** The
-[decision record](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/0.9.0-decisions.md) settles a set of
-breaking changes; every one of them is now in the code, and each decision
-carries its own shipped status.
-
-Shipped from that record: **D1** (`#fragment` section selection),
-**D2** (the `akm show <ref> toc|section|lines|frontmatter|full` view grammar is
-gone — `#fragment` is the only section selector), **D4** (conceptId /
-`bundle//` prefix browse), **D5** (`akm bundle` removed), **D6** (open `type`
-set at runtime), **D7** (all six `--format` values everywhere), **D8** (the
-`experimental.improveAutonomy` gate), **D9** (`--auto-accept` removed, a hard error since 0.10),
-and partially **D10** (an `akm-migrate` binary now exists, though the code still
-lives in this repo). **D3** shipped too, in the end: `akm mv` was removed in
-0.9.0 (see the Renames bullet above), with `scripts/rekey-asset-ref.ts` as the
-Internal replacement for the one capability nothing else covered.
-
 - **0.10 — `config set`/`config unset` may drop the config dump** in favor of
   a compact `{ok, shape, key}` result; `akm config list` remains the full read.
 - **0.10 — migration extraction.** The migration machinery lives in its own
@@ -624,7 +607,5 @@ worth fixing.
   (independent of the feature-stability policy above).
 - [`docs/architecture/specs/ref.md`](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/ref.md) — the
   normative ref grammar.
-- [`docs/architecture/specs/0.9.0-decisions.md`](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/0.9.0-decisions.md)
-  — the decision record behind the 0.9.0 surface changes.
 - [`docs/reference/data-and-telemetry.md`](./docs/reference/data-and-telemetry.md) — what
   state akm reads and writes locally.

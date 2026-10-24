@@ -2,7 +2,7 @@
 
 This directory holds one `.md` file per release. Each file is the short,
 focused migration note that `akm help migrate <version>` prints to the
-terminal. The longform cross-release guides (e.g. `v0.5-to-v0.6.md`)
+terminal. The longform cross-release guides (e.g. `v0.8-to-v0.9.md`)
 live one level up in `docs/migration/`.
 
 ## Available notes

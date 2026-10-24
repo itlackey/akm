@@ -79,17 +79,6 @@ describe("shapeSearchHit — registry brief projects name + score (#28)", () => 
     expect(out.installRef).toBe("npm:@myorg/deploy-stash");
   });
 
-  test("brief with only title (no name field): normalises title → name", () => {
-    const hit = {
-      type: "registry",
-      title: "some-kit",
-      installRef: "github:org/some-kit",
-      score: 0.5,
-    };
-    const out = shapeSearchHit(hit as Record<string, unknown>, "brief");
-    expect(out.name).toBe("some-kit");
-  });
-
   // D6 (Phase 2 triage): "brief does NOT return empty object for registry
   // hits" was DELETED here — it asserted `Object.keys(out).length > 0` on
   // this same `registryHit` fixture, which `:72-78` above already asserts

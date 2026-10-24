@@ -129,8 +129,7 @@ version prefix mixed into a unit's input hash is 7
 (`src/workflows/exec/step-work.ts`); 0.9.2 bumped it — a single, durable
 5 → 7 step, since every released tag on the line carries 5 — when
 `taskInputs`, the resolved values of a composed task's reference-kind
-`inputBindings`, joined the preimage (see [ADR
-0002](decisions/0002-unit-reuse-and-input-hash-scope.md)). Child composition
+`inputBindings`, joined the preimage. Child composition
 itself contributed nothing to that bump: the parent unit's input-hash
 preimage already covers everything the child drive depends on — the frozen
 target carries the child's ref, plan hash, content hash, binding mode, and

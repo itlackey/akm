@@ -87,20 +87,6 @@ for retrieval — ship as the `facts/conventions/organization`,
 facts in the bundle skeleton, and are surfaced to agents automatically at
 authoring time.
 
-### Planned
-
-Not part of the current stability contract; see
-[ROADMAP.md](../../ROADMAP.md) for what's committed:
-
-- A `--namespace <ns>` flag to provide a thin name-prefix normalizer on
-  `search`, `remember`, `improve`, and `feedback` so the same prefix doesn't
-  have to be typed every time.
-- A `::` delimiter (for example `projectA::memories/auth-tip`) to provide
-  strict isolation so refs from different namespaces never collide in
-  ranking or recall.
-
-Until those land, physical subdirectories remain the recommended pattern.
-
 ## Renames and moves
 
 **Treat a ref as permanent.** A rename is **delete plus create**: the new
@@ -125,8 +111,7 @@ real refs dangling. The procedure above is the only supported path today.
 To carry an asset's earned signal (feedback, usage, salience/outcome
 history) across a rename, the maintainer script `scripts/rekey-asset-ref.ts`
 re-keys those rows onto the new ref before `akm index` runs; it is Internal
-tooling, not a supported command surface. See
-[the decision record](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/0.9.0-decisions.md#d3--renames-are-delete--create-akm-mv-ships-experimental).
+tooling, not a supported command surface.
 
 ## Refs in prose
 
@@ -143,9 +128,8 @@ fully-qualified `bundle//conceptId`; the short form is accepted input only),
 conceptId-prefix enumeration, and the rename-is-delete-plus-create procedure
 are all named explicitly in the Stable tier, and the ref grammar is called
 out as frozen at 1.0 alongside the supported source model, search behavior,
-and write-target rules. The `--namespace` flag and `::` delimiter above are
-On the horizon, not yet part of the contract. See `STABILITY.md` for the
-full command- and surface-level tier index.
+and write-target rules. See `STABILITY.md` for the full command- and
+surface-level tier index.
 
 ## See also
 
@@ -153,4 +137,3 @@ full command- and surface-level tier index.
 - [Asset Types](asset-types.md) — how a conceptId's subdirectory maps to an asset type
 - [Memory](memory.md) — parent/derived-memory provenance backrefs
 - [`docs/architecture/specs/ref.md`](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/ref.md) — the normative ref grammar spec
-- [ROADMAP.md](../../ROADMAP.md) — planned ref-syntax additions

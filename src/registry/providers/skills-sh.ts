@@ -13,7 +13,7 @@ import { md5Hex } from "../../runtime";
 import { fetchCachedJson } from "../../storage/repositories/registry-index-cache-repository";
 import { registerRegistryProvider } from "../factory";
 import { fetchRegistryJson } from "../network";
-import type { RegistryAssetSearchHit, RegistrySearchHit } from "../types";
+import type { RegistrySearchHit } from "../types";
 import type { RegistryProvider, RegistryProviderResult, RegistryProviderSearchOptions } from "./types";
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -47,12 +47,7 @@ class SkillsShProvider implements RegistryProvider {
     try {
       const entries = await this.fetchSkills(options.query, options.limit);
       const limited = entries.slice(0, options.limit);
-      const hits = this.mapToHits(limited);
-      let assetHits: RegistryAssetSearchHit[] | undefined;
-      if (options.includeAssets) {
-        assetHits = this.mapToAssetHits(limited);
-      }
-      return { hits, assetHits };
+      return { hits: this.mapToHits(limited) };
     } catch (err) {
       return {
         hits: [],
@@ -121,31 +116,6 @@ class SkillsShProvider implements RegistryProvider {
         registryName,
       };
     });
-  }
-
-  private mapToAssetHits(entries: SkillsShEntry[]): RegistryAssetSearchHit[] | undefined {
-    if (entries.length === 0) return undefined;
-
-    const registryName = this.config.name ?? "skills.sh";
-    const maxInstalls = Math.max(...entries.map((e) => e.installs), 1);
-
-    const hits: RegistryAssetSearchHit[] = entries.map((entry) => {
-      const segments = entry.source.split("/");
-      const owner = segments[0] ?? "";
-      const repo = segments[1] ?? "";
-      const ownerRepo = owner && repo ? `${owner}/${repo}` : entry.source;
-      return {
-        type: "registry-asset",
-        assetType: "skill",
-        assetName: entry.name,
-        stash: { id: `skills-sh:${entry.id}`, name: entry.name },
-        registryName,
-        action: `akm bundle add github:${ownerRepo}`,
-        score: Math.round((entry.installs / maxInstalls) * 1000) / 1000,
-      };
-    });
-
-    return hits.length > 0 ? hits : undefined;
   }
 
   // ── DB cache key ────────────────────────────────────────────────────────

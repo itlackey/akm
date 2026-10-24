@@ -11,8 +11,8 @@ For read-only native tool bundles, recognition is runtime translation, not
 conversion: the adapter projects native files into AKM's index/runtime shapes
 while the source file remains authoritative. AKM does not synchronize native
 formats, maintain translated canonical copies, or write agent/command assets
-back through the Claude/OpenCode adapters. See
-[Agent, Command, Engine, and Model Resolution](specs/agent-command-engine-model-design.md).
+back through the Claude/OpenCode adapters. Execution of agent and command
+assets is described in [Architecture: Engine Boundary](architecture.md#engine-boundary).
 
 > **Stability note.** The adapter set, bundle-recognition rules, and the
 > `bundles` config shape are still evolving — see [STABILITY.md](../../STABILITY.md).

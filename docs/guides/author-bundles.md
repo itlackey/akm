@@ -52,9 +52,7 @@ sync with the code:
   metadata when `akm index` runs.
 
 If you still have a legacy `.stash.json` sidecar, migrate its fields into
-inline metadata before publishing — see the
-[v0.7 → v0.8 migration guide](../migration/v0.7-to-v0.8.md) for the full
-field mapping and a worked example.
+inline metadata before publishing.
 
 **Keep `show` payloads focused.** `akm show` returns the whole asset body by
 default (the whole document for a knowledge asset, the whole `SKILL.md` for a

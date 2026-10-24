@@ -21,11 +21,6 @@ export function sanitizeString(value: unknown, maxLength = 255): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, maxLength);
 }
 
-/** Check whether a cached timestamp has exceeded its TTL. */
-export function isExpired(mtimeMs: number, ttlMs: number): boolean {
-  return Date.now() - mtimeMs > ttlMs;
-}
-
 /**
  * True when ANY built-in adapter's install-time `looksLikeRoot` probe claims
  * `root` — the spec §1.2 ordered probe reduced to "is this the root of a bundle

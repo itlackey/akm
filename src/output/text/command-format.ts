@@ -11,9 +11,7 @@
  * Split out of `helpers.ts` (formerly 1418 lines / 59 fns) as its own
  * sibling module: unlike `show`/`workflow`/`proposal` (each a stateful,
  * multi-branch renderer with its own module), these are flat
- * field-extraction formatters with no shared state beyond
- * `formatRegistrySearchPlain` delegating to `formatSearchPlain` in this
- * same file.
+ * field-extraction formatters with no shared state.
  */
 
 import { formatRegistryUrl } from "../../core/registry-url";
@@ -173,11 +171,6 @@ export function formatRegistryRemovePlain(r: Record<string, unknown>): string {
   return `Removed registry ${url}`;
 }
 
-export function formatRegistrySearchPlain(r: Record<string, unknown>, detail: DetailLevel): string {
-  // Reuse the same renderer as `search` — both share `hits` / `registryHits`.
-  return formatSearchPlain(r, detail);
-}
-
 export function formatEnvListPlain(r: Record<string, unknown>): string {
   // Multi-env listing: { envs: [{ ref, path, keys }, ...] }
   const envs = Array.isArray(r.envs) ? (r.envs as Array<Record<string, unknown>>) : [];
@@ -279,6 +272,7 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (Array.isArray(hit.keys) && hit.keys.length > 0) lines.push(`  keys: ${hit.keys.join(", ")}`);
     if (hit.size) lines.push(`  size: ${String(hit.size)}`);
     if (hit.action) lines.push(`  action: ${String(hit.action)}`);
+    if (hit.installRef) lines.push(`  installRef: ${String(hit.installRef)}`);
     if (hit.run) lines.push(`  run: ${String(hit.run)}`);
     if (Array.isArray(hit.tags) && hit.tags.length > 0) lines.push(`  tags: ${hit.tags.join(", ")}`);
     // Optional v1 spec §4.2 quality marker (e.g. "curated" / "proposed").

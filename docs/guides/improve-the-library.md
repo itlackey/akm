@@ -240,7 +240,7 @@ autonomy gate that governs the few lanes that can act without one.
 ## See also
 
 - [Discover & Load](discover-and-load.md) — finding and loading assets
-- [Knowledge Management](knowledge-management.md) — capturing memories and docs
+- [Capture Knowledge](capture-knowledge.md) — capturing memories and docs
 - [Agent Integration](use-with-any-agent.md) — wiring feedback into agent workflows
 - [CLI Reference](../reference/cli.md) — full flag documentation for `feedback`, `log`, `improve`, `proposal`
 - [Architecture: The Improvement Loop](../architecture/improvement.md) — utility scoring, strategies, autonomy gates, auto-sync, and session extraction

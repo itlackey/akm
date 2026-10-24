@@ -5,20 +5,19 @@ import { shapeForCommand } from "../src/output/shapes";
 import {
   capDescription,
   pickFields,
-  shapeAssetHit,
   shapeProposalAcceptOutput,
   shapeProposalDiffOutput,
   shapeProposalEntry,
   shapeProposalListOutput,
   shapeProposalRejectOutput,
   shapeProposalShowOutput,
-  shapeRegistrySearchOutput,
   shapeSearchHit,
   shapeSearchHitForAgent,
   shapeSearchOutput,
   shapeShowOutput,
   truncateDescription,
 } from "../src/output/shapes/helpers";
+import { formatPlain } from "../src/output/text";
 
 describe("pickFields", () => {
   test("returns only requested fields, in the requested order", () => {
@@ -128,7 +127,7 @@ describe("shapeSearchHit — local stash hits", () => {
     });
   });
 
-  test("normal adds description and score (and caps description)", () => {
+  test("normal adds ref, description and score (and caps description)", () => {
     const out = shapeSearchHit(fullHit, "normal");
     expect(out).toMatchObject({
       type: "skill",
@@ -137,8 +136,8 @@ describe("shapeSearchHit — local stash hits", () => {
       action: "akm show skills/deploy",
       score: 0.42,
       estimatedTokens: 120,
+      ref: "skills/deploy",
     });
-    expect(out).not.toHaveProperty("ref");
     expect(out).not.toHaveProperty("origin");
     expect(out).not.toHaveProperty("tags");
   });
@@ -156,18 +155,17 @@ describe("shapeSearchHit — registry hits", () => {
     name: "azure-ops",
     description: "Azure ops kit",
     action: "akm bundle add npm:azure-ops",
+    installRef: "npm:azure-ops",
     warnings: ["registry rate limit hit, results may be stale"],
     id: "npm:azure-ops",
     score: 0.7,
   };
 
-  test("brief keeps name/score (QA #28: brief now projects name+installRef+score)", () => {
-    // Brief now includes name (normalised from title if needed) and score so
-    // callers can use the result without --detail full.
+  test("brief is exactly name + installRef + score (QA #28)", () => {
+    // Brief carries the install ref so callers can act without --detail full.
     const result = shapeSearchHit(registryHit, "brief");
-    expect(result.name).toBe("azure-ops");
-    expect(result.score).toBe(0.7);
-    // action is no longer in brief output — use installRef to act
+    expect(result).toEqual({ name: "azure-ops", installRef: "npm:azure-ops", score: 0.7 });
+    // action is not in brief output — use installRef to act
     expect(result).not.toHaveProperty("curated");
     // brief intentionally omits warnings to keep payloads small
     expect(result).not.toHaveProperty("warnings");
@@ -179,6 +177,7 @@ describe("shapeSearchHit — registry hits", () => {
       name: "azure-ops",
       description: "Azure ops kit",
       action: "akm bundle add npm:azure-ops",
+      installRef: "npm:azure-ops",
       warnings: ["registry rate limit hit, results may be stale"],
     });
     expect(out).not.toHaveProperty("curated");
@@ -188,6 +187,11 @@ describe("shapeSearchHit — registry hits", () => {
     const out = shapeSearchHit(registryHit, "full");
     expect(out).toEqual(registryHit);
     expect(out).not.toHaveProperty("curated");
+  });
+
+  test("the text renderer prints the install ref at normal detail", () => {
+    const shaped = shapeForCommand("search", { hits: [], registryHits: [registryHit] }, "normal");
+    expect(formatPlain("search", shaped, "normal")).toContain("installRef: npm:azure-ops");
   });
 });
 
@@ -235,35 +239,6 @@ describe("shapeSearchHitForAgent", () => {
       editHint: "akm clone team//skills/deploy",
     });
     expect(readOnly.editHint).toBe("akm clone team//skills/deploy");
-  });
-});
-
-describe("shapeAssetHit", () => {
-  const asset = {
-    assetName: "deploy",
-    assetType: "skill",
-    description: "Deploy the app",
-    stash: { id: "x", name: "x" },
-    action: "akm show skills/deploy",
-    estimatedTokens: 120,
-  };
-
-  test("brief drops description", () => {
-    expect(shapeAssetHit(asset, "brief")).toEqual({
-      assetName: "deploy",
-      assetType: "skill",
-      action: "akm show skills/deploy",
-      estimatedTokens: 120,
-    });
-  });
-
-  test("normal includes description + stash", () => {
-    expect(shapeAssetHit(asset, "normal")).toMatchObject({
-      assetName: "deploy",
-      assetType: "skill",
-      description: "Deploy the app",
-      stash: { id: "x", name: "x" },
-    });
   });
 });
 
@@ -543,27 +518,6 @@ describe("curate agent access projection", () => {
   });
 });
 
-describe("shapeRegistrySearchOutput", () => {
-  test("shapes registry hits at the requested detail level", () => {
-    const result = {
-      hits: [
-        {
-          name: "azure-ops",
-          description: "Azure ops kit",
-          action: "akm bundle add npm:azure-ops",
-          // v1 §4.2: no more `curated` key.
-          score: 0.5,
-          id: "npm:azure-ops",
-        },
-      ],
-      registryHits: [],
-    };
-    const brief = shapeRegistrySearchOutput(result, "brief") as { hits: Record<string, unknown>[] };
-    // QA #28: brief now projects name + score at minimum (not just name/action)
-    expect(brief.hits[0]).toMatchObject({ name: "azure-ops", score: 0.5 });
-  });
-});
-
 // ── Output-shape registry exhaustiveness (#274) ─────────────────────────────
 
 describe("shapeForCommand: unknown command", () => {
@@ -585,7 +539,6 @@ describe("shapeForCommand — `results` collection alias (#922)", () => {
   const LIST_COMMANDS: Array<[string, string, Record<string, unknown>]> = [
     ["search", "hits", { hits: [{ type: "skill", name: "x", action: "a" }], registryHits: [] }],
     ["curate", "items", { items: [{ type: "skill", name: "x" }], query: "q", summary: "s" }],
-    ["registry-search", "hits", { hits: [{ name: "x", installRef: "x" }], assetHits: [] }],
     ["proposal-list", "proposals", { totalCount: 1, proposals: [{ id: "p1", ref: "lessons/x", status: "pending" }] }],
     ["list", "sources", { sources: [{ name: "b1" }] }],
     ["env-list", "envs", { envs: [{ name: "e1" }] }],

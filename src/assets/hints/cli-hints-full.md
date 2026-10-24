@@ -297,7 +297,6 @@ akm registry add <url> --name my-team         # Add with label
 akm registry add <url> --provider skills-sh   # Specify provider type
 akm registry remove <url-or-name>             # Remove a registry
 akm search "<query>" --from registry          # Search all registries (registry search was folded into search)
-akm search "<query>" --from registry --assets # Include asset-level results
 ```
 
 ## Configuration

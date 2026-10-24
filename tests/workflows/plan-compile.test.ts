@@ -177,12 +177,12 @@ Rework it.
 `;
 
 describe("compiled and frozen plan — full-vocabulary golden", () => {
-  test("the canonical workflow-format example parses and compiles", () => {
-    const specPath = path.resolve(import.meta.dir, "../../docs/architecture/specs/workflow-format-unification.md");
-    const spec = fs.readFileSync(specPath, "utf8");
-    const example = spec.match(/### 2\.2 The format\n\n````markdown\n([\s\S]*?)\n````/);
-    if (!example?.[1]) throw new Error("canonical workflow example not found");
-    expect(compileOk(example[1], "github-issues", specPath).steps).toHaveLength(5);
+  test("the richer workflow example in the schema reference parses and compiles", () => {
+    const docPath = path.resolve(import.meta.dir, "../../docs/reference/workflow-schema.md");
+    const doc = fs.readFileSync(docPath, "utf8");
+    const example = doc.match(/## Richer example\n[\s\S]*?\n```markdown\n([\s\S]*?)\n```\n/);
+    if (!example?.[1]) throw new Error("richer workflow example not found");
+    expect(compileOk(example[1], "review-changes", docPath).steps).toHaveLength(3);
   });
 
   test("defaults, unit overrides, map, and schemas land where freeze reads them", () => {

@@ -18,7 +18,7 @@ date: '2026-05-05T02:19:46Z'
 
 akm 0.6.0 is out. This one is deliberately boring: a stabilization release that takes a clean break from pre-v1 terminology so the surface area we carry into v1 is honest. The domain model now has one noun for "a source of content" (stash) and one noun for "a service that helps discover them" (registry). The parallel vocabulary that accreted during earlier experiments — "kit", "source", hand-special-cased provider types — is gone. A handful of additive quality-of-life improvements ship alongside, but the headline story is fewer concepts, not more.
 
-If you are on 0.5.x, read [the v0.5 → v0.6 migration guide](https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md) before upgrading. Most projects will work without edits thanks to automatic on-disk migrations; a small number of config fields and CLI flags need explicit updates.
+If you are on 0.5.x, read [the v0.5 → v0.6 migration guide](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.5-to-v0.6.md) before upgrading. Most projects will work without edits thanks to automatic on-disk migrations; a small number of config fields and CLI flags need explicit updates.
 
 ## TL;DR
 
@@ -51,14 +51,14 @@ The registry wire format follows the same logic. Schema v3 drops `kits[]` and pa
 
 Each bullet below links to its section in the migration guide, which has the exact before/after code or config diff.
 
-- [`stash.lock` → `akm.lock`](https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md#1-stashlock--akmlock) — auto-copied on first run.
-- [`installed[]` → `stashes[]` + `akm.lock`](https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md#2-installed--stashes--akmlock) — config cleanup happens on next write.
-- [`stashDir` → `primary: true`](https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md#3-stashdir--primary-true) — automatic.
-- [`disableGlobalStashes` → `stashInheritance`](https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md#1-replace-disableglobalstashes) — **manual**, one-line config edit.
-- [`--for-agent` → `--detail=agent`](https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md#2-replace---for-agent-with---detailagent) — old flag still works as a deprecated alias for one release cycle.
-- [`akm enable/disable context-hub` removed](https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md#3-replace-akm-enable-context-hub--akm-disable-context-hub) — add it as a regular git stash.
-- [Wire format `kits[]` → `stashes[]`](https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md#wire-format-change-kits--stashes) — registry publishers must regenerate.
-- [Discovery keyword / topic `akm-kit` → `akm-stash`](https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md#publisher--kit-maker-changes) — publishers must re-tag.
+- [`stash.lock` → `akm.lock`](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.5-to-v0.6.md#1-stashlock--akmlock) — auto-copied on first run.
+- [`installed[]` → `stashes[]` + `akm.lock`](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.5-to-v0.6.md#2-installed--stashes--akmlock) — config cleanup happens on next write.
+- [`stashDir` → `primary: true`](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.5-to-v0.6.md#3-stashdir--primary-true) — automatic.
+- [`disableGlobalStashes` → `stashInheritance`](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.5-to-v0.6.md#1-replace-disableglobalstashes) — **manual**, one-line config edit.
+- [`--for-agent` → `--detail=agent`](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.5-to-v0.6.md#2-replace---for-agent-with---detailagent) — old flag still works as a deprecated alias for one release cycle.
+- [`akm enable/disable context-hub` removed](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.5-to-v0.6.md#3-replace-akm-enable-context-hub--akm-disable-context-hub) — add it as a regular git stash.
+- [Wire format `kits[]` → `stashes[]`](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.5-to-v0.6.md#wire-format-change-kits--stashes) — registry publishers must regenerate.
+- [Discovery keyword / topic `akm-kit` → `akm-stash`](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.5-to-v0.6.md#publisher--kit-maker-changes) — publishers must re-tag.
 
 If you consume only the public registry and do not maintain your own, the publisher changes do not apply to you.
 
@@ -96,7 +96,7 @@ akm upgrade
 
 Read:
 
-- [v0.5 → v0.6 migration guide](https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md) — every breaking change with before/after code; publisher checklist if you maintain a registry or an npm/GitHub stash.
+- [v0.5 → v0.6 migration guide](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.5-to-v0.6.md) — every breaking change with before/after code; publisher checklist if you maintain a registry or an npm/GitHub stash.
 
 Verify:
 
@@ -106,7 +106,7 @@ akm config list                   # stashes[] populated, no installed[]
 akm list                          # your sources resolve cleanly  # doclint:ignore (historical — pre-0.9.0 command spelling)
 ```
 
-If something looks wrong after upgrade, the guide has a [troubleshooting section](https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md#troubleshooting) covering the common pitfalls (stale context-hub entries, v2 registry URLs, empty `stashes[]` after a read-only upgrade path).
+If something looks wrong after upgrade, the guide has a [troubleshooting section](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.5-to-v0.6.md#troubleshooting) covering the common pitfalls (stale context-hub entries, v2 registry URLs, empty `stashes[]` after a read-only upgrade path).
 
 ## What's next
 

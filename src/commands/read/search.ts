@@ -124,12 +124,6 @@ export async function akmSearch(input: {
   eventSource?: UsageEventSource;
   /** Internal projection used only to decide whether derived surface content was emitted. */
   attributionProjection?: AttributionProjection;
-  /**
-   * Include asset-level search results from registry providers (only
-   * meaningful when `source` is `registry` or `all`). Folded in from the
-   * retired `akm registry search --assets` flag (0.9.0 CLI overhaul, S8).
-   */
-  assets?: boolean;
 }): Promise<SearchResponse> {
   const t0 = Date.now();
   const query = input.query.trim();
@@ -220,9 +214,7 @@ export async function akmSearch(input: {
         });
 
   const registryResult =
-    source === "local"
-      ? undefined
-      : await searchRegistry(query, { limit, includeAssets: input.assets === true, registries: config.registries });
+    source === "local" ? undefined : await searchRegistry(query, { limit, registries: config.registries });
 
   if (source === "local") {
     const localHits = localResult?.hits ?? [];
@@ -251,6 +243,7 @@ export async function akmSearch(input: {
       id: hit.id,
       description: hit.description,
       action: `akm bundle add ${installRef} -> then search again`,
+      installRef,
       score: hit.score,
       registryName: hit.registryName,
       ...(hit.warnings && hit.warnings.length > 0 ? { warnings: hit.warnings } : {}),
