@@ -403,6 +403,28 @@ describe("task lifecycle failure handling", () => {
   });
 
   test.each([
+    ["reviewer", "harness"],
+    ["lab", "connection"],
+  ])("add writes the retired --engine %s as a %s, never as the retired key", async (name, key) => {
+    writeSandboxConfig({
+      bundles: { stash: { path: storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      semanticSearchMode: "off",
+      harnesses: { reviewer: { platform: "opencode", bin: "fake-agent" } },
+      connections: { lab: { endpoint: "http://lab.invalid/v1", models: { fast: "m" } } },
+    });
+
+    const result = await akmTasksAdd(
+      { id: `engine-${name}`, schedule: "@daily", prompt: "Review the latest changes carefully.", engine: name },
+      { backend },
+    );
+
+    const written = fs.readFileSync(result.path, "utf8");
+    expect(written).toContain(`${key}: ${name}`);
+    expect(written).not.toMatch(/\bengine\s*:/);
+  });
+
+  test.each([
     ["harness", { harness: "reviewer" }],
     ["connection", { connection: "lab" }],
   ])("add writes a prompt task's --%s into the task, with --model", async (key, where) => {

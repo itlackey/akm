@@ -25,7 +25,7 @@
 import fs from "node:fs";
 import { defineCommand } from "citty";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
-import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
+import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -59,6 +59,7 @@ export const agentCommand = defineCommand({
       default: false,
     },
     ...SELECTION_ARGS,
+    ...RETIRED_ENGINE_ARG,
     model: {
       ...SELECTION_ARGS.model,
       description: `${SELECTION_ARGS.model.description}. Overrides the model specified in the agent asset.`,

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
-import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
+import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { isVerbose, setVerbose, warn, warnVerbose } from "../../core/warn";
@@ -41,6 +41,7 @@ export const commandRunCommand = defineJsonCommand({
       description: "Override the command's agent selector with a portable agent ref or native harness selector",
     },
     ...SELECTION_ARGS,
+    ...RETIRED_ENGINE_ARG,
     "timeout-ms": { type: "string", description: "Override the execution timeout in milliseconds" },
     cwd: { type: "string", description: "Override the execution workspace/current working directory" },
     "dry-run": {

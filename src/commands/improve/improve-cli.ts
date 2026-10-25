@@ -15,7 +15,7 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
 import { getRunLogDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
-import { clearLogFile, setLogFile } from "../../core/warn";
+import { clearLogFile, setLogFile, warnOnce } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { defaultWhich } from "../../integrations/agent/detect";
 import { materializeConnection } from "../../integrations/agent/runner-dispatch";
@@ -340,6 +340,8 @@ export const improveCommand = defineCommand({
         "Fail before the run starts (exit 78, before any indexing, lock, or log side effect) if a connection or harness the run needs is not usable: an enabled process has none configured, a connection's credential cannot be resolved in this process's environment, a connection does not answer one short completion (bounded by its timeoutMs, at most two minutes), or a harness binary is not on PATH. Without this flag, improve degrades gracefully instead: it skips the affected processes and reports them in the result's skippedProcesses. Recommended alongside --skip-if-locked for scheduled runs.",
       default: false,
     },
+    // Retired spelling of --require-targets: parsed, left out of --help, warns once.
+    "require-engines": { type: "boolean", hidden: true, description: "Retired: use --require-targets." },
     "show-prompt": {
       type: "boolean",
       description:
@@ -401,7 +403,13 @@ export const improveCommand = defineCommand({
         return;
       }
       let engineProbe: EngineProbeOutcome[] | undefined;
-      if (args["require-targets"]) {
+      if (args["require-engines"]) {
+        warnOnce(
+          "retired-flag:--require-engines",
+          "--require-engines is retired: use --require-targets, which does the same.",
+        );
+      }
+      if (args["require-targets"] || args["require-engines"]) {
         assertRequiredTargetsAvailable(resolvedPlan);
         engineProbe = await assertRequiredTargetsReachable(resolvedPlan);
       }

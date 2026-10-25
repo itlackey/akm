@@ -220,6 +220,7 @@ export function resolveStandaloneExtractPlan(
     current: {
       ...(selection.connection ? { connection: selection.connection } : {}),
       ...(selection.harness ? { harness: selection.harness } : {}),
+      ...(selection.engine ? { engine: selection.engine } : {}),
       ...(selection.model ? { model: selection.model } : {}),
       ...(Object.hasOwn(selection, "timeoutMs") ? { timeoutMs: selection.timeoutMs ?? null } : {}),
     },

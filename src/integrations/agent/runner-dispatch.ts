@@ -302,6 +302,8 @@ export interface InteractiveAgentInvocationOptions {
   /** What to launch, by name; omitted means the default harness. */
   readonly connection?: string;
   readonly harness?: string;
+  /** The retired spelling of the two: a connection by that name, else a harness. */
+  readonly engine?: string;
   /** The model it starts with, as an alias or an exact name. */
   readonly model?: string;
   readonly timeoutMs?: number;
@@ -328,6 +330,7 @@ export async function executeInteractiveAgentInvocation(
     layers: [
       ...(input.connection === undefined ? [] : [{ connection: input.connection }]),
       ...(input.harness === undefined ? [] : [{ harness: input.harness }]),
+      ...(input.engine === undefined ? [] : [{ engine: input.engine }]),
       ...(input.model === undefined ? [] : [{ model: input.model }]),
     ],
   });

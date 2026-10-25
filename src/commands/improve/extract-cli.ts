@@ -20,7 +20,7 @@
  */
 
 import { getStringArg } from "../../cli/parse-args";
-import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
+import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -71,6 +71,7 @@ export const extractCommand = defineJsonCommand({
       description: "Per-session LLM timeout in ms. Default: the engine's own timeout.",
     },
     ...SELECTION_ARGS,
+    ...RETIRED_ENGINE_ARG,
     strategy: {
       type: "string",
       description: "Improve strategy supplying extract behavior.",

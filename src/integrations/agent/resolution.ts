@@ -118,6 +118,11 @@ type Target =
   | { readonly kind: "connection"; readonly name: string; readonly connection: ConnectionConfig }
   | { readonly kind: "harness"; readonly name: string; readonly harness: HarnessConfig };
 
+/** What the retired `engine` spelling names: a connection by that name, else a harness. */
+export function engineKind(config: AkmConfig, name: string): "connection" | "harness" {
+  return config.harnesses?.[name] && !config.connections?.[name] ? "harness" : "connection";
+}
+
 /** The name the nearest layer that names anything gives, and the kind it gave it as. */
 function namedByLayers(
   config: AkmConfig,
@@ -132,14 +137,8 @@ function namedByLayers(
       const name = layer[kind];
       if (typeof name === "string" && name) return { kind, name };
     }
-    // `engine` is the retired spelling of `connection` / `harness`: a connection by that name, else a harness.
     const engine = layer.engine;
-    if (typeof engine === "string" && engine) {
-      return {
-        kind: config.harnesses?.[engine] && !config.connections?.[engine] ? "harness" : "connection",
-        name: engine,
-      };
-    }
+    if (typeof engine === "string" && engine) return { kind: engineKind(config, engine), name: engine };
   }
   return undefined;
 }

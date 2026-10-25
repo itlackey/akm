@@ -19,6 +19,7 @@ import {
   requiredTargetProbeTimeoutMs,
 } from "../../../src/commands/improve/improve-cli";
 import type { ResolvedImprovePlan } from "../../../src/commands/improve/improve-strategies";
+import { _resetWarnOnceForTests } from "../../../src/core/warn";
 import { runCliCapture } from "../../_helpers/cli";
 import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
 
@@ -75,6 +76,30 @@ describe("akm improve --require-targets", () => {
     expect(result.stderr).toContain("improve.processes.reflect.connection");
     expect(result.stderr).toContain("akm setup");
     expect(fakeAkmImprove).not.toHaveBeenCalled();
+  });
+
+  test("the retired --require-engines still aborts the same way, with one warning naming --require-targets", async () => {
+    const stash = makeStashDir();
+    disposers.push(stash);
+    _resetWarnOnceForTests();
+    _setAkmImproveForTests((async () => {
+      throw new Error("akmImprove must not run when the flag aborts first");
+    }) as unknown as typeof akmImprove);
+
+    const run = () =>
+      withEnv(freshEnv(stash.dir), async () => {
+        writeNothingConfiguredConfig();
+        return runCliCapture(["improve", "--dry-run", "--require-engines"]);
+      });
+    const first = await run();
+    const second = await run();
+
+    for (const result of [first, second]) {
+      expect(result.code).toBe(78);
+      expect(result.stderr).toContain("improve.processes.reflect.connection");
+    }
+    expect(first.stderr).toContain("--require-engines is retired: use --require-targets");
+    expect(second.stderr).not.toContain("--require-engines is retired");
   });
 
   test("without the flag, the run proceeds and the result carries skippedProcesses", async () => {

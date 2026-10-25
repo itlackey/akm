@@ -49,6 +49,7 @@ import {
 } from "../../core/write-source";
 import type { InputFlag } from "../../execution/input-contract";
 import { deriveInstallations } from "../../indexer/installations";
+import { engineKind } from "../../integrations/agent/resolution";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
@@ -110,6 +111,8 @@ export interface TasksAddInput {
   /** Where a prompt target runs and on which model (`--connection`, `--harness`, `--model`), written into the task. */
   connection?: string;
   harness?: string;
+  /** The retired `--engine`: written into the task as a connection by that name, else a harness. */
+  engine?: string;
   model?: string;
   timeoutMs?: number;
   params?: string;
@@ -166,14 +169,15 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     throw new UsageError(`Resolved task path escapes the stash: "${id}".`, "PATH_ESCAPE_VIOLATION");
   }
 
+  const engineAs = input.engine === undefined ? undefined : engineKind(bundle.config, input.engine);
   const yaml = renderTaskYaml({
     id,
     schedule: input.schedule,
     workflow: input.workflow,
     prompt: input.prompt,
     command: input.command,
-    connection: input.connection,
-    harness: input.harness,
+    connection: input.connection ?? (engineAs === "connection" ? input.engine : undefined),
+    harness: input.harness ?? (engineAs === "harness" ? input.engine : undefined),
     model: input.model,
     timeoutMs: input.timeoutMs,
     params: input.params,
@@ -276,7 +280,11 @@ function assertTaskAddTargetShape(input: TasksAddInput): void {
   }
   // `--timeout-ms` is the workflow's whole-run bound. Connection, harness and
   // model stay prompt-only because workflow engines come from the frozen plan.
-  const selects = input.connection !== undefined || input.harness !== undefined || input.model !== undefined;
+  const selects =
+    input.connection !== undefined ||
+    input.harness !== undefined ||
+    input.engine !== undefined ||
+    input.model !== undefined;
   if (input.workflow && selects) {
     throw new UsageError(
       "Workflow tasks accept --params and --timeout-ms; connection, harness and model are prompt-task fields.",

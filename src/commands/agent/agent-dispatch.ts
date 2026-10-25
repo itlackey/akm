@@ -37,7 +37,10 @@ export interface AkmAgentDispatchOptions {
    */
   cwd?: string;
   /** Current invocation-layer selections consumed by the execution cascade. */
-  selection?: Pick<UnresolvedExecutionDefaults, "connection" | "harness" | "model" | "inference" | "outputSchema">;
+  selection?: Pick<
+    UnresolvedExecutionDefaults,
+    "connection" | "harness" | "engine" | "model" | "inference" | "outputSchema"
+  >;
 }
 
 export interface AkmAgentDispatchSeams {
@@ -69,6 +72,7 @@ function canonicalCurrent(options: AkmAgentDispatchOptions): UnresolvedExecution
   if (options.agentRef !== undefined) current.agent = options.agentRef;
   if (options.selection?.connection !== undefined) current.connection = options.selection.connection;
   if (options.selection?.harness !== undefined) current.harness = options.selection.harness;
+  if (options.selection?.engine !== undefined) current.engine = options.selection.engine;
   if (options.selection?.model !== undefined) current.model = options.selection.model;
   if (Object.hasOwn(options.selection ?? {}, "inference")) current.inference = options.selection?.inference;
   if (options.selection?.outputSchema !== undefined) current.outputSchema = options.selection.outputSchema;
@@ -120,7 +124,7 @@ export async function akmAgentDispatch(
   if (options.prompt !== undefined) return delegateCanonicalCommand(options, seams, { content: options.prompt });
 
   // No prompt: the harness is started for a person. Only where and which model ride along; the rest needs a task.
-  const { connection, harness, model, ...needsTask } = options.selection ?? {};
+  const { connection, harness, engine, model, ...needsTask } = options.selection ?? {};
   if (options.agentRef !== undefined || Object.keys(needsTask).length > 0) {
     throw new UsageError(
       "An agent persona, inference setting or output schema applies to a task: pass --prompt or --prompt-stdin. Without a prompt only the harness (and a model) is started.",
@@ -133,6 +137,7 @@ export async function akmAgentDispatch(
     config: options.agentConfig,
     ...(typeof connection === "string" ? { connection } : {}),
     ...(typeof harness === "string" ? { harness } : {}),
+    ...(typeof engine === "string" ? { engine } : {}),
     ...(typeof model === "string" ? { model } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),

@@ -206,6 +206,19 @@ export const GLOBAL_OUTPUT_ARGS = {
 } as const satisfies ArgsDef;
 
 /**
+ * A command with the args marked `hidden` left out: what `--help` renders. A
+ * hidden arg parses like any other and is simply not advertised, the way
+ * `meta.hidden` keeps a command out of the COMMANDS list. It is for a retired
+ * spelling that still works, so a scheduled command written for an earlier
+ * release keeps running.
+ */
+export function withoutHiddenArgs<T extends object>(command: T): T {
+  const args = (command as { args?: Record<string, { hidden?: boolean }> }).args;
+  if (!args) return command;
+  return { ...command, args: Object.fromEntries(Object.entries(args).filter(([, def]) => def.hidden !== true)) };
+}
+
+/**
  * Define a citty command whose `run` body is automatically wrapped in
  * `runWithJsonErrors`, so the handler emits a byte-identical JSON error
  * envelope (stdout/stderr/exit-code) on throw without the boilerplate. A

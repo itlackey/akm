@@ -87,6 +87,7 @@ import {
   GLOBAL_OUTPUT_ARGS,
   output,
   runWithJsonErrors,
+  withoutHiddenArgs,
 } from "./cli/shared";
 import { assertKnownFlags, closestMatch, type FlagScanCommand } from "./cli/unknown-flags";
 import { agentCommand, lintCommand } from "./commands/agent/contribute-cli";
@@ -565,7 +566,7 @@ function commandHelpTopic(name: string, command: AnyCittyCommand): AnyCittyComma
   return defineCommand({
     meta: { name, description: `Print help for akm ${name}` },
     async run() {
-      await showUsage(command as CommandDef, buildUsageParentForPath([name]) as CommandDef);
+      await showUsage(withoutHiddenArgs(command) as CommandDef, buildUsageParentForPath([name]) as CommandDef);
     },
   });
 }
@@ -1185,7 +1186,7 @@ export async function runCli(): Promise<void> {
         process.stdout.write(`${await renderSectionedRootHelp()}\n`);
       } else {
         const path = resolveCittyCommandPath(main, rawArgs);
-        await showUsage(resolved as CommandDef, buildUsageParentForPath(path) as CommandDef);
+        await showUsage(withoutHiddenArgs(resolved) as CommandDef, buildUsageParentForPath(path) as CommandDef);
       }
       return;
     }

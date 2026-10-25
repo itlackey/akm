@@ -221,6 +221,37 @@ describe("akmAgentDispatch engine capability", () => {
     ]);
   });
 
+  test("the retired engine selection reaches the invocation layer as `engine`, for a prompt and for an interactive launch", async () => {
+    const commandCalls: unknown[] = [];
+    const interactiveCalls: unknown[] = [];
+    const seams = {
+      executeCommand: async (input: unknown) => {
+        commandCalls.push(input);
+        return {
+          schemaVersion: 2,
+          ok: true,
+          shape: "agent-result",
+          engine: "x",
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          durationMs: 1,
+        } as const;
+      },
+      executeInteractive: async (input: unknown) => {
+        interactiveCalls.push(input);
+        return { engine: "x", result: { ok: true, exitCode: 0, stdout: "", stderr: "", durationMs: 1 } };
+      },
+    };
+    const agentConfig = { configVersion: "0.9.0", semanticSearchMode: "off" } as AkmConfig;
+
+    await akmAgentDispatch({ prompt: "hi", agentConfig, selection: { engine: "old-name" } }, seams);
+    await akmAgentDispatch({ agentConfig, selection: { engine: "old-name" } }, seams);
+
+    expect(commandCalls).toMatchObject([{ current: { engine: "old-name" } }]);
+    expect(interactiveCalls).toMatchObject([{ engine: "old-name" }]);
+  });
+
   test("a persona or inference setting without a task is refused instead of fabricating an empty command", async () => {
     let calls = 0;
     const executeCommand = async () => {

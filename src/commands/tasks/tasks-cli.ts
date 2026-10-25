@@ -27,7 +27,7 @@
 import { defineCommand } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
-import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
+import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import {
   defineGroupCommand,
   defineJsonCommand,
@@ -208,6 +208,7 @@ const tasksAddCommand = defineJsonCommand({
         'Exact shell string to run on the schedule (no AI agent), e.g. "akm improve --strategy consolidate".',
     },
     ...SELECTION_ARGS,
+    ...RETIRED_ENGINE_ARG,
     "timeout-ms": { type: "string", description: "Positive timeout in milliseconds for prompt or command targets" },
     params: { type: "string", description: "Workflow params as a JSON object" },
     name: { type: "string", description: "Human-readable name for the task" },

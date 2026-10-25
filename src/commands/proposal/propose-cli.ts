@@ -20,7 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineCommand } from "citty";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
-import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
+import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { UsageError } from "../../core/errors";
@@ -59,6 +59,7 @@ export const proposeCommand = defineCommand({
         "Configured writable bundle to queue the proposal for and draw convention facts from (default: the working bundle)",
     },
     ...SELECTION_ARGS,
+    ...RETIRED_ENGINE_ARG,
     "timeout-ms": { type: "string", description: "Override the engine timeout in milliseconds" },
   },
   async run({ args }) {

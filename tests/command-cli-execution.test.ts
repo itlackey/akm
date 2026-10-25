@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { _resetWarnOnceForTests } from "../src/core/warn";
 import { akmIndex } from "../src/indexer/indexer";
 import { runCliCapture } from "./_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
@@ -139,6 +140,25 @@ describe("command CLI execution convergence", () => {
     const both = await dryRun("--connection", "lab", "--harness", "reviewer");
     expect(both.code).toBe(2);
     expect(both.stderr).toContain("--connection and --harness are mutually exclusive");
+  });
+
+  test("the retired --engine still names a connection by that name, else a harness, with one warning", async () => {
+    writeSandboxConfig({
+      connections: { lab: { endpoint: "https://lab.invalid/v1/chat/completions", models: { fast: "lab-model" } } },
+    });
+    _resetWarnOnceForTests();
+    const dryRun = (engine: string) =>
+      runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json", "--engine", engine]);
+
+    const harness = await dryRun("reviewer");
+    expect(harness.code).toBe(0);
+    expect(JSON.parse(harness.stdout)).toMatchObject({ engine: "reviewer" });
+    expect(harness.stderr).toContain("--engine is retired: use --connection or --harness");
+
+    const connection = await dryRun("lab");
+    expect(connection.code).toBe(0);
+    expect(JSON.parse(connection.stdout)).toMatchObject({ engine: "lab" });
+    expect(connection.stderr).not.toContain("--engine is retired");
   });
 
   test("live --verbose reports only safe dry-run diagnostics before preserving the dispatch envelope", async () => {
