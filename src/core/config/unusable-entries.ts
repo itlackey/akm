@@ -7,6 +7,7 @@ import { isRecord } from "../common";
 import { warnOnce } from "../warn";
 import { ConnectionSchema } from "./schema/connections";
 import { HarnessSchema, harnessNameProblem } from "./schema/harnesses";
+import { engineName } from "./schema/primitives";
 
 type Dict = Record<string, unknown>;
 
@@ -17,16 +18,22 @@ function firstIssue(error: ZodError): string {
   return `${where ? `${where}: ` : ""}${issue?.message ?? "it is not valid"}`;
 }
 
-/** Why a connection entry cannot be used, if it cannot: its own schema rejects it. */
-function connectionProblem(_name: string, entry: unknown): string | undefined {
-  const parsed = ConnectionSchema.safeParse(entry);
-  return parsed.success ? undefined : firstIssue(parsed.error);
+/** Why an entry cannot have this name, if it cannot: the rule every connection and harness name follows. */
+function nameProblem(name: string): string | undefined {
+  const parsed = engineName.safeParse(name);
+  return parsed.success ? undefined : `its name breaks the naming rule (${firstIssue(parsed.error)})`;
 }
 
-/** Why a harness entry cannot be used, if it cannot: its own schema rejects it, or it names no platform and is not one. */
+/** Why a connection entry cannot be used, if it cannot: its name breaks the rule, or its own schema rejects it. */
+function connectionProblem(name: string, entry: unknown): string | undefined {
+  const parsed = ConnectionSchema.safeParse(entry);
+  return nameProblem(name) ?? (parsed.success ? undefined : firstIssue(parsed.error));
+}
+
+/** Why a harness entry cannot be used, if it cannot: as for a connection, or it names no platform and is not one. */
 function harnessProblem(name: string, entry: unknown): string | undefined {
   const parsed = HarnessSchema.safeParse(entry);
-  return parsed.success ? harnessNameProblem(name, parsed.data) : firstIssue(parsed.error);
+  return nameProblem(name) ?? (parsed.success ? harnessNameProblem(name, parsed.data) : firstIssue(parsed.error));
 }
 
 export interface UnusableEntry {
@@ -57,7 +64,8 @@ export function findUnusableEntries(raw: Dict): UnusableEntry[] {
 
 /**
  * A connection or harness its own schema rejects (no endpoint, an endpoint that
- * is not a URL, a model that is not a name, a harness akm cannot run) is of no
+ * is not a URL, a model that is not a name, a harness akm cannot run, a name that
+ * breaks the naming rule) is of no
  * use, but it is not a reason to refuse the rest of the config or to disable the
  * entries beside it: each is dropped from what is read, with one warning naming
  * it and the first thing wrong. The file keeps it, and a write does not remove it.

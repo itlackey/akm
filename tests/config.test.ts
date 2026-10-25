@@ -634,6 +634,13 @@ describe("connections", () => {
       { connections: { lab: LAB }, harnesses: { claude: { args: "--x" }, codex: {} } },
       "claude",
     ],
+    ["a connection name outside the naming rule", { connections: { "My Lab": LAB, lab: LAB } }, "My Lab"],
+    ["a connection name with a reserved prefix", { connections: { "akm-lab": LAB, lab: LAB } }, "akm-lab"],
+    [
+      "a harness name outside the naming rule",
+      { connections: { lab: LAB }, harnesses: { Claude_Work: { platform: "claude" }, codex: {} } },
+      "Claude_Work",
+    ],
   ])("%s is dropped with one warning naming it; the rest loads", (_name, config, dropped) => {
     writeCurrentConfig(config);
     let loaded!: ReturnType<typeof loadConfig>;

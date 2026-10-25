@@ -234,6 +234,25 @@ describe("the entries the reader drops", () => {
     expect(notes).toMatch(/harnesses\.cursor: kept as written.*platform/);
   });
 
+  test("include one whose name breaks the naming rule: kept as written, with a note naming it", () => {
+    const lab = { endpoint: "http://lab:8080/v1", models: { fast: "m" } };
+    writeConfig({
+      connections: { "My Lab": lab, lab },
+      harnesses: { Claude_Work: { platform: "claude" } },
+    });
+
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    const written = readConfig();
+    expect((written.connections as Dict)["My Lab"]).toEqual(lab);
+    expect((written.harnesses as Dict).Claude_Work).toEqual({ platform: "claude" });
+    const notes = (result.notes ?? []).join("\n");
+    expect(notes).toContain(
+      "connections.My Lab: kept as written, and ignored by akm because its name breaks the naming rule",
+    );
+    expect(notes).toContain("harnesses.Claude_Work: kept as written");
+  });
+
   test("are kept when they are all the file holds", () => {
     writeConfig({ connections: { draft }, bundles: {} });
 
