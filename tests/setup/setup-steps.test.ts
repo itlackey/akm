@@ -15,8 +15,10 @@ import type { AkmConfig } from "../../src/core/config/config";
 import { writeCredential } from "../../src/core/config/credentials";
 import { UsageError } from "../../src/core/errors";
 import { _setWarnSinkForTests } from "../../src/core/warn";
+import { effectiveEmbedding } from "../../src/llm/embedders/connection";
 import type { InstalledHarness } from "../../src/setup/detect";
 import { parseSetupFlags } from "../../src/setup/setup-flags";
+import { applySetupAnswers } from "../../src/setup/setup-plan";
 import { stepConnection } from "../../src/setup/steps/connection";
 import { stepEmbeddings } from "../../src/setup/steps/embeddings";
 import { stepHarnesses } from "../../src/setup/steps/harnesses";
@@ -600,6 +602,61 @@ describe("stepEmbeddings", () => {
       }),
     );
     expect(warnings).toEqual([]);
+  });
+
+  describe("the connection that serves an embedding model is the default of the config as it will be", () => {
+    const other = { name: "other", endpoint: "http://other.example.test/v1", picks: {} };
+    const flags = parseSetupFlags({ embedding: "embed-new" });
+
+    test("a further connection that is not the default does not serve it: its models are not offered, and the default's endpoint is the one used", async () => {
+      const current = cfg({ connections: { default: { endpoint: "http://main.example.test/v1" } } });
+      prompts.answers.select.push("local");
+      prompts.answers.confirm.push(false);
+      await stepEmbeddings(input({ current, connection: other, listed: ["embed-from-other"] }));
+      expect(prompts.of("select")[0]?.options.map((option) => option.value)).toEqual(["local", "endpoint", "off"]);
+
+      const flagged = await stepEmbeddings(
+        input({ current, connection: other, listed: ["embed-from-other"], flags, interactive: false }),
+      );
+      expect(flagged.answer).toEqual({ kind: "connection", model: "embed-new" });
+      // Saved, the embedding runs on the endpoint the default connection has.
+      const saved = {
+        ...current,
+        ...applySetupAnswers(current, { connection: other, embedding: flagged.answer }).patch,
+      };
+      expect(effectiveEmbedding(saved as AkmConfig)).toMatchObject({
+        model: "embed-new",
+        endpoint: "http://main.example.test/v1",
+      });
+    });
+
+    test("with several connections and none called default there is nothing to serve it, and the user is told how to fix that", async () => {
+      const current = cfg({
+        connections: {
+          first: { endpoint: "http://a.example.test/v1" },
+          second: { endpoint: "http://b.example.test/v1" },
+        },
+      });
+      const failure = await stepEmbeddings(
+        input({ current, connection: other, listed: ["embed-new"], flags, interactive: false }),
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(UsageError);
+      expect((failure as UsageError).message).toContain('none of the connections is called "default"');
+      expect((failure as UsageError).message).toContain("akm setup --name default");
+    });
+
+    test("a connection that becomes the default serves it, and its own models are offered", async () => {
+      const current = cfg({ connections: { first: { endpoint: "http://a.example.test/v1" } } });
+      const named = { name: "default", endpoint: "http://main.example.test/v1", picks: {} };
+      prompts.answers.select.push("model:embed-main");
+      prompts.answers.confirm.push(false);
+      const result = await stepEmbeddings(input({ current, connection: named, listed: ["embed-main"] }));
+      expect(prompts.of("select")[0]?.options.map((option) => option.value)).toContain("model:embed-main");
+      expect(result.answer).toEqual({ kind: "connection", model: "embed-main" });
+    });
   });
 
   test("--embedding off, local, or a model on the connection, with no question asked", async () => {

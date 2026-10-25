@@ -8,7 +8,12 @@
  */
 
 import * as p from "../../cli/clack";
-import { type AkmConfig, defaultConnection, type EmbeddingConnectionConfig } from "../../core/config/config";
+import {
+  type AkmConfig,
+  type ConnectionConfig,
+  defaultConnection,
+  type EmbeddingConnectionConfig,
+} from "../../core/config/config";
 import { apiKeyReference, resolveApiKey, storedCredential } from "../../core/config/credentials";
 import { sameEndpoint } from "../../core/endpoint-url";
 import { UsageError } from "../../core/errors";
@@ -17,7 +22,7 @@ import { isEmbeddingModel } from "../../llm/model-list";
 import { prompt } from "../prompt";
 import { describeSemanticSearchAssets, isRemoteEmbeddingConfig } from "../semantic-assets";
 import type { SetupFlags } from "../setup-flags";
-import type { ConnectionAnswer, EmbeddingAnswer, KeyAnswer } from "../setup-plan";
+import { applySetupAnswers, type ConnectionAnswer, type EmbeddingAnswer, type KeyAnswer } from "../setup-plan";
 import { listModels, pickModel, promptApiKey, promptEndpoint, promptModelName, warnUser } from "./connection-shared";
 
 export interface SemanticSearchChoice {
@@ -43,9 +48,22 @@ export interface EmbeddingStepResult {
   semantic: SemanticSearchChoice;
 }
 
-/** The base URL of the connection that would serve an embedding model, once this run's connection is saved. */
-function servingEndpoint(input: EmbeddingStepInput): string | undefined {
-  return input.connection?.endpoint ?? defaultConnection(input.current)?.connection.endpoint;
+/**
+ * The connection that will serve an embedding model once this run's answers are saved: the default connection
+ * of the config as it will be, which is not necessarily the one this run just answered (a further `--name`
+ * connection is not the default, and with several none of which is called `default` there is none).
+ */
+function servingConnection(input: EmbeddingStepInput): { name: string; connection: ConnectionConfig } | undefined {
+  const projected: AkmConfig = input.connection
+    ? { ...input.current, ...applySetupAnswers(input.current, { connection: input.connection }).patch }
+    : input.current;
+  return defaultConnection(projected);
+}
+
+/** The embedding models the serving connection lists: this run's listing, when this run was about that connection. */
+function servedModels(input: EmbeddingStepInput): string[] {
+  const serving = servingConnection(input);
+  return serving !== undefined && input.connection?.name === serving.name ? input.listed.filter(isEmbeddingModel) : [];
 }
 
 /**
@@ -79,9 +97,17 @@ function fromFlags(input: EmbeddingStepInput): EmbeddingAnswer {
       ...(flags.embeddingApiKeyEnv ? { key: { env: flags.embeddingApiKeyEnv } } : {}),
     };
   }
-  if (servingEndpoint(input) === undefined) {
+  if (servingConnection(input) === undefined) {
+    const several =
+      Object.keys(
+        input.connection
+          ? { ...input.current.connections, [input.connection.name]: 1 }
+          : (input.current.connections ?? {}),
+      ).length > 1;
     throw new UsageError(
-      `--embedding ${model} is served by the default connection, and none is configured. Pass --endpoint (or --embedding-endpoint).`,
+      several
+        ? `--embedding ${model} is served by the default connection, and none of the connections is called "default". Name one default (akm setup --name default), or pass --embedding-endpoint.`
+        : `--embedding ${model} is served by the default connection, and none is configured. Pass --endpoint (or --embedding-endpoint).`,
       "MISSING_REQUIRED_ARGUMENT",
     );
   }
@@ -91,15 +117,17 @@ function fromFlags(input: EmbeddingStepInput): EmbeddingAnswer {
 /** The embedding block this answer leaves the config with, for the note that says what setup downloads. */
 function embeddingAfter(input: EmbeddingStepInput, answer: EmbeddingAnswer): EmbeddingConnectionConfig | undefined {
   if (answer.kind === "endpoint") return { endpoint: answer.endpoint, model: answer.model };
-  if (answer.kind === "connection") return { endpoint: servingEndpoint(input), model: answer.model };
+  if (answer.kind === "connection")
+    return { endpoint: servingConnection(input)?.connection.endpoint, model: answer.model };
   return answer.kind === "off" ? input.current.embedding : undefined;
 }
 
 async function askSource(input: EmbeddingStepInput): Promise<EmbeddingAnswer> {
   const { current } = input;
-  const servedModels = input.listed.filter(isEmbeddingModel);
-  const heldModel = current.embedding?.endpoint === undefined ? current.embedding?.model : undefined;
-  const connectionModels = [...new Set([...(heldModel ? [heldModel] : []), ...servedModels])];
+  const served = servedModels(input);
+  const hasServing = servingConnection(input) !== undefined;
+  const heldModel = hasServing && current.embedding?.endpoint === undefined ? current.embedding?.model : undefined;
+  const connectionModels = [...new Set([...(heldModel ? [heldModel] : []), ...served])];
 
   const options = [
     ...connectionModels.map((model) => ({ value: `model:${model}`, label: model, hint: "served by the connection" })),
@@ -111,8 +139,8 @@ async function askSource(input: EmbeddingStepInput): Promise<EmbeddingAnswer> {
     ? "endpoint"
     : heldModel
       ? `model:${heldModel}`
-      : servedModels[0]
-        ? `model:${servedModels[0]}`
+      : served[0]
+        ? `model:${served[0]}`
         : "local";
   const choice = await prompt(() =>
     p.select({ message: "Which embedding source should akm use?", options, initialValue }),
@@ -163,7 +191,7 @@ export async function stepEmbeddings(input: EmbeddingStepInput): Promise<Embeddi
   if (!interactive) {
     // The default: a model the new default connection serves. A rerun, another connection, or an embedding
     // block the config already has is the user's earlier choice and stays.
-    const model = input.listed.find(isEmbeddingModel);
+    const model = servedModels(input)[0];
     if (model === undefined || current.embedding !== undefined || !input.addedDefaultConnection) {
       return { semantic: unchanged };
     }

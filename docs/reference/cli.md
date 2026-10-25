@@ -199,8 +199,12 @@ The wizard asks, in order:
    prompt and stored in `credentials.json`, never in `config.json`), and one model
    per alias (`fast`, `balanced`, `reasoning`) picked from the models the
    endpoint lists. Change a pick later with `akm models set`.
-4. **Embeddings.** A model the connection serves, akm's built-in local embedder,
-   another endpoint, or off.
+4. **Embeddings.** A model the default connection serves, akm's built-in local
+   embedder, another endpoint, or off. The serving connection is the default of
+   the config as this run will save it: a further `--name` connection does not
+   serve embeddings, its models are not offered, and with several connections
+   none called `default`, `--embedding <model>` refuses and asks you to name one
+   default or pass `--embedding-endpoint`.
 5. **Save.** The config is written, the bundle directory initialized, and a
    summary says what runs where.
 
