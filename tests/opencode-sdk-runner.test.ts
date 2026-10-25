@@ -2,27 +2,32 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// The OpenCode SDK runner (#1244) against the real embedded OpenCode and a
-// loopback fake model: no binary, no network.
+// akm's internal runtime (#1244) against the real embedded OpenCode and a
+// loopback fake model: no binary, no network. What a run is created with and what
+// the endpoint receives are asserted; the fake host (tests/opencode-runtime-sessions.test.ts)
+// covers the rest.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { OpenCode } from "@opencode/sdk";
+import type { Plugin } from "@opencode/plugin";
+import { resetConfigCache } from "../src/core/config/config";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import {
   _setOpencodeHostFactoryForTests,
   akmOpencodeDatabasePath,
   closeOpencodeSdk,
-  runOpencodeSdk,
-} from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
+  hostFor,
+} from "../src/integrations/harnesses/opencode/embedded/host";
+import { runOpencodeSdk } from "../src/integrations/harnesses/opencode/embedded/run";
+import { createSdkHost } from "../src/integrations/harnesses/opencode/embedded/sdk-host";
 import type { ChatCompletionConfig } from "../src/llm/client";
 import { type FakeModelServer, startFakeModel } from "./_helpers/fake-model-server";
-import { installFakeOpencodeHost } from "./_helpers/fake-opencode-host";
+import { writeSandboxConfig } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
 const profile: AgentProfile = {
-  name: "opencode-sdk",
+  name: "lab",
   platform: "opencode-sdk",
   bin: "",
   args: [],
@@ -32,37 +37,38 @@ const profile: AgentProfile = {
 };
 
 let model: FakeModelServer;
-let llm: ChatCompletionConfig;
+let connection: ChatCompletionConfig;
 let work: string;
 
 beforeAll(() => {
   model = startFakeModel();
-  llm = {
-    endpoint: model.url,
-    model: "fake-model",
-    apiKey: "test-key",
-    contextLength: 40000,
-    inference: { maxTokens: 4000 },
-  };
+  connection = { endpoint: model.url, model: "fake-model", apiKey: "test-key", contextLength: 40000 };
   work = fs.mkdtempSync(path.join(process.env.HOME ?? "/tmp", "sdk-work-"));
 });
 
-// No model catalog fetch: tests stay off the network.
-beforeEach(() =>
-  overrideSeam(_setOpencodeHostFactoryForTests, (options) => OpenCode.create({ ...options, models: { fetch: false } })),
-);
+// The runtime's providers are the configured connections; the real factory builds the host.
+beforeEach(() => {
+  writeSandboxConfig({
+    connections: {
+      lab: { endpoint: model.url, models: { fast: "fake-model" }, contextLength: 40000, max_tokens: 4000 },
+    },
+  });
+  resetConfigCache();
+  overrideSeam(_setOpencodeHostFactoryForTests, createSdkHost);
+});
 
 afterAll(async () => {
   await closeOpencodeSdk();
   model.stop();
 });
 
-const run = (prompt: string, extra: Parameters<typeof runOpencodeSdk>[2] = {}) =>
-  runOpencodeSdk(profile, prompt, { cwd: work, timeoutMs: 60_000, ...extra }, llm);
+const run = (prompt: string, extra: Parameters<typeof runOpencodeSdk>[2] = {}, using = connection) =>
+  runOpencodeSdk(profile, prompt, { cwd: work, timeoutMs: 60_000, ...extra }, using);
 
 const requestsFor = (mode: string) => model.requests.filter((r) => r.mode === mode);
+const lastAnswer = (since: number) => model.requests.slice(since).find((r) => r.mode === "answer");
 
-describe("runOpencodeSdk", () => {
+describe("a run on akm's internal runtime", () => {
   test("answers through the embedded OpenCode and stores the session in akm's database", async () => {
     const result = await run("MODE:answer hello");
     expect(result.ok).toBe(true);
@@ -77,27 +83,16 @@ describe("runOpencodeSdk", () => {
     expect(requestsFor("answer").some((r) => r.system.includes("PERSONA-MARKER"))).toBe(true);
   });
 
+  test("the run's environment reaches the commands the agent runs", async () => {
+    const result = await run("MODE:env go", { env: { AKM_PROBE: "from-akm" } });
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("PROBE=from-akm");
+  });
+
   test("a question is cancelled with a message and the run carries on", async () => {
     const result = await run("MODE:question go");
     expect(result.ok).toBe(true);
     expect(result.stdout).toBe("Q-DONE");
-  });
-
-  test("a permission request is rejected with a message and the run carries on", async () => {
-    const config = path.join(process.env.XDG_CONFIG_HOME ?? "", "opencode");
-    fs.mkdirSync(config, { recursive: true });
-    fs.writeFileSync(
-      path.join(config, "opencode.json"),
-      JSON.stringify({ permissions: [{ action: "shell", resource: "*", effect: "ask" }] }),
-    );
-    try {
-      const result = await run("MODE:shell ask first");
-      expect(result.ok).toBe(true);
-      expect(result.stdout).toContain("permission.rejected");
-      expect(result.stdout).toContain("nobody can answer");
-    } finally {
-      fs.rmSync(path.join(config, "opencode.json"));
-    }
   });
 
   test("a compaction in the middle of a turn does not hide the turn", async () => {
@@ -120,7 +115,80 @@ describe("runOpencodeSdk", () => {
     expect(result.reason).toBe("parse_error");
   });
 
-  test("model work gets OpenCode's read-only tools and akm's, and akm's tools run in-process", async () => {
+  test("a model the connection does not list fails the run, naming it", async () => {
+    const result = await run("MODE:answer go", {}, { ...connection, model: "not-listed" });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("akm-lab/not-listed");
+  });
+
+  test("a connection that is not configured fails the run, naming it", async () => {
+    const result = await runOpencodeSdk({ ...profile, name: "ghost" }, "MODE:answer go", { cwd: work }, connection);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("akm-ghost/fake-model");
+  });
+});
+
+describe("what the endpoint receives", () => {
+  test("the key is sent as a bearer token, and no key sends none", async () => {
+    const before = model.requests.length;
+    await run("MODE:answer keyed");
+    expect(lastAnswer(before)?.authorization).toBe("Bearer test-key");
+    const without = model.requests.length;
+    await run("MODE:answer keyless", {}, { ...connection, apiKey: undefined });
+    expect(lastAnswer(without)?.authorization).toBeUndefined();
+  });
+
+  test("the connection's request fields reach the model as written", async () => {
+    const withFields: ChatCompletionConfig = {
+      ...connection,
+      request: { top_p: 0.9, chat_template_kwargs: { enable_thinking: false }, reasoning_effort: "low" },
+    };
+    const before = model.requests.length;
+    expect((await run("MODE:answer with request fields", {}, withFields)).ok).toBe(true);
+    const sent = lastAnswer(before);
+    expect(sent?.params.top_p).toBe(0.9);
+    expect(sent?.params.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(sent?.params.reasoning_effort).toBe("low");
+  });
+
+  test("a call's portable settings are translated, and its enableThinking keeps the thinking fields beside it", async () => {
+    const withSettings: ChatCompletionConfig = {
+      ...connection,
+      request: { chat_template_kwargs: { enable_thinking: true, thinking_budget: 8192 } },
+      inference: { enableThinking: false, temperature: 0.2, extraParams: { top_k: 40 } },
+    };
+    const before = model.requests.length;
+    expect((await run("MODE:answer with merged thinking fields", {}, withSettings)).ok).toBe(true);
+    const sent = lastAnswer(before);
+    expect(sent?.params.chat_template_kwargs).toEqual({ enable_thinking: false, thinking_budget: 8192 });
+    expect(sent?.params.temperature).toBe(0.2);
+    expect(sent?.params.top_k).toBe(40);
+  });
+
+  test("a call's maxTokens is the request's only output limit", async () => {
+    const before = model.requests.length;
+    await run("MODE:answer capped", {}, { ...connection, inference: { maxTokens: 777 } });
+    const sent = lastAnswer(before);
+    expect(sent?.params.max_tokens).toBe(777);
+    expect(sent?.params).not.toHaveProperty("max_completion_tokens");
+  });
+
+  test("one session's fields do not reach another's requests", async () => {
+    const before = model.requests.length;
+    await Promise.all([
+      run("MODE:answer first", {}, { ...connection, request: { top_k: 11 } }),
+      run("MODE:answer second", {}, { ...connection, request: { top_k: 22 } }),
+    ]);
+    const sent = model.requests.slice(before).filter((r) => r.mode === "answer" && r.params.top_k !== undefined);
+    expect(sent.map((r) => [r.lastUser.includes("first"), r.params.top_k]).sort()).toEqual([
+      [false, 22],
+      [true, 11],
+    ]);
+  });
+});
+
+describe("model work on the runtime's host", () => {
+  test("gets OpenCode's read-only tools and akm's, and akm's tools run in-process", async () => {
     // akm search needs a bundle; this test's own, removed after so no other test sees it.
     const bundle = path.join(process.env.HOME ?? "", "akm");
     fs.mkdirSync(bundle, { recursive: true });
@@ -137,117 +205,55 @@ describe("runOpencodeSdk", () => {
     }
   });
 
-  test("model work cannot write", async () => {
+  test("cannot write", async () => {
     const result = await run("MODE:write go", { dispatch: { prompt: "", modelWork: true } });
     expect(result.stdout).toContain("No tool named");
   });
+});
 
-  test("model work uses the user's OpenCode model when akm names none", async () => {
-    const config = path.join(process.env.XDG_CONFIG_HOME ?? "", "opencode");
-    fs.mkdirSync(config, { recursive: true });
-    fs.writeFileSync(
-      path.join(config, "opencode.json"),
-      JSON.stringify({
-        model: "userfake/fake-model",
-        provider: {
-          userfake: {
-            npm: "@ai-sdk/openai-compatible",
-            options: { baseURL: model.url, apiKey: "{env:USERFAKE_KEY}" },
-            models: { "fake-model": {} },
+describe("the runtime's host", () => {
+  test("offers the connections' models and none of OpenCode's own free ones", async () => {
+    // A probe plugin beside akm's keeps the context OpenCode hands plugins, to ask it which models a session may pick.
+    let context: Parameters<Plugin.Plugin["setup"]>[0] | undefined;
+    overrideSeam(_setOpencodeHostFactoryForTests, (spec) =>
+      createSdkHost({
+        ...spec,
+        plugin: {
+          id: "probe",
+          setup: async (ctx) => {
+            context = ctx;
+            await spec.plugin.setup(ctx);
           },
         },
       }),
     );
-    process.env.USERFAKE_KEY = "user-key";
-    try {
-      const result = await runOpencodeSdk(profile, "MODE:answer from user model", {
-        cwd: work,
-        timeoutMs: 60_000,
-        dispatch: { prompt: "", modelWork: true },
-      });
-      expect(result.ok).toBe(true);
-      expect(result.stdout).toMatch(/^ANSWER-\d+$/);
-    } finally {
-      delete process.env.USERFAKE_KEY;
-      fs.rmSync(path.join(config, "opencode.json"));
-    }
+    // Plugins are set up per location, when a run first opens one.
+    expect((await run("MODE:answer probe")).ok).toBe(true);
+    const listed = await context?.model.list({});
+    const models = ((listed as { data?: unknown[] } | undefined)?.data ?? listed) as Array<{
+      providerID: string;
+      id: string;
+    }>;
+    expect(models.map((m) => `${m.providerID}/${m.id}`)).toEqual(["akm-lab/fake-model"]);
   });
 
-  test("inference is laid over a model from the user's OpenCode config", async () => {
-    const config = path.join(process.env.XDG_CONFIG_HOME ?? "", "opencode");
-    fs.mkdirSync(config, { recursive: true });
-    fs.writeFileSync(
-      path.join(config, "opencode.json"),
-      JSON.stringify({
-        provider: {
-          userfake: {
-            npm: "@ai-sdk/openai-compatible",
-            options: { baseURL: model.url, apiKey: "user-key" },
-            models: { "fake-model": {} },
-          },
-        },
-      }),
-    );
-    try {
-      const before = model.requests.length;
-      const result = await runOpencodeSdk(profile, "MODE:answer with effort", {
-        cwd: work,
-        timeoutMs: 60_000,
-        dispatch: { prompt: "", model: "userfake/fake-model", inference: { reasoningEffort: "high" } },
-      });
-      expect(result.ok).toBe(true);
-      const sent = model.requests.slice(before).find((r) => r.mode === "answer");
-      expect(sent?.params.reasoning_effort).toBe("high");
-    } finally {
-      fs.rmSync(path.join(config, "opencode.json"));
-    }
+  test("rejects a permission request with a message, and the run carries on", async () => {
+    const { host } = await hostFor("runtime");
+    const session = await host.sessions.create({
+      title: "asks",
+      metadata: { akm: "agent" },
+      location: { directory: work },
+      model: { providerID: "akm-lab", id: "fake-model" },
+      permissions: [{ action: "shell", resource: "*", effect: "ask" }],
+    });
+    await host.sessions.prompt({ sessionID: session.id, text: "MODE:shell ask first" });
+    await host.sessions.wait({ sessionID: session.id });
+    const page = await host.message.list({ sessionID: session.id, limit: 50, order: "asc" });
+    expect(JSON.stringify(page.data)).toContain("nobody can answer");
   });
+});
 
-  test("the connection's request fields reach the model as written", async () => {
-    const connection: ChatCompletionConfig = {
-      ...llm,
-      request: { top_p: 0.9, chat_template_kwargs: { enable_thinking: false }, reasoning_effort: "low" },
-    };
-    const before = model.requests.length;
-    const result = await runOpencodeSdk(
-      profile,
-      "MODE:answer with request fields",
-      { cwd: work, timeoutMs: 60_000 },
-      connection,
-    );
-    expect(result.ok).toBe(true);
-    const sent = model.requests.slice(before).find((r) => r.mode === "answer");
-    expect(sent?.params.top_p).toBe(0.9);
-    expect(sent?.params.chat_template_kwargs).toEqual({ enable_thinking: false });
-    expect(sent?.params.reasoning_effort).toBe("low");
-  });
-
-  test("a call's enableThinking does not erase the thinking fields the connection wrote beside it", async () => {
-    const connection: ChatCompletionConfig = {
-      ...llm,
-      request: { chat_template_kwargs: { enable_thinking: true, thinking_budget: 8192 } },
-      inference: { enableThinking: false, extraParams: { top_k: 40 } },
-    };
-    const before = model.requests.length;
-    const result = await runOpencodeSdk(
-      profile,
-      "MODE:answer with merged thinking fields",
-      { cwd: work, timeoutMs: 60_000 },
-      connection,
-    );
-    expect(result.ok).toBe(true);
-    const sent = model.requests.slice(before).find((r) => r.mode === "answer");
-    expect(sent?.params.chat_template_kwargs).toEqual({ enable_thinking: false, thinking_budget: 8192 });
-    expect(sent?.params.top_k).toBe(40);
-  });
-
-  test("a turn longer than one page of history is read across pages", async () => {
-    installFakeOpencodeHost({ reply: () => ({ text: "AFTER-MANY-STEPS", steps: 450 }) });
-    const result = await run("long turn");
-    expect(result.ok).toBe(true);
-    expect(result.stdout).toBe("AFTER-MANY-STEPS");
-  });
-
+describe("limits", () => {
   test("the deadline ends a run as a timeout", async () => {
     const result = await run("MODE:answer slow", { timeoutMs: 1 });
     expect(result.ok).toBe(false);
@@ -259,5 +265,19 @@ describe("runOpencodeSdk", () => {
     controller.abort();
     const result = await run("MODE:answer", { signal: controller.signal });
     expect(result.reason).toBe("aborted");
+  });
+
+  test("a unit timeout ends a turn promptly on an endpoint that is down", async () => {
+    // OpenCode retries a failing endpoint with backoff for over a minute; the unit's timeout is what ends the turn.
+    const down: ChatCompletionConfig = { ...connection, endpoint: "http://127.0.0.1:1/v1" };
+    writeSandboxConfig({
+      connections: { lab: { endpoint: down.endpoint, models: { fast: "fake-model" } } },
+    });
+    resetConfigCache();
+    await closeOpencodeSdk();
+    const started = Date.now();
+    const result = await run("MODE:answer down", { timeoutMs: 2_000 }, down);
+    expect(result.reason).toBe("timeout");
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 });

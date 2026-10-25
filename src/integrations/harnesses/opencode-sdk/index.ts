@@ -9,10 +9,9 @@
  * registry must never load it; `agent/runner-dispatch.ts` imports it directly.
  */
 
-import { createAgentRequestLowerer } from "../../agent/request-lowering";
+import { runtimeLowerer } from "../opencode/embedded/runtime-lowerer";
 import { caps } from "../shared";
 import { BaseHarness } from "../types";
-import { OPENCODE_INFERENCE } from "./model-entry";
 
 /**
  * OpenCode SDK (embedded-SDK dispatch path).
@@ -26,11 +25,7 @@ export class OpencodeSdkHarness extends BaseHarness {
   readonly executionLowerer = {
     platform: "opencode-sdk",
     personaChannel: "native" as const,
-    lower: createAgentRequestLowerer({
-      adapter: "opencode-sdk",
-      personaChannel: "native",
-      inference: OPENCODE_INFERENCE,
-    }),
+    lower: runtimeLowerer,
   };
   // No flag-shaped resume: session reuse is programmatic — the SDK session id is
   // stored opportunistically on the unit row and passed back to

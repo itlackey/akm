@@ -4,7 +4,7 @@
 
 /**
  * A `bun test` run must close the embedded OpenCode hosts its tests opened.
- * The SDK runner caches them for the life of the process and only closes them
+ * The runner caches them for the life of the process and only closes them
  * on an explicit `closeOpencodeSdk()` — and `bun test` never emits `exit` when
  * a run ends normally (bun 1.4.1). Any test that dispatched through the real
  * runner therefore left its host open, holding the database and the run's HOME
@@ -26,9 +26,9 @@ import path from "node:path";
 import { makeSandboxDir } from "../_helpers/sandbox";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "../..");
-const SDK_RUNNER = path.join(REPO_ROOT, "src/integrations/harnesses/opencode-sdk/sdk-runner.ts");
+const EMBEDDED = path.join(REPO_ROOT, "src/integrations/harnesses/opencode/embedded");
 const MODEL_SERVER = path.join(REPO_ROOT, "tests/_helpers/fake-model-server.ts");
-const SDK = Bun.resolveSync("@opencode/sdk", REPO_ROOT);
+const SANDBOX_HELPERS = path.join(REPO_ROOT, "tests/_helpers/sandbox.ts");
 
 test("a bun test run closes the embedded OpenCode hosts its tests opened and removes its suite sandbox", async () => {
   const sandbox = makeSandboxDir("akm-sdk-teardown");
@@ -42,21 +42,23 @@ test("a bun test run closes the embedded OpenCode hosts its tests opened and rem
     [
       `import { expect, test } from "bun:test";`,
       `import { writeFileSync } from "node:fs";`,
-      `import { OpenCode } from ${JSON.stringify(SDK)};`,
-      `import { _setOpencodeHostFactoryForTests, runOpencodeSdk } from ${JSON.stringify(SDK_RUNNER)};`,
+      `import { _setOpencodeHostFactoryForTests } from ${JSON.stringify(path.join(EMBEDDED, "host.ts"))};`,
+      `import { runOpencodeSdk } from ${JSON.stringify(path.join(EMBEDDED, "run.ts"))};`,
+      `import { createSdkHost } from ${JSON.stringify(path.join(EMBEDDED, "sdk-host.ts"))};`,
       `import { startFakeModel } from ${JSON.stringify(MODEL_SERVER)};`,
+      `import { writeSandboxConfig } from ${JSON.stringify(SANDBOX_HELPERS)};`,
       `test("completes a dispatch and leaves the host cached", async () => {`,
       `  writeFileSync(${JSON.stringify(homeFile)}, process.env.HOME as string);`,
-      `  _setOpencodeHostFactoryForTests(async (options) => {`,
-      `    const host = await OpenCode.create({ ...options, models: { fetch: false } });`,
+      `  const model = startFakeModel();`,
+      `  writeSandboxConfig({ connections: { teardown: { endpoint: model.url, models: { fast: "fake-model" } } } });`,
+      `  _setOpencodeHostFactoryForTests(async (spec) => {`,
+      `    const host = await createSdkHost(spec);`,
       `    const close = host.close.bind(host);`,
       `    host.close = async () => { writeFileSync(${JSON.stringify(closedFile)}, "closed"); await close(); };`,
       `    return host;`,
       `  });`,
-      `  const model = startFakeModel();`,
-      `  const profile = { name: "sdk-teardown", bin: "", args: [], platform: "opencode-sdk" };`,
-      `  const llm = { endpoint: model.url, model: "fake-model", apiKey: "test-key" };`,
-      `  const result = await runOpencodeSdk(profile as never, "MODE:answer ping", { timeoutMs: 30_000 }, llm);`,
+      `  const profile = { name: "teardown", bin: "", args: [], platform: "opencode-sdk" };`,
+      `  const result = await runOpencodeSdk(profile as never, "MODE:answer ping", { timeoutMs: 30_000 }, { endpoint: model.url, model: "fake-model" });`,
       `  model.stop();`,
       `  expect(result.ok).toBe(true);`,
       `});`,

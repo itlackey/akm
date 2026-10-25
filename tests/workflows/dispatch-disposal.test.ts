@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { disposeDispatchResources } from "../../src/integrations/agent/runner-dispatch";
-import { runOpencodeSdk } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { runOpencodeSdk } from "../../src/integrations/harnesses/opencode/embedded/run";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import { startWorkflowRun } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
@@ -231,16 +231,16 @@ describe("disposeDispatchResources closes the embedded OpenCode hosts", () => {
   test("closes every cached host so the next dispatch starts a fresh one", async () => {
     const { lifecycle } = installFakeOpencodeHost({ reply: () => "ok" });
     const profile = { name: "mysdk", bin: "", args: [] } as never;
-    // Two configurations, two cached hosts: one with no model, one with akm's model.
-    await runOpencodeSdk(profile, "p", { timeoutMs: null });
-    await runOpencodeSdk(profile, "p", { timeoutMs: null, dispatch: { prompt: "p", model: "lab/m" } });
-    expect(lifecycle.created).toBe(2);
+    // The host is shared: sessions with different models run on the one cached host.
+    await runOpencodeSdk(profile, "p", { timeoutMs: null }, { endpoint: "http://lab.invalid/v1", model: "a" });
+    await runOpencodeSdk(profile, "p", { timeoutMs: null }, { endpoint: "http://lab.invalid/v1", model: "b" });
+    expect(lifecycle.created).toBe(1);
 
     await disposeDispatchResources();
-    expect(lifecycle.closed).toBe(2);
+    expect(lifecycle.closed).toBe(1);
 
-    await runOpencodeSdk(profile, "p", { timeoutMs: null });
-    expect(lifecycle.created).toBe(3);
+    await runOpencodeSdk(profile, "p", { timeoutMs: null }, { endpoint: "http://lab.invalid/v1", model: "a" });
+    expect(lifecycle.created).toBe(2);
   });
 
   test("awaits a host still starting and closes it before disposal resolves", async () => {
@@ -249,7 +249,15 @@ describe("disposeDispatchResources closes the embedded OpenCode hosts", () => {
       start = resolve;
     });
     const { lifecycle } = installFakeOpencodeHost({ reply: () => "ok", ready });
-    const running = runOpencodeSdk({ name: "mysdk", bin: "", args: [] } as never, "p", { timeoutMs: null });
+    const running = runOpencodeSdk(
+      { name: "mysdk", bin: "", args: [] } as never,
+      "p",
+      { timeoutMs: null },
+      {
+        endpoint: "http://lab.invalid/v1",
+        model: "a",
+      },
+    );
     await Promise.resolve();
 
     let disposed = false;

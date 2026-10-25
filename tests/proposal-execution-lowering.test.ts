@@ -45,21 +45,11 @@ function directConfig(stashDir: string, apiKey?: string): AkmConfig {
   } as AkmConfig;
 }
 
-/** The provider the embedded OpenCode was configured with for a run on `direct`. */
-function providerOf(config: Record<string, unknown> | undefined): {
-  options?: Record<string, unknown>;
-  models?: Record<string, { options?: Record<string, unknown> }>;
-} {
-  return ((config?.provider as Record<string, unknown> | undefined)?.["akm-custom"] ?? {}) as ReturnType<
-    typeof providerOf
-  >;
-}
-
 const proposalReply = (ref: string, description: string, body: string): string =>
   JSON.stringify({ ref, content: `---\ndescription: ${description}\n---\n\n${body}\n` });
 
 describe("proposal new on a connection runs akm's own runtime", () => {
-  test("it sends the connection's exact model, endpoint and request fields, and the proposal prompt", async () => {
+  test("it sends the connection's exact model and request fields, and the proposal prompt", async () => {
     const stashDir = proposalStash();
     const host = installFakeOpencodeHost({
       reply: () => proposalReply("skills/lowered", "Exercises resolved proposal lowering", "Use the shared boundary."),
@@ -79,9 +69,8 @@ describe("proposal new on a connection runs akm's own runtime", () => {
     expect(result.engine).toBe("direct");
     expect(host.calls).toHaveLength(1);
     const call = host.calls[0];
-    expect(call?.config?.model).toBe("akm-custom/provider/exact-proposal-092");
-    const provider = providerOf(call?.config);
-    expect(provider.options).toMatchObject({ baseURL: "https://proposal.invalid/v1" });
+    expect(call?.model).toEqual({ providerID: "akm-direct", id: "provider/exact-proposal-092" });
+    expect(call?.requestBody).toMatchObject({ temperature: 0.17, max_tokens: 222 });
     expect(call?.prompt).toContain(
       buildProposePrompt({ type: "skill", name: "lowered", task: "AUTHORING-CONTENT-MUST-NOT-ENTER-NOTICES" }),
     );
@@ -135,7 +124,7 @@ describe("proposal new on a connection runs akm's own runtime", () => {
     const result = await withEnv({ PROPOSAL_LEASE_KEY: secret }, () => akmPropose(options));
 
     expect(dispatchReady).toBe(true);
-    expect(providerOf(host.calls[0]?.config).options?.apiKey).toBe(replacement);
+    expect(host.calls[0]?.requestHeaders.authorization).toBe(`Bearer ${replacement}`);
     expect(result.ok).toBe(true);
     expect(JSON.stringify(result)).not.toContain(secret);
     expect(JSON.stringify(result)).not.toContain(replacement);
@@ -164,7 +153,7 @@ describe("proposal new on a connection runs akm's own runtime", () => {
       }),
     );
 
-    expect(providerOf(host.calls[0]?.config).options?.apiKey).toBe(secret);
+    expect(host.calls[0]?.requestHeaders.authorization).toBe(`Bearer ${secret}`);
     expect(JSON.stringify(result)).not.toContain(secret);
     if (echo) {
       expect(result).toMatchObject({ ok: false, reason: "parse_error", engine: "direct" });

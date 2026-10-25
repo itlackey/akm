@@ -26,7 +26,8 @@ import type { ExecutionJsonObject } from "../../execution/json";
 import { type ChatCompletionConfig, chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { getHarness } from "../harnesses";
-import { closeOpencodeSdk, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
+import { closeOpencodeSdk } from "../harnesses/opencode/embedded/host";
+import { runOpencodeSdk } from "../harnesses/opencode/embedded/run";
 import { type AgentResultExtraction, modelFromArgs } from "./builder-shared";
 import type { BuiltExecution } from "./execution";
 import { type AgentProfile, harnessProfile, runtimeProfile } from "./profiles";
@@ -46,7 +47,7 @@ export interface RunExecutionOptions {
     profile: AgentProfile,
     prompt: string,
     opts: RunAgentOptions,
-    connection?: ChatCompletionConfig,
+    connection: ChatCompletionConfig,
   ) => Promise<AgentRunResult>;
   /**
    * Operational overrides: stdio, parseOutput, signal, envSource, spawn,

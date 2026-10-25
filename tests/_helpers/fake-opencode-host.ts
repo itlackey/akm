@@ -3,21 +3,33 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * A scripted stand-in for the embedded OpenCode (`@opencode/sdk`), installed
- * through the SDK runner's host-factory seam. Each prompt is answered by
- * `reply`: the reply's text, or a {@link FakeOpencodeReply} with usage or a
- * provider error. A reply that never settles leaves the turn running, for
- * deadline and abort tests. What the runner sent is recorded in `calls`.
+ * A scripted stand-in for the embedded OpenCode, installed through the host
+ * factory seam. Each prompt is answered by `reply`: the reply's text, or a
+ * {@link FakeOpencodeReply} with usage or a provider error. A reply that never
+ * settles leaves the turn running, for deadline and abort tests. What akm asked
+ * of the host and the session is recorded in `calls`.
  *
- * Tests that need OpenCode's real behaviour (tools, permissions, compaction)
- * use the real SDK with `startFakeModel()` instead.
+ * The fake runs akm's plugin the way OpenCode would: it calls its `setup` with a
+ * context that records the tools it registers and the session hooks it
+ * subscribes, and for every prompt it runs the `http.request` hooks over the
+ * model request OpenCode would send (`requestBody`, `requestHeaders`), so a test
+ * sees what a session's requests would carry.
+ *
+ * Tests that need OpenCode's real behaviour (tools, permissions, compaction) use
+ * the real SDK with `startFakeModel()` instead.
  */
 
-import { _setOpencodeHostFactoryForTests } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import {
+  _setOpencodeHostFactoryForTests,
+  type EmbeddedHost,
+  type HostSpec,
+} from "../../src/integrations/harnesses/opencode/embedded/host";
 import { overrideSeam } from "./seams";
 
 export interface FakeOpencodeCall {
-  /** The config content the host was created with (akm's model, when it names one). */
+  /** The kind of host the session ran on. */
+  readonly kind: HostSpec["kind"];
+  /** The OpenCode config content the host was created with. */
   readonly config?: Record<string, unknown>;
   readonly prompt: string;
   readonly system?: string;
@@ -25,6 +37,14 @@ export interface FakeOpencodeCall {
   readonly directory?: string;
   readonly permissions?: unknown;
   readonly metadata?: unknown;
+  /** The model the session was created with. */
+  readonly model?: { readonly providerID: string; readonly id: string };
+  /** The variables set on the session's environment. */
+  readonly environment?: Readonly<Record<string, string>>;
+  /** The JSON body of the session's model request after akm's `http.request` hook ran over a plain one. */
+  readonly requestBody: Record<string, unknown>;
+  /** The headers of that request. */
+  readonly requestHeaders: Readonly<Record<string, string>>;
 }
 
 export interface FakeOpencodeReply {
@@ -42,55 +62,127 @@ export interface FakeOpencodeOptions {
   readonly reply: (call: FakeOpencodeCall) => string | FakeOpencodeReply | Promise<string | FakeOpencodeReply>;
   /** Hold every host's creation until this settles (an in-flight start). */
   readonly ready?: Promise<void>;
+  /** Called with every session the fake interrupts. */
+  readonly onInterrupt?: (sessionID: string) => void | Promise<void>;
 }
 
 export interface FakeOpencodeHosts {
   readonly calls: FakeOpencodeCall[];
+  /** What each host was created with. */
+  readonly specs: HostSpec[];
+  /** The tools akm's plugin registered, by host kind. */
+  readonly tools: Record<string, string[]>;
   /** Hosts created and closed so far. */
   readonly lifecycle: { created: number; closed: number };
 }
 
+interface HookEvent {
+  sessionID: string;
+  agent: string;
+  model: unknown;
+  kind: string;
+  request: Request;
+}
+
+/** Run the plugin's setup against a context that keeps what it registers. */
+async function loadPlugin(
+  spec: HostSpec,
+): Promise<{ tools: string[]; requestHooks: Array<(e: HookEvent) => Promise<void>> }> {
+  const tools: string[] = [];
+  const requestHooks: Array<(e: HookEvent) => Promise<void>> = [];
+  const context = {
+    tool: {
+      transform: async (edit: (editor: { add: (tool: { name: string }) => void }) => void) =>
+        edit({ add: (tool) => void tools.push(tool.name) }),
+    },
+    session: {
+      hook: async (name: string, callback: (e: HookEvent) => Promise<void>) => {
+        if (name === "http.request") requestHooks.push(callback);
+      },
+    },
+  };
+  await spec.plugin.setup(context as never);
+  return { tools, requestHooks };
+}
+
 export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpencodeHosts {
   const calls: FakeOpencodeCall[] = [];
+  const specs: HostSpec[] = [];
+  const tools: Record<string, string[]> = {};
   const lifecycle = { created: 0, closed: 0 };
-  overrideSeam(_setOpencodeHostFactoryForTests, async (create) => {
+  overrideSeam(_setOpencodeHostFactoryForTests, async (spec) => {
     await options.ready;
     lifecycle.created += 1;
-    const content = (create as { config?: { content?: string } }).config?.content;
-    const config = content ? (JSON.parse(content) as Record<string, unknown>) : undefined;
+    specs.push(spec);
+    const plugin = await loadPlugin(spec);
+    tools[spec.kind] = plugin.tools;
     const sessions = new Map<
       string,
-      { create: Record<string, unknown>; system?: string; messages: unknown[]; done?: Promise<void> }
+      {
+        create: Record<string, unknown>;
+        system?: string;
+        environment?: Record<string, string>;
+        messages: unknown[];
+        done?: Promise<void>;
+      }
     >();
     let n = 0;
-    const host = {
+
+    /** The model request OpenCode would send for a session, after akm's hook ran over it. */
+    async function modelRequest(sessionID: string, model: { providerID: string; id: string } | undefined) {
+      let request = new Request("http://model.invalid/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: model?.id ?? "unset", stream: true, max_completion_tokens: 32000 }),
+      });
+      for (const hook of plugin.requestHooks) {
+        const event: HookEvent = { sessionID, agent: "build", model, kind: "primary", request };
+        await hook(event);
+        request = event.request;
+      }
+      return {
+        requestBody: (await request.json()) as Record<string, unknown>,
+        requestHeaders: Object.fromEntries(request.headers.entries()),
+      };
+    }
+
+    const host: EmbeddedHost = {
       sessions: {
-        create: async (input: Record<string, unknown>) => {
+        create: async (input) => {
           const id = `ses_${++n}`;
-          sessions.set(id, { create: input, messages: [] });
+          sessions.set(id, { create: input as unknown as Record<string, unknown>, messages: [] });
           return { id };
+        },
+        environment: async ({ sessionID, variables }) => {
+          const session = sessions.get(sessionID);
+          if (session) session.environment = variables;
         },
         instructions: {
           entry: {
-            put: async ({ sessionID, value }: { sessionID: string; value: string }) => {
+            put: async ({ sessionID, value }) => {
               const session = sessions.get(sessionID);
               if (session) session.system = value;
             },
           },
         },
-        prompt: async ({ sessionID, text }: { sessionID: string; text: string }) => {
+        prompt: async ({ sessionID, text }) => {
           const session = sessions.get(sessionID);
           if (!session) throw new Error(`no session ${sessionID}`);
           const userId = `msg_user_${++n}`;
           const location = session.create.location as { directory?: string } | undefined;
+          const model = session.create.model as { providerID: string; id: string } | undefined;
           const call: FakeOpencodeCall = {
-            ...(config ? { config } : {}),
+            kind: spec.kind,
+            ...(spec.content ? { config: spec.content } : {}),
             prompt: text,
             ...(session.system !== undefined ? { system: session.system } : {}),
             ...(typeof session.create.agent === "string" ? { agent: session.create.agent } : {}),
             ...(location?.directory ? { directory: location.directory } : {}),
             ...(session.create.permissions ? { permissions: session.create.permissions } : {}),
             ...(session.create.metadata ? { metadata: session.create.metadata } : {}),
+            ...(model ? { model } : {}),
+            ...(session.environment ? { environment: session.environment } : {}),
+            ...(await modelRequest(sessionID, model)),
           };
           calls.push(call);
           session.messages.push({ id: userId, type: "user" });
@@ -118,15 +210,17 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
           });
           return { id: userId };
         },
-        wait: async ({ sessionID }: { sessionID: string }) => {
+        wait: async ({ sessionID }) => {
           await sessions.get(sessionID)?.done;
         },
-        interrupt: async () => {},
+        interrupt: async ({ sessionID }) => {
+          await options.onInterrupt?.(sessionID);
+        },
         form: { cancel: async () => {} },
       },
       message: {
         // Pages like OpenCode: a cursor carries its page's order, and OpenCode refuses one combined with `order`.
-        list: async (input: { sessionID: string; limit?: number; order?: "asc" | "desc"; cursor?: string }) => {
+        list: async (input) => {
           if (input.cursor !== undefined && input.order !== undefined)
             throw new Error("Cursor cannot be combined with order");
           const [order, start] = input.cursor
@@ -141,17 +235,15 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
       },
       permission: { reply: async () => {} },
       events: {
-        subscribe: ({ signal }: { signal?: AbortSignal } = {}) => ({
-          async *[Symbol.asyncIterator]() {
-            await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
-          },
-        }),
+        forEach: async (_handler, signal) => {
+          await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+        },
       },
       close: async () => {
         lifecycle.closed += 1;
       },
     };
-    return host as never;
+    return host;
   });
-  return { calls, lifecycle };
+  return { calls, specs, tools, lifecycle };
 }

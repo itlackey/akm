@@ -10,6 +10,7 @@
         "@opencode/sdk": "2.1.4",
         "citty": "^0.2.2",
         "dotenv": "^17.4.2",
+        "effect": "4.0.1",
         "fast-xml-parser": "^5.10.1",
         "marked": "^18.1.1",
         "node-html-parser": "^9.0.1",

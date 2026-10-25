@@ -40,7 +40,7 @@ import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../src/integrations/agent/spawn";
 import { HARNESS_CONFIG_PLATFORMS } from "../../src/integrations/harnesses";
-import { closeOpencodeSdk } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { closeOpencodeSdk } from "../../src/integrations/harnesses/opencode/embedded/host";
 import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink, withLlmStage } from "../../src/llm/usage-telemetry";
 import { serveLlmStub } from "../_helpers/engine-stubs";
 import { type FakeOpencodeCall, type FakeOpencodeReply, installFakeOpencodeHost } from "../_helpers/fake-opencode-host";
@@ -436,27 +436,17 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
     });
   });
 
-  test("internal runtime: akm's config gives the connection's model every field, and its context window", async () => {
-    const { built, result } = await dispatchBuilt(
-      RUNTIME,
-      "valid",
-      { inference: INFERENCE },
-      { contextLength: 120000 },
-    );
+  test("internal runtime: every field is sent as its wire form, as on a connection's chat", async () => {
+    const { built, result } = await dispatchBuilt(RUNTIME, "valid", { inference: INFERENCE });
 
     expect(result.ok).toBe(true);
     expect(untranslatedKeys(built.notices)).toEqual([]);
-    const provider = runtimeCalls.at(-1)?.config?.provider as Record<string, { models: Record<string, unknown> }>;
-    expect(provider["akm-custom"]?.models).toEqual({
-      "stub-model": {
-        options: {
-          temperature: 0.2,
-          reasoningEffort: "high",
-          chat_template_kwargs: { enable_thinking: false },
-          enable_thinking: false,
-        },
-        limit: { context: 120000, output: 4096 },
-      },
+    expect(runtimeCalls.at(-1)?.requestBody).toMatchObject({
+      temperature: 0.2,
+      max_tokens: 4096,
+      reasoning_effort: "high",
+      chat_template_kwargs: { enable_thinking: false },
+      enable_thinking: false,
     });
   });
 
@@ -476,13 +466,12 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
   });
 
   // `effort` (`effort:` frontmatter) and `reasoningEffort` (a request, opencode's options) are one setting.
-  test("an asset's `effort` is reasoningEffort on a connection's chat and on the runtime's model", async () => {
+  test("an asset's `effort` is reasoningEffort on a connection's chat and on the runtime's requests", async () => {
     await dispatchBuilt(CHAT, "reply", { inference: { effort: "high" } });
     await dispatchBuilt(RUNTIME, "valid", { inference: { effort: "high" } });
 
     expect(chatBodies.at(-1)).toMatchObject({ reasoning_effort: "high" });
-    const provider = runtimeCalls.at(-1)?.config?.provider as Record<string, { models: Record<string, unknown> }>;
-    expect(provider["akm-custom"]?.models["stub-model"]).toEqual({ options: { reasoningEffort: "high" } });
+    expect(runtimeCalls.at(-1)?.requestBody).toMatchObject({ reasoning_effort: "high" });
   });
 });
 

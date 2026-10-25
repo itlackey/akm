@@ -109,8 +109,7 @@ function installFakeSdk(reply: Reply): SdkCall[] {
   recordedCalls = [];
   installFakeOpencodeHost({
     reply: (call) => {
-      const model = typeof call.config?.model === "string" ? call.config.model.replace(/^akm-custom\//, "") : undefined;
-      const sdkCall: SdkCall = { via: "sdk", model, prompt: call.prompt, system: call.system };
+      const sdkCall: SdkCall = { via: "sdk", model: call.model?.id, prompt: call.prompt, system: call.system };
       recordedCalls.push(sdkCall);
       return reply(sdkCall);
     },

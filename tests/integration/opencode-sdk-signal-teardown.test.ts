@@ -64,17 +64,11 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
           return new Promise<Response>(() => {});
         },
       });
-      // The CLI as `bun src/cli.ts` runs it, with the embedded OpenCode kept off the network (no model catalog fetch).
+      // The CLI as `bun src/cli.ts` runs it, on the real embedded OpenCode (which fetches no model catalog).
       const entry = path.join(fakeDir.dir, "entry.ts");
       fs.writeFileSync(
         entry,
-        [
-          `import { OpenCode } from ${JSON.stringify(Bun.resolveSync("@opencode/sdk", REPO_ROOT))};`,
-          `import { runCli } from ${JSON.stringify(path.join(REPO_ROOT, "src/cli.ts"))};`,
-          `import { _setOpencodeHostFactoryForTests } from ${JSON.stringify(path.join(REPO_ROOT, "src/integrations/harnesses/opencode-sdk/sdk-runner.ts"))};`,
-          `_setOpencodeHostFactoryForTests((options) => OpenCode.create({ ...options, models: { fetch: false } }));`,
-          `await runCli();`,
-        ].join("\n"),
+        [`import { runCli } from ${JSON.stringify(path.join(REPO_ROOT, "src/cli.ts"))};`, `await runCli();`].join("\n"),
       );
       writeSandboxConfig({
         connections: {

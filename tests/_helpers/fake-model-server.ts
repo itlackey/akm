@@ -9,6 +9,7 @@
  *   answer    reply "ANSWER-<n>"
  *   question  call the `question` tool, then reply "Q-DONE"
  *   shell     call `shell`, then reply with the tool result
+ *   env       call `shell` to print $AKM_PROBE, then reply with the tool result
  *   write     call `write`, then reply with the tool result
  *   akm       call `akm_search`, then reply with the tool result
  *   length    first step cut at the output limit, then "PART-TWO"
@@ -37,6 +38,8 @@ export interface FakeModelRequest {
   readonly params: Record<string, unknown>;
   /** The request asked the model to summarize the conversation (a compaction). */
   readonly summarize: boolean;
+  /** The `Authorization` header the request carried, if any. */
+  readonly authorization?: string;
 }
 
 export interface FakeModelServer {
@@ -69,8 +72,10 @@ export function startFakeModel(): FakeModelServer {
       let mode = /MODE:(\w+)/.exec(users.find((u) => /MODE:\w+/.test(u)) ?? "")?.[1] ?? "answer";
       if (!tools.length && /title/i.test(system)) mode = "title";
       const all = messages.map((m) => text(m.content)).join("\n");
+      const authorization = req.headers.get("authorization");
       requests.push({
         mode,
+        ...(authorization ? { authorization } : {}),
         tools,
         system,
         params,
@@ -98,6 +103,10 @@ export function startFakeModel(): FakeModelServer {
         reply = afterTool
           ? { content: `SHELL:${result}` }
           : { tool: { name: "shell", args: { command: "echo HELLO", description: "hello" } } };
+      else if (mode === "env")
+        reply = afterTool
+          ? { content: `ENV:${result}` }
+          : { tool: { name: "shell", args: { command: 'echo "PROBE=$AKM_PROBE"', description: "probe" } } };
       else if (mode === "write")
         reply = afterTool
           ? { content: `WRITE:${result}` }
