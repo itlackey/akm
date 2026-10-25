@@ -136,6 +136,9 @@ export type IndexConfig = z.infer<typeof import("./config-schema").IndexConfigSc
 /** `akm improve` pipeline tuning (`improve`). See config-schema.ts for docs. */
 export type ImproveConfig = z.infer<typeof import("./config-schema").ImproveConfigSchema>;
 
+/** Where one improve call runs: `improve.processes.<name>` and `improve.qualityGate`. */
+export type ImproveWhere = z.infer<typeof import("./config-schema").ImproveWhereSchema>;
+
 /** Host-local scheduler activation configuration. */
 export type SchedulerConfig = z.infer<typeof import("./config-schema").SchedulerConfigSchema>;
 

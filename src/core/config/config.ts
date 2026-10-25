@@ -62,6 +62,7 @@ export type {
   ImproveConfig,
   ImproveProcessConfig,
   ImproveProfileConfig,
+  ImproveWhere,
   IndexConfig,
   IndexPassConfig,
   OutputConfig,

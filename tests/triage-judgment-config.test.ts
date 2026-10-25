@@ -46,7 +46,7 @@ function judgmentPatchBase(): Record<string, unknown> {
       strategies: {
         nightly: {
           processes: {
-            triage: { enabled: true, judgment: { enabled: false, connection: "old" } },
+            triage: { enabled: true, judgment: { enabled: false } },
           },
         },
       },
@@ -55,86 +55,52 @@ function judgmentPatchBase(): Record<string, unknown> {
 }
 
 describe("triage judgment config normalization (#814)", () => {
-  test("normalizes boolean shorthand and legacy objects to explicit enabled state", () => {
+  test("normalizes boolean shorthand and objects to explicit enabled state", () => {
     expect(ImproveProcessConfigSchema.parse({ judgment: true }).judgment).toEqual({ enabled: true });
     expect(ImproveProcessConfigSchema.parse({ judgment: false }).judgment).toEqual({ enabled: false });
     expect(ImproveProcessConfigSchema.parse({ judgment: {} }).judgment).toEqual({ enabled: true });
-    expect(ImproveProcessConfigSchema.parse({ judgment: { connection: "judge", model: "exact" } }).judgment).toEqual({
-      enabled: true,
-      connection: "judge",
-      model: "exact",
-    });
-    expect(ImproveProcessConfigSchema.parse({ judgment: { enabled: false, timeoutMs: null } }).judgment).toEqual({
-      enabled: false,
-      timeoutMs: null,
-    });
+    expect(ImproveProcessConfigSchema.parse({ judgment: { enabled: false } }).judgment).toEqual({ enabled: false });
   });
 
   test("tolerates judgment typos, unknown keys and the retired mode/profile knobs", () => {
     // An unknown key is not fatal anywhere in config: the loader names it once
-    // and it changes nothing. Only the retired keys below still fail, because
-    // they have a replacement to point at.
-    for (const judgment of [{ bogus: 1 }, { conection: "judge" }]) {
+    // and it changes nothing. That includes the keys a judgment once took to say
+    // where it runs; that is `improve.processes.triage` now.
+    for (const judgment of [{ bogus: 1 }, { conection: "judge" }, { connection: "judge", model: "exact" }]) {
       expect(ImproveProcessConfigSchema.safeParse({ judgment }).success).toBe(true);
     }
     expect(TriageProcessConfigSchema.safeParse({ judgement: true }).success).toBe(true);
-
-    // The retired `mode`/`profile` knobs are unknown keys like any other now:
-    // tolerated here, named once by the loader, and never a reason to fail.
     for (const key of ["mode", "profile"] as const) {
       expect(ImproveProcessConfigSchema.safeParse({ judgment: { [key]: "llm" } }).success).toBe(true);
     }
   });
 
-  test("tolerates unknown judgment LLM override keys and retains arbitrary extraParams", () => {
+  test("where triage's judgment runs is improve.processes.triage, which tolerates unknown LLM keys and keeps extraParams", () => {
     for (const llmOverrides of [{ tempertaure: 0.2 }, { futureTopLevelKnob: true }]) {
-      expect(ImproveProcessConfigSchema.safeParse({ judgment: { llm: llmOverrides } }).success).toBe(true);
-
-      const live = validateConfigShape({
-        configVersion: "0.9.0",
-        improve: {
-          strategies: {
-            nightly: { processes: { triage: { enabled: true, judgment: { llm: llmOverrides } } } },
-          },
-        },
-      });
-      expect(live.ok).toBe(true);
-    }
-
-    const extraParams = {
-      providerFeature: { nested: [1, true, "kept"] },
-      arbitrary_number: 7,
-    };
-    expect(ImproveProcessConfigSchema.parse({ judgment: { llm: { temperature: 0.2, extraParams } } }).judgment).toEqual(
-      { enabled: true, llm: { temperature: 0.2, extraParams } },
-    );
-
-    const live = validateConfigShape({
-      configVersion: "0.9.0",
-      improve: {
-        strategies: {
-          nightly: { processes: { triage: { enabled: true, judgment: { llm: { extraParams } } } } },
-        },
-      },
-    });
-    expect(live.ok).toBe(true);
-    if (!live.ok) throw new Error(JSON.stringify(live.errors));
-    expect(live.value.improve?.strategies?.nightly?.processes?.triage?.judgment?.llm?.extraParams).toEqual(extraParams);
-  });
-
-  test("a judgment may name a connection or harness that is not configured: it is resolved when used", () => {
-    for (const enabled of [false, true]) {
       expect(
         validateConfigShape({
           configVersion: "0.9.0",
-          improve: {
-            strategies: {
-              named: { processes: { triage: { enabled: true, judgment: { enabled, connection: "missing" } } } },
-            },
-          },
+          improve: { processes: { triage: { llm: llmOverrides } } },
         }).ok,
       ).toBe(true);
     }
+
+    const extraParams = { providerFeature: { nested: [1, true, "kept"] }, arbitrary_number: 7 };
+    const live = validateConfigShape({
+      configVersion: "0.9.0",
+      improve: { processes: { triage: { llm: { extraParams } } } },
+    });
+    if (!live.ok) throw new Error(JSON.stringify(live.errors));
+    expect(live.value.improve?.processes?.triage?.llm?.extraParams).toEqual(extraParams);
+  });
+
+  test("triage may name a connection or harness that is not configured: it is resolved when used", () => {
+    expect(
+      validateConfigShape({
+        configVersion: "0.9.0",
+        improve: { processes: { triage: { connection: "missing" } } },
+      }).ok,
+    ).toBe(true);
   });
 
   test("disabled judgment requires no connection and produces no runtime runner", () => {
@@ -145,11 +111,8 @@ describe("triage judgment config normalization (#814)", () => {
         private: connection("base", { apiKey: "$MISSING_JUDGMENT_TOKEN" }),
       },
       improve: {
-        strategies: {
-          disabled: {
-            processes: isolatedProcesses({ enabled: false, connection: "private" }),
-          },
-        },
+        processes: { triage: { connection: "private" } },
+        strategies: { disabled: { processes: isolatedProcesses({ enabled: false }) } },
       },
     });
 
@@ -171,81 +134,52 @@ describe("triage judgment config normalization (#814)", () => {
     }
   });
 
-  test("enabled judgment keeps judgment → triage → improve → default precedence", () => {
-    const config = parseConfig({
+  test("enabled judgment runs where improve.processes.triage says, else improve-wide, else the default by name", () => {
+    const base = {
       configVersion: "0.9.0",
       connections: {
         default: connection("default"),
         improve: connection("improve"),
         triage: connection("triage"),
-        judgment: connection("judgment"),
       },
-      improve: {
-        connection: "improve",
-        strategies: {
-          enabled: {
-            processes: {
-              ...isolatedProcesses(true),
-              triage: { enabled: true, connection: "triage", judgment: { enabled: true, connection: "judgment" } },
-            },
-          },
-          "via-triage": {
-            processes: {
-              ...isolatedProcesses(true),
-              triage: { enabled: true, connection: "triage", judgment: { enabled: true } },
-            },
-          },
-          "via-improve": { processes: isolatedProcesses({ enabled: true }) },
-        },
-      },
-    });
+      strategies: { enabled: { processes: isolatedProcesses(true) } },
+    };
+    const resolve = (improve: Record<string, unknown>) =>
+      resolveImprovePlan("enabled", parseConfig({ ...base, improve: { ...improve, strategies: base.strategies } }))
+        .triageJudgment;
 
-    expect(resolveImprovePlan("enabled", config).triageJudgment).toMatchObject({
+    expect(resolve({ connection: "improve", processes: { triage: { connection: "triage" } } })).toMatchObject({
       kind: "connection",
-      name: "judgment",
-      model: "judgment",
+      name: "triage",
+      model: "triage",
     });
-    expect(resolveImprovePlan("via-triage", config).triageJudgment).toMatchObject({ name: "triage", model: "triage" });
-    expect(resolveImprovePlan("via-improve", config).triageJudgment).toMatchObject({
-      name: "improve",
-      model: "improve",
-    });
-    const { improve, ...withoutImprove } = config;
-    expect(
-      resolveImprovePlan("via-improve", { ...withoutImprove, improve: { strategies: improve?.strategies } })
-        .triageJudgment,
-    ).toMatchObject({ name: "default", model: "default" });
+    expect(resolve({ connection: "improve" })).toMatchObject({ name: "improve", model: "improve" });
+    expect(resolve({})).toMatchObject({ name: "default", model: "default" });
   });
 });
 
 describe("triage judgment config patch semantics (#814 remediation-1)", () => {
   test("whole-object patches preserve an existing explicit disabled state", () => {
-    const changedEngine = configSet(judgmentPatchBase(), judgmentPath, '{"connection":"new"}');
-    expect(configGet(changedEngine, judgmentPath)).toEqual({ enabled: false, connection: "new" });
-
     const emptyPatch = configSet(judgmentPatchBase(), judgmentPath, "{}");
-    expect(configGet(emptyPatch, judgmentPath)).toEqual({ enabled: false, connection: "old" });
+    expect(configGet(emptyPatch, judgmentPath)).toEqual({ enabled: false });
 
-    const nullOverride = configSet(judgmentPatchBase(), judgmentPath, '{"timeoutMs":null}');
-    expect(configGet(nullOverride, judgmentPath)).toEqual({ enabled: false, connection: "old", timeoutMs: null });
+    const enabled = configSet(judgmentPatchBase(), judgmentPath, '{"enabled":true}');
+    expect(configGet(enabled, judgmentPath)).toEqual({ enabled: true });
   });
 
   test("leaf set and unset patches preserve an existing explicit disabled state", () => {
-    const changedEngine = configSet(judgmentPatchBase(), `${judgmentPath}.connection`, "new");
-    expect(configGet(changedEngine, judgmentPath)).toEqual({ enabled: false, connection: "new" });
+    const enabled = configSet(judgmentPatchBase(), `${judgmentPath}.enabled`, "true");
+    expect(configGet(enabled, judgmentPath)).toEqual({ enabled: true });
 
-    const nullTimeout = configSet(judgmentPatchBase(), `${judgmentPath}.timeoutMs`, "null");
-    expect(configGet(nullTimeout, judgmentPath)).toEqual({ enabled: false, connection: "old", timeoutMs: null });
-
-    const removedEngine = configUnset(judgmentPatchBase(), `${judgmentPath}.connection`);
-    expect(configGet(removedEngine, judgmentPath)).toEqual({ enabled: false });
+    const disabledAgain = configSet(enabled, `${judgmentPath}.enabled`, "false");
+    expect(configGet(disabledAgain, judgmentPath)).toEqual({ enabled: false });
   });
 
   test("a newly introduced legacy object still defaults enabled true", () => {
     const base = judgmentPatchBase();
     const withoutJudgment = configUnset(base, judgmentPath);
-    const added = configSet(withoutJudgment, judgmentPath, '{"connection":"new"}');
-    expect(configGet(added, judgmentPath)).toEqual({ enabled: true, connection: "new" });
+    const added = configSet(withoutJudgment, judgmentPath, "{}");
+    expect(configGet(added, judgmentPath)).toEqual({ enabled: true });
   });
 
   test("null and unset remove the whole judgment object without reviving it", () => {
@@ -258,13 +192,8 @@ describe("triage judgment config patch semantics (#814 remediation-1)", () => {
     expect(() => configSet(judgmentPatchBase(), judgmentPath, "")).toThrow("Invalid value");
   });
 
-  test("unsetting enabled intentionally restores the legacy object default", () => {
+  test("unsetting enabled removes the object it was the last key of, rather than reviving the judgment", () => {
     const raw = configUnset(judgmentPatchBase(), `${judgmentPath}.enabled`);
-    const legacy = configGet(raw, judgmentPath);
-    expect(legacy).toEqual({ connection: "old" });
-    expect(ImproveProcessConfigSchema.parse({ judgment: legacy }).judgment).toEqual({
-      enabled: true,
-      connection: "old",
-    });
+    expect(configGet(raw, judgmentPath)).toBeNull();
   });
 });

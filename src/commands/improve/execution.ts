@@ -2,8 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveWhere } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
+import { IMPROVE_ENGINE_PROCESSES } from "../../core/config/engine-semantics";
 import { ConfigError } from "../../core/errors";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
@@ -11,7 +12,7 @@ import { buildExecution, resolveExecution } from "../../integrations/agent/execu
 import type { RunnerSpec } from "../../integrations/agent/runner";
 
 /** The settings a layer of improve's cascade can carry: where to run, which model, and how. */
-type ImproveExecutionLayer = Pick<ImproveProcessConfig, "connection" | "harness" | "model" | "timeoutMs" | "llm"> & {
+type ImproveExecutionLayer = Pick<ImproveWhere, "connection" | "harness" | "model" | "timeoutMs" | "llm"> & {
   /** A flag's name: a connection by that name, else a harness. */
   readonly engine?: string;
 };
@@ -54,10 +55,10 @@ function mergeDefaults(
 
 export interface ResolveImproveExecutionOptions {
   config: AkmConfig;
+  /** What the call is for. When it names an improve process, `improve.processes.<name>` applies to it. */
   processName: string;
-  /** The selected strategy; it says which processes run, never where, so it adds no layer. */
-  profile?: ImproveProfileConfig;
-  process?: ImproveProcessConfig;
+  /** The `improve.processes` entry that applies, for a call that is not itself an improve process (a judge). */
+  process?: (typeof IMPROVE_ENGINE_PROCESSES)[number];
   /**
    * The process's standing `index.<pass>` settings, when the process has one:
    * farther than the process's own settings.
@@ -74,13 +75,20 @@ export interface ResolvedImproveExecution {
 
 /**
  * Resolve improve-owned model work: `improve.connection` / `improve.harness`
- * -> index.<pass> -> process -> current invocation, nearest wins, over the
- * default by name. `null` when no connection or harness is configured for it.
+ * -> index.<pass> -> `improve.processes.<name>` -> current invocation, nearest
+ * wins, over the default by name. A strategy adds no layer: it says which
+ * processes run, never where. `null` when no connection or harness is
+ * configured for it.
  */
 export function resolveImproveExecution(options: ResolveImproveExecutionOptions): ResolvedImproveExecution | null {
   const improveWide = cascadeDefaults(options.config.improve);
   const indexDefaults = cascadeDefaults(options.index);
-  const processDefaults = cascadeDefaults(options.process);
+  const processKey = options.process ?? options.processName;
+  const processDefaults = cascadeDefaults(
+    (IMPROVE_ENGINE_PROCESSES as readonly string[]).includes(processKey)
+      ? (options.config.improve?.processes as Record<string, ImproveWhere | undefined> | undefined)?.[processKey]
+      : undefined,
+  );
   const currentDefaults = cascadeDefaults(options.current);
   try {
     const prepared = resolveExecution({

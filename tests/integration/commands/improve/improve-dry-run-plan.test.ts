@@ -356,7 +356,7 @@ describe("#800 effective dry-run planner", () => {
     expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual(result.plannedRefs);
   });
 
-  test("plan.processes reports resolved engine/model per process, honors a --strategy override, and counts eligibleRefs (#947)", async () => {
+  test("plan.processes reports resolved engine/model per process, a --strategy override changes which processes run and not where, and counts eligibleRefs (#947)", async () => {
     const { stashDir } = isolatedStorage();
     const config = withImproveAutonomy(
       withTestImproveLlm({
@@ -366,18 +366,15 @@ describe("#800 effective dry-run planner", () => {
             endpoint: "http://127.0.0.1:1/v1/chat/completions",
             models: { fast: "model-a" },
           },
-          "consolidate-engine-b": {
-            endpoint: "http://127.0.0.1:1/v1/chat/completions",
-            models: { fast: "model-b" },
-          },
         },
         improve: {
+          processes: { consolidate: { connection: "consolidate-engine-a" } },
           strategies: {
             default: {
               processes: {
                 reflect: { enabled: true, limit: 4 },
                 distill: { enabled: false },
-                consolidate: { enabled: true, connection: "consolidate-engine-a" },
+                consolidate: { enabled: true },
                 memoryInference: { enabled: false },
                 extract: { enabled: false },
                 validation: { enabled: false },
@@ -385,7 +382,7 @@ describe("#800 effective dry-run planner", () => {
                 proactiveMaintenance: { enabled: false },
               },
             },
-            alt: { processes: { consolidate: { connection: "consolidate-engine-b" } } },
+            alt: { processes: { consolidate: { enabled: false } } },
           },
         },
       } as AkmConfig),
@@ -395,12 +392,13 @@ describe("#800 effective dry-run planner", () => {
     const defaultRun = await akmImprove({ scope: "skill", stashDir, config, dryRun: true });
     const altRun = await akmImprove({ scope: "skill", stashDir, config, dryRun: true, strategy: "alt" });
 
-    // Acceptance criterion (#947): changing processes.consolidate.engine and
-    // re-planning shows the new engine, and neither plan dispatches anything.
+    // Acceptance criterion (#947): changing improve.processes.consolidate.connection and
+    // re-planning shows the new connection, and neither plan dispatches anything.
+    // A strategy picks which processes run, never where.
     const consolidateDefault = defaultRun.plan?.processes.find((row) => row.process === "consolidate");
     const consolidateAlt = altRun.plan?.processes.find((row) => row.process === "consolidate");
     expect(consolidateDefault).toMatchObject({ enabled: true, engine: "consolidate-engine-a", model: "model-a" });
-    expect(consolidateAlt).toMatchObject({ enabled: true, engine: "consolidate-engine-b", model: "model-b" });
+    expect(consolidateAlt).toMatchObject({ enabled: false });
     expect(defaultRun.plan?.dispatch).toBe(false);
     expect(altRun.plan?.dispatch).toBe(false);
     expect(defaultRun.plan?.mode).toBe("estimate");

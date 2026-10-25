@@ -406,7 +406,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const stashDir = writeTarget.source.path;
   const notices = noticeSet(opts.onNotices);
   const enabled = resolveProcessEnabled("consolidate", profile);
-  const runner = enabled ? stageRunner(opts, config, profile, "consolidate", notices.add) : undefined;
+  const runner = enabled ? stageRunner(opts, config, "consolidate", notices.add) : undefined;
   opts = {
     ...opts,
     target: writeTarget.source.name,

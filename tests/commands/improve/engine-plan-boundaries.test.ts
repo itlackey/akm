@@ -102,9 +102,8 @@ describe("improve plan boundaries", () => {
         semanticSearchMode: "off",
         connections: { repair: lab("repair-model") },
         improve: {
-          strategies: {
-            repair: { processes: disabledProcesses({ validation: { enabled: true, connection: "repair" } }) },
-          },
+          processes: { validation: { connection: "repair" } },
+          strategies: { repair: { processes: disabledProcesses({ validation: { enabled: true } }) } },
         },
       };
       const resolvedPlan = resolveImprovePlan("repair", config);
@@ -147,14 +146,11 @@ describe("improve plan boundaries", () => {
         defaultBundle: "stash",
         connections: { consolidate: lab("contradiction-model") },
         improve: {
+          processes: { consolidate: { connection: "consolidate" } },
           strategies: {
             contradictions: {
               processes: disabledProcesses({
-                consolidate: {
-                  enabled: true,
-                  connection: "consolidate",
-                  contradictionDetection: { enabled: true },
-                },
+                consolidate: { enabled: true, contradictionDetection: { enabled: true } },
               }),
             },
           },
@@ -198,16 +194,15 @@ describe("improve plan boundaries", () => {
         defaultBundle: "stash",
         connections: { reflect: lab("reflect-model"), distill: lab("distill-model") },
         improve: {
+          processes: {
+            reflect: { connection: "reflect", model: "process-model" },
+            distill: { connection: "distill" },
+          },
           strategies: {
             split: {
               processes: disabledProcesses({
-                reflect: {
-                  enabled: true,
-                  connection: "reflect",
-                  model: "process-model",
-                  allowedTypes: ["memory"],
-                },
-                distill: { enabled: true, connection: "distill", allowedTypes: ["memory"] },
+                reflect: { enabled: true, allowedTypes: ["memory"] },
+                distill: { enabled: true, allowedTypes: ["memory"] },
               }),
             },
           },
@@ -218,7 +213,7 @@ describe("improve plan boundaries", () => {
       const distillConnection = config.connections?.distill;
       if (reflectConnection) reflectConnection.models = { fast: "changed-reflect-model" };
       if (distillConnection) distillConnection.models = { fast: "changed-distill-model" };
-      const liveProcesses = config.improve?.strategies?.split?.processes;
+      const liveProcesses = config.improve?.processes;
       if (liveProcesses?.reflect) liveProcesses.reflect.connection = "distill";
       if (liveProcesses?.distill) liveProcesses.distill.connection = "reflect";
       let reflectOptions: Record<string, unknown> | undefined;
@@ -283,7 +278,8 @@ describe("improve plan boundaries", () => {
       expect((reflectOptions?.config as AkmConfig).connections?.reflect).toMatchObject({
         models: { fast: "reflect-model" },
       });
-      expect((reflectOptions?.improveProfile as ImproveProfileConfig).processes?.reflect).toMatchObject({
+      // Where reflect runs is frozen with the config, so the live swap above does not reach it.
+      expect((reflectOptions?.config as AkmConfig).improve?.processes?.reflect).toMatchObject({
         connection: "reflect",
         model: "process-model",
       });

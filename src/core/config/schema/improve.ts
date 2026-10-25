@@ -9,7 +9,7 @@
  */
 import { z } from "zod";
 import { ImproveProfileConfigSchema } from "./improve-processes";
-import { engineName, nonNegativeNumber } from "./primitives";
+import { engineName, LlmInvocationOverridesSchema, nonEmptyString, nonNegativeNumber, positiveInt } from "./primitives";
 
 // ── Improve top-level (event retention, salience, state GC) ────────────────
 
@@ -32,6 +32,34 @@ const ImproveStateGcSchema = z
   })
   .passthrough();
 
+/**
+ * Where one improve call runs: a connection or a harness, the model (an alias or
+ * a name), inference settings and a timeout. Strategies say which processes run;
+ * this says where, whichever strategy is selected.
+ */
+export const ImproveWhereSchema = z
+  .object({
+    connection: engineName.optional(),
+    harness: engineName.optional(),
+    model: nonEmptyString.optional(),
+    llm: LlmInvocationOverridesSchema.optional(),
+    timeoutMs: z.union([positiveInt, z.null()]).optional(),
+  })
+  .passthrough();
+
+/** The improve processes that make a model call; `proactiveMaintenance` makes none, so it has no place to run. */
+const ImproveProcessesSchema = z
+  .object({
+    reflect: ImproveWhereSchema.optional(),
+    distill: ImproveWhereSchema.optional(),
+    consolidate: ImproveWhereSchema.optional(),
+    memoryInference: ImproveWhereSchema.optional(),
+    extract: ImproveWhereSchema.optional(),
+    validation: ImproveWhereSchema.optional(),
+    triage: ImproveWhereSchema.optional(),
+  })
+  .passthrough();
+
 export const ImproveConfigSchema = z
   .object({
     /** The strategy `akm improve` runs when `--strategy` names none. */
@@ -39,6 +67,10 @@ export const ImproveConfigSchema = z
     /** Where improve's model work runs: a connection, or a harness, over the default. */
     connection: engineName.optional(),
     harness: engineName.optional(),
+    /** Where each improve process runs, over `connection` / `harness` above. */
+    processes: ImproveProcessesSchema.optional(),
+    /** Where the judge of the reflect and distill quality gates runs, over the process's own settings. */
+    qualityGate: ImproveWhereSchema.optional(),
     strategies: z.record(engineName, ImproveProfileConfigSchema).optional(),
     eventRetentionDays: nonNegativeNumber.optional(),
     salience: ImproveSalienceSchema.optional(),

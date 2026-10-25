@@ -530,8 +530,7 @@ const proposalDrainCommand = defineJsonCommand({
       args.judgment === true || (args.strategy !== undefined && triageConfig?.judgment?.enabled === true)
         ? resolveImproveExecution({
             config: cfg,
-            process: triageConfig,
-            current: triageConfig?.judgment,
+            process: "triage",
             processName: "proposal-triage-judgment",
           })
         : null;

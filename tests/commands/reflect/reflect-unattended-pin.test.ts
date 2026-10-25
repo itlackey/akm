@@ -64,13 +64,8 @@ function agentModeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
     connections: { "pin-target": { endpoint: "http://127.0.0.1:9", models: { fast: "pin-model" } } },
     harnesses: { "fake-agent": { platform: "claude", bin: "fake-agent" } },
     improve: {
-      strategies: {
-        default: {
-          processes: {
-            reflect: { enabled: true, harness: "fake-agent", qualityGate: { enabled: false } },
-          },
-        },
-      },
+      processes: { reflect: { harness: "fake-agent" } },
+      strategies: { default: { processes: { reflect: { enabled: true, qualityGate: { enabled: false } } } } },
     },
     ...overrides,
   } as unknown as AkmConfig;
@@ -143,13 +138,8 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
         judge: { endpoint: "http://127.0.0.1:9", models: { fast: "block-model" } },
       },
       improve: {
-        strategies: {
-          default: {
-            processes: {
-              reflect: { enabled: true, connection: "judge", qualityGate: { enabled: false } },
-            },
-          },
-        },
+        processes: { reflect: { connection: "judge" } },
+        strategies: { default: { processes: { reflect: { enabled: true, qualityGate: { enabled: false } } } } },
       },
     };
 
@@ -175,7 +165,6 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
 
     const config = agentModeConfig({ connections: undefined, harnesses: undefined });
     const strategy = config.improve?.strategies?.default;
-    if (strategy?.processes?.reflect) delete strategy.processes.reflect.harness;
 
     await expect(
       akmReflect({

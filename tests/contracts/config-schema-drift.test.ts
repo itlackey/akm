@@ -27,53 +27,50 @@ describe("config schema drift pins", () => {
     expect(keys).not.toContain("contradictionDetection");
   });
 
-  test("triage judgment JSON schema accepts boolean shorthand and passes unknown object keys through", () => {
+  test("triage judgment JSON schema accepts boolean shorthand, and a judgment only says whether it runs", () => {
     const schema = readSchema();
     const defs = schema.$defs as Record<string, unknown>;
     const ipc = defs.ImproveProcessConfig as { properties?: Record<string, unknown> };
     const judgment = ipc.properties?.judgment as {
       anyOf?: Array<{ type?: string; properties?: Record<string, unknown>; additionalProperties?: boolean }>;
     };
-    const booleanArm = judgment.anyOf?.find((arm) => arm.type === "boolean");
     const objectArm = judgment.anyOf?.find((arm) => arm.type === "object");
-    const llmOverrides = objectArm?.properties?.llm as {
-      properties?: Record<string, unknown>;
-      additionalProperties?: boolean;
-    };
-    const extraParams = llmOverrides.properties?.extraParams as { additionalProperties?: unknown };
 
-    expect(booleanArm).toBeDefined();
-    expect(Object.keys(objectArm?.properties ?? {}).sort()).toEqual([
-      "connection",
-      "enabled",
-      "harness",
-      "llm",
-      "model",
-      "timeoutMs",
-    ]);
+    expect(judgment.anyOf?.some((arm) => arm.type === "boolean")).toBe(true);
+    expect(Object.keys(objectArm?.properties ?? {})).toEqual(["enabled"]);
     expect(objectArm?.additionalProperties).toBe(true);
-    expect(Object.keys(llmOverrides.properties ?? {}).sort()).toEqual([
-      "contextLength",
-      "enableThinking",
-      "extraParams",
-      "maxTokens",
-      "reasoningEffort",
-      "supportsJsonSchema",
-      "temperature",
-    ]);
-    expect(llmOverrides.additionalProperties).toBe(true);
-    expect(extraParams.additionalProperties).toEqual({});
   });
 
-  test("generated schema tolerates unknown judgment LLM keys and accepts arbitrary extraParams", () => {
+  test("where a process runs is improve.processes.<name> and improve.qualityGate, never a strategy's", () => {
+    const schema = readSchema();
+    const props = schema.properties as Record<string, { properties?: Record<string, unknown> }>;
+    const improve = props.improve?.properties ?? {};
+    const where = ["connection", "harness", "llm", "model", "timeoutMs"];
+    const processes = improve.processes as { properties?: Record<string, { properties?: Record<string, unknown> }> };
+    expect(Object.keys(processes.properties ?? {}).sort()).toEqual([
+      "consolidate",
+      "distill",
+      "extract",
+      "memoryInference",
+      "reflect",
+      "triage",
+      "validation",
+    ]);
+    for (const process of Object.values(processes.properties ?? {})) {
+      expect(Object.keys(process.properties ?? {}).sort()).toEqual(where);
+    }
+    expect(
+      Object.keys((improve.qualityGate as { properties?: Record<string, unknown> }).properties ?? {}).sort(),
+    ).toEqual(where);
+    const defs = schema.$defs as Record<string, { properties?: Record<string, unknown> }>;
+    for (const key of where) expect(Object.keys(defs.ImproveProcessConfig?.properties ?? {})).not.toContain(key);
+  });
+
+  test("generated schema tolerates unknown LLM keys under improve.processes and accepts arbitrary extraParams", () => {
     const validate = new Ajv2020({ allErrors: true, strict: false }).compile(readSchema());
     const withLlm = (llm: Record<string, unknown>) => ({
       configVersion: "0.9.0",
-      improve: {
-        strategies: {
-          nightly: { processes: { triage: { enabled: true, judgment: { llm } } } },
-        },
-      },
+      improve: { processes: { triage: { llm } } },
     });
 
     // An unknown key is never a schema error; the loader names it once at runtime.

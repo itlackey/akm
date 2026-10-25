@@ -149,13 +149,11 @@ test("dry-run preserves the same plan-owned lowering notices as live output with
       defaultBundle: "stash",
       improve: {
         strategy: "plan-notices",
+        processes: { reflect: { llm: { unsupportedPlannerField: true } as never } },
         strategies: {
           "plan-notices": {
             processes: {
-              reflect: {
-                enabled: true,
-                llm: { unsupportedPlannerField: true } as never,
-              },
+              reflect: { enabled: true },
               distill: { enabled: false },
               consolidate: { enabled: false },
               memoryInference: { enabled: false },

@@ -325,16 +325,15 @@ describe("health engine probes", () => {
       connections: { lab, default: { ...lab, endpoint: "https://default.example/v1/chat/completions" } },
       improve: {
         strategy: "pinned",
-        strategies: {
-          pinned: { processes: { extract: { enabled: true, connection: "lab" } } },
-        },
+        processes: { extract: { connection: "lab" } },
+        strategies: { pinned: { processes: { extract: { enabled: true } } } },
       },
     };
 
     const result = healthChecks.runActiveImproveStrategyProbe({ loadConfig: () => config, env: {} });
 
     expect(result.status).toBe("pass");
-    expect(result.evidence).toMatchObject({ engines: { extract: "lab" } });
+    expect(result.evidence).toMatchObject({ engines: { extract: "lab", reflect: "default" } });
     expect(result.message).toContain('extract: "lab"');
   });
 

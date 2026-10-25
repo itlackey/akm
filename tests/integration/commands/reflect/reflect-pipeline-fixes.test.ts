@@ -524,7 +524,7 @@ describe("Reflect quality gate — source context", () => {
     expect(judged).toBe(1);
   });
 
-  test("qualityGate.connection judges with its own connection instead of the default one", async () => {
+  test("improve.qualityGate.connection judges with its own connection instead of the default one", async () => {
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: Separate judge\n---\n\n${LONG_SOURCE_BODY}\n`;
     const config = {
@@ -536,7 +536,8 @@ describe("Reflect quality gate — source context", () => {
       harnesses: { "fake-agent": { platform: "claude", bin: "fake-agent" } },
       improve: {
         strategy: "default",
-        strategies: { default: { processes: { reflect: { qualityGate: { connection: "judge" } } } } },
+        qualityGate: { connection: "judge" },
+        strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
       },
     } as AkmConfig;
     const models: string[] = [];
@@ -578,9 +579,9 @@ describe("Reflect quality gate — source context", () => {
       harnesses: { "fake-agent": { platform: "claude", bin: judgeBin } },
       improve: {
         strategy: "default",
-        strategies: {
-          default: { processes: { reflect: { harness: "fake-agent", qualityGate: { llm: { temperature: 0 } } } } },
-        },
+        processes: { reflect: { harness: "fake-agent" } },
+        qualityGate: { llm: { temperature: 0 } },
+        strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
       },
     } as AkmConfig;
     let chatRan = false;

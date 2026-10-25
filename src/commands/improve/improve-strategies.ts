@@ -343,12 +343,12 @@ function buildImprovePlan(
     // step needs a model, so disabling repair must not create an LLM preflight.
     const skipsRepairEngine = processName === "validation" && options.repairValidationFailures === false;
     if (!skipsRepairEngine) {
-      const resolved = resolveImproveExecution({ config, process: sourceProcessConfig, processName });
+      const resolved = resolveImproveExecution({ config, processName });
       runner = resolved?.runner ?? null;
       notices = resolved?.notices ?? [];
     }
     if (!runner && !skipsRepairEngine) {
-      const configKey = `improve.strategies.${strategy.name}.processes.${processName}.connection`;
+      const configKey = `improve.processes.${processName}.connection`;
       engineUnavailable.push({
         process: processName,
         configKey,
@@ -388,15 +388,14 @@ function buildImprovePlan(
     processes.triage.enabled && judgmentEnabled
       ? resolveImproveExecution({
           config,
-          process: triage,
-          current: triage.judgment,
+          process: "triage",
           processName: "triage-judgment",
         })
       : null;
   const triageJudgment = triageJudgmentResolution?.runner ?? null;
   if (processes.triage.enabled && judgmentEnabled && !triageJudgment) {
     throw new ConfigError(
-      `Enabled improve triage judgment requires a connection or harness. Run \`akm setup\`, or set improve.connection or improve.strategies.${strategy.name}.processes.triage.judgment.connection.`,
+      `Enabled improve triage judgment requires a connection or harness. Run \`akm setup\`, or set improve.connection or improve.processes.triage.connection.`,
       "LLM_NOT_CONFIGURED",
     );
   }

@@ -810,16 +810,12 @@ function resolveReflectRunner(options: AkmReflectOptions): {
       modelWork: true,
     });
   } else if (options.improveProfile) {
-    const resolved = resolveImproveExecution({
-      config,
-      process: activeStrategy?.processes?.reflect,
-      processName: "reflect",
-    });
+    const resolved = resolveImproveExecution({ config, processName: "reflect" });
     if (!resolved) {
       throw new ConfigError(
         "Reflect requires a connection or harness for the active improve strategy.",
         "LLM_NOT_CONFIGURED",
-        "Run `akm setup`, or set improve.connection or improve.strategies.<name>.processes.reflect.connection.",
+        "Run `akm setup`, or set improve.connection or improve.processes.reflect.connection.",
       );
     }
     lowered = resolved;

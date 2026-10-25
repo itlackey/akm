@@ -999,7 +999,8 @@ describe("akmDistill — queued proposal", () => {
       ].join("\n"),
       "utf8",
     );
-    const config = distillConfig(stash, { qualityGate: { enabled: true, connection: "judge" } });
+    const config = distillConfig(stash, { qualityGate: { enabled: true } });
+    config.improve = { ...config.improve, qualityGate: { connection: "judge" } };
     config.connections = {
       default: {
         endpoint: "http://localhost:11434/v1/chat/completions",
@@ -2033,9 +2034,10 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     expect(persisted).not.toContain(rotated);
   });
 
-  test("qualityGate.connection judges the lesson on its own connection; generation stays on the default", async () => {
+  test("improve.qualityGate.connection judges the lesson on its own connection; generation stays on the default", async () => {
     const stash = makeStashDir();
-    const config = distillConfig(stash, { enabled: true, qualityGate: { enabled: true, connection: "judge" } });
+    const config = distillConfig(stash, { enabled: true, qualityGate: { enabled: true } });
+    config.improve = { ...config.improve, qualityGate: { connection: "judge" } };
     config.connections = {
       ...config.connections,
       judge: { endpoint: "http://localhost:11435/v1/chat/completions", models: { fast: "judge-model" } },

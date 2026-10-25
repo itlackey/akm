@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { isDeepStrictEqual } from "node:util";
 import { getHarness } from "../../integrations/harnesses";
 /**
  * The pre-0.10 `engines` / `defaults` config read as `connections` / `harnesses`.
@@ -60,10 +61,18 @@ const AGENT_ENGINE_KEYS = new Set([
   "llmEngine",
 ]);
 const CARRIED = ["endpoint", "contextLength", "timeoutMs", "concurrency"] as const;
+/** What a strategy's process, quality gate or judgment once said about where it runs and how. */
+const EXECUTION_KEYS = ["connection", "harness", "model", "llm", "timeoutMs"] as const;
 
 const str = (value: unknown): string | undefined => (typeof value === "string" && value ? value : undefined);
 const allAliases = (model: string | undefined): Dict | undefined =>
   model === undefined ? undefined : Object.fromEntries(ALIASES.map((alias) => [alias, model]));
+
+/** `holder[key]` as an object, made on `holder` when it is not one yet. */
+function objectAt(holder: Dict, key: string): Dict {
+  if (!isRecord(holder[key])) holder[key] = {};
+  return holder[key] as Dict;
+}
 
 /** An overlay entry as a model entry: the bare name, or `{ model, ...fields }` when it sets more. */
 function modelEntry(model: string, fields: Dict): unknown {
@@ -248,6 +257,25 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
   };
   const improve = out.improve;
   if (isRecord(improve) && isRecord(improve.strategies)) {
+    /** Where a strategy once said a process runs is `improve.processes.<name>` / `improve.qualityGate`; the first strategy to say it wins. */
+    const hoist = (holder: unknown, from: string, place: string, destination: () => Dict): void => {
+      if (!isRecord(holder)) return;
+      retarget(holder, `${from}.engine`);
+      const found = EXECUTION_KEYS.filter((key) => key in holder);
+      if (found.length === 0) return;
+      changed = true;
+      const into = destination();
+      for (const key of found) {
+        const value = holder[key];
+        delete holder[key];
+        const names = key === "connection" || key === "harness";
+        const taken = names ? "connection" in into || "harness" in into : key in into;
+        if (!taken) into[key] = value;
+        else if (!isDeepStrictEqual(into[key], value))
+          notes.push(`${from}.${key}: ${place} already says where this runs; the first choice is kept.`);
+      }
+    };
+    const processEntry = (name: string) => () => objectAt(objectAt(improve, "processes"), name);
     for (const [strategyName, strategy] of Object.entries(improve.strategies)) {
       if (!isRecord(strategy)) continue;
       for (const key of ["engine", "model", "llm", "timeoutMs"]) {
@@ -261,11 +289,12 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
       }
       for (const [processName, process] of Object.entries(isRecord(strategy.processes) ? strategy.processes : {})) {
         const where = `improve.strategies.${strategyName}.processes.${processName}`;
-        retarget(process, `${where}.engine`);
-        if (isRecord(process)) {
-          retarget(process.qualityGate, `${where}.qualityGate.engine`);
-          retarget(process.judgment, `${where}.judgment.engine`);
-        }
+        hoist(process, where, `improve.processes.${processName}`, processEntry(processName));
+        if (!isRecord(process)) continue;
+        hoist(process.qualityGate, `${where}.qualityGate`, "improve.qualityGate", () =>
+          objectAt(improve, "qualityGate"),
+        );
+        hoist(process.judgment, `${where}.judgment`, "improve.processes.triage", processEntry("triage"));
       }
     }
   }

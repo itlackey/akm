@@ -63,7 +63,7 @@ export { EmbeddingConnectionConfigSchema } from "./schema/embedding";
 export { ExperimentalConfigSchema } from "./schema/experimental";
 export { FeedbackConfigSchema } from "./schema/feedback";
 export { HarnessesSchema } from "./schema/harnesses";
-export { ImproveConfigSchema } from "./schema/improve";
+export { ImproveConfigSchema, ImproveWhereSchema } from "./schema/improve";
 export {
   ConsolidateProcessConfigSchema,
   DistillProcessConfigSchema,

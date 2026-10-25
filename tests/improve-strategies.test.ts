@@ -223,9 +223,8 @@ describe("resolveImprovePlan", () => {
       semanticSearchMode: "auto",
       connections: { default: lab, validation: { ...lab, models: { fast: "repair" } } },
       improve: {
-        strategies: {
-          quick: strategy(QUICK, { processes: { validation: { enabled: true, connection: "validation" } } }),
-        },
+        processes: { validation: { connection: "validation" } },
+        strategies: { quick: strategy(QUICK, { processes: { validation: { enabled: true } } }) },
       },
     });
 
@@ -303,11 +302,8 @@ describe("resolveImprovePlan", () => {
       connections: { default: lab },
       harnesses: { reviewer: { platform: "claude", models: { fast: "review" } } },
       improve: {
-        strategies: {
-          "reflect-distill": strategy(REFLECT_DISTILL, {
-            processes: { triage: { judgment: { harness: "reviewer", timeoutMs: null } } },
-          }),
-        },
+        processes: { triage: { harness: "reviewer", timeoutMs: null } },
+        strategies: { "reflect-distill": strategy(REFLECT_DISTILL) },
       },
     });
 
@@ -328,56 +324,34 @@ describe("resolveImprovePlan", () => {
     expect(plan.triageJudgment).toBeNull();
   });
 
-  test("uses judgment then triage then improve-wide then the default by name for the judge", () => {
+  test("the triage judgment runs where improve.processes.triage says, else improve-wide, else the default by name", () => {
     const base = {
       configVersion: "0.9.0" as const,
       semanticSearchMode: "auto" as const,
       connections: {
         default: { ...lab, models: { fast: "default" } },
         wide: { ...lab, models: { fast: "wide" } },
-        judgment: { ...lab, models: { fast: "judgment" } },
+        near: { ...lab, models: { fast: "near" } },
       },
       harnesses: { reviewer: { platform: "claude" as const, models: { fast: "agent-base" } } },
     };
+    const judging = { precedence: { processes: { triage: { enabled: true, judgment: {} } } } };
 
-    const explicit = resolveImprovePlan("precedence", {
+    const process = resolveImprovePlan("precedence", {
+      ...base,
+      improve: { connection: "wide", processes: { triage: { connection: "near" } }, strategies: judging },
+    });
+    expect(process.triageJudgment).toMatchObject({ kind: "connection", name: "near" });
+
+    const harness = resolveImprovePlan("precedence", {
       ...base,
       improve: {
         connection: "wide",
-        strategies: {
-          precedence: {
-            processes: {
-              triage: {
-                enabled: true,
-                harness: "reviewer",
-                judgment: { connection: "judgment" },
-              },
-            },
-          },
-        },
+        processes: { triage: { harness: "reviewer", model: "agent-override", timeoutMs: null } },
+        strategies: judging,
       },
     });
-    expect(explicit.triageJudgment).toMatchObject({ kind: "connection", name: "judgment" });
-
-    const triage = resolveImprovePlan("precedence", {
-      ...base,
-      improve: {
-        connection: "wide",
-        strategies: {
-          precedence: {
-            processes: {
-              triage: {
-                enabled: true,
-                harness: "reviewer",
-                model: "agent-override",
-                judgment: { timeoutMs: null },
-              },
-            },
-          },
-        },
-      },
-    });
-    expect(triage.triageJudgment).toMatchObject({
+    expect(harness.triageJudgment).toMatchObject({
       kind: "harness",
       name: "reviewer",
       timeoutMs: null,
@@ -386,17 +360,11 @@ describe("resolveImprovePlan", () => {
 
     const wide = resolveImprovePlan("precedence", {
       ...base,
-      improve: {
-        connection: "wide",
-        strategies: { precedence: { processes: { triage: { enabled: true, judgment: {} } } } },
-      },
+      improve: { connection: "wide", strategies: judging },
     });
     expect(wide.triageJudgment).toMatchObject({ kind: "connection", name: "wide" });
 
-    const fallback = resolveImprovePlan("precedence", {
-      ...base,
-      improve: { strategies: { precedence: { processes: { triage: { enabled: true, judgment: {} } } } } },
-    });
+    const fallback = resolveImprovePlan("precedence", { ...base, improve: { strategies: judging } });
     expect(fallback.triageJudgment).toMatchObject({ kind: "connection", name: "default" });
   });
 
@@ -406,7 +374,8 @@ describe("resolveImprovePlan", () => {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
         improve: {
-          strategies: { quick: strategy(QUICK, { processes: { reflect: { model: "model-without-connection" } } }) },
+          processes: { reflect: { model: "model-without-connection" } },
+          strategies: { quick: strategy(QUICK) },
         },
       }),
     ).toThrow('"reflect" requires a connection or harness that is not configured');
@@ -480,7 +449,7 @@ describe("resolveImprovePlan", () => {
       (["consolidate", "distill", "memoryInference", "reflect", "validation"] as string[]).sort(),
     );
     for (const item of plan.engineUnavailable) {
-      expect(item.configKey).toBe(`improve.strategies.default.processes.${item.process}.connection`);
+      expect(item.configKey).toBe(`improve.processes.${item.process}.connection`);
       expect(item.reason).toContain("akm setup");
     }
   });
@@ -506,11 +475,8 @@ describe("resolveImprovePlan", () => {
       connections: { default: lab },
       harnesses: { reviewer: { platform: "claude" } },
       improve: {
-        strategies: {
-          "reflect-distill": strategy(REFLECT_DISTILL, {
-            processes: { triage: { judgment: { harness: "reviewer", llm: { temperature: 0 } } } },
-          }),
-        },
+        processes: { triage: { harness: "reviewer", llm: { temperature: 0 } } },
+        strategies: { "reflect-distill": strategy(REFLECT_DISTILL) },
       },
     });
     expect(plan.triageJudgment).toMatchObject({ kind: "harness", name: "reviewer" });
@@ -529,9 +495,8 @@ describe("projectResolvedProcessRouting (#947)", () => {
       semanticSearchMode: "auto",
       connections: { default: lab, validation: { ...lab, models: { fast: "repair" } } },
       improve: {
-        strategies: {
-          quick: strategy(QUICK, { processes: { validation: { enabled: true, connection: "validation" } } }),
-        },
+        processes: { validation: { connection: "validation" } },
+        strategies: { quick: strategy(QUICK, { processes: { validation: { enabled: true } } }) },
       },
     });
 
@@ -580,7 +545,7 @@ describe("projectResolvedProcessRouting (#947)", () => {
     const reflect = rows.find((row) => row.process === "reflect");
     expect(reflect?.enabled).toBe(false);
     expect(reflect?.engine).toBeUndefined();
-    expect(reflect?.unavailable?.configKey).toBe("improve.strategies.default.processes.reflect.connection");
+    expect(reflect?.unavailable?.configKey).toBe("improve.processes.reflect.connection");
     expect(reflect?.unavailable?.reason).toContain("akm setup");
   });
 
@@ -602,11 +567,8 @@ describe("projectResolvedProcessRouting (#947)", () => {
         connections: { default: lab },
         harnesses: { reviewer: { platform: "claude", models: { fast: "review" } } },
         improve: {
-          strategies: {
-            "reflect-distill": strategy(REFLECT_DISTILL, {
-              processes: { triage: { judgment: { harness: "reviewer", timeoutMs: null } } },
-            }),
-          },
+          processes: { triage: { harness: "reviewer", timeoutMs: null } },
+          strategies: { "reflect-distill": strategy(REFLECT_DISTILL) },
         },
       }),
     );

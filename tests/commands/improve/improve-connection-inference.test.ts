@@ -12,7 +12,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { resolveImproveExecution } from "../../../src/commands/improve/execution";
-import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
+import type { AkmConfig } from "../../../src/core/config/config";
 import { buildExecution, resolveExecution } from "../../../src/integrations/agent/execution";
 import { runExecution } from "../../../src/integrations/agent/runner-dispatch";
 import type { ChatCompletionConfig } from "../../../src/llm/client";
@@ -22,28 +22,19 @@ const CONNECTION = {
   models: { fast: "krang/chat/qwen3.8-27b" },
 };
 
-function configFor(
-  connection: Record<string, unknown>,
-  llm?: Record<string, unknown>,
-): { config: AkmConfig; profile: ImproveProfileConfig } {
-  const profile = {
-    processes: { reflect: { enabled: true, ...(llm ? { llm } : {}) } },
-  } as unknown as ImproveProfileConfig;
-  const config = {
+function configFor(connection: Record<string, unknown>, llm?: Record<string, unknown>): AkmConfig {
+  return {
     configVersion: "0.9.0",
     connections: { x: connection },
-    improve: { strategies: { s: profile } },
+    improve: {
+      strategies: { s: { processes: { reflect: { enabled: true } } } },
+      ...(llm ? { processes: { reflect: { llm } } } : {}),
+    },
   } as unknown as AkmConfig;
-  return { config, profile };
 }
 
-function resolveReflect(config: AkmConfig, profile: ImproveProfileConfig) {
-  const resolved = resolveImproveExecution({
-    config,
-    profile,
-    process: profile.processes?.reflect,
-    processName: "reflect",
-  });
+function resolveReflect(config: AkmConfig) {
+  const resolved = resolveImproveExecution({ config, processName: "reflect" });
   if (!resolved) throw new Error("no runner resolved");
   return resolved;
 }
@@ -64,8 +55,8 @@ async function dispatchedAgain(runner: ReturnType<typeof resolveReflect>["runner
 
 describe("improve model work on a connection", () => {
   test("the process overlay survives the frozen runner and reaches the chat call", async () => {
-    const { config, profile } = configFor(CONNECTION, { reasoningEffort: "low", temperature: 0.2 });
-    const resolved = resolveReflect(config, profile);
+    const config = configFor(CONNECTION, { reasoningEffort: "low", temperature: 0.2 });
+    const resolved = resolveReflect(config);
 
     expect(resolved.notices.filter((notice) => (notice.field ?? "").startsWith("inference."))).toEqual([]);
     const { connection } = await dispatchedAgain(resolved.runner);
@@ -74,8 +65,8 @@ describe("improve model work on a connection", () => {
   });
 
   test("with no setting anywhere, akm sends nothing of its own", async () => {
-    const { config, profile } = configFor(CONNECTION);
-    const { runner } = resolveReflect(config, profile);
+    const config = configFor(CONNECTION);
+    const { runner } = resolveReflect(config);
     const { again, connection } = await dispatchedAgain(runner);
 
     expect(again.request).not.toHaveProperty("inference");
@@ -83,8 +74,8 @@ describe("improve model work on a connection", () => {
   });
 
   test("the connection's own request fields stay under the overlay", async () => {
-    const { config, profile } = configFor({ ...CONNECTION, top_p: 0.9, temperature: 0.7 }, { temperature: 0.2 });
-    const { connection } = await dispatchedAgain(resolveReflect(config, profile).runner);
+    const config = configFor({ ...CONNECTION, top_p: 0.9, temperature: 0.7 }, { temperature: 0.2 });
+    const { connection } = await dispatchedAgain(resolveReflect(config).runner);
 
     expect(connection.request).toEqual({ top_p: 0.9, temperature: 0.2 });
   });

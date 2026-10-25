@@ -72,7 +72,7 @@ describe("akm improve --require-engines", () => {
     expect(result.code).toBe(78);
     expect(result.stderr).toContain("--require-engines");
     expect(result.stderr).toContain("reflect");
-    expect(result.stderr).toContain("improve.strategies.default.processes.reflect.connection");
+    expect(result.stderr).toContain("improve.processes.reflect.connection");
     expect(result.stderr).toContain("akm setup");
     expect(fakeAkmImprove).not.toHaveBeenCalled();
   });
@@ -95,7 +95,7 @@ describe("akm improve --require-engines", () => {
     expect(parsed.skippedProcesses).toContainEqual(
       expect.objectContaining({
         process: "reflect",
-        configKey: "improve.strategies.default.processes.reflect.connection",
+        configKey: "improve.processes.reflect.connection",
         reason: expect.stringContaining("akm setup"),
       }),
     );

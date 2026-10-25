@@ -54,73 +54,81 @@ function strategy(processes: Record<string, unknown>): ImproveProfileConfig {
   return { processes } as unknown as ImproveProfileConfig;
 }
 
+/** A config whose `improve.qualityGate` (and optionally `improve.processes`) say where the judge runs. */
+function gated(
+  qualityGate: Record<string, unknown>,
+  processes?: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+  connections: Record<string, unknown> = {},
+): AkmConfig {
+  return config({ improve: { qualityGate, ...(processes ? { processes } : {}) }, ...extra }, connections);
+}
+
 describe("resolveQualityGateJudge (#1011)", () => {
   test("a gate that names no judge leaves the caller's judge in place", () => {
     expect(resolveQualityGateJudge(config(), undefined, "reflect")).toBeUndefined();
-    expect(
-      resolveQualityGateJudge(config(), strategy({ reflect: { qualityGate: { enabled: true } } }), "reflect"),
-    ).toBeUndefined();
+    expect(resolveQualityGateJudge(gated({}), undefined, "reflect")).toBeUndefined();
   });
 
-  test("qualityGate.connection selects that connection for the judge", () => {
-    const runner = resolveQualityGateJudge(
-      config(),
-      strategy({ reflect: { qualityGate: { connection: "judge" } } }),
-      "reflect",
-    );
+  test("improve.qualityGate.connection selects that connection for the judge", () => {
+    const runner = resolveQualityGateJudge(gated({ connection: "judge" }), undefined, "reflect");
     expect(runner?.name).toBe("judge");
     expect(asLlmRunner(runner).model).toBe("judge-model");
   });
 
-  test("qualityGate.llm alone keeps the process's connection and overrides its settings", () => {
+  test("improve.qualityGate.llm alone keeps the process's connection and overrides its settings", () => {
     const runner = resolveQualityGateJudge(
-      config(
+      gated(
+        { llm: { temperature: 0.5 } },
+        { distill: { connection: "other", llm: { temperature: 0.3 } } },
         {},
         { other: { endpoint: "http://localhost:11436/v1/chat/completions", models: { fast: "other-model" } } },
       ),
-      strategy({
-        distill: { connection: "other", llm: { temperature: 0.3 }, qualityGate: { llm: { temperature: 0.5 } } },
-      }),
+      undefined,
       "distill",
     );
     expect(runner?.name).toBe("other");
     expect(asLlmRunner(runner).request.temperature).toBe(0.5);
   });
 
+  test("one setting serves the judges of reflect and distill", () => {
+    const cfg = gated({ connection: "judge" });
+    expect(resolveQualityGateJudge(cfg, undefined, "reflect")?.name).toBe("judge");
+    expect(resolveQualityGateJudge(cfg, undefined, "distill")?.name).toBe("judge");
+  });
+
   test("an explicit timeoutMs: null names a judge too", () => {
-    const runner = resolveQualityGateJudge(
-      config(),
-      strategy({ reflect: { qualityGate: { timeoutMs: null } } }),
-      "reflect",
-    );
+    const runner = resolveQualityGateJudge(gated({ timeoutMs: null }), undefined, "reflect");
     expect(runner?.name).toBe("default");
     expect(runner?.timeoutMs).toBeNull();
   });
 
-  test("a gate that is off names no judge, whatever else it sets", () => {
+  test("a strategy that turns the gate off names no judge, whatever improve.qualityGate sets", () => {
     expect(
       resolveQualityGateJudge(
-        config(),
-        strategy({ reflect: { qualityGate: { enabled: false, harness: "agent" } } }),
+        gated({ harness: "agent" }),
+        strategy({ reflect: { qualityGate: { enabled: false } } }),
         "reflect",
       ),
     ).toBeUndefined();
+    // Another process's gate is not this one's.
+    expect(
+      resolveQualityGateJudge(
+        gated({ harness: "agent" }),
+        strategy({ distill: { qualityGate: { enabled: false } } }),
+        "reflect",
+      ),
+    ).toMatchObject({ kind: "harness", name: "agent" });
   });
 
   test("the judge may be a harness that confines the model-work tool policy", () => {
-    const runner = resolveQualityGateJudge(
-      config(),
-      strategy({ reflect: { qualityGate: { harness: "agent" } } }),
-      "reflect",
-    );
+    const runner = resolveQualityGateJudge(gated({ harness: "agent" }), undefined, "reflect");
     expect(runner).toMatchObject({ kind: "harness", name: "agent" });
   });
 
   test("a gate that resolves to no connection or harness at all fails instead of falling back", () => {
-    const nothing = config({ harnesses: undefined, connections: undefined });
-    expect(() =>
-      resolveQualityGateJudge(nothing, strategy({ reflect: { qualityGate: { model: "judge-model" } } }), "reflect"),
-    ).toThrow(ConfigError);
+    const nothing = gated({ model: "judge-model" }, undefined, { harnesses: undefined, connections: undefined });
+    expect(() => resolveQualityGateJudge(nothing, undefined, "reflect")).toThrow(ConfigError);
   });
 });
 
@@ -134,7 +142,7 @@ describe("a quality gate's judge is checked when it resolves, not when the confi
       configVersion: "0.9.0",
       connections: reviewers,
       harnesses: { reviewer: { platform: "pi" }, confined: { platform: "claude" } },
-      improve: { strategies: { custom: { processes: { reflect: { qualityGate: gate } } } } },
+      improve: { qualityGate: gate },
     });
     return result.ok ? [] : result.errors.map((issue) => `${issue.path}: ${issue.message}`);
   }
@@ -147,29 +155,19 @@ describe("a quality gate's judge is checked when it resolves, not when the confi
   });
 
   test("a harness that cannot confine the policy judges unrestricted: it resolves", () => {
-    const cfg = config({ harnesses: { reviewer: { platform: "pi" } } });
-    expect(
-      resolveQualityGateJudge(cfg, strategy({ reflect: { qualityGate: { harness: "reviewer" } } }), "reflect"),
-    ).toMatchObject({ kind: "harness", name: "reviewer" });
+    const cfg = gated({ harness: "reviewer" }, undefined, { harnesses: { reviewer: { platform: "pi" } } });
+    expect(resolveQualityGateJudge(cfg, undefined, "reflect")).toMatchObject({ kind: "harness", name: "reviewer" });
   });
 
   test("a connection that is not configured uses the default one", () => {
-    const runner = resolveQualityGateJudge(
-      config(),
-      strategy({ reflect: { qualityGate: { connection: "missing" } } }),
-      "reflect",
-    );
+    const runner = resolveQualityGateJudge(gated({ connection: "missing" }), undefined, "reflect");
     expect(runner?.name).toBe("default");
   });
 });
 
 describe("the judge thinks only when its own connection enables thinking", () => {
   test("a judge connection that enables thinking asks for thinking", async () => {
-    const llmRunner = resolveQualityGateJudge(
-      config(),
-      strategy({ reflect: { qualityGate: { connection: "judge" } } }),
-      "reflect",
-    );
+    const llmRunner = resolveQualityGateJudge(gated({ connection: "judge" }), undefined, "reflect");
     if (!llmRunner) throw new Error("expected the judge connection to resolve");
     let thinking: boolean | undefined;
     await runReflectQualityJudge(
@@ -201,12 +199,8 @@ describe("the judge thinks only when its own connection enables thinking", () =>
         "utf8",
       );
       fs.chmodSync(bin, 0o755);
-      const cfg = config({ harnesses: { agent: { platform: "claude", bin } } });
-      const llmRunner = resolveQualityGateJudge(
-        cfg,
-        strategy({ reflect: { qualityGate: { harness: "agent" } } }),
-        "reflect",
-      );
+      const cfg = gated({ harness: "agent" }, undefined, { harnesses: { agent: { platform: "claude", bin } } });
+      const llmRunner = resolveQualityGateJudge(cfg, undefined, "reflect");
       const result = await runReflectQualityJudge(cfg, "candidate", "source", [], undefined, {
         llmRunner,
         ref: "knowledge/x",
@@ -246,11 +240,7 @@ describe("a judge's usage is credited to the engine that served it", () => {
   });
 
   test("inside a stage planned on another connection", async () => {
-    const llmRunner = resolveQualityGateJudge(
-      config(),
-      strategy({ reflect: { qualityGate: { connection: "judge" } } }),
-      "reflect",
-    );
+    const llmRunner = resolveQualityGateJudge(gated({ connection: "judge" }), undefined, "reflect");
     if (!llmRunner) throw new Error("expected the judge connection to resolve");
     globalThis.fetch = (async () =>
       new Response(JSON.stringify({ choices: [{ message: { content: PASSING_VERDICT } }] }), {
@@ -293,16 +283,10 @@ describe("memory inference uses the configured temperature", () => {
       // Memory inference is an autonomy lane: off unless improveAutonomy is on.
       experimental: { improveAutonomy: true },
       improve: {
-        strategies: {
-          default: {
-            processes: {
-              memoryInference: {
-                enabled: true,
-                ...(processTemperature === undefined ? {} : { llm: { temperature: processTemperature } }),
-              },
-            },
-          },
-        },
+        strategies: { default: { processes: { memoryInference: { enabled: true } } } },
+        ...(processTemperature === undefined
+          ? {}
+          : { processes: { memoryInference: { llm: { temperature: processTemperature } } } }),
       },
     } as AkmConfig;
     // The runner improve hands memory inference.

@@ -579,6 +579,508 @@
           "maxLength": 63,
           "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
         },
+        "processes": {
+          "type": "object",
+          "properties": {
+            "reflect": {
+              "type": "object",
+              "properties": {
+                "connection": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "harness": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "llm": {
+                  "type": "object",
+                  "properties": {
+                    "temperature": {
+                      "type": "number"
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "supportsJsonSchema": {
+                      "type": "boolean"
+                    },
+                    "extraParams": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "contextLength": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "enableThinking": {
+                      "type": "boolean"
+                    },
+                    "reasoningEffort": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": true
+            },
+            "distill": {
+              "type": "object",
+              "properties": {
+                "connection": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "harness": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "llm": {
+                  "type": "object",
+                  "properties": {
+                    "temperature": {
+                      "type": "number"
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "supportsJsonSchema": {
+                      "type": "boolean"
+                    },
+                    "extraParams": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "contextLength": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "enableThinking": {
+                      "type": "boolean"
+                    },
+                    "reasoningEffort": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": true
+            },
+            "consolidate": {
+              "type": "object",
+              "properties": {
+                "connection": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "harness": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "llm": {
+                  "type": "object",
+                  "properties": {
+                    "temperature": {
+                      "type": "number"
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "supportsJsonSchema": {
+                      "type": "boolean"
+                    },
+                    "extraParams": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "contextLength": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "enableThinking": {
+                      "type": "boolean"
+                    },
+                    "reasoningEffort": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": true
+            },
+            "memoryInference": {
+              "type": "object",
+              "properties": {
+                "connection": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "harness": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "llm": {
+                  "type": "object",
+                  "properties": {
+                    "temperature": {
+                      "type": "number"
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "supportsJsonSchema": {
+                      "type": "boolean"
+                    },
+                    "extraParams": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "contextLength": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "enableThinking": {
+                      "type": "boolean"
+                    },
+                    "reasoningEffort": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": true
+            },
+            "extract": {
+              "type": "object",
+              "properties": {
+                "connection": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "harness": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "llm": {
+                  "type": "object",
+                  "properties": {
+                    "temperature": {
+                      "type": "number"
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "supportsJsonSchema": {
+                      "type": "boolean"
+                    },
+                    "extraParams": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "contextLength": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "enableThinking": {
+                      "type": "boolean"
+                    },
+                    "reasoningEffort": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": true
+            },
+            "validation": {
+              "type": "object",
+              "properties": {
+                "connection": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "harness": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "llm": {
+                  "type": "object",
+                  "properties": {
+                    "temperature": {
+                      "type": "number"
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "supportsJsonSchema": {
+                      "type": "boolean"
+                    },
+                    "extraParams": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "contextLength": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "enableThinking": {
+                      "type": "boolean"
+                    },
+                    "reasoningEffort": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": true
+            },
+            "triage": {
+              "type": "object",
+              "properties": {
+                "connection": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "harness": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "llm": {
+                  "type": "object",
+                  "properties": {
+                    "temperature": {
+                      "type": "number"
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "supportsJsonSchema": {
+                      "type": "boolean"
+                    },
+                    "extraParams": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "contextLength": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "enableThinking": {
+                      "type": "boolean"
+                    },
+                    "reasoningEffort": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "qualityGate": {
+          "type": "object",
+          "properties": {
+            "connection": {
+              "type": "string",
+              "maxLength": 63,
+              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+            },
+            "harness": {
+              "type": "string",
+              "maxLength": 63,
+              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "llm": {
+              "type": "object",
+              "properties": {
+                "temperature": {
+                  "type": "number"
+                },
+                "maxTokens": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "supportsJsonSchema": {
+                  "type": "boolean"
+                },
+                "extraParams": {
+                  "type": "object",
+                  "additionalProperties": {}
+                },
+                "contextLength": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "enableThinking": {
+                  "type": "boolean"
+                },
+                "reasoningEffort": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": true
+            },
+            "timeoutMs": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
         "strategies": {
           "type": "object",
           "additionalProperties": {
@@ -594,64 +1096,8 @@
                   "reflect": {
                     "type": "object",
                     "properties": {
-                      "connection": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "harness": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "model": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "llm": {
-                        "type": "object",
-                        "properties": {
-                          "temperature": {
-                            "type": "number"
-                          },
-                          "maxTokens": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "supportsJsonSchema": {
-                            "type": "boolean"
-                          },
-                          "extraParams": {
-                            "type": "object",
-                            "additionalProperties": {}
-                          },
-                          "contextLength": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "enableThinking": {
-                            "type": "boolean"
-                          },
-                          "reasoningEffort": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "enabled": {
                         "type": "boolean"
-                      },
-                      "timeoutMs": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
                       },
                       "allowedTypes": {
                         "type": "array",
@@ -676,62 +1122,6 @@
                         "properties": {
                           "enabled": {
                             "type": "boolean"
-                          },
-                          "connection": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "harness": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "model": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
-                          "llm": {
-                            "type": "object",
-                            "properties": {
-                              "temperature": {
-                                "type": "number"
-                              },
-                              "maxTokens": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "supportsJsonSchema": {
-                                "type": "boolean"
-                              },
-                              "extraParams": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "contextLength": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "enableThinking": {
-                                "type": "boolean"
-                              },
-                              "reasoningEffort": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": true
                           }
                         },
                         "additionalProperties": true
@@ -769,64 +1159,8 @@
                   "distill": {
                     "type": "object",
                     "properties": {
-                      "connection": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "harness": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "model": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "llm": {
-                        "type": "object",
-                        "properties": {
-                          "temperature": {
-                            "type": "number"
-                          },
-                          "maxTokens": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "supportsJsonSchema": {
-                            "type": "boolean"
-                          },
-                          "extraParams": {
-                            "type": "object",
-                            "additionalProperties": {}
-                          },
-                          "contextLength": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "enableThinking": {
-                            "type": "boolean"
-                          },
-                          "reasoningEffort": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "enabled": {
                         "type": "boolean"
-                      },
-                      "timeoutMs": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
                       },
                       "allowedTypes": {
                         "type": "array",
@@ -840,62 +1174,6 @@
                         "properties": {
                           "enabled": {
                             "type": "boolean"
-                          },
-                          "connection": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "harness": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "model": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
-                          "llm": {
-                            "type": "object",
-                            "properties": {
-                              "temperature": {
-                                "type": "number"
-                              },
-                              "maxTokens": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "supportsJsonSchema": {
-                                "type": "boolean"
-                              },
-                              "extraParams": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "contextLength": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "enableThinking": {
-                                "type": "boolean"
-                              },
-                              "reasoningEffort": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": true
                           }
                         },
                         "additionalProperties": true
@@ -922,64 +1200,8 @@
                   "consolidate": {
                     "type": "object",
                     "properties": {
-                      "connection": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "harness": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "model": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "llm": {
-                        "type": "object",
-                        "properties": {
-                          "temperature": {
-                            "type": "number"
-                          },
-                          "maxTokens": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "supportsJsonSchema": {
-                            "type": "boolean"
-                          },
-                          "extraParams": {
-                            "type": "object",
-                            "additionalProperties": {}
-                          },
-                          "contextLength": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "enableThinking": {
-                            "type": "boolean"
-                          },
-                          "reasoningEffort": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "enabled": {
                         "type": "boolean"
-                      },
-                      "timeoutMs": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
                       },
                       "allowedTypes": {
                         "type": "array",
@@ -1003,64 +1225,8 @@
                   "memoryInference": {
                     "type": "object",
                     "properties": {
-                      "connection": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "harness": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "model": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "llm": {
-                        "type": "object",
-                        "properties": {
-                          "temperature": {
-                            "type": "number"
-                          },
-                          "maxTokens": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "supportsJsonSchema": {
-                            "type": "boolean"
-                          },
-                          "extraParams": {
-                            "type": "object",
-                            "additionalProperties": {}
-                          },
-                          "contextLength": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "enableThinking": {
-                            "type": "boolean"
-                          },
-                          "reasoningEffort": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "enabled": {
                         "type": "boolean"
-                      },
-                      "timeoutMs": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
                       },
                       "minPendingCount": {
                         "type": "integer",
@@ -1072,64 +1238,8 @@
                   "extract": {
                     "type": "object",
                     "properties": {
-                      "connection": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "harness": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "model": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "llm": {
-                        "type": "object",
-                        "properties": {
-                          "temperature": {
-                            "type": "number"
-                          },
-                          "maxTokens": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "supportsJsonSchema": {
-                            "type": "boolean"
-                          },
-                          "extraParams": {
-                            "type": "object",
-                            "additionalProperties": {}
-                          },
-                          "contextLength": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "enableThinking": {
-                            "type": "boolean"
-                          },
-                          "reasoningEffort": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "enabled": {
                         "type": "boolean"
-                      },
-                      "timeoutMs": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
                       },
                       "defaultSince": {
                         "type": "string",
@@ -1177,64 +1287,8 @@
                   "validation": {
                     "type": "object",
                     "properties": {
-                      "connection": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "harness": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "model": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "llm": {
-                        "type": "object",
-                        "properties": {
-                          "temperature": {
-                            "type": "number"
-                          },
-                          "maxTokens": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "supportsJsonSchema": {
-                            "type": "boolean"
-                          },
-                          "extraParams": {
-                            "type": "object",
-                            "additionalProperties": {}
-                          },
-                          "contextLength": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "enableThinking": {
-                            "type": "boolean"
-                          },
-                          "reasoningEffort": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "enabled": {
                         "type": "boolean"
-                      },
-                      "timeoutMs": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
                       }
                     },
                     "additionalProperties": true
@@ -1242,64 +1296,8 @@
                   "triage": {
                     "type": "object",
                     "properties": {
-                      "connection": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "harness": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "model": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "llm": {
-                        "type": "object",
-                        "properties": {
-                          "temperature": {
-                            "type": "number"
-                          },
-                          "maxTokens": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "supportsJsonSchema": {
-                            "type": "boolean"
-                          },
-                          "extraParams": {
-                            "type": "object",
-                            "additionalProperties": {}
-                          },
-                          "contextLength": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "enableThinking": {
-                            "type": "boolean"
-                          },
-                          "reasoningEffort": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "enabled": {
                         "type": "boolean"
-                      },
-                      "timeoutMs": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
                       },
                       "applyMode": {
                         "type": "string",
@@ -1322,62 +1320,6 @@
                             "properties": {
                               "enabled": {
                                 "type": "boolean"
-                              },
-                              "connection": {
-                                "type": "string",
-                                "maxLength": 63,
-                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                              },
-                              "harness": {
-                                "type": "string",
-                                "maxLength": 63,
-                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                              },
-                              "model": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "timeoutMs": {
-                                "anyOf": [
-                                  {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ]
-                              },
-                              "llm": {
-                                "type": "object",
-                                "properties": {
-                                  "temperature": {
-                                    "type": "number"
-                                  },
-                                  "maxTokens": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0
-                                  },
-                                  "supportsJsonSchema": {
-                                    "type": "boolean"
-                                  },
-                                  "extraParams": {
-                                    "type": "object",
-                                    "additionalProperties": {}
-                                  },
-                                  "contextLength": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0
-                                  },
-                                  "enableThinking": {
-                                    "type": "boolean"
-                                  },
-                                  "reasoningEffort": {
-                                    "type": "string",
-                                    "minLength": 1
-                                  }
-                                },
-                                "additionalProperties": true
                               }
                             },
                             "additionalProperties": true
@@ -1390,64 +1332,8 @@
                   "proactiveMaintenance": {
                     "type": "object",
                     "properties": {
-                      "connection": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "harness": {
-                        "type": "string",
-                        "maxLength": 63,
-                        "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                      },
-                      "model": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "llm": {
-                        "type": "object",
-                        "properties": {
-                          "temperature": {
-                            "type": "number"
-                          },
-                          "maxTokens": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "supportsJsonSchema": {
-                            "type": "boolean"
-                          },
-                          "extraParams": {
-                            "type": "object",
-                            "additionalProperties": {}
-                          },
-                          "contextLength": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "enableThinking": {
-                            "type": "boolean"
-                          },
-                          "reasoningEffort": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "enabled": {
                         "type": "boolean"
-                      },
-                      "timeoutMs": {
-                        "anyOf": [
-                          {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
                       },
                       "dueDays": {
                         "type": "integer",
@@ -2153,6 +2039,508 @@
               "maxLength": 63,
               "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
             },
+            "processes": {
+              "type": "object",
+              "properties": {
+                "reflect": {
+                  "type": "object",
+                  "properties": {
+                    "connection": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "harness": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "llm": {
+                      "type": "object",
+                      "properties": {
+                        "temperature": {
+                          "type": "number"
+                        },
+                        "maxTokens": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "supportsJsonSchema": {
+                          "type": "boolean"
+                        },
+                        "extraParams": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        },
+                        "contextLength": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "enableThinking": {
+                          "type": "boolean"
+                        },
+                        "reasoningEffort": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "distill": {
+                  "type": "object",
+                  "properties": {
+                    "connection": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "harness": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "llm": {
+                      "type": "object",
+                      "properties": {
+                        "temperature": {
+                          "type": "number"
+                        },
+                        "maxTokens": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "supportsJsonSchema": {
+                          "type": "boolean"
+                        },
+                        "extraParams": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        },
+                        "contextLength": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "enableThinking": {
+                          "type": "boolean"
+                        },
+                        "reasoningEffort": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "consolidate": {
+                  "type": "object",
+                  "properties": {
+                    "connection": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "harness": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "llm": {
+                      "type": "object",
+                      "properties": {
+                        "temperature": {
+                          "type": "number"
+                        },
+                        "maxTokens": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "supportsJsonSchema": {
+                          "type": "boolean"
+                        },
+                        "extraParams": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        },
+                        "contextLength": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "enableThinking": {
+                          "type": "boolean"
+                        },
+                        "reasoningEffort": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "memoryInference": {
+                  "type": "object",
+                  "properties": {
+                    "connection": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "harness": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "llm": {
+                      "type": "object",
+                      "properties": {
+                        "temperature": {
+                          "type": "number"
+                        },
+                        "maxTokens": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "supportsJsonSchema": {
+                          "type": "boolean"
+                        },
+                        "extraParams": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        },
+                        "contextLength": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "enableThinking": {
+                          "type": "boolean"
+                        },
+                        "reasoningEffort": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "extract": {
+                  "type": "object",
+                  "properties": {
+                    "connection": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "harness": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "llm": {
+                      "type": "object",
+                      "properties": {
+                        "temperature": {
+                          "type": "number"
+                        },
+                        "maxTokens": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "supportsJsonSchema": {
+                          "type": "boolean"
+                        },
+                        "extraParams": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        },
+                        "contextLength": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "enableThinking": {
+                          "type": "boolean"
+                        },
+                        "reasoningEffort": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "validation": {
+                  "type": "object",
+                  "properties": {
+                    "connection": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "harness": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "llm": {
+                      "type": "object",
+                      "properties": {
+                        "temperature": {
+                          "type": "number"
+                        },
+                        "maxTokens": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "supportsJsonSchema": {
+                          "type": "boolean"
+                        },
+                        "extraParams": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        },
+                        "contextLength": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "enableThinking": {
+                          "type": "boolean"
+                        },
+                        "reasoningEffort": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "triage": {
+                  "type": "object",
+                  "properties": {
+                    "connection": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "harness": {
+                      "type": "string",
+                      "maxLength": 63,
+                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "llm": {
+                      "type": "object",
+                      "properties": {
+                        "temperature": {
+                          "type": "number"
+                        },
+                        "maxTokens": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "supportsJsonSchema": {
+                          "type": "boolean"
+                        },
+                        "extraParams": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        },
+                        "contextLength": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "enableThinking": {
+                          "type": "boolean"
+                        },
+                        "reasoningEffort": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "timeoutMs": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": true
+            },
+            "qualityGate": {
+              "type": "object",
+              "properties": {
+                "connection": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "harness": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "llm": {
+                  "type": "object",
+                  "properties": {
+                    "temperature": {
+                      "type": "number"
+                    },
+                    "maxTokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "supportsJsonSchema": {
+                      "type": "boolean"
+                    },
+                    "extraParams": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "contextLength": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "enableThinking": {
+                      "type": "boolean"
+                    },
+                    "reasoningEffort": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "timeoutMs": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": true
+            },
             "strategies": {
               "type": "object",
               "additionalProperties": {
@@ -2168,64 +2556,8 @@
                       "reflect": {
                         "type": "object",
                         "properties": {
-                          "connection": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "harness": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "model": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "llm": {
-                            "type": "object",
-                            "properties": {
-                              "temperature": {
-                                "type": "number"
-                              },
-                              "maxTokens": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "supportsJsonSchema": {
-                                "type": "boolean"
-                              },
-                              "extraParams": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "contextLength": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "enableThinking": {
-                                "type": "boolean"
-                              },
-                              "reasoningEffort": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "enabled": {
                             "type": "boolean"
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
                           },
                           "allowedTypes": {
                             "type": "array",
@@ -2250,62 +2582,6 @@
                             "properties": {
                               "enabled": {
                                 "type": "boolean"
-                              },
-                              "connection": {
-                                "type": "string",
-                                "maxLength": 63,
-                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                              },
-                              "harness": {
-                                "type": "string",
-                                "maxLength": 63,
-                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                              },
-                              "model": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "timeoutMs": {
-                                "anyOf": [
-                                  {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ]
-                              },
-                              "llm": {
-                                "type": "object",
-                                "properties": {
-                                  "temperature": {
-                                    "type": "number"
-                                  },
-                                  "maxTokens": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0
-                                  },
-                                  "supportsJsonSchema": {
-                                    "type": "boolean"
-                                  },
-                                  "extraParams": {
-                                    "type": "object",
-                                    "additionalProperties": {}
-                                  },
-                                  "contextLength": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0
-                                  },
-                                  "enableThinking": {
-                                    "type": "boolean"
-                                  },
-                                  "reasoningEffort": {
-                                    "type": "string",
-                                    "minLength": 1
-                                  }
-                                },
-                                "additionalProperties": true
                               }
                             },
                             "additionalProperties": true
@@ -2343,64 +2619,8 @@
                       "distill": {
                         "type": "object",
                         "properties": {
-                          "connection": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "harness": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "model": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "llm": {
-                            "type": "object",
-                            "properties": {
-                              "temperature": {
-                                "type": "number"
-                              },
-                              "maxTokens": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "supportsJsonSchema": {
-                                "type": "boolean"
-                              },
-                              "extraParams": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "contextLength": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "enableThinking": {
-                                "type": "boolean"
-                              },
-                              "reasoningEffort": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "enabled": {
                             "type": "boolean"
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
                           },
                           "allowedTypes": {
                             "type": "array",
@@ -2414,62 +2634,6 @@
                             "properties": {
                               "enabled": {
                                 "type": "boolean"
-                              },
-                              "connection": {
-                                "type": "string",
-                                "maxLength": 63,
-                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                              },
-                              "harness": {
-                                "type": "string",
-                                "maxLength": 63,
-                                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                              },
-                              "model": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "timeoutMs": {
-                                "anyOf": [
-                                  {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ]
-                              },
-                              "llm": {
-                                "type": "object",
-                                "properties": {
-                                  "temperature": {
-                                    "type": "number"
-                                  },
-                                  "maxTokens": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0
-                                  },
-                                  "supportsJsonSchema": {
-                                    "type": "boolean"
-                                  },
-                                  "extraParams": {
-                                    "type": "object",
-                                    "additionalProperties": {}
-                                  },
-                                  "contextLength": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0
-                                  },
-                                  "enableThinking": {
-                                    "type": "boolean"
-                                  },
-                                  "reasoningEffort": {
-                                    "type": "string",
-                                    "minLength": 1
-                                  }
-                                },
-                                "additionalProperties": true
                               }
                             },
                             "additionalProperties": true
@@ -2496,64 +2660,8 @@
                       "consolidate": {
                         "type": "object",
                         "properties": {
-                          "connection": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "harness": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "model": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "llm": {
-                            "type": "object",
-                            "properties": {
-                              "temperature": {
-                                "type": "number"
-                              },
-                              "maxTokens": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "supportsJsonSchema": {
-                                "type": "boolean"
-                              },
-                              "extraParams": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "contextLength": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "enableThinking": {
-                                "type": "boolean"
-                              },
-                              "reasoningEffort": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "enabled": {
                             "type": "boolean"
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
                           },
                           "allowedTypes": {
                             "type": "array",
@@ -2577,64 +2685,8 @@
                       "memoryInference": {
                         "type": "object",
                         "properties": {
-                          "connection": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "harness": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "model": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "llm": {
-                            "type": "object",
-                            "properties": {
-                              "temperature": {
-                                "type": "number"
-                              },
-                              "maxTokens": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "supportsJsonSchema": {
-                                "type": "boolean"
-                              },
-                              "extraParams": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "contextLength": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "enableThinking": {
-                                "type": "boolean"
-                              },
-                              "reasoningEffort": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "enabled": {
                             "type": "boolean"
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
                           },
                           "minPendingCount": {
                             "type": "integer",
@@ -2646,64 +2698,8 @@
                       "extract": {
                         "type": "object",
                         "properties": {
-                          "connection": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "harness": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "model": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "llm": {
-                            "type": "object",
-                            "properties": {
-                              "temperature": {
-                                "type": "number"
-                              },
-                              "maxTokens": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "supportsJsonSchema": {
-                                "type": "boolean"
-                              },
-                              "extraParams": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "contextLength": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "enableThinking": {
-                                "type": "boolean"
-                              },
-                              "reasoningEffort": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "enabled": {
                             "type": "boolean"
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
                           },
                           "defaultSince": {
                             "type": "string",
@@ -2751,64 +2747,8 @@
                       "validation": {
                         "type": "object",
                         "properties": {
-                          "connection": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "harness": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "model": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "llm": {
-                            "type": "object",
-                            "properties": {
-                              "temperature": {
-                                "type": "number"
-                              },
-                              "maxTokens": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "supportsJsonSchema": {
-                                "type": "boolean"
-                              },
-                              "extraParams": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "contextLength": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "enableThinking": {
-                                "type": "boolean"
-                              },
-                              "reasoningEffort": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "enabled": {
                             "type": "boolean"
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
                           }
                         },
                         "additionalProperties": true
@@ -2816,64 +2756,8 @@
                       "triage": {
                         "type": "object",
                         "properties": {
-                          "connection": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "harness": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "model": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "llm": {
-                            "type": "object",
-                            "properties": {
-                              "temperature": {
-                                "type": "number"
-                              },
-                              "maxTokens": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "supportsJsonSchema": {
-                                "type": "boolean"
-                              },
-                              "extraParams": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "contextLength": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "enableThinking": {
-                                "type": "boolean"
-                              },
-                              "reasoningEffort": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "enabled": {
                             "type": "boolean"
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
                           },
                           "applyMode": {
                             "type": "string",
@@ -2896,62 +2780,6 @@
                                 "properties": {
                                   "enabled": {
                                     "type": "boolean"
-                                  },
-                                  "connection": {
-                                    "type": "string",
-                                    "maxLength": 63,
-                                    "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                                  },
-                                  "harness": {
-                                    "type": "string",
-                                    "maxLength": 63,
-                                    "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                                  },
-                                  "model": {
-                                    "type": "string",
-                                    "minLength": 1
-                                  },
-                                  "timeoutMs": {
-                                    "anyOf": [
-                                      {
-                                        "type": "integer",
-                                        "exclusiveMinimum": 0
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
-                                  },
-                                  "llm": {
-                                    "type": "object",
-                                    "properties": {
-                                      "temperature": {
-                                        "type": "number"
-                                      },
-                                      "maxTokens": {
-                                        "type": "integer",
-                                        "exclusiveMinimum": 0
-                                      },
-                                      "supportsJsonSchema": {
-                                        "type": "boolean"
-                                      },
-                                      "extraParams": {
-                                        "type": "object",
-                                        "additionalProperties": {}
-                                      },
-                                      "contextLength": {
-                                        "type": "integer",
-                                        "exclusiveMinimum": 0
-                                      },
-                                      "enableThinking": {
-                                        "type": "boolean"
-                                      },
-                                      "reasoningEffort": {
-                                        "type": "string",
-                                        "minLength": 1
-                                      }
-                                    },
-                                    "additionalProperties": true
                                   }
                                 },
                                 "additionalProperties": true
@@ -2964,64 +2792,8 @@
                       "proactiveMaintenance": {
                         "type": "object",
                         "properties": {
-                          "connection": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "harness": {
-                            "type": "string",
-                            "maxLength": 63,
-                            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                          },
-                          "model": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "llm": {
-                            "type": "object",
-                            "properties": {
-                              "temperature": {
-                                "type": "number"
-                              },
-                              "maxTokens": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "supportsJsonSchema": {
-                                "type": "boolean"
-                              },
-                              "extraParams": {
-                                "type": "object",
-                                "additionalProperties": {}
-                              },
-                              "contextLength": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              "enableThinking": {
-                                "type": "boolean"
-                              },
-                              "reasoningEffort": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "enabled": {
                             "type": "boolean"
-                          },
-                          "timeoutMs": {
-                            "anyOf": [
-                              {
-                                "type": "integer",
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
                           },
                           "dueDays": {
                             "type": "integer",
@@ -3283,64 +3055,8 @@
     "ImproveProcessConfig": {
       "type": "object",
       "properties": {
-        "connection": {
-          "type": "string",
-          "maxLength": 63,
-          "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-        },
-        "harness": {
-          "type": "string",
-          "maxLength": 63,
-          "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-        },
-        "model": {
-          "type": "string",
-          "minLength": 1
-        },
-        "llm": {
-          "type": "object",
-          "properties": {
-            "temperature": {
-              "type": "number"
-            },
-            "maxTokens": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "supportsJsonSchema": {
-              "type": "boolean"
-            },
-            "extraParams": {
-              "type": "object",
-              "additionalProperties": {}
-            },
-            "contextLength": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "enableThinking": {
-              "type": "boolean"
-            },
-            "reasoningEffort": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "additionalProperties": true
-        },
         "enabled": {
           "type": "boolean"
-        },
-        "timeoutMs": {
-          "anyOf": [
-            {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            {
-              "type": "null"
-            }
-          ]
         },
         "allowedTypes": {
           "type": "array",
@@ -3365,62 +3081,6 @@
           "properties": {
             "enabled": {
               "type": "boolean"
-            },
-            "connection": {
-              "type": "string",
-              "maxLength": 63,
-              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-            },
-            "harness": {
-              "type": "string",
-              "maxLength": 63,
-              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-            },
-            "model": {
-              "type": "string",
-              "minLength": 1
-            },
-            "timeoutMs": {
-              "anyOf": [
-                {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "llm": {
-              "type": "object",
-              "properties": {
-                "temperature": {
-                  "type": "number"
-                },
-                "maxTokens": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "supportsJsonSchema": {
-                  "type": "boolean"
-                },
-                "extraParams": {
-                  "type": "object",
-                  "additionalProperties": {}
-                },
-                "contextLength": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "enableThinking": {
-                  "type": "boolean"
-                },
-                "reasoningEffort": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "additionalProperties": true
             }
           },
           "additionalProperties": true
@@ -3538,62 +3198,6 @@
               "properties": {
                 "enabled": {
                   "type": "boolean"
-                },
-                "connection": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "harness": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "model": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "timeoutMs": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": true
                 }
               },
               "additionalProperties": true
@@ -3624,64 +3228,8 @@
             "reflect": {
               "type": "object",
               "properties": {
-                "connection": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "harness": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "model": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "enabled": {
                   "type": "boolean"
-                },
-                "timeoutMs": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
                 },
                 "allowedTypes": {
                   "type": "array",
@@ -3706,62 +3254,6 @@
                   "properties": {
                     "enabled": {
                       "type": "boolean"
-                    },
-                    "connection": {
-                      "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                    },
-                    "harness": {
-                      "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                    },
-                    "model": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "timeoutMs": {
-                      "anyOf": [
-                        {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "llm": {
-                      "type": "object",
-                      "properties": {
-                        "temperature": {
-                          "type": "number"
-                        },
-                        "maxTokens": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
-                        },
-                        "supportsJsonSchema": {
-                          "type": "boolean"
-                        },
-                        "extraParams": {
-                          "type": "object",
-                          "additionalProperties": {}
-                        },
-                        "contextLength": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
-                        },
-                        "enableThinking": {
-                          "type": "boolean"
-                        },
-                        "reasoningEffort": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "additionalProperties": true
                     }
                   },
                   "additionalProperties": true
@@ -3799,64 +3291,8 @@
             "distill": {
               "type": "object",
               "properties": {
-                "connection": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "harness": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "model": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "enabled": {
                   "type": "boolean"
-                },
-                "timeoutMs": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
                 },
                 "allowedTypes": {
                   "type": "array",
@@ -3870,62 +3306,6 @@
                   "properties": {
                     "enabled": {
                       "type": "boolean"
-                    },
-                    "connection": {
-                      "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                    },
-                    "harness": {
-                      "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                    },
-                    "model": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "timeoutMs": {
-                      "anyOf": [
-                        {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "llm": {
-                      "type": "object",
-                      "properties": {
-                        "temperature": {
-                          "type": "number"
-                        },
-                        "maxTokens": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
-                        },
-                        "supportsJsonSchema": {
-                          "type": "boolean"
-                        },
-                        "extraParams": {
-                          "type": "object",
-                          "additionalProperties": {}
-                        },
-                        "contextLength": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
-                        },
-                        "enableThinking": {
-                          "type": "boolean"
-                        },
-                        "reasoningEffort": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "additionalProperties": true
                     }
                   },
                   "additionalProperties": true
@@ -3952,64 +3332,8 @@
             "consolidate": {
               "type": "object",
               "properties": {
-                "connection": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "harness": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "model": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "enabled": {
                   "type": "boolean"
-                },
-                "timeoutMs": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
                 },
                 "allowedTypes": {
                   "type": "array",
@@ -4033,64 +3357,8 @@
             "memoryInference": {
               "type": "object",
               "properties": {
-                "connection": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "harness": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "model": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "enabled": {
                   "type": "boolean"
-                },
-                "timeoutMs": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
                 },
                 "minPendingCount": {
                   "type": "integer",
@@ -4102,64 +3370,8 @@
             "extract": {
               "type": "object",
               "properties": {
-                "connection": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "harness": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "model": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "enabled": {
                   "type": "boolean"
-                },
-                "timeoutMs": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
                 },
                 "defaultSince": {
                   "type": "string",
@@ -4207,64 +3419,8 @@
             "validation": {
               "type": "object",
               "properties": {
-                "connection": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "harness": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "model": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "enabled": {
                   "type": "boolean"
-                },
-                "timeoutMs": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
                 }
               },
               "additionalProperties": true
@@ -4272,64 +3428,8 @@
             "triage": {
               "type": "object",
               "properties": {
-                "connection": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "harness": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "model": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "enabled": {
                   "type": "boolean"
-                },
-                "timeoutMs": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
                 },
                 "applyMode": {
                   "type": "string",
@@ -4352,62 +3452,6 @@
                       "properties": {
                         "enabled": {
                           "type": "boolean"
-                        },
-                        "connection": {
-                          "type": "string",
-                          "maxLength": 63,
-                          "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                        },
-                        "harness": {
-                          "type": "string",
-                          "maxLength": 63,
-                          "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                        },
-                        "model": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "timeoutMs": {
-                          "anyOf": [
-                            {
-                              "type": "integer",
-                              "exclusiveMinimum": 0
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "llm": {
-                          "type": "object",
-                          "properties": {
-                            "temperature": {
-                              "type": "number"
-                            },
-                            "maxTokens": {
-                              "type": "integer",
-                              "exclusiveMinimum": 0
-                            },
-                            "supportsJsonSchema": {
-                              "type": "boolean"
-                            },
-                            "extraParams": {
-                              "type": "object",
-                              "additionalProperties": {}
-                            },
-                            "contextLength": {
-                              "type": "integer",
-                              "exclusiveMinimum": 0
-                            },
-                            "enableThinking": {
-                              "type": "boolean"
-                            },
-                            "reasoningEffort": {
-                              "type": "string",
-                              "minLength": 1
-                            }
-                          },
-                          "additionalProperties": true
                         }
                       },
                       "additionalProperties": true
@@ -4420,64 +3464,8 @@
             "proactiveMaintenance": {
               "type": "object",
               "properties": {
-                "connection": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "harness": {
-                  "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                },
-                "model": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "enabled": {
                   "type": "boolean"
-                },
-                "timeoutMs": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
                 },
                 "dueDays": {
                   "type": "integer",

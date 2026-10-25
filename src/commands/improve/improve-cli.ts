@@ -253,7 +253,7 @@ const improveJudgeCommand = defineJsonCommand({
     );
     if (!judge) {
       throw new ConfigError(
-        "`akm improve judge` judges with the reflect quality gate's connection or harness. Set processes.reflect.qualityGate.connection.",
+        "`akm improve judge` judges with the reflect quality gate's connection or harness. Set improve.qualityGate.connection.",
         "INVALID_CONFIG_FILE",
       );
     }

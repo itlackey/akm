@@ -202,16 +202,8 @@ describe("akmConsolidate — all-hot chunk", () => {
       semanticSearchMode: "off",
       improve: {
         strategy: "freeze-once",
-        strategies: {
-          "freeze-once": {
-            processes: {
-              consolidate: {
-                enabled: true,
-                llm: { unsupportedPlannerField: true },
-              },
-            },
-          },
-        },
+        processes: { consolidate: { llm: { unsupportedPlannerField: true } } },
+        strategies: { "freeze-once": { processes: { consolidate: { enabled: true } } } },
       },
       connections: {
         planner: {

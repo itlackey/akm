@@ -502,7 +502,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     stash,
     config,
     profile,
-    runner: stageRunner(options, config, profile, "distill", notices.add),
+    runner: stageRunner(options, config, "distill", notices.add),
     judgeRunner: resolveQualityGateJudge(config, profile, "distill", notices.add),
     notices,
     eligMeta,

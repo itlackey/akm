@@ -220,7 +220,6 @@ export function resolveStandaloneExtractPlan(
   const process = cloneAndFreeze(getImproveProcessConfig("extract", selected.config) ?? {});
   const resolved = resolveImproveExecution({
     config,
-    process,
     current: {
       ...(selection.engine ? { engine: selection.engine } : {}),
       ...(Object.hasOwn(selection, "timeoutMs") ? { timeoutMs: selection.timeoutMs ?? null } : {}),
@@ -229,7 +228,7 @@ export function resolveStandaloneExtractPlan(
   });
   if (!resolved) {
     throw new ConfigError(
-      "No connection or harness is configured for extract. Run `akm setup`, pass --engine, or set improve.connection or processes.extract.connection.",
+      "No connection or harness is configured for extract. Run `akm setup`, pass --engine, or set improve.connection or improve.processes.extract.connection.",
       "LLM_NOT_CONFIGURED",
     );
   }
@@ -1023,13 +1022,13 @@ function resolveExtractRun(
   } else if (options.llmRunner) {
     llmRunner = options.llmRunner;
   } else {
-    const resolved = resolveImproveExecution({ config, process, processName: "extract" });
+    const resolved = resolveImproveExecution({ config, processName: "extract" });
     llmRunner = resolved?.runner;
     if (resolved) notices.add(resolved.notices);
   }
   if (!llmRunner) {
     throw new ConfigError(
-      "No connection or harness is configured for extract. Run `akm setup`, or set improve.connection or improve.strategies.<name>.processes.extract.connection.",
+      "No connection or harness is configured for extract. Run `akm setup`, or set improve.connection or improve.processes.extract.connection.",
       "LLM_NOT_CONFIGURED",
     );
   }

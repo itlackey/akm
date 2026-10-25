@@ -10,7 +10,6 @@
  */
 
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
-import { getImproveProcessConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import type { EventsContext } from "../../core/events";
 import { thinkingSetting } from "../../core/llm-inference";
@@ -72,16 +71,11 @@ export type NoticeSet = ReturnType<typeof noticeSet>;
 export function stageRunner(
   frozen: { llmRunner?: RunnerSpec | null },
   config: AkmConfig,
-  profile: ImproveProfileConfig | undefined,
   processName: ImproveProcessName,
   onNotices?: NoticeSink,
 ): RunnerSpec | undefined {
   if (Object.hasOwn(frozen, "llmRunner")) return frozen.llmRunner ?? undefined;
-  const resolved = resolveImproveExecution({
-    config,
-    process: getImproveProcessConfig(processName, profile),
-    processName,
-  });
+  const resolved = resolveImproveExecution({ config, processName });
   if (resolved) onNotices?.(resolved.notices);
   return resolved?.runner;
 }
@@ -307,13 +301,14 @@ type QualityJudgeChat = (
 ) => Promise<string>;
 
 /**
- * The judge a quality gate names for itself (#1011): the gate's `engine`,
- * `model`, `timeoutMs` and `llm` over the process's own settings, as
- * `processes.triage.judgment` resolves over triage. `undefined` when the gate
- * is off or sets none of them, so the caller keeps its own judge. The engine
- * may be of any kind; a harness that cannot confine the model-work tool policy
- * runs unrestricted, with a notice. Throws when they resolve to no engine at all,
- * before anything is generated: the gate never falls back to another judge.
+ * The judge a quality gate names for itself (#1011): `improve.qualityGate`'s
+ * connection or harness, model, timeout and inference over the process's own
+ * settings. `undefined` when the strategy turns the gate off or
+ * `improve.qualityGate` sets none of them, so the caller keeps its own judge.
+ * The judge may be a connection or a harness; a harness that cannot confine
+ * the model-work tool policy runs unrestricted, with a notice. Throws when
+ * they resolve to nothing at all, before anything is generated: the gate never
+ * falls back to another judge.
  */
 export function resolveQualityGateJudge(
   config: AkmConfig,
@@ -321,19 +316,20 @@ export function resolveQualityGateJudge(
   processName: "reflect" | "distill",
   onNotices?: NoticeSink,
 ): RunnerSpec | undefined {
-  const process = profile?.processes?.[processName];
-  const gate = process?.qualityGate;
-  if (!gate || gate.enabled === false) return undefined;
-  if (!["connection", "harness", "model", "timeoutMs", "llm"].some((key) => Object.hasOwn(gate, key))) return undefined;
+  if (profile?.processes?.[processName]?.qualityGate?.enabled === false) return undefined;
+  const gate = config.improve?.qualityGate;
+  if (!gate || !["connection", "harness", "model", "timeoutMs", "llm"].some((key) => Object.hasOwn(gate, key))) {
+    return undefined;
+  }
   const resolved = resolveImproveExecution({
     config,
     processName: `${processName}-quality-judge`,
-    ...(process ? { process } : {}),
+    process: processName,
     current: gate,
   });
   if (!resolved) {
     throw new ConfigError(
-      `The ${processName} quality gate's judge has no connection or harness. Set processes.${processName}.qualityGate.connection.`,
+      "The quality gate's judge has no connection or harness. Set improve.qualityGate.connection.",
       "INVALID_CONFIG_FILE",
     );
   }

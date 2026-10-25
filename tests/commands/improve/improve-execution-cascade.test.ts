@@ -4,8 +4,8 @@
 
 /**
  * Improve's cascade picks where model work runs, farther to nearer:
- * `improve.connection` / `improve.harness`, then `index.<pass>`, then the
- * process, then the current invocation. The nearest layer that names a
+ * `improve.connection` / `improve.harness`, then `index.<pass>`, then
+ * `improve.processes.<name>`, then the current invocation. The nearest layer that names a
  * connection or harness decides, whichever of the two keys each layer used.
  */
 
@@ -30,6 +30,12 @@ const resolve = (
   options: Partial<Parameters<typeof resolveImproveExecution>[0]> = {},
 ) => resolveImproveExecution({ config: config(improve), processName: "reflect", ...options })?.runner;
 
+/** `improve` with the reflect process saying where it runs. */
+const reflect = (where: Record<string, unknown>, improve: Record<string, unknown> = {}) => ({
+  ...improve,
+  processes: { reflect: where },
+});
+
 describe("resolveImproveExecution — the nearest layer that names a target wins", () => {
   test("with nothing named, model work runs on the default connection", () => {
     expect(resolve({})).toMatchObject({ kind: "connection", name: "default" });
@@ -37,29 +43,35 @@ describe("resolveImproveExecution — the nearest layer that names a target wins
 
   test("improve-wide, then the process, then the current invocation", () => {
     expect(resolve({ connection: "wide" })).toMatchObject({ name: "wide" });
-    expect(resolve({ connection: "wide" }, { process: { connection: "near" } })).toMatchObject({ name: "near" });
+    expect(resolve(reflect({ connection: "near" }, { connection: "wide" }))).toMatchObject({ name: "near" });
     expect(
-      resolve({ connection: "wide" }, { process: { connection: "near" }, current: { connection: "default" } }),
+      resolve(reflect({ connection: "near" }, { connection: "wide" }), { current: { connection: "default" } }),
     ).toMatchObject({ name: "default" });
   });
 
+  test("a call that is not a process takes the settings of the process it names", () => {
+    const improve = { processes: { triage: { connection: "near" }, reflect: { connection: "wide" } } };
+    expect(resolve(improve, { processName: "triage-judgment", process: "triage" })).toMatchObject({ name: "near" });
+    expect(resolve(improve, { processName: "remember-enrich" })).toMatchObject({ name: "default" });
+  });
+
   test("a nearer harness replaces a farther connection, and a nearer connection a farther harness", () => {
-    expect(resolve({ connection: "wide" }, { process: { harness: "claude" } })).toMatchObject({
+    expect(resolve(reflect({ harness: "claude" }, { connection: "wide" }))).toMatchObject({
       kind: "harness",
       name: "claude",
     });
-    expect(resolve({ harness: "claude" }, { process: { connection: "near" } })).toMatchObject({
+    expect(resolve(reflect({ connection: "near" }, { harness: "claude" }))).toMatchObject({
       kind: "connection",
       name: "near",
     });
   });
 
   test("a flag's name (a connection by that name, else a harness) replaces a process's choice of the other kind", () => {
-    expect(resolve({}, { process: { connection: "near" }, current: { engine: "claude" } })).toMatchObject({
+    expect(resolve(reflect({ connection: "near" }), { current: { engine: "claude" } })).toMatchObject({
       kind: "harness",
       name: "claude",
     });
-    expect(resolve({}, { process: { harness: "claude" }, current: { engine: "near" } })).toMatchObject({
+    expect(resolve(reflect({ harness: "claude" }), { current: { engine: "near" } })).toMatchObject({
       kind: "connection",
       name: "near",
     });

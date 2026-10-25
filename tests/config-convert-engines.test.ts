@@ -11,8 +11,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveImproveExecution } from "../src/commands/improve/execution";
+import { resolveQualityGateJudge } from "../src/commands/improve/stage";
 import { stripJsonComments } from "../src/core/common";
 import {
+  type AkmConfig,
   loadUserConfig,
   normalizeConfigFile,
   resetConfigCache,
@@ -188,9 +191,9 @@ describe("the defaults become the entries named default", () => {
     });
     expect(Object.keys(config.connections as Dict)).toEqual(["default", "cloud"]);
     expect((config.index as Dict).memory).toEqual({ connection: "default" });
-    const processes = ((config.improve as Dict).strategies as Dict).nightly as Dict;
-    expect((processes.processes as Dict).reflect).toEqual({ connection: "default" });
-    expect(((processes.processes as Dict).triage as Dict).judgment).toEqual({ connection: "cloud" });
+    const processes = (config.improve as Dict).processes as Dict;
+    expect(processes.reflect).toEqual({ connection: "default" });
+    expect(processes.triage).toEqual({ connection: "cloud" });
     expect(config).not.toHaveProperty("defaults");
   });
 
@@ -369,7 +372,7 @@ describe("what a strategy no longer decides, and per-process names", () => {
     expect(withHarness.notes.join("\n")).toContain("index.memory.engine");
   });
 
-  test("a per-process engine becomes connection or harness by the target's kind, keeping model, llm and timeoutMs", () => {
+  test("a strategy process's engine becomes connection or harness by the target's kind, and moves to improve.processes with its model, llm and timeoutMs", () => {
     const { config } = convert({
       engines: {
         lab: llm(),
@@ -381,30 +384,72 @@ describe("what a strategy no longer decides, and per-process names", () => {
           nightly: {
             processes: {
               reflect: {
+                enabled: true,
                 engine: "lab",
                 model: "balanced",
                 llm: { temperature: 0.1 },
                 timeoutMs: 100,
-                qualityGate: { engine: "claude" },
+                qualityGate: { enabled: false, engine: "claude" },
               },
               distill: { engine: "sdk" },
-              triage: { judgment: { engine: "gone" } },
+              triage: { judgment: { enabled: true, engine: "gone" } },
             },
           },
         },
       },
     });
-    const processes = (((config.improve as Dict).strategies as Dict).nightly as Dict).processes as Dict;
-    expect(processes.reflect).toEqual({
-      connection: "lab",
-      model: "balanced",
-      llm: { temperature: 0.1 },
-      timeoutMs: 100,
-      qualityGate: { harness: "claude" },
+    const improve = config.improve as Dict;
+    expect(improve.processes).toEqual({
+      reflect: { connection: "lab", model: "balanced", llm: { temperature: 0.1 }, timeoutMs: 100 },
+      // The removed runtime engine is the connection it ran over; a name that is nothing is read as a connection.
+      distill: { connection: "lab" },
+      triage: { connection: "gone" },
     });
-    // The removed runtime engine is the connection it ran over; a name that is nothing is read as a connection.
-    expect(processes.distill).toEqual({ connection: "lab" });
-    expect((processes.triage as Dict).judgment).toEqual({ connection: "gone" });
+    expect(improve.qualityGate).toEqual({ harness: "claude" });
+    // What stays in the strategy is which processes run and how.
+    expect(improve.strategies).toEqual({
+      nightly: {
+        processes: {
+          reflect: { enabled: true, qualityGate: { enabled: false } },
+          distill: {},
+          triage: { judgment: { enabled: true } },
+        },
+      },
+    });
+  });
+
+  test("two strategies that say where a process runs differently keep the first and note the second", () => {
+    const { config, notes } = convert({
+      engines: { lab: llm(), cloud: llm({ endpoint: "https://api.openai.com/v1/chat/completions" }) },
+      improve: {
+        strategies: {
+          nightly: { processes: { reflect: { engine: "lab", model: "fast", qualityGate: { engine: "lab" } } } },
+          weekly: {
+            processes: { reflect: { engine: "cloud", model: "fast", timeoutMs: 7, qualityGate: { engine: "cloud" } } },
+          },
+        },
+      },
+    });
+    const improve = config.improve as Dict;
+    expect(improve.processes).toEqual({ reflect: { connection: "lab", model: "fast", timeoutMs: 7 } });
+    expect(improve.qualityGate).toEqual({ connection: "lab" });
+    const text = notes.join("\n");
+    expect(text).toContain("improve.strategies.weekly.processes.reflect.connection");
+    expect(text).toContain("improve.strategies.weekly.processes.reflect.qualityGate.connection");
+    expect(text).not.toContain("reflect.model");
+  });
+
+  test("a harness and a connection named by different strategies for one process are one choice, not two", () => {
+    const { config } = convert({
+      engines: { lab: llm(), claude: { kind: "agent", platform: "claude" } },
+      improve: {
+        strategies: {
+          nightly: { processes: { reflect: { engine: "lab" } } },
+          weekly: { processes: { reflect: { engine: "claude" } } },
+        },
+      },
+    });
+    expect((config.improve as Dict).processes).toEqual({ reflect: { connection: "lab" } });
   });
 });
 
@@ -533,10 +578,20 @@ describe("the example configs load unchanged and validate", () => {
     // Already the current form: the converter leaves it alone.
     expect(convertEngineConfig(raw).changed).toBe(false);
     expect(AkmConfigSchema.safeParse({ configVersion: "0.9.0", semanticSearchMode: "off", ...raw }).success).toBe(true);
-    // Every key of the connections, harnesses, embedding and index blocks is one akm reads or a request field.
-    const unknown = unknownConfigKeyPaths({ configVersion: "0.9.0", ...raw }).map((keyPath) => keyPath.join("."));
-    // 3-power.jsonc sketches `improve.processes` and `improve.qualityGate`, which the schema does not define
-    // (processes are a strategy's: `improve.strategies.<s>.processes`); they are warned about and ignored.
-    expect(unknown).toEqual(name === "3-power" ? ["improve.processes", "improve.qualityGate"] : []);
+    // Every key is one akm reads or a request field.
+    expect(unknownConfigKeyPaths({ configVersion: "0.9.0", ...raw })).toEqual([]);
+  });
+
+  test("3-power.jsonc: triage runs on the anthropic connection's reasoning model, and the quality gate judges on anthropic", () => {
+    const raw = JSON.parse(stripJsonComments(fs.readFileSync(path.join(examples, "3-power.jsonc"), "utf8"))) as Dict;
+    const config = AkmConfigSchema.parse({ configVersion: "0.9.0", semanticSearchMode: "off", ...raw }) as AkmConfig;
+    const triage = resolveImproveExecution({ config, processName: "triage-judgment", process: "triage" })?.runner;
+    expect(triage).toMatchObject({ kind: "connection", name: "anthropic", model: "claude-opus-4-7" });
+    const distill = resolveImproveExecution({ config, processName: "distill" })?.runner;
+    expect(distill).toMatchObject({ kind: "connection", name: "default", model: "qwen3-32b" });
+    expect(resolveQualityGateJudge(config, undefined, "reflect")).toMatchObject({
+      kind: "connection",
+      name: "anthropic",
+    });
   });
 });

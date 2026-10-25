@@ -2059,7 +2059,14 @@ describe("akmExtract — engine + strategy config resolution", () => {
     }
   });
 
+  /**
+   * `processOverride` is the extract process's settings. Where it runs (connection, harness, model, llm,
+   * timeoutMs) is `improve.processes.extract`, whichever strategy is selected; the rest is the strategy's.
+   */
   function configWithStrategy(stashDir: string, processOverride: Record<string, unknown>): AkmConfig {
+    const where = ["connection", "harness", "model", "llm", "timeoutMs"];
+    const placed = Object.fromEntries(Object.entries(processOverride).filter(([key]) => where.includes(key)));
+    const strategyProcess = Object.fromEntries(Object.entries(processOverride).filter(([key]) => !where.includes(key)));
     return {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
@@ -2080,13 +2087,14 @@ describe("akmExtract — engine + strategy config resolution", () => {
       },
       improve: {
         strategy: "extract",
+        processes: { extract: placed },
         strategies: {
           // #561 — default-off session indexing here so these resolution tests
           // keep asserting the single distillation chat call. Overridable via
           // processOverride for any test that wants to exercise it.
           extract: {
             processes: {
-              extract: { enabled: true, indexSessions: false, triage: { enabled: false }, ...processOverride },
+              extract: { enabled: true, indexSessions: false, triage: { enabled: false }, ...strategyProcess },
             },
           },
         },
@@ -2257,7 +2265,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
     ).rejects.toThrow("No connection or harness is configured for extract");
   });
 
-  test("honors processes.extract.engine to pick a non-default LLM", async () => {
+  test("honors improve.processes.extract.connection to pick a non-default connection", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_profile", Date.now() - 60_000);
     let receivedEndpoint = "";
