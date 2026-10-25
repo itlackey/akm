@@ -9,11 +9,12 @@
  * Stored commands execute only through `akm command run`; workflows execute
  * only through the workflow runtime.
  *
- * When no prompt, agent selector, or model is given, the
- * native agent is launched interactively with no dispatch payload.
+ * With a prompt the agent runs it and its reply is printed. Without one the harness
+ * is started interactively (a model may be named); a connection has nothing to start,
+ * and a persona, inference or output schema needs a task to apply to.
  *
- * Every noninteractive arm uses the canonical command invocation path. The
- * prompt-free arm uses the shared payload-free interactive execution lowerer.
+ * The prompt arm uses the canonical command invocation path; the prompt-free arm starts
+ * the harness itself (`executeInteractiveAgentInvocation`).
  */
 
 import type { AkmConfig } from "../../core/config/config";
@@ -116,21 +117,22 @@ export async function akmAgentDispatch(
 
   rejectInvalidAgentRef(options.agentRef);
 
-  const hasResolvedSelection = options.agentRef !== undefined || options.selection !== undefined;
-  if (options.prompt !== undefined || hasResolvedSelection) {
-    if (options.prompt === undefined) {
-      throw new UsageError(
-        "Agent persona/model/tool/schema/inference selection requires an explicit task from --prompt or --prompt-stdin; it cannot fabricate an empty command. Omit those selections for a prompt-free interactive launch.",
-        "MISSING_REQUIRED_ARGUMENT",
-      );
-    }
-    return delegateCanonicalCommand(options, seams, { content: options.prompt });
+  if (options.prompt !== undefined) return delegateCanonicalCommand(options, seams, { content: options.prompt });
+
+  // No prompt: the harness is started for a person. Only a model rides along; the rest needs a task.
+  const { model, ...needsTask } = options.selection ?? {};
+  if (options.agentRef !== undefined || Object.keys(needsTask).length > 0) {
+    throw new UsageError(
+      "An agent persona, inference setting or output schema applies to a task: pass --prompt or --prompt-stdin. Without a prompt only the harness (and a model) is started.",
+      "MISSING_REQUIRED_ARGUMENT",
+    );
   }
 
   const executeInteractive = seams.executeInteractive ?? executeInteractiveAgentInvocation;
   const execution = await executeInteractive({
     config: options.agentConfig,
     ...(options.engine !== undefined ? { engine: options.engine } : {}),
+    ...(typeof model === "string" ? { model } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
   });

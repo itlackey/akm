@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import type { AkmConfig } from "../../core/config/config";
 import { resolveApiKey } from "../../core/config/credentials";
+import { UsageError } from "../../core/errors";
 import type { LlmInference } from "../../core/llm-inference";
 import { collectSensitiveValues, isEnvPassthroughValueSafeToExpose, redactSensitiveText } from "../../core/redaction";
 import type { ExecutionJsonObject } from "../../execution/json";
@@ -298,8 +299,10 @@ export async function runExecution(
 
 export interface InteractiveAgentInvocationOptions {
   readonly config: AkmConfig;
-  /** The harness (or connection) to launch; omitted means the default. */
+  /** The harness to launch; omitted means the default. */
   readonly engine?: string;
+  /** The model it starts with, as an alias or an exact name. */
+  readonly model?: string;
   readonly timeoutMs?: number;
   readonly cwd?: string;
 }
@@ -310,23 +313,33 @@ export interface InteractiveAgentInvocationResult {
   readonly result: AgentRunResult;
 }
 
-/** `akm agent`: launch an agent interactively, with no prompt of its own. */
+/**
+ * `akm agent` with no prompt: start the harness for a person to use, with the terminal
+ * inherited and nothing to run (no `-p`, no empty turn). A connection has nothing
+ * interactive to start, so it is refused rather than billed for an empty turn.
+ */
 export async function executeInteractiveAgentInvocation(
   input: InteractiveAgentInvocationOptions,
-  seams: Pick<RunExecutionOptions, "runAgent" | "runSdk"> = {},
+  seams: Pick<RunExecutionOptions, "runAgent"> = {},
 ): Promise<InteractiveAgentInvocationResult> {
   const runner = resolveTarget({
     config: input.config,
-    layers: input.engine === undefined ? [] : [{ engine: input.engine }],
+    layers: [
+      ...(input.engine === undefined ? [] : [{ engine: input.engine }]),
+      ...(input.model === undefined ? [] : [{ model: input.model }]),
+    ],
   });
+  if (runner.kind === "connection") {
+    throw new UsageError(
+      `"${runner.name}" is a connection, which has nothing to start interactively. Pass --prompt, or name a harness.`,
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  }
   const opts: RunAgentOptions = {
-    stdio: runner.kind === "connection" ? "captured" : "interactive",
+    stdio: "interactive",
     timeoutMs: input.timeoutMs ?? runner.timeoutMs,
-    ...(input.cwd
-      ? { cwd: input.cwd }
-      : runner.kind === "harness" && runner.workspace
-        ? { cwd: runner.workspace }
-        : {}),
+    ...(input.cwd ? { cwd: input.cwd } : runner.workspace ? { cwd: runner.workspace } : {}),
+    dispatch: { ...(runner.model ? { model: runner.model } : {}), ...(runner.agent ? { agent: runner.agent } : {}) },
   };
   return { engine: runner.name, result: await dispatchRunner({ runner }, "", opts, seams) };
 }

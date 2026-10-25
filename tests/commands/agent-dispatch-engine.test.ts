@@ -8,7 +8,8 @@ import { akmAgentDispatch } from "../../src/commands/agent/agent-dispatch";
 import { agentCommand } from "../../src/commands/agent/contribute-cli";
 import type { AkmConfig } from "../../src/core/config/config-types";
 import { executeInteractiveAgentInvocation } from "../../src/integrations/agent/runner-dispatch";
-import { withEnv } from "../_helpers/sandbox";
+import { harnessCalls, writeFakeHarness } from "../_helpers/engine-stubs";
+import { makeSandboxDir, withEnv } from "../_helpers/sandbox";
 
 describe("akm agent CLI help", () => {
   test("does not expose workflow flattening or tool policy", async () => {
@@ -63,7 +64,9 @@ describe("akmAgentDispatch engine capability", () => {
       },
     });
     const nativeOptions = (calls[0] as { options: Record<string, unknown> }).options;
-    for (const field of ["env", "dispatch", "signal"]) {
+    // Nothing to run: an empty request, the program as a person would start it.
+    expect(nativeOptions.dispatch).toEqual({});
+    for (const field of ["env", "signal"]) {
       expect(Object.hasOwn(nativeOptions, field)).toBe(false);
     }
     for (const field of [execution.result.stdout, execution.result.stderr, execution.result.error]) {
@@ -71,32 +74,49 @@ describe("akmAgentDispatch engine capability", () => {
     }
   });
 
-  test("a connection launches akm's own runtime, captured, with no prompt of its own", async () => {
-    const sdkCalls: unknown[] = [];
-    const launched = await executeInteractiveAgentInvocation(
-      {
-        config: {
-          configVersion: "0.9.0",
-          semanticSearchMode: "off",
-          connections: { lab: { endpoint: "https://example.invalid/v1", models: { fast: "fixture" } } },
-        },
-        engine: "lab",
-      },
-      {
-        runSdk: async (profile, prompt, options, connection) => {
-          sdkCalls.push({ profile: profile.name, prompt, options, model: connection?.model });
-          return { ok: true, exitCode: 0, stdout: "", stderr: "", durationMs: 1 };
-        },
-      },
-    );
-    expect(launched.engine).toBe("lab");
-    expect(sdkCalls).toHaveLength(1);
-    expect(sdkCalls[0]).toMatchObject({
-      profile: "lab",
-      prompt: "",
-      options: { stdio: "captured" },
-      model: "fixture",
-    });
+  test("a connection has nothing to start interactively: it says so, and runs nothing", async () => {
+    let dispatches = 0;
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      connections: { lab: { endpoint: "https://example.invalid/v1", models: { fast: "fixture" } } },
+    };
+    const runAgent = async () => {
+      dispatches += 1;
+      return { ok: true, exitCode: 0, stdout: "", stderr: "", durationMs: 1 };
+    };
+    for (const input of [{ config }, { config, engine: "lab" }]) {
+      await expect(executeInteractiveAgentInvocation(input, { runAgent })).rejects.toThrow(
+        /connection.*--prompt.*harness/is,
+      );
+    }
+    expect(dispatches).toBe(0);
+  });
+
+  test("a harness starts interactively through its own binary: no prompt flag, no empty turn", async () => {
+    const bins = makeSandboxDir("akm-interactive-agent");
+    try {
+      const bin = writeFakeHarness(bins.dir, "claude-fake", [""], { readStdin: false });
+      const config: AkmConfig = {
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        harnesses: { native: { platform: "claude", bin, models: { fast: "claude-fast" } } },
+      };
+
+      const plain = await executeInteractiveAgentInvocation({ config, engine: "native" });
+      expect(plain).toMatchObject({ engine: "native", result: { ok: true, exitCode: 0 } });
+      const withModel = await executeInteractiveAgentInvocation({ config, engine: "native", model: "fast" });
+      expect(withModel.result.ok).toBe(true);
+
+      const calls = harnessCalls(bin);
+      expect(calls.map((call) => call.argv)).toEqual([
+        ["--model", "claude-fast"],
+        ["--model", "claude-fast"],
+      ]);
+      for (const call of calls) expect(call.argv).not.toContain("-p");
+    } finally {
+      bins.cleanup();
+    }
   });
 
   test("nothing configured is AGENT_NOT_CONFIGURED before any dispatch", async () => {
@@ -201,21 +221,43 @@ describe("akmAgentDispatch engine capability", () => {
     ]);
   });
 
-  test("rejects persona or model metadata without explicit work instead of fabricating an empty command", async () => {
+  test("a persona or inference setting without a task is refused instead of fabricating an empty command", async () => {
     let calls = 0;
     const executeCommand = async () => {
       calls += 1;
       throw new Error("must not delegate");
     };
+    const executeInteractive = async () => {
+      calls += 1;
+      throw new Error("must not start the harness");
+    };
     const agentConfig = { configVersion: "0.9.0", semanticSearchMode: "off" } as const;
 
     await expect(
-      akmAgentDispatch({ agentRef: "fixture//agents/reviewer", agentConfig }, { executeCommand }),
-    ).rejects.toThrow(/--prompt|explicit task/i);
+      akmAgentDispatch({ agentRef: "fixture//agents/reviewer", agentConfig }, { executeCommand, executeInteractive }),
+    ).rejects.toThrow(/--prompt/i);
     await expect(
-      akmAgentDispatch({ selection: { model: "balanced" }, agentConfig }, { executeCommand }),
-    ).rejects.toThrow(/--prompt|explicit task/i);
+      akmAgentDispatch(
+        { selection: { inference: { temperature: 0 } }, agentConfig },
+        { executeCommand, executeInteractive },
+      ),
+    ).rejects.toThrow(/--prompt/i);
     expect(calls).toBe(0);
+  });
+
+  test("a model alone does not need a task: it rides along to the interactive launch", async () => {
+    const calls: unknown[] = [];
+    const agentConfig = { configVersion: "0.9.0", semanticSearchMode: "off" } as const;
+    await akmAgentDispatch(
+      { selection: { model: "balanced" }, agentConfig },
+      {
+        executeInteractive: async (input) => {
+          calls.push(input);
+          return { engine: "native", result: { ok: true, exitCode: 0, stdout: "", stderr: "", durationMs: 1 } };
+        },
+      },
+    );
+    expect(calls).toEqual([{ config: agentConfig, model: "balanced" }]);
   });
 
   test("rejects a non-agent positional ref before canonical command delegation", async () => {

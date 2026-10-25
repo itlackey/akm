@@ -42,7 +42,7 @@ export const agentCommand = defineCommand({
   meta: {
     name: "agent",
     description:
-      "Dispatch an agent CLI (opencode, claude, …) with an optional agent persona and model defaults. Use --prompt for work; stored commands run through akm command run.",
+      "Dispatch an agent CLI (opencode, claude, …) with an optional agent persona and model defaults. Use --prompt for work; without one the harness starts interactively. Stored commands run through akm command run.",
   },
   args: {
     ...GLOBAL_OUTPUT_ARGS,

@@ -47,13 +47,28 @@ describe("akm contribution cluster — JSON envelope snapshot (WS6)", () => {
     expect(env.hint).toContain("akm setup");
   });
 
-  test("agent (a connection configured): runs on akm's own runtime, with no binary or PATH check (exit 0)", async () => {
+  test("agent (a connection configured, no prompt): nothing to start, so a usage envelope naming --prompt and a harness (exit 2)", async () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       connections: { lab: { endpoint: "http://127.0.0.1:1/v1", models: { fast: "fixture" } } },
     });
     const host = installFakeOpencodeHost({ reply: () => "hello" });
-    const { stdout, status } = await withEnv({ PATH: "" }, () => runCli(["agent"]));
+    const { stderr, status } = await withEnv({ PATH: "" }, () => runCli(["agent"]));
+    expect(status).toBe(2);
+    const env = JSON.parse(stderr);
+    expect(env).toMatchObject({ ok: false, code: "MISSING_REQUIRED_ARGUMENT" });
+    expect(env.error).toMatch(/connection.*--prompt.*harness/is);
+    // No billed empty turn.
+    expect(host.calls).toHaveLength(0);
+  });
+
+  test("agent --prompt (a connection configured): runs on akm's own runtime, with no binary or PATH check (exit 0)", async () => {
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      connections: { lab: { endpoint: "http://127.0.0.1:1/v1", models: { fast: "fixture" } } },
+    });
+    const host = installFakeOpencodeHost({ reply: () => "hello" });
+    const { stdout, status } = await withEnv({ PATH: "" }, () => runCli(["agent", "--prompt", "say hello"]));
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
     expect(env).toMatchObject({ ok: true, engine: "lab", stdout: "hello" });
