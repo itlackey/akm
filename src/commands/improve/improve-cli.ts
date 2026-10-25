@@ -347,7 +347,7 @@ export const improveCommand = defineCommand({
     "show-prompt": {
       type: "boolean",
       description:
-        "Print the composed reflect prompt for one asset ref and exit — no lock, index write, or engine dispatch (#952). Requires a fully-qualified asset ref as the scope positional (e.g. `akm improve lessons/my-lesson --show-prompt`). JSON/yaml format carries the prompt as a `prompt` field; text format prints it directly.",
+        "Print the composed reflect prompt for one asset ref and exit — no lock, index write, or model call (#952). Requires a fully-qualified asset ref as the scope positional (e.g. `akm improve lessons/my-lesson --show-prompt`). JSON/yaml format carries the prompt as a `prompt` field; text format prints it directly.",
       default: false,
     },
     strategy: {

@@ -333,8 +333,9 @@ export async function executeInteractiveAgentInvocation(
   });
   if (runner.kind === "connection") {
     throw new UsageError(
-      `"${runner.name}" is a connection, which has nothing to start interactively. Pass --prompt, or name a harness.`,
+      `"${runner.name}" is a connection, which has nothing to start interactively.`,
       "MISSING_REQUIRED_ARGUMENT",
+      "Pass --prompt to run a task on the connection, or name a harness with --harness to start it interactively.",
     );
   }
   const opts: RunAgentOptions = {

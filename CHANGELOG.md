@@ -913,7 +913,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   its whole deadline. It now returns at once with `reason: "aborted"` and the declined tool call in `error`.
 - **Documented: OpenCode permission defaults in a dispatch (#1049).** OpenCode 1 asks before reading or writing outside
   the project directory; OpenCode 2 does not unless its config says `ask`, so akm's permission rejection only happens
-  on OpenCode 2 once you add that rule. akm changes no default. See [Configuration](docs/reference/configuration.md#engines).
+  on OpenCode 2 once you add that rule. akm changes no default. See [Configuration](docs/reference/configuration.md#harnesses).
 
 ## [0.10.26101201] - 2026-10-12
 
