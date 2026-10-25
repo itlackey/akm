@@ -49,7 +49,7 @@ import {
 } from "../../core/write-source";
 import type { InputFlag } from "../../execution/input-contract";
 import { deriveInstallations } from "../../indexer/installations";
-import { engineKind } from "../../integrations/agent/resolution";
+import { retiredEngineSelection } from "../../integrations/agent/resolution";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
@@ -169,15 +169,15 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     throw new UsageError(`Resolved task path escapes the stash: "${id}".`, "PATH_ESCAPE_VIOLATION");
   }
 
-  const engineAs = input.engine === undefined ? undefined : engineKind(bundle.config, input.engine);
+  const engineAs = input.engine === undefined ? undefined : retiredEngineSelection(bundle.config, input.engine);
   const yaml = renderTaskYaml({
     id,
     schedule: input.schedule,
     workflow: input.workflow,
     prompt: input.prompt,
     command: input.command,
-    connection: input.connection ?? (engineAs === "connection" ? input.engine : undefined),
-    harness: input.harness ?? (engineAs === "harness" ? input.engine : undefined),
+    connection: input.connection ?? (engineAs?.kind === "connection" ? engineAs.name : undefined),
+    harness: input.harness ?? (engineAs?.kind === "harness" ? engineAs.name : undefined),
     model: input.model,
     timeoutMs: input.timeoutMs,
     params: input.params,

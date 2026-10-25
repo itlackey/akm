@@ -11,7 +11,9 @@
  *
  * A key is stored for one endpoint and is read for that endpoint alone: the
  * entry records the endpoint it was stored for, and a block whose endpoint is
- * now another gets no key, with a word saying so. A connection's name and a
+ * now another gets no key, with a word saying so. Only the connections this
+ * host's own config file defines have a stored key: one that only an `extends`
+ * base defines gets none, whatever the store holds under its name. A connection's name and a
  * service's slot are different namespaces, so a connection called `embedding`
  * and the embedding service hold different keys. A block whose `apiKey` is a
  * `$VAR` reference reads that variable and never touches this file. The bundle's
@@ -26,6 +28,7 @@ import { ConfigError } from "../errors";
 import { getConfigDir } from "../paths";
 import { collectSensitiveValues, redactUrlCredentials } from "../redaction";
 import { warnOnce } from "../warn";
+import { isInheritedConnection } from "./config";
 import type { AkmConfig } from "./config-types";
 import { envReferenceName, isEnvReference } from "./schema/primitives";
 
@@ -132,6 +135,7 @@ export function storedCredential(slot: CredentialSlot): StoredCredential | undef
  * not read: it is named once, without its value, and the block goes without.
  */
 export function readCredential(slot: CredentialSlot, endpoint: string): string | undefined {
+  if ("connection" in slot && isInheritedConnection(slot.connection)) return undefined;
   const held = storedCredential(slot);
   if (!held) return undefined;
   if (!sameEndpoint(held.endpoint, endpoint)) {

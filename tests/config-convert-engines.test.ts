@@ -311,6 +311,65 @@ describe("the defaults become the entries named default", () => {
     expect((connections["legacy-default"] as Dict).models).toMatchObject({ fast: "old" });
   });
 
+  test("a legacy-default that already exists is not overwritten: the old default moves to the next free name, one name to one name", () => {
+    const { config, targets, keys } = convert({
+      engines: {
+        default: llm({ model: "was-default", apiKey: "sk-default" }),
+        "legacy-default": llm({ model: "was-legacy" }),
+        lab: llm({ model: "was-lab" }),
+      },
+      defaults: { llmEngine: "lab" },
+    });
+    const connections = config.connections as Dict;
+    expect(Object.keys(connections).sort()).toEqual(["default", "legacy-default", "legacy-default-2"]);
+    const fast = (name: string) => ((connections[name] as Dict).models as Dict).fast;
+    expect([fast("default"), fast("legacy-default"), fast("legacy-default-2")]).toEqual([
+      "was-lab",
+      "was-legacy",
+      "was-default",
+    ]);
+    // Every reference to an old name follows the same map: the engines' targets, and the key an engine held.
+    expect(targets).toEqual({
+      default: { connection: "legacy-default-2" },
+      "legacy-default": { connection: "legacy-default" },
+      lab: { connection: "default" },
+    });
+    expect(keys).toEqual([{ engine: "default", connection: "legacy-default-2", field: "apiKey" }]);
+  });
+
+  test("the harness side moves a harness already called default aside the same way", () => {
+    const { config, targets } = convert({
+      engines: {
+        default: { kind: "agent", platform: "gemini" },
+        "legacy-default": { kind: "agent", platform: "pi" },
+        claude: { kind: "agent", platform: "claude" },
+      },
+      defaults: { engine: "claude" },
+    });
+    expect(config.harnesses).toEqual({
+      default: { platform: "claude" },
+      "legacy-default-2": { platform: "gemini" },
+      "legacy-default": { platform: "pi" },
+    });
+    expect(targets).toEqual({
+      default: { harness: "legacy-default-2" },
+      "legacy-default": { harness: "legacy-default" },
+      claude: { harness: "default" },
+    });
+  });
+
+  test("a name the file itself writes under connections is not taken by the entry that moves aside", () => {
+    const { config } = convert({
+      engines: { default: llm({ model: "was-default" }), lab: llm({ model: "was-lab" }) },
+      connections: { "legacy-default": { endpoint: "http://own:1/v1", models: { fast: "own" } } },
+      defaults: { llmEngine: "lab" },
+    });
+    const connections = config.connections as Dict;
+    expect(Object.keys(connections).sort()).toEqual(["default", "legacy-default", "legacy-default-2"]);
+    expect(((connections["legacy-default"] as Dict).models as Dict).fast).toBe("own");
+    expect(((connections["legacy-default-2"] as Dict).models as Dict).fast).toBe("was-default");
+  });
+
   test("the harness defaults.engine named is renamed default when there are several, keeping its platform", () => {
     const { config } = convert({
       engines: { claude: { kind: "agent", platform: "claude" }, opencode: { kind: "agent", platform: "opencode" } },

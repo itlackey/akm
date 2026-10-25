@@ -7,16 +7,20 @@
  * workflow files and task sources becomes `connection:` or `harness:`, by the
  * kind of thing the name is now. The names an engine had before the `engines`
  * form was converted come from that step's result (`engineTargets`: `lab` may now
- * be `default`); a name it does not know is looked up in the configuration as it
- * stands; a name that is neither a connection nor a harness is written as a
- * harness, with a note.
+ * be `default`), and are kept in the data directory until no file is left skipped, so
+ * a read-only bundle's asset that becomes writable, or a retry after the config has
+ * been rewritten, is written under the same names; a name it does not know is looked
+ * up in the configuration as it stands; a name that is neither a connection nor a
+ * harness is written as a harness, with a note.
  */
 
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { type AkmConfig, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
 import type { EngineTarget } from "../../src/core/config/convert-engines";
+import { isRecord } from "../../src/core/common";
 import { getDataDir } from "../../src/core/paths";
 import {
   type EngineKeyOutcome,
@@ -100,10 +104,33 @@ function summarize(files: readonly EngineKeyOutcome[]): EngineKeysSummary {
   };
 }
 
-function plan(targets?: Readonly<Record<string, EngineTarget>>) {
+type EngineTargets = Readonly<Record<string, EngineTarget>>;
+
+/** Where the old names are kept until every reference to them has been rewritten. */
+function rememberedTargetsPath(): string {
+  return path.join(getDataDir(), "migrate", "engine-targets.json");
+}
+
+/** The names an earlier run's config step recorded, if any; a file that is not a name map holds none. */
+function rememberedTargets(): EngineTargets {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(rememberedTargetsPath(), "utf8"));
+    return isRecord(parsed) ? (parsed as EngineTargets) : {};
+  } catch {
+    return {};
+  }
+}
+
+function rememberTargets(targets: EngineTargets): void {
+  fs.mkdirSync(path.dirname(rememberedTargetsPath()), { recursive: true });
+  fs.writeFileSync(rememberedTargetsPath(), `${JSON.stringify(targets, null, 2)}\n`);
+}
+
+function plan(targets?: EngineTargets) {
   resetConfigCache();
   const config = loadConfig();
-  return planEngineKeys(inspectEngineKeyFiles(taskRoots(config)), resolverFor(config, targets));
+  const known = targets && Object.keys(targets).length > 0 ? targets : rememberedTargets();
+  return planEngineKeys(inspectEngineKeyFiles(taskRoots(config)), resolverFor(config, known));
 }
 
 function statusOf(summary: EngineKeysSummary): EngineKeysMigrationStatus {
@@ -118,11 +145,15 @@ export function inspectEngineKeysMigration(targets?: Readonly<Record<string, Eng
 /** Rewrite every `engine:` key found, under one backup directory for the run. */
 export function applyEngineKeysMigration(targets?: Readonly<Record<string, EngineTarget>>): EngineKeysMigrationStatus {
   return withConfigLock(() => {
+    if (targets && Object.keys(targets).length > 0) rememberTargets(targets);
     const before = plan(targets);
     const summary = summarize(before.files);
+    // Nothing left skipped: every reference that could be rewritten is, and the old names are no longer needed.
+    if (summary.skipped === 0 && summary.changed === 0) fs.rmSync(rememberedTargetsPath(), { force: true });
     if (summary.changed === 0) return statusOf(summary);
     const backupPath = path.join(getDataDir(), "backups", "asset-engine-keys", `${Date.now()}-${randomUUID()}`);
     const rewritten = applyEngineKeysPlan(before, { backupRoot: backupPath });
+    if (summary.skipped === 0) fs.rmSync(rememberedTargetsPath(), { force: true });
     // The report keeps what was rewritten, notes included; nothing is left to do.
     return { schemaVersion: 1, status: "current", assetEngineKeys: { ...summary, backupPath, applied: rewritten.length } };
   });

@@ -290,11 +290,12 @@ akm reads an API key from one of two places, and nowhere else:
   different namespaces, so a connection called `embedding` and the embedding
   service hold different keys. An `embedding` that runs on the default connection
   uses that connection's entry. A connection that only an `extends` base defines
-  has the base's endpoint, so it uses a stored key only when you stored one for
-  that exact endpoint; a connection of the same name stored for another endpoint,
-  or a key in the older flat `{ "<name>": "<key>" }` form, which names no
-  endpoint, is not used (`akm migrate apply` files a flat entry under the
-  endpoint your own config gives that block).
+  gets its endpoint from that base, so it never uses a stored key: stored keys
+  are for the connections your own `config.json` names (name it there, even with
+  only its `models`, and a key stored for the endpoint it ends up with is used).
+  A key in the older flat `{ "<name>": "<key>" }` form names no endpoint and is
+  not used; `akm migrate apply` files it under the endpoint your own config gives
+  that block.
 
 `akm setup` asks for a key at a masked prompt and stores it in
 `credentials.json` for the endpoint it was typed for; `--api-key-env NAME` sets
@@ -1055,7 +1056,7 @@ asset keys move as the table says.
 | `engines.<name>` with `kind: "llm"` | `connections.<name>`. `endpoint`, `contextLength`, `timeoutMs`, `concurrency` and an `apiKey` that is a `$VAR` are kept. `model` becomes `models`, with `fast`, `balanced` and `reasoning` all naming it. `temperature`, `maxTokens`, `enableThinking`, `reasoningEffort` and `extraParams` become request fields (`temperature`, `max_tokens`, `enable_thinking` with `chat_template_kwargs.enable_thinking`, `reasoning_effort`, and the extras as written). `kind`, `provider` and `supportsJsonSchema` are dropped, with a note. |
 | `engines.<name>` with `kind: "agent"` and `platform: "opencode-sdk"` | Removed: akm's own runtime has no entry. Its `llmEngine` connection becomes `default`. |
 | `engines.<name>` with `kind: "agent"`, any other platform | `harnesses.<name>`, keeping `platform`, `bin`, `args`, `workspace`, `agent` and `timeoutMs`. `model` becomes `models`, naming it for all three aliases. |
-| `defaults.llmEngine`, else `defaults.engine` when it names an LLM engine | That connection is renamed `default`, and every reference to the old name follows. |
+| `defaults.llmEngine`, else `defaults.engine` when it names an LLM engine | That connection is renamed `default`, and every reference to the old name follows. An entry already called `default` moves aside to `legacy-default`, or the first `legacy-default-<n>` nothing else has: the renaming is one name to one name, so no two entries share a name and none is lost. |
 | `defaults.engine` naming an agent engine, when there are several | That harness is renamed `default`. |
 | `defaults.improveStrategy` | `improve.strategy`. |
 | `models.json` | Folded into the `models` of the connections and harnesses it names; what it cannot place is listed in the notes. The file moves to `config-backups/` in the cache directory. |
@@ -1067,6 +1068,12 @@ asset keys move as the table says.
 | `workflow.judgeEngine` | Dropped, with a note. |
 | `engine:` in an asset's frontmatter, a workflow step or a task source | `connection:` or `harness:`, by what the configured target is; a name it cannot place becomes `harness:`, with a note. A bundle akm may not change is skipped. |
 
-An `engine:` key on an asset that has not been migrated is read the same way: as
-a connection by that name, else a harness, with a one-time notice.
+An `engine:` key on an asset that has not been migrated is read the same way,
+with a one-time notice. While the config file is still in the `engines` form it
+names the connection or harness that engine became, so `engine: lab` still means
+the engine called `lab` after the conversion has renamed it `default`; once the
+file is migrated it names a connection by that name, else a harness. The names
+the engines had are kept in akm's data directory (`migrate/engine-targets.json`)
+until no asset is left skipped, so an asset that was read-only, or a retried
+`akm migrate apply`, is rewritten under the same names.
 

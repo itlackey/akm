@@ -122,11 +122,16 @@ interface Converted {
   readonly ownModelOf: Array<{ kind: "connections" | "harnesses"; engine: string; model: string }>;
 }
 
-/** The entries as `connections` / `harnesses` now name them, and how an old engine name maps to them. */
+/**
+ * The entries as `connections` / `harnesses` now name them, and how an old engine name maps to them.
+ * The two name maps are computed once, one name to one name, and every step reads them: the entries, the
+ * keys, the models, the references.
+ */
 interface Naming {
   readonly defaultConnection: string | undefined;
   readonly defaultHarness: string | undefined;
-  readonly newName: (name: string, from: string | undefined) => string;
+  readonly connectionName: (name: string) => string;
+  readonly harnessName: (name: string) => string;
   readonly connections: Dict;
   readonly harnesses: Dict;
   readonly keys: readonly EngineKey[];
@@ -246,8 +251,31 @@ function convertEngines(
 
 // ── the defaults are the entries named `default` ─────────────────────────────
 
+/**
+ * The name each of `names` has once `from` is called `default`. An existing `default` moves aside to
+ * `legacy-default`, or the first `legacy-default-<n>` that nothing else (an engine, or an entry the file writes
+ * itself under `taken`) already has, so no two entries ever share a name and none is lost.
+ */
+function renameMap(
+  names: readonly string[],
+  taken: readonly string[],
+  from: string | undefined,
+): (name: string) => string {
+  const moved = new Map<string, string>();
+  if (from !== undefined && from !== "default") {
+    moved.set(from, "default");
+    if (names.includes("default")) {
+      const used = new Set([...names, ...taken]);
+      let aside = "legacy-default";
+      for (let n = 2; used.has(aside); n += 1) aside = `legacy-default-${n}`;
+      moved.set("default", aside);
+    }
+  }
+  return (name) => moved.get(name) ?? name;
+}
+
 /** `defaults.llmEngine`, else `defaults.engine`: that connection is `default`; `defaults.engine` naming one of several harnesses: that harness is. */
-function nameDefaults(defaults: Dict, converted: Converted, conversion: Conversion): Naming {
+function nameDefaults(defaults: Dict, converted: Converted, conversion: Conversion, written: Entries): Naming {
   const { connections, harnesses, runtimes, keyHolders } = converted;
   const defaultEngine = str(defaults.engine);
   const runtimeLlm = defaultEngine === undefined ? undefined : runtimes.get(defaultEngine);
@@ -258,15 +286,13 @@ function nameDefaults(defaults: Dict, converted: Converted, conversion: Conversi
     defaultEngine !== undefined && defaultEngine in harnesses && Object.keys(harnesses).length > 1
       ? defaultEngine
       : undefined;
-  const newName = (name: string, from: string | undefined): string =>
-    name === from ? "default" : name === "default" && from ? "legacy-default" : name;
-  const renamed = (entries: Dict, from: string | undefined): Dict => {
-    if (from === undefined || from === "default") return entries;
-    return Object.fromEntries(Object.entries(entries).map(([name, entry]) => [newName(name, from), entry]));
-  };
+  const connectionName = renameMap(Object.keys(connections), Object.keys(written.connections), defaultConnection);
+  const harnessName = renameMap(Object.keys(harnesses), Object.keys(written.harnesses), defaultHarness);
+  const renamed = (entries: Dict, name: (engine: string) => string): Dict =>
+    Object.fromEntries(Object.entries(entries).map(([engine, entry]) => [name(engine), entry]));
   const named = {
-    connections: renamed(connections, defaultConnection),
-    harnesses: renamed(harnesses, defaultHarness),
+    connections: renamed(connections, connectionName),
+    harnesses: renamed(harnesses, harnessName),
   };
   const defaultHarnessName =
     "default" in named.harnesses
@@ -282,20 +308,18 @@ function nameDefaults(defaults: Dict, converted: Converted, conversion: Conversi
   const target = (engine: string): EngineTarget | undefined => {
     if (runtimes.has(engine)) {
       const runtime = runtimes.get(engine);
-      return runtime !== undefined && runtime in connections
-        ? { connection: newName(runtime, defaultConnection) }
-        : undefined;
+      return runtime !== undefined && runtime in connections ? { connection: connectionName(runtime) } : undefined;
     }
-    if (engine in harnesses) return { harness: newName(engine, defaultHarness) };
-    if (engine in connections) return { connection: newName(engine, defaultConnection) };
+    if (engine in harnesses) return { harness: harnessName(engine) };
+    if (engine in connections) return { connection: connectionName(engine) };
     return { connection: engine };
   };
   const keys = keyHolders.map(({ engine, field }) => ({
     engine,
-    connection: newName(engine, defaultConnection),
+    connection: connectionName(engine),
     field,
   }));
-  return { defaultConnection, defaultHarness, newName, ...named, keys, target };
+  return { defaultConnection, defaultHarness, connectionName, harnessName, ...named, keys, target };
 }
 
 /** What the file writes under `connections` / `harnesses` itself, read with the converted entries: the written entry wins field by field. */
@@ -312,8 +336,7 @@ function mergeWritten(out: Dict, naming: Naming): Entries {
 function ownModelsOf(converted: Converted, naming: Naming): OwnModels {
   const ownModels: OwnModels = { connections: new Map(), harnesses: new Map() };
   for (const { kind, engine, model } of converted.ownModelOf) {
-    const from = kind === "connections" ? naming.defaultConnection : naming.defaultHarness;
-    ownModels[kind].set(naming.newName(engine, from), model);
+    ownModels[kind].set(kind === "connections" ? naming.connectionName(engine) : naming.harnessName(engine), model);
   }
   return ownModels;
 }
@@ -330,7 +353,10 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
   };
 
   const converted = convertEngines(engines, defaults, options.env, conversion);
-  const naming = nameDefaults(defaults, converted, conversion);
+  const naming = nameDefaults(defaults, converted, conversion, {
+    connections: asDict(out.connections),
+    harnesses: asDict(out.harnesses),
+  });
   const merged = mergeWritten(out, naming);
   const ownModels = ownModelsOf(converted, naming);
   foldModelsOverlay(options.modelsOverlay, {
@@ -342,9 +368,8 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
     renamed: {
       runtime: [...converted.runtimes.values()]
         .filter((name): name is string => name !== undefined && name in converted.connections)
-        .map((name) => naming.newName(name, naming.defaultConnection)),
-      connection: (engine) =>
-        engine in converted.connections ? naming.newName(engine, naming.defaultConnection) : undefined,
+        .map((name) => naming.connectionName(name)),
+      connection: (engine) => (engine in converted.connections ? naming.connectionName(engine) : undefined),
     },
   });
   foldEngineModels(merged, ownModels);

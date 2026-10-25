@@ -313,6 +313,49 @@ describe("the step", () => {
     expect(fs.readFileSync(path.join(stash(), "commands/c.md"), "utf8")).toContain("harness: claude");
   });
 
+  test("the old names are kept while a file is skipped, so a retry after the config was rewritten writes the same names", async () => {
+    // `lab` becomes `default` and the engine called `default` becomes `legacy-default`; the bundle is read-only at first.
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: {
+        primary: {
+          path: stash(),
+          writable: false,
+          components: { main: { root: ".", adapter: "akm", writable: false } },
+        },
+      },
+      engines: {
+        lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "qwen3-32b" },
+        default: { kind: "llm", endpoint: "http://old:8080/v1/chat/completions", model: "old-model" },
+      },
+      defaults: { llmEngine: "lab" },
+    });
+    const a = write("commands/a.md", "---\nname: a\nakm:\n  engine: lab\n---\nA.\n");
+    const b = write("commands/b.md", "---\nname: b\nakm:\n  engine: default\n---\nB.\n");
+
+    const first = await runMigration({ apply: true });
+    expect(first.assetEngineKeys).toMatchObject({ changed: 0, skipped: 2 });
+    expect(fs.readFileSync(a, "utf8")).toContain("engine: lab");
+
+    // The config is now in its current shape, and has no memory of what `default` used to mean.
+    const configPath = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
+    const migrated = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(migrated.engines).toBeUndefined();
+    migrated.bundles.primary.writable = true;
+    migrated.bundles.primary.components.main = { root: ".", adapter: "akm" };
+    fs.writeFileSync(configPath, JSON.stringify(migrated));
+    resetConfigCache();
+
+    const retry = await runMigration({ apply: true });
+
+    expect(retry.assetEngineKeys).toMatchObject({ changed: 2, skipped: 0 });
+    expect(fs.readFileSync(a, "utf8")).toContain("connection: default");
+    expect(fs.readFileSync(b, "utf8")).toContain("connection: legacy-default");
+    // Nothing is left skipped, so the names are forgotten.
+    const third = await runMigration({ apply: true });
+    expect(third.assetEngineKeys).toMatchObject({ changed: 0, skipped: 0 });
+  });
+
   test("the assets wait when the config step failed: nothing is rewritten and the step is absent from the plan", async () => {
     // A credentials.json akm cannot write stops the config step.
     fs.writeFileSync(path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "credentials.json"), "not json");

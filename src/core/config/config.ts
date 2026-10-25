@@ -95,10 +95,28 @@ export const DEFAULT_CONFIG: AkmConfig = {
 
 // ── Load / Save / Update ────────────────────────────────────────────────────
 
-let cachedConfig: { config: AkmConfig; path: string; mtime: number; size: number } | undefined;
+let cachedConfig:
+  | {
+      config: AkmConfig;
+      path: string;
+      mtime: number;
+      size: number;
+      /** The connections only an `extends` base defines: this file names none of them. */
+      inheritedConnections: ReadonlySet<string>;
+    }
+  | undefined;
 
 export function resetConfigCache(): void {
   cachedConfig = undefined;
+}
+
+/**
+ * Whether the loaded config has `name` only from an `extends` base. A base chooses such a connection's
+ * endpoint, so it never uses a key stored on this host: keys are for the connections this host's own
+ * config file defines.
+ */
+export function isInheritedConnection(name: string): boolean {
+  return cachedConfig?.inheritedConnections.has(name) ?? false;
 }
 
 export function loadUserConfig(): AkmConfig {
@@ -144,7 +162,12 @@ export function loadUserConfig(): AkmConfig {
     return { ...DEFAULT_CONFIG };
   }
 
-  const finalConfig = parseAndValidateConfigText(text, configPath);
+  const lifted = runConfigFilePipeline(text, configPath);
+  const finalConfig = buildEffectiveConfig(lifted, configPath);
+  const written = isPlainConfigObject(lifted.connections) ? lifted.connections : {};
+  const inheritedConnections = new Set(
+    Object.keys(finalConfig.connections ?? {}).filter((name) => !Object.hasOwn(written, name)),
+  );
 
   // Re-stat after potential write-back so the cache key reflects the new mtime.
   let finalStat = stat;
@@ -158,6 +181,7 @@ export function loadUserConfig(): AkmConfig {
     path: configPath,
     mtime: finalStat.mtimeMs,
     size: finalStat.size,
+    inheritedConnections,
   };
   return finalConfig;
 }
@@ -215,6 +239,21 @@ function inheritedEntries(
   } finally {
     modelsOverlayOverride = undefined;
   }
+}
+
+/**
+ * What each engine of the retired `engines` form became, under the name it has now, while the file is still
+ * in that form. The conversion renames the engine `defaults` named to `default` and moves an old `default`
+ * aside, so an `engine:` selector (a flag, or a key in an asset or a task source) is resolved through this and
+ * keeps meaning the service it always named. Empty once `akm migrate apply` has rewritten the file; the
+ * references it could not rewrite then say what they say.
+ */
+export function retiredEngineTargets(): Readonly<Record<string, EngineTarget>> {
+  const configPath = getConfigPath();
+  const text = readConfigText(configPath);
+  if (text === undefined) return {};
+  return convertEngineConfig(readConfigFile(text, configPath), { modelsOverlay: modelsOverlay(), env: process.env })
+    .targets;
 }
 
 /**

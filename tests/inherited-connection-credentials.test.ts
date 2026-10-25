@@ -4,9 +4,10 @@
 
 /**
  * A connection that only an `extends` base defines has its endpoint chosen by
- * that base, so a key stored on this host is sent to it only when the host stored
- * the key for exactly that endpoint. A shared name is not that binding, and the
- * base's own `$VAR` never crosses over (it is stripped when the base is read).
+ * that base, so it never uses a key stored on this host, whatever the store holds
+ * under its name and for whichever endpoint. The base's own `$VAR` never crosses
+ * over either (it is stripped when the base is read). A connection this host's
+ * own file also names is the host's, and uses a key stored for its endpoint.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -76,7 +77,20 @@ describe("an inherited connection", () => {
     expect(await keySent()).toBeUndefined();
   });
 
-  test("gets the key this host stored for exactly that endpoint", async () => {
+  test("gets no key even from an entry stored for the base's own endpoint", async () => {
+    writeCredential({ connection: "default" }, "host-key-for-shared", SHARED);
+    expect(await keySent()).toBeUndefined();
+  });
+
+  test("gets the key once this host's own file names it, if it was stored for that endpoint", async () => {
+    const local = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    fs.writeFileSync(
+      getConfigPath(),
+      JSON.stringify({ ...local, connections: { default: { models: { fast: "m" } } } }),
+    );
+    resetConfigCache();
+    writeCredential({ connection: "default" }, "host-key-for-own-server", OWN);
+    expect(await keySent()).toBeUndefined();
     writeCredential({ connection: "default" }, "host-key-for-shared", SHARED);
     expect(await keySent()).toBe("host-key-for-shared");
   });

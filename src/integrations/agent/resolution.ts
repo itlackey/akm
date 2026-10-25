@@ -21,7 +21,7 @@
  */
 
 import path from "node:path";
-import { type AkmConfig, defaultConnection, defaultHarness } from "../../core/config/config";
+import { type AkmConfig, defaultConnection, defaultHarness, retiredEngineTargets } from "../../core/config/config";
 import type { ConnectionConfig, HarnessConfig } from "../../core/config/config-types";
 import { apiKeyReference } from "../../core/config/credentials";
 import { deepMergeConfig } from "../../core/config/deep-merge";
@@ -118,9 +118,20 @@ type Target =
   | { readonly kind: "connection"; readonly name: string; readonly connection: ConnectionConfig }
   | { readonly kind: "harness"; readonly name: string; readonly harness: HarnessConfig };
 
-/** What the retired `engine` spelling names: a connection by that name, else a harness. */
-export function engineKind(config: AkmConfig, name: string): "connection" | "harness" {
-  return config.harnesses?.[name] && !config.connections?.[name] ? "harness" : "connection";
+/**
+ * What the retired `engine` spelling names. While the config file is still in the `engines` form, the connection
+ * or harness that engine became (it may have been renamed); otherwise a connection by that name, else a harness.
+ */
+export function retiredEngineSelection(
+  config: AkmConfig,
+  name: string,
+): { kind: "connection" | "harness"; name: string } {
+  const became = retiredEngineTargets()[name];
+  if (became)
+    return "harness" in became
+      ? { kind: "harness", name: became.harness }
+      : { kind: "connection", name: became.connection };
+  return { kind: config.harnesses?.[name] && !config.connections?.[name] ? "harness" : "connection", name };
 }
 
 /** The name the nearest layer that names anything gives, and the kind it gave it as. */
@@ -138,7 +149,7 @@ function namedByLayers(
       if (typeof name === "string" && name) return { kind, name };
     }
     const engine = layer.engine;
-    if (typeof engine === "string" && engine) return { kind: engineKind(config, engine), name: engine };
+    if (typeof engine === "string" && engine) return retiredEngineSelection(config, engine);
   }
   return undefined;
 }
