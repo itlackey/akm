@@ -58,8 +58,8 @@ describe("opencode (OpenCode 1 CLI) builder", () => {
     expect(argv).toEqual(["opencode", "run", "--model", "new/m"]);
   });
 
-  test("refuses an OpenCode 2 binary and points to the opencode-sdk engine", () => {
-    expect(() => build(2, {}, { prompt: "p" })).toThrow(/opencode-sdk/);
+  test("refuses an OpenCode 2 binary, saying OpenCode 2 runs embedded in akm", () => {
+    expect(() => build(2, {}, { prompt: "p" })).toThrow(/OpenCode 2 runs embedded in akm/);
   });
 
   test("a binary whose version cannot be read is run as given", () => {

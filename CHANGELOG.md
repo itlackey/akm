@@ -8,35 +8,101 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- The OpenCode integration is rebuilt on `@opencode/sdk` (#1244). An
-  `opencode-sdk` engine now runs OpenCode 2 embedded in akm's process: no
-  `opencode` binary, no `opencode serve`, no port. It ignores `bin` and `args`
-  with a warning (`args` used to fail config validation).
+- Connections and harnesses replace engines (#1244). `config.json` names
+  `connections`, the OpenAI-compatible endpoints akm reaches models through
+  (`endpoint`, `apiKey`, `models`, `contextLength`, `timeoutMs`, `concurrency`;
+  every other key on a connection or a model entry is a request field in the
+  endpoint's own spelling, sent as written), and `harnesses`, the agent programs
+  you already have (`platform`, `bin`, `args`, `workspace`, `agent`,
+  `timeoutMs`, `models`). There is no `defaults` block: the entry named
+  `default`, or the only entry, is the default connection or harness.
+  - `models` maps an alias (`fast`, `balanced`, `reasoning`, or your own) to the
+    model's name, or to an object holding the name and request fields of its
+    own. A harness's `models` maps an alias to the harness's own model name,
+    over the map akm ships for its platform.
+  - A config in the old form (`engines`, `defaults.engine`,
+    `defaults.llmEngine`, `defaults.improveStrategy`, `workflow.judgeEngine`, a
+    strategy's `engine`, `model`, `llm` and `timeoutMs`) still loads: it is
+    read as the new form in memory, with one warning that names `akm migrate
+    apply`, and the file is rewritten only by `akm migrate apply`. An ordinary
+    write (`akm config set`) edits the file's own document and no longer
+    converts it or drops what the loader only reads; removing a value the old
+    form supplies is refused, naming `akm migrate apply`.
+  - `improve.strategy` replaces `defaults.improveStrategy`. `improve.processes.
+    <process>` and `improve.qualityGate` say where each process and the quality
+    gates run (`connection` or `harness`, `model`, `llm`, `timeoutMs`), and
+    `index` takes `connection`, `model`, `llm` and `timeoutMs`. A strategy says which
+    processes run, never where.
+  - Each kind of call asks for a shipped alias until something nearer names a
+    model: improve passes, extract, enrich and the index passes ask for `fast`;
+    judges (the reflect and distill quality gates, triage's judgment, workflow
+    gates) and agent work ask for `balanced`. A harness with a model map but no
+    entry for the alias warns once.
+  - Model work runs on any harness. Where a harness can be restricted it is;
+    where it cannot, the call runs unrestricted, with a notice. A config that
+    names an `opencode` harness for model work loads, and a native agent named
+    for model work is ignored with a notice.
+  - `embedding` with a `model` and no `endpoint` is served by the default
+    connection: its endpoint and its key. With no connection, the built-in local
+    embedder runs, with one warning.
+  - A connection or harness its own schema rejects (no endpoint, an endpoint that
+    is not a URL, a harness akm cannot run) is ignored with one warning naming
+    it, instead of stopping every command; the rest of the file loads.
+- Keys come from a `$VAR` reference (`apiKey: "$NAME"`) or from
+  `<config dir>/credentials.json`, a `{ "<name>": "<key>" }` file (0600) keyed by
+  the connection's name, `embedding` or `curateRerank`. A literal `apiKey` in
+  `config.json` is kept, warned about once, and never read, sent or printed;
+  `akm config get` masks it and the redactor treats it as a secret.
+- Agent work on a connection, with no harness, runs on OpenCode 2 embedded in
+  akm's process (`@opencode/sdk`, #1244): no `opencode` binary, no `opencode
+  serve`, no port. It has no entry in config, and `opencode-sdk` is not a harness
+  platform.
   - Agent and workflow runs load the user's default OpenCode config, with akm's
     model on top when akm names one.
-  - Model work runs read-only on an empty akm-owned config: OpenCode's tools
-    except edit, write, shell, execute and subagents, plus akm's own
-    `akm_search`, `akm_show` and `akm_curate`, which run in-process. None of the
-    user's plugins, MCP servers or agents load. Its model is akm's, else the one the user's OpenCode config
-    selects.
   - Sessions are stored in akm's own OpenCode database,
     `<akm data dir>/opencode.db`.
   - Questions are cancelled and permission requests rejected, each with a
     message, and the model carries on.
-  - Inference reaches every `opencode-sdk` dispatch, not only model work. On a
-    model from the user's OpenCode config it is laid over that model, best
-    effort, with a one-time warning.
+  - The call's inference reaches the embedded OpenCode, laid over the
+    connection's model entry, as does the connection's `contextLength`.
 - `akm proposal extract --type opencode` reads OpenCode 2 history through the
   embedded OpenCode, from OpenCode's database and akm's own: top-level sessions
   only, without subagent sessions or akm's model work. OpenCode 1 databases are
   still read directly, read-only.
 - `platform: "opencode"` is the OpenCode 1 CLI only. It sends the prompt on
-  stdin, refuses an OpenCode 2 binary with a message naming `opencode-sdk`, and
-  no longer runs model work: a config that names an `opencode` engine for model
-  work fails to load.
-- With no engine configured, akm uses the embedded OpenCode whether or not an
-  `opencode` binary is installed. `akm health` and `akm improve
-  --require-engines` no longer check for an OpenCode binary or client package.
+  stdin and refuses an OpenCode 2 binary, saying OpenCode 2 runs embedded in akm.
+- `akm health` and `akm improve --require-engines` no longer check for an
+  OpenCode binary or client package.
+- A workflow run frozen by an earlier release (plan irVersion 7 or lower) whose
+  plan holds a command target is no longer resumed: it is abandoned (status
+  `failed`) with a message naming `akm workflow run <ref>` to start afresh.
+  Converting its engine runners would have changed unit input hashes and
+  published a second child run. Plans with no command target still decode. The
+  plan version is now 8, which freezes a connection or a harness where 7
+  froze an engine.
+- `akm migrate apply` converts the old form for good, under a backup of
+  `config.json`:
+  - `engines` and `defaults` become `connections` and `harnesses` (the default
+    engine is renamed `default`, and references follow), `defaults.improveStrategy`
+    becomes `improve.strategy`, a strategy's per-process `engine` becomes
+    `connection` or `harness` by the target's kind, and the where-fields a strategy
+    carried move to `improve.processes` and `improve.qualityGate`. An engine
+    that is akm's own OpenCode runtime, or a setting akm no longer reads, is
+    dropped with a note.
+  - An engine's `apiKeyFile`, a literal or `${secrets/...}` `apiKey`, and the
+    same literal or secret-store `apiKey` on a connection, `embedding` or
+    `search.curateRerank`, are read and stored in `credentials.json` under the
+    connection's new name, `embedding` or `curateRerank`, then removed from the
+    file. One note per key names it, never its value. `AKM_ENGINE_<NAME>_API_KEY`
+    and `AKM_LLM_API_KEY`, when set, become `apiKey: "$VAR"`.
+  - The user `models.json` is folded into the models it names, then moved to
+    `<cache dir>/config-backups/models.json.<timestamp>`.
+  - `engine:` on commands, agents, workflows (`defaults` and units) and task
+    sources becomes `connection:` or `harness:` by what the name is now, under
+    one backup directory per run (a name that is neither is written as
+    `harness:`, with a note). `akm migrate status` and `--dry-run` list the files.
+  - A connection or harness the loader ignores stays in the file as written,
+    with a note on what to fix; `akm migrate apply` never deletes one.
 - A non-interactive `akm setup` picks `opencode-sdk` when OpenCode is set up for
   the user (a model in their OpenCode config, or saved credentials), else the
   first agent CLI on `PATH`, else `opencode-sdk`. It never picks the OpenCode 1
@@ -49,6 +115,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- `engines`, `defaults.engine`, `defaults.llmEngine`, `workflow.judgeEngine`, a
+  strategy's `engine`, `model`, `llm` and `timeoutMs`, `provider`, and
+  `extraParams` as a key (write the request fields on the connection or model
+  entry), all read from an old file and converted by `akm migrate apply`.
+- `models.json`, the user overlay and the one akm shipped, and `akm models`.
+  Aliases live on `connections.<name>.models`.
+- `apiKeyFile`, the implicit `AKM_ENGINE_<NAME>_API_KEY` and `AKM_LLM_API_KEY`
+  lookups, and `${secrets/...}` as a connection key. Use `apiKey: "$VAR"` or
+  `credentials.json`.
+- `supportsJsonSchema`. When an endpoint rejects a response schema, akm retries
+  without one and remembers that for the rest of the process.
+- The load-time rule that refused model work on an `opencode` engine.
 - The `opencode serve` server management, the OpenCode 1 and 2 HTTP adapters,
   the injected `akm-model-work` OpenCode agent, and the `@opencode-ai/sdk` and
   `@opencode/client` dependencies.

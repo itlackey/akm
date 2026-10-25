@@ -4,15 +4,15 @@
 
 /**
  * OpenCode 1 command builder: the legacy `opencode run` CLI harness, treated
- * like the Claude and Codex CLIs (#1244). OpenCode 2 runs embedded through the
- * `opencode-sdk` engine, so an OpenCode 2 binary is refused here.
+ * like the Claude and Codex CLIs (#1244). OpenCode 2 runs embedded in akm, with
+ * no harness of its own, so an OpenCode 2 binary is refused here.
  *
  * The prompt goes on stdin: `opencode run` wraps an argv prompt in quotes and
  * escapes its inner quotes, which changes what the model reads; stdin is read
  * verbatim, and a prompt that starts with `-` is not taken for a flag.
  *
- * No model work, and no tool restriction: a `permissions:` grant runs with
- * OpenCode 1's defaults and a one-line warning.
+ * No tool restriction: a `permissions:` grant runs with OpenCode 1's defaults
+ * and a one-line warning.
  */
 
 import type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "../../agent/builder-shared";
@@ -42,7 +42,7 @@ export const opencodeBuilder: AgentCommandBuilder = {
     const { reportedMajor, version } = detectOpencodeMajor(profile.bin);
     if (reportedMajor !== undefined && reportedMajor >= 2) {
       throw new Error(
-        `${profile.bin} reports ${version}. The opencode harness runs OpenCode 1 only; OpenCode 2 runs embedded through an engine with platform "opencode-sdk".`,
+        `${profile.bin} reports ${version}. The opencode harness runs OpenCode 1 only; OpenCode 2 runs embedded in akm, with no harness of its own.`,
       );
     }
     return { argv: [profile.bin, ...flags(profile, req)], stdin: req.prompt };
