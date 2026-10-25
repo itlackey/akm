@@ -6,11 +6,12 @@
  * Where an execution runs: the one place a connection or harness, and the model on
  * it, are chosen.
  *
- *   target  the nearest layer that names a connection or harness; none (or one
- *           that is not configured, with a warning) means the default by name,
- *           chosen by the work: model work prefers the default connection and
- *           falls back to the default harness, agent work the reverse and falls
- *           back to akm's own runtime over the default connection.
+ *   target  the nearest layer that names a connection or harness, which must be
+ *           configured: a name that is not is an error, never a reason to use the
+ *           default. None named means the default by name, chosen by the work:
+ *           model work prefers the default connection and falls back to the
+ *           default harness, agent work the reverse and falls back to akm's own
+ *           runtime over the default connection.
  *   model   the nearest layer's `model`: an alias is looked up in the connection's
  *           (or harness's) `models`, anything else is the exact name; none means
  *           the first model configured.
@@ -21,12 +22,14 @@
  */
 
 import path from "node:path";
+import { closestMatch } from "../../core/closest-match";
 import {
   type AkmConfig,
   ambiguousDefaultAdvice,
   defaultConnection,
   defaultHarness,
   retiredEngineTargets,
+  unusableEntryAt,
 } from "../../core/config/config";
 import type { ConnectionConfig, HarnessConfig } from "../../core/config/config-types";
 import { apiKeyReference } from "../../core/config/credentials";
@@ -177,6 +180,29 @@ function defaultTarget(config: AkmConfig, modelWork: boolean): Target | undefine
   return modelWork ? (asConnection ?? asHarness) : (asHarness ?? asConnection);
 }
 
+/** The error for a connection or harness that was named and is not configured: what was named, what is configured, and the nearest name. */
+function selectionNotConfigured(config: AkmConfig, kind: "connection" | "harness", name: string): ConfigError {
+  const label = kind === "connection" ? "Connection" : "Harness";
+  const plural = kind === "connection" ? "connections" : "harnesses";
+  const configured = Object.keys((kind === "connection" ? config.connections : config.harnesses) ?? {});
+  const near = closestMatch(name, configured, Math.max(1, Math.floor(name.length / 3)));
+  const unusable = unusableEntryAt(`${kind === "connection" ? "connections" : "harnesses"}.${name}`);
+  return new ConfigError(
+    [
+      `${label} "${name}" is not configured.`,
+      unusable
+        ? `config.json has a ${kind} by that name that akm ignores, because ${unusable.why}.`
+        : configured.length > 0
+          ? `Configured ${plural}: ${configured.join(", ")}.`
+          : `No ${plural} are configured.`,
+      near ? `Did you mean "${near}"?` : undefined,
+    ]
+      .filter((sentence) => sentence !== undefined)
+      .join(" "),
+    "SELECTION_NOT_CONFIGURED",
+  );
+}
+
 function selectTarget(input: ResolveTargetInput): Target {
   const modelWork = input.modelWork === true;
   const named = namedByLayers(input.config, input.layers, modelWork);
@@ -185,10 +211,9 @@ function selectTarget(input: ResolveTargetInput): Target {
     const harness = named.kind === "harness" ? input.config.harnesses?.[named.name] : undefined;
     if (connection) return { kind: "connection", name: named.name, connection };
     if (harness) return { kind: "harness", name: named.name, harness };
-    warnOnce(
-      `resolution:unconfigured:${named.kind}:${named.name}`,
-      `${named.kind === "connection" ? "Connection" : "Harness"} "${named.name}" is not configured; using the default.`,
-    );
+    // A target that was asked for by name is never replaced by the default: that could send a private call to a remote
+    // service, or a call that must not touch files to an agent that can. Defaults apply only when nothing was named.
+    throw selectionNotConfigured(input.config, named.kind, named.name);
   }
   const target = defaultTarget(input.config, modelWork);
   if (target) return target;

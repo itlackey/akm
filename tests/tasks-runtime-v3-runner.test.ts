@@ -98,8 +98,13 @@ describe("task runner mutation boundary", () => {
     ],
     [
       "no connection or harness to run on",
-      'version: 4\nuses: akm/command\nwith:\n  content: Review\nharness: missing\nschedule: "@daily"\n',
+      'version: 4\nuses: akm/command\nwith:\n  content: Review\nschedule: "@daily"\n',
       "nothing to run agent work on",
+    ],
+    [
+      "a harness that is not configured",
+      'version: 4\nuses: akm/command\nwith:\n  content: Review\nharness: missing\nschedule: "@daily"\n',
+      'Harness "missing" is not configured',
     ],
   ] as const) {
     test(`${label} source fails before any history or log mutation`, async () => {

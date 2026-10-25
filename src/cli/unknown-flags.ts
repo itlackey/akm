@@ -27,6 +27,7 @@
  * validation) — conservative by design.
  */
 
+import { closestMatch } from "../core/closest-match";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import {
@@ -130,39 +131,6 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
   }
 
   return { names, valueFlags, booleanFlags, displayNames, path, resolved: true };
-}
-
-/** Single-row-at-a-time edit-distance DP (inputs are short flag/command names). */
-function editDistance(a: string, b: string): number {
-  let previous: number[] = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i += 1) {
-    const current: number[] = [i];
-    for (let j = 1; j <= b.length; j += 1) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      current.push(Math.min((previous[j] ?? 0) + 1, (current[j - 1] ?? 0) + 1, (previous[j - 1] ?? 0) + cost));
-    }
-    previous = current;
-  }
-  return previous[b.length] ?? 0;
-}
-
-/**
- * Closest candidate within `threshold` edit distance, or undefined when
- * nothing is close enough to be worth suggesting. Shared by the unknown-flag
- * and unknown-command (src/cli.ts) did-you-mean paths, which pick different
- * thresholds.
- */
-export function closestMatch(attempted: string, candidates: readonly string[], threshold: number): string | undefined {
-  let best: string | undefined;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const candidate of candidates) {
-    const distance = editDistance(attempted, candidate);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = candidate;
-    }
-  }
-  return best !== undefined && bestDistance <= threshold ? best : undefined;
 }
 
 /**

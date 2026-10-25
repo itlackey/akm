@@ -133,12 +133,44 @@ describe("the nearest layer that names a target decides", () => {
     expect(harnessFor(config, [{ engine: "claude" }]).name).toBe("claude");
   });
 
-  test("a name that is not configured warns once and uses the default for the work", () => {
-    expect(connectionFor(config, [{ connection: "gone" }]).name).toBe("default");
-    expect(connectionFor(config, [{ connection: "gone" }]).name).toBe("default");
-    expect(harnessFor(config, [{ harness: "absent" }]).name).toBe("default");
-    expect(warnings.filter((w) => w.includes('"gone"'))).toHaveLength(1);
-    expect(warnings.filter((w) => w.includes('"absent"'))).toHaveLength(1);
+  describe("a name that is not configured", () => {
+    const failure = (layers: UnresolvedExecutionDefaults[], modelWork = true) =>
+      failureOf(() => resolveTarget({ config, layers, modelWork }));
+
+    test("is an error that names it, says it is not configured and lists what is, never the default", () => {
+      const error = failure([{ connection: "gone" }]);
+      expect(error.code).toBe("SELECTION_NOT_CONFIGURED");
+      expect(error.message).toContain('Connection "gone" is not configured.');
+      expect(error.message).toContain("Configured connections: default, cloud.");
+      expect(error.hint()).toContain("akm health");
+      expect(failure([{ harness: "absent" }], false).message).toContain('Harness "absent" is not configured.');
+      expect(failure([{ harness: "absent" }], false).message).toContain("Configured harnesses: default, claude.");
+      expect(warnings).toEqual([]);
+    });
+
+    test("offers the nearest configured name when one is close", () => {
+      expect(failure([{ connection: "clod" }]).message).toContain('Did you mean "cloud"?');
+      expect(failure([{ harness: "cluade" }], false).message).toContain('Did you mean "claude"?');
+      expect(failure([{ connection: "gone" }]).message).not.toContain("Did you mean");
+    });
+
+    test("is an error for the retired engine spelling too, and for the nearest layer that names anything", () => {
+      expect(failure([{ engine: "gone" }]).message).toContain('"gone" is not configured');
+      // A nearer layer that is configured does not rescue a farther one; the nearest layer that names a target decides.
+      expect(connectionFor(config, [{ connection: "gone" }, { connection: "cloud" }]).name).toBe("cloud");
+      expect(failure([{ connection: "cloud" }, { connection: "gone" }]).message).toContain('"gone"');
+    });
+
+    test("says there are none to choose from when none of that kind is configured", () => {
+      const bare = configOf({ connections: { default: lab } });
+      const error = failureOf(() => resolveTarget({ config: bare, layers: [{ harness: "claude" }], modelWork: false }));
+      expect(error.message).toContain("No harnesses are configured.");
+    });
+
+    test("does not touch the default: with nothing named, the default is used as before", () => {
+      expect(connectionFor(config).name).toBe("default");
+      expect(harnessFor(config).name).toBe("default");
+    });
   });
 });
 

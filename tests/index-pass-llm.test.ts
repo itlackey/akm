@@ -130,24 +130,13 @@ describe("resolveIndexPassExecution", () => {
       });
     });
 
-    test("a per-pass connection that is not configured warns once and uses the default one", () => {
-      const warnings: string[] = [];
-      _resetWarnOnceForTests();
-      _setWarnSinkForTests((level, args) => {
-        if (level === "warn") warnings.push(args.map(String).join(" "));
-      });
-      try {
-        const config: AkmConfig = {
-          semanticSearchMode: "auto",
-          connections: { default: PRIMARY },
-          index: { memory: { connection: "missing" } },
-        };
-        expect(asLlmRunner(resolveIndexPassExecution("memory", config).runner).name).toBe("default");
-        resolveIndexPassExecution("memory", config);
-      } finally {
-        _setWarnSinkForTests(undefined);
-      }
-      expect(warnings.filter((w) => w.includes('"missing" is not configured'))).toHaveLength(1);
+    test("a per-pass connection that is not configured is an error naming it, not a reason to use the default one", () => {
+      const config: AkmConfig = {
+        semanticSearchMode: "auto",
+        connections: { default: PRIMARY },
+        index: { memory: { connection: "missing" } },
+      };
+      expect(() => resolveIndexPassExecution("memory", config)).toThrow('Connection "missing" is not configured.');
     });
 
     test("with no connection, a harness that confines the model-work tool policy runs the pass", () => {

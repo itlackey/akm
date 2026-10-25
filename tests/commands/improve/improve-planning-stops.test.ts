@@ -139,7 +139,7 @@ describe("akm improve with something to run on", () => {
     expect(result.stderr).toContain("--require-engines is retired and has no effect");
   });
 
-  test("a process pinned to a connection that is not configured is skipped and reported while the others run", async () => {
+  test("a process pinned to a connection that is not configured stops planning, naming it, and is not given the default", async () => {
     const stash = makeStashDir();
     disposers.push(stash);
     const { env } = freshEnv(stash.dir);
@@ -147,12 +147,15 @@ describe("akm improve with something to run on", () => {
     const result = await withEnv(env, async () => {
       writeSandboxConfig({
         ...ONE_CONNECTION,
-        improve: { processes: { extract: { connection: "ghost", enabled: true } } },
+        improve: { processes: { reflect: { connection: "ghost" } } },
       } as never);
       return runCliCapture(["improve", "--dry-run"]);
     });
 
-    expect(result.code).toBe(0);
+    expect(result.code).toBe(78);
+    const message = (JSON.parse(result.stderr) as { error: string }).error;
+    expect(message).toContain('Connection "ghost" is not configured.');
+    expect(message).toContain("Configured connections: default.");
   });
 });
 

@@ -989,38 +989,43 @@ describe("0.9 config shape parsing", () => {
     expect(loaded.improve?.strategy).toBe("my-custom-strategy");
   });
 
-  // A pointer to a connection or harness is a plain string: a miscased or unknown name warns once where it is
-  // resolved and the default runs, and the config still loads. Only the entry's own name is held to the rule.
+  // A pointer to a connection or harness is a plain string, so the config loads with a miscased or unknown name in
+  // it. Where it is resolved it is an error that names it, never the default. Only the entry's own name is held to
+  // the naming rule.
   test.each([
-    ["improve.connection", { improve: { connection: "Anthropic" } }],
-    ["improve.harness", { improve: { harness: "Anthropic" } }],
-    ["improve.processes.<process>.connection", { improve: { processes: { triage: { connection: "Anthropic" } } } }],
-    ["improve.processes.<process>.harness", { improve: { processes: { triage: { harness: "Anthropic" } } } }],
-    ["improve.qualityGate.connection", { improve: { qualityGate: { connection: "Anthropic" } } }],
-    ["index.connection", { index: { connection: "Anthropic" } }],
-    ["index.<pass>.connection", { index: { graph: { connection: "Anthropic" } } }],
-  ])("a miscased name at %s warns once at resolution and uses the default", (_where, pointer) => {
+    ["improve.connection", { improve: { connection: "Anthropic" } }, "improve"],
+    ["improve.harness", { improve: { harness: "Anthropic" } }, "improve"],
+    [
+      "improve.processes.<process>.connection",
+      { improve: { processes: { triage: { connection: "Anthropic" } } } },
+      "improve",
+    ],
+    [
+      "improve.processes.<process>.harness",
+      { improve: { processes: { triage: { harness: "Anthropic" } } } },
+      "improve",
+    ],
+    ["improve.qualityGate.connection", { improve: { qualityGate: { connection: "Anthropic" } } }, "gate"],
+    ["index.connection", { index: { connection: "Anthropic" } }, "index"],
+    ["index.<pass>.connection", { index: { graph: { connection: "Anthropic" } } }, "index"],
+  ])("a miscased name at %s loads, and is an error at resolution naming it", (_where, pointer, resolves) => {
     writeCurrentConfig({
       connections: { default: { endpoint: "http://lab:1/v1", models: { fast: "m" } } },
       ...pointer,
     });
-    const warnings = captureWarnings(() => {
-      const loaded = loadConfig();
-      for (let round = 0; round < 2; round += 1) {
-        const improve = resolveImproveExecution({ config: loaded, processName: "triage", alias: "fast" });
-        const gate = resolveImproveExecution({
+    const loaded = loadConfig();
+    const resolution = {
+      improve: () => resolveImproveExecution({ config: loaded, processName: "triage", alias: "fast" }),
+      gate: () =>
+        resolveImproveExecution({
           config: loaded,
           processName: "reflect-quality-judge",
           alias: "fast",
           ...(loaded.improve?.qualityGate ? { current: loaded.improve.qualityGate } : {}),
-        });
-        const index = resolveIndexPassExecution("graph", loaded);
-        expect(improve?.runner).toMatchObject({ kind: "connection", name: "default" });
-        expect(gate?.runner).toMatchObject({ kind: "connection", name: "default" });
-        expect(index.runner).toMatchObject({ kind: "connection", name: "default" });
-      }
-    });
-    expect(warnings.filter((w) => w.includes('"Anthropic"'))).toHaveLength(1);
+        }),
+      index: () => resolveIndexPassExecution("graph", loaded),
+    }[resolves as "improve" | "gate" | "index"];
+    expect(resolution).toThrow(/"Anthropic" is not configured/);
   });
 
   test("the lone connection, and the lone harness, are the defaults whatever they are called", () => {

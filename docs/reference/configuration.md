@@ -382,8 +382,15 @@ each command that needs one says so and points at `akm setup`, and everything
 that needs no model keeps working.
 
 Anywhere a connection or harness can be named (config, a flag, an asset's
-`connection:` or `harness:`) and none is, the default is used. A name that is not
-configured is warned about once and the default is used.
+`connection:` or `harness:`) and none is, the default is used. A name that is
+not configured is an error (exit 78), never a reason to use the default: the
+message names the selector, says it is not configured, lists the configured
+connections (or harnesses) and the nearest name when one is close, and the same
+holds for the retired `engine:` and `--engine`. Defaults apply only when nothing
+was named, so a call for a private connection is never sent to a remote service,
+nor a call that must not touch files to a harness that can, by a typo, a removed
+entry, or an entry akm ignored when it loaded the config (`akm health` lists
+what is configured).
 
 These settings, all optional, choose another place for one piece of work:
 

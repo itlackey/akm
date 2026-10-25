@@ -511,7 +511,8 @@ for the connection or harness and the model, then merges one set of defaults,
 nearest wins. The layers run farthest to nearest: the shipped alias for the kind
 of work, the configuration for the process, the persona, the command, the
 invocation defaults, and the current call's flags. A connection or harness that
-is named and not configured is warned about once and the default is used. A
+is named and not configured is an error (exit 78) that lists the configured names;
+the default is used only when nothing was named. A
 model is an alias, looked up on the selected connection or harness, or an exact
 name; the request records the exact final model. A connection's request fields
 and the model entry's are sent as written, under the portable settings

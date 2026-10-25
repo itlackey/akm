@@ -148,6 +148,8 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
     const bin = path.join(binDir.dir, "never-run");
 
     const config = agentModeConfig({ connections: undefined, harnesses: undefined });
+    // Nothing is configured and nothing is pinned: a pin to a harness that is not configured would fail on its own.
+    delete (config.improve as { processes?: unknown }).processes;
     const strategy = config.improve?.strategies?.default;
 
     await expect(

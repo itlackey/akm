@@ -401,8 +401,9 @@ A step that dispatches a model runs on your default harness, or on akm's own
 runtime over your default connection when you have no harness. Leave that to
 the machine the workflow runs on. Name one only when a step needs it:
 `harness:` or `connection:` in `defaults` (or per-unit `unit.harness` /
-`unit.connection`), where a name the machine has not configured is warned about
-and the default is used. Set `defaults.model`/`unit.model` to an alias rather
+`unit.connection`), where a name the machine has not configured is an error that
+names it and lists what the machine has, so a workflow shared across machines
+should name a program only when it needs that one. Set `defaults.model`/`unit.model` to an alias rather
 than hardcoding an exact model id, so the workflow stays portable. The aliases
 are `fast`, `balanced`, `reasoning` and any a connection or harness maps in its
 `models`; see

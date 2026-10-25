@@ -181,9 +181,10 @@ describe("a quality gate's judge is checked when it resolves, not when the confi
     expect(resolveQualityGateJudge(cfg, undefined, "reflect")).toMatchObject({ kind: "harness", name: "reviewer" });
   });
 
-  test("a connection that is not configured uses the default one", () => {
-    const runner = resolveQualityGateJudge(gated({ connection: "missing" }), undefined, "reflect");
-    expect(runner?.name).toBe("default");
+  test("a connection that is not configured is an error naming it, not a reason to use the default one", () => {
+    expect(() => resolveQualityGateJudge(gated({ connection: "missing" }), undefined, "reflect")).toThrow(
+      'Connection "missing" is not configured.',
+    );
   });
 });
 

@@ -274,16 +274,10 @@ describe("target selection", () => {
     expect(nearest.provenance.target).toEqual({ layer: "current-invocation", kind: "current", via: "explicit" });
   });
 
-  test("a named target that is not configured warns once and uses the default", () => {
-    const warnings: string[] = [];
-    _resetWarnOnceForTests();
-    overrideSeam(_setWarnSinkForTests, (level: string, args: unknown[]) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
+  test("a named target that is not configured is an error, and is not replaced by the default", () => {
     const input = { content: "x", config: config({ harnesses }), layers: [currentLayer({ harness: "codex" })] };
-    expect(resolveExecution(input).request.target.name).toBe("default");
-    expect(resolveExecution(input).request.target.name).toBe("default");
-    expect(warnings.filter((w) => w.includes('"codex" is not configured'))).toHaveLength(1);
+    expect(() => resolveExecution(input)).toThrow('Harness "codex" is not configured.');
+    expect(() => resolveExecution(input)).toThrow(/Configured harnesses: /);
   });
 
   test("with nothing configured there is nothing to run on, whatever is on PATH", async () => {

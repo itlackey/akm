@@ -61,7 +61,7 @@ const oneStep = (_name: string, withGate = false): string =>
     "type: workflow",
     "description: Dispatch-disposal fixture.",
     "defaults:",
-    "  engine: test-agent",
+    "  engine: test-llm",
     "steps:",
     "  - id: only",
     ...(withGate ? ["    gate: { max_loops: 2 }"] : []),

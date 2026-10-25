@@ -18,7 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `default`, or the only entry, is the default connection or harness. Anywhere a
   connection or harness can be named (config, a flag, an asset's `connection:`
   or `harness:`) and none is, the default is used; a name that is not
-  configured is warned about once and the default is used. With neither
+  configured is an error (exit 78) that names it, lists the configured ones and
+  the nearest, and is never replaced by the default. With neither
   configured, model features and agent work are off, each command that needs one
   says so and points at `akm setup`, and everything that needs no model keeps
   working.

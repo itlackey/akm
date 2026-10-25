@@ -42,6 +42,8 @@ export type ConfigErrorCode =
   | "INDEX_SCHEMA_INCOMPATIBLE"
   | "LLM_NOT_CONFIGURED"
   | "AGENT_NOT_CONFIGURED"
+  // A connection or harness was named (a flag, an asset, a config key) that is not configured: never replaced by a default.
+  | "SELECTION_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
   | "UNKNOWN_IMPROVE_STRATEGY"
   // Refused stashDir that would clobber a sensitive system path or the user's
@@ -227,6 +229,8 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   LLM_NOT_CONFIGURED:
     "Run `akm setup` to add a connection (an OpenAI-compatible endpoint) or enable a harness; model features need one.",
   AGENT_NOT_CONFIGURED: "Run `akm setup` to enable a harness or add a connection; agent work needs one.",
+  SELECTION_NOT_CONFIGURED:
+    "Name one that is configured (`akm health` lists them), correct the name, or add it with `akm setup --name <name> --endpoint <url>` (a connection) or `akm setup --harness <name>`.",
   TEST_ISOLATION_MISSING:
     "Under bun test, when AKM_BUNDLE_DIR is set you MUST also set XDG_DATA_HOME (or AKM_DATA_DIR) and XDG_STATE_HOME (or AKM_STATE_DIR) to temp directories so the test does not touch the developer's real ~/.local/share/akm or ~/.local/state/akm.",
   UNSAFE_STASH_DIR:
