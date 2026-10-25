@@ -115,9 +115,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     request fields and environment.
   - OpenCode's logs, repositories and binaries are kept under akm's data and
     cache directories. Sessions are stored in akm's own OpenCode database,
-    `<akm data dir>/opencode.db`. The embedded OpenCode opens no other database,
-    except your OpenCode 2 database for your logins on the opencode harness
-    (below); reading OpenCode 2 history (below) opens yours read-only.
+    `<akm data dir>/opencode.db`. The embedded OpenCode opens no other database;
+    akm reads your OpenCode 2 database read-only, for your logins on the opencode
+    harness (below) and for OpenCode 2 history (below).
   - Another process's unfinished turns are never resumed (OpenCode resumes
     every top-level session whose turn did not finish, whichever process owns
     it), and the interrupt a timeout or an abort sends is awaited, for up to 5
@@ -138,13 +138,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   installed binary's `--version` decides, per request. OpenCode 1 runs its CLI
   (the prompt on stdin). OpenCode 2 runs embedded in akm, with your config
   directory (`OPENCODE_CONFIG_DIR` too), providers, plugins and default model
-  (akm passes a model only when it names one), and your logins, which akm's
-  embedded OpenCode reads from your OpenCode 2 database through OpenCode's own
-  credential service when that database has every migration the embedded
-  OpenCode carries; a refreshed OAuth token is written back to your OpenCode
-  database, as OpenCode itself does; nothing else in it is changed. akm never
-  creates or migrates that file or stores a session in it: an older one is left
-  untouched, with one warning, and the run goes on without its logins. An
+  (akm passes a model only when it names one), and your logins, which akm copies
+  from your OpenCode 2 database into its own OpenCode database at start. akm
+  never creates, migrates or changes your file, or stores a session in it. An
   interactive `akm agent` still hands the terminal to the CLI.
   - Model work on the opencode harness is confined where OpenCode 2 is
     installed (its tools that edit, run commands or start subagents are denied;

@@ -601,12 +601,11 @@ the sessions of akm's own agent runtime and of the OpenCode 2 harness
 (`src/integrations/harnesses/opencode/embedded/host-spec.ts`). akm creates it on
 the first embedded run. It is separate from the user's own `opencode.db` under
 `$XDG_DATA_HOME/opencode` (on every platform; `~/.local/share/opencode` by
-default), which akm never migrates: the OpenCode 2 harness reads your logins
-from it only when it has every migration the embedded OpenCode carries (a
-refreshed OAuth token is written back there), and otherwise leaves it alone with
-a warning. `akm proposal extract --type opencode` and the
-improve extract stage read both with SQLite alone, read-only, and skip
-sessions that are subagents or akm's own model work. The embedded OpenCode also
+default), which akm never changes: the OpenCode 2 harness opens it read-only
+and copies your logins into `$DATA/opencode.db` at start.
+`akm proposal extract --type opencode` and the improve extract stage read both
+with SQLite alone, read-only, and skip sessions that are subagents or akm's own
+model work. The embedded OpenCode also
 keeps its working files in `$DATA/opencode/` (logs, repositories, shell output,
 a config directory), `$CACHE/opencode/` (binaries; `npm/`, which akm's own
 runtime leaves empty because it reaches its endpoint with the
