@@ -152,21 +152,28 @@ function applyEarlyStderrFlags(argv: string[]): void {
  * Default --format is `json`, so a CI or piped consumer sees only the JSON on
  * stdout. But an interactive user running `akm setup --yes` would otherwise
  * see only the JSON blob with no obvious next step. When stderr is a TTY and
- * the JSON went to stdout, print a two-line summary to stderr telling the
- * user (a) where the stash landed and (b) what to run next.
+ * the JSON went to stdout, print a short summary to stderr telling the user
+ * (a) where the stash landed, (b) what runs where, and (c) what to run next.
  *
  * Silent when: stderr is not a TTY (CI, pipes), --format=text/yaml (the user
  * already gets readable output), --quiet, or the result is missing fields.
  */
-function printSetupTtyHint(result: { bundleDir?: string; configPath?: string }): void {
+function printSetupTtyHint(result: {
+  bundleDir?: string;
+  configPath?: string;
+  runs?: { modelCalls: string; agentWork: string; embeddings: string };
+}): void {
   if (!process.stderr.isTTY) return;
   const mode = getOutputMode();
   if (mode.format !== "json" && mode.format !== "jsonl") return;
   if (isQuiet()) return;
   if (!result?.bundleDir) return;
+  const runs = result.runs
+    ? `  Model calls:  ${result.runs.modelCalls}\n  Agent work:   ${result.runs.agentWork}\n  Embeddings:   ${result.runs.embeddings}\n`
+    : "";
   console.error(
     plainize(
-      `\n✓ Bundle created at ${result.bundleDir}\n` +
+      `\n✓ Bundle created at ${result.bundleDir}\n${runs}` +
         '  Next: `akm bundle add <source>`, `akm index`, `akm search "<query>"`, `akm hints`',
     ),
   );
@@ -183,7 +190,7 @@ const setupCommand = defineCommand({
   meta: {
     name: "setup",
     description:
-      "Interactive configuration wizard. Configures embeddings/LLM connections (for indexing/enrichment), agent profiles (CLI agent, embedded SDK, or none), sources, and registries. Shows which features are enabled at the end. Use --config <json> or --yes for non-interactive/scripting mode.",
+      "Interactive configuration wizard. Enables agent programs (Claude Code, Codex, OpenCode, ...), sets up a model connection and embeddings, and picks bundle sources and registries. Flags answer individual questions; --yes takes the detected default for the rest, for scripting.",
   },
   args: {
     // R-051/S11: `setup` is a raw `defineCommand` (not `defineJsonCommand`),
@@ -191,10 +198,35 @@ const setupCommand = defineCommand({
     // already had. Three of its four run branches call `output()`; spreading
     // this in is a `--help` visibility fix, not a behavior change.
     ...GLOBAL_OUTPUT_ARGS,
-    config: {
+    endpoint: {
       type: "string",
       description:
-        'Config JSON to apply non-interactively, e.g. \'{"connections":{"default":{"endpoint":"...","models":{"fast":"...","balanced":"...","reasoning":"..."}}}}\'',
+        "OpenAI-compatible endpoint to add or update as a connection (the first is named default), e.g. http://localhost:11434/v1",
+    },
+    "api-key-env": {
+      type: "string",
+      description:
+        "Name of the environment variable holding the connection's API key; the connection gets apiKey: $NAME. Keys are never passed on the command line.",
+    },
+    name: {
+      type: "string",
+      description: "Name for a further connection (with --endpoint); the first connection is named default",
+    },
+    harness: {
+      type: "string",
+      description: "Agent programs to enable, comma-separated (claude,codex,opencode,...); the first is the default",
+    },
+    embedding: {
+      type: "string",
+      description: "Embeddings: a model the connection serves, local (the built-in embedder), or off",
+    },
+    "embedding-endpoint": {
+      type: "string",
+      description: "Another endpoint that serves the --embedding model",
+    },
+    "embedding-api-key-env": {
+      type: "string",
+      description: "Name of the environment variable holding the embedding endpoint's API key",
     },
     from: {
       type: "string",
@@ -204,11 +236,12 @@ const setupCommand = defineCommand({
     yes: {
       type: "boolean",
       default: false,
-      description: "Accept all defaults, skip all prompts. Idempotent — safe to run in CI.",
+      description:
+        "Take the detected default for every question no flag answers; no prompts. Idempotent — safe to run in CI.",
     },
     dir: {
       type: "string",
-      description: "Bundle directory path (overrides defaultBundle in config or --config JSON)",
+      description: "Bundle directory path (overrides defaultBundle in config)",
     },
     // Declared as the POSITIVE name with `default: true` so citty's native
     // `--no-<name>` negation (it strips a leading `--no-` from ANY token and
@@ -222,19 +255,32 @@ const setupCommand = defineCommand({
       default: true,
       description: "Scaffold the bundle directory. Use --no-init to write configuration without scaffolding it.",
     },
+    // Same `--no-<name>` mechanism as `init`.
     probe: {
       type: "boolean",
-      default: false,
-      description: "Probe LLM/embedding endpoints before writing config to verify connectivity",
+      default: true,
+      description:
+        "Contact the endpoint to list its models. Use --no-probe for an offline run: aliases resolve to the connection's first model until `akm models set`.",
     },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const noInit = !args.init;
-      if (args.from && args.config) {
-        throw new UsageError("Pass either --from <file> or --config <json>, not both.", "INVALID_FLAG_VALUE");
-      }
+      const noProbe = !args.probe;
+      const { hasEngineFlags, parseEngineFlags } = await import("./setup/engine-flags");
+      const flags = parseEngineFlags({
+        endpoint: args.endpoint,
+        apiKeyEnv: args["api-key-env"],
+        name: args.name,
+        harness: args.harness,
+        embedding: args.embedding,
+        embeddingEndpoint: args["embedding-endpoint"],
+        embeddingApiKeyEnv: args["embedding-api-key-env"],
+      });
       if (args.from) {
+        if (hasEngineFlags(flags) && !args.yes) {
+          throw new UsageError("--from takes the engine flags only with --yes.", "INVALID_FLAG_VALUE");
+        }
         // File-based bootstrap. `loadSetupConfigFromFile` expands a leading
         // `~`, resolves relative paths against cwd, picks the YAML or JSON
         // parser based on the file extension, and surfaces any
@@ -247,20 +293,8 @@ const setupCommand = defineCommand({
           configJson: loaded.configJson,
           dir: args.dir,
           noInit,
-          probe: args.probe,
-          applyDefaults: args.yes,
-        });
-        output("setup", result);
-        printSetupTtyHint(result);
-      } else if (args.config) {
-        // Non-interactive config mode. With `--yes`, defaults fill any keys
-        // the JSON blob leaves missing after the deep merge.
-        const { runSetupFromConfig } = await import("./setup/setup");
-        const result = await runSetupFromConfig({
-          configJson: args.config,
-          dir: args.dir,
-          noInit,
-          probe: args.probe,
+          noProbe,
+          flags,
           applyDefaults: args.yes,
         });
         output("setup", result);
@@ -268,11 +302,7 @@ const setupCommand = defineCommand({
       } else if (args.yes) {
         // Defaults mode — no prompts
         const { runSetupWithDefaults } = await import("./setup/setup");
-        const result = await runSetupWithDefaults({
-          dir: args.dir,
-          noInit,
-          probe: args.probe,
-        });
+        const result = await runSetupWithDefaults({ dir: args.dir, noInit, noProbe, flags });
         output("setup", result);
         printSetupTtyHint(result);
       } else {
@@ -282,12 +312,12 @@ const setupCommand = defineCommand({
         // setup` is the first command users automate.
         if (process.stdin.isTTY !== true) {
           throw new UsageError(
-            "Interactive setup requires a TTY. Pass --yes to accept defaults, or --config <json> / --from <file> to configure non-interactively.",
+            "Interactive setup requires a TTY. Pass --yes to take the detected defaults (flags such as --endpoint answer questions), or --from <file> to configure from a file.",
             "NON_INTERACTIVE_REQUIRES_YES",
           );
         }
         const { runSetupWizard } = await import("./setup/setup");
-        await runSetupWizard({ dir: args.dir, noInit });
+        await runSetupWizard({ dir: args.dir, noInit, noProbe, flags });
       }
     });
   },

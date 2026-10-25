@@ -179,32 +179,45 @@ hijacking your real default bundle.
 
 ### setup
 
-Run the interactive first-run wizard.
+Run the first-run wizard.
 
 ```sh
 akm setup
+akm setup --endpoint http://localhost:11434/v1 --yes   # no prompts
 ```
 
-The setup wizard configures AKM in two steps:
+The wizard asks, in order:
 
-**Step 1 — Small model connection** (for background processing)
-Configures the OpenAI-compatible endpoint and model used for `akm improve`
-and `akm remember --enrich`. Supports Ollama,
-OpenAI, LM Studio, or any custom endpoint. Skipping disables enrichment features.
+1. **Agent programs.** Which installed agent programs (Claude Code, Codex,
+   OpenCode, ...) akm may use; each is shown with whether akm can run it
+   read-only for its own model calls. With several, you pick the default.
+2. **Model calls.** Whether the default agent program also takes akm's own
+   model calls (improve, judging, extraction). Answering no leads to a connection.
+3. **Connection.** An OpenAI-compatible endpoint, its API key (typed at a masked
+   prompt and stored in `credentials.json`, never in `config.json`), and one model
+   per alias (`fast`, `balanced`, `reasoning`) picked from the models the
+   endpoint lists. Change a pick later with `akm models set`.
+4. **Embeddings.** A model the connection serves, akm's built-in local embedder,
+   another endpoint, or off.
+5. **Save.** The config is written, the bundle directory initialized, and a
+   summary says what runs where.
 
-**Step 2 — Agent connection** (for agentic commands)
-Configures how `akm improve`, `akm proposal new`, and `akm task run` dispatch AI sessions.
-Options:
-- **Same connection** — reuse the Step 1 endpoint with a (optionally different) model
-- **New connection** — separate endpoint, model, and API key
-- **Installed CLI agent** — use an installed agent binary (opencode, claude, codex, etc.)
-- **None** — agentic commands disabled with a clear warning
+Flags answer one question each; `--yes` takes the detected default for every
+question left, so nothing is prompted.
 
-A feature capability summary is shown at the end of setup.
+| Flag | Answers |
+|---|---|
+| `--endpoint <url>` | The connection to add or update (the first is named `default`) |
+| `--api-key-env <NAME>` | The environment variable holding its key (`apiKey: "$NAME"`) |
+| `--name <name>` | A further connection, with `--endpoint` |
+| `--harness <a,b>` | Agent programs to enable; the first is the default |
+| `--embedding <model\|local\|off>` | Embeddings |
+| `--embedding-endpoint <url>`, `--embedding-api-key-env <NAME>` | Another endpoint serving the embedding model |
+| `--from <file>` | A config file (JSON or YAML) to merge |
+| `--dir <path>`, `--no-init` | The bundle directory; skip scaffolding it |
+| `--no-probe` | Offline: the endpoint is not contacted and its models are not listed |
 
-The wizard also lets you choose a bundle directory, review registries, and add bundle
-sources. When you save, akm writes the config file, initializes the bundle directory,
-and builds the search index.
+The wizard also lets you review registries and add bundle sources.
 
 ### index
 

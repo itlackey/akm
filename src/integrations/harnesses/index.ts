@@ -103,18 +103,3 @@ export const HARNESS_NATIVE_AGENT_IDS = idsWith((h) => h.capabilities.nativeAgen
 export function getHarness(id: string): AkmHarness | undefined {
   return HARNESS_BY_ID.get(id);
 }
-
-/**
- * Default agent-profile name for a detected harness id (#566).
- *
- * Used by `akm setup`'s headless/recommended-config path so a newly added
- * dispatch-capable harness gets a usable default profile name (its canonical
- * id) instead of falling through a hardcoded if-chain with no default. Returns
- * `undefined` for `"none"` or any id that is unknown / not agent-dispatch
- * capable.
- */
-export function defaultProfileName(detected: string): string | undefined {
-  const h = HARNESS_BY_ID.get(detected);
-  if (!h?.capabilities.agentDispatch) return undefined;
-  return h.id;
-}

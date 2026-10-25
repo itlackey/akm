@@ -3,7 +3,7 @@
  *
  * Covers the three non-interactive write paths (`runSetupFromConfig` and
  * `runSetupWithDefaults`) and their merge / backup guarantees:
- *   - `--file` / `--config` deep-merge: a partial input only updates the keys
+ *   - `--from` deep-merge: a partial input only updates the keys
  *     it carries and never drops sibling subkeys.
  *   - `--yes` idempotency: running N times == running once (fill-missing-only,
  *     never overwrite an existing value).
@@ -23,6 +23,7 @@ import { resetConfigCache } from "../../src/core/config/config";
 import { getConfigLockPath } from "../../src/core/config/config-io";
 import { getConfigPath } from "../../src/core/paths";
 import { _setWarnSinkForTests } from "../../src/core/warn";
+import { parseEngineFlags } from "../../src/setup/engine-flags";
 import { rebaseSetupChanges, runSetupFromConfig, runSetupWithDefaults } from "../../src/setup/setup";
 import {
   type Cleanup,
@@ -103,14 +104,6 @@ describe("runSetupFromConfig — deep merge", () => {
 
   test("detects a same-field race before stash initialization", async () => {
     seedFullConfig();
-    const seeded = readWrittenConfig();
-    seeded.connections = {
-      default: {
-        endpoint: "https://example.test/v1/chat/completions",
-        models: { fast: "test-model" },
-      },
-    };
-    fs.writeFileSync(getConfigPath(), `${JSON.stringify(seeded)}\n`);
     resetConfigCache();
     let initCalls = 0;
     _setAkmInitForTests(async () => {
@@ -118,20 +111,23 @@ describe("runSetupFromConfig — deep merge", () => {
       return { bundleDir: "/unused", created: true, configPath: getConfigPath(), defaultBundleUpdated: false };
     });
 
+    // Another process edits the same field while setup is listing the endpoint's models.
     await withMockedFetch(
       async () => {
         await expect(
-          runSetupFromConfig({ configJson: JSON.stringify({ output: { format: "text" } }), probe: true }),
+          runSetupFromConfig({
+            configJson: JSON.stringify({ output: { format: "text" } }),
+            applyDefaults: true,
+            flags: parseEngineFlags({ endpoint: "https://example.test/v1" }),
+          }),
         ).rejects.toThrow(/Setup config conflict at output\.format/);
       },
-      () => {
+      (url) => {
+        if (!url.startsWith("https://example.test/")) throw new Error("unreachable");
         const concurrent = readWrittenConfig();
         concurrent.output = { ...(concurrent.output as Record<string, unknown>), format: "yaml" };
         fs.writeFileSync(getConfigPath(), `${JSON.stringify(concurrent)}\n`);
-        return new Response(
-          JSON.stringify({ choices: [{ message: { content: '{"ok":true,"ingest":true,"lint":true}' } }] }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+        return Response.json({ data: [{ id: "test-model" }] });
       },
     );
 
@@ -139,7 +135,7 @@ describe("runSetupFromConfig — deep merge", () => {
     expect((readWrittenConfig().output as Record<string, unknown>).format).toBe("yaml");
   });
 
-  test("partial --file updates a nested key but preserves sibling subkeys", async () => {
+  test("a partial file updates a nested key but preserves sibling subkeys", async () => {
     seedFullConfig();
 
     await runSetupFromConfig({
@@ -159,19 +155,18 @@ describe("runSetupFromConfig — deep merge", () => {
     expect(written.registries).toEqual([{ name: "default", url: "https://example.com/registry" }]);
   });
 
-  test("--config follows the identical deep-merge semantics as --file", async () => {
+  test("an embedding model served by a connection needs no endpoint of its own", async () => {
     seedFullConfig();
 
-    // --config and --file share runSetupFromConfig; this asserts the JSON-blob
-    // path deep-merges too (sibling subkey survives).
     await runSetupFromConfig({
-      configJson: JSON.stringify({ output: { detail: "brief" } }),
+      configJson: JSON.stringify({
+        connections: { default: { endpoint: "https://example.test/v1", models: { fast: "m" } } },
+        embedding: { model: "nomic-embed-text" },
+      }),
       noInit: true,
     });
 
-    const output = readWrittenConfig().output as Record<string, unknown>;
-    expect(output.detail).toBe("brief");
-    expect(output.format).toBe("json");
+    expect(readWrittenConfig().embedding).toEqual({ model: "nomic-embed-text" });
   });
 
   test("nested harnesses merge key-by-key (sibling harness survives)", async () => {
@@ -188,7 +183,7 @@ describe("runSetupFromConfig — deep merge", () => {
     expect(harnesses.opencode).toEqual({ bin: "opencode" });
   });
 
-  test("an empty --config drops no pre-existing key", async () => {
+  test("an empty file drops no pre-existing key", async () => {
     seedFullConfig();
     const before = readWrittenConfig();
 

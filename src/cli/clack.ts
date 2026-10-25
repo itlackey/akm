@@ -25,6 +25,7 @@ import {
   multiselect as realMultiselect,
   note as realNote,
   outro as realOutro,
+  password as realPassword,
   select as realSelect,
   spinner as realSpinner,
   text as realText,
@@ -48,6 +49,7 @@ export interface ClackFakeForTests {
   select?: FakeFn;
   multiselect?: FakeFn;
   text?: FakeFn;
+  password?: FakeFn;
   spinner?: FakeFn;
   note?: FakeFn;
   isCancel?: (value: unknown) => boolean;
@@ -72,6 +74,7 @@ const realFns = {
   select: realSelect,
   multiselect: realMultiselect,
   text: realText,
+  password: realPassword,
   spinner: realSpinner,
   note: realNote,
   isCancel: realIsCancel,
@@ -99,6 +102,7 @@ export const confirm = bind("confirm");
 export const select = bind("select");
 export const multiselect = bind("multiselect");
 export const text = bind("text");
+export const password = bind("password");
 export const spinner = bind("spinner");
 export const note = bind("note");
 export const isCancel = bind("isCancel");

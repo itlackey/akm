@@ -52,6 +52,12 @@ export interface SetupContext {
 
   /** Merge a partial delta into the accumulated config. */
   apply(delta: Partial<SetupDraftConfig>): void;
+
+  /**
+   * Set top-level keys wholesale, so an entry the user removed is gone rather
+   * than merged back; a key given as `undefined` is deleted.
+   */
+  replace(keys: Readonly<Record<string, unknown>>): void;
 }
 
 /**
@@ -84,6 +90,14 @@ export function createSetupContext(initial: AkmConfig, options: { nonInteractive
     nonInteractive: options.nonInteractive,
     apply(delta) {
       acc = deepMergeConfig(acc, delta) as SetupDraftConfig;
+    },
+    replace(keys) {
+      const next: Record<string, unknown> = { ...acc };
+      for (const [key, value] of Object.entries(keys)) {
+        if (value === undefined) delete next[key];
+        else next[key] = value;
+      }
+      acc = next as SetupDraftConfig;
     },
   };
 }
