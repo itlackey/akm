@@ -98,7 +98,7 @@ describe("akm setup --endpoint --yes", () => {
       modelCalls: 'connection "default" (qwen3-8b)',
       agentWork: 'akm\'s own runtime over connection "default" (qwen3-8b)',
       // The endpoint lists an embedding model, which --yes turns on.
-      embeddings: "nomic-embed-text at http://localhost:11434/v1",
+      embeddings: 'nomic-embed-text on connection "default"',
     });
     expect(saved.embedding).toEqual({ model: "nomic-embed-text" });
     expect(saved.semanticSearchMode).toBe("auto");
@@ -213,6 +213,24 @@ describe("akm setup --endpoint --yes", () => {
     await server.serve(() => run({ endpoint: "http://localhost:11434/v1", embedding: "off" }));
 
     expect(written()).toEqual(first);
+  });
+
+  test("a connection that has no model yet is reported as that, with how to name one", async () => {
+    const summary = await run({ endpoint: "http://localhost:11434/v1" }, { noProbe: true });
+
+    for (const said of [summary.runs.modelCalls, summary.runs.agentWork]) {
+      expect(said).toContain('Connection "default" lists no models');
+      expect(said).toContain("akm models set");
+      expect(said).not.toContain("no connection or harness is configured");
+    }
+  });
+
+  test("the same is said when the endpoint would not list its models", async () => {
+    const summary = await withMockedFetch(
+      () => run({ endpoint: "https://api.example.test/v1" }),
+      () => new Response("denied", { status: 401 }),
+    );
+    expect(summary.runs.modelCalls).toContain("akm models set");
   });
 
   test("--no-probe contacts nothing: the connection is written with the models it already has", async () => {

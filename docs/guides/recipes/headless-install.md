@@ -53,7 +53,8 @@ it and never appears on the command line:
 akm setup --yes --endpoint https://api.example.com/v1 --api-key-env EXAMPLE_API_KEY
 ```
 
-`--no-probe` keeps the run offline (the endpoint's model list is not fetched).
+`--no-probe` keeps the run offline (the endpoint's model list is not fetched), so a
+new connection has no model until `akm models set` names one.
 For the full set of flags, see `akm setup --help`; for the config they write,
 see [configuration.md](../../reference/configuration.md).
 

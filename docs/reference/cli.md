@@ -215,7 +215,7 @@ question left, so nothing is prompted.
 | `--embedding-endpoint <url>`, `--embedding-api-key-env <NAME>` | Another endpoint serving the embedding model |
 | `--from <file>` | A config file (JSON or YAML) to merge |
 | `--dir <path>`, `--no-init` | The bundle directory; skip scaffolding it |
-| `--no-probe` | Offline: the endpoint is not contacted and its models are not listed |
+| `--no-probe` | Offline: the endpoint is not contacted and its models are not listed; a connection added this way has no model until `akm models set` names one |
 
 The wizard also lets you review registries and add bundle sources. A scripted run
 prints its result with a `runs` object saying what runs where: `modelCalls`,

@@ -262,7 +262,7 @@ const setupCommand = defineCommand({
     "no-probe": {
       type: "boolean",
       description:
-        "Offline run: the endpoint is not contacted and its models are not listed. Aliases resolve to the connection's first model until `akm models set`.",
+        "Offline run: the endpoint is not contacted and its models are not listed. A connection added this way has no model until one is named with `akm models set`; the picks it already has are kept.",
     },
   },
   async run({ args }) {
