@@ -707,6 +707,7 @@ describe("S11: sectioned root help", () => {
         "metrics",
         "ui",
         "config",
+        "models",
         "registry",
         "info",
         "log",

@@ -451,33 +451,34 @@ export function formatListPlain(r: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
-/** Render `akm models list`'s `{ rows }` as a column-aligned table (#946). */
-export function formatModelsListPlain(r: Record<string, unknown>): string {
-  const rows = Array.isArray(r.rows) ? (r.rows as Record<string, unknown>[]) : [];
-  if (rows.length === 0) return "No model aliases configured.";
-  const headers = ["ALIAS", "COLUMN", "MODEL", "SOURCE", "VIA", "ENGINE"] as const;
-  const cells: string[][] = rows.map((row) => [
-    String(row.alias ?? "?"),
-    String(row.column ?? "?"),
-    String(row.model ?? "?"),
-    String(row.source ?? "?"),
-    String(row.via ?? "?"),
-    row.engine !== undefined ? String(row.engine) : "-",
+/** Render `akm models`'s `{ connection, aliases, available }`: each alias's model, beside the models the endpoint lists. */
+export function formatModelsPlain(r: Record<string, unknown>): string {
+  const aliases =
+    r.aliases && typeof r.aliases === "object" ? Object.entries(r.aliases as Record<string, unknown>) : [];
+  const available = Array.isArray(r.available) ? r.available.map(String) : [];
+  const title = `Connection ${String(r.connection ?? "?")}`;
+  if (aliases.length === 0 && available.length === 0) {
+    return `${title} has no model aliases. Set one with \`akm models set <alias> <model>\`.`;
+  }
+  const headers = ["ALIAS", "MODEL", "AVAILABLE"] as const;
+  const cells: string[][] = Array.from({ length: Math.max(aliases.length, available.length) }, (_, i) => [
+    aliases[i]?.[0] ?? "",
+    aliases[i] ? String(aliases[i]?.[1]) : "",
+    available[i] ?? "",
   ]);
-  const widths = headers.map((header, i) => {
-    let width = header.length;
-    for (const cols of cells) {
-      const cell = cols[i];
-      if (cell !== undefined && cell.length > width) width = cell.length;
-    }
-    return width;
-  });
+  const widths = headers.map((header, i) => Math.max(header.length, ...cells.map((cols) => cols[i]?.length ?? 0)));
   const renderRow = (cols: readonly string[]): string =>
     cols
       .map((cell, i) => cell.padEnd(widths[i] ?? cell.length))
       .join("  ")
       .trimEnd();
-  return [renderRow(headers), ...cells.map(renderRow)].join("\n");
+  return [title, renderRow(headers), ...cells.map(renderRow)].join("\n");
+}
+
+/** Render `akm models set`'s result. */
+export function formatModelsSetPlain(r: Record<string, unknown>): string {
+  const was = typeof r.previous === "string" ? ` (was ${r.previous})` : "";
+  return `${String(r.alias)} -> ${String(r.model)} on connection ${String(r.connection)}${was}`;
 }
 
 /** Render a single `SourceEntry` — `akm bundle show <name>`'s detail view of one `list` row. */

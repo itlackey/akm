@@ -306,13 +306,15 @@ akm config list                               # Show current config
 akm config get <key>                          # Read a value
 akm config set <key> <value>                  # Set a value
 akm config unset <key>                        # Remove a key
+akm models                                    # Which model answers each alias, beside what the endpoint lists
+akm models set <alias> <model>                # Change one (--connection <name> for another connection)
 ```
 
 ## Other Commands
 
 ```sh
 akm bundle create                                      # Initialize working bundle (scaffold only)
-akm setup                                     # Interactive wizard: bundle + LLM/embedding + agent + registry config
+akm setup                                     # Interactive wizard: agent programs, model connection, embeddings, bundle + registry config
 akm setup --dir ~/custom-bundle                # Run the wizard against a custom bundle path
 akm setup --yes                               # Non-interactive, accepts all defaults
 akm index                                     # Rebuild search index

@@ -2183,6 +2183,26 @@ work with.
 
 See [configuration.md](configuration.md) for details.
 
+### models
+
+Show which model answers each alias (`fast`, `balanced`, `reasoning`, and any
+you add) on a connection, beside the models its endpoint lists, and change one.
+Connections only: a harness's alias map is `harnesses.<name>.models`, edited
+with `akm config set`. Run `akm models --help` for the options.
+
+```sh
+akm models                            # The default connection's picks and the endpoint's models
+akm models --connection cloud         # Another connection
+akm models --no-probe                 # The picks only; the endpoint is not contacted
+akm models set reasoning glm-5        # Make glm-5 answer "reasoning"
+```
+
+`akm models` prints `{ connection, aliases, available }`. `set` writes
+`connections.<name>.models.<alias>`; an alias whose entry carries request fields
+keeps them and changes the model. A model the endpoint does not list is written
+with a warning. With no connection configured both commands say so and point at
+`akm setup`.
+
 ### help
 
 Print the sectioned command overview, detailed help for any command, or a
