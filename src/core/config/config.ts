@@ -918,17 +918,16 @@ function applyEdit(target: Record<string, unknown>, before: Record<string, unkno
   for (const [key, value] of Object.entries(after)) {
     const was = before[key];
     if (isDeepStrictEqual(value, was)) continue;
-    if (!isPlainObject(value) || !isPlainObject(was)) {
-      target[key] = value;
-      continue;
-    }
     const existing = target[key];
-    if (existing !== undefined && !isPlainObject(existing)) {
+    // An entry the reader dropped (a connection with no endpoint) is absent from
+    // `before` but present in the file: an edit to it adds to what the file has.
+    const merges = was === undefined ? isPlainObject(existing) : isPlainObject(was);
+    if (!isPlainObject(value) || !merges || (existing !== undefined && !isPlainObject(existing))) {
       target[key] = value;
       continue;
     }
     const part = existing ?? {};
-    applyEdit(part, was, value);
+    applyEdit(part, isPlainObject(was) ? was : {}, value);
     followKeyOrder(part, value);
     if (existing !== undefined || Object.keys(part).length > 0) target[key] = part;
   }

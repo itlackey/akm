@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { setConfigValue } from "../src/commands/config-cli";
 import {
   DEFAULT_CONFIG,
   defaultConnection,
@@ -590,6 +591,30 @@ describe("connections", () => {
     const dropped = warnings.filter((w) => w.includes('connection "cloud"'));
     expect(dropped).toHaveLength(1);
     expect(dropped[0]).toContain("no endpoint");
+  });
+
+  test("setting a field on a connection the reader dropped adds to what the file has, never replaces it", () => {
+    const dropped = { models: { fast: "gpt-4" }, top_p: 0.9 };
+    writeCurrentConfig({ connections: { lab: dropped, other: LAB } });
+    captureWarnings(() => {
+      mutateConfig((current) => setConfigValue(current, "connections.lab.endpoint", "http://lab:8080/v1"));
+    });
+    const written = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as { connections: Record<string, unknown> };
+    expect(written.connections.lab).toEqual({ ...dropped, endpoint: "http://lab:8080/v1" });
+    expect(written.connections.other).toEqual(LAB);
+    resetConfigCache();
+    expect(loadConfig().connections?.lab).toMatchObject({ endpoint: "http://lab:8080/v1", models: { fast: "gpt-4" } });
+  });
+
+  test("setting the platform on a harness the reader dropped keeps its bin and args", () => {
+    writeCurrentConfig({ harnesses: { work: { bin: "/opt/claude", args: ["--print"] } } });
+    captureWarnings(() => {
+      mutateConfig((current) => setConfigValue(current, "harnesses.work.platform", "claude"));
+    });
+    const written = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as { harnesses: Record<string, unknown> };
+    expect(written.harnesses.work).toEqual({ bin: "/opt/claude", args: ["--print"], platform: "claude" });
+    resetConfigCache();
+    expect(loadConfig().harnesses?.work).toMatchObject({ platform: "claude", bin: "/opt/claude", args: ["--print"] });
   });
 
   test("keeps request fields on the connection and on a model entry as written, without warning", () => {
