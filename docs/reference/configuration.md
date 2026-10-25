@@ -263,13 +263,12 @@ the major version `opencode --version` reports:
 - akm never migrates your OpenCode database. It reads the database's migration
   ledger first, read-only, and only when the ledger has every migration the
   OpenCode akm embeds carries (your OpenCode is the same release or newer) does
-  OpenCode's own credential service read your logins from it. Opening it then
-  migrates nothing: a WAL checkpoint, which any SQLite program opening the file
-  does, can rewrite its bytes but not its content, and a refreshed OAuth token
-  is written back there, as your own OpenCode does. An older database is left
-  untouched: akm warns once and the run goes on without your stored logins
-  until you upgrade OpenCode. akm stores no session in it, and its reads of
-  your OpenCode history are separate and read-only.
+  OpenCode's own credential service read your logins from it. A refreshed OAuth
+  token is written back to your OpenCode database, as OpenCode itself does;
+  nothing else in it is changed. An older database is left untouched: akm warns
+  once and the run goes on without your stored logins until you upgrade
+  OpenCode. akm stores no session in it, and its reads of your OpenCode history
+  are separate and read-only.
 - OpenCode 1 runs as `opencode run`, with the prompt on stdin. It keeps its logins
   in `auth.json`, which akm does not import. akm reads OpenCode 1's session
   history read-only from its `opencode.db`, the same file OpenCode 2 uses.

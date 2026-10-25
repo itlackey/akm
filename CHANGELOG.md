@@ -139,8 +139,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (akm passes a model only when it names one), and your logins, which akm's
   embedded OpenCode reads from your OpenCode 2 database through OpenCode's own
   credential service when that database has every migration the embedded
-  OpenCode carries; a refreshed token is written back there. akm never creates
-  or migrates that file or stores a session in it: an older one is left
+  OpenCode carries; a refreshed OAuth token is written back to your OpenCode
+  database, as OpenCode itself does; nothing else in it is changed. akm never
+  creates or migrates that file or stores a session in it: an older one is left
   untouched, with one warning, and the run goes on without its logins. An
   interactive `akm agent` still hands the terminal to the CLI.
   - Model work on the opencode harness is confined where OpenCode 2 is
