@@ -19,6 +19,7 @@ import path from "node:path";
 import { inspectConsolidationPool } from "../../../../src/commands/improve/consolidate";
 import { collectEligibleRefs, dedupeRefs, resolveImproveScope } from "../../../../src/commands/improve/eligibility";
 import { akmImprove } from "../../../../src/commands/improve/improve";
+import { resolveImprovePlan } from "../../../../src/commands/improve/improve-strategies";
 import { stateKey } from "../../../../src/commands/improve/ledger";
 import { buildSnapshotManifest } from "../../../../src/commands/improve/preparation";
 import type { AssetSalienceRow } from "../../../../src/commands/improve/salience";
@@ -394,6 +395,39 @@ describe("reflect signal-delta eligibility", () => {
     });
 
     expect(reflected).toContain("memories/auth-tips");
+  });
+
+  test("what the run selected reaches the reflect stage, for its judge", async () => {
+    const stash = makeTempDir("akm-elig-run-selection-");
+    writeMemory(stash, "auth-tips", "Use VPN.");
+    await buildIndex(stash);
+    recordAttempt(stash, "memories/auth-tips", "reflect", "unchanged", OLDER_MS);
+    appendEvent(
+      { eventType: "feedback", ref: durableRef("memories/auth-tips"), metadata: { signal: "negative" } },
+      { now: () => NEWER_MS },
+    );
+    const config = configWithoutProactiveLane(stash);
+    config.connections = {
+      ...config.connections,
+      picked: { endpoint: "http://127.0.0.1:2/v1", models: { fast: "m", balanced: "m" } },
+    };
+
+    const seen: Array<unknown> = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      config,
+      resolvedPlan: resolveImprovePlan(undefined, config, { run: { connection: "picked" } }),
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref, run }) => {
+        seen.push(["reflect", run]);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(seen).toContainEqual(["reflect", { connection: "picked" }]);
   });
 
   test("no new feedback since last reflect proposal → ineligible", async () => {

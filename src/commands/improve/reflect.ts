@@ -34,6 +34,7 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { warnOnce } from "../../core/warn";
+import type { ConfiguredExecutionSettings } from "../../execution/source";
 import { lookup } from "../../indexer/indexer";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
 import { buildExecution, currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
@@ -84,6 +85,12 @@ export interface AkmReflectOptions {
   task?: string;
   /** Connection (or harness) override, by name. */
   engine?: string;
+  /**
+   * What the improve run selected: the nearest layer of this stage and of its
+   * quality-gate judge. `engine`, the flag of a stand-alone reflect, selects this
+   * stage's own target only.
+   */
+  run?: ConfiguredExecutionSettings;
   timeoutMs?: number;
   /** Shared improve deadline for dispatch and judging. */
   signal?: AbortSignal;
@@ -811,7 +818,12 @@ function resolveReflectRunner(options: AkmReflectOptions): {
       modelWork: true,
     });
   } else if (options.improveProfile) {
-    const resolved = resolveImproveExecution({ config, processName: "reflect", alias: SHIPPED_ALIAS.improve });
+    const resolved = resolveImproveExecution({
+      config,
+      processName: "reflect",
+      alias: SHIPPED_ALIAS.improve,
+      ...(options.run ? { run: options.run } : {}),
+    });
     if (!resolved) {
       throw new ConfigError(
         "Reflect requires a connection or harness for the active improve strategy.",
@@ -1211,7 +1223,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // Judge selection is frozen before dispatch so a missing judge credential fails first.
   const judgeWanted = activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? true;
   let judgeRunner: RunnerSpec | undefined;
-  if (judgeWanted) judgeRunner = resolveQualityGateJudge(config, activeStrategy, "reflect", notices.add);
+  if (judgeWanted) judgeRunner = resolveQualityGateJudge(config, activeStrategy, "reflect", notices.add, options.run);
   const skippedNoJudge = judgeWanted && !judgeRunner;
   if (skippedNoJudge) {
     warnOnce(

@@ -117,3 +117,52 @@ describe("the shipped alias per kind of call", () => {
     expect(asLlmRunner(processed.processes.reflect.runner).model).toBe("m-reasoning");
   });
 });
+
+describe("what a run selects is the nearest layer of every call in it, the judges included", () => {
+  const connection = (prefix: string) => ({
+    endpoint: `http://${prefix}:1/v1`,
+    models: { fast: `${prefix}-fast`, balanced: `${prefix}-balanced`, reasoning: `${prefix}-reasoning` },
+  });
+  const connections = { default: LAB, x: connection("x"), y: connection("y") };
+
+  test("with no improve.qualityGate, a quality-gate judge runs on the selected connection under the judge alias", () => {
+    const config = configOf({ connections });
+    for (const process of ["reflect", "distill"] as const) {
+      const judge = resolveQualityGateJudge(config, undefined, process, undefined, { connection: "x" });
+      expect(judge).toMatchObject({ kind: "connection", name: "x" });
+      expect(asLlmRunner(judge).model).toBe("x-balanced");
+    }
+  });
+
+  test("it is nearer than improve.qualityGate: the gate names y, the run names x, the judge is on x", () => {
+    const config = configOf({ connections, improve: { qualityGate: { connection: "y" } } });
+    expect(resolveQualityGateJudge(config, undefined, "reflect")).toMatchObject({ name: "y" });
+    const judge = resolveQualityGateJudge(config, undefined, "reflect", undefined, { connection: "x" });
+    expect(judge).toMatchObject({ name: "x" });
+    expect(asLlmRunner(judge).model).toBe("x-balanced");
+  });
+
+  test("the improve plan resolves its passes and triage's judgment under it: passes on fast, the judgment on balanced", () => {
+    const config = configOf({
+      connections,
+      improve: {
+        ...REFLECT_AND_TRIAGE,
+        connection: "default",
+        processes: { triage: { connection: "y" }, reflect: { connection: "y" } },
+      },
+    });
+    const plan = resolveImprovePlan("nightly", config, { run: { connection: "x" } });
+
+    expect(plan.run).toEqual({ connection: "x" });
+    expect(plan.processes.reflect.runner).toMatchObject({ name: "x" });
+    expect(asLlmRunner(plan.processes.reflect.runner).model).toBe("x-fast");
+    expect(plan.triageJudgment).toMatchObject({ name: "x" });
+    expect(asLlmRunner(plan.triageJudgment).model).toBe("x-balanced");
+
+    // Without it, the process settings decide.
+    const without = resolveImprovePlan("nightly", config);
+    expect(without.run).toBeUndefined();
+    expect(without.triageJudgment).toMatchObject({ name: "y" });
+    expect(without.processes.reflect.runner).toMatchObject({ name: "y" });
+  });
+});

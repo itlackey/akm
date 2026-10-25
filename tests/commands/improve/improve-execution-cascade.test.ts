@@ -49,6 +49,20 @@ describe("resolveImproveExecution — the nearest layer that names a target wins
     ).toMatchObject({ name: "default" });
   });
 
+  test("what the run selected is nearer than the call's own settings", () => {
+    expect(
+      resolve(reflect({ connection: "near" }, { connection: "wide" }), {
+        current: { connection: "wide" },
+        run: { connection: "default" },
+      }),
+    ).toMatchObject({ name: "default" });
+    // A run that names a harness replaces a connection every farther layer chose.
+    expect(resolve(reflect({ connection: "near" }), { run: { harness: "claude" } })).toMatchObject({
+      kind: "harness",
+      name: "claude",
+    });
+  });
+
   test("a call that is not a process takes the settings of the process it names", () => {
     const improve = { processes: { triage: { connection: "near" }, reflect: { connection: "wide" } } };
     expect(resolve(improve, { processName: "triage-judgment", process: "triage" })).toMatchObject({ name: "near" });
