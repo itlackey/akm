@@ -15,13 +15,12 @@
  * (`src/tasks/run/attempt-lifecycle.ts` is never imported here), never writes
  * history or a log (`src/tasks/run/task-history.ts` /
  * `src/tasks/run/task-log.ts` are never imported here), never touches the
- * scheduler (`src/tasks/scheduler-*.ts` are never imported here), and never
- * resolves a composed command/persona REF against the local index
- * (`src/tasks/prepare/prepare.ts`'s own command branch always does, via
- * `prepareCommandInvocation`'s default `sourceLoader` — an unindexed bundle
- * would otherwise make a read-only introspection command fail with "Run `akm
- * index` to build it", which is the wrong shape of dependency for a command
- * whose whole point is to work on a task the caller just wrote).
+ * scheduler (`src/tasks/scheduler-*.ts` are never imported here), and reads a
+ * composed command/persona REF only through the read-only lookup `akm command
+ * run --dry-run` uses (an isolated snapshot of the index, never the live one).
+ * A command or persona that cannot be read is reported as the envelope's
+ * `execution.problem`, not thrown: the task the caller just wrote is the thing
+ * being explained.
  *
  * SECRET-FREE BY CONSTRUCTION for the structural bans below — these hold
  * regardless of any value's shape, because the excluded data never reaches
@@ -34,20 +33,16 @@
  *     rendered command/persona source — so a `run:` command string,
  *     `with.content`, an inline `akm/command` prompt body, or a stored
  *     command's own rendered content is never read, let alone printed;
- *   - effective execution settings (engine/model/timeout) reuse
- *     `resolveExecution` (`src/integrations/agent/execution.ts`) — the SAME
- *     resolution entry point every command/persona invocation goes through —
- *     fed a BLANK inline placeholder command (`createInlineResolvedCommand`)
- *     and an EMPTY command-layer values map, instead of the task's real referenced
- *     command source. This is a deliberate, documented trade-off: a
- *     referenced command's OWN frontmatter overrides (its own `engine:`/
- *     `model:`, if any) do not contribute a layer here, in exchange for never
- *     needing the index, never reading the referenced file's bytes, and never
- *     risking a leaked `runtime.environment` value (the cascade's own
- *     "current" layer, built here from the TASK's own `execution` overrides
- *     ONLY — connection/harness/engine/model/inference/outputSchema/timeout, deliberately
- *     never `environment`/`workspace`/`agent`, so a portable persona selector
- *     can never demand a persona this module never loads). Only
+ *   - effective execution settings (engine/model/timeout) come from the SAME
+ *     entry point `akm command run` uses (`prepareCommandInvocation`), so a
+ *     stored command's own frontmatter (its `harness:`, `model:`, `agent:`) and
+ *     the persona it names contribute their layers and the target named is the
+ *     target `command run --dry-run` names. An inline `akm/command` prompt has
+ *     no frontmatter: it goes through `resolveExecution` with a BLANK inline
+ *     command. The cascade's "current" layer is built from the TASK's own
+ *     `execution` overrides ONLY — connection/harness/engine/model/agent/inference/
+ *     outputSchema/timeout, deliberately never `environment`/`workspace`, so no
+ *     `runtime.environment` value is ever near this module. Only
  *     `engine`/`model`/`runtime.timeoutMs` and the cascade's own
  *     `{layer,kind,via}` provenance map are read back — never
  *     `request.command`, `request.persona`, `request.conversation`, or
@@ -77,10 +72,10 @@
 
 import fs from "node:fs";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
-import { makeBundleRef } from "../../core/asset/asset-ref";
+import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
-import { NotFoundError } from "../../core/errors";
+import { ConfigError, NotFoundError } from "../../core/errors";
 import {
   applyInputDefaults,
   type InputContract,
@@ -89,8 +84,15 @@ import {
   materializeInputFlags,
 } from "../../execution/input-contract";
 import { createInlineResolvedCommand } from "../../execution/resolved-request";
+import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
+import { lookupBundleRefReadonly } from "../../indexer/indexer";
 import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
-import { currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
+import {
+  currentLayer,
+  type ResolvedExecution,
+  resolveExecution,
+  shippedAlias,
+} from "../../integrations/agent/execution";
 import { isSchedulerRefEnabled } from "../../tasks/activation-config";
 import type { PreparableTaskDocument } from "../../tasks/prepare/prepared-execution";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
@@ -98,6 +100,7 @@ import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../../tasks/source/task-input-diagnostics";
 import { validateTaskConceptId, validateTaskId } from "../../tasks/task-id";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
+import { prepareCommandInvocation } from "../command/command-execution";
 import { parseTaskRef, resolveTaskReadBundle, taskIdForAdapter } from "./tasks";
 
 export interface TaskExplainOptions {
@@ -140,6 +143,8 @@ interface ExecutionSettingsSection {
   readonly model?: unknown;
   readonly timeoutMs?: number | null;
   readonly provenance: Readonly<Record<string, Readonly<{ layer: string; kind: string; via: string }>>>;
+  /** The command or persona the task names could not be read, so these settings are the defaults without it. */
+  readonly problem?: string;
 }
 
 export interface TaskExplainEnvelope {
@@ -265,31 +270,70 @@ function isCommandTarget(document: PreparableTaskDocument): boolean {
  * home for both a v3 document's authored `akm.*` and a v4 document's
  * projected `execution` block) as a cascade "current" layer — the exact
  * non-secret subset `src/tasks/prepare/prepare-support.ts`'s
- * `currentExecutionValues` also forwards, minus `agent`/`workspace`/
- * `environment` (this module never loads a persona and never reads `env:`,
- * see this file's header).
+ * `currentExecutionValues` also forwards, minus `workspace`/`environment`
+ * (this module never reads `env:`, see this file's header).
  */
-function currentExecutionValues(document: PreparableTaskDocument): Record<string, unknown> {
+function currentExecutionValues(document: PreparableTaskDocument, bundleName: string): Record<string, unknown> {
   const akm = document.akm;
   if (!akm) return {};
   const out: Record<string, unknown> = {};
   for (const key of ["connection", "harness", "engine", "model", "inference", "outputSchema", "timeout"] as const) {
     if (Object.hasOwn(akm, key)) out[key] = akm[key];
   }
+  if (Object.hasOwn(akm, "agent")) {
+    const agent = akm.agent;
+    out.agent =
+      typeof agent === "string" && isPortableExecutionAgentSelector(agent) ? qualifyInBundle(agent, bundleName) : agent;
+  }
   return out;
+}
+
+/** A ref the task wrote, relative to its own bundle unless it names one. */
+function qualifyInBundle(ref: string, bundleName: string): string {
+  const parsed = parseBundleRef(ref);
+  return makeBundleRef(parsed.bundle ?? bundleName, parsed.conceptId);
+}
+
+/** The stored command the task runs, if it runs one; an inline `akm/command` prompt has none. */
+function storedCommandRef(document: PreparableTaskDocument): string | undefined {
+  if (document.target.kind !== "uses") return undefined;
+  if (document.target.uses.kind === "command") return document.target.uses.ref;
+  const command = document.target.command;
+  return command?.kind === "stored" ? command.ref : undefined;
 }
 
 /**
  * Effective execution settings + field-level provenance for a command-kind
- * target — see this file's header for why this is a BLANK-command cascade
- * call rather than a real command/persona load.
+ * target. A stored command is prepared the way `akm command run --dry-run`
+ * prepares it; one that cannot be (a missing command or persona) falls back to
+ * the cascade without it, with the reason in `problem`.
  */
-function resolveExecutionSettings(document: PreparableTaskDocument): ExecutionSettingsSection {
+async function resolveExecutionSettings(
+  document: PreparableTaskDocument,
+  bundleName: string,
+): Promise<ExecutionSettingsSection> {
   if (!isCommandTarget(document)) return { provenance: {} };
-  const current = currentExecutionValues(document);
-  const prepared = resolveExecution({
+  const config = loadConfig();
+  const current = currentExecutionValues(document, bundleName);
+  const ref = storedCommandRef(document);
+  let problem: string | undefined;
+  let prepared: ResolvedExecution | undefined;
+  if (ref !== undefined) {
+    try {
+      prepared = await prepareCommandInvocation({
+        action: { ref: qualifyInBundle(ref, bundleName) },
+        config,
+        current: current as UnresolvedExecutionDefaults,
+        sourceLookup: lookupBundleRefReadonly,
+      });
+    } catch (error) {
+      if (error instanceof ConfigError) throw error;
+      problem = error instanceof Error ? error.message : String(error);
+    }
+  }
+  prepared ??= resolveExecution({
     command: createInlineResolvedCommand({ template: "", content: "" }),
-    config: loadConfig(),
+    config,
     layers: [
       shippedAlias(SHIPPED_ALIAS.agent),
       { id: "task-explain", kind: "command", values: {} },
@@ -306,6 +350,7 @@ function resolveExecutionSettings(document: PreparableTaskDocument): ExecutionSe
     ...(prepared.request.model !== undefined ? { model: prepared.request.model } : {}),
     ...(prepared.request.runtime.timeoutMs !== undefined ? { timeoutMs: prepared.request.runtime.timeoutMs } : {}),
     provenance: prepared.provenance,
+    ...(problem !== undefined ? { problem } : {}),
   };
 }
 
@@ -389,7 +434,7 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
     target: targetSection(document),
     inputDeclarations: buildInputDeclarations(inputContract),
     suppliedInputs: buildSuppliedInputs(defaultedInputs, materializedInputs),
-    execution: resolveExecutionSettings(document),
+    execution: await resolveExecutionSettings(document, bundle.source.name),
     schedule,
   };
 }

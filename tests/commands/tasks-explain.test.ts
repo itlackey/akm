@@ -46,6 +46,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isTaskRunWithId } from "../../src/cli";
 import { resetConfigCache } from "../../src/core/config/config";
+import { akmIndex } from "../../src/indexer/indexer";
 import { runCliCapture } from "../_helpers/cli";
 import {
   type IsolatedAkmStorage,
@@ -401,6 +402,84 @@ describe("akm task explain <ref> — where a task runs", () => {
     expect(result.code).toBe(0);
     const { execution } = JSON.parse(result.stdout) as { execution?: { engine?: { name: string; platform?: string } } };
     expect(execution?.engine).toMatchObject({ name, ...(platform ? { platform } : {}) });
+  });
+});
+
+describe("akm task explain <ref> — the stored command is read the way `command run --dry-run` reads it", () => {
+  const explain = async (id: string) => {
+    const result = await runCliCapture(["task", "explain", id, "--format", "json"]);
+    expect(result.code).toBe(0);
+    return JSON.parse(result.stdout) as {
+      execution: { engine?: { name: string; kind: string }; problem?: string };
+    };
+  };
+  const useCommand = (id: string, ref: string) =>
+    writeTask(id, ["version: 4", `uses: ${ref}`, "schedule:", '  - cron: "0 9 * * 1"', ""].join("\n"));
+
+  beforeEach(() => {
+    writeSandboxConfig({
+      harnesses: { reviewer: { platform: "claude", bin: "/bin/true" } },
+    });
+    resetConfigCache();
+  });
+
+  test("a command whose frontmatter names a harness runs on it, as `command run --dry-run` says", async () => {
+    write("commands/on-reviewer.md", "---\nname: on-reviewer\ntype: command\nharness: reviewer\n---\nReview.\n");
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    useCommand("explain-on-reviewer", "commands/on-reviewer");
+
+    const { execution } = await explain("explain-on-reviewer");
+    const dryRun = await runCliCapture(["command", "run", "commands/on-reviewer", "--dry-run", "--format=json"]);
+
+    expect(execution.engine).toMatchObject({ name: "reviewer", kind: "harness" });
+    expect(execution.problem).toBeUndefined();
+    expect(JSON.parse(dryRun.stdout)).toMatchObject({ engine: "reviewer" });
+  });
+
+  test("the task's own overrides are nearer than the command's", async () => {
+    write("commands/on-reviewer.md", "---\nname: on-reviewer\ntype: command\nharness: reviewer\n---\nReview.\n");
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    writeSandboxConfig({ connections: { lab: { endpoint: "http://lab.invalid/v1", models: { fast: "m" } } } });
+    resetConfigCache();
+    writeTask(
+      "explain-override",
+      ["version: 4", "uses: commands/on-reviewer", "connection: lab", "schedule:", '  - cron: "0 9 * * 1"', ""].join(
+        "\n",
+      ),
+    );
+
+    expect((await explain("explain-override")).execution.engine).toMatchObject({ name: "lab", kind: "connection" });
+  });
+
+  test("a bundle with no index yet is a problem that says so, not an error", async () => {
+    write("commands/unindexed.md", "---\nname: unindexed\ntype: command\n---\nGo.\n");
+    useCommand("explain-unindexed", "commands/unindexed");
+
+    const { execution } = await explain("explain-unindexed");
+
+    expect(execution.problem).toContain("akm index");
+    expect(execution.engine?.name).toBeDefined();
+  });
+
+  test("a command that is not there is a problem in the envelope, with the defaults beside it", async () => {
+    write("commands/present.md", "---\nname: present\ntype: command\n---\nGo.\n");
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    useCommand("explain-ghost", "commands/ghost");
+
+    const { execution } = await explain("explain-ghost");
+
+    expect(execution.problem).toContain("ghost");
+    expect(execution.engine?.name).toBeDefined();
+  });
+
+  test("a persona the command names that is not there is a problem too", async () => {
+    write("commands/needs-persona.md", "---\nname: needs-persona\ntype: command\nagent: agents/ghost\n---\nGo.\n");
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    useCommand("explain-persona", "commands/needs-persona");
+
+    const { execution } = await explain("explain-persona");
+
+    expect(execution.problem).toContain("ghost");
   });
 });
 
