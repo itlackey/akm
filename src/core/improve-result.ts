@@ -41,8 +41,7 @@ const COMMON_FIELDS = [
   "coverageGaps",
   // R10: no longer written (the write-only eval-cases path was removed),
   // but kept in the allow-list so `decodeImproveResult` still reads
-  // improve-result envelopes a prior release wrote with this field —
-  // AGENTS.md "Reading persisted data".
+  // improve-result envelopes a prior release wrote with this field.
   "evalCasesWritten",
   "deadUrls",
   "deadUrlCoverage",
@@ -62,8 +61,7 @@ const COMMON_FIELDS = [
   "reflectGuardRejectedActions",
   // No longer written (nothing has set it since the confidence gate was
   // deleted), but kept in the allow-list so `decodeImproveResult` still reads
-  // the improve_runs rows an older release wrote with it, its value ignored —
-  // AGENTS.md "Reading persisted data".
+  // the improve_runs rows an older release wrote with it, its value ignored.
   "gateAutoAcceptedCount",
   "gateAutoAcceptFailedCount",
   "triage",
@@ -141,7 +139,7 @@ function validateConsolidationPlan(value: unknown): void {
   );
   if (!isRecord(value.configured)) fail("plan.consolidation.configured must be an object");
   // `minPoolSize` is no longer written (the minimum-pool guard was removed in 0.10, #1131); runs an
-  // older release persisted still carry it, ignored — AGENTS.md "Reading persisted data".
+  // older release persisted still carry it, ignored.
   requireExactFields(value.configured, new Set(["enabled", "minPoolSize", "limit", "maxChunkSize"]));
   if (value.configured.enabled !== undefined && typeof value.configured.enabled !== "boolean") {
     fail("plan.consolidation.configured.enabled must be a boolean");
@@ -411,7 +409,7 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   // #947 added plan.processes (2026-09-09T09:03:19Z); every run recorded
   // before it legitimately stored `plan` with no `processes` key at all —
   // validate the rows only when present, same as `proactive` below, so a
-  // pre-#947 envelope still decodes (AGENTS.md "Reading persisted data").
+  // pre-#947 envelope still decodes.
   if (value.processes !== undefined) validateProcessRoutingRows(value.processes);
   if (value.proactive !== undefined) validateProactivePlan(value.proactive);
   validateConsolidationPlan(value.consolidation);

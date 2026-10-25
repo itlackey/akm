@@ -17,8 +17,7 @@
 // under os.tmpdir() (via makeSandboxDir), and isTransientStashPath()
 // deliberately hardcodes /tmp, /var/tmp, and their macOS /private
 // equivalents rather than reading TMPDIR. A relocated TMPDIR makes these
-// fixtures fail for reasons unrelated to the guard under test. See
-// AGENTS.md's Tests section.
+// fixtures fail for reasons unrelated to the guard under test.
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";

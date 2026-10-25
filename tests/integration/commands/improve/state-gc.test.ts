@@ -246,7 +246,7 @@ describe("runOrphanStateGcPass", () => {
     try {
       // The LIVE entry is stored under the bundle-qualified item_ref; the
       // state row only carries the bare conceptId (an older/legacy write
-      // spelling — AGENTS.md: "the short bundle-omitted form is input sugar").
+      // spelling: the short bundle-omitted form is input sugar).
       // A naive `asset_ref NOT IN (SELECT item_ref FROM entries)` would flag
       // this row as an orphan because the strings differ; the per-ref
       // getEntryByRef probe (which suffix-matches a bare conceptId across

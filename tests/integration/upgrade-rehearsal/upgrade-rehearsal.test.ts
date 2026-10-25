@@ -402,7 +402,7 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     const result = await runLauncher(candidateLauncher, ["improve", "--dry-run"], home.env);
     expect(result.status).not.toBe(70);
     if (result.status === 0) return;
-    // Failures render to stderr as {ok:false, error, code} (AGENTS.md's CLI Contract).
+    // Failures render to stderr as {ok:false, error, code}.
     const envelope = JSON.parse(result.stderr) as { ok?: boolean; code?: string };
     expect(envelope.ok).toBe(false);
     expect(envelope.code).toBe("LLM_NOT_CONFIGURED");

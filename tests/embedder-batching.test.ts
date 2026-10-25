@@ -9,8 +9,8 @@
  * split-and-retry for RemoteEmbedder.embedBatch.
  *
  * All network I/O here is mocked via `withMockedFetch` (no real socket
- * opened), so this stays a pure unit test rather than an integration test —
- * see AGENTS.md's tests/integration/ classification rule. The real-server
+ * opened), so this stays a pure unit test rather than an integration test.
+ * The real-server
  * variants of the concurrency and context-split behavior live in
  * tests/integration/embedder.test.ts.
  */

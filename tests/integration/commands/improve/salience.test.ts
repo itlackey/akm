@@ -14,7 +14,7 @@
  *
  * The state.db cases open a real SQLite database (openStateDatabase), which
  * is why this file lives in tests/integration/ despite covering mostly pure
- * functions (ORG-05, 0.9.8 stabilization; see AGENTS.md's classification rule).
+ * functions.
  */
 
 import { describe, expect, test } from "bun:test";

@@ -387,8 +387,8 @@ function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePat
  * per-pass catchall schema (`IndexPassConfigSchema`), so `resolveSchemaAt`
  * below never returns `undefined` for them and the walk would otherwise
  * treat them as a live, ordinary pass. Named here so the same three
- * guarantees apply as any other retired config key (AGENTS.md "Reading
- * persisted data"): a config setting one keeps loading, is named once by
+ * guarantees apply as any other retired config key: a config setting one keeps
+ * loading, is named once by
  * the unknown-key warning, and is dropped only by `akm migrate apply`.
  * `index.graph` (the LLM entity-graph extraction pass) and
  * `index.metadataEnhance` (LLM metadata enrichment) were retired in

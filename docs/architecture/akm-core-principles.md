@@ -153,10 +153,9 @@ disabled is disabled explicitly with a linked issue.
 
 No test reads or writes a developer's real files: the runner scripts and the
 preload point everything a test can resolve from the environment at a
-sandbox, and a test that leaks fails. A default that is not resolved from the
-environment, such as `os.homedir()`, is outside that sandbox and needs its own
-override. [Testing Workflow](testing/testing-workflow.md) states the two
-targets, where a test belongs and how the sandbox works.
+sandbox, and a test that leaks fails.
+[Testing Workflow](testing/testing-workflow.md) states the two targets, where
+a test belongs, how the sandbox works and what it cannot cover.
 
 Why: a suite that is "usually green" is a suite nobody trusts, and a test
 that reads a developer's real config passes on one machine and fails on

@@ -242,8 +242,7 @@ describe("decodeImproveResult", () => {
   // stored `plan` without it. `akm health --group-by run` on a real owner
   // state.db found 11 such rows in a 30d window, all silently excluded
   // because `validateProcessRoutingRows` was called unconditionally instead
-  // of guarded like `proactive` below. Must not throw (AGENTS.md "Reading
-  // persisted data").
+  // of guarded like `proactive` below. Must not throw.
   test("decodes a real pre-#947 run record with no plan.processes field (akm health must still count it)", () => {
     const { processes: _processes, ...prePlan947 } = plan;
     const envelope = {
@@ -270,7 +269,7 @@ describe("decodeImproveResult", () => {
   // `graphExtractionDurationMs` fields. Retired in 0.9.17-alpha.9 (nothing
   // routes or runs it anymore), but every pre-alpha.9 run stored this shape,
   // and `akm health` decodes those rows on every read — this must not throw
-  // or silently drop the row (AGENTS.md "Reading persisted data").
+  // or silently drop the row.
   test("decodes a real 0.9.17-alpha.8 run record naming the retired graphExtraction process (health must still count it)", () => {
     // `process: "graphExtraction"` / `name: "graph-extraction"` are
     // deliberately outside the fresh-plan `ProcessRoutingRow`/stage-name

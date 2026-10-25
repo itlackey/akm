@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The unit target is every test outside `tests/integration/` (AGENTS.md, Tests).
+ * The unit target is every test outside `tests/integration/`.
  * A test that runs the real embedded OpenCode (its own SQLite database and shell
  * tools) or serves a loopback fake model belongs in the integration target, so
  * the unit target stays the fast one. The fake host (`tests/_helpers/fake-opencode-host.ts`)

@@ -44,11 +44,10 @@ ground says which clause it satisfies in a one-line header comment instead of
 being placed by feel. No `.test.ts` belongs under a `fixtures` or `_fixtures`
 path: those are data, not executable specs.
 
-**The suite is green by default.** `test:unit` and `test:integration` are
-expected to report 0 fail at all times, so a red run means something is broken,
-not "pre-existing" noise to route around. A test that must be disabled is
-`.skip`ped with a linked issue in the same change; never leave a failure
-standing and never add an "expected failures" allowlist.
+**Green by default** ([principle 6](../akm-core-principles.md#6-the-suite-is-green-by-default-and-sandboxed-through-the-environment)).
+A test that must be disabled is `.skip`ped in the same change that links its
+issue; never leave a failure standing and never add an "expected failures"
+allowlist.
 
 ## Test Layers In This Repo
 

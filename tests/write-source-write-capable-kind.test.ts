@@ -7,9 +7,8 @@
  * predicate for the write-capable source kinds. `assertSupportedKind` and
  * `adaptConfiguredSource` (same module) and `akmTasksSync`'s scheduler-kind
  * guard/filter (src/commands/tasks/tasks.ts) all defer to it now, rather than
- * each spelling the filesystem/git list separately (AGENTS.md: "All
- * write-target branching by `source.kind` belongs in
- * `src/core/write-source.ts`").
+ * each spelling the filesystem/git list separately (all write-target
+ * branching by `source.kind` belongs in `src/core/write-source.ts`).
  */
 
 import { describe, expect, test } from "bun:test";

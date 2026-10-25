@@ -276,8 +276,8 @@ export const ProactiveMaintenanceProcessConfigSchema = z
 /**
  * Process names that once had a dedicated schema and are now gone. Setting
  * one, even with `enabled: true`, is tolerated rather than rejected by the
- * "unknown enabled process" check below — an old config must keep loading
- * (AGENTS.md "Reading persisted data"). `graphExtraction`: the LLM
+ * "unknown enabled process" check below — an old config must keep loading.
+ * `graphExtraction`: the LLM
  * entity-graph extraction it ran was retired in 0.9.17-alpha.9.
  * `feedbackDistillation`: a wrapper of `processes.distill.enabled`, removed in
  * 0.8.0.

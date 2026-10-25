@@ -1218,7 +1218,7 @@ export async function runCli(): Promise<void> {
     // could ever reach this boundary. Route it the same way rather than
     // hard-coding GENERAL(1): the CLI contract reserves 1 for general/not-found
     // and requires a non-`AkmError` throw to render the JSON failure envelope
-    // with INTERNAL(70) (AGENTS.md "CLI Contract"), which is what lets
+    // with INTERNAL(70), which is what lets
     // automation tell an internal defect apart from an ordinary failure.
     // `emitJsonError` classifies and sets `process.exitCode` itself.
     emitJsonError(error);

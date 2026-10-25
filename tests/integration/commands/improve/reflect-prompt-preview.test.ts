@@ -8,8 +8,7 @@
  * <ref> --show-prompt` (improve-cli.ts) is its CLI surface.
  *
  * Under tests/integration (not tests/) because the read-only helpers reused
- * here (readRecentFeedback -> readEvents) open the real state.db, per the
- * ORG-03..06 classification rule in AGENTS.md.
+ * here (readRecentFeedback -> readEvents) open the real state.db.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

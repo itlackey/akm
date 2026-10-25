@@ -341,7 +341,7 @@ export interface CuratePackResult {
  * `budgetTokens`.
  *
  * Registry hits are never packed — only `CuratedStashItem`s (locked
- * contract, AGENTS.md: registry results stay separate/opt-in).
+ * contract: registry results stay separate/opt-in).
  *
  * Truncation policy: drop whole hits from the tail of the ranked list first.
  * The only exception is a single high-rank hit that alone exceeds the

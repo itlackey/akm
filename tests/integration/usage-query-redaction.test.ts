@@ -10,7 +10,7 @@
  * `TOKEN=…`, `SECRET=…`) stored verbatim in `state.db`.
  *
  * This drives the real CLI end to end (a real state.db, a real index.db —
- * hence `tests/integration/`, per AGENTS.md's ORG-03/04/05/06 rule) and
+ * hence `tests/integration/`) and
  * confirms the redacted form, not the raw secret, lands in BOTH persistence
  * points named in the bug report: `usage_events.query` and the `events`
  * table's `metadata_json` (read back via `readEvents`), for both `search` and

@@ -4,8 +4,7 @@
 
 /**
  * WS-2 outcome loop. Opens a real SQLite state.db (openStateDatabase), which
- * is why this file lives in tests/integration/ (ORG-05, 0.9.8 stabilization;
- * see AGENTS.md's classification rule).
+ * is why this file lives in tests/integration/.
  *
  * Covers:
  *   - `updateAssetOutcome`: warm-start, differential update.

@@ -12,7 +12,7 @@
  * the run instead of just the batch in flight (field report, #954 follow-up).
  *
  * This is a pure contract check on `db.inTransaction` — no real database is
- * opened, so this stays a unit test (AGENTS.md ORG-03..06 classification).
+ * opened, so this stays a unit test.
  */
 
 import { describe, expect, test } from "bun:test";
