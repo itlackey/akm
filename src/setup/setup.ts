@@ -401,7 +401,7 @@ export function buildSetupSteps(options: {
   const probe = options.probe !== false;
   // What an earlier engine step decided that a later one builds on.
   let harness: HarnessStepResult = { modelCallsOnHarness: false };
-  let connection: ConnectionStepResult = { listed: [] };
+  let connection: ConnectionStepResult = { listed: [], addedDefault: false };
 
   const applyAnswers = (ctx: SetupContext, answers: EngineAnswers): void => {
     const change = applyEngineAnswers(ctx.config, answers);
@@ -464,6 +464,7 @@ export function buildSetupSteps(options: {
           probe,
           connection: connection.answer,
           listed: connection.listed,
+          addedDefaultConnection: connection.addedDefault,
         });
         applyAnswers(ctx, { embedding: embeddings.answer });
         outcome.semantic = embeddings.semantic;

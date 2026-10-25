@@ -35,9 +35,11 @@ export interface ConnectionStepResult {
   answer?: ConnectionAnswer;
   /** Every model the endpoint listed; empty when it was not asked or could not say. */
   listed: readonly string[];
+  /** This step added a connection that is the default: the one named `default`, or the first and so the lone one. */
+  addedDefault: boolean;
 }
 
-const NOTHING: ConnectionStepResult = { listed: [] };
+const NOTHING: ConnectionStepResult = { listed: [], addedDefault: false };
 
 /** The key to list models with now: the one just supplied, else the connection's own when the endpoint is its own. */
 function listingKey(
@@ -141,5 +143,7 @@ export async function stepConnection(input: ConnectionStepInput): Promise<Connec
 
   const listed = input.probe ? await listModels(endpoint, listingKey(key, existing, name, endpoint), interactive) : [];
   const picks = await pickAliases(existing, listed, interactive);
-  return { answer: { name, endpoint, ...(key ? { key } : {}), picks }, listed };
+  const addedDefault =
+    existing === undefined && (name === "default" || Object.keys(current.connections ?? {}).length === 0);
+  return { answer: { name, endpoint, ...(key ? { key } : {}), picks }, listed, addedDefault };
 }

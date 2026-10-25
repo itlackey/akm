@@ -32,6 +32,8 @@ export interface EmbeddingStepInput {
   /** What the connection step decided, and the models its endpoint listed. */
   connection?: ConnectionAnswer;
   listed: readonly string[];
+  /** This run added the connection that is now the default. */
+  addedDefaultConnection: boolean;
 }
 
 export interface EmbeddingStepResult {
@@ -136,8 +138,12 @@ export async function stepEmbeddings(input: EmbeddingStepInput): Promise<Embeddi
   }
 
   if (!interactive) {
+    // The default: a model the new default connection serves. A rerun, another connection, or an embedding
+    // block the config already has is the user's earlier choice and stays.
     const model = input.listed.find(isEmbeddingModel);
-    if (model === undefined) return { semantic: unchanged };
+    if (model === undefined || current.embedding !== undefined || !input.addedDefaultConnection) {
+      return { semantic: unchanged };
+    }
     return { answer: { kind: "connection", model }, semantic: { mode: "auto", prepareAssets: false } };
   }
 

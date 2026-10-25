@@ -161,6 +161,50 @@ describe("akm setup --endpoint --yes", () => {
     });
   });
 
+  test("a rerun over a config with its own embedding changes neither the block nor semantic search", async () => {
+    const server = endpoint("http://localhost:11434/v1", MODELS);
+    const embedding = { endpoint: "http://embed.example.test/v1", model: "my-own-embedder", dimension: 768 };
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      connections: { default: { endpoint: "http://localhost:11434/v1", models: { fast: "qwen3-8b" } } },
+      embedding,
+    });
+    resetConfigCache();
+
+    await server.serve(() => run({ endpoint: "http://localhost:11434/v1" }));
+
+    expect(written().embedding).toEqual(embedding);
+    expect(written().semanticSearchMode).toBe("off");
+  });
+
+  test("a rerun that finds no embedding block still leaves semantic search as the user set it", async () => {
+    const server = endpoint("http://localhost:11434/v1", MODELS);
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      connections: { default: { endpoint: "http://localhost:11434/v1", models: { fast: "qwen3-8b" } } },
+    });
+    resetConfigCache();
+
+    await server.serve(() => run({ endpoint: "http://localhost:11434/v1" }));
+
+    expect(written().semanticSearchMode).toBe("off");
+    expect("embedding" in written()).toBe(false);
+  });
+
+  test("--name adds a further connection without taking an embedding model only it lists", async () => {
+    const server = endpoint("https://cloud.example.test/v1", ["cloud-model", "cloud-embed"]);
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      connections: { default: { endpoint: "http://localhost:11434/v1", models: { fast: "local" } } },
+    });
+    resetConfigCache();
+
+    await server.serve(() => run({ endpoint: "https://cloud.example.test/v1", name: "cloud" }));
+
+    expect("embedding" in written()).toBe(false);
+    expect(written().semanticSearchMode).toBe("off");
+  });
+
   test("a second identical run writes the same config", async () => {
     const server = endpoint("http://localhost:11434/v1", MODELS);
 
