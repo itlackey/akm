@@ -232,6 +232,7 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
     signal: env.budgetSignal,
     eventsCtx: env.eventsCtx,
     ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
+    llmRunner: resolvedPlan.processes.reflect.runner,
     ...(resolvedPlan.run ? { run: resolvedPlan.run } : {}),
   } satisfies AkmReflectOptions;
   const result = await attributeStage(resolvedPlan, "reflect", () => env.reflectFn(reflectArgs));

@@ -82,6 +82,8 @@ export interface AkmReflectOptions {
   ref?: string;
   /** Task hint passed through to the prompt. */
   task?: string;
+  /** Exact runner frozen by the improve plan (an own key, `null` meaning none); without one reflect resolves its own. */
+  llmRunner?: RunnerSpec | null;
   /** What the improve run selected: the nearest layer of this stage and of its quality-gate judge. */
   run?: ConfiguredExecutionSettings;
   timeoutMs?: number;
@@ -782,9 +784,9 @@ async function resolveReflectSource(
 }
 
 /**
- * The single connection or harness for this invocation: reflect's place in
- * improve's cascade. Whatever its kind, reflect runs it under the model-work
- * tool policy.
+ * The single connection or harness for this invocation: the one the improve
+ * plan froze for reflect, else reflect's place in improve's cascade. Whatever
+ * its kind, reflect runs it under the model-work tool policy.
  */
 function resolveReflectRunner(options: AkmReflectOptions): {
   config: AkmConfig;
@@ -795,12 +797,17 @@ function resolveReflectRunner(options: AkmReflectOptions): {
 } {
   const config = options.config ?? loadConfig();
   const activeStrategy = options.improveProfile ?? config.improve?.strategies?.[config.improve?.strategy ?? "default"];
-  const resolved = resolveImproveExecution({
-    config,
-    processName: "reflect",
-    alias: SHIPPED_ALIAS.improve,
-    ...(options.run ? { run: options.run } : {}),
-  });
+  // The plan resolved reflect's runner once, with its notices; each asset does not resolve it again.
+  const resolved = Object.hasOwn(options, "llmRunner")
+    ? options.llmRunner
+      ? { runner: options.llmRunner, notices: [] }
+      : null
+    : resolveImproveExecution({
+        config,
+        processName: "reflect",
+        alias: SHIPPED_ALIAS.improve,
+        ...(options.run ? { run: options.run } : {}),
+      });
   if (!resolved) {
     throw new ConfigError(
       "Reflect requires a connection or harness for the active improve strategy.",

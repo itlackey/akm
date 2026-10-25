@@ -176,6 +176,8 @@ async function runShowPromptCli(
     ...(taskArg ? { task: taskArg } : {}),
     improveProfile: resolvedPlan.strategy.config,
     config: resolvedPlan.config as AkmConfig,
+    // A strategy that turns reflect off froze no runner for it; the preview resolves its own.
+    ...(resolvedPlan.processes.reflect.runner ? { llmRunner: resolvedPlan.processes.reflect.runner } : {}),
     ...(resolvedPlan.run ? { run: resolvedPlan.run } : {}),
     stashDir: readSource.source.path,
   });

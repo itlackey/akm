@@ -273,6 +273,8 @@ describe("improve plan boundaries", () => {
         resolvedPlan: plan,
       });
       expect(reflectOptions).not.toHaveProperty("runner");
+      // The plan froze reflect's runner; no asset resolves it again.
+      expect(reflectOptions?.llmRunner).toBe(plan.processes.reflect.runner);
       expect(reflectOptions).not.toHaveProperty("engine");
       expect(reflectOptions?.config).not.toBe(config);
       expect((reflectOptions?.config as AkmConfig).connections?.reflect).toMatchObject({

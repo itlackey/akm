@@ -143,6 +143,48 @@ function completedEvent() {
   return events[0]?.metadata as Record<string, unknown>;
 }
 
+describe("reflect runs the runner the improve plan froze", () => {
+  test("it resolves nothing of its own: a config that configures nothing still dispatches, and the plan's runner answers", async () => {
+    const result = await akmReflect({
+      ref: REF,
+      stashDir: storage.stashDir,
+      config: {
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        improve: {
+          strategy: "default",
+          strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } },
+        },
+      } as unknown as AkmConfig,
+      assetContent: SOURCE,
+      llmRunner: {
+        kind: "harness",
+        name: "frozen",
+        platform: "claude",
+        bin: path.join(bins.dir, "valid"),
+        args: [],
+        timeoutMs: null,
+      },
+    });
+
+    if (!result.ok) throw new Error(`expected a proposal, got ${result.reason}: ${result.error}`);
+    expect(result.engine).toBe("frozen");
+    expect(claudeCalls("valid")).toHaveLength(1);
+  });
+
+  test("a plan that froze none for reflect (null) is the same error as a config that names none", async () => {
+    await expect(
+      akmReflect({
+        ref: REF,
+        stashDir: storage.stashDir,
+        config: { configVersion: "0.9.0" } as AkmConfig,
+        assetContent: SOURCE,
+        llmRunner: null,
+      }),
+    ).rejects.toMatchObject({ code: "LLM_NOT_CONFIGURED" });
+  });
+});
+
 describe("reflect asks every engine kind for the same JSON reply", () => {
   test.each(TRANSPORTS)("%s: the reply is queued as a proposal", async (_name, transport) => {
     const result = await reflect(transport, "valid");
