@@ -380,6 +380,18 @@ describe("a harness", () => {
     expect(warnings).toEqual([]);
   });
 
+  test("an alias written as an object passes its model name; a harness takes the name only, and says so once", () => {
+    const config = configOf({
+      harnesses: { claude: { models: { fast: "haiku", reasoning: { model: "opus", effort: "high" } } } },
+    });
+    expect(harnessFor(config, [{ model: "reasoning" }]).model).toBe("opus");
+    expect(harnessFor(config, [{ model: "reasoning" }]).model).toBe("opus");
+    expect(harnessFor(config, [{ model: "fast" }]).model).toBe("haiku");
+    expect(warnings.filter((w) => w.includes('"claude"') && w.includes('"reasoning"'))).toHaveLength(1);
+    const first = configOf({ harnesses: { claude: { models: { reasoning: { model: "opus" } } } } });
+    expect(harnessFor(first).model).toBe("opus");
+  });
+
   test("a layer that sets model to null passes no model; a connection, which must send one, uses its first", () => {
     const harnesses = configOf({ harnesses: { claude: { models: { fast: "f" } } } });
     expect(harnessFor(harnesses, [{ model: "fast" }, { model: null }]).model).toBeUndefined();

@@ -319,7 +319,10 @@ name:
 - A harness passes no model for an alias it has none for, and the program uses
   its own default; when the harness maps other aliases, akm says so once. Claude
   Code ships a map (`fast` Haiku 4.5, `balanced` Sonnet 4.6, `reasoning` Opus
-  4.7), which a `models` entry overrides. No other harness ships one.
+  4.7), which a `models` entry overrides. No other harness ships one. A
+  harness is passed the model name only: an alias written as an object
+  (`{ "model": "...", "effort": "high" }`) gives its `model`, and akm says once
+  that its other fields are ignored.
 
 A kind of work that names no model asks for a default alias: improve's
 processes, the index passes, extraction and `akm remember --enrich` ask for

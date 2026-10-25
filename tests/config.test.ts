@@ -958,6 +958,14 @@ describe("0.9 config shape parsing", () => {
     expect(after.connections).toEqual({ cloud: { models: { fast: "m" } } });
   });
 
+  test("a harness alias written as a model object, as on a connection, keeps the harness usable", () => {
+    writeCurrentConfig({ harnesses: { claude: { models: { reasoning: { model: "opus", effort: "high" } } } } });
+    const warnings = captureWarnings(() => {
+      expect(loadConfig().harnesses?.claude?.models).toEqual({ reasoning: { model: "opus", effort: "high" } });
+    });
+    expect(warnings).toEqual([]);
+  });
+
   test("a key a harness does not read warns once and is ignored", () => {
     writeCurrentConfig({ harnesses: { claude: { colour: "blue" } } });
     const warnings = captureWarnings(() => {

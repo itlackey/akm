@@ -81,7 +81,8 @@ describe("a harness's models", () => {
     expect(validateConfigShape(configWith({ fast: "claude-haiku-4-5" })).ok).toBe(true);
   });
 
-  test("take no request fields: an entry that is an object is refused", () => {
-    expect(validateConfigShape(configWith({ fast: { model: "claude-haiku-4-5", temperature: 0.2 } })).ok).toBe(false);
+  test("take the model name only: an entry written as a connection's object is read for its model, and needs one", () => {
+    expect(validateConfigShape(configWith({ fast: { model: "claude-haiku-4-5", temperature: 0.2 } })).ok).toBe(true);
+    expect(validateConfigShape(configWith({ fast: { temperature: 0.2 } })).ok).toBe(false);
   });
 });

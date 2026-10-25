@@ -10,7 +10,7 @@
  */
 import { z } from "zod";
 import { HARNESS_CONFIG_PLATFORMS } from "../../../integrations/harnesses";
-import { timeoutMsField } from "./connections";
+import { ModelAliasesSchema, timeoutMsField } from "./connections";
 import { engineName, nonEmptyString } from "./primitives";
 
 export const HarnessSchema = z
@@ -22,8 +22,8 @@ export const HarnessSchema = z
     /** The harness's native agent to run when a request names none (platforms with native agents only). */
     agent: nonEmptyString.optional(),
     timeoutMs: timeoutMsField,
-    /** Alias to model for this harness, over the map akm ships for its platform. */
-    models: z.record(nonEmptyString, nonEmptyString).optional(),
+    /** Alias to model for this harness, over the map akm ships for its platform. A harness is given the name only. */
+    models: ModelAliasesSchema.optional(),
   })
   .passthrough();
 

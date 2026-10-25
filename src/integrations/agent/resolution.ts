@@ -247,6 +247,18 @@ function connectionRunner(
   };
 }
 
+/** The model name a harness alias holds. A harness is passed the name only, so an entry's request fields (a connection's) are ignored, with a word. */
+function harnessAliasModel(name: string, alias: string, entry: NonNullable<HarnessConfig["models"]>[string]): string {
+  if (typeof entry === "string") return entry;
+  if (Object.keys(entry).length > 1) {
+    warnOnce(
+      `resolution:alias-fields:${name}:${alias}`,
+      `Harness "${name}" is passed only the model name of "${alias}"; the other fields of that entry are ignored.`,
+    );
+  }
+  return entry.model;
+}
+
 /**
  * The harness model a request names, or `undefined` when the harness is left to pick
  * its own: a layer that sets `model: null` asks for exactly that.
@@ -259,10 +271,12 @@ function harnessModel(
   aliases: ReadonlySet<string>,
 ): string | undefined {
   if (requested === null) return undefined;
-  const own: Readonly<Record<string, string>> = harness.models ?? {};
+  const own = harness.models ?? {};
   const shipped = getHarness(platform)?.models ?? {};
-  if (requested === undefined) return Object.values(own)[0];
-  if (Object.hasOwn(own, requested)) return own[requested];
+  const [first] = Object.entries(own);
+  if (requested === undefined) return first ? harnessAliasModel(name, first[0], first[1]) : undefined;
+  const entry = Object.hasOwn(own, requested) ? own[requested] : undefined;
+  if (entry !== undefined) return harnessAliasModel(name, requested, entry);
   if (Object.hasOwn(shipped, requested)) return shipped[requested];
   if (!aliases.has(requested)) return requested;
   // A harness with no map at all picks its own model whatever is asked; only one that maps others is worth a word.
