@@ -43,6 +43,12 @@ export { OpenCodeProvider } from "./session-log";
  */
 const OPENCODE_ENV_PASSTHROUGH = ["OPENCODE_API_KEY", "OPENCODE_CONFIG", ...XDG_BASE_DIR_ENV_PASSTHROUGH] as const;
 
+/** OpenCode 2 runs embedded; OpenCode 1, and a binary whose version cannot be read, run as the CLI. */
+function runsEmbedded(bin: string): boolean {
+  const major = detectOpencodeMajor(bin).reportedMajor;
+  return major !== undefined && major >= 2;
+}
+
 /**
  * OpenCode.
  *
@@ -60,14 +66,14 @@ export class OpencodeHarness implements AkmHarness {
   // Session-id env marker for run attribution.
   readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;
   readonly sessionLogProvider = (): SessionLogHarness => new OpenCodeProvider();
-  /** OpenCode 2 runs embedded; OpenCode 1, and a binary whose version cannot be read, run as the CLI. */
-  readonly runInProcess: AkmHarness["runInProcess"] = (profile, opts) => {
-    const major = detectOpencodeMajor(profile.bin).reportedMajor;
-    if (major === undefined || major < 2) return undefined;
-    return import("./embedded/run").then((embedded) => embedded.runOpencodeHarness(profile, opts));
-  };
+  readonly runInProcess: AkmHarness["runInProcess"] = (profile, opts) =>
+    runsEmbedded(profile.bin)
+      ? import("./embedded/run").then((embedded) => embedded.runOpencodeHarness(profile, opts))
+      : undefined;
   readonly systemPrompt = false;
   readonly nativeAgent = true;
-  // Model work can be confined (read-only) on OpenCode 2; OpenCode 1 runs it unrestricted.
+  // Model work is confined (read-only) on OpenCode 2 only; OpenCode 1 runs it unrestricted, with a warning.
+  // Lowering asks for the confined run either way; setup asks whether the installed OpenCode can give it.
   readonly confinable = true;
+  readonly confinableInstalled = () => runsEmbedded(this.profile.bin);
 }

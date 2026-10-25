@@ -20,6 +20,7 @@ import { _setAgentDetectForTests } from "../../src/integrations/agent";
 import { resolveTarget } from "../../src/integrations/agent/resolution";
 import { runSetupFromConfig, runSetupWithDefaults, type SetupSummary } from "../../src/setup/setup";
 import { parseSetupFlags, type RawSetupFlags, type SetupFlags } from "../../src/setup/setup-flags";
+import { fakeOpencodeMajor, withOpencodeOnPath } from "../_helpers/opencode-version";
 import {
   type IsolatedAkmStorage,
   withEnv,
@@ -321,6 +322,26 @@ describe("akm setup --yes defaults", () => {
     });
   });
 
+  test("OpenCode 1 cannot be restricted: it is saved as off for model calls, and the summary says what that means", async () => {
+    installed("opencode");
+
+    const summary = await withOpencodeOnPath(1, () => run());
+
+    expect(written().harnesses).toEqual({ opencode: { modelWork: false } });
+    expect(summary.runs.modelCalls).toContain('harness "opencode" is set not to take model calls');
+    expect(summary.runs.agentWork).toContain('harness "opencode"');
+    expect(summary.runs.agentWork).not.toContain("read-only");
+  });
+
+  test("OpenCode 2 can be restricted: it takes the model calls, read-only, and is not marked", async () => {
+    installed("opencode");
+
+    const summary = await withOpencodeOnPath(2, () => run());
+
+    expect(written().harnesses).toEqual({ opencode: {} });
+    expect(summary.runs.modelCalls).toBe('harness "opencode", read-only');
+  });
+
   test("a second run over that config changes nothing, and the hand-written setting is kept", async () => {
     installed("gemini");
     await run();
@@ -379,6 +400,7 @@ describe("akm setup --yes defaults", () => {
 
 describe("akm setup --harness", () => {
   test("enables the named platforms, the first the default, whether or not they are installed", async () => {
+    fakeOpencodeMajor(2);
     const summary = await run({ harness: "opencode,claude" });
 
     expect(written().harnesses).toEqual({ default: { platform: "opencode" }, claude: {} });

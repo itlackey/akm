@@ -18,9 +18,10 @@ export interface SetupRuns {
   embeddings: string;
 }
 
-/** Whether akm can run this platform read-only for model calls, which keeps them from changing anything. */
+/** Whether akm can run this platform, as installed, read-only for model calls, which keeps them from changing anything. */
 export function runsReadOnly(platform: string): boolean {
-  return getHarness(platform)?.confinable === true;
+  const harness = getHarness(platform);
+  return harness !== undefined && (harness.confinableInstalled?.() ?? harness.confinable);
 }
 
 /** What setup says, wherever it names a harness that takes akm's model calls and cannot be restricted. */

@@ -12,6 +12,7 @@ import { _setEmbedderForTests } from "../src/llm/embedder";
 import { _setDetectForTests } from "../src/setup/detect";
 import { _setLoadSetupStashesForTests, type SetupBundleEntry } from "../src/setup/registry-stash-loader";
 import { runSetupFromConfig, runSetupWizard } from "../src/setup/setup";
+import { withOpencodeOnPath } from "./_helpers/opencode-version";
 import {
   type IsolatedAkmStorage,
   withIsolatedAkmStorage,
@@ -368,6 +369,60 @@ describe("runSetupWizard", () => {
       kind: "harness",
       name: "gemini",
     });
+  });
+
+  test("OpenCode 1 asked about model calls: the question says it cannot be restricted, and the summary repeats it for a yes", async () => {
+    installSetupSeams();
+    installHarness("opencode");
+
+    promptState.multiselects.push(["opencode"], [...DEFAULT_REGISTRY_URLS], [], []);
+    promptState.confirms.push(true, true, false);
+    promptState.texts.push("");
+    promptState.selects.push("default", "off", "done", "json", "brief");
+
+    await withOpencodeOnPath(1, () => runSetupWizard());
+
+    expect(promptState.trace.find((line) => line.startsWith("[confirm] Use opencode"))).toContain(
+      "Model work on opencode cannot be restricted: it can edit files and run commands.",
+    );
+    expect(readSavedConfig().harnesses).toEqual({ opencode: {} });
+    const summary = promptState.notes.find((note) => note.startsWith("Configuration Summary")) ?? "";
+    expect(summary).toContain(
+      'Model calls:      harness "opencode". Model work on "opencode" cannot be restricted: it can edit files and run commands.',
+    );
+  });
+
+  test("OpenCode 1 asked about model calls, answered no: saved as off, and no connection follows", async () => {
+    installSetupSeams();
+    installHarness("opencode");
+
+    promptState.multiselects.push(["opencode"], [...DEFAULT_REGISTRY_URLS], [], []);
+    promptState.confirms.push(false, true, false);
+    promptState.texts.push("");
+    promptState.selects.push("default", "off", "done", "json", "brief");
+
+    await withOpencodeOnPath(1, () => runSetupWizard());
+
+    expect(readSavedConfig().harnesses).toEqual({ opencode: { modelWork: false } });
+  });
+
+  test("OpenCode 2 asked about model calls: the question and the summary say read-only", async () => {
+    installSetupSeams();
+    installHarness("opencode");
+
+    promptState.multiselects.push(["opencode"], [...DEFAULT_REGISTRY_URLS], [], []);
+    promptState.confirms.push(true, true, false);
+    promptState.texts.push("");
+    promptState.selects.push("default", "off", "done", "json", "brief");
+
+    await withOpencodeOnPath(2, () => runSetupWizard());
+
+    const question = promptState.trace.find((line) => line.startsWith("[confirm] Use opencode")) ?? "";
+    expect(question).toContain("Model calls run read-only.");
+    expect(question).not.toContain("cannot be restricted");
+    expect(readSavedConfig().harnesses).toEqual({ opencode: {} });
+    const summary = promptState.notes.find((note) => note.startsWith("Configuration Summary")) ?? "";
+    expect(summary).toContain('Model calls:      harness "opencode", read-only');
   });
 
   test("a harness and a connection with a typed key: the key lands in credentials.json and nowhere else", async () => {

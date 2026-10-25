@@ -22,6 +22,7 @@ import { applySetupAnswers } from "../../src/setup/setup-plan";
 import { stepConnection } from "../../src/setup/steps/connection";
 import { stepEmbeddings } from "../../src/setup/steps/embeddings";
 import { stepHarnesses } from "../../src/setup/steps/harnesses";
+import { fakeOpencodeMajor, withOpencodeOnPath } from "../_helpers/opencode-version";
 import { withEnv, withMockedFetch } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
 import { type ScriptedPrompts, scriptPrompts } from "../_helpers/setup-prompts";
@@ -105,6 +106,58 @@ describe("stepHarnesses", () => {
     expect(prompts.of("confirm")[1]?.message).toContain("Model calls run read-only.");
   });
 
+  test("OpenCode 1 cannot be restricted, whatever the platform table says: the hint, the question, the note beside the answer and --yes all say so", async () => {
+    await withOpencodeOnPath(1, async () => {
+      prompts.answers.multiselect.push(["opencode"]);
+      prompts.answers.confirm.push(true);
+
+      const result = await stepHarnesses(input({ installed: installed("opencode") }));
+
+      expect(prompts.of("multiselect")[0]?.options[0]?.hint).toContain("cannot be restricted to read-only");
+      expect(prompts.of("confirm")[0]?.message).toContain(
+        "Model work on opencode cannot be restricted: it can edit files and run commands.",
+      );
+      expect(prompts.of("confirm")[0]?.message).not.toContain("Model calls run read-only.");
+      expect(prompts.output).toContain(
+        "Model work on opencode cannot be restricted: it can edit files and run commands.",
+      );
+      expect(result).toEqual({
+        answer: { platforms: ["opencode"], default: "opencode" },
+        modelCallsOnHarness: true,
+        modelWork: true,
+      });
+
+      // --yes does not hand model calls to it.
+      const yes = await stepHarnesses(input({ interactive: false, installed: installed("opencode") }));
+      expect(yes).toEqual({
+        answer: { platforms: ["opencode"], default: "opencode" },
+        modelCallsOnHarness: false,
+        modelWork: false,
+      });
+    });
+  });
+
+  test("OpenCode 2 can: the hint and the question say read-only, no note is added, and --yes hands it model calls", async () => {
+    await withOpencodeOnPath(2, async () => {
+      prompts.answers.multiselect.push(["opencode"]);
+      prompts.answers.confirm.push(true);
+
+      const result = await stepHarnesses(input({ installed: installed("opencode") }));
+
+      expect(prompts.of("multiselect")[0]?.options[0]?.hint).toContain("model calls run read-only");
+      expect(prompts.of("confirm")[0]?.message).toContain("Model calls run read-only.");
+      expect(prompts.output.filter((line) => line.includes("cannot be restricted"))).toEqual([]);
+      expect(result.modelWork).toBe(true);
+
+      const yes = await stepHarnesses(input({ interactive: false, installed: installed("opencode") }));
+      expect(yes).toEqual({
+        answer: { platforms: ["opencode"], default: "opencode" },
+        modelCallsOnHarness: true,
+        modelWork: true,
+      });
+    });
+  });
+
   test("interactive: with several selected, asks which one is the default", async () => {
     prompts.answers.multiselect.push(["claude", "gemini"]);
     prompts.answers.select.push("gemini");
@@ -179,6 +232,7 @@ describe("stepHarnesses", () => {
   });
 
   test("--harness enables the named platforms in addition to the configured ones, the first being the default", async () => {
+    fakeOpencodeMajor(2);
     const current = cfg({ harnesses: { aider: {} } });
     const result = await stepHarnesses(
       input({ interactive: false, current, flags: parseSetupFlags({ harness: "opencode,claude" }) }),
