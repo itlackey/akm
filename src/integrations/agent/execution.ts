@@ -40,11 +40,11 @@ import {
 import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
 import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import { getHarness } from "../harnesses";
-import { runtimeLowerer } from "../harnesses/opencode/embedded/runtime-lowerer";
 import { type AgentProfile, harnessProfile, runtimeProfile } from "./profiles";
 import { lowerRequest, untranslated } from "./request-lowering";
 import { mergeLayerInference, parseTimeout, resolveTarget, withReasoningEffort } from "./resolution";
 import { decodeFrozenRunnerSpec, type RunnerSpec } from "./runner";
+import { agentRuntime } from "./runtime";
 import type { RunAgentOptions } from "./spawn";
 
 /** Which layer set one request field. */
@@ -332,7 +332,7 @@ export function buildExecution(request: ResolvedExecutionRequestV1, runner: Runn
 
   // Agent work on a connection runs on akm's own runtime, which is no harness and has its own lowering target.
   const profile = runner.kind === "harness" ? harnessProfile(runner) : runtimeProfile(runner);
-  const target = runner.kind === "connection" ? runtimeLowerer : getHarness(runner.platform);
+  const target = runner.kind === "connection" ? agentRuntime.lowering : getHarness(runner.platform);
   if (!target) {
     throw new ConfigError(
       `Agent platform ${JSON.stringify(profile.platform)} has no registered request builder.`,

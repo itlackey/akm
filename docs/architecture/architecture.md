@@ -599,6 +599,12 @@ Agent programs are reachable by two execution paths, both behind
 
 **Embedded OpenCode** (`src/integrations/harnesses/opencode/embedded/`):
 
+- It is akm's agent runtime behind one application-owned port,
+  `src/integrations/agent/runtime-port.ts`: the lowering target a request is
+  lowered for (`lowering`), `run` for one resolved dispatch, and `dispose` for what
+  the process started. Lowering and dispatch use only the port; the one module that
+  names this folder is `src/integrations/agent/runtime.ts`, and the folder reads no
+  config (`tests/contracts/runtime-port-boundary.test.ts` checks both).
 - OpenCode 2 runs in akm's process through `@opencode/sdk`
   (`OpenCode.create()`, an in-memory router): no binary, no server, no port.
   Only this folder imports `@opencode/*` (one file, `sdk-host.ts`, does the SDK

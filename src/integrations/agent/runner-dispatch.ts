@@ -23,12 +23,11 @@ import { type ChatCompletionConfig, chatCompletion, LlmCallError } from "../../l
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { getHarness } from "../harnesses";
 import { modelFromArgs } from "../harnesses/harness";
-import { closeOpencodeSdk } from "../harnesses/opencode/embedded/host";
-import { runOpencodeSdk } from "../harnesses/opencode/embedded/run";
 import type { BuiltExecution } from "./execution";
 import { type AgentProfile, harnessProfile, runtimeProfile } from "./profiles";
 import { mergeLayerInference, resolveTarget } from "./resolution";
 import type { ConnectionRunner, RunnerSpec } from "./runner";
+import { agentRuntime } from "./runtime";
 import { type AgentFailureReason, type AgentRunResult, type RunAgentOptions, runAgent } from "./spawn";
 
 export interface RunExecutionOptions {
@@ -38,7 +37,7 @@ export interface RunExecutionOptions {
   readonly onRetryAttempt?: () => void;
   /** Agent spawn; defaults to {@link runAgent}. */
   readonly runAgent?: (profile: AgentProfile, opts: RunAgentOptions) => Promise<AgentRunResult>;
-  /** Internal runtime dispatch; defaults to {@link runOpencodeSdk}. */
+  /** Internal runtime dispatch; defaults to the agent runtime's `run`. */
   readonly runSdk?: (
     profile: AgentProfile,
     opts: RunAgentOptions,
@@ -194,7 +193,7 @@ async function dispatchRunner(
     if (connection.apiKey) secrets.push(connection.apiKey);
     result = llm
       ? await llm(connection, opts)
-      : await (seams.runSdk ?? runOpencodeSdk)(profile ?? runtimeProfile(runner), opts, connection);
+      : await (seams.runSdk ?? agentRuntime.run)(profile ?? runtimeProfile(runner), opts, connection);
   }
   return redactResult(result, collectSensitiveValues(secrets));
 }
@@ -353,5 +352,5 @@ export async function executeInteractiveAgentInvocation(
  * workflow engine call this in `finally` blocks. A no-op when none was started.
  */
 export async function disposeDispatchResources(): Promise<void> {
-  await closeOpencodeSdk();
+  await agentRuntime.dispose();
 }
