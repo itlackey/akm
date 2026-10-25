@@ -11,7 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import path from "node:path";
 import { OpenCode } from "@opencode/sdk";
-import type { AgentProfile } from "../src/integrations/agent/profiles";
+import { harnessProfile } from "../src/integrations/agent/profiles";
 import {
   _setOpencodeHostFactoryForTests,
   closeOpencodeSdk,
@@ -24,14 +24,14 @@ import { type FakeModelServer, startFakeModel } from "./_helpers/fake-model-serv
 import { makeSandboxDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
-const profile: AgentProfile = {
+const profile = harnessProfile({
+  kind: "harness",
   name: "opencode",
   platform: "opencode",
   bin: "opencode",
   args: ["run"],
-  stdio: "captured",
-  envPassthrough: [],
-};
+  timeoutMs: null,
+});
 
 let model: FakeModelServer;
 let sandbox: SandboxedDir;
@@ -153,10 +153,13 @@ describe("a run on the user's OpenCode 2", () => {
     expect(model.requests.slice(before).find((r) => r.mode === "answer")?.authorization).toBe("Bearer sk-their-login");
   });
 
-  test("passes the run's environment to the commands it runs", async () => {
-    const result = await run(userConfig({ apiKey: "user-key" }), "MODE:env go", {}, { AKM_PROBE: "from-akm" });
+  test("passes the run's environment to the commands it runs, and nothing the harness's allowlist leaves out", async () => {
+    const result = await withEnv({ AKM_AMBIENT: "ambient" }, () =>
+      run(userConfig({ apiKey: "user-key" }), "MODE:env go", {}, { AKM_PROBE: "from-akm" }),
+    );
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("PROBE=from-akm");
+    expect(result.stdout).toContain("PROBE=from-akm AMBIENT= HOME=");
+    expect(result.stdout).not.toContain("ambient");
   });
 });
 

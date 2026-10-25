@@ -131,9 +131,11 @@ export interface AgentRunResult {
  * The child's env, lowest precedence first: the directories this akm resolved, so
  * a child that runs `akm` uses the same installation; what the profile passes
  * through from this process (the allowlist also supplements PATH for scheduler
- * contexts where the inherited PATH is stripped); then the call's `env`.
+ * contexts where the inherited PATH is stripped); then the call's `env`. The one
+ * environment policy for anything an agent run starts: a CLI harness's child, and
+ * the shell of an embedded session.
  */
-function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<string, string> {
+export function buildChildEnv(profile: AgentProfile, options: Pick<RunAgentOptions, "env">): Record<string, string> {
   return { ...akmLocations(), ...collectAllowlistedEnv(profile.envPassthrough), ...options.env };
 }
 

@@ -14,8 +14,8 @@ import path from "node:path";
 import type { Plugin } from "@opencode/plugin";
 import { OpenCode } from "@opencode/sdk";
 import { loadConfig, resetConfigCache } from "../src/core/config/config";
-import { getDataDir } from "../src/core/paths";
-import type { AgentProfile } from "../src/integrations/agent/profiles";
+import { getConfigDir, getDataDir } from "../src/core/paths";
+import { runtimeProfile } from "../src/integrations/agent/profiles";
 import {
   _setOpencodeHostFactoryForTests,
   closeOpencodeSdk,
@@ -30,14 +30,14 @@ import { type FakeModelServer, startFakeModel } from "./_helpers/fake-model-serv
 import { withEnv, writeSandboxConfig } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
-const profile: AgentProfile = {
+const profile = runtimeProfile({
+  kind: "connection",
   name: "lab",
-  platform: "opencode-sdk",
-  bin: "",
-  args: [],
-  stdio: "captured",
-  envPassthrough: [],
-};
+  endpoint: "",
+  model: "fake-model",
+  request: {},
+  timeoutMs: null,
+});
 
 let model: FakeModelServer;
 let connection: ChatCompletionConfig;
@@ -94,11 +94,12 @@ describe("a run on akm's internal runtime", () => {
     expect(result.stdout).toContain("PROBE=from-akm");
   });
 
-  test("the commands it runs keep the process environment under the run's variables", async () => {
+  test("the commands it runs get the allowlist, akm's directories and the run's variables, not the rest of the process environment", async () => {
     const result = await withEnv({ AKM_AMBIENT: "ambient" }, () =>
       run("MODE:env go", { env: { AKM_PROBE: "from-akm" } }),
     );
-    expect(result.stdout).toContain("PROBE=from-akm AMBIENT=ambient");
+    expect(result.stdout).toContain(`PROBE=from-akm AMBIENT= HOME=${process.env.HOME} CONFIG=${getConfigDir()}`);
+    expect(result.stdout).not.toContain("ambient");
   });
 
   test("a question is cancelled with a message and the run carries on", async () => {

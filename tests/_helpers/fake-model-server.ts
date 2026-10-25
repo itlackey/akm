@@ -9,7 +9,7 @@
  *   answer    reply "ANSWER-<n>"
  *   question  call the `question` tool, then reply "Q-DONE"
  *   shell     call `shell`, then reply with the tool result
- *   env       call `shell` to print $AKM_PROBE and $AKM_AMBIENT, then reply with the tool result
+ *   env       call `shell` to print $AKM_PROBE, $AKM_AMBIENT, $HOME and $AKM_CONFIG_DIR, then reply with the tool result
  *   hang      accept the request and never answer it
  *   subagent  call `subagent`, whose prompt asks the child for MODE:env, then reply with its result
  *   write     call `write`, then reply with the tool result
@@ -111,7 +111,10 @@ export function startFakeModel(): FakeModelServer {
           : {
               tool: {
                 name: "shell",
-                args: { command: 'echo "PROBE=$AKM_PROBE AMBIENT=$AKM_AMBIENT"', description: "probe" },
+                args: {
+                  command: 'echo "PROBE=$AKM_PROBE AMBIENT=$AKM_AMBIENT HOME=$HOME CONFIG=$AKM_CONFIG_DIR"',
+                  description: "probe",
+                },
               },
             };
       else if (mode === "subagent")

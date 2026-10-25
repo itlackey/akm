@@ -97,9 +97,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `temperature`, `maxTokens`, `reasoningEffort`, `enableThinking` and
     `extraParams` (translated as the direct chat path translates them), and the
     key read when the call is dispatched are laid over that session's requests.
-  - The run's environment (workflow and task `env:`, `AKM_EVENT_SOURCE`) reaches
-    the commands the agent runs, on top of akm's own environment (`PATH`, `HOME`
-    and the rest).
+  - The commands the agent runs get the environment a CLI harness's child gets:
+    akm's directories (`AKM_CONFIG_DIR` and the rest), the harness's
+    environment allowlist (`PATH`, `HOME`, its own provider keys) and the run's
+    variables (workflow and task `env:`, `AKM_EVENT_SOURCE`). Nothing else in
+    akm's environment reaches them.
   - An agent has akm's read tools (`akm_search`, `akm_show`, `akm_curate`) in
     process, with no shell. A subagent it starts runs with the run's key,
     request fields and environment.

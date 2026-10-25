@@ -10,21 +10,22 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import { resetConfigCache } from "../src/core/config/config";
-import type { AgentProfile } from "../src/integrations/agent/profiles";
+import { getConfigDir } from "../src/core/paths";
+import { runtimeProfile } from "../src/integrations/agent/profiles";
 import { closeOpencodeSdk, hostFor } from "../src/integrations/harnesses/opencode/embedded/host";
 import { runOpencodeSdk } from "../src/integrations/harnesses/opencode/embedded/run";
 import type { ChatCompletionConfig } from "../src/llm/client";
 import { type FakeChildSession, installFakeOpencodeHost } from "./_helpers/fake-opencode-host";
-import { writeSandboxConfig } from "./_helpers/sandbox";
+import { withEnv, writeSandboxConfig } from "./_helpers/sandbox";
 
-const profile: AgentProfile = {
+const profile = runtimeProfile({
+  kind: "connection",
   name: "lab",
-  platform: "opencode-sdk",
-  bin: "",
-  args: [],
-  stdio: "captured",
-  envPassthrough: [],
-};
+  endpoint: "",
+  model: "glm-5",
+  request: {},
+  timeoutMs: null,
+});
 const connection: ChatCompletionConfig = { endpoint: "https://lab.invalid/v1/chat/completions", model: "glm-5" };
 
 beforeEach(() => {
@@ -129,15 +130,19 @@ describe("a session on the runtime", () => {
       dispatch: { prompt: "p", systemPrompt: "BE BRIEF" },
     });
     expect(calls[0]?.environment).toMatchObject({ AKM_EVENT_SOURCE: "task", API_TOKEN: "t" });
-    // OpenCode gives a session's commands its environment in place of the process's, so the process's is kept in it.
-    expect(calls[0]?.environment?.PATH).toBe(process.env.PATH);
     expect(calls[0]?.system).toBe("BE BRIEF");
   });
 
-  test("sets no environment when the run has none", async () => {
+  // OpenCode gives a session's commands its environment in place of the process's, so the session is always given
+  // one, built as a CLI harness's child gets its own: akm's directories, the allowlist, then the run's variables.
+  test("gives the commands an environment of the allowlist and akm's directories, never the whole process's", async () => {
     const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
-    await run("p");
-    expect(calls[0]?.environment).toBeUndefined();
+    await withEnv({ AKM_AMBIENT: "ambient", OPENAI_API_KEY: "sk-other-vendor" }, () => run("p"));
+    const environment = calls[0]?.environment ?? {};
+    expect(environment).toMatchObject({ HOME: process.env.HOME, AKM_CONFIG_DIR: getConfigDir() });
+    expect(environment.PATH).toBeTruthy();
+    expect(environment).not.toHaveProperty("AKM_AMBIENT");
+    expect(environment).not.toHaveProperty("OPENAI_API_KEY");
   });
 
   test("model work is created with the deny permissions, and none of them is a tool OpenCode names differently", async () => {

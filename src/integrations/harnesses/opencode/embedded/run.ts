@@ -25,7 +25,12 @@ import { warnOnce } from "../../../../core/warn";
 import type { ChatCompletionConfig } from "../../../../llm/client";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../../agent/config";
 import type { AgentProfile } from "../../../agent/profiles";
-import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../../agent/spawn";
+import {
+  type AgentFailureReason,
+  type AgentRunResult,
+  buildChildEnv,
+  type RunAgentOptions,
+} from "../../../agent/spawn";
 import { type EmbeddedHost, hostFor } from "./host";
 import type { HostKind } from "./host-spec";
 import { forgetSession, type SessionSettings } from "./plugin";
@@ -111,17 +116,6 @@ interface Target {
   readonly settings: SessionSettings;
 }
 
-/**
- * What a session's commands run with. OpenCode gives them the session's environment
- * in place of the process's, so a run's variables go on top of the process's: the
- * commands keep `PATH`, `HOME` and the rest, as they do on a session that sets none.
- */
-function commandEnvironment(env: Readonly<Record<string, string>> | undefined): Record<string, string> | undefined {
-  if (!env || Object.keys(env).length === 0) return undefined;
-  const ambient = Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined);
-  return { ...Object.fromEntries(ambient), ...env };
-}
-
 /** The one place a run is made: create the session, set it up, drive its turn, and report. */
 async function runSession(target: Target, profile: AgentProfile, opts: RunAgentOptions): Promise<AgentRunResult> {
   const prompt = opts.dispatch?.prompt;
@@ -160,13 +154,10 @@ async function runSession(target: Target, profile: AgentProfile, opts: RunAgentO
     });
     sessionId = session.id;
     const eventSource = opts.env?.AKM_EVENT_SOURCE;
-    const env = commandEnvironment(opts.env);
-    sessions.set(session.id, {
-      ...target.settings,
-      ...(eventSource ? { eventSource } : {}),
-      ...(env ? { env } : {}),
-    });
-    if (env) await host.sessions.environment({ sessionID: session.id, variables: env });
+    // OpenCode gives a session's commands this environment in place of the process's, so it is the one a CLI harness's child gets.
+    const env = buildChildEnv(profile, opts);
+    sessions.set(session.id, { ...target.settings, ...(eventSource ? { eventSource } : {}), env });
+    await host.sessions.environment({ sessionID: session.id, variables: env });
     if (dispatch?.systemPrompt) {
       await host.sessions.instructions.entry.put({
         sessionID: session.id,
