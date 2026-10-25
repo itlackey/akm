@@ -202,8 +202,7 @@ Reflect changes only an asset's `description`, `when_to_use` and title. The engi
    kind runs the same iteration (`runReflectIteration`). The JSON Schema of
    the reply (`REFLECT_JSON_SCHEMA`, or the unscoped schema when no ref was
    given) is the request's output schema: `response_format` for an LLM, the
-   shared schema instruction at the end of the prompt for an agent (`claude`
-   also gets `--output-format json`, which akm unwraps). An agent edits only
+   shared schema instruction at the end of the prompt for an agent. An agent edits only
    its own scratch directory, so it returns the proposal as its reply, as an
    LLM does. An LLM endpoint that rejects JSON Schema gets the framed-markdown
    contract instead.

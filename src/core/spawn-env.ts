@@ -122,7 +122,7 @@ export function spawnEnvNamesFor(names: Iterable<string>, platform: string = pro
   if (platform !== "win32") return effective;
   // Deduped by EXACT spelling, never case-folded: {@link collectAllowlistedEnv}
   // looks each surviving name up with exactly this case, and a `source` that is
-  // a plain object — the agent spawn's `envSource` seam — does not case-fold.
+  // a plain object does not case-fold.
   // Suppressing `SystemRoot` because the caller happened to write `SYSTEMROOT`
   // would therefore drop the loader-critical variable the floor exists to
   // guarantee. Keeping both spellings is harmless: the win32 environment is

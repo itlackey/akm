@@ -3156,10 +3156,9 @@ Every engine kind returns the proposal the same way: as one JSON object on
 stdout with the asset's `ref`, its full `content` and a self-rated
 `confidence`. akm sends the object's JSON Schema with the request, as
 `response_format` to an LLM engine and as an instruction at the end of the
-prompt to an agent engine (codex also gets it as `--output-schema`). akm
-captures the reply; an agent CLI runs headless, with no live terminal session.
-A harness's own JSON envelope, such as claude's
-`--output-format json` result, is unwrapped first.
+prompt to an agent engine. akm
+captures the reply, which is the agent's plain-text output; an agent CLI runs
+headless, with no live terminal session.
 A reply that is not a valid proposal gets one corrective retry that says what
 was wrong. If that reply is not valid either, the command exits 1 with
 `reason: "parse_error"` and an error that names the engine, for example

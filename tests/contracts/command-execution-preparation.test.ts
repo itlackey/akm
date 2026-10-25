@@ -98,7 +98,7 @@ function projectedWithoutStoredIdentity(value: string): Record<string, unknown> 
 
 const OK = { ok: true, exitCode: 0, stdout: "", stderr: "", durationMs: 0 } as const;
 
-/** Dispatch through the agent spawn seam and capture what the harness would receive. */
+/** Dispatch through the `runAgent` seam and capture what the harness would receive. */
 async function captureAgent(prepared: Awaited<ReturnType<typeof prepareCommandInvocation>>) {
   let capture: { profile?: AgentProfile; prompt?: string; options?: RunAgentOptions } = {};
   const result = await dispatchPreparedCommandInvocation(prepared, {

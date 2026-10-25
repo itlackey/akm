@@ -134,9 +134,9 @@ const RESPONSE_CONTRACT_JSON = [
 /**
  * The JSON Schema of {@link RESPONSE_CONTRACT_JSON}'s object, the output
  * schema `proposal new` sends with its request: an LLM engine gets it as
- * `response_format`, codex as `--output-schema`, every agent engine as the
- * shared schema instruction. It is in the strict form those native channels
- * accept (every property required, no others), so it leaves out the optional
+ * `response_format`, every agent engine as the shared schema instruction. It
+ * is in the strict form a provider's native channel accepts (every property
+ * required, no others), so it leaves out the optional
  * `frontmatter`, which `content` already carries. The reply is held only to
  * what {@link validateProposalPayload} needs.
  */

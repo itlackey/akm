@@ -122,7 +122,6 @@ describe("the opencode harness chooses its transport from the binary", () => {
     args: ["run"],
     stdio: "captured" as const,
     envPassthrough: [],
-    parseOutput: "text" as const,
   });
 
   test("runs an OpenCode 1 binary, or one that reports no OpenCode version, as its CLI; OpenCode 2 embedded", async () => {

@@ -139,8 +139,7 @@ as `response_format` (`json_schema`, strict) unless the engine sets
 endpoint and model for the rest of the process. An agent engine receives the
 schema as one instruction at the end of its prompt (`Respond with ONLY a JSON
 value matching this JSON Schema (no prose, no code fences):` followed by the
-schema), plus the harness's own schema channel where it has one (codex
-`--output-schema`).
+schema).
 
 An agent engine may set `bin`, `args`, `workspace`, `model`, `agent`, and `timeoutMs`;
 it takes no inference of its own (see
