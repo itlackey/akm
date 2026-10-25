@@ -58,7 +58,7 @@ test("a bun test run closes the embedded OpenCode hosts its tests opened and rem
       `    return host;`,
       `  });`,
       `  const profile = { name: "teardown", bin: "", args: [], platform: "opencode-sdk" };`,
-      `  const result = await runOpencodeSdk(profile as never, "MODE:answer ping", { timeoutMs: 30_000 }, { endpoint: model.url, model: "fake-model" });`,
+      `  const result = await runOpencodeSdk(profile as never, { timeoutMs: 30_000, dispatch: { prompt: "MODE:answer ping" } }, { endpoint: model.url, model: "fake-model" });`,
       `  model.stop();`,
       `  expect(result.ok).toBe(true);`,
       `});`,
