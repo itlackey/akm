@@ -10,6 +10,7 @@
  */
 
 import { fetchWithTimeout, readBodyWithByteCap } from "../core/common";
+import { openAiBaseUrl, openAiOperationUrl } from "../core/endpoint-url";
 import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
 import { effectiveRequestFields, type LlmInference } from "../core/llm-inference";
 import { redactErrorBody, redactSensitiveText } from "../core/redaction";
@@ -101,15 +102,6 @@ export type ChatCompletionConfig = {
   /** Portable settings, translated over `request` when the request is sent. */
   inference?: LlmInference;
 };
-
-/** The base of an OpenAI-compatible endpoint: the URL without `/chat/completions` or a trailing slash. */
-export function openAiBaseUrl(endpoint: string): string {
-  return endpoint.replace(/\/+$/, "").replace(/\/chat\/completions$/, "");
-}
-
-function chatCompletionsUrl(endpoint: string): string {
-  return `${openAiBaseUrl(endpoint)}/chat/completions`;
-}
 
 interface ChatCompletionResponse {
   /** Model id echoed by the provider; may differ from the requested alias. */
@@ -601,7 +593,7 @@ async function chatCompletionAttemptOnce(
       : {};
   const fields = requestFields(config, options, includeThinking);
   const requestBody = JSON.stringify({ ...fields, model: config.model, messages, ...responseFormat });
-  const endpointUrl = chatCompletionsUrl(config.endpoint);
+  const endpointUrl = openAiOperationUrl(config.endpoint, "chat/completions");
 
   // Wall-clock start for per-attempt usage telemetry (#576). Captured here so the
   // emitted duration covers the full request/response/parse cycle of a single
@@ -810,7 +802,7 @@ export async function probeLlmEndpoint(
   timeoutMs = 3_000,
 ): Promise<{ reachable: boolean; error?: string }> {
   try {
-    await fetch(`${openAiBaseUrl(config.endpoint)}/models`, { signal: AbortSignal.timeout(timeoutMs) });
+    await fetch(openAiOperationUrl(config.endpoint, "models"), { signal: AbortSignal.timeout(timeoutMs) });
     return { reachable: true };
   } catch (err) {
     return { reachable: false, error: err instanceof Error ? err.message : String(err) };

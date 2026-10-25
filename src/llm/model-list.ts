@@ -9,7 +9,7 @@
  * what they show agrees. `akm health` asks only whether the endpoint answers, with
  * its own request (`probeLlmEndpoint` in `client.ts`), and reads no list.
  */
-import { openAiBaseUrl } from "./client";
+import { openAiOperationUrl } from "../core/endpoint-url";
 
 const LIST_TIMEOUT_MS = 3_000;
 
@@ -23,7 +23,7 @@ export async function listEndpointModels(
   timeoutMs = LIST_TIMEOUT_MS,
 ): Promise<EndpointModels> {
   try {
-    const response = await fetch(`${openAiBaseUrl(connection.endpoint)}/models`, {
+    const response = await fetch(openAiOperationUrl(connection.endpoint, "models"), {
       headers: connection.apiKey ? { authorization: `Bearer ${connection.apiKey}` } : {},
       signal: AbortSignal.timeout(timeoutMs),
     });

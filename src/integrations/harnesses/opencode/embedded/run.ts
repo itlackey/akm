@@ -212,6 +212,7 @@ export function runOpencodeSdk(
       kind: "runtime",
       runner: runnerModel(connection),
       settings: {
+        endpoint: connection.endpoint,
         requestFields: effectiveRequestFields(connection.request, connection.inference),
         ...(connection.apiKey ? { apiKey: connection.apiKey } : {}),
       },

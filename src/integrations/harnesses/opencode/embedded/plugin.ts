@@ -25,6 +25,7 @@
 
 import type { Plugin } from "@opencode/plugin";
 import { isRecord, toErrorMessage } from "../../../../core/common";
+import { openAiOperationUrl } from "../../../../core/endpoint-url";
 import { mergeRequestFields } from "../../../../core/llm-inference";
 import { AKM_READ_TOOLS } from "../../../agent/akm-read-tools";
 import type { RunnerModels } from "./runner-models";
@@ -33,6 +34,8 @@ import type { RunnerModels } from "./runner-models";
 export interface SessionSettings {
   /** Request fields (wire names) to lay over the session's model requests. */
   readonly requestFields?: Readonly<Record<string, unknown>>;
+  /** The connection's endpoint: every model request of the session goes to it, whatever URL OpenCode built. */
+  readonly endpoint?: string;
   /** The endpoint's key, sent as a bearer token with the session's model requests. */
   readonly apiKey?: string;
   /** The run's `AKM_EVENT_SOURCE`, which akm's read tools record their usage events under. */
@@ -53,29 +56,37 @@ export function forgetSession(sessions: SessionRegistry, sessionID: string): voi
   for (const [id, other] of sessions) if (id === sessionID || other === settings) sessions.delete(id);
 }
 
-/** The request with the session's key and request fields applied; a request with no JSON object body keeps its body. */
-async function withSettings(request: Request, { requestFields, apiKey }: SessionSettings): Promise<Request> {
+/**
+ * The request with the session's endpoint, key and request fields applied. The
+ * key and the destination are set together, so a key is only ever sent to the
+ * endpoint of the connection it belongs to. A request with no JSON object body
+ * keeps its body.
+ */
+async function withSettings(request: Request, { requestFields, apiKey, endpoint }: SessionSettings): Promise<Request> {
   const fields = requestFields ?? {};
-  if (!apiKey && Object.keys(fields).length === 0) return request;
+  if (!apiKey && !endpoint && Object.keys(fields).length === 0) return request;
   const headers = new Headers(request.headers);
   if (apiKey) headers.set("authorization", `Bearer ${apiKey}`);
-  const body: unknown =
-    Object.keys(fields).length > 0
-      ? await request
-          .clone()
-          .json()
-          .catch(() => undefined)
-      : undefined;
-  if (!isRecord(body)) return new Request(request, { headers });
-  const merged = mergeRequestFields(body, fields);
-  // OpenCode states the output limit as `max_completion_tokens`; the chat transport sends `max_tokens`
-  // alone, so one the call writes replaces it rather than riding beside it.
-  if (Object.hasOwn(fields, "max_tokens")) delete merged.max_completion_tokens;
-  headers.delete("content-length");
-  return new Request(request.url, {
+  const text = request.body === null ? undefined : await request.clone().text();
+  let parsed: unknown;
+  try {
+    parsed = text === undefined ? undefined : JSON.parse(text);
+  } catch {
+    parsed = undefined;
+  }
+  let body = text;
+  if (isRecord(parsed)) {
+    const merged = mergeRequestFields(parsed, fields);
+    // OpenCode states the output limit as `max_completion_tokens`; the chat transport sends `max_tokens`
+    // alone, so one the call writes replaces it rather than riding beside it.
+    if (Object.hasOwn(fields, "max_tokens")) delete merged.max_completion_tokens;
+    body = JSON.stringify(merged);
+    headers.delete("content-length");
+  }
+  return new Request(endpoint ? openAiOperationUrl(endpoint, "chat/completions") : request.url, {
     method: request.method,
     headers,
-    body: JSON.stringify(merged),
+    ...(body !== undefined ? { body } : {}),
     signal: request.signal,
   });
 }

@@ -10,8 +10,8 @@
 import * as p from "../../cli/clack";
 import { type AkmConfig, defaultConnection, type EmbeddingConnectionConfig } from "../../core/config/config";
 import { resolveApiKey } from "../../core/config/credentials";
+import { sameEndpoint } from "../../core/endpoint-url";
 import { UsageError } from "../../core/errors";
-import { openAiBaseUrl } from "../../llm/client";
 import { isEmbeddingModel } from "../../llm/model-list";
 import { prompt } from "../prompt";
 import { describeSemanticSearchAssets, isRemoteEmbeddingConfig } from "../semantic-assets";
@@ -113,9 +113,9 @@ async function askSource(input: EmbeddingStepInput): Promise<EmbeddingAnswer> {
   const key: KeyAnswer | undefined = typed ? { pasted: typed } : undefined;
 
   // The held key is sent only to the endpoint it belongs to.
-  const sameEndpoint =
-    current.embedding?.endpoint !== undefined && openAiBaseUrl(current.embedding.endpoint) === openAiBaseUrl(endpoint);
-  const listed = input.probe ? await listModels(endpoint, typed ?? (sameEndpoint ? held : undefined), true) : [];
+  const unchangedEndpoint =
+    current.embedding?.endpoint !== undefined && sameEndpoint(current.embedding.endpoint, endpoint);
+  const listed = input.probe ? await listModels(endpoint, typed ?? (unchangedEndpoint ? held : undefined), true) : [];
   const embeddingModels = listed.filter(isEmbeddingModel);
   const model =
     listed.length > 0

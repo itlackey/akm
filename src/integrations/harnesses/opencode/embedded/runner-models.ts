@@ -16,8 +16,9 @@
 
 import { createHash } from "node:crypto";
 import type { Plugin } from "@opencode/plugin";
+import { openAiBaseUrl } from "../../../../core/endpoint-url";
 import { effectiveRequestFields } from "../../../../core/llm-inference";
-import { type ChatCompletionConfig, openAiBaseUrl } from "../../../../llm/client";
+import type { ChatCompletionConfig } from "../../../../llm/client";
 
 /** The model a dispatched connection runs, and the provider that carries it. */
 export interface RunnerModel {

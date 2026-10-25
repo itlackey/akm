@@ -32,6 +32,8 @@ const text = (content: unknown): string =>
 
 export interface FakeModelRequest {
   readonly mode: string;
+  /** The path and query the request was made to. */
+  readonly url: string;
   readonly tools: readonly string[];
   readonly system: string;
   readonly lastUser: string;
@@ -75,8 +77,10 @@ export function startFakeModel(): FakeModelServer {
       if (!tools.length && /title/i.test(system)) mode = "title";
       const all = messages.map((m) => text(m.content)).join("\n");
       const authorization = req.headers.get("authorization");
+      const target = new URL(req.url);
       requests.push({
         mode,
+        url: `${target.pathname}${target.search}`,
         ...(authorization ? { authorization } : {}),
         tools,
         system,

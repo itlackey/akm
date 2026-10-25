@@ -225,6 +225,13 @@ describe("what the endpoint receives", () => {
     expect(lastAnswer(without)?.authorization).toBeUndefined();
   });
 
+  test("an endpoint with a query string is reached with the operation in the path and the query intact", async () => {
+    const before = model.requests.length;
+    const gateway = { ...connection, endpoint: `${model.url}?api-version=2026-01-01` };
+    expect((await run("MODE:answer gateway", {}, gateway)).ok).toBe(true);
+    expect(lastAnswer(before)?.url).toBe("/v1/chat/completions?api-version=2026-01-01");
+  });
+
   test("the connection's request fields reach the model as written", async () => {
     const withFields: ChatCompletionConfig = {
       ...connection,

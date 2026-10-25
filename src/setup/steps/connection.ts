@@ -10,9 +10,9 @@
 import { type AkmConfig, type ConnectionConfig, defaultConnection } from "../../core/config/config";
 import { resolveApiKey } from "../../core/config/credentials";
 import { entryModel, STANDARD_ALIASES } from "../../core/config/model-aliases";
+import { sameEndpoint } from "../../core/endpoint-url";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
-import { openAiBaseUrl } from "../../llm/client";
 import { isEmbeddingModel } from "../../llm/model-list";
 import type { LocalServerResult } from "../detect";
 import type { SetupFlags } from "../setup-flags";
@@ -54,7 +54,7 @@ function listingKey(
     if (!value) warn(`[akm setup] ${key.env} is not set; listing models without a key.`);
     return value || undefined;
   }
-  return existing && openAiBaseUrl(existing.endpoint) === openAiBaseUrl(endpoint)
+  return existing && sameEndpoint(existing.endpoint, endpoint)
     ? resolveApiKey(existing.apiKey, name, process.env, true)
     : undefined;
 }

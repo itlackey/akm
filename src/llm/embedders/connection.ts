@@ -5,8 +5,8 @@
 import { defaultConnection } from "../../core/config/config";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../../core/config/config-types";
 import { apiKeyReference } from "../../core/config/credentials";
+import { openAiBaseUrl } from "../../core/endpoint-url";
 import { warnOnce } from "../../core/warn";
-import { openAiBaseUrl } from "../client";
 
 /**
  * The embedding block as the embedder uses it. `embedding.model` without an

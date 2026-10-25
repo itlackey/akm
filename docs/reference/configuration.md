@@ -100,7 +100,7 @@ akm reads these keys of a connection:
 
 | Key | Meaning |
 | --- | --- |
-| `endpoint` | Required. The OpenAI-compatible base URL (`http://localhost:11434/v1`) or the chat-completions URL itself, starting with `http://` or `https://`. Requests go to `<base>/chat/completions` and the model list is read from `<base>/models`. A username or password in the URL is warned about; put the key in `apiKey` or `credentials.json`. |
+| `endpoint` | Required. The OpenAI-compatible base URL (`http://localhost:11434/v1`) or the chat-completions URL itself, starting with `http://` or `https://`. Requests go to `<base>/chat/completions` and the model list is read from `<base>/models`; a query string on the URL (a gateway's `api-version`, say) stays after the path on every request, and a `#fragment` is dropped. A username or password in the URL is warned about; put the key in `apiKey` or `credentials.json`. |
 | `apiKey` | A `$VAR` or `${VAR}` reference to an environment variable. Absent, the key is the one stored under the connection's name in `credentials.json`. See [Credentials](#credentials). |
 | `models` | Alias to model. See [Aliases](#aliases). |
 | `contextLength` | The model's context window in tokens. `akm improve` sizes its prompts from it (consolidate's chunks, reflect's asset content); unset, it assumes 4096. |
