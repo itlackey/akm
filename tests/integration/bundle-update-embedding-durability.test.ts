@@ -52,16 +52,17 @@ describe("akm bundle update: embedding durability (#954)", () => {
     storage.cleanup();
   });
 
-  function configureManagedBundle(id: string, fileCount: number): void {
+  /**
+   * Install `id` as a bundle of `fileCount` files and build the index the update runs over. The seed index runs
+   * with semantic search off: only the update's embedding phase is under test, and with it on, the seed index
+   * would download the default local model from Hugging Face into the test's empty cache.
+   */
+  async function seedManagedBundle(id: string, fileCount: number): Promise<void> {
     const cacheDir = path.join(getRegistryCacheDir(), `${id}-cache`);
     const contentDir = path.join(cacheDir, "content");
     writeMarkdownFiles(contentDir, fileCount, "seed");
-    saveConfig({
-      semanticSearchMode: "auto",
-      bundles: {
-        [id]: { npm: id, components: { main: { root: ".", adapter: "akm", writable: false } } },
-      },
-    });
+    const bundles = { [id]: { npm: id, components: { main: { root: ".", adapter: "akm", writable: false } } } };
+    saveConfig({ semanticSearchMode: "off", bundles });
     seedLockEntries([
       {
         id,
@@ -72,6 +73,8 @@ describe("akm bundle update: embedding durability (#954)", () => {
         installedAt: "2026-08-18T00:00:00.000Z",
       },
     ]);
+    await akmIndex({ stashDir: storage.stashDir, hydrateSources: false, persistDetectedAdapters: false });
+    saveConfig({ semanticSearchMode: "auto", bundles });
   }
 
   /** Mock `syncFromRef` to stage `fileCount` fresh markdown files, mirroring a real npm re-download. */
@@ -100,8 +103,7 @@ describe("akm bundle update: embedding durability (#954)", () => {
   test("an embedding batch committed mid-update is visible to a second connection", async () => {
     const id = "durability-probe";
     const fileCount = 4;
-    configureManagedBundle(id, fileCount);
-    await akmIndex({ stashDir: storage.stashDir, hydrateSources: false, persistDetectedAdapters: false });
+    await seedManagedBundle(id, fileCount);
 
     const syncSpy = mockSyncFromRef(id, fileCount);
     const firstBatchCommitted = makeDeferred<void>();
@@ -164,8 +166,7 @@ describe("akm bundle update: embedding durability (#954)", () => {
 
   test("a failing embedding phase still leaves the update successful, reporting semanticStatus blocked", async () => {
     const id = "post-commit-failure-probe";
-    configureManagedBundle(id, 3);
-    await akmIndex({ stashDir: storage.stashDir, hydrateSources: false, persistDetectedAdapters: false });
+    await seedManagedBundle(id, 3);
 
     const syncSpy = mockSyncFromRef(id, 3);
     _setEmbedderForTests({
