@@ -217,7 +217,9 @@ question left, so nothing is prompted.
 | `--dir <path>`, `--no-init` | The bundle directory; skip scaffolding it |
 | `--no-probe` | Offline: the endpoint is not contacted and its models are not listed |
 
-The wizard also lets you review registries and add bundle sources.
+The wizard also lets you review registries and add bundle sources. A scripted run
+prints its result with a `runs` object saying what runs where: `modelCalls`,
+`agentWork` and `embeddings`.
 
 ### index
 

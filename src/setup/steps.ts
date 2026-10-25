@@ -5,17 +5,16 @@
 /**
  * Composable runner abstraction for `akm setup`.
  *
- * The interactive wizard in `setup.ts` historically ran a fixed series of
- * step functions (`stepStashDir`, `stepOllama`, `stepLlm`, ...) inline.
+ * The interactive wizard in `setup.ts` runs a fixed series of step functions
+ * (`stepStashDir`, `stepHarnesses`, `stepConnection`, ...).
  * This module formalizes that pattern so steps can be:
  *   - reused by `akm init` (non-interactive preset, see Finding 31),
  *   - tested in isolation by passing a stub `SetupContext`, and
  *   - extended by plugins without touching the wizard call site.
  *
- * Steps mutate state through `SetupContext.apply()`, which accumulates a
- * delta on top of the original config. `stepLlm` reading the embedding
- * endpoint that `stepSemanticSearch` produced is the canonical example of
- * why mutable accumulation is preferred over immutable returns.
+ * Steps change the config through `SetupContext.apply()` (merge a delta) and
+ * `SetupContext.replace()` (set a key wholesale, so something the user removed
+ * stays removed); both accumulate on top of the original config.
  */
 
 import type { AkmConfig, SourceConfigEntry } from "../core/config/config";

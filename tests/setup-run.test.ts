@@ -391,6 +391,32 @@ describe("runSetupWizard", () => {
     expect(promptState.trace.filter((line) => line.startsWith('[select] Model for "'))).toHaveLength(3);
   });
 
+  test("a harness the user deselects on a rerun is removed from the config, and the one kept is left as it was", async () => {
+    installSetupSeams();
+    installClaude();
+    fs.mkdirSync(path.dirname(DEFAULT_CONFIG_PATH), { recursive: true });
+    fs.writeFileSync(
+      DEFAULT_CONFIG_PATH,
+      `${JSON.stringify({
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        harnesses: { claude: { args: ["--keep"] }, codex: { bin: "/opt/codex" } },
+        connections: { default: { endpoint: "https://api.example.test/v1", models: { fast: "m" } } },
+      })}\n`,
+    );
+
+    // The harness question lists claude (installed) and codex (configured, not on PATH); codex is unchecked.
+    promptState.multiselects.push(["claude"], [...DEFAULT_REGISTRY_URLS], [], []);
+    promptState.confirms.push(true, false);
+    promptState.texts.push("https://api.example.test/v1");
+    promptState.passwords.push("");
+    promptState.selects.push("default", "m", "m", "m", "off", "done", "json", "brief");
+
+    await withEndpoint("https://api.example.test/v1", ["m"], () => runSetupWizard());
+
+    expect(readSavedConfig().harnesses).toEqual({ claude: { args: ["--keep"] } });
+  });
+
   test("keeps semantic search in auto mode when asset preparation fails", async () => {
     installSetupSeams();
 

@@ -89,8 +89,9 @@ interface AkmHarnessCommon {
   readonly models?: HarnessModelMap;
 
   /**
-   * LLM-config importer for `akm setup` (requires `capabilities.configImport`).
-   * `setup/harness-config-import.ts` DERIVES its importer list from this.
+   * LLM-config importer (requires `capabilities.configImport`). `akm setup` no
+   * longer imports engine settings from a harness, so only a harness's own
+   * runner calls it.
    */
   readonly configImporter?: HarnessConfigImporter;
 

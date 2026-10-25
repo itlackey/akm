@@ -11,7 +11,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { akmHealth } from "../../../src/commands/health";
 import { ENGINE_LAST_USED_LOOKBACK_DAYS } from "../../../src/commands/health/engine-usage";
+import { runTargetsCheck } from "../../../src/commands/health/targets-check";
 import { appendEvent } from "../../../src/core/events";
+import { probeLlmEndpoint } from "../../../src/llm/client";
 import { runCliCapture } from "../../_helpers/cli";
 import {
   type IsolatedAkmStorage,
@@ -121,3 +123,31 @@ function withoutLastUsed(row: Row): Row {
   const { lastUsedAt: _lastUsedAt, ...rest } = row;
   return rest;
 }
+
+describe("the targets check over HTTP", () => {
+  test("a loopback endpoint that answers is reachable; a closed port is not, and says why", async () => {
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => Response.json({ data: [] }) });
+    const closed = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
+    const closedPort = closed.port;
+    closed.stop(true);
+    try {
+      const result = await runTargetsCheck({
+        loadConfig: () => ({
+          semanticSearchMode: "off",
+          connections: {
+            up: { endpoint: `http://127.0.0.1:${server.port}/v1`, models: { fast: "m" } },
+            down: { endpoint: `http://127.0.0.1:${closedPort}/v1`, models: { fast: "m" } },
+          },
+        }),
+        probeReachable: probeLlmEndpoint,
+      });
+      const rows = result.evidence?.rows as Row[];
+      expect(rows.find((row) => row.name === "up")).toMatchObject({ reachable: true });
+      expect(rows.find((row) => row.name === "down")).toMatchObject({ reachable: false });
+      expect(result.status).toBe("warn");
+      expect(result.message).toContain('connection "down" is not reachable');
+    } finally {
+      server.stop(true);
+    }
+  });
+});
