@@ -42,8 +42,8 @@ beforeEach(() => {
   resetConfigCache();
 });
 
-const run = (prompt: string, opts: Parameters<typeof runOpencodeSdk>[2] = {}, using = connection) =>
-  runOpencodeSdk(profile, prompt, { timeoutMs: 5_000, ...opts }, using);
+const run = (prompt: string, opts: Parameters<typeof runOpencodeSdk>[1] = {}, using = connection) =>
+  runOpencodeSdk(profile, { timeoutMs: 5_000, ...opts, dispatch: { ...opts.dispatch, prompt } }, using);
 
 describe("the runtime host", () => {
   test("has one provider per configured connection, listing its models, and OpenCode's free ones off", async () => {

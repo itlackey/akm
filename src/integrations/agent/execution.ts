@@ -106,9 +106,7 @@ export interface ResolvedExecution {
 export interface BuiltExecution {
   readonly request: ResolvedExecutionRequestV1;
   readonly runner: RunnerSpec;
-  /** The harness prompt (harness or runtime), or the terminal user message (chat). */
-  readonly prompt: string;
-  /** Spawn options: timeout, cwd, env, and the harness `dispatch` the argv is built from. */
+  /** Spawn options: timeout, cwd, env, and the harness `dispatch` the argv is built from (its `prompt` is the one prompt). */
   readonly options: Readonly<RunAgentOptions>;
   /** What the prompt is spawned or run as; absent for a direct chat. */
   readonly profile?: AgentProfile;
@@ -313,7 +311,7 @@ function buildChat(
     ...(request.conversation ?? []).map((message) => ({ role: message.role, content: message.content })),
     { role: "user", content: request.command.content },
   ];
-  return { request, runner, prompt: request.command.content, options, messages, chatOptions, notices };
+  return { request, runner, options, messages, chatOptions, notices };
 }
 
 /**
@@ -345,7 +343,6 @@ export function buildExecution(request: ResolvedExecutionRequestV1, runner: Runn
   return {
     request,
     runner,
-    prompt: built.prompt,
     options: { ...options, dispatch: built.dispatch },
     profile,
     notices: built.notices,

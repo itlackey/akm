@@ -123,12 +123,9 @@ function commandEnvironment(env: Readonly<Record<string, string>> | undefined): 
 }
 
 /** The one place a run is made: create the session, set it up, drive its turn, and report. */
-async function runSession(
-  target: Target,
-  profile: AgentProfile,
-  prompt: string,
-  opts: RunAgentOptions,
-): Promise<AgentRunResult> {
+async function runSession(target: Target, profile: AgentProfile, opts: RunAgentOptions): Promise<AgentRunResult> {
+  const prompt = opts.dispatch?.prompt;
+  if (prompt === undefined) throw new TypeError("An embedded session is run with a prompt.");
   const start = Date.now();
   const timeoutMs = opts.timeoutMs !== undefined ? opts.timeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
   const deadline = timeoutMs === null ? null : start + timeoutMs;
@@ -213,7 +210,6 @@ async function runSession(
  */
 export function runOpencodeSdk(
   profile: AgentProfile,
-  prompt: string,
   opts: RunAgentOptions,
   connection: ChatCompletionConfig,
 ): Promise<AgentRunResult> {
@@ -237,7 +233,6 @@ export function runOpencodeSdk(
       },
     },
     profile,
-    prompt,
     opts,
   );
 }
@@ -266,16 +261,11 @@ function modelWorkDirectory(): string {
  * logins, and their default model unless akm names one. Model work is confined
  * (the deny permissions, akm's read tools) and runs in a fixed directory.
  */
-export function runOpencodeHarness(
-  profile: AgentProfile,
-  prompt: string,
-  opts: RunAgentOptions,
-): Promise<AgentRunResult> {
+export function runOpencodeHarness(profile: AgentProfile, opts: RunAgentOptions): Promise<AgentRunResult> {
   const model = userModel(opts.dispatch?.model);
   return runSession(
     { kind: "opencode", settings: {}, ...(model ? { model } : {}) },
     profile,
-    prompt,
     opts.dispatch?.modelWork === true ? { ...opts, cwd: modelWorkDirectory() } : opts,
   );
 }

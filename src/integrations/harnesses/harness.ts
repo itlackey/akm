@@ -59,7 +59,6 @@ export interface AgentDispatchRequest {
 
 /** A harness's view of one resolved request, before argv/SDK dispatch. */
 export interface LoweredAgentDispatch {
-  readonly prompt: string;
   readonly dispatch: Readonly<AgentDispatchRequest>;
   readonly notices: readonly Readonly<LoweringNotice>[];
 }
@@ -119,11 +118,7 @@ export interface AkmHarness extends LowerTarget {
    * Runs a captured request inside akm's process when the installed harness
    * supports that (OpenCode 2, embedded); `undefined` means spawn its CLI.
    */
-  readonly runInProcess?: (
-    profile: AgentProfile,
-    prompt: string,
-    opts: RunAgentOptions,
-  ) => Promise<AgentRunResult> | undefined;
+  readonly runInProcess?: (profile: AgentProfile, opts: RunAgentOptions) => Promise<AgentRunResult> | undefined;
   /** Turn one request into the command to spawn. */
   build(spawn: HarnessSpawn, request: AgentDispatchRequest): BuiltCommand;
 }

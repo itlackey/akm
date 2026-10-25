@@ -89,5 +89,5 @@ export function lowerRequest(target: LowerTarget, request: ResolvedExecutionRequ
       });
     }
   }
-  return { prompt, dispatch, notices };
+  return { dispatch, notices };
 }

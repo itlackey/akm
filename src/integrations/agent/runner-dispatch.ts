@@ -41,7 +41,6 @@ export interface RunExecutionOptions {
   /** Internal runtime dispatch; defaults to {@link runOpencodeSdk}. */
   readonly runSdk?: (
     profile: AgentProfile,
-    prompt: string,
     opts: RunAgentOptions,
     connection: ChatCompletionConfig,
   ) => Promise<AgentRunResult>;
@@ -174,7 +173,6 @@ interface DispatchTarget {
 /** `llm` is given for a direct chat; without it a connection runs akm's internal runtime. */
 async function dispatchRunner(
   { runner, profile, inference, confined }: DispatchTarget,
-  prompt: string,
   opts: RunAgentOptions,
   seams: RunExecutionOptions,
   llm?: LlmCall,
@@ -187,7 +185,7 @@ async function dispatchRunner(
     // hands the terminal to its CLI, and a test's `runAgent` seam stands for the CLI.
     const inProcess =
       seams.runAgent === undefined && opts.stdio !== "interactive"
-        ? getHarness(runner.platform)?.runInProcess?.(harnessRunProfile, prompt, opts)
+        ? getHarness(runner.platform)?.runInProcess?.(harnessRunProfile, opts)
         : undefined;
     const spawn = (spawnOpts: RunAgentOptions) => (seams.runAgent ?? runAgent)(harnessRunProfile, spawnOpts);
     result = await (inProcess ?? (confined ? inScratchDirectory(opts, spawn) : spawn(opts)));
@@ -196,7 +194,7 @@ async function dispatchRunner(
     if (connection.apiKey) secrets.push(connection.apiKey);
     result = llm
       ? await llm(connection, opts)
-      : await (seams.runSdk ?? runOpencodeSdk)(profile ?? runtimeProfile(runner), prompt, opts, connection);
+      : await (seams.runSdk ?? runOpencodeSdk)(profile ?? runtimeProfile(runner), opts, connection);
   }
   return redactResult(result, collectSensitiveValues(secrets));
 }
@@ -286,7 +284,6 @@ export async function runExecution(
       inference: execution.request.inference as LlmInference | null | undefined,
       confined,
     },
-    execution.prompt,
     opts,
     options,
     llm,
@@ -346,7 +343,7 @@ export async function executeInteractiveAgentInvocation(
     ...(input.cwd ? { cwd: input.cwd } : runner.workspace ? { cwd: runner.workspace } : {}),
     dispatch: { ...(runner.model ? { model: runner.model } : {}), ...(runner.agent ? { agent: runner.agent } : {}) },
   };
-  return { engine: runner.name, result: await dispatchRunner({ runner }, "", opts, seams) };
+  return { engine: runner.name, result: await dispatchRunner({ runner }, opts, seams) };
 }
 
 /**

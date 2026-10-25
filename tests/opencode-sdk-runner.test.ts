@@ -67,8 +67,8 @@ afterAll(async () => {
   model.stop();
 });
 
-const run = (prompt: string, extra: Parameters<typeof runOpencodeSdk>[2] = {}, using = connection) =>
-  runOpencodeSdk(profile, prompt, { cwd: work, timeoutMs: 60_000, ...extra }, using);
+const run = (prompt: string, extra: Parameters<typeof runOpencodeSdk>[1] = {}, using = connection) =>
+  runOpencodeSdk(profile, { cwd: work, timeoutMs: 60_000, ...extra, dispatch: { ...extra.dispatch, prompt } }, using);
 
 const requestsFor = (mode: string) => model.requests.filter((r) => r.mode === mode);
 const lastAnswer = (since: number) => model.requests.slice(since).find((r) => r.mode === "answer");
@@ -135,7 +135,11 @@ describe("a run on akm's internal runtime", () => {
   });
 
   test("a connection that is not configured fails the run, naming it", async () => {
-    const result = await runOpencodeSdk({ ...profile, name: "ghost" }, "MODE:answer go", { cwd: work }, connection);
+    const result = await runOpencodeSdk(
+      { ...profile, name: "ghost" },
+      { cwd: work, dispatch: { prompt: "MODE:answer go" } },
+      connection,
+    );
     expect(result.ok).toBe(false);
     expect(result.error).toContain("akm-ghost/fake-model");
   });

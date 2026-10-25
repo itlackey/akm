@@ -61,10 +61,10 @@ export class OpencodeHarness implements AkmHarness {
   readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;
   readonly sessionLogProvider = (): SessionLogHarness => new OpenCodeProvider();
   /** OpenCode 2 runs embedded; OpenCode 1, and a binary whose version cannot be read, run as the CLI. */
-  readonly runInProcess: AkmHarness["runInProcess"] = (profile, prompt, opts) => {
+  readonly runInProcess: AkmHarness["runInProcess"] = (profile, opts) => {
     const major = detectOpencodeMajor(profile.bin).reportedMajor;
     if (major === undefined || major < 2) return undefined;
-    return import("./embedded/run").then((embedded) => embedded.runOpencodeHarness(profile, prompt, opts));
+    return import("./embedded/run").then((embedded) => embedded.runOpencodeHarness(profile, opts));
   };
   readonly systemPrompt = false;
   readonly nativeAgent = true;

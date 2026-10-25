@@ -129,10 +129,13 @@ describe("the opencode harness chooses its transport from the binary", () => {
     const harness = getHarness("opencode");
     expect(opencodeBuilder.build(profile("oc-old"), { prompt: "p" }).argv).toEqual(["oc-old", "run"]);
     expect(opencodeBuilder.build(profile("not-oc"), { prompt: "p" }).argv).toEqual(["not-oc", "run"]);
-    expect(harness?.runInProcess?.(profile("oc-old"), "p", {})).toBeUndefined();
-    expect(harness?.runInProcess?.(profile("not-oc"), "p", {})).toBeUndefined();
+    expect(harness?.runInProcess?.(profile("oc-old"), { dispatch: { prompt: "p" } })).toBeUndefined();
+    expect(harness?.runInProcess?.(profile("not-oc"), { dispatch: { prompt: "p" } })).toBeUndefined();
     const { calls } = installFakeOpencodeHost({ reply: () => "embedded" });
-    expect(await harness?.runInProcess?.(profile("oc-new"), "p", {})).toMatchObject({ ok: true, stdout: "embedded" });
+    expect(await harness?.runInProcess?.(profile("oc-new"), { dispatch: { prompt: "p" } })).toMatchObject({
+      ok: true,
+      stdout: "embedded",
+    });
     expect(calls).toHaveLength(1);
   });
 

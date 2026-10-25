@@ -127,8 +127,8 @@ describe("runExecution routes each runner kind to its transport", () => {
     await runExecution(built({ ...lab, request: { top_p: 0.9 } }, "sdk-prompt"), {
       runAgent: refuse("agent"),
       chat: refuse("chat") as never,
-      runSdk: async (_profile, prompt, opts, connection) => {
-        received = { prompt, timeoutMs: opts.timeoutMs, connection };
+      runSdk: async (_profile, opts, connection) => {
+        received = { prompt: opts.dispatch?.prompt ?? "", timeoutMs: opts.timeoutMs, connection };
         return okResult("from-sdk");
       },
     });

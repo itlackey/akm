@@ -223,7 +223,7 @@ describe("a connection running agent work: akm's internal runtime", () => {
     await withEnv({ AKM_PIPELINE_TEST_KEY: "sk-runtime" }, async () => {
       let seen: { model?: string; connection?: { apiKey?: string; endpoint?: string } } = {};
       const result = await runExecution(buildExecution(resolved.request, resolved.runner), {
-        runSdk: async (profile, _prompt, _opts, connection) => {
+        runSdk: async (profile, _opts, connection) => {
           seen = { model: profile.model, connection };
           return { ok: true, exitCode: 0, stdout: `used ${connection?.apiKey}`, stderr: "", durationMs: 1 };
         },
@@ -249,8 +249,9 @@ describe("a connection running agent work: akm's internal runtime", () => {
       conversation: [{ role: "assistant", content: "First draft." }],
     });
     const built = buildExecution(resolved.request, resolved.runner);
-    expect(built.prompt).toContain("First draft.");
-    expect(built.prompt.endsWith("\n\nNow finish.")).toBe(true);
+    const prompt = built.options.dispatch?.prompt ?? "";
+    expect(prompt).toContain("First draft.");
+    expect(prompt.endsWith("\n\nNow finish.")).toBe(true);
     expect(built.notices.map((notice) => notice.code)).toEqual(["conversation-prompt-composed"]);
   });
 });
@@ -438,7 +439,7 @@ describe("resume from the journaled wire form", () => {
       runner: { kind: "harness", name: "pi", platform: "pi", bin: "pi", legacyField: 1 },
     });
     expect(built.runner).toMatchObject({ kind: "harness", name: "pi", platform: "pi", bin: "pi", args: [] });
-    expect(built.prompt).toBe("x");
+    expect(built.options.dispatch?.prompt).toBe("x");
   });
 });
 
@@ -482,7 +483,7 @@ describe("a harness's default agent", () => {
     const dispatch = buildExecution(resolved.request, resolved.runner).options.dispatch;
     expect(dispatch?.agent).toBeUndefined();
     expect(dispatch?.systemPrompt).toBeUndefined();
-    expect(buildExecution(resolved.request, resolved.runner).prompt).toContain("You review carefully.");
+    expect(dispatch?.prompt).toContain("You review carefully.");
   });
 
   test("model work keeps its confined agent", () => {

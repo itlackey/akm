@@ -232,14 +232,26 @@ describe("disposeDispatchResources closes the embedded OpenCode hosts", () => {
     const { lifecycle } = installFakeOpencodeHost({ reply: () => "ok" });
     const profile = { name: "mysdk", bin: "", args: [] } as never;
     // The host is shared: sessions with different models run on the one cached host.
-    await runOpencodeSdk(profile, "p", { timeoutMs: null }, { endpoint: "http://lab.invalid/v1", model: "a" });
-    await runOpencodeSdk(profile, "p", { timeoutMs: null }, { endpoint: "http://lab.invalid/v1", model: "b" });
+    await runOpencodeSdk(
+      profile,
+      { timeoutMs: null, dispatch: { prompt: "p" } },
+      { endpoint: "http://lab.invalid/v1", model: "a" },
+    );
+    await runOpencodeSdk(
+      profile,
+      { timeoutMs: null, dispatch: { prompt: "p" } },
+      { endpoint: "http://lab.invalid/v1", model: "b" },
+    );
     expect(lifecycle.created).toBe(1);
 
     await disposeDispatchResources();
     expect(lifecycle.closed).toBe(1);
 
-    await runOpencodeSdk(profile, "p", { timeoutMs: null }, { endpoint: "http://lab.invalid/v1", model: "a" });
+    await runOpencodeSdk(
+      profile,
+      { timeoutMs: null, dispatch: { prompt: "p" } },
+      { endpoint: "http://lab.invalid/v1", model: "a" },
+    );
     expect(lifecycle.created).toBe(2);
   });
 
@@ -251,8 +263,7 @@ describe("disposeDispatchResources closes the embedded OpenCode hosts", () => {
     const { lifecycle } = installFakeOpencodeHost({ reply: () => "ok", ready });
     const running = runOpencodeSdk(
       { name: "mysdk", bin: "", args: [] } as never,
-      "p",
-      { timeoutMs: null },
+      { timeoutMs: null, dispatch: { prompt: "p" } },
       {
         endpoint: "http://lab.invalid/v1",
         model: "a",

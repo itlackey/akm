@@ -118,8 +118,8 @@ async function captureAgent(prepared: Awaited<ReturnType<typeof prepareCommandIn
 async function captureRuntime(prepared: Awaited<ReturnType<typeof prepareCommandInvocation>>) {
   let capture: { prompt?: string; options?: RunAgentOptions; connection?: ChatCompletionConfig } = {};
   const result = await dispatchPreparedCommandInvocation(prepared, {
-    runSdk: async (_profile, prompt, options, connection) => {
-      capture = { prompt, options, ...(connection ? { connection } : {}) };
+    runSdk: async (_profile, options, connection) => {
+      capture = { prompt: options.dispatch?.prompt, options, ...(connection ? { connection } : {}) };
       return OK;
     },
   });
@@ -442,7 +442,7 @@ describe("common command invocation preparation", () => {
 
     const result = await withEnv({ COMMAND_FAILURE_KEY: secret }, () =>
       dispatchPreparedCommandInvocation(prepared, {
-        runSdk: async (_profile, _prompt, _options, connection) => {
+        runSdk: async (_profile, _options, connection) => {
           expect(connection?.apiKey).toBe(secret);
           return { ...OK, ok: false, exitCode: 1, error: `provider echoed ${secret}`, reason: "non_zero_exit" };
         },

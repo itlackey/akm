@@ -80,11 +80,11 @@ function userConfig(options: Record<string, unknown> = {}, select = true): strin
 
 const run = (config: string, prompt: string, dispatch: Record<string, unknown> = {}, env?: Record<string, string>) =>
   withEnv({ OPENCODE_CONFIG_DIR: config }, () =>
-    runOpencodeHarness(profile, prompt, {
+    runOpencodeHarness(profile, {
       cwd: work,
       timeoutMs: 60_000,
       ...(env ? { env } : {}),
-      dispatch: { prompt: "", ...dispatch },
+      dispatch: { ...dispatch, prompt },
     }),
   );
 

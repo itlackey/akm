@@ -85,7 +85,8 @@ function deliveredPrompt(name: string): { delivered: string; expected: string; i
     instructions: list.list.template.instructions,
   });
   const instruction = instructionFor(schema);
-  if (built.runner.kind === "connection") return { delivered: built.prompt, expected, instruction };
+  if (built.runner.kind === "connection")
+    return { delivered: built.options.dispatch?.prompt ?? "", expected, instruction };
   // A harness that reads its prompt on stdin (OpenCode 1) gets it there instead of in argv.
   const command = getHarness(built.runner.platform)!.build(built.profile!, built.options.dispatch!);
   return { delivered: [...command.argv, command.stdin ?? ""].join("\n"), expected, instruction };
