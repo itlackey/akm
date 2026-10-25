@@ -7,7 +7,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentCommandBuilder, AgentDispatchRequest } from "../../src/integrations/agent/builder-shared";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
-import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 
 // NOTE: this file previously carried a full 13-export mock.module fake of
 // src/core/warn. Nothing under test here (builders and profiles)
@@ -29,9 +28,8 @@ function makeFakeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
   };
 }
 
-// These cases pin the OpenCode 1 argv, so the binary reports 1.x.
+// These cases pin the OpenCode 1 argv (the builder only ever builds that: dispatch sends OpenCode 2 to the embedded OpenCode).
 function makeOpencodeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
-  fakeOpencodeMajor(1);
   return makeFakeProfile({
     name: "opencode",
     bin: "opencode",
@@ -109,6 +107,19 @@ describe("opencodeBuilder — basic dispatch", () => {
     const idx = argv.indexOf("--model");
     expect(idx).toBeGreaterThan(-1);
     expect(argv[idx + 1]).toBe("opus");
+  });
+
+  test("the engine's agent default and a model both reach the argv", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const req: AgentDispatchRequest = { prompt: "p", agent: "planner", model: "lab/m" };
+    expect(getCommandBuilder("opencode").build(makeOpencodeProfile(), req).argv).toEqual([
+      "opencode",
+      "run",
+      "--agent",
+      "planner",
+      "--model",
+      "lab/m",
+    ]);
   });
 
   test("a bare exact override replaces the configured model without reinterpretation", async () => {

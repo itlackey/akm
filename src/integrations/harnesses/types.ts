@@ -16,6 +16,8 @@
  */
 
 import type { AgentCommandBuilder, AgentRequestLowerer, AgentResultExtractor } from "../agent/builder-shared";
+import type { AgentProfile } from "../agent/profiles";
+import type { AgentRunResult, RunAgentOptions } from "../agent/spawn";
 import type { SessionLogHarness } from "../session-logs/types";
 import type { HarnessCapabilities, HarnessConfigImporter, HarnessModelMap } from "./shared";
 
@@ -96,6 +98,18 @@ interface AkmHarnessCommon {
 
   /** Resolved-request lowering for non-argv transports such as OpenCode SDK. */
   readonly executionLowerer?: AgentRequestLowerer;
+
+  /**
+   * Runs the request inside akm's process when the installed harness supports
+   * that (OpenCode 2, embedded); `undefined` means spawn its CLI instead. Dispatch
+   * asks this first, so which transport a harness uses is the harness's decision
+   * and core branches on no platform.
+   */
+  readonly runInProcess?: (
+    profile: AgentProfile,
+    prompt: string,
+    opts: RunAgentOptions,
+  ) => Promise<AgentRunResult> | undefined;
 
   /**
    * Env vars that carry this harness's *session id* when a process runs under
@@ -224,6 +238,7 @@ export abstract class BaseHarness implements AkmHarnessCommon {
   readonly models?: HarnessModelMap;
   readonly configImporter?: HarnessConfigImporter;
   readonly executionLowerer?: AgentRequestLowerer;
+  readonly runInProcess?: AkmHarnessCommon["runInProcess"];
   readonly identityEnv?: readonly string[];
   readonly presenceEnv?: readonly string[];
   readonly resultExtractor?: AgentResultExtractor;

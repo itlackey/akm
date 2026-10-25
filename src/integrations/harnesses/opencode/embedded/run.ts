@@ -15,13 +15,18 @@
  * requests rejected (`./host.ts`), each with a message, and the model carries on.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { toErrorMessage } from "../../../../core/common";
 import { effectiveRequestFields } from "../../../../core/llm-inference";
+import { getCacheDir } from "../../../../core/paths";
+import { warnOnce } from "../../../../core/warn";
 import type { ChatCompletionConfig } from "../../../../llm/client";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../../agent/config";
 import type { AgentProfile } from "../../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../../agent/spawn";
-import { type EmbeddedHost, hostFor } from "./host";
+import { type EmbeddedHost, type HostKind, hostFor } from "./host";
+import type { SessionSettings } from "./plugin";
 import { runtimeProviderId } from "./runtime-config";
 import { runTurn, turnResult } from "./turn";
 
@@ -96,17 +101,20 @@ async function interrupt(host: EmbeddedHost, sessionID: string, timers: Timers):
   );
 }
 
-/**
- * Run one prompt on akm's internal runtime: the embedded OpenCode driven by the
- * connection the run resolved to. The connection's endpoint is the host's
- * provider (`./runtime-config.ts`); the run contributes its model, request fields
- * and key.
- */
-export async function runOpencodeSdk(
+/** What distinguishes a run on one kind of host from a run on the other. */
+interface Target {
+  readonly kind: HostKind;
+  /** The model the session is created with; absent, OpenCode's own default for the host decides. */
+  readonly model?: { readonly providerID: string; readonly id: string };
+  readonly settings: SessionSettings;
+}
+
+/** The one place a run is made: create the session, set it up, drive its turn, and report. */
+async function runSession(
+  target: Target,
   profile: AgentProfile,
   prompt: string,
   opts: RunAgentOptions,
-  connection: ChatCompletionConfig,
 ): Promise<AgentRunResult> {
   const start = Date.now();
   const timeoutMs = opts.timeoutMs !== undefined ? opts.timeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
@@ -123,7 +131,7 @@ export async function runOpencodeSdk(
   let handle: Awaited<ReturnType<typeof hostFor>> | undefined;
   let sessionId: string | undefined;
   try {
-    const started = await bounded(hostFor("runtime"), deadline, run.signal, timers);
+    const started = await bounded(hostFor(target.kind), deadline, run.signal, timers);
     if (started === ABORTED) return failed(start, "aborted", `${name} aborted by caller signal during startup`);
     if (started === TIMED_OUT) return failed(start, "timeout", `${name} timed out during startup after ${timeoutMs}ms`);
     handle = started;
@@ -133,15 +141,12 @@ export async function runOpencodeSdk(
       title: "akm",
       metadata: { akm: modelWork ? "model-work" : "agent" },
       location: { directory: opts.cwd ?? process.cwd() },
-      model: { providerID: runtimeProviderId(profile.name), id: connection.model },
+      ...(target.model ? { model: target.model } : {}),
       ...(!modelWork && dispatch?.agent ? { agent: dispatch.agent } : {}),
       ...(modelWork ? { permissions: MODEL_WORK_PERMISSIONS } : {}),
     });
     sessionId = session.id;
-    sessions.set(session.id, {
-      requestFields: effectiveRequestFields(connection.request, connection.inference),
-      ...(connection.apiKey ? { apiKey: connection.apiKey } : {}),
-    });
+    sessions.set(session.id, target.settings);
     if (opts.env && Object.keys(opts.env).length > 0) {
       await host.sessions.environment({ sessionID: session.id, variables: opts.env });
     }
@@ -178,4 +183,69 @@ export async function runOpencodeSdk(
     run.abort();
     if (sessionId) handle?.sessions.delete(sessionId);
   }
+}
+
+/**
+ * Run one prompt on akm's internal runtime: the embedded OpenCode driven by the
+ * connection the run resolved to. The connection's endpoint is the host's
+ * provider (`./runtime-config.ts`); the run contributes its model, request fields
+ * and key.
+ */
+export function runOpencodeSdk(
+  profile: AgentProfile,
+  prompt: string,
+  opts: RunAgentOptions,
+  connection: ChatCompletionConfig,
+): Promise<AgentRunResult> {
+  return runSession(
+    {
+      kind: "runtime",
+      model: { providerID: runtimeProviderId(profile.name), id: connection.model },
+      settings: {
+        requestFields: effectiveRequestFields(connection.request, connection.inference),
+        ...(connection.apiKey ? { apiKey: connection.apiKey } : {}),
+      },
+    },
+    profile,
+    prompt,
+    opts,
+  );
+}
+
+/** `provider/model` as the user's OpenCode names a model; the model id may itself hold slashes. */
+function userModel(model: string | undefined): { providerID: string; id: string } | undefined {
+  if (model === undefined) return undefined;
+  const slash = model.indexOf("/");
+  if (slash > 0 && slash < model.length - 1) return { providerID: model.slice(0, slash), id: model.slice(slash + 1) };
+  warnOnce(
+    `opencode-model:${model}`,
+    `OpenCode model ${JSON.stringify(model)} is not provider/model, so OpenCode's own default is used.`,
+  );
+  return undefined;
+}
+
+/** The one working directory of every model-work session this process runs on the user's OpenCode: OpenCode keeps an instance per directory for the life of the process. */
+function modelWorkDirectory(): string {
+  const directory = path.join(getCacheDir(), "opencode", "model-work");
+  fs.mkdirSync(directory, { recursive: true });
+  return directory;
+}
+
+/**
+ * Run one prompt on the user's OpenCode 2, embedded: their config, providers and
+ * logins, and their default model unless akm names one. Model work is confined
+ * (the deny permissions, akm's read tools) and runs in a fixed directory.
+ */
+export function runOpencodeHarness(
+  profile: AgentProfile,
+  prompt: string,
+  opts: RunAgentOptions,
+): Promise<AgentRunResult> {
+  const model = userModel(opts.dispatch?.model);
+  return runSession(
+    { kind: "opencode", settings: {}, ...(model ? { model } : {}) },
+    profile,
+    prompt,
+    opts.dispatch?.modelWork === true ? { ...opts, cwd: modelWorkDirectory() } : opts,
+  );
 }

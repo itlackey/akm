@@ -189,11 +189,13 @@ interface DispatchTarget {
   readonly runner: RunnerSpec;
   readonly profile?: AgentProfile;
   readonly inference?: LlmInference | null;
+  /** Model work that runs an agent: a CLI it spawns runs in a scratch directory. */
+  readonly confined?: boolean;
 }
 
 /** `llm` is given for a direct chat; without it a connection runs akm's internal runtime. */
 async function dispatchRunner(
-  { runner, profile, inference }: DispatchTarget,
+  { runner, profile, inference, confined }: DispatchTarget,
   prompt: string,
   opts: RunAgentOptions,
   seams: RunExecutionOptions,
@@ -203,7 +205,15 @@ async function dispatchRunner(
   const secrets = collectDispatchSensitiveValues(runner, opts, envSource);
   let result: AgentRunResult;
   if (runner.kind === "harness") {
-    result = await (seams.runAgent ?? runAgent)(profile ?? harnessProfile(runner), prompt, opts);
+    const harnessRunProfile = profile ?? harnessProfile(runner);
+    // A harness may run a captured request in akm's process (OpenCode 2, embedded); an interactive launch
+    // hands the terminal to its CLI, and a test's `runAgent` seam stands for the CLI.
+    const inProcess =
+      seams.runAgent === undefined && opts.stdio !== "interactive"
+        ? getHarness(runner.platform)?.runInProcess?.(harnessRunProfile, prompt, opts)
+        : undefined;
+    const spawn = (spawnOpts: RunAgentOptions) => (seams.runAgent ?? runAgent)(harnessRunProfile, prompt, spawnOpts);
+    result = await (inProcess ?? (confined ? inScratchDirectory(opts, spawn) : spawn(opts)));
   } else {
     const connection = materializeConnection(runner, inference, envSource);
     if (connection.apiKey) secrets.push(connection.apiKey);
@@ -215,36 +225,25 @@ async function dispatchRunner(
 }
 
 /**
- * The scratch working directory for one model-work dispatch on a harness or the
- * internal runtime, so the edit the model-work tool policy grants never reaches
- * the stash.
+ * Run `work` in a scratch working directory that akm creates for it and removes
+ * after, so the edit that model work on a CLI harness cannot be denied never
+ * reaches the stash.
  */
-function createModelWorkDirectory(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "akm-model-work-"));
+async function inScratchDirectory(
+  opts: RunAgentOptions,
+  work: (opts: RunAgentOptions) => Promise<AgentRunResult>,
+): Promise<AgentRunResult> {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "akm-model-work-"));
+  try {
+    return await work({ ...opts, cwd: scratch });
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
-/** Whether this execution is model work that runs an agent (not a direct chat), and so needs the scratch directory. */
+/** Whether this execution is model work that runs an agent (not a direct chat). */
 function isConfinedAgentWork(execution: BuiltExecution): boolean {
   return execution.request.modelWork && execution.messages === undefined;
-}
-
-/**
- * Run a built execution. Credentials are read here, once per call, and never
- * returned. Model work on a harness or the internal runtime runs in a scratch
- * working directory that akm creates for the dispatch and removes after it, and
- * must end with an answer: an agent that stops with none (opencode at its step
- * limit, for one) has failed with `parse_error`.
- */
-export async function runExecution(
-  execution: BuiltExecution,
-  options: RunExecutionOptions = {},
-): Promise<AgentRunResult> {
-  const scratch = isConfinedAgentWork(execution) ? createModelWorkDirectory() : undefined;
-  try {
-    return await runBuiltExecution(execution, options, scratch);
-  } finally {
-    if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
-  }
 }
 
 /** A successful reply's text, unwrapped from its harness's framing (claude's `--output-format json` result envelope, for one). */
@@ -265,13 +264,19 @@ function modelWorkAnswer(runner: RunnerSpec, result: AgentRunResult): AgentRunRe
   return { ...answer, ok: false, reason: "parse_error", error: `"${runner.name}" returned no answer.` };
 }
 
-/** `scratch` is the model-work working directory, set only for model work that runs an agent. */
-async function runBuiltExecution(
+/**
+ * Run a built execution. Credentials are read here, once per call, and never
+ * returned. Model work on a harness runs confined: in a scratch working
+ * directory when it is a CLI (the OpenCode 2 harness runs in its own fixed one),
+ * and it must end with an answer: an agent that stops with none (opencode at its
+ * step limit, for one) has failed with `parse_error`.
+ */
+export async function runExecution(
   execution: BuiltExecution,
-  options: RunExecutionOptions,
-  scratch: string | undefined,
+  options: RunExecutionOptions = {},
 ): Promise<AgentRunResult> {
-  const opts: RunAgentOptions = { ...execution.options, ...(scratch ? { cwd: scratch } : {}) };
+  const confined = isConfinedAgentWork(execution);
+  const opts: RunAgentOptions = { ...execution.options };
   const operational = options.runOptions ?? {};
   for (const key of OPERATIONAL_OPTIONS) {
     if (operational[key] !== undefined) (opts as Record<string, unknown>)[key] = operational[key];
@@ -312,13 +317,14 @@ async function runBuiltExecution(
       runner: execution.runner,
       ...(execution.profile ? { profile: execution.profile } : {}),
       inference: execution.request.inference as LlmInference | null | undefined,
+      confined,
     },
     execution.prompt,
     opts,
     options,
     llm,
   );
-  if (scratch !== undefined && result.ok) result = modelWorkAnswer(execution.runner, result);
+  if (confined && result.ok) result = modelWorkAnswer(execution.runner, result);
   // The LLM transport records each HTTP attempt itself.
   if (llm === undefined) recordDispatchUsage(execution, result);
   return result;

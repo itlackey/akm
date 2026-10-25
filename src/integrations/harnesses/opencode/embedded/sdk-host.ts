@@ -17,6 +17,10 @@
  *   shares one database between processes, so that would run an interrupted or
  *   timed-out turn again, under whichever process started next. The sweep is
  *   replaced by an inert one.
+ * - **The user's logins** (the opencode host): OpenCode 2 keeps credentials in its
+ *   database. The host keeps its sessions in akm's database and has its credential
+ *   service read the user's, so their logins work and a refreshed token is written
+ *   back where their own OpenCode finds it.
  * - **akm's own roots** (an isolated host): OpenCode keeps its logs, repositories
  *   and binaries under akm's data and cache directories, and loads no config
  *   directory of the user's.
@@ -27,14 +31,16 @@ import { getCacheDir, getDataDir, getStateDir } from "../../../../core/paths";
 import type { EmbeddedHost, HostSpec } from "./host";
 
 async function load() {
-  const [sdk, plugin, restart, global, effect] = await Promise.all([
+  const [sdk, plugin, restart, global, credential, database, effect] = await Promise.all([
     import("@opencode/sdk/effect"),
     import("@opencode/core/plugin/promise"),
     import("@opencode/core/session/execution/restart"),
     import("@opencode/util/global"),
+    import("@opencode/core/credential"),
+    import("@opencode/core/database/database"),
     import("effect"),
   ]);
-  return { sdk, plugin, restart, global, effect };
+  return { sdk, plugin, restart, global, credential, database, effect };
 }
 
 /** The directories OpenCode keeps its own files under on the runtime host. */
@@ -54,7 +60,7 @@ function akmRoots() {
 
 /** Start the embedded OpenCode `spec` describes. */
 export async function createSdkHost(spec: HostSpec): Promise<EmbeddedHost> {
-  const { sdk, plugin, restart, global, effect } = await load();
+  const { sdk, plugin, restart, global, credential, database, effect } = await load();
   const { Effect, Exit, Layer, References, Scope, Stream } = effect;
   const run = <A>(work: import("effect").Effect.Effect<A, unknown>, signal?: AbortSignal): Promise<A> =>
     Effect.runPromise(
@@ -66,7 +72,14 @@ export async function createSdkHost(spec: HostSpec): Promise<EmbeddedHost> {
   const overrides = [
     restart.SessionRestart.node.replace(inertSweep),
     ...(spec.isolated ? [global.Global.node.replace(global.Global.layerWith(akmRoots()))] : []),
+    ...(spec.credentialsFrom ? [readLogins(spec.credentialsFrom)] : []),
   ];
+  /** OpenCode's credential service, pointed at the user's database: it reads their logins and writes a refreshed token back, as a second OpenCode process would. */
+  function readLogins(path: string) {
+    return credential.Credential.node.replace(
+      credential.Credential.node.mapLayer((layer) => Layer.provide(layer, database.Database.layer({ path })) as never),
+    );
+  }
   const scope = await Effect.runPromise(Scope.make());
   const close = () => Effect.runPromise(Scope.close(scope, Exit.void));
   const client = await run(
@@ -77,6 +90,7 @@ export async function createSdkHost(spec: HostSpec): Promise<EmbeddedHost> {
         config: {
           ...(spec.isolated ? { project: false, claude: false } : {}),
           ...(spec.content ? { content: JSON.stringify(spec.content) } : {}),
+          ...(spec.configDirectory ? { directory: spec.configDirectory } : {}),
         },
         plugins: [plugin.PluginPromise.fromPromise(spec.plugin)],
         log: { level: "error", emit: () => {} },

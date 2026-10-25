@@ -3,22 +3,23 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * OpenCode 1 command builder: the legacy `opencode run` CLI harness, treated
- * like the Claude and Codex CLIs (#1244). OpenCode 2 runs embedded in akm, with
- * no harness of its own, so an OpenCode 2 binary is refused here.
+ * OpenCode 1 command builder: the `opencode run` CLI transport of the opencode
+ * harness (#1244), treated like the Claude and Codex CLIs. OpenCode 2 runs
+ * embedded (`./embedded/`); which of the two a request uses is decided at
+ * dispatch (`./index.ts`), so this builder only ever builds OpenCode 1's argv.
  *
  * The prompt goes on stdin: `opencode run` wraps an argv prompt in quotes and
  * escapes its inner quotes, which changes what the model reads; stdin is read
  * verbatim, and a prompt that starts with `-` is not taken for a flag.
  *
- * No tool restriction: a `permissions:` grant runs with OpenCode 1's defaults
- * and a one-line warning.
+ * No tool restriction: model work on OpenCode 1 runs with its defaults, with a
+ * one-line warning.
  */
 
+import { warnOnce } from "../../../core/warn";
 import type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "../../agent/builder-shared";
 import type { AgentProfile } from "../../agent/profiles";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
-import { detectOpencodeMajor } from "./version";
 
 function flags(profile: AgentProfile, req: AgentDispatchRequest): string[] {
   const args: string[] = [];
@@ -38,11 +39,10 @@ export const opencodeBuilder: AgentCommandBuilder = {
   personaChannel: "prompt",
   lower: createAgentRequestLowerer({ adapter: "opencode", personaChannel: "prompt" }),
   build(profile, req): BuiltCommand {
-    // Refuse only a binary that reports OpenCode 2 or later; one whose version cannot be read is run as given.
-    const { reportedMajor, version } = detectOpencodeMajor(profile.bin);
-    if (reportedMajor !== undefined && reportedMajor >= 2) {
-      throw new Error(
-        `${profile.bin} reports ${version}. The opencode harness runs OpenCode 1 only; OpenCode 2 runs embedded in akm, with no harness of its own.`,
+    if (req.modelWork) {
+      warnOnce(
+        "opencode-1-model-work",
+        "OpenCode 1 cannot restrict its tools, so model work on it runs unrestricted, in a scratch directory. OpenCode 2 runs it read-only.",
       );
     }
     return { argv: [profile.bin, ...flags(profile, req)], stdin: req.prompt };

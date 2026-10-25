@@ -7,6 +7,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { resolveTarget } from "../src/integrations/agent/resolution";
+import { getHarness } from "../src/integrations/harnesses";
 import { opencodeBuilder } from "../src/integrations/harnesses/opencode/agent-builder";
 import {
   _setOpencodeVersionProbeForTests,
@@ -14,6 +15,7 @@ import {
   parseOpencodeMajor,
   resolveOpencodeBin,
 } from "../src/integrations/harnesses/opencode/version";
+import { installFakeOpencodeHost } from "./_helpers/fake-opencode-host";
 import { overrideSeam } from "./_helpers/seams";
 
 let warnings: string[];
@@ -113,7 +115,7 @@ describe("detectOpencodeMajor", () => {
   });
 });
 
-describe("the OpenCode 1 CLI harness", () => {
+describe("the opencode harness chooses its transport from the binary", () => {
   const profile = (bin: string) => ({
     name: "opencode",
     bin,
@@ -123,11 +125,16 @@ describe("the OpenCode 1 CLI harness", () => {
     parseOutput: "text" as const,
   });
 
-  test("runs an OpenCode 1 binary, or one that reports no OpenCode version, and refuses OpenCode 2", () => {
+  test("runs an OpenCode 1 binary, or one that reports no OpenCode version, as its CLI; OpenCode 2 embedded", async () => {
     fakeBinaries({ "oc-old": "1.18.34", "not-oc": "true (GNU coreutils) 9.7", "oc-new": "opencode v2.0.26" });
+    const harness = getHarness("opencode");
     expect(opencodeBuilder.build(profile("oc-old"), { prompt: "p" }).argv).toEqual(["oc-old", "run"]);
     expect(opencodeBuilder.build(profile("not-oc"), { prompt: "p" }).argv).toEqual(["not-oc", "run"]);
-    expect(() => opencodeBuilder.build(profile("oc-new"), { prompt: "p" })).toThrow(/embedded in akm/);
+    expect(harness?.runInProcess?.(profile("oc-old"), "p", {})).toBeUndefined();
+    expect(harness?.runInProcess?.(profile("not-oc"), "p", {})).toBeUndefined();
+    const { calls } = installFakeOpencodeHost({ reply: () => "embedded" });
+    expect(await harness?.runInProcess?.(profile("oc-new"), "p", {})).toMatchObject({ ok: true, stdout: "embedded" });
+    expect(calls).toHaveLength(1);
   });
 
   test("a harness with no bin runs opencode; one with a bin keeps it", () => {
