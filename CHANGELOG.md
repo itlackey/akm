@@ -57,10 +57,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   OpenCode 2 embedded in akm's process (`@opencode/sdk`, #1244), with no
   `opencode` binary, no `opencode serve` and no port. It has no entry in config,
   and `opencode-sdk` is not a harness platform.
-  - The runtime is driven by your connections and nothing of your OpenCode: one
-    provider per connection (`akm-<name>`, at its endpoint, listing the models in
-    its alias map), no project or Claude config, no model catalog fetch, and
-    OpenCode's own free-model provider switched off. An exact model name the
+  - The runtime is driven by your connections: one provider per connection
+    (`akm-<name>`, at its endpoint, listing the models in its alias map), no user
+    or project OpenCode config, no model catalog fetch, and OpenCode's own
+    free-model provider switched off. It still loads what OpenCode reads from
+    outside its config directories: `~/.agents`, and OpenCode's system config
+    (`/etc/opencode`, or macOS managed preferences). An exact model name the
     connection does not list works as it does on chat: the run uses one of the
     connection's models and the endpoint receives the name as written.
   - One embedded OpenCode per process, started on first use, shared by every
@@ -72,15 +74,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - The run's environment (workflow and task `env:`, `AKM_EVENT_SOURCE`) reaches
     the commands the agent runs. It did not before.
   - An agent has akm's read tools (`akm_search`, `akm_show`, `akm_curate`) in
-    process, with no shell.
+    process, with no shell. A subagent it starts runs with the run's key,
+    request fields and environment.
   - OpenCode's logs, repositories and binaries are kept under akm's data and
     cache directories. Sessions are stored in akm's own OpenCode database,
-    `<akm data dir>/opencode.db`; akm opens no OpenCode database it does not own
-    except to read your logins (below).
+    `<akm data dir>/opencode.db`. The embedded OpenCode opens no other database,
+    except your OpenCode database for your logins on the opencode harness
+    (below); reading OpenCode 2 history (below) opens yours read-only.
   - Another process's unfinished turns are never resumed (OpenCode resumes
     every top-level session whose turn did not finish, whichever process owns
     it), and the interrupt a timeout or an abort sends is awaited, for up to 5
-    s, before the run is reported.
+    s, before the run is reported. A unit `timeout` therefore ends a turn in
+    about the timeout when the endpoint is down; OpenCode alone retries a
+    failing endpoint with backoff for over a minute and has no setting to
+    shorten it, so a unit with no `timeout` waits that long.
   - Questions are cancelled and permission requests rejected, each with a
     message, and the model carries on.
 - `platform: "opencode"` is your OpenCode, whichever major is installed: the
@@ -98,12 +105,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     it runs unrestricted in a scratch directory, with one warning.
 - `akm proposal extract --type opencode` and the improve extract gate read
   OpenCode 2 history from the `session_v2` and `session_message` tables with
-  SQLite alone, from your OpenCode database and akm's own: top-level sessions
-  only, without subagent sessions or akm's model work. Nothing starts OpenCode
-  on the file (that migrated it and resumed its suspended sessions), and the
-  content hash of every session is unchanged, so nothing is extracted again. A
-  file or session that cannot be read is recorded as `read_failed`, not as an
-  empty `too_short` session. OpenCode 1 databases are read as before.
+  SQLite, read-only, from your OpenCode database and akm's own: top-level
+  sessions only, without subagent sessions or akm's model work. The content hash
+  of every session is unchanged, so nothing is extracted again. A file or
+  session that cannot be read (a session missing from its file, a file with
+  neither OpenCode layout) is recorded as `read_failed`, not as an empty
+  `too_short` session.
 - OpenCode's directories follow `XDG_DATA_HOME`, `XDG_CACHE_HOME` and
   `XDG_CONFIG_HOME` on every platform, as OpenCode's own do (the data path was
   wrong on macOS and ignored `XDG_DATA_HOME`); `akm health` follows
@@ -217,23 +224,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   frontmatter error from `akm distill` ("See v1 spec §13"), the two `agent-skills`
   lint details ("spec §4.5"), the bundle-identity-drift warning ("spec §11.5") and
   the unknown-`quality` warning ("v1 spec §4.2").
-- The embedded OpenCode's session store, which started OpenCode on a copy of
-  your database to read history, and the per-call scratch directory of model
-  work on the embedded OpenCode (OpenCode keeps an instance per directory for the
-  life of the process).
 
 ### Fixed
 
-- Improve's own retrievals no longer count as user demand. akm's read tools
-  recorded `source=user` for every run, and model work run through `structured-call`,
-  `propose` or `drain` stamped no source at all; model work now records
-  `improve`, a task's agent `task`, and an unknown source `unknown`.
-- A unit `timeout` ends an agent turn on the embedded OpenCode in about the
-  timeout when its endpoint is down. OpenCode alone retries a failing endpoint
-  with backoff for over a minute and gives no setting to shorten it.
-- Reading OpenCode 2 history no longer migrates your OpenCode database, changes its
-  mode or resumes the sessions of your own OpenCode that were interrupted, and a
-  history test no longer reaches the developer's own OpenCode directory.
+- Model work no longer counts as user demand. Model work run through
+  `structured-call`, `propose` or `drain` stamped no event source, so the `akm`
+  commands its agent ran were recorded as the user's, which feeds ranking; it now
+  stamps `improve` (a task's agent still records `task`, and an unknown source
+  `unknown`).
 
 ## [0.10.261013] - 2026-10-23
 
