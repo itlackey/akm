@@ -23,6 +23,11 @@ type Dict = Record<string, unknown>;
 export interface ConvertEnginesOptions {
   /** The parsed user `models.json`: alias to engine column to model. */
   readonly modelsOverlay?: unknown;
+  /**
+   * The connections and harnesses an `extends` base defines (read without the overlay): models.json also names them,
+   * and a partial entry written beside the base is how what it places there outlives the file.
+   */
+  readonly inherited?: { readonly connections?: Dict; readonly harnesses?: Dict };
   /** Where an engine's implicit key variable (`AKM_ENGINE_<NAME>_API_KEY`, `AKM_LLM_API_KEY`) is looked for; one that is set becomes the connection's `$VAR` key. */
   readonly env?: NodeJS.ProcessEnv;
 }
@@ -298,6 +303,13 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
   };
   const hasModel = (entry: unknown, alias: string): boolean =>
     isRecord(entry) && isRecord(entry.models) && alias in entry.models;
+  const inheritedConnections = options.inherited?.connections ?? {};
+  const inheritedHarnesses = options.inherited?.harnesses ?? {};
+  /** Whether the config itself, the file or its base, already names a model for the alias. */
+  const configNames = (own: Dict, base: Dict, name: string, alias: string): boolean =>
+    hasModel(own[name], alias) || hasModel(base[name], alias);
+  const platformOf = (name: string): string =>
+    String(((mergedHarnesses[name] ?? inheritedHarnesses[name]) as Dict | undefined)?.platform ?? name);
   let folded = false;
   for (const { alias, column, profile } of entries) {
     const p: Dict = typeof profile === "string" ? { model: profile } : isRecord(profile) ? profile : {};
@@ -310,19 +322,19 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
     }
     const candidates =
       column === "*"
-        ? Object.keys(mergedConnections)
+        ? [...new Set([...Object.keys(mergedConnections), ...Object.keys(inheritedConnections)])]
         : column === "opencode-sdk"
           ? [...runtimes.values()]
               .filter((n): n is string => n !== undefined && n in connections)
               .map((n) => newName(n, defaultConnection))
           : column in connections
             ? [newName(column, defaultConnection)]
-            : column in written(out.connections)
+            : column in written(out.connections) || column in inheritedConnections
               ? [column]
               : [];
-    const harnessNamed = Object.entries(mergedHarnesses)
-      .filter(([name, h]) => ((h as Dict).platform ?? name) === column)
-      .map(([n]) => n);
+    const harnessNamed = [...new Set([...Object.keys(mergedHarnesses), ...Object.keys(inheritedHarnesses)])].filter(
+      (name) => platformOf(name) === column,
+    );
     if (candidates.length === 0 && harnessNamed.length === 0) {
       notes.push(`${where}: names no configured connection or harness, so it is not carried over.`);
       continue;
@@ -330,32 +342,36 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
     // The config's own choice stands, and `*` leaves what an explicit column already set.
     const connectionNames = candidates.filter(
       (name) =>
-        !hasModel(written(out.connections)[name], alias) &&
+        !configNames(written(out.connections), inheritedConnections, name, alias) &&
         !(column === "*" && hasModel(mergedConnections[name], alias)),
     );
-    const harnessNames = harnessNamed.filter((name) => !hasModel(written(out.harnesses)[name], alias));
+    const harnessNames = harnessNamed.filter(
+      (name) => !configNames(written(out.harnesses), inheritedHarnesses, name, alias),
+    );
     if (connectionNames.length === 0 && harnessNames.length === 0) {
       // Only the config's own choice is worth a note; an explicit column that came first is the overlay's own.
       const keptByConfig =
-        candidates.some((name) => hasModel(written(out.connections)[name], alias)) ||
-        harnessNamed.some((name) => hasModel(written(out.harnesses)[name], alias));
+        candidates.some((name) => configNames(written(out.connections), inheritedConnections, name, alias)) ||
+        harnessNamed.some((name) => configNames(written(out.harnesses), inheritedHarnesses, name, alias));
       if (keptByConfig) notes.push(`${where}: the config already names a model for it, so it is not carried over.`);
       continue;
     }
     for (const name of connectionNames) {
-      const models = modelsOf(mergedConnections[name] as Dict);
-      const existing = models[alias];
+      const current = (mergedConnections[name] as Dict | undefined)?.models as Dict | undefined;
+      const existing = current?.[alias];
       const model =
         str(p.model) ?? str(isRecord(existing) ? existing.model : existing) ?? ownModels.connections.get(name);
       if (model === undefined) continue;
-      models[alias] = modelEntry(model, wire);
+      // A connection only the base defines gets a partial entry here; the base completes it.
+      mergedConnections[name] ??= {};
+      modelsOf(mergedConnections[name] as Dict)[alias] = modelEntry(model, wire);
       folded = true;
     }
     for (const name of harnessNames) {
-      const harness = mergedHarnesses[name] as Dict;
-      const model = str(p.model) ?? str(getHarness(String(harness.platform ?? name))?.models?.[alias]);
+      const model = str(p.model) ?? str(getHarness(platformOf(name))?.models?.[alias]);
       if (model === undefined) continue;
-      modelsOf(harness)[alias] = model;
+      mergedHarnesses[name] ??= {};
+      modelsOf(mergedHarnesses[name] as Dict)[alias] = model;
       folded = true;
       if (Object.keys(wire).length > 0)
         notes.push(`${where}: a harness takes the model only; the inference settings are not carried over.`);

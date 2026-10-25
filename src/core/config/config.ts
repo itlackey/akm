@@ -191,6 +191,32 @@ function readConfigFile(text: string, sourcePath?: string): Record<string, unkno
   return readConfigVersion(lifted, sourcePath);
 }
 
+/** The overlay every file read folds in, unless the migrator is reading an `extends` base without it. */
+let modelsOverlayOverride: { readonly overlay: unknown } | undefined;
+
+function modelsOverlay(): unknown {
+  return modelsOverlayOverride ? modelsOverlayOverride.overlay : readModelsFile();
+}
+
+/**
+ * The connections and harnesses an `extends` base defines on its own, without the
+ * models.json overlay the loader folds into them: what the migrator folds into
+ * entries only the base defines, as partial local entries, once the file is gone.
+ */
+function inheritedEntries(
+  document: Record<string, unknown>,
+  configPath: string,
+): { connections: Record<string, unknown>; harnesses: Record<string, unknown> } | undefined {
+  if (document.extends === undefined) return undefined;
+  modelsOverlayOverride = { overlay: undefined };
+  try {
+    const base = buildEffectiveConfig({ configVersion: document.configVersion, extends: document.extends }, configPath);
+    return { connections: { ...base.connections }, harnesses: { ...base.harnesses } };
+  } finally {
+    modelsOverlayOverride = undefined;
+  }
+}
+
 /**
  * `engines` / `defaults` are retired in favour of `connections` / `harnesses`.
  * A config in the old form is read as the new one, in memory, with one warning;
@@ -199,7 +225,7 @@ function readConfigFile(text: string, sourcePath?: string): Record<string, unkno
  */
 function readRetiredEngines(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
   const { config, notes, changed, keys } = convertEngineConfig(raw, {
-    modelsOverlay: readModelsFile(),
+    modelsOverlay: modelsOverlay(),
     env: process.env,
   });
   if (!changed) return raw;
@@ -1140,7 +1166,13 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     const document = readConfigFile(text, configPath);
     // The conversion runs before the unknown-key sweep below deletes what the
     // schema does not know (inventory surprise 8).
-    const converted = convertEngineConfig(document, { modelsOverlay: readModelsFile(), env: process.env });
+    const overlay = readModelsFile();
+    const inherited = overlay === undefined ? undefined : inheritedEntries(document, configPath);
+    const converted = convertEngineConfig(document, {
+      modelsOverlay: overlay,
+      env: process.env,
+      ...(inherited ? { inherited } : {}),
+    });
     const plan = planKeyMoves(document, converted, {
       resolveSecretRef: (ref) => resolveSecret(ref, options.resolveFromStore),
     });

@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { normalizeConfigFile, resetConfigCache } from "../../src/core/config/config";
+import { loadConfig, normalizeConfigFile, resetConfigCache } from "../../src/core/config/config";
 import { readCredential, writeCredential } from "../../src/core/config/credentials";
 import { getCacheDir, getConfigDir, getConfigPath } from "../../src/core/paths";
 import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -350,6 +350,44 @@ describe("the retired models.json", () => {
     const notes = result.notes?.join("\n") ?? "";
     expect(notes).toContain("models.json fast.lab: the config already names a model for it");
     expect(notes).toContain("models.json coder.nowhere: names no configured connection or harness");
+  });
+
+  test("is folded into a connection only an extends base defines, as a partial entry the base completes", () => {
+    fs.writeFileSync(
+      path.join(path.dirname(getConfigPath()), "base.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        connections: { shared: { endpoint: "http://shared:1/v1", models: { fast: "s-fast" } } },
+      }),
+    );
+    writeConfig({
+      extends: "base.json",
+      connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
+    });
+    fs.writeFileSync(
+      modelsFile(),
+      JSON.stringify({
+        version: 1,
+        aliases: { reasoning: { shared: "s-big" }, balanced: { "*": "wild" }, fast: { shared: "ignored" } },
+      }),
+    );
+    resetConfigCache();
+    const sharedBefore = loadConfig().connections?.shared?.models;
+    expect(sharedBefore).toEqual({ fast: "s-fast", reasoning: "s-big", balanced: "wild" });
+
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    expect(fs.existsSync(modelsFile())).toBe(false);
+    // The local file carries what only the overlay put there; the base still completes the entry.
+    expect((readConfig().connections as Record<string, Dict>).shared).toEqual({
+      models: { reasoning: "s-big", balanced: "wild" },
+    });
+    resetConfigCache();
+    expect(loadConfig().connections?.shared?.models).toEqual(sharedBefore);
+    expect(loadConfig().connections?.lab?.models).toEqual({ fast: "m", balanced: "wild" });
+    const notes = result.notes?.join("\n") ?? "";
+    expect(notes).not.toContain("names no configured connection");
+    expect(notes).toContain("models.json fast.shared: the config already names a model for it");
   });
 
   test("is moved even when it places nothing, and the config is then left as it was", () => {
