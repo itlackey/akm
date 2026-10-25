@@ -2256,7 +2256,7 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
       ].join("\n"),
       "utf8",
     );
-    // The gate is on and no engine exists to judge with; a reinforced memory needs no engine to be promoted.
+    // The gate is on and no connection exists to judge with; a reinforced memory needs none to be promoted.
     const config = configJudgeEnabled(stash);
     delete config.connections;
 

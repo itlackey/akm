@@ -521,8 +521,7 @@ async function runMemoryInferencePassBody(
           configFailure ??= error;
         },
       }),
-    // Caller-set connection concurrency or 1: `resolveLlmEngineUse` does
-    // not forward `engines.<name>.concurrency`, so config cannot raise this.
+    // The connection's own `concurrency` when it sets one, else 1.
     (llmRunner.kind === "connection" ? llmRunner.concurrency : undefined) ?? 1,
   );
   if (configFailure) throw configFailure;

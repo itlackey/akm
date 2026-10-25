@@ -816,7 +816,7 @@ function parseUnit(
   if (raw.exec !== undefined) {
     const exec = parseExec(ctx, raw.exec, [...path, "exec"], stepLabel);
     if (exec !== undefined) unit.exec = exec;
-    // An exec unit dispatches no engine call, so every engine-selection key is
+    // An exec unit dispatches no model call, so every connection or harness selection key is
     // a contradiction rather than a harmless extra. Reported per key so the
     // author sees exactly which line to delete.
     for (const key of UNIT_ENGINE_KEYS) {
@@ -838,7 +838,7 @@ function parseUnit(
         `${stepLabel} "unit" declares both "exec" and "workflow" — a unit runs one or the other.`,
       );
     }
-    // A workflow unit starts a child run: it reaches no engine and the child carries its own environment.
+    // A workflow unit starts a child run: it reaches no model and the child carries its own environment.
     for (const key of [...UNIT_ENGINE_KEYS, "env"]) {
       if (raw[key] === undefined) continue;
       ctx.err(
@@ -1239,7 +1239,7 @@ const RETIRED_LLM_KEYS: Readonly<Record<string, string>> = {
   context_length: "the context window is a connection's setting (contextLength)",
 };
 
-/** Parse only invocation tuning. Connection identity belongs to a named engine. */
+/** Parse only invocation tuning. Where it is sent belongs to a named connection. */
 function parseLlmOverrides(ctx: Ctx, raw: unknown, path: Path, label: string): LlmInvocationOverrides | undefined {
   if (raw === undefined) return undefined;
   if (!isRecord(raw)) {

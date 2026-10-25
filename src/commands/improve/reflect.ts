@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm reflect [ref]` — ask an engine whether an asset's `description`,
+ * `akm reflect [ref]` — ask a model whether an asset's `description`,
  * `when_to_use` and title need a fix, and queue the asset with that fix as a
- * proposal (`source: "reflect"`). The engine never writes the body: akm keeps
+ * proposal (`source: "reflect"`). The model never writes the body: akm keeps
  * it byte for byte. Reflect never writes an asset: the proposal queue is the
  * only path, `akm proposal accept` the bridge.
  *
@@ -305,10 +305,10 @@ function patchFrontmatterLines(fmText: string, changes: Record<string, unknown>)
 
 // ── Output contract ──────────────────────────────────────────────────────────
 //
-// Every engine kind is asked for the same reply: the JSON object of
-// REFLECT_JSON_SCHEMA, or the framed-markdown frame for an LLM engine that
-// rejects JSON Schema. The reply is validated by the parse functions below and
-// repaired once, whatever engine produced it.
+// A connection and a harness are asked for the same reply: the JSON object of
+// REFLECT_JSON_SCHEMA, or the framed-markdown frame for a connection whose
+// endpoint rejects JSON Schema. The reply is validated by the parse functions
+// below and repaired once, whatever produced it.
 
 const REFLECT_FRONTMATTER_PATCH_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -365,8 +365,8 @@ export interface RunReflectIterationOptions {
   signal?: AbortSignal;
   /**
    * JSON Schema the reply must match, sent as the request's output schema: as
-   * `response_format` to an LLM engine (the transport falls back once on a
-   * 4xx), as an instruction at the end of the prompt to an agent engine.
+   * `response_format` to a connection (the transport falls back once on a
+   * 4xx), as an instruction at the end of the prompt to a harness.
    */
   responseSchema?: Record<string, unknown>;
   chat?: typeof chatCompletion;
@@ -375,7 +375,7 @@ export interface RunReflectIterationOptions {
   /** Known target identity; target-scoped output never echoes it. */
   targetRef?: string;
   onNotices?: (notices: readonly Notice[]) => void;
-  /** The child process's environment: an agent or SDK engine has one, an LLM does not. */
+  /** The child process's environment: a harness has one, a connection does not. */
   environment?: Record<string, string>;
 }
 
@@ -518,8 +518,8 @@ function dispatchFailure(
 }
 
 /**
- * One reflect call on any engine (errors captured, never thrown except
- * configuration). Every engine kind is sent the same request, with the reply's
+ * One reflect call on a connection or a harness (errors captured, never thrown except
+ * configuration). A connection and a harness are sent the same request, with the reply's
  * schema as the output schema, and its reply is held to the same contract: an
  * unparseable reply gets one repair turn within the original deadline, then
  * fails. A failed agent dispatch is reported as it ran, with its exit code and
@@ -597,7 +597,7 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
       parse,
       correct: (refusal) => refusal.errors.join("; "),
     });
-    // A reply that broke the contract; its message is the parser's, on every engine kind.
+    // A reply that broke the contract; its message is the parser's, on a connection and a harness alike.
     if (!loop.ok) return failed(messageFailure(loop.errors.join("; "), "parse_error", loop.raw, 0));
     return {
       ok: true,

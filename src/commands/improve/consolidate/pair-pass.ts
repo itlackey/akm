@@ -913,8 +913,8 @@ const emptyLabelCounts = (): Record<ConsolidatePairJudgeLabel, number> => ({
 /**
  * The pair pass (alpha.9): initiators -> candidates -> one judge call per
  * pair -> retire proposals for the calibrated classes. Runs alongside the
- * promote pass, sharing its gate, its frozen LLM runner and its engine
- * concurrency. `bundleId` is the target bundle's id (`undefined` skips the
+ * promote pass, sharing its gate, its frozen LLM runner and its
+ * connection's concurrency. `bundleId` is the target bundle's id (`undefined` skips the
  * pass — nothing to scope candidates to).
  */
 export async function runConsolidatePairPass(

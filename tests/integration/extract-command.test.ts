@@ -358,7 +358,7 @@ describe("akmExtract — discovery mode", () => {
   });
 });
 
-// ── #912/#913: skip-reason aggregation + resolved engine on the envelope ────
+// ── #912/#913: skip-reason aggregation + resolved connection or harness on the envelope ────
 describe("akmExtract — skip aggregation + resolved engine (#912, #913)", () => {
   function fakeSessionWithText(id: string, endedAt: number, text: string): SessionData {
     return {
@@ -1474,7 +1474,7 @@ describe("akmExtract — candidate → proposal routing", () => {
 });
 
 describe("akmExtract — LLM call wiring", () => {
-  // The one corrective retry no longer depends on the engine's JSON Schema support.
+  // The one corrective retry no longer depends on the endpoint's JSON Schema support.
   test.each([false, true])("repairs malformed output once (endpoint accepts a schema: %p)", async (schemaAccepted) => {
     const stash = makeStashDir();
     const session = fakeSession("ses_repair", Date.now() - 60_000);
@@ -1627,9 +1627,9 @@ describe("minContentChars improve-process config schema", () => {
   });
 });
 
-// ── per-process engine + strategy config support ────────────────────────────
+// ── per-process connection/harness + strategy config support ────────────────────────────
 
-describe("akmExtract — engine + strategy config resolution", () => {
+describe("akmExtract — connection, harness + strategy config resolution", () => {
   test("a live lock created while classification reads the session suppresses credential materialization", async () => {
     const stash = storage.stashDir;
     const session = fakeSession("credential-lock-race", Date.now());

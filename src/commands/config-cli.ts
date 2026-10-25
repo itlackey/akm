@@ -10,7 +10,7 @@
  * zero lines here — the walker handles get/set/unset/coercion uniformly.
  *
  * `configVersion` is controlled by the config lifecycle. All execution
- * settings use their canonical engine/strategy paths; retired aliases are not
+ * settings use their canonical connection, harness and strategy paths; retired aliases are not
  * rewritten at this boundary.
  */
 import { isDeepStrictEqual } from "node:util";

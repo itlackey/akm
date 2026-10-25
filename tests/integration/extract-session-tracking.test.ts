@@ -1136,7 +1136,7 @@ describe("akmExtract — R4 transient outcomes stay retryable (null content_hash
   });
 
   // #913 — the ledger row's metadata carries `engine` alongside `skipReason` so
-  // #914's health check can attribute a run of skips to the engine that produced
+  // #914's health check can attribute a run of skips to the connection or harness that produced
   // them without re-deriving it from config.
   test("ledger row metadata carries engine and skipReason", async () => {
     const stash = makeStashDir();

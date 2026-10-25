@@ -275,7 +275,7 @@ function assertTaskAddTargetShape(input: TasksAddInput): void {
     );
   }
   // `--timeout-ms` is the workflow's whole-run bound. Connection, harness and
-  // model stay prompt-only because workflow engines come from the frozen plan.
+  // model stay prompt-only because a workflow's connections and harnesses come from the frozen plan.
   const selects = input.connection !== undefined || input.harness !== undefined || input.model !== undefined;
   if (input.workflow && selects) {
     throw new UsageError(

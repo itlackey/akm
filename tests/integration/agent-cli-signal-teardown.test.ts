@@ -4,7 +4,7 @@
 
 /**
  * Killing a dispatching `akm agent` command must not leave the CLI harness it
- * spawned (and that harness's own children) running. The CLI engines
+ * spawned (and that harness's own children) running. The CLI harnesses
  * (`opencode run`, `claude`, `codex`) are spawned in their own process group by
  * the managed-subprocess primitive; a timeout reaped that group, but a SIGTERM
  * or SIGINT to akm itself killed akm and left the group behind. This runs the

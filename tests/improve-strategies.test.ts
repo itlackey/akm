@@ -418,7 +418,7 @@ describe("resolveImprovePlan", () => {
       resolveImprovePlan("default", {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        // default's deterministic triage (#1143) also needs no engine and would keep the plan alive.
+        // default's deterministic triage (#1143) also needs no connection or harness and would keep the plan alive.
         improve: { strategies: { default: { processes: { triage: { enabled: false } } } } },
       } as AkmConfig),
     ).toThrow("No improve process can run");
@@ -431,7 +431,7 @@ describe("resolveImprovePlan", () => {
       experimental: { improveAutonomy: true },
       improve: {
         strategies: {
-          // A process that needs no engine keeps the plan alive; proactiveMaintenance alone would not.
+          // A process that needs no connection or harness keeps the plan alive; proactiveMaintenance alone would not.
           default: { processes: { triage: { enabled: true } } },
         },
       },

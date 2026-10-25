@@ -77,7 +77,7 @@ interface RequiredTarget {
   bin?: string;
 }
 
-/** Every engine the plan would dispatch to, triage's judgment engine included. */
+/** Every connection or harness the plan would dispatch to, triage's judgment included. */
 function collectRequiredTargets(plan: ResolvedImprovePlan): RequiredTarget[] {
   const runners = (Object.entries(plan.processes) as [EngineUnavailableProcessName, ResolvedImproveProcess][])
     .flatMap(([processName, process]) => (process.runner ? [[processName, process.runner] as const] : []))
@@ -220,7 +220,7 @@ const improveReportCommand = defineJsonCommand({
 
 /**
  * `akm improve judge`: reflect's quality judge on one revision, read as
- * `{"source", "candidate", "feedback"}` JSON from stdin, with the engine the
+ * `{"source", "candidate", "feedback"}` JSON from stdin, on the connection or harness the
  * strategy's reflect quality gate names. It writes nothing.
  */
 const improveJudgeCommand = defineJsonCommand({

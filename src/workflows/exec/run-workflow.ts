@@ -145,8 +145,8 @@ export interface RunWorkflowResult {
   /** Deduped safe diagnostics from work lowered during this invocation only. */
   notices?: readonly Readonly<LoweringNotice>[];
   /**
-   * Non-fatal notices from THIS invocation: creating the run (the implicit
-   * engine fallback announcement — never re-surfaced on a resume), resuming a
+   * Non-fatal notices from THIS invocation: creating the run (a param that
+   * looks like a secret — never re-surfaced on a resume), resuming a
    * run whose authored source changed since it was frozen (the run continues
    * on the frozen plan), or abandoning a run whose frozen plan this akm can
    * no longer decode (the message names the recovery).
@@ -729,7 +729,7 @@ async function driveRun(
     }
 
     // Judge-outage contract: resolve the step's frozen completion judge BEFORE
-    // any dispatch. An unresolvable judge (missing frozen engine, no dispatcher
+    // any dispatch. An unresolvable judge (missing frozen connection or harness, no dispatcher
     // for an agent judge) is verifier INFRASTRUCTURE failure — block the step
     // for `akm workflow resume` instead of spending on units the gate can never
     // verify. No gate loop is consumed and nothing is dispatched.

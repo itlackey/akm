@@ -34,13 +34,13 @@
  *     rendered command/persona source — so a `run:` command string,
  *     `with.content`, an inline `akm/command` prompt body, or a stored
  *     command's own rendered content is never read, let alone printed;
- *   - effective execution settings (engine/model/timeout) reuse
+ *   - effective execution settings (connection or harness, model, timeout) reuse
  *     `resolveExecution` (`src/integrations/agent/execution.ts`) — the SAME
  *     resolution entry point every command/persona invocation goes through —
  *     fed a BLANK inline placeholder command (`createInlineResolvedCommand`)
  *     and an EMPTY command-layer values map, instead of the task's real referenced
  *     command source. This is a deliberate, documented trade-off: a
- *     referenced command's OWN frontmatter overrides (its own `engine:`/
+ *     referenced command's OWN frontmatter overrides (its own `connection:`/`harness:`/
  *     `model:`, if any) do not contribute a layer here, in exchange for never
  *     needing the index, never reading the referenced file's bytes, and never
  *     risking a leaked `runtime.environment` value (the cascade's own
@@ -72,7 +72,7 @@
  *
  * Field-level execution provenance is READ from `resolveExecution`'s own
  * `provenance` — this module is a CONSUMER of the one common resolver, never a
- * second resolver: it never re-derives engine/model precedence itself.
+ * second resolver: it never re-derives connection, harness or model precedence itself.
  */
 
 import fs from "node:fs";
@@ -252,7 +252,7 @@ function targetSection(document: PreparableTaskDocument): Readonly<{ kind: strin
   return { kind: uses.kind, ref: uses.ref };
 }
 
-/** True only for the two `uses:` kinds an execution cascade (engine/model resolution) actually applies to. */
+/** True only for the two `uses:` kinds an execution cascade (connection, harness and model resolution) actually applies to. */
 function isCommandTarget(document: PreparableTaskDocument): boolean {
   return (
     document.target.kind === "uses" &&

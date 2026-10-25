@@ -1004,7 +1004,7 @@ function recordSessionOutcome(
   }
 }
 
-/** The run's runner, budgets, gates and session-indexing settings (throws without an engine). */
+/** The run's runner, budgets, gates and session-indexing settings (throws without a connection or harness). */
 function resolveExtractRun(
   options: AkmExtractOptions,
   config: AkmConfig,

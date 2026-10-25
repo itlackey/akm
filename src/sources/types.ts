@@ -155,7 +155,7 @@ export interface WorkflowParameter {
  * The step's dispatch kind is carried by FIELD PRESENCE, the same way `fanOut`
  * carries the step kind: `exec` present means the step runs a shell
  * command, and `engine`/`model` are then absent because an exec unit names no
- * engine — it must never be described as running on the workflow's default one.
+ * connection or harness — it must never be described as running on the workflow's default one.
  */
 export interface WorkflowStepOrchestrationSummary {
   engine?: string;

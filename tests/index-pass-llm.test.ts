@@ -11,7 +11,7 @@ import { resolveIndexPassExecution } from "../src/llm/index-passes";
 import { asLlmRunner } from "./_helpers/llm-runner";
 import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
-// Tests for standalone index-pass engine resolution.
+// Tests for standalone index-pass connection resolution.
 
 let envCleanup: Cleanup = () => {};
 

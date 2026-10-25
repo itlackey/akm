@@ -70,7 +70,7 @@ describe("config-cli: defaultWriteTarget (#21)", () => {
   });
 });
 
-// ── Cluster B: engine/embedding subkey support ────────────────────────────────
+// ── Cluster B: connection/embedding subkey support ────────────────────────────────
 
 describe("config-cli: connections.* and embedding.* subkeys (#36)", () => {
   const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };

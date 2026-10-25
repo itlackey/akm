@@ -282,7 +282,7 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
   // eventSource is "task" in BOTH cases — the R-07 fix is not conditioned on
   // the flag. A fake no-op agent binary (mirroring
   // tests/integration/usage-provenance-cli.test.ts) makes dispatch succeed
-  // without a real engine.
+  // without a real agent.
   test.each([
     [],
     ["--scheduled"],

@@ -5,14 +5,14 @@
 /**
  * Shared prompt builders for proposal-producing agent commands (#226).
  *
- * `akm reflect` and `akm proposal new` both ask the configured engine for a
+ * `akm reflect` and `akm proposal new` both ask the connection or harness they run on for a
  * structured proposal payload. The prompts are intentionally similar and share
- * their construction here. `proposal new` asks every engine kind for the JSON
+ * their construction here. `proposal new` asks a connection and a harness alike for the JSON
  * object below, with {@link PROPOSAL_JSON_SCHEMA} as the request's output
- * schema. Reflect asks every engine kind for its own contract, JSON Schema or
+ * schema. Reflect asks both for its own contract, JSON Schema or
  * framed markdown ({@link ReflectOutputMode}).
  *
- * The output an engine must produce for `proposal new` is a strict JSON object:
+ * The output `proposal new` needs back is a strict JSON object:
  *
  * ```json
  * {
@@ -111,7 +111,7 @@ export const REFLECT_CONTENT_CAP = 12_000;
 export const REFLECT_TRUNCATION_MARKER = "... [truncated — focus on the visible portion]";
 
 /**
- * The JSON envelope `proposal new` asks the engine to honour. The wrapper code
+ * The JSON envelope `proposal new` asks the model to honour. The wrapper code
  * uses `JSON.parse(stdout)` to extract the payload — anything outside the JSON
  * object will be treated as a parse error.
  */
@@ -133,8 +133,8 @@ const RESPONSE_CONTRACT_JSON = [
 
 /**
  * The JSON Schema of {@link RESPONSE_CONTRACT_JSON}'s object, the output
- * schema `proposal new` sends with its request: an LLM engine gets it as
- * `response_format`, every agent engine as the shared schema instruction. It
+ * schema `proposal new` sends with its request: a connection gets it as
+ * `response_format`, a harness as the shared schema instruction. It
  * is in the strict form a provider's native channel accepts (every property
  * required, no others), so it leaves out the optional
  * `frontmatter`, which `content` already carries. The reply is held only to
@@ -195,7 +195,7 @@ export interface ReflectPromptInput {
    * proposals that have already been reviewed and refused.
    */
   rejectedProposals?: RejectedProposalContext[];
-  /** The response contract, for any engine kind. Defaults to the JSON Schema contract. */
+  /** The response contract, for a connection or a harness. Defaults to the JSON Schema contract. */
   outputMode?: ReflectOutputMode;
   /**
    * Override for the asset-content character cap (#952). Undefined keeps
@@ -457,7 +457,7 @@ export interface ProposePromptInput {
 
 /**
  * Build the prompt for `akm proposal new <type> <name> --task ...`. Asks the
- * engine to author a brand-new asset of the given type fulfilling `task`, and
+ * model to author a brand-new asset of the given type fulfilling `task`, and
  * to return it as the JSON object of {@link RESPONSE_CONTRACT_JSON}.
  */
 export function buildProposePrompt(input: ProposePromptInput): string {

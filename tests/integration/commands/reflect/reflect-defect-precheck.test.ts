@@ -127,7 +127,7 @@ afterEach(() => {
 
 const REF = "knowledge/nightly-export";
 
-/** A judge engine with the quality gate on, or (`gate: false`) the gate off. */
+/** A judge harness with the quality gate on, or (`gate: false`) the gate off. */
 function config(gate: boolean, bin: string): AkmConfig {
   if (!gate) return quietQualityGateConfig(bin);
   return {

@@ -61,7 +61,7 @@ function agent(replies: readonly string[], options?: FakeHarnessOptions): string
   return writeFakeHarness(makeTempDir("akm-reflect-propose-bin-"), `fake-agent-${agents}`, replies, options);
 }
 
-/** What an engine of any kind replies to a reflect run on `lessons/rg-over-grep`. */
+/** What a connection or a harness replies to a reflect run on `lessons/rg-over-grep`. */
 const LESSON_PATCH = {
   description: "Use ripgrep before grep",
   when_to_use: "Searching large repos for patterns",
@@ -360,7 +360,7 @@ describe("akm reflect", () => {
 
     expect(result.ok).toBe(true);
     // Under the model-work tool policy an agent edits only its own scratch directory, so the
-    // proposal comes back on stdout, as the JSON object an LLM engine gets natively.
+    // proposal comes back on stdout, as the JSON object a connection gets natively.
     const prompt = promptOf(harnessCalls(bin)[0]);
     expect(prompt).toContain("Task / focus: Tighten the guidance");
     expect(prompt).toContain("Respond only through the provider's native JSON schema.");

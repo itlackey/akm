@@ -5,7 +5,7 @@
 /**
  * Freeze a compiled workflow plan into the plan a run executes. Every step's
  * authored spec resolves through the shared command/task authorities into a
- * frozen `root` (engine, model, timeout, concurrency, dispatch target and
+ * frozen `root` (connection or harness, model, timeout, concurrency, dispatch target and
  * environment descriptors); gates get their judge; the compile-only fields are
  * dropped; the source file's sha256 is recorded. Nothing is published here.
  */

@@ -29,7 +29,7 @@ import type { ChatCompletionConfig, ChatMessage } from "./client";
  * Per-call request shape. Mirrors the subset of direct-LLM options the
  * structured callers actually use, plus an injectable `chat` seam so tests can
  * replace the transport without a network call. Production transport selection
- * stays inside the engine-owned lowered dispatch seam.
+ * stays inside the lowered dispatch seam.
  *
  * KEY-PRESENCE SEMANTICS (`timeoutMs`): an ABSENT `timeoutMs` key means "the
  * runner's own timeout" (the resolver's), while a PRESENT key set to

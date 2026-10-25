@@ -943,7 +943,7 @@ describe("workflow smoke parity", () => {
 // Reviewer #9: bare `require(...)` in ESM modules throws
 // `ReferenceError: require is not defined` under Node. The offending sites were
 // on the workflow LLM paths — the summary-validation judge
-// (`buildDefaultSummaryJudge` → canonical engine resolution + `await import llm/client`)
+// (`buildDefaultSummaryJudge` → connection resolution + `await import llm/client`)
 // and the native unit dispatcher (`resolveUnitRunner`/`requireDefaultLlm` →
 // `await import` of `integrations/agent/config` and `core/config/config`). These
 // smokes drive those paths on the Node runtime with an LLM configured at a
@@ -1033,7 +1033,7 @@ describe("workflow LLM import-site parity (reviewer #9)", () => {
       configureDeadLlm();
       writeJudgeWorkflow("judge-smoke");
 
-      // The gated exec step runs no engine, so the only LLM call is its frozen
+      // The gated exec step makes no model call, so the only LLM call is its frozen
       // judge. The dead endpoint rejects the gate, but the dynamic import must load.
       const run = nodeRun(["workflow", "run", "workflows/judge-smoke", "--max-steps=1"], nodeEnv);
       assertNoBoundaryLeak(run, "judge run");

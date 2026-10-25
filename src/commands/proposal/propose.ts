@@ -6,7 +6,7 @@
  * `akm proposal new <type> <name> --task ...` — proposal-producing command
  * (#226).
  *
- * Mirrors {@link akmReflect} but for fresh authoring. The engine, of any kind,
+ * Mirrors {@link akmReflect} but for fresh authoring. The connection or harness
  * receives a task description plus per-asset-type schema hints and returns a
  * brand-new asset payload as JSON on stdout. The output lands ONLY in the
  * proposal queue.
@@ -114,7 +114,7 @@ function noticeFields(notices: readonly Readonly<LoweringNotice>[]): { notices?:
 interface ProposalDispatchResult {
   /** The last dispatch. */
   result: AgentRunResult;
-  /** The proposal the engine returned, or why its last reply was not one; absent when a dispatch failed. */
+  /** The proposal the model returned, or why its last reply was not one; absent when a dispatch failed. */
   reply?: StructuredLoopResult<AgentProposalPayload>;
   /** Every dispatch's duration. */
   durationMs: number;
@@ -234,7 +234,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     );
   }
 
-  // 1. Resolve the write target. Engine/model/inference resolution happens
+  // 1. Resolve the write target. Connection, harness, model and inference resolution happens
   // exactly once below through the shared execution cascade. `--bundle` names a
   // configured, writable bundle (same resolver and errors as `akm remember
   // --bundle`); its root becomes the stash the proposal is queued for and the
@@ -275,7 +275,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     return failureEnvelope(result, options.type, options.name, engineName, notices);
   }
 
-  // 5. The proposal the engine returned on stdout, validated.
+  // 5. The proposal the model returned on stdout, validated.
   if (!reply.ok) {
     return {
       schemaVersion: 2,

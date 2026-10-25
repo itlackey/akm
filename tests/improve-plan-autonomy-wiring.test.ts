@@ -11,8 +11,8 @@
  *
  * The `consolidate` strategy is the discriminating fixture: consolidate is its
  * only LLM-backed process, so with autonomy OFF the gate disables it and the
- * plan resolves with no engine configured at all. With autonomy ON the same
- * call demands an engine and throws `LLM_NOT_CONFIGURED`. That asymmetry is
+ * plan resolves with no connection or harness configured at all. With autonomy ON the same
+ * call demands one and throws `LLM_NOT_CONFIGURED`. That asymmetry is
  * only possible if the gate runs BEFORE the LLM preflight, which is the
  * ordering the choke point depends on.
  */
@@ -57,7 +57,7 @@ describe("resolveImprovePlan applies the autonomy gate", () => {
 
   // The "already review-first strategy reports no downgrades" case lives in
   // tests/improve-autonomy-gate.test.ts: asserting it here would need an
-  // `engines` fixture purely to get past the preflight for reflect, which adds
+  // `connections` fixture purely to get past the preflight for reflect, which adds
   // setup without adding signal the three cases above do not already give.
 });
 

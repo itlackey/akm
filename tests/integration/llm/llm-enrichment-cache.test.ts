@@ -22,7 +22,7 @@ import { type Cleanup, makeSandboxDir, sandboxXdgDataHome, sandboxXdgStateHome }
 
 // ── Local LLM server (stub endpoint) ──────────────────────────────────────────
 // A real HTTP server on a random port stands in for the LLM endpoint so
-// `configWithLlm()` can point a real engine at it. This avoids
+// `configWithLlm()` can point a real connection at it. This avoids
 // mock.module("../src/llm/client") which leaks into other test files (e.g.
 // tests/llm.test.ts) when Bun shares workers across files. The memory-inference
 // tests below never actually reach it — they inject `compressMemoryToDerivedMemory`

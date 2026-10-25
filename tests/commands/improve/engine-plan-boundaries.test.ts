@@ -44,8 +44,8 @@ describe("improve plan boundaries", () => {
         config: {
           configVersion: "0.9.0",
           semanticSearchMode: "off",
-          // Deterministic triage (the default's) needs no engine and would let the
-          // plan resolve; switch it off so every enabled process wants an engine.
+          // Deterministic triage (the default's) needs no connection or harness and would let the
+          // plan resolve; switch it off so every enabled process wants one.
           improve: { strategies: { default: { processes: { triage: { enabled: false } } } } },
         },
         ensureIndexFn,

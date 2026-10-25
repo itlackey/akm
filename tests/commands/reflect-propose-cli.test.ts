@@ -2,7 +2,7 @@
  * In-tree CLI argv-coercion tests for `akm reflect` and `akm propose` (#226).
  *
  * The real CLI dispatcher in `src/cli.ts` coerces citty's argv shape
- * (`{ ref?, task?, engine?, "timeout-ms"?, type, name }`) into the
+ * (`{ ref?, task?, "timeout-ms"?, type, name }`) into the
  * `AkmReflectOptions` / `AkmProposeOptions` shape consumed by
  * `akmReflect` / `akmPropose`. Exercising the live `runMain` here would
  * require spawning the CLI and stubbing PATH-resolved binaries, which is
@@ -85,7 +85,6 @@ afterEach(() => {
 function coerceReflectArgs(args: Record<string, unknown>): {
   ref?: string;
   task?: string;
-  engine?: string;
   timeoutMs?: number;
 } {
   const timeoutRaw = args["timeout-ms"];
@@ -93,7 +92,6 @@ function coerceReflectArgs(args: Record<string, unknown>): {
   return {
     ref: typeof args.ref === "string" && (args.ref as string).trim() ? (args.ref as string) : undefined,
     task: typeof args.task === "string" && (args.task as string).trim() ? (args.task as string) : undefined,
-    engine: typeof args.engine === "string" && (args.engine as string).trim() ? (args.engine as string) : undefined,
     ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
   };
 }
@@ -102,7 +100,6 @@ function coerceProposeArgs(args: Record<string, unknown>): {
   type: string;
   name: string;
   task: string;
-  engine?: string;
   timeoutMs?: number;
 } {
   const timeoutRaw = args["timeout-ms"];
@@ -111,7 +108,6 @@ function coerceProposeArgs(args: Record<string, unknown>): {
     type: String(args.type),
     name: String(args.name),
     task: String(args.task ?? ""),
-    engine: typeof args.engine === "string" && (args.engine as string).trim() ? (args.engine as string) : undefined,
     ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
   };
 }
@@ -120,10 +116,9 @@ function coerceProposeArgs(args: Record<string, unknown>): {
 
 describe("citty argv → akmReflect coercion", () => {
   test("string fields trimmed; empty strings → undefined", () => {
-    expect(coerceReflectArgs({ ref: "lessons/foo", task: "  ", engine: "" })).toEqual({
+    expect(coerceReflectArgs({ ref: "lessons/foo", task: "  " })).toEqual({
       ref: "lessons/foo",
       task: undefined,
-      engine: undefined,
     });
   });
 
@@ -141,12 +136,11 @@ describe("citty argv → akmReflect coercion", () => {
 });
 
 describe("citty argv → akmPropose coercion", () => {
-  test("type/name/task always strings; engine trimmed", () => {
-    expect(coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi", engine: "  " })).toEqual({
+  test("type/name/task always strings", () => {
+    expect(coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi" })).toEqual({
       type: "skill",
       name: "hello",
       task: "Say hi",
-      engine: undefined,
     });
   });
 
@@ -154,10 +148,10 @@ describe("citty argv → akmPropose coercion", () => {
     expect(coerceProposeArgs({ type: "skill", name: "x" })).toMatchObject({ task: "" });
   });
 
-  test("--timeout-ms parsed; engine passed through when set", () => {
-    expect(
-      coerceProposeArgs({ type: "skill", name: "x", task: "go", "timeout-ms": "9000", engine: "claude" }),
-    ).toMatchObject({ timeoutMs: 9000, engine: "claude" });
+  test("--timeout-ms parsed", () => {
+    expect(coerceProposeArgs({ type: "skill", name: "x", task: "go", "timeout-ms": "9000" })).toMatchObject({
+      timeoutMs: 9000,
+    });
   });
 });
 

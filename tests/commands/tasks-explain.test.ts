@@ -158,7 +158,7 @@ function hasNamedVersionField(json: unknown, keyPattern: RegExp, expected: numbe
  * (`src/integrations/agent/execution.ts`) —
  * structurally, not merely because the resolved connection NAME ("test-llm")
  * appears somewhere in the envelope (P2b test-review finding #3: a whole-
- * envelope substring probe for the engine name alone is satisfiable by an
+ * envelope substring probe for the connection name alone is satisfiable by an
  * envelope that prints the RESOLVED value with no provenance tracking at
  * all). Finding this shape is the direct, structural proof that `akm task
  * explain` REUSES resolveExecution's own provenance rather than writing

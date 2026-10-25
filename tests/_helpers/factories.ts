@@ -47,7 +47,7 @@ export function quietQualityGateConfig(bin = "fake-agent"): AkmConfig {
 }
 
 /**
- * The reply a model gives reflect on any engine kind: the JSON object of
+ * The reply a model gives reflect on a connection or a harness: the JSON object of
  * `REFLECT_JSON_SCHEMA`, a patch of the fields to change (each one left out is
  * `null`: no change). A reflect run with no target asks for the unscoped
  * object, which names the asset in `ref`.

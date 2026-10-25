@@ -45,7 +45,7 @@ export function errMessage(e: unknown): string {
 
 /**
  * A stage's runner: the one the improve plan froze for it (an own
- * `llmRunner` key, `null` meaning "none"), else the process engine cascade.
+ * `llmRunner` key, `null` meaning "none"), else the one the process resolves to now.
  */
 export function stageRunner(
   frozen: { llmRunner?: RunnerSpec | null },
@@ -126,13 +126,13 @@ export async function callStageOnce(call: StageLlmCall): Promise<StructuredOutco
       ...(call.current ? { current: call.current } : {}),
       ...(call.onNotices ? { onNotices: call.onNotices } : {}),
     });
-  // Usage is credited to the engine that serves the call, which for a gate's own judge
-  // (#1011) is not the stage's planned engine.
+  // Usage is credited to the connection or harness that serves the call, which for a gate's own judge
+  // (#1011) is not the one the stage planned.
   const stage = currentLlmStage();
   return stage === undefined ? dispatch() : withLlmStage(stage, dispatch, { engine: call.runner.name });
 }
 
-/** Attribute a stage's LLM calls to its process and planned engine (the usage report). */
+/** Attribute a stage's LLM calls to its process and planned connection or harness (the usage report). */
 const STAGE_LABELS = {
   reflect: "reflect",
   distill: "distill",
@@ -307,7 +307,7 @@ export interface QualityJudgeOptions {
   feedback?: string[];
   /** Distill's lesson update: the body of the existing lesson the proposed lesson extends (judged as an edit of it). */
   extending?: string;
-  /** Reflect: the ref of the asset the candidate revises, for a judge on an agent engine to read. */
+  /** Reflect: the ref of the asset the candidate revises, for a judge on a harness to read. */
   ref?: string;
   /** The exact runner selected for this judge. */
   llmRunner?: RunnerSpec;
@@ -404,11 +404,11 @@ function buildChangedRegion(sourceContent: string, candidateContent: string): st
   return boundedDocument(`Removed or replaced:\n${removed || "(none)"}\n\nAdded or replacement:\n${added || "(none)"}`);
 }
 
-/** How a judge on an agent engine reads an asset: OpenCode has akm's `akm_show` tool; any other harness runs the CLI. */
+/** How a judge on a harness reads an asset: OpenCode has akm's `akm_show` tool; any other harness runs the CLI. */
 type JudgeReadTool = "akm_show" | "akm show";
 
 /**
- * What the judge may do with tools when it runs on an agent engine: verify a
+ * What the judge may do with tools when it runs on a harness: verify a
  * fact the revision adds or alters, and nothing else. The plain judge's prompt
  * is unchanged (its rubric is tuned and measured without this paragraph).
  */
@@ -430,7 +430,7 @@ const REFLECT_JUDGE_NEGATIVE =
 const REFLECT_JUDGE_MAINTENANCE =
   "This revision is maintenance: there is no negative feedback. Only a missing or broken field needs a change; rewording a sound `description` or `when_to_use` is churn, however accurate.";
 
-/** Judge prompt for an in-place revision. `tools` is set when the judge runs on an agent engine. */
+/** Judge prompt for an in-place revision. `tools` is set when the judge runs on a harness. */
 export function buildReflectJudgePrompt(
   candidateContent: string,
   sourceContent: string,

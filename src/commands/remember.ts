@@ -284,7 +284,7 @@ function detectObservedAt(body: string): string | undefined {
  *
  * `tags` is always an array (possibly empty). `description` and
  * `observed_at` (the memory's `observed` date) are optional — only populated when
- * the model returns them in the expected shape. An absent engine, provider failure, timeout, or
+ * the model returns them in the expected shape. No connection or harness, a provider failure, a timeout, or
  * invalid JSON yields `{ tags: [] }` with a warning. Invalid configuration is
  * a hard pre-write error.
  */
@@ -304,7 +304,7 @@ export function parseEnrichObserved(parsed: Record<string, unknown>): string | u
   return undefined;
 }
 
-/** Timeout for the `--enrich` LLM call, in place of the engine's own. */
+/** Timeout for the `--enrich` LLM call, in place of the connection's own. */
 const LLM_ENRICH_TIMEOUT_MS = 10_000;
 
 /**

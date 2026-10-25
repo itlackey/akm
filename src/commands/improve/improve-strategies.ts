@@ -166,7 +166,7 @@ export type ImproveProcessName = (typeof IMPROVE_PROCESS_NAMES)[number];
 
 /**
  * The processes that make their own model calls, so the plan resolves a runner
- * for each: every engine process but triage, whose engine is its judgment's.
+ * for each: every process that makes a model call but triage, whose connection or harness is its judgment's.
  */
 export const MODEL_CALLING_PROCESSES: ReadonlySet<ImproveProcessName> = new Set(
   IMPROVE_ENGINE_PROCESSES.filter((name) => name !== "triage"),
@@ -180,7 +180,7 @@ export interface ResolvedImproveProcess {
 }
 
 /**
- * `"triage.judgment"` names the triage sub-process's own judgment engine, which
+ * `"triage.judgment"` names the triage sub-process's own judgment connection or harness, which
  * is resolved separately from the main {@link MODEL_CALLING_PROCESSES} loop and
  * is not a process of its own (#957).
  */
@@ -202,7 +202,7 @@ export interface EngineUnavailableProcess {
 export interface EngineProbeOutcome {
   process: EngineUnavailableProcessName;
   engine: string;
-  /** The LLM endpoint probed, or an agent engine's binary. */
+  /** A connection's endpoint, or a harness's binary. */
   endpoint: string;
   reachable: boolean;
   latencyMs: number;
@@ -210,7 +210,7 @@ export interface EngineProbeOutcome {
 
 /** Complete immutable process behavior for one improve invocation. */
 export interface ResolvedImprovePlan {
-  /** Immutable config snapshot used to re-enter canonical named-engine lowering. */
+  /** Immutable config snapshot a process's connection or harness is resolved from again. */
   config: Readonly<AkmConfig>;
   strategy: Readonly<SelectedStrategy>;
   processes: Readonly<Record<ImproveProcessName, ResolvedImproveProcess>>;
@@ -228,7 +228,7 @@ export interface ResolvedImprovePlan {
 }
 
 /**
- * One row of the resolved process -> engine -> model routing table (#947).
+ * One row of the resolved process -> connection or harness -> model routing table (#947).
  * Sourced entirely from data {@link resolveImprovePlan} already computes
  * before any dispatch — this is a pure projection, not new resolution. The
  * `eligibleRefs` count (reflect/distill/consolidate only) is folded in by the
@@ -255,7 +255,7 @@ export interface ProcessRoutingRow {
 /**
  * Project a resolved improve plan into one routing row per
  * {@link IMPROVE_PROCESS_NAMES} name, plus a `"triage.judgment"`
- * pseudo-row when the strategy configures a judgment engine. Pure — no I/O,
+ * pseudo-row when the strategy configures a judgment connection or harness. Pure — no I/O,
  * no re-resolution. Shared by `improve --dry-run`'s `plan.processes` (#947)
  * and `akm health`'s post-run reporting (#944).
  */
@@ -386,7 +386,7 @@ function buildImprovePlan(
 
   if (
     engineUnavailable.length > 0 &&
-    // proactiveMaintenance uses no engine: it is a selector, so it alone does not keep a run alive.
+    // proactiveMaintenance makes no model call: it is a selector, so it alone does not keep a run alive.
     !IMPROVE_ENGINE_PROCESSES.some((name) => processes[name].enabled)
   ) {
     const names = engineUnavailable.map((item) => `"${item.process}"`).join(", ");

@@ -77,7 +77,7 @@ describe("embedded task registry", () => {
   });
 
   // #957: scheduled improve runs should fail loudly (exit 78) rather than
-  // silently degrade when an engine/credential is unavailable — the whole
+  // silently degrade when a connection or credential is unavailable — the whole
   // point of a nightly job is that nobody is watching it fail quietly.
   test("every scheduled improve template requires available engines (#957)", () => {
     const scheduledImproveTasks = listEmbeddedTasks().filter(

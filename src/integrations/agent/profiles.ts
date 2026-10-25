@@ -46,7 +46,7 @@ export interface AgentProfile {
  * Built-in profiles for the agent CLIs akm knows out of the box, DERIVED from
  * the harness registry: each harness that declares `profile` defaults gets one,
  * named by its id. The fields are conservative defaults, overridable from user
- * config. Engine lowering selects captured stdio for unattended dispatch.
+ * config. Request lowering selects captured stdio for unattended dispatch.
  *
  * Built lazily: the registry transitively imports this module, so it cannot be
  * read at module load.
