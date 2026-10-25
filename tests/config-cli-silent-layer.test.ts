@@ -121,6 +121,32 @@ describe("akm config unset on an entry the reader drops", () => {
     expect(after).toBe(before);
   });
 
+  test("an entry an extends base completes is in use: a key inside it is unset as ever", async () => {
+    const { result, local } = await withEnv(freshEnv(), async () => {
+      const dir = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "base.json"),
+        JSON.stringify({ configVersion: "0.9.0", connections: { lab: { endpoint: "http://lab:1/v1" } } }),
+      );
+      fs.writeFileSync(
+        path.join(dir, "config.json"),
+        JSON.stringify({
+          configVersion: "0.9.0",
+          extends: "base.json",
+          connections: { lab: { models: { fast: "m", balanced: "b" } } },
+        }),
+      );
+      const result = await runCliCapture(["config", "unset", "connections.lab.models.balanced"]);
+      const local = JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8")) as {
+        connections: { lab: { models: Record<string, string> } };
+      };
+      return { result, local };
+    });
+    expect(result.code).toBe(0);
+    expect(local.connections.lab.models).toEqual({ fast: "m" });
+  });
+
   test("an entry the reader uses is unset as ever", async () => {
     const lab = { endpoint: "http://lab:1/v1", models: { fast: "m" } };
     const { result, config } = await withEnv(freshEnv(), async () => {

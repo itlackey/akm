@@ -1058,8 +1058,9 @@ function configWriteBody(
 
 /**
  * The connection or harness that `key` (`connections.<name>[.…]`,
- * `harnesses.<name>[.…]`) is inside, when the config file holds it and the reader
- * drops it. `akm config` cannot edit an entry it cannot see.
+ * `harnesses.<name>[.…]`) is inside, when the reader drops it: this file holds it
+ * and nothing, an `extends` base included, completes it. `akm config` cannot edit
+ * an entry it cannot see.
  */
 export function unusableEntryAt(key: string): (UnusableEntry & { group: "connections" | "harnesses" }) | undefined {
   const [group, name] = key.split(".");
@@ -1071,7 +1072,8 @@ export function unusableEntryAt(key: string): (UnusableEntry & { group: "connect
   const entry = findUnusableEntries(localRaw).find(
     (found) => found.name === name && found.kind === (group === "connections" ? "connection" : "harness"),
   );
-  return entry ? { ...entry, group } : undefined;
+  if (!entry || Object.hasOwn(buildEffectiveConfig(localRaw, configPath)[group] ?? {}, entry.name)) return undefined;
+  return { ...entry, group };
 }
 
 export interface ConfigFileNormalization {
