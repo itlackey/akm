@@ -64,7 +64,7 @@ Override: set `AKM_CONFIG_DIR` or `XDG_CONFIG_HOME`.
 | `akm.lock` | Inter-process write lock | Yes — recreated automatically |
 | `backups/tasks/` | Copies of task files taken by `akm migrate apply` before it rewrites them, one timestamped directory per run that rewrote a file | Yes — once the migrated tasks are verified |
 | `akm.lock.lck` | Lock write sentinel | Yes — recreated automatically |
-| `opencode.db` | The sessions of akm's own agent runtime and of the OpenCode 2 harness (an OpenCode database; `akm proposal extract --type opencode` reads it back, read-only) | Yes — it loses that session history |
+| `opencode.db` | The sessions of akm's own agent runtime (an OpenCode database; `akm proposal extract --type opencode` reads it back, read-only) | Yes — it loses that session history |
 | `opencode/` | The embedded OpenCode's own working files for akm's runtime: logs, repositories, shell output and a config directory. akm creates a matching `opencode/` under the state and cache directories | Yes — recreated on next use |
 
 Override: set `AKM_DATA_DIR` or `XDG_DATA_HOME`.
@@ -109,7 +109,7 @@ Everything in the cache is regenerable. It is safe to delete the entire cache di
 | `bin/` | Downloaded AKM binary cache (used by `akm upgrade`) | Yes |
 | `tasks/logs/` | Scheduled task log files. Written at your umask; they hold captured command/agent output, so tighten the directory yourself if the machine is shared | Yes — ephemeral logs |
 | `tasks/history/` | Legacy task history JSONL (v0.7 migration artifact) | Yes |
-| `opencode/model-work/` | The fixed working directory in which model work runs on the OpenCode 2 harness; `opencode/bin/` holds the embedded OpenCode's binaries | Yes |
+| `opencode/bin/` | The embedded OpenCode's binaries | Yes |
 
 Override: set `AKM_CACHE_DIR` or `XDG_CACHE_HOME`.
 

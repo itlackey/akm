@@ -2741,7 +2741,7 @@ akm agent --connection local --prompt "summarize recent changes"
 
 Returns `{ ok, engine, exitCode, stdout, stderr, durationMs, reason?, error?, sessionId? }`.
 `engine` is the name of the connection or harness the run used. `sessionId` is
-the run's session id when it has one: akm's own runtime and OpenCode 2 keep their
+the run's session id when it has one: akm's own runtime reports one and keeps its
 sessions in `<akm data dir>/opencode.db`, so the run can be found there. On
 failure, `reason` is a short code such as `timeout`, `spawn_failed`,
 `non_zero_exit` or `parse_error`. Captured dispatches render this final envelope
@@ -3137,12 +3137,14 @@ those are not sessions of their own.
 The `opencode` harness reads two SQLite files, read-only and without starting
 OpenCode: OpenCode's own `opencode.db` (under `$XDG_DATA_HOME/opencode`, which is
 `~/.local/share/opencode` unless `XDG_DATA_HOME` says otherwise, on every
-platform) and akm's `<akm data dir>/opencode.db`, where akm's own runtime and
-the OpenCode 2 harness keep their agent runs (`--location` points at a directory
-holding another `opencode.db`). It reads both OpenCode 2 and OpenCode 1 files.
-Of an OpenCode 2 file it lists only top-level sessions, leaving out subagent
-sessions and akm's own model work. A file it cannot read is named in a warning,
-never taken for an empty history.
+platform) and akm's `<akm data dir>/opencode.db`, where akm's own runtime keeps
+its agent runs (`--location` points at a directory holding another
+`opencode.db`). Runs of the `opencode` harness are in OpenCode's own file. It
+reads both OpenCode 2 and OpenCode 1 files. Of an OpenCode 2 file it lists only
+top-level sessions, leaving out subagent sessions and akm's own model work,
+which ran as the `akm-model-work` agent; OpenCode 1 keeps no such marker, so its
+model-work sessions are listed like any other. A file it cannot read is named in
+a warning, never taken for an empty history.
 
 There is no `akm proposal extract --watch`/`--debounce-ms` either (0.9.0:
 dropped — a foreground polling daemon in a one-shot CLI); the shipped

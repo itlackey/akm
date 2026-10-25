@@ -369,9 +369,8 @@ CHANGELOG with a migration note.
   as ordinary concepts inside their bundle. Adapter behavior and page
   conventions are still iterating.
 - **Agent dispatch** — `akm agent` and `akm command run`. Supported
-  harnesses: `claude`, `codex`, `opencode` (OpenCode 2 embedded in akm, OpenCode
-  1 through `opencode run`), `copilot`, `pi`, `gemini`, `aider`, `amazonq` and
-  `openhands`. Every harness is Evolving: a harness is a thin shell that turns a
+  harnesses: `claude`, `codex`, `opencode` (through `opencode run`), `copilot`,
+  `pi`, `gemini`, `aider`, `amazonq` and `openhands`. Every harness is Evolving: a harness is a thin shell that turns a
   request into a command, and the set is easy to add to, remove from and update.
   The set will grow. With no harness configured, agent work runs on akm's own
   runtime over a connection, which is Evolving too.

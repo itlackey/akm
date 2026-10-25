@@ -597,21 +597,20 @@ Indexes: `idx_task_logs_ts` on `ts`, `idx_task_logs_task_id` on `task_id`, `idx_
 ### `$DATA/opencode.db` — OpenCode Sessions
 
 An OpenCode database (the OpenCode 2 layout) in which the embedded OpenCode keeps
-the sessions of akm's own agent runtime and of the OpenCode 2 harness
+the sessions of akm's own agent runtime
 (`src/integrations/harnesses/opencode/embedded/host-spec.ts`). akm creates it on
-the first embedded run. It is separate from the user's own `opencode.db` under
+the first run of the runtime. It is separate from the user's own `opencode.db` under
 `$XDG_DATA_HOME/opencode` (on every platform; `~/.local/share/opencode` by
-default), which akm never changes: the OpenCode 2 harness opens it read-only
-and copies your logins into `$DATA/opencode.db` at start.
-`akm proposal extract --type opencode` and the improve extract stage read both
-with SQLite alone, read-only, and skip sessions that are subagents or akm's own
-model work. The embedded OpenCode also
+default), which keeps the runs of the `opencode` harness and which akm never
+writes. `akm proposal extract --type opencode` and the improve extract stage read
+both with SQLite alone, read-only, and skip sessions that are subagents or akm's
+own model work (on OpenCode 2, the sessions that ran as the `akm-model-work`
+agent). The embedded OpenCode also
 keeps its working files in `$DATA/opencode/` (logs, repositories, shell output,
 a config directory), `$CACHE/opencode/` (binaries; `npm/`, which akm's own
 runtime leaves empty because it reaches its endpoint with the
 `@ai-sdk/openai-compatible` package installed with akm or, in the standalone
-binary, embedded in it; and `model-work/`, the fixed working directory of model
-work on the OpenCode 2 harness) and `$STATE/opencode/`.
+binary, embedded in it) and `$STATE/opencode/`.
 
 ---
 
@@ -804,7 +803,7 @@ adapter recognizes — `schema.md` + `pages/` is the probe) contains:
 | `$CACHE/registry-build/build-<random>/` | Temp archive extraction for registry index building | Deleted in `finally` after each run |
 | `$CACHE/tasks/logs/<task-id>/` | Per-run stdout/stderr log files (`<ISO-ts>.log`) | No cleanup |
 | `$CACHE/bin/rg` | Auto-downloaded ripgrep binary | Permanent |
-| `$CACHE/opencode/` | The embedded OpenCode's cache for akm's runtime (`bin/`), and `model-work/`, the one working directory in which model work runs on the OpenCode 2 harness | Permanent; safe to delete |
+| `$CACHE/opencode/` | The embedded OpenCode's cache for akm's runtime (`bin/`) | Permanent; safe to delete |
 | `$CACHE/index/unresolved-sources/<stash>/<name>` | Synthetic placeholder path for a configured source whose content root did not resolve this run; never written to disk, only reported as a `SearchSource.path`. Moved out of `$STASH/.akm/unresolved-sources/` (itlackey/akm#890). | N/A (not a real directory) |
 
 Cache-backed bundles (`git`, `website`, `npm`) are materialised into `$CACHE`
@@ -966,8 +965,8 @@ not affect ranking, salience, real-query labels, or GRR.
 | 41 | `$STATE/improve/eval-cases/<stash>/<slug>.md` | FM+Markdown | Improve regression eval cases |
 | 42 | `$CACHE/index/unresolved-sources/<stash>/<name>` | N/A | Synthetic unresolved-source placeholder path (never written to disk) |
 | 43 | `$CODEX_HOME/sessions/**/rollout-*.jsonl` | JSONL | Codex session logs (read-only input; `~/.codex/sessions/` by default) |
-| 44 | `$DATA/opencode.db` | SQLite | Sessions of akm's own agent runtime and the OpenCode 2 harness |
-| 45 | `$DATA/opencode/`, `$CACHE/opencode/`, `$STATE/opencode/` | Directories | The embedded OpenCode's working files (logs, repositories, binaries, model-work directory) |
+| 44 | `$DATA/opencode.db` | SQLite | Sessions of akm's own agent runtime |
+| 45 | `$DATA/opencode/`, `$CACHE/opencode/`, `$STATE/opencode/` | Directories | The embedded OpenCode's working files (logs, repositories, binaries) |
 
 ---
 

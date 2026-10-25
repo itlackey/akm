@@ -232,9 +232,12 @@ platform (OpenCode: on version 2):
   the tools; with `Read` and `Bash` only for `akm search`, `akm show` and `akm
   curate`; with no MCP servers; and with no transcript saved.
 - Codex runs with `--sandbox read-only`.
-- OpenCode 2 runs with its tools that edit files, run commands or start
-  subagents denied, plus akm's own `akm_search`, `akm_show` and `akm_curate`, in
-  a fixed directory under akm's cache directory.
+- OpenCode 2 runs as a read-only agent that akm passes inline with the run, so
+  nothing is written to your files: its tools that edit files, run commands,
+  fetch from the web, start subagents or ask questions are denied, which leaves
+  `read`, `grep`, `glob` and `skill`, and what your plugins add. akm's own read
+  tools (`akm_search`, `akm_show`, `akm_curate`) come from the akm OpenCode
+  plugin when you have it installed.
 - On those three, `args` do not apply to model work, except a `--model` they
   name.
 - Every other platform, and OpenCode 1, cannot be restricted: the run is
@@ -257,28 +260,27 @@ finds one that cannot be restricted), it saves `modelWork: false` on the harness
 and, with no connection, the summary says model calls are off and points at
 `akm setup --endpoint URL`.
 
-**OpenCode.** The `opencode` platform runs your own OpenCode, choosing how from
-the major version `opencode --version` reports:
-- OpenCode 2 runs embedded in akm's process (no server, no port), with your
-  OpenCode configuration (providers, plugins, MCP servers, agents), your logins
-  read from your OpenCode 2 database, and your default model unless akm names one.
-  A model name is OpenCode's `provider/model`, from the request, else the
-  `--model` in the harness's `args`, as on OpenCode 1. The embedded run carries
-  no other `args` (the CLI's flags have no meaning there): any it cannot carry
-  are named once. Its sessions are stored in akm's own database,
-  `<akm data dir>/opencode.db`.
-- akm never changes your OpenCode database. At start it opens the database
-  read-only and copies the logins stored in it into akm's own OpenCode database;
-  a token akm's OpenCode refreshes stays in that copy, and your own OpenCode
-  refreshes yours. akm stores no session in it, and its reads of your OpenCode
-  history are separate and read-only.
-- OpenCode 1 runs as `opencode run`, with the prompt on stdin. It keeps its logins
-  in `auth.json`, which akm does not import. akm reads OpenCode 1's session
-  history read-only from its `opencode.db`, the same file OpenCode 2 uses.
+**OpenCode.** The `opencode` platform runs your installed OpenCode, either major
+version, as `opencode run` with the prompt on stdin; the reply is its standard
+output. Your OpenCode owns its configuration, logins, token refresh and
+sessions: akm reads, copies and embeds nothing of yours, and passes
+`OPENCODE_CONFIG_DIR` through. A run is its own `opencode` process, with no
+background service left behind.
+- A model name is OpenCode's `provider/model`, from the request, else the
+  `--model` in the harness's `args`; without one, your OpenCode's default decides.
+- Every run sets `OPENCODE_DISABLE_FREE_MODELS=1`, so a run with no usable
+  provider fails instead of sending the prompt and the working directory's files
+  to OpenCode's hosted free model.
+- OpenCode 2 also gets `--standalone` and `--title akm`.
+- Its sessions are in your OpenCode history, and `akm proposal extract` and
+  improve read them there. On OpenCode 2 they leave out the sessions of akm's
+  model work, which ran as the `akm-model-work` agent; OpenCode 1 keeps no such
+  marker, so its model-work sessions are read like any other.
 
-Nobody can answer an akm run. On the embedded OpenCode (this harness and akm's
-own runtime) akm cancels every question and rejects every permission request,
-each with a message saying so, and the model carries on without it.
+Nobody can answer an akm run. On akm's own runtime akm cancels every question and
+rejects every permission request, each with a message saying so, and the model
+carries on without it. The `opencode` harness runs your OpenCode as it behaves
+without a person at the terminal.
 
 ### Without a harness
 

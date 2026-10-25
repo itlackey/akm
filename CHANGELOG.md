@@ -116,8 +116,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - OpenCode's logs, repositories and binaries are kept under akm's data and
     cache directories. Sessions are stored in akm's own OpenCode database,
     `<akm data dir>/opencode.db`. The embedded OpenCode opens no other database;
-    akm reads your OpenCode 2 database read-only, for your logins on the opencode
-    harness (below) and for OpenCode 2 history (below).
+    akm reads your OpenCode 2 database read-only, for OpenCode 2 history
+    (below).
   - Another process's unfinished turns are never resumed (OpenCode resumes
     every top-level session whose turn did not finish, whichever process owns
     it), and the interrupt a timeout or an abort sends is awaited, for up to 5
@@ -134,18 +134,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     did not finish is named in a warning, not waited for.
   - Questions are cancelled and permission requests rejected, each with a
     message, and the model carries on.
-- `platform: "opencode"` is your OpenCode, whichever major is installed: the
-  installed binary's `--version` decides, per request. OpenCode 1 runs its CLI
-  (the prompt on stdin). OpenCode 2 runs embedded in akm, with your config
-  directory (`OPENCODE_CONFIG_DIR` too), providers, plugins and default model
-  (akm passes a model only when it names one), and your logins, which akm copies
-  from your OpenCode 2 database into its own OpenCode database at start. akm
-  never creates, migrates or changes your file, or stores a session in it. An
-  interactive `akm agent` still hands the terminal to the CLI.
+- `platform: "opencode"` is your OpenCode, whichever major is installed, run
+  through its CLI: `opencode run` with the prompt on stdin, a model only when akm
+  names one, and `OPENCODE_CONFIG_DIR` passed through. Your OpenCode owns its
+  configuration, logins and sessions; akm reads, copies and embeds nothing of
+  yours, and its runs are in your OpenCode history, which improve reads.
+  OpenCode 2 runs `--standalone` (one process that ends with the run, not a
+  background service) with `--title akm`, and every run sets
+  `OPENCODE_DISABLE_FREE_MODELS=1`, so a run with no usable provider fails
+  instead of sending the prompt to OpenCode's hosted free model. An interactive
+  `akm agent` still hands the terminal to the CLI.
   - Model work on the opencode harness is confined where OpenCode 2 is
-    installed (its tools that edit, run commands or start subagents are denied;
-    akm's read tools are added), in one fixed working directory. On OpenCode 1
-    it runs unrestricted in a scratch directory, with one warning.
+    installed: it runs as a read-only agent that akm passes inline for the run
+    (the tools that edit files, run commands, fetch from the web or start
+    subagents are denied, and nothing is written to your files), in a scratch
+    directory. On OpenCode 1 it runs unrestricted in a scratch directory, with
+    one warning.
 - A config in the old form (`engines`, `defaults.engine`, `defaults.llmEngine`,
   `defaults.improveStrategy`, `workflow.judgeEngine`, a strategy's `engine`,
   `model`, `llm` and `timeoutMs`) still loads: it is read as the new form in
@@ -209,8 +213,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Model work runs on any harness. Where a harness can be restricted it is: Claude
   Code runs with its settings files ignored, only `Read` and `akm search`, `akm
   show` and `akm curate`, no MCP servers and no saved transcript, Codex with
-  `--sandbox read-only`, and OpenCode 2 with its tools that edit files, run
-  commands or start subagents denied. Where it cannot (the other platforms, and
+  `--sandbox read-only`, and OpenCode 2 as a read-only agent passed inline for
+  the run, with its tools that edit files, run commands, fetch from the web or
+  start subagents denied. Where it cannot (the other platforms, and
   OpenCode 1), the call runs unrestricted, with a notice. A config that names an
   `opencode` harness for model work loads, and a native agent named for model
   work is ignored with a notice.
@@ -266,7 +271,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm proposal extract --type opencode` and the improve extract gate read
   OpenCode 2 history from the `session_v2` and `session_message` tables with
   SQLite, read-only, from your OpenCode database and akm's own: top-level
-  sessions only, without subagent sessions or akm's model work. The content hash
+  sessions only, without subagent sessions or akm's model work (which ran as the
+  `akm-model-work` agent; OpenCode 1 keeps no such marker). The content hash
   of every session is unchanged, so nothing is extracted again. A file or
   session that cannot be read (a session missing from its file, a file with
   neither OpenCode layout) is recorded as `read_failed`, not as an empty
@@ -328,9 +334,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm setup --probe` and `--config`, and the engine, Ollama and provider steps
   of the wizard.
 - The `opencode serve` server management, the OpenCode 1 and 2 HTTP adapters,
-  the injected `akm-model-work` OpenCode agent, and the `@opencode-ai/sdk` and
-  `@opencode/client` dependencies. Agent work on a connection needs no OpenCode
-  binary or client package, so `akm health` checks for neither.
+  the 0.9 `akm-model-work` OpenCode agent definition (OpenCode 2 model work now
+  passes a smaller read-only agent inline for the run, never written into your
+  files), and the `@opencode-ai/sdk` and `@opencode/client` dependencies. Agent
+  work on a connection needs no OpenCode binary or client package, so `akm
+  health` checks for neither.
 - Asset tool requests. An agent or command's `tools:` (or a Claude command's
   `allowed-tools:`) is no longer read, a task's `tools:` is ignored with a
   warning, and `akm migrate apply` drops a v3 task's `akm.tools`. With them go

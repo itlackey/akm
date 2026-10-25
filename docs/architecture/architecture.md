@@ -612,6 +612,11 @@ Agent programs are reachable by two execution paths, both behind
   process spawn, captured/interactive stdio, hard timeout, and structured
   failure reasons. The child's environment is an allowlist plus the directories
   this akm resolved and the harness's own pass-through names.
+- The `opencode` harness is the user's installed OpenCode, both majors, through
+  `opencode run` with the prompt on stdin
+  (`src/integrations/harnesses/opencode/agent-builder.ts`). Their OpenCode owns
+  its configuration, logins and sessions; akm embeds, copies and reads none of it
+  to run.
 - The `AgentRunResult` envelope carries `{ ok, exitCode, stdout, stderr,
   durationMs, reason?, error?, ... }` where `reason` is a typed code such as
   `"timeout"`, `"spawn_failed"`, `"non_zero_exit"` or `"parse_error"`. Callers
@@ -625,40 +630,34 @@ Agent programs are reachable by two execution paths, both behind
   the process started. Lowering and dispatch use only the port; the one module that
   names this folder is `src/integrations/agent/runtime.ts`, and the folder reads no
   config (`tests/contracts/runtime-port-boundary.test.ts` checks both).
-- OpenCode 2 runs in akm's process through `@opencode/sdk`
+- It is OpenCode 2 in akm's process through `@opencode/sdk`
   (`OpenCode.create()`, an in-memory router): no binary, no server, no port.
   Only this folder imports `@opencode/*` (one file, `sdk-host.ts`, does the SDK
   wiring), and only lazily, so the harness stays replaceable.
-- A process starts at most two hosts, each on first use and kept until
-  `disposeDispatchResources()`: the **runtime** host, which is akm's own agent
-  runtime driven by the connection a run was dispatched with (a provider
-  declared from that connection's endpoint, model and context window as the run
-  froze them, never from the live config; no user or project OpenCode
-  configuration, though OpenCode still reads `~/.agents` and its system config;
-  its files under akm's data, cache and state directories), and the **opencode**
-  host, which is the user's OpenCode for the `opencode` harness (their
-  configuration, providers and default model, with their logins copied from their
-  OpenCode 2 database, which is only read; OpenCode 1 is driven through its CLI,
-  and akm reads its history read-only). A host serves any
-  number of sessions; what differs per
-  call (model, environment, request fields, persona) is set on the session.
-- Both hosts load akm's plugin: `akm_search`, `akm_show` and `akm_curate` run in
+- A process starts one host, on first use, kept until
+  `disposeDispatchResources()`: akm's own agent runtime, driven by the connection
+  a run was dispatched with (a provider declared from that connection's
+  endpoint, model and context window as the run froze them, never from the live
+  config; no user or project OpenCode configuration, though OpenCode still reads
+  `~/.agents` and its system config; its files under akm's data, cache and state
+  directories). The host serves any number of sessions; what differs per call
+  (model, environment, request fields, persona) is set on the session.
+- The host loads akm's plugin: `akm_search`, `akm_show` and `akm_curate` run in
   akm's process, and the connection's key and request fields are laid over the
   runtime's requests per session.
-- Model work runs only on the opencode host, with the tools that change things
-  denied; a model-work call on a connection never reaches the runtime, it goes
-  straight to the endpoint.
+- A model-work call on a connection never reaches the runtime, it goes straight
+  to the endpoint.
 - Every session is stored in akm's own OpenCode database
   (`<akm data dir>/opencode.db`), which `akm proposal extract --type opencode`
-  reads back with SQLite alone.
+  reads back with SQLite alone, beside your own OpenCode's database.
 - Nobody can answer an akm run: questions are cancelled and permission requests
   rejected, each with a message, and the model carries on.
 - One deadline and one abort signal govern a run from the start of its host to
-  the end of its turn (`runSession`, `src/integrations/harnesses/opencode/embedded/run.ts`):
+  the end of its turn (`runOpencodeSdk`, `src/integrations/harnesses/opencode/embedded/run.ts`):
   every step is raced against them, a step that finishes after either has fired
   starts nothing more, and a session such a step created is released. Closing the
-  hosts (`closeOpencodeSdk`) asks a start in flight to stop and waits at most 5 s
-  for it, then at most 5 s for each host to close, naming in a warning what did
+  host (`closeOpencodeSdk`) asks a start in flight to stop and waits at most 5 s
+  for it, then at most 5 s for the host to close, naming in a warning what did
   not finish.
 
 New tasks are task source v4 `.yml` assets. Normal execution rejects v2 and v3
@@ -724,7 +723,7 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 | `src/llm/memory-infer.ts` | atomic-fact split helper (runs where `improve.processes.memoryInference` or `index.memory` says) |
 | `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
 | `src/integrations/agent/spawn.ts` | agent CLI shell-out entry point (`runAgent`) |
-| `src/integrations/harnesses/opencode/embedded/` | the embedded OpenCode: akm's own runtime and the OpenCode 2 transport of the `opencode` harness |
+| `src/integrations/harnesses/opencode/embedded/` | the embedded OpenCode: akm's own runtime |
 | `src/integrations/agent/profiles.ts` | internal spawn descriptors, built from the harness registry |
 | `src/llm/structured-call.ts` | bounded structured-LLM adapter through the common resolved/lowered execution seam |
 | `src/integrations/agent/detect.ts` | PATH-based agent CLI detection for `akm setup` |
