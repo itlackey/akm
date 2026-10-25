@@ -12,7 +12,7 @@
 import { abortableDelay, backoffDelay, fetchWithTimeout, isHttpUrl, readBodyWithByteCap } from "../../core/common";
 import { concurrentMap } from "../../core/concurrent";
 import type { EmbeddingConnectionConfig } from "../../core/config/config";
-import { readCredential, resolveApiKey } from "../../core/config/credentials";
+import { apiKeyReference, readCredential, resolveApiKey } from "../../core/config/credentials";
 import { defaultConcurrencyForEndpoint } from "../../core/loopback";
 import { redactErrorBody, redactSensitiveText } from "../../core/redaction";
 import { warnVerbose } from "../../core/warn";
@@ -1073,6 +1073,7 @@ export function hasRemoteEndpoint(config: EmbeddingConnectionConfig): boolean {
  * secret itself (#953).
  */
 export function describeEmbeddingCredential(config: EmbeddingConnectionConfig): string {
-  if (config.apiKey) return `${config.apiKey} (env)`;
+  const reference = apiKeyReference(config.apiKey);
+  if (reference) return `${reference} (env)`;
   return readCredential(config.credentialName ?? "embedding") ? "credentials.json" : "none configured";
 }

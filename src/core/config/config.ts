@@ -1152,8 +1152,9 @@ export function schedulerSourceIdFor(config: AkmConfig, bundleId: string): strin
 /**
  * Drop what must not reach `config.json` before it is written.
  *
- * A literal `apiKey` never gets here: the schema reads it as absent (see
- * `envReferenceApiKey`), so only registry URLs carrying credentials remain.
+ * A literal `apiKey` is not dropped: akm never reads or sends it (see
+ * `envReferenceApiKey`), but it is the user's, and `akm migrate apply` is what
+ * moves it. Only registry URLs carrying credentials are removed here.
  * `quiet` skips the warnings for a caller that only asks whether a write would
  * drop anything and writes nothing itself.
  */

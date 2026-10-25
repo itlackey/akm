@@ -3,8 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Regression suite for #474 — `akm setup --from --yes` silently stripped API
-// keys. A `$VAR` / `${VAR}` reference is not a secret and is kept; a literal key
-// is read as absent (warned about once) and so never reaches the file.
+// keys. A `$VAR` / `${VAR}` reference is not a secret and is kept; so is a key
+// the user left in the file: it is warned about once, never read or sent, and
+// only `akm migrate apply` moves it.
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import fs from "node:fs";
@@ -52,7 +53,7 @@ afterEach(() => {
 });
 
 describe("config writes — secret handling (#474)", () => {
-  it("never writes a literal embedding.apiKey, warning instead of rejecting the whole save", () => {
+  it("keeps a literal embedding.apiKey as written, warning that it is never read", () => {
     const warnings = captureWarnings(() => {
       saveConfig(
         makeConfig({
@@ -65,8 +66,9 @@ describe("config writes — secret handling (#474)", () => {
       );
     });
     const persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
-    expect(persisted).not.toContain("sk-LITERAL-SECRET");
+    expect(persisted).toContain("sk-LITERAL-SECRET");
     expect(warnings.some((w) => w.includes("literal apiKey"))).toBe(true);
+    expect(warnings.join("\n")).not.toContain("sk-LITERAL-SECRET");
   });
 
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference syntax under test
@@ -86,7 +88,7 @@ describe("config writes — secret handling (#474)", () => {
     expect(persisted).toContain("${OPENAI_API_KEY}");
   });
 
-  it("does not keep a secrets ref as a key: akm reads keys from $VAR or credentials.json only", () => {
+  it("keeps a secrets ref as written, with a notice that names akm migrate apply", () => {
     const warnings = captureWarnings(() => {
       saveConfig(
         makeConfig({
@@ -100,8 +102,8 @@ describe("config writes — secret handling (#474)", () => {
       );
     });
     const persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
-    expect(persisted).not.toContain("embed-key");
-    expect(warnings.some((w) => w.includes("apiKey"))).toBe(true);
+    expect(persisted).toContain("embed-key");
+    expect(warnings.some((w) => w.includes("secret-store reference") && w.includes("akm migrate apply"))).toBe(true);
   });
 
   it("preserves $VAR (no braces) reference", () => {
@@ -119,7 +121,7 @@ describe("config writes — secret handling (#474)", () => {
   });
 
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference syntax under test
-  it("treats unsupported ${VAR:-default} syntax as a literal and drops it", () => {
+  it("treats unsupported ${VAR:-default} syntax as a literal key: kept, never read", () => {
     const warnings = captureWarnings(() => {
       saveConfig(
         makeConfig({
@@ -133,11 +135,11 @@ describe("config writes — secret handling (#474)", () => {
       );
     });
     const persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
-    expect(persisted).not.toContain("OPENAI_API_KEY:-fallback");
+    expect(persisted).toContain("OPENAI_API_KEY:-fallback");
     expect(warnings.some((w) => w.includes("apiKey"))).toBe(true);
   });
 
-  it("drops a literal connection apiKey and preserves references across connections", () => {
+  it("keeps a literal connection apiKey and preserves references across connections", () => {
     const warnings = captureWarnings(() => {
       saveConfig(
         makeConfig({
@@ -152,7 +154,7 @@ describe("config writes — secret handling (#474)", () => {
       );
     });
     let persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
-    expect(persisted).not.toContain("sk-openai-literal");
+    expect(persisted).toContain("sk-openai-literal");
     expect(warnings.some((w) => w.includes("literal apiKey"))).toBe(true);
 
     saveConfig(

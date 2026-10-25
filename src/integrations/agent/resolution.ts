@@ -23,6 +23,7 @@
 import path from "node:path";
 import { type AkmConfig, defaultConnection, defaultHarness } from "../../core/config/config";
 import type { ConnectionConfig, HarnessConfig } from "../../core/config/config-types";
+import { apiKeyReference } from "../../core/config/credentials";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { STANDARD_ALIASES } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
@@ -246,7 +247,7 @@ function connectionRunner(
     endpoint: connection.endpoint,
     model,
     request: { ...connectionFields, ...entryFields, ...inferenceWireFields(inference ?? undefined) },
-    ...(connection.apiKey !== undefined ? { apiKey: connection.apiKey } : {}),
+    ...(apiKeyReference(connection.apiKey) !== undefined ? { apiKey: connection.apiKey } : {}),
     ...(contextLength !== undefined ? { contextLength } : {}),
     ...(connection.concurrency !== undefined ? { concurrency: connection.concurrency } : {}),
     timeoutMs: firstTimeout(layerTimeout(layers), connection.timeoutMs, DEFAULT_LLM_TIMEOUT_MS),

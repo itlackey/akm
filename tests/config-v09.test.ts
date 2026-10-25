@@ -83,7 +83,7 @@ describe("0.9 config contract", () => {
     expect(normalizeConfigFile(getConfigPath(), { apply: false }).changed).toBe(false);
   });
 
-  test("loads a config with retired profile vocabulary and a literal connection apiKey, ignoring the key", () => {
+  test("loads a config with retired profile vocabulary and a literal connection apiKey, never reading the key", () => {
     writeConfig({
       configVersion: "0.9.0" as const,
       profiles: { llm: {} },
@@ -92,7 +92,7 @@ describe("0.9 config contract", () => {
       },
     });
     const warnings = captureWarnings(() => {
-      expect(loadUserConfig().connections?.fast?.apiKey).toBeUndefined();
+      expect(loadUserConfig().connections?.fast?.apiKey).toBe("not-symbolic");
     });
     expect(warnings.some((w) => w.includes("Unknown config key") && w.includes("profiles"))).toBe(true);
     expect(warnings.some((w) => w.includes("literal apiKey"))).toBe(true);

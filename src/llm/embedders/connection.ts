@@ -4,6 +4,7 @@
 
 import { defaultConnection } from "../../core/config/config";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../../core/config/config-types";
+import { apiKeyReference } from "../../core/config/credentials";
 import { warnOnce } from "../../core/warn";
 import { openAiBaseUrl } from "../client";
 
@@ -29,7 +30,7 @@ export function effectiveEmbedding(config: AkmConfig): EmbeddingConnectionConfig
   return {
     ...embedding,
     endpoint: openAiBaseUrl(found.connection.endpoint),
-    ...(found.connection.apiKey !== undefined ? { apiKey: found.connection.apiKey } : {}),
+    ...(apiKeyReference(found.connection.apiKey) !== undefined ? { apiKey: found.connection.apiKey } : {}),
     credentialName: found.name,
   };
 }

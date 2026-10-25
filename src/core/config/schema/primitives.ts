@@ -61,16 +61,24 @@ export function envReferenceName(value: string): string | undefined {
 /**
  * The `apiKey` of a connection, `embedding` or `search.curateRerank`: a `$VAR` /
  * `${VAR}` reference, or absent (the key is then `credentials.json`'s under the
- * block's name). A literal key does nothing safely, so it is warned about once
- * and ignored, never a load error.
+ * block's name). Anything else is never read or sent: it is warned about once,
+ * never a load error, and kept as written so an ordinary write does not delete
+ * the user's key from their file (`akm migrate apply` moves it).
  */
 export const envReferenceApiKey = z.string().transform((value) => {
   if (isEnvReference(value)) return value;
-  warnOnce(
-    "config:literal-api-key",
-    "A literal apiKey in config.json is ignored: akm does not keep keys in config. Use a $VAR reference, or run `akm setup` to store the key in credentials.json.",
-  );
-  return undefined;
+  if (isSecretRefToken(value)) {
+    warnOnce(
+      "config:secret-ref-api-key",
+      "An apiKey that is a secret-store reference is ignored: akm reads a key from a $VAR or credentials.json. `akm migrate apply` moves it into credentials.json.",
+    );
+  } else {
+    warnOnce(
+      "config:literal-api-key",
+      "A literal apiKey in config.json is ignored: akm does not read keys from config. Use a $VAR reference, or run `akm setup` to store the key in credentials.json.",
+    );
+  }
+  return value;
 });
 
 /** A connection endpoint: a complete http(s) URL, the OpenAI-compatible base (`…/v1`) or the chat-completions URL itself. */

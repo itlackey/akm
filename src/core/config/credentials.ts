@@ -18,7 +18,7 @@ import { getConfigDir } from "../paths";
 import { collectSensitiveValues } from "../redaction";
 import { warnOnce } from "../warn";
 import type { AkmConfig } from "./config-types";
-import { envReferenceName } from "./schema/primitives";
+import { envReferenceName, isEnvReference } from "./schema/primitives";
 
 function storePath(): string {
   return path.join(getConfigDir(), "credentials.json");
@@ -100,15 +100,28 @@ export function resolveApiKey(
   return value || undefined;
 }
 
-/** Every key the config can resolve now, for redaction. */
+/**
+ * The `$VAR` reference an `apiKey` holds. Anything else in that field is a key
+ * the user left in the file, which akm never reads or sends and never passes on.
+ */
+export function apiKeyReference(apiKey: string | undefined): string | undefined {
+  return apiKey !== undefined && isEnvReference(apiKey) ? apiKey : undefined;
+}
+
+/** Every key the config can resolve now, and any left in it as written, for redaction. */
 export function collectCredentialValues(
   config: Pick<AkmConfig, "connections" | "embedding" | "search">,
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  const keys = Object.entries(config.connections ?? {}).map(([name, c]) => resolveApiKey(c.apiKey, name, env, true));
-  keys.push(
-    resolveApiKey(config.embedding?.apiKey, "embedding", env, true),
-    resolveApiKey(config.search?.curateRerank?.apiKey, "curateRerank", env, true),
+  const blocks: Array<[string, { apiKey?: string } | undefined]> = [
+    ...Object.entries(config.connections ?? {}),
+    ["embedding", config.embedding],
+    ["curateRerank", config.search?.curateRerank],
+  ];
+  return collectSensitiveValues(
+    blocks.flatMap(([name, block]) => [
+      resolveApiKey(block?.apiKey, name, env, true),
+      apiKeyReference(block?.apiKey) === undefined ? block?.apiKey : undefined,
+    ]),
   );
-  return collectSensitiveValues(keys);
 }

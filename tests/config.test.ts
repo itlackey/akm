@@ -534,24 +534,34 @@ describe("connections", () => {
     expect(loadConfig().connections?.cloud?.apiKey).toBe("$OPENAI_API_KEY");
   });
 
-  test("a literal apiKey is warned about once and ignored, never a load error", () => {
+  test("a literal apiKey is warned about once, kept as written and never read, never a load error", () => {
     writeCurrentConfig({
       connections: { cloud: { endpoint: "https://api.openai.com/v1", models: { fast: "gpt-4" }, apiKey: "sk-secret" } },
     });
     const warnings = captureWarnings(() => {
-      expect(loadConfig().connections?.cloud?.apiKey).toBeUndefined();
+      expect(loadConfig().connections?.cloud?.apiKey).toBe("sk-secret");
+      resetConfigCache();
+      loadConfig();
     });
-    expect(warnings.some((w) => w.includes("literal apiKey") && w.includes("credentials.json"))).toBe(true);
+    const literal = warnings.filter((w) => w.includes("literal apiKey") && w.includes("credentials.json"));
+    expect(literal).toHaveLength(1);
+    expect(literal.join("\n")).not.toContain("sk-secret");
   });
 
-  test("a ${secrets/...} reference is not a key akm reads: ignored with the same warning", () => {
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal secret reference syntax under test
+  test("a ${secrets/...} reference is not a key akm reads: kept, with a notice that names akm migrate apply", () => {
     writeCurrentConfig({
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal secret reference under test
       connections: { cloud: { endpoint: "https://x.test/v1", models: { fast: "m" }, apiKey: "${secrets/openai}" } },
     });
     const warnings = captureWarnings(() => {
-      expect(loadConfig().connections?.cloud?.apiKey).toBeUndefined();
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal secret reference under test
+      expect(loadConfig().connections?.cloud?.apiKey).toBe("${secrets/openai}");
     });
-    expect(warnings.some((w) => w.includes("apiKey"))).toBe(true);
+    const notices = warnings.filter((w) => w.includes("secret-store reference"));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("akm migrate apply");
+    expect(warnings.some((w) => w.includes("literal apiKey"))).toBe(false);
   });
 
   test("allows a connection with no apiKey (the key may live in credentials.json)", () => {

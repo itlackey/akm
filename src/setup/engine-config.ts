@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { type AkmConfig, defaultConnection, defaultHarness, type HarnessConfig } from "../core/config/config";
-import { resolveApiKey } from "../core/config/credentials";
+import { apiKeyReference, resolveApiKey } from "../core/config/credentials";
 import { modelForEveryAlias } from "../core/config/model-aliases";
 import type { ChatCompletionConfig } from "../llm/client";
 
@@ -39,7 +39,7 @@ export function readCurrentLlmEngine(config: AkmConfig): SetupConnection | undef
   return {
     endpoint: found.connection.endpoint,
     model: typeof entry === "string" ? entry : entry.model,
-    ...(found.connection.apiKey ? { apiKey: found.connection.apiKey } : {}),
+    ...(apiKeyReference(found.connection.apiKey) ? { apiKey: found.connection.apiKey } : {}),
   };
 }
 
