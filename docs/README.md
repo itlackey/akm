@@ -54,7 +54,7 @@ Working on akm itself, not just using it.
 ## Look up details
 
 - [CLI](reference/cli.md) -- All `akm` commands and flags
-- [Configuration](reference/configuration.md) -- Engines, strategies, bundles, and settings
+- [Configuration](reference/configuration.md) -- Connections, harnesses, strategies, bundles, and settings
 - [Supported Formats](reference/supported-formats.md) -- Every bundle format akm recognizes, its detection marker, and current read/write support
 - [Tasks](reference/tasks.md) -- Task-v3 files, targets, triggers, and fail-closed migration
 - [Asset Types](reference/asset-types.md) -- The capability taxonomy, directory conventions, and per-type examples

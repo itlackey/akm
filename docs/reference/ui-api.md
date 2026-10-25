@@ -75,7 +75,7 @@ Everything on the overview page in one call. Query parameters:
 | --- | --- | --- |
 | `since` | `24h` | Health window start (ISO, date, epoch ms, or `24h` / `7d`). A duration also turns on the prior-window comparison, as `akm health --report --since` does. |
 | `metricsSince` | `30d` | Metrics window start, as `akm metrics --since`. |
-| `probe` | off | `1` probes engine reachability and checks for a newer akm release (network). Off by default so loading the page makes no outbound calls. |
+| `probe` | off | `1` probes whether each connection's endpoint answers and what each harness's `--version` prints, and checks for a newer akm release (network). Off by default so loading the page makes no outbound calls. |
 
 ```json
 {
@@ -232,7 +232,7 @@ The effective configuration, as `akm config list` shows it, with where each valu
   and the entry's own keys (a connection's `endpoint` and `models`, a harness's `platform`, ...); keys are never
   included (`apiKey` shows as `[redacted]` or its `$VAR` reference). Reachability is a health probe, not config: use
   `/api/overview?probe=1`.
-- `env` lists the `AKM_*` environment variables set for the server, which override paths and credentials. A
+- `env` lists the `AKM_*` environment variables set for the server, which override paths and other settings. A
   secret-like name (`...KEY`, `...TOKEN`, ...) has `value: "[redacted]"`.
 
 ## `GET /api/proposals`

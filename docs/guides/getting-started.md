@@ -48,17 +48,24 @@ Guided, interactive setup is the default:
 akm setup
 ```
 
-`akm setup` walks through bundle location, embedding/LLM settings, semantic
-search asset preparation, registries, sources, and task definitions. It also
+`akm setup` walks through the bundle location, the agent programs akm may use
+(Claude Code, Codex, OpenCode, ...), a model connection (an OpenAI-compatible
+endpoint, and which of its models answers each of `fast`, `balanced` and
+`reasoning`), embeddings, semantic search asset preparation, registries,
+sources, and task definitions. The model steps are optional: with no connection
+and no agent program, everything that needs no model still works. Setup also
 reviews your scheduled task definitions and asks whether to activate them in
 the OS scheduler — that part of the flow, plus how to migrate or repair
 scheduler bindings later, is covered in [Scheduling](scheduling.md).
 
 For non-interactive use — scripting, CI, or when you just want a working
-bundle fast — use `--yes`:
+bundle fast — use `--yes`. A flag answers one question, so
+`--endpoint` adds a model connection without prompting (see the
+[CLI reference](../reference/cli.md#setup) for the rest):
 
 ```sh
 akm setup --yes
+akm setup --endpoint http://localhost:11434/v1 --yes   # also add a model endpoint
 akm setup --dir ~/custom-bundle   # optional: a non-default bundle location
 ```
 

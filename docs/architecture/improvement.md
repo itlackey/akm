@@ -37,7 +37,7 @@ everything else routes through `akm proposal accept`.
   for every entry and `akm feedback` for the entry it touched.
 - **Strategies** (`src/commands/improve/improve-strategies.ts`,
   `src/assets/improve-strategies/*.json`) — named presets that decide which
-  improve processes run and with what engine/model/limits.
+  improve processes run and with what limits and gates (where each runs is `improve.processes`).
 - **Autonomy gate** (`src/commands/improve/autonomy-gate.ts`) — downgrades
   the handful of processes that would otherwise mutate assets without review
   (memory inference, memory cleanup, and a judged triage promote), unless

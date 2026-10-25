@@ -61,7 +61,7 @@ different checkout or package. Editing definitions and running ordinary `akm
 task sync` preserves that captured runtime.
 
 A scheduled fire re-reads the guarded current source and creates a fresh
-durable-v4-family freeze at executable `irVersion: 7`.
+durable-v4-family freeze at executable `irVersion: 8`.
 Scheduler sync/validation evidence is not an executable snapshot and is never reused as the later run plan.
 
 ## A scheduled `akm improve` covers one bundle

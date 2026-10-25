@@ -28,7 +28,7 @@ the run so `akm workflow run <id>` can continue it.
 0.10 so existing scripts keep working.
 
 Every new run/start compiles source IR v1 and freezes the durable plan v4
-family's current executable format (`irVersion: 7`) before publishing the run.
+family's current executable format (`irVersion: 8`) before publishing the run.
 A workflow ref is a Markdown `.md` source.
 
 ```sh
@@ -261,7 +261,7 @@ treat package dependencies**:
 - **Audit before run** for any workflow that touches secrets, deploys to
   production, or writes outside the project tree. Read the `env:` bindings a
   workflow declares, and read its `exec.pass_env` lines.
-  The durable v4 family (`irVersion: 7`) rejects `inherit_env`. Authors must
+  The durable v4 family (`irVersion: 8`) rejects `inherit_env`. Authors must
   use exact named bindings and `pass_env` names.
 - **Pin known-good versions** when adding workflow sources from a registry
   or git remote (`akm bundle add github:owner/repo#v1.2.3`), and update

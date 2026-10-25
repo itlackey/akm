@@ -129,7 +129,7 @@ points to, so `scripts/deploy.sh` linked to `real-script.txt` runs under the
 shell.
 
 Every field that used to live under v3's `akm:` options bag is a top-level
-key in task source v4: `agent`, `engine`, `model`, `inference`, `timeout`,
+key in task source v4: `agent`, `connection`, `harness`, `model`, `inference`, `timeout`,
 `redact`, `maxSteps`, and `maxRetries`, plus `description`, `when_to_use`, and
 `tags`. A v3 `akm.tools` is dropped by the migration, and a v4 `tools` is
 ignored with a warning. Environment entries (`env`) are literal string,
@@ -143,7 +143,7 @@ the workflow run at its next step boundary, when it fires. For `uses:
 akm/command`, `commands/<name>`, and any other agent/LLM dispatch target
 there is no outer process kill — `timeout:` instead resolves through the
 execution cascade (config/persona/command/task layers) into the dispatch's
-own deadline, and the SDK/CLI runner races each phase against it internally.
+own deadline, and the runner (a harness's process, or akm's own runtime) enforces it.
 Either way, a dispatch that times out is recorded as `status: failed` with
 `detail.reason: "timeout"` in `task_history` — not a silent `completed` — and
 `akm task run` exits non-zero for it; see [health-advisories.md's
@@ -220,7 +220,7 @@ schedule:
   - cron: "0 8 * * 1"
     inputs: { scope: all, ticket: OPS-1234 }
 timeout: 45000
-engine: reviewer
+harness: reviewer
 redact: [TOKEN]
 ```
 
@@ -417,7 +417,7 @@ for full before/after examples and recovery guidance.
   a `version: 4` file still carrying a retired `schedule[].enabled` (the finding
   names `akm migrate apply`, which converts them), a cron the local scheduler
   backend cannot parse, and a schedule entry whose `inputs` leave a required
-  input unsatisfied. It is read-only and needs no configured engine.
+  input unsatisfied. It is read-only and needs no configured connection or harness.
 - `akm task add` validates a task source v4 document, writes it, adds its ref
   to local scheduler activation, and syncs its bundle. `--params` renders
   typed `inputs:` declarations instead of a `with:` bag; `--schedule` is
