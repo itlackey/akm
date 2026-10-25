@@ -16,13 +16,12 @@
  * `new <Harness>()` while the descriptor's class binding was still
  * initializing, throwing "Cannot access '<Harness>' before initialization"
  * (process exit 1), which crashed every multi-process workflow chaos driver at
- * import time. The opencode descriptor therefore loads its embedded runner when
- * it runs (`harnesses/opencode/index.ts`), never at import. This test spawns a
- * REAL `bun` child whose entry import is `run-workflow` (the workflow-exec
- * subprocess entry — the exact order that reproduced the TDZ) and asserts it
- * loads cleanly. A subprocess is required: an in-process import would hit a warm
- * module cache and never exercise the fresh-graph evaluation order (hence
- * tests/integration/ per the spawn rule).
+ * import time. A descriptor therefore never imports a module that reaches
+ * `core/config`. This test spawns a REAL `bun` child whose entry import is
+ * `run-workflow` (the workflow-exec subprocess entry — the exact order that
+ * reproduced the TDZ) and asserts it loads cleanly. A subprocess is required:
+ * an in-process import would hit a warm module cache and never exercise the
+ * fresh-graph evaluation order (hence tests/integration/ per the spawn rule).
  */
 
 import { describe, expect, test } from "bun:test";

@@ -22,8 +22,6 @@ import { buildExecution, resolveExecution } from "../../src/integrations/agent/e
 import type { HarnessRunner } from "../../src/integrations/agent/runner";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
 import { HARNESS_REGISTRY } from "../../src/integrations/harnesses";
-import { installFakeOpencodeHost } from "../_helpers/fake-opencode-host";
-import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 
 let root: string;
 
@@ -119,24 +117,6 @@ describe("model work on a CLI harness advertised as confinable", () => {
       });
     });
   }
-
-  test("OpenCode 2 runs it with every edit, shell, execute and subagent permission denied", async () => {
-    fakeOpencodeMajor(2);
-    const { calls } = installFakeOpencodeHost({ reply: () => "done" });
-    const runner: HarnessRunner = {
-      kind: "harness",
-      name: "opencode-default",
-      platform: "opencode",
-      bin: "opencode",
-      args: ["run"],
-      timeoutMs: null,
-    };
-    const result = await run(runner, true);
-    expect(result.ok).toBe(true);
-    expect(calls[0]?.permissions).toEqual(
-      ["edit", "shell", "execute", "subagent"].map((action) => ({ action, resource: "*", effect: "deny" })),
-    );
-  });
 
   test("every harness the registry advertises as confinable is covered above", () => {
     const advertised = HARNESS_REGISTRY.filter((harness) => harness.confinable)

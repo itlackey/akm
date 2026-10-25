@@ -10,7 +10,6 @@ import {
   databaseIn,
   opencodeCacheDir,
   opencodeConfigDir,
-  opencodeConfigDirOverride,
   opencodeDatabasePath,
   opencodeDataDir,
 } from "../src/integrations/harnesses/opencode/roots";
@@ -36,9 +35,7 @@ describe("OpenCode's roots", () => {
 
   test("OPENCODE_CONFIG_DIR moves the config directory, and an empty one counts as unset", () => {
     const env = { XDG_CONFIG_HOME: "/x/config", HOME: "/h" };
-    expect(opencodeConfigDirOverride({ ...env, OPENCODE_CONFIG_DIR: " /elsewhere " })).toBe("/elsewhere");
-    expect(opencodeConfigDir({ ...env, OPENCODE_CONFIG_DIR: "/elsewhere" })).toBe("/elsewhere");
-    expect(opencodeConfigDirOverride({ ...env, OPENCODE_CONFIG_DIR: "  " })).toBeUndefined();
+    expect(opencodeConfigDir({ ...env, OPENCODE_CONFIG_DIR: " /elsewhere " })).toBe("/elsewhere");
     expect(opencodeConfigDir({ ...env, OPENCODE_CONFIG_DIR: "  " })).toBe(path.join("/x/config", "opencode"));
   });
 

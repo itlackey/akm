@@ -21,7 +21,6 @@ import { collectSensitiveValues, isEnvPassthroughValueSafeToExpose, redactSensit
 import type { ExecutionJsonObject } from "../../execution/json";
 import { type ChatCompletionConfig, chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
-import { getHarness } from "../harnesses";
 import { modelFromArgs } from "../harnesses/harness";
 import type { BuiltExecution } from "./execution";
 import { type AgentProfile, harnessProfile, runtimeProfile } from "./profiles";
@@ -180,14 +179,8 @@ async function dispatchRunner(
   let result: AgentRunResult;
   if (runner.kind === "harness") {
     const harnessRunProfile = profile ?? harnessProfile(runner);
-    // A harness may run a captured request in akm's process (OpenCode 2, embedded); an interactive launch
-    // hands the terminal to its CLI, and a test's `runAgent` seam stands for the CLI.
-    const inProcess =
-      seams.runAgent === undefined && opts.stdio !== "interactive"
-        ? getHarness(runner.platform)?.runInProcess?.(harnessRunProfile, opts)
-        : undefined;
     const spawn = (spawnOpts: RunAgentOptions) => (seams.runAgent ?? runAgent)(harnessRunProfile, spawnOpts);
-    result = await (inProcess ?? (confined ? inScratchDirectory(opts, spawn) : spawn(opts)));
+    result = await (confined ? inScratchDirectory(opts, spawn) : spawn(opts));
   } else {
     const connection = materializeConnection(runner, inference);
     if (connection.apiKey) secrets.push(connection.apiKey);
@@ -230,9 +223,8 @@ function modelWorkAnswer(runner: RunnerSpec, result: AgentRunResult): AgentRunRe
 /**
  * Run a built execution. Credentials are read here, once per call, and never
  * returned. Model work on a harness runs confined: in a scratch working
- * directory when it is a CLI (the OpenCode 2 harness runs in its own fixed one),
- * and it must end with an answer: an agent that stops with none (opencode at its
- * step limit, for one) has failed with `parse_error`.
+ * directory, and it must end with an answer: an agent that stops with none
+ * (opencode at its step limit, for one) has failed with `parse_error`.
  */
 export async function runExecution(
   execution: BuiltExecution,
@@ -348,9 +340,9 @@ export async function executeInteractiveAgentInvocation(
 }
 
 /**
- * Close the embedded OpenCode hosts this process started (akm's own runtime and the
- * opencode harness's). An open one holds the event loop open, so the CLI and
- * workflow engine call this in `finally` blocks. A no-op when none was started.
+ * Close the embedded OpenCode this process started (akm's own runtime). An open
+ * one holds the event loop open, so the CLI and workflow engine call this in
+ * `finally` blocks. A no-op when none was started.
  */
 export async function disposeDispatchResources(): Promise<void> {
   await agentRuntime.dispose();

@@ -148,7 +148,7 @@ function installSuiteWideSandbox(): void {
   // Likewise Claude Code's config directory, which holds the `projects` transcripts the Claude reader scans.
   process.env.CLAUDE_CONFIG_DIR = path.join(suiteSandboxRoot, "claude-home");
   // And OpenCode's home, which is `OPENCODE_TEST_HOME ?? os.homedir()`: without it the real-SDK suites load the
-  // developer's `~/.agents` (and, on the user's OpenCode host, `~/.claude`).
+  // developer's `~/.agents`.
   process.env.OPENCODE_TEST_HOME = home;
   // Teardown must fire on signal-kills too, not just clean exit. A worker that
   // is SIGTERM/SIGINT/SIGHUP'd (e.g. an orphaned/hung `bun test` worker being

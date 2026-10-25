@@ -19,8 +19,6 @@
  */
 
 import type { LoweringNotice } from "../../execution/resolved-request";
-import type { AgentProfile } from "../agent/profiles";
-import type { AgentRunResult, RunAgentOptions } from "../agent/spawn";
 import type { SessionLogHarness } from "../session-logs/types";
 
 /** What a request is lowered for: a harness, or akm's own runtime. */
@@ -119,11 +117,6 @@ export interface AkmHarness extends LowerTarget {
    */
   readonly presenceEnv?: readonly string[];
   readonly sessionLogProvider?: () => SessionLogHarness;
-  /**
-   * Runs a captured request inside akm's process when the installed harness
-   * supports that (OpenCode 2, embedded); `undefined` means spawn its CLI.
-   */
-  readonly runInProcess?: (profile: AgentProfile, opts: RunAgentOptions) => Promise<AgentRunResult> | undefined;
   /** Turn one request into the command to spawn. */
   build(spawn: HarnessSpawn, request: AgentDispatchRequest): BuiltCommand;
 }

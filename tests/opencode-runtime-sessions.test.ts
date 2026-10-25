@@ -40,7 +40,6 @@ describe("the runtime host", () => {
     const { specs } = installFakeOpencodeHost({ reply: () => "ok" });
     await run("p");
     expect(specs).toHaveLength(1);
-    expect(specs[0]).toMatchObject({ kind: "runtime", isolated: true, fetchModels: false });
     expect(specs[0]?.content).toEqual({ disabled_providers: ["opencode"] });
   });
 
@@ -106,7 +105,7 @@ describe("the runtime host", () => {
   test("loads akm's read tools", async () => {
     const { tools } = installFakeOpencodeHost({ reply: () => "ok" });
     await run("p");
-    expect(tools.runtime).toEqual(["akm_curate", "akm_search", "akm_show"]);
+    expect(tools).toEqual(["akm_curate", "akm_search", "akm_show"]);
   });
 });
 
@@ -115,12 +114,9 @@ describe("a session on the runtime", () => {
     const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
     await run("p", { cwd: "/work/here" }, { ...connection, model: "glm-5.1" });
     expect(calls[0]).toMatchObject({
-      kind: "runtime",
       model: { providerID: runnerModel({ ...connection, model: "glm-5.1" }).providerID, id: "glm-5.1" },
       directory: "/work/here",
-      metadata: { akm: "agent" },
     });
-    expect(calls[0]?.permissions).toBeUndefined();
   });
 
   test("an exact model name is the session's model and the request's, whatever the config lists", async () => {
@@ -150,15 +146,6 @@ describe("a session on the runtime", () => {
     expect(environment.PATH).toBeTruthy();
     expect(environment).not.toHaveProperty("AKM_AMBIENT");
     expect(environment).not.toHaveProperty("OPENAI_API_KEY");
-  });
-
-  test("model work is created with the deny permissions, and none of them is a tool OpenCode names differently", async () => {
-    const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
-    await run("p", { dispatch: { prompt: "p", modelWork: true } });
-    expect(calls[0]).toMatchObject({ metadata: { akm: "model-work" } });
-    expect(calls[0]?.permissions).toEqual(
-      ["edit", "shell", "execute", "subagent"].map((action) => ({ action, resource: "*", effect: "deny" })),
-    );
   });
 });
 
@@ -256,14 +243,14 @@ describe("the settings the plugin applies to a session's model requests", () => 
   test("are forgotten when the run ends", async () => {
     installFakeOpencodeHost({ reply: () => "ok" });
     await run("p", {}, { ...connection, apiKey: "sk-lab", request: { top_p: 0.9 } });
-    expect((await hostFor("runtime")).sessions.size).toBe(0);
+    expect((await hostFor()).sessions.size).toBe(0);
   });
 
   test("are forgotten when the run times out", async () => {
     installFakeOpencodeHost({ reply: () => new Promise(() => {}) });
     const result = await run("p", { timeoutMs: 20 }, { ...connection, request: { top_p: 0.9 } });
     expect(result.reason).toBe("timeout");
-    expect((await hostFor("runtime")).sessions.size).toBe(0);
+    expect((await hostFor()).sessions.size).toBe(0);
   });
 });
 
@@ -281,13 +268,13 @@ describe("a subagent session the run starts", () => {
     let seen: { request: Awaited<ReturnType<FakeChildSession["request"]>>; environment: unknown } | undefined;
     const host = installFakeOpencodeHost({
       reply: async (call) => {
-        const child = host.spawnChild("runtime", call.sessionID);
+        const child = host.spawnChild(call.sessionID);
         seen = { request: await child.request(), environment: child.environment() };
         return "done";
       },
     });
     const result = await run("p", { env }, withSettings);
-    return { result, seen, sessionsAfter: (await hostFor("runtime")).sessions.size };
+    return { result, seen, sessionsAfter: (await hostFor()).sessions.size };
   }
 
   test("is given the run's key and request fields on its first request", async () => {
@@ -308,7 +295,7 @@ describe("a subagent session the run starts", () => {
   test("a session that no run started is given nothing", async () => {
     const host = installFakeOpencodeHost({ reply: () => "ok" });
     await run("p", { env }, withSettings);
-    const stranger = host.spawnChild("runtime", "ses_not_a_run");
+    const stranger = host.spawnChild("ses_not_a_run");
     expect((await stranger.request()).requestHeaders.authorization).toBeUndefined();
     expect(stranger.environment()).toBeUndefined();
   });
@@ -383,7 +370,7 @@ describe("the deadline and the abort signal govern every step of a run", () => {
     expect(waited).toBeLessThan(40);
     // The session was created after the run was given up on: nothing was prompted, and nothing is left registered.
     expect(calls).toHaveLength(0);
-    expect((await hostFor("runtime")).sessions.size).toBe(0);
+    expect((await hostFor()).sessions.size).toBe(0);
   });
 
   for (const step of ["create", "environment", "instructions"] as const) {
@@ -404,7 +391,7 @@ describe("the deadline and the abort signal govern every step of a run", () => {
       } else {
         expect(interrupted).toEqual([result.sessionId as string]);
       }
-      expect((await hostFor("runtime")).sessions.size).toBe(0);
+      expect((await hostFor()).sessions.size).toBe(0);
     });
   }
 
@@ -422,7 +409,7 @@ describe("the deadline and the abort signal govern every step of a run", () => {
     expect(result.reason).toBe("aborted");
     expect(result.error).toContain("during startup");
     expect(calls).toHaveLength(0);
-    expect((await hostFor("runtime")).sessions.size).toBe(0);
+    expect((await hostFor()).sessions.size).toBe(0);
   });
 
   test("a deadline that has already passed when the host is ready starts nothing", async () => {

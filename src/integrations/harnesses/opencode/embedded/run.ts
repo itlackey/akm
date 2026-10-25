@@ -3,24 +3,19 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Run one prompt as a session on an embedded OpenCode (#1244).
+ * Run one prompt as a session on akm's embedded OpenCode (#1244).
  *
  * The session carries everything that differs from one call to the next: the
  * model (`SessionCreateInput.model`), the environment (`sessions.environment`),
  * the persona (an instructions entry) and the request fields (recorded for the
- * akm plugin, `./plugin.ts`). The host is shared and keyed only by its kind
- * (`./host.ts`).
+ * akm plugin, `./plugin.ts`). The host is shared (`./host.ts`).
  *
  * Nobody can answer an akm run, so questions are cancelled and permission
  * requests rejected (`./host.ts`), each with a message, and the model carries on.
  */
 
-import fs from "node:fs";
-import path from "node:path";
 import { toErrorMessage } from "../../../../core/common";
 import { effectiveRequestFields } from "../../../../core/llm-inference";
-import { getCacheDir } from "../../../../core/paths";
-import { warnOnce } from "../../../../core/warn";
 import type { ChatCompletionConfig } from "../../../../llm/client";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../../agent/config";
 import type { AgentProfile } from "../../../agent/profiles";
@@ -30,19 +25,10 @@ import {
   buildChildEnv,
   type RunAgentOptions,
 } from "../../../agent/spawn";
-import { modelFromArgs, withoutLeading, withoutModelFlag } from "../../harness";
 import { type EmbeddedHost, hostFor } from "./host";
-import type { HostKind } from "./host-spec";
-import { forgetSession, type SessionSettings } from "./plugin";
-import { type RunnerModel, runnerModel } from "./runner-models";
+import { forgetSession } from "./plugin";
+import { runnerModel } from "./runner-models";
 import { runTurn, turnResult } from "./turn";
-
-/** Model work reads but changes nothing: OpenCode's tools that edit files, run commands or start subagents are denied. */
-const MODEL_WORK_PERMISSIONS = ["edit", "shell", "execute", "subagent"].map((action) => ({
-  action,
-  resource: "*",
-  effect: "deny" as const,
-}));
 
 /** How long an interrupt may take before the run is reported without waiting for it. */
 const INTERRUPT_GRACE_MS = 5_000;
@@ -108,16 +94,6 @@ async function interrupt(host: EmbeddedHost, sessionID: string, timers: Timers):
   );
 }
 
-/** What distinguishes a run on one kind of host from a run on the other. */
-interface Target {
-  readonly kind: HostKind;
-  /** The connection's model a runtime run brings, declared on the host before its session is created. */
-  readonly runner?: RunnerModel;
-  /** The model the session is created with on the user's OpenCode; absent, OpenCode's own default decides. */
-  readonly model?: { readonly providerID: string; readonly id: string };
-  readonly settings: SessionSettings;
-}
-
 /** Why a run was stopped before its turn finished: its deadline passed, or its caller gave up. */
 class RunStopped extends Error {
   constructor(readonly reason: "timeout" | "aborted") {
@@ -126,26 +102,37 @@ class RunStopped extends Error {
 }
 
 /**
+ * Run one prompt on akm's internal runtime: the embedded OpenCode driven by the
+ * connection the run was dispatched with. Nothing here reads config: the
+ * connection's endpoint, model and window become the provider the session runs
+ * on (`./runner-models.ts`), and its key and request fields are the session's.
+ *
  * The one place a run is made: start (or reach) the host, declare the connection, create the session, set it up,
  * drive its turn, and report. One deadline and one abort signal govern all of it: every step is raced against
  * them, a step that finishes after they have fired starts nothing more, and a session such a step created is
  * released. A run that stops after its session exists interrupts the turn, for at most {@link INTERRUPT_GRACE_MS}.
  */
-async function runSession(target: Target, profile: AgentProfile, opts: RunAgentOptions): Promise<AgentRunResult> {
+export async function runOpencodeSdk(
+  profile: AgentProfile,
+  opts: RunAgentOptions,
+  connection: ChatCompletionConfig,
+): Promise<AgentRunResult> {
   const prompt = opts.dispatch?.prompt;
   if (prompt === undefined) throw new TypeError("An embedded session is run with a prompt.");
+  const runner = runnerModel(connection);
+  const settings = {
+    endpoint: connection.endpoint,
+    requestFields: effectiveRequestFields(connection.request, connection.inference),
+    ...(connection.apiKey ? { apiKey: connection.apiKey } : {}),
+  };
   const start = Date.now();
   const timeoutMs = opts.timeoutMs !== undefined ? opts.timeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
   const deadline = timeoutMs === null ? null : start + timeoutMs;
   const timers = { set: setTimeout, clear: clearTimeout };
-  const name =
-    target.kind === "runtime"
-      ? `akm's runtime on connection "${profile.name}"`
-      : `the opencode harness "${profile.name}"`;
+  const name = `akm's runtime on connection "${profile.name}"`;
   if (opts.signal?.aborted) return failed(start, "aborted", `${name} not started: caller signal already aborted`);
 
   const dispatch = opts.dispatch;
-  const modelWork = dispatch?.modelWork === true;
   const run = new AbortController();
   const forwardAbort = (): void => run.abort();
   opts.signal?.addEventListener("abort", forwardAbort, { once: true });
@@ -162,22 +149,19 @@ async function runSession(target: Target, profile: AgentProfile, opts: RunAgentO
 
   const lifecycle = async (): Promise<AgentRunResult> => {
     try {
-      const handle = await hostFor(target.kind);
+      const handle = await hostFor();
       live();
       reached.handle = handle;
       const { host, sessions } = handle;
-      if (target.runner) await handle.models.declare(target.runner);
+      await handle.models.declare(runner);
       live();
-      const model = target.runner ? { providerID: target.runner.providerID, id: target.runner.modelID } : target.model;
 
       const created = await host.sessions.create(
         {
           title: "akm",
-          metadata: { akm: modelWork ? "model-work" : "agent" },
           location: { directory: opts.cwd ?? process.cwd() },
-          ...(model ? { model } : {}),
-          ...(!modelWork && dispatch?.agent ? { agent: dispatch.agent } : {}),
-          ...(modelWork ? { permissions: MODEL_WORK_PERMISSIONS } : {}),
+          model: { providerID: runner.providerID, id: runner.modelID },
+          ...(dispatch?.agent ? { agent: dispatch.agent } : {}),
         },
         { signal: run.signal },
       );
@@ -186,7 +170,7 @@ async function runSession(target: Target, profile: AgentProfile, opts: RunAgentO
       const eventSource = opts.env?.AKM_EVENT_SOURCE;
       // OpenCode gives a session's commands this environment in place of the process's, so it is the one a CLI harness's child gets.
       const env = buildChildEnv(profile, opts);
-      sessions.set(created.id, { ...target.settings, ...(eventSource ? { eventSource } : {}), env });
+      sessions.set(created.id, { ...settings, ...(eventSource ? { eventSource } : {}), env });
       await host.sessions.environment({ sessionID: created.id, variables: env }, { signal: run.signal });
       live();
       if (dispatch?.systemPrompt) {
@@ -243,80 +227,4 @@ async function runSession(target: Target, profile: AgentProfile, opts: RunAgentO
     run.abort();
     release();
   }
-}
-
-/**
- * Run one prompt on akm's internal runtime: the embedded OpenCode driven by the
- * connection the run was dispatched with. Nothing below this point reads config:
- * the connection's endpoint, model and window become the provider the session runs
- * on (`./runner-models.ts`), and its key and request fields are the session's.
- */
-export function runOpencodeSdk(
-  profile: AgentProfile,
-  opts: RunAgentOptions,
-  connection: ChatCompletionConfig,
-): Promise<AgentRunResult> {
-  return runSession(
-    {
-      kind: "runtime",
-      runner: runnerModel(connection),
-      settings: {
-        endpoint: connection.endpoint,
-        requestFields: effectiveRequestFields(connection.request, connection.inference),
-        ...(connection.apiKey ? { apiKey: connection.apiKey } : {}),
-      },
-    },
-    profile,
-    opts,
-  );
-}
-
-/** `provider/model` as the user's OpenCode names a model; the model id may itself hold slashes. */
-function userModel(model: string | undefined): { providerID: string; id: string } | undefined {
-  if (model === undefined) return undefined;
-  const slash = model.indexOf("/");
-  if (slash > 0 && slash < model.length - 1) return { providerID: model.slice(0, slash), id: model.slice(slash + 1) };
-  warnOnce(
-    `opencode-model:${model}`,
-    `OpenCode model ${JSON.stringify(model)} is not provider/model, so OpenCode's own default is used.`,
-  );
-  return undefined;
-}
-
-/** The one working directory of every model-work session this process runs on the user's OpenCode: OpenCode keeps an instance per directory for the life of the process. */
-function modelWorkDirectory(): string {
-  const directory = path.join(getCacheDir(), "opencode", "model-work");
-  fs.mkdirSync(directory, { recursive: true });
-  return directory;
-}
-
-/**
- * The harness's authored `args` the embedded run cannot carry, as OpenCode 1's CLI would have passed them. The
- * `--model` they name is the model unless the request names one (see {@link runOpencodeHarness}); a leading
- * `run` is the CLI's own subcommand; anything else is for the CLI alone, and is named once.
- */
-function warnOfUncarriedArgs(profile: AgentProfile): void {
-  const uncarried = withoutModelFlag(withoutLeading(profile.args, "run"));
-  if (uncarried.length === 0) return;
-  warnOnce(
-    `opencode-embedded-args:${profile.name}:${uncarried.join(" ")}`,
-    `The opencode harness "${profile.name}" runs OpenCode 2 embedded in akm, which carries only the --model of its args; ${uncarried.join(" ")} ${uncarried.length === 1 ? "is" : "are"} not applied. Set the harness's model, agent or workspace instead.`,
-  );
-}
-
-/**
- * Run one prompt on the user's OpenCode 2, embedded: their config, providers and
- * logins, and their default model unless akm names one. The model is the
- * request's, else the `--model` the harness's authored `args` carry, as on
- * OpenCode 1's CLI. Model work is confined (the deny permissions, akm's read
- * tools) and runs in a fixed directory.
- */
-export function runOpencodeHarness(profile: AgentProfile, opts: RunAgentOptions): Promise<AgentRunResult> {
-  warnOfUncarriedArgs(profile);
-  const model = userModel(opts.dispatch?.model ?? modelFromArgs(profile.args));
-  return runSession(
-    { kind: "opencode", settings: {}, ...(model ? { model } : {}) },
-    profile,
-    opts.dispatch?.modelWork === true ? { ...opts, cwd: modelWorkDirectory() } : opts,
-  );
 }

@@ -331,27 +331,20 @@ describe("a subagent the run starts", () => {
   });
 });
 
-describe("model work on the runtime's host", () => {
-  test("gets OpenCode's read-only tools and akm's, and akm's tools run in-process", async () => {
+describe("akm's read tools on the runtime", () => {
+  test("are offered to the model and run in-process", async () => {
     // akm search needs a bundle; this test's own, removed after so no other test sees it.
     const bundle = path.join(process.env.HOME ?? "", "akm");
     fs.mkdirSync(bundle, { recursive: true });
     try {
-      const result = await run("MODE:akm go", { dispatch: { prompt: "", modelWork: true } });
+      const result = await run("MODE:akm go");
       expect(result.ok).toBe(true);
-      const offered = requestsFor("akm")[0]?.tools ?? [];
-      expect(offered).toEqual(expect.arrayContaining(["read", "grep", "glob", "akm_search", "akm_show", "akm_curate"]));
-      for (const tool of ["edit", "write", "shell", "execute", "subagent"]) expect(offered).not.toContain(tool);
+      expect(requestsFor("akm")[0]?.tools).toEqual(expect.arrayContaining(["akm_search", "akm_show", "akm_curate"]));
       // akm search's own JSON came back as the tool result.
       expect(requestsFor("akm").find((r) => r.toolResult)?.toolResult).toContain('"hits"');
     } finally {
       fs.rmSync(bundle, { recursive: true, force: true });
     }
-  });
-
-  test("cannot write", async () => {
-    const result = await run("MODE:write go", { dispatch: { prompt: "", modelWork: true } });
-    expect(result.stdout).toContain("No tool named");
   });
 });
 
@@ -382,15 +375,16 @@ describe("the runtime's host", () => {
   });
 
   test("rejects a permission request with a message, and the run carries on", async () => {
-    const { host, models } = await hostFor("runtime");
+    const { host, models } = await hostFor();
     const declared = runnerModel(connection);
     await models.declare(declared);
+    // OpenCode's own `permissions` is not part of akm's narrow contract; the spread keeps it out of the type check.
+    const asks = { permissions: [{ action: "shell", resource: "*", effect: "ask" }] };
     const session = await host.sessions.create({
       title: "asks",
-      metadata: { akm: "agent" },
       location: { directory: work },
       model: { providerID: declared.providerID, id: declared.modelID },
-      permissions: [{ action: "shell", resource: "*", effect: "ask" }],
+      ...asks,
     });
     await host.sessions.prompt({ sessionID: session.id, text: "MODE:shell ask first" });
     await host.sessions.wait({ sessionID: session.id });
@@ -440,7 +434,7 @@ describe("what akm replaces in the embedded OpenCode", () => {
     await closeOpencodeSdk(); // the process ends mid-turn: the turn stays unfinished in the database
     expect((await running).ok).toBe(false);
 
-    await hostFor("runtime");
+    await hostFor();
     await sleep(1_500);
     expect(hangingRequests()).toBe(before + 1);
     await closeOpencodeSdk();

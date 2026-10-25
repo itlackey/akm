@@ -5,21 +5,16 @@
 /**
  * The OpenCode harness (#564, #1244): the user's own OpenCode, enabled like the
  * Claude and Codex CLIs. One entry, one lowerer (the persona goes in the prompt;
- * inference is the user's config's to set, and says so), two transports chosen
- * when a request is dispatched by the major version of the installed binary:
- *   - OpenCode 1: its CLI, `opencode run` with the prompt on stdin
- *     (./agent-builder.ts).
- *   - OpenCode 2: embedded in akm's process (./embedded/), with the user's
- *     config, providers and logins and their default model, in akm's own
- *     database.
+ * inference is the user's config's to set, and says so), one transport for both
+ * majors: its CLI, `opencode run` with the prompt on stdin (./agent-builder.ts).
+ * The user's OpenCode owns its config, logins and sessions.
  *
  * Per-harness barrel that gathers the OpenCode integration surfaces:
  *   - session-log reader     → ./session-log.ts   (OpenCodeProvider)
  *   - agent command builder  → ./agent-builder.ts (opencodeBuilder)
  *
  * It also defines {@link OpencodeHarness}, the {@link AkmHarness} descriptor
- * that `HARNESS_REGISTRY` registers. The embedded transport imports `core/config`,
- * which the registry must not load, so it is imported when it runs.
+ * that `HARNESS_REGISTRY` registers.
  *
  * id normalization: OpenCode's canonical id (`'opencode'`) is also its runtime
  * identity and session-log provider name — there is no historical split (unlike
@@ -43,12 +38,6 @@ export { OpenCodeProvider } from "./session-log";
  */
 const OPENCODE_ENV_PASSTHROUGH = ["OPENCODE_API_KEY", "OPENCODE_CONFIG", ...XDG_BASE_DIR_ENV_PASSTHROUGH] as const;
 
-/** OpenCode 2 runs embedded; OpenCode 1, and a binary whose version cannot be read, run as the CLI. */
-function runsEmbedded(bin: string): boolean {
-  const major = detectOpencodeMajor(bin).reportedMajor;
-  return major !== undefined && major >= 2;
-}
-
 /**
  * OpenCode.
  *
@@ -66,14 +55,10 @@ export class OpencodeHarness implements AkmHarness {
   // Session-id env marker for run attribution.
   readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;
   readonly sessionLogProvider = (): SessionLogHarness => new OpenCodeProvider();
-  readonly runInProcess: AkmHarness["runInProcess"] = (profile, opts) =>
-    runsEmbedded(profile.bin)
-      ? import("./embedded/run").then((embedded) => embedded.runOpencodeHarness(profile, opts))
-      : undefined;
   readonly systemPrompt = false;
   readonly nativeAgent = true;
   // Model work is confined (read-only) on OpenCode 2 only; OpenCode 1 runs it unrestricted, with a warning.
   // Lowering asks for the confined run either way; setup asks whether the installed OpenCode can give it.
   readonly confinable = true;
-  readonly confinableInstalled = () => runsEmbedded(this.profile.bin);
+  readonly confinableInstalled = () => (detectOpencodeMajor(this.profile.bin).reportedMajor ?? 0) >= 2;
 }

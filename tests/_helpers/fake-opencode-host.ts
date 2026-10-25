@@ -27,8 +27,6 @@ import type { HostSpec } from "../../src/integrations/harnesses/opencode/embedde
 import { overrideSeam } from "./seams";
 
 export interface FakeOpencodeCall {
-  /** The kind of host the session ran on. */
-  readonly kind: HostSpec["kind"];
   readonly sessionID: string;
   /** The OpenCode config content the host was created with. */
   readonly config?: Record<string, unknown>;
@@ -36,8 +34,6 @@ export interface FakeOpencodeCall {
   readonly system?: string;
   readonly agent?: string;
   readonly directory?: string;
-  readonly permissions?: unknown;
-  readonly metadata?: unknown;
   /** The model the session was created with. */
   readonly model?: { readonly providerID: string; readonly id: string };
   /** The variables set on the session's environment. */
@@ -81,14 +77,14 @@ export interface FakeOpencodeHosts {
   readonly calls: FakeOpencodeCall[];
   /** What each host was created with. */
   readonly specs: HostSpec[];
-  /** The tools akm's plugin registered, by host kind. */
-  readonly tools: Record<string, string[]>;
+  /** The tools akm's plugin registered. */
+  readonly tools: string[];
   /** The providers akm's plugin declared on the hosts, by provider id: what OpenCode would route a session's model to. */
   readonly providers: Map<string, FakeProvider>;
-  /** Run a tool akm's plugin registered, as OpenCode would for a session on the host of `kind`. */
-  runTool(kind: HostSpec["kind"], name: string, input: unknown, sessionID: string): Promise<{ content: string }>;
-  /** A subagent session OpenCode starts under `parentID` on the host of `kind`. */
-  spawnChild(kind: HostSpec["kind"], parentID: string): FakeChildSession;
+  /** Run a tool akm's plugin registered, as OpenCode would for a session on the host. */
+  runTool(name: string, input: unknown, sessionID: string): Promise<{ content: string }>;
+  /** A subagent session OpenCode starts under `parentID`. */
+  spawnChild(parentID: string): FakeChildSession;
   /** Hosts created and closed so far. */
   readonly lifecycle: { created: number; closed: number };
 }
@@ -165,9 +161,9 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
   const calls: FakeOpencodeCall[] = [];
   const specs: HostSpec[] = [];
   const providers = new Map<string, FakeProvider>();
-  const tools: Record<string, string[]> = {};
-  const executes: Record<string, Map<string, ToolExecute>> = {};
-  const children: Record<string, FakeOpencodeHosts["spawnChild"]> = {};
+  const tools: string[] = [];
+  let executes = new Map<string, ToolExecute>();
+  let startChild: FakeOpencodeHosts["spawnChild"] | undefined;
   const lifecycle = { created: 0, closed: 0 };
   overrideSeam(_setOpencodeHostFactoryForTests, async (spec, signal) => {
     if (options.startupHonorsAbort && signal) {
@@ -183,8 +179,8 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
     lifecycle.created += 1;
     specs.push(spec);
     const plugin = await loadPlugin(spec, providers);
-    tools[spec.kind] = plugin.tools;
-    executes[spec.kind] = plugin.executes;
+    tools.splice(0, tools.length, ...plugin.tools);
+    executes = plugin.executes;
     const sessions = new Map<
       string,
       {
@@ -219,7 +215,7 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
       };
     }
 
-    children[spec.kind] = (_kind, parentID) => {
+    startChild = (parentID) => {
       const sessionID = `ses_${++n}`;
       sessions.set(sessionID, { create: { parentID }, messages: [] });
       return {
@@ -258,15 +254,12 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
           const location = session.create.location as { directory?: string } | undefined;
           const model = session.create.model as { providerID: string; id: string } | undefined;
           const call: FakeOpencodeCall = {
-            kind: spec.kind,
             sessionID,
-            ...(spec.content ? { config: spec.content } : {}),
+            config: spec.content,
             prompt: text,
             ...(session.system !== undefined ? { system: session.system } : {}),
             ...(typeof session.create.agent === "string" ? { agent: session.create.agent } : {}),
             ...(location?.directory ? { directory: location.directory } : {}),
-            ...(session.create.permissions ? { permissions: session.create.permissions } : {}),
-            ...(session.create.metadata ? { metadata: session.create.metadata } : {}),
             ...(model ? { model } : {}),
             ...(session.environment ? { environment: session.environment } : {}),
             ...(await modelRequest(sessionID, model)),
@@ -334,15 +327,21 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
     };
     return host;
   });
-  const runTool: FakeOpencodeHosts["runTool"] = async (kind, name, input, sessionID) => {
-    const execute = executes[kind]?.get(name);
-    if (!execute) throw new Error(`no tool ${name} on the ${kind} host`);
+  const runTool: FakeOpencodeHosts["runTool"] = async (name, input, sessionID) => {
+    const execute = executes.get(name);
+    if (!execute) throw new Error(`no tool ${name} on the host`);
     return execute(input, { sessionID });
   };
-  const spawnChild: FakeOpencodeHosts["spawnChild"] = (kind, parentID) => {
-    const spawn = children[kind];
-    if (!spawn) throw new Error(`no ${kind} host`);
-    return spawn(kind, parentID);
+  return {
+    calls,
+    specs,
+    tools,
+    providers,
+    runTool,
+    spawnChild: (parentID) => {
+      if (!startChild) throw new Error("no host");
+      return startChild(parentID);
+    },
+    lifecycle,
   };
-  return { calls, specs, tools, providers, runTool, spawnChild, lifecycle };
 }

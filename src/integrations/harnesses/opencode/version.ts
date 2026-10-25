@@ -5,11 +5,10 @@
 /**
  * Which OpenCode major an installed `opencode` binary is.
  *
- * The opencode harness runs OpenCode 2 embedded (`./embedded/`) and OpenCode 1
- * through its CLI; the installed binary's major decides which, once per request
- * (`./index.ts`). Plugin upgrades also ask it, to refresh a plugin cache with the
- * major that owns it. {@link detectOpencodeMajor} runs `<bin> --version` once per
- * binary per process.
+ * The opencode harness runs the installed binary through its CLI for both majors;
+ * the binary's major decides the flags (`./agent-builder.ts`). Plugin upgrades also
+ * ask it, to refresh a plugin cache with the major that owns it.
+ * {@link detectOpencodeMajor} runs `<bin> --version` once per binary per process.
  */
 
 import childProcess from "node:child_process";
@@ -17,9 +16,9 @@ import { warnOnce } from "../../../core/warn";
 import { defaultWhich } from "../../agent/detect";
 
 /**
- * The OpenCode CLI binary: the opencode harness runs it for OpenCode 1 and asks it
- * for its major, and plugin upgrades refresh OpenCode's plugin caches with it.
- * akm's own runtime and OpenCode 2 run embedded and need no binary.
+ * The OpenCode CLI binary: the opencode harness runs it and asks it for its major,
+ * and plugin upgrades refresh OpenCode's plugin caches with it. akm's own runtime
+ * is embedded and needs no binary.
  */
 export const OPENCODE_BIN = "opencode";
 

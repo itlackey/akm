@@ -5,9 +5,9 @@
 // Integration: opens a real index and state.db.
 //
 // akm's read tools (`akm_search`, `akm_show`, `akm_curate`) run in akm's process
-// for an agent on an embedded OpenCode. Each call records a usage event, and the
-// source it records is the run's own: model work is the improve pipeline's
-// traffic, never the user's demand, which feeds ranking.
+// for an agent on akm's runtime. Each call records a usage event, and the source
+// it records is the run's own, so a run another process stamped is never counted
+// as the user's demand, which feeds ranking.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -19,7 +19,6 @@ import { AKM_READ_TOOLS } from "../../src/integrations/agent/akm-read-tools";
 import { buildExecution, currentLayer, resolveExecution } from "../../src/integrations/agent/execution";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
 import { installFakeOpencodeHost } from "../_helpers/fake-opencode-host";
-import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -34,10 +33,9 @@ beforeEach(async () => {
     bundles: { stash: { path: storage.stashDir } },
     defaultBundle: "stash",
     registries: [],
-    harnesses: { opencode: {} },
+    connections: { lab: { endpoint: "http://127.0.0.1:1/v1", models: { fast: "stub-model" } } },
   });
   await akmIndex({ stashDir: storage.stashDir, full: true });
-  fakeOpencodeMajor(2);
   baseline = recorded().length;
 });
 
@@ -108,26 +106,25 @@ describe("a read tool's usage event", () => {
   });
 });
 
-describe("a run on the embedded OpenCode", () => {
-  /** A request to the opencode harness; its scripted agent calls each read tool in its own session. */
-  async function agentRun(options: { modelWork?: boolean; eventSource?: string; inSubagent?: boolean }) {
+describe("a run on akm's runtime", () => {
+  /** A request to the connection; its scripted agent calls each read tool in its own session. */
+  async function agentRun(options: { eventSource?: string; inSubagent?: boolean }) {
     const host = installFakeOpencodeHost({
       reply: async (call) => {
         let sessionID = call.sessionID;
         if (options.inSubagent) {
-          const child = host.spawnChild("opencode", call.sessionID);
+          const child = host.spawnChild(call.sessionID);
           await child.request();
           sessionID = child.sessionID;
         }
-        for (const name of Object.keys(INPUTS)) await host.runTool("opencode", name, INPUTS[name], sessionID);
+        for (const name of Object.keys(INPUTS)) await host.runTool(name, INPUTS[name], sessionID);
         return "done";
       },
     });
     const resolved = resolveExecution({
       content: "look it up",
       config: JSON.parse(fs.readFileSync(path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json"), "utf8")),
-      layers: [currentLayer({})],
-      modelWork: options.modelWork === true,
+      layers: [currentLayer({ connection: "lab" })],
     });
     return runExecution(buildExecution(resolved.request, resolved.runner), {
       ...(options.eventSource ? { eventSource: options.eventSource } : {}),
@@ -136,14 +133,9 @@ describe("a run on the embedded OpenCode", () => {
 
   const sources = () => new Set(recorded().map(([, source]) => source));
 
-  test("model work records its reads as the improve pipeline's, whoever dispatched it", async () => {
-    expect((await agentRun({ modelWork: true })).ok).toBe(true);
-    expect(recorded().length).toBeGreaterThanOrEqual(3);
-    expect(sources()).toEqual(new Set(["improve"]));
-  });
-
   test("a scheduled task's agent records its reads as the task's", async () => {
-    await agentRun({ eventSource: "task" });
+    expect((await agentRun({ eventSource: "task" })).ok).toBe(true);
+    expect(recorded().length).toBeGreaterThanOrEqual(3);
     expect(sources()).toEqual(new Set(["task"]));
   });
 

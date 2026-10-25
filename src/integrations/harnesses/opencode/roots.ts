@@ -19,7 +19,7 @@ function xdgRoot(name: string, fallback: readonly string[], env: NodeJS.ProcessE
   return path.join(home, ...fallback, "opencode");
 }
 
-/** `$XDG_DATA_HOME/opencode`: the user's `opencode.db` and logins. */
+/** `$XDG_DATA_HOME/opencode`: the user's `opencode.db`. */
 export function opencodeDataDir(env: NodeJS.ProcessEnv = process.env): string {
   return xdgRoot("XDG_DATA_HOME", [".local", "share"], env);
 }
@@ -29,14 +29,9 @@ export function opencodeCacheDir(env: NodeJS.ProcessEnv = process.env): string {
   return xdgRoot("XDG_CACHE_HOME", [".cache"], env);
 }
 
-/** `$OPENCODE_CONFIG_DIR`, when it moves the user's config directory. */
-export function opencodeConfigDirOverride(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  return env.OPENCODE_CONFIG_DIR?.trim() || undefined;
-}
-
 /** `$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`: `opencode.json`, agents and plugins. */
 export function opencodeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
-  return opencodeConfigDirOverride(env) ?? xdgRoot("XDG_CONFIG_HOME", [".config"], env);
+  return env.OPENCODE_CONFIG_DIR?.trim() || xdgRoot("XDG_CONFIG_HOME", [".config"], env);
 }
 
 /** OpenCode's SQLite session store, in OpenCode's data directory and in akm's. */

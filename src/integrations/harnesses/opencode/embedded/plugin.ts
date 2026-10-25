@@ -6,7 +6,7 @@
  * The plugin akm loads into every embedded OpenCode it starts.
  *
  * - **akm's read tools** (`akm_search`, `akm_show`, `akm_curate`): they run in
- *   akm's process, so an agent on either host reads the library without a shell.
+ *   akm's process, so an agent reads the library without a shell.
  *   A call records its usage event under the source of the run it is in (the
  *   session's `AKM_EVENT_SOURCE`), so model work's own reads never count as user
  *   demand.
@@ -14,7 +14,7 @@
  *   provider of its own when the run asks (`./runner-models.ts`), so the host
  *   never reads config.
  * - **Per-session request settings**: what a call resolves to differs from
- *   session to session on one shared host: the request fields (the connection's
+ *   session to session on the one shared host: the request fields (the connection's
  *   and model entry's, and the portable settings of the call, in the endpoint's
  *   own spelling) and the key, which is read when the call is dispatched. The
  *   runner records them under the session's id and the `http.request` hook lays
@@ -35,7 +35,7 @@ export interface SessionSettings {
   /** Request fields (wire names) to lay over the session's model requests. */
   readonly requestFields?: Readonly<Record<string, unknown>>;
   /** The connection's endpoint: every model request of the session goes to it, whatever URL OpenCode built. */
-  readonly endpoint?: string;
+  readonly endpoint: string;
   /** The endpoint's key, sent as a bearer token with the session's model requests. */
   readonly apiKey?: string;
   /** The run's `AKM_EVENT_SOURCE`, which akm's read tools record their usage events under. */
@@ -63,8 +63,6 @@ export function forgetSession(sessions: SessionRegistry, sessionID: string): voi
  * keeps its body.
  */
 async function withSettings(request: Request, { requestFields, apiKey, endpoint }: SessionSettings): Promise<Request> {
-  const fields = requestFields ?? {};
-  if (!apiKey && !endpoint && Object.keys(fields).length === 0) return request;
   const headers = new Headers(request.headers);
   if (apiKey) headers.set("authorization", `Bearer ${apiKey}`);
   const text = request.body === null ? undefined : await request.clone().text();
@@ -79,12 +77,12 @@ async function withSettings(request: Request, { requestFields, apiKey, endpoint 
     // OpenCode sizes every request's output cap from the model's limit (32,000 tokens when the limit does not say)
     // and sends it as `max_tokens` or `max_completion_tokens`. That is its own accounting, not a cap anyone
     // asked for: akm's runtime sends the cap the connection or the call writes, and none otherwise, as the chat
-    // transport does. (A request with an endpoint is a runtime session's; the user's own OpenCode keeps its caps.)
+    // transport does.
     const { max_tokens: _own, max_completion_tokens: _ownCompletion, ...kept } = parsed;
-    body = JSON.stringify(mergeRequestFields(endpoint ? kept : parsed, fields));
+    body = JSON.stringify(mergeRequestFields(kept, requestFields ?? {}));
     headers.delete("content-length");
   }
-  return new Request(endpoint ? openAiOperationUrl(endpoint, "chat/completions") : request.url, {
+  return new Request(openAiOperationUrl(endpoint, "chat/completions"), {
     method: request.method,
     headers,
     ...(body !== undefined ? { body } : {}),

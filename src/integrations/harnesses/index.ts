@@ -13,8 +13,7 @@ import type { SessionLogHarness } from "../session-logs/types";
  *
  * Adding a harness: create `./<id>/index.ts`, add its class here. Removing:
  * delete both. This module must stay free of runtime `core/config` imports
- * (config derives `VALID_HARNESS_IDS` from here), so a harness's heavy runner
- * (e.g. `opencode/embedded/run.ts`) is imported when it runs, not here.
+ * (config derives `VALID_HARNESS_IDS` from here).
  */
 import { AiderHarness } from "./aider";
 import { AmazonqHarness } from "./amazonq";
