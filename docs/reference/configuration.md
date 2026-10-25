@@ -1114,9 +1114,15 @@ asset keys move as the table says.
 An `engine:` key on an asset that has not been migrated is read the same way,
 with a one-time notice. While the config file is still in the `engines` form it
 names the connection or harness that engine became, so `engine: lab` still means
-the engine called `lab` after the conversion has renamed it `default`; once the
-file is migrated it names a connection by that name, else a harness. The names
-the engines had are kept in akm's data directory (`migrate/engine-targets.json`)
-until no asset is left skipped, so an asset that was read-only, or a retried
-`akm migrate apply`, is rewritten under the same names.
+the engine called `lab` after the conversion has renamed it `default`. Once `akm
+migrate apply` has rewritten the file, the names the engines had are kept in
+akm's data directory (`migrate/engine-targets.json`), and the key (and a retired
+`--engine` flag) goes on meaning the same engine until the migrator has rewritten
+every `engine:` key it can reach; an asset in a read-only bundle, or a block it
+could not splice, is rewritten under the same names by a later run. Then the
+names are forgotten and `engine:` names a connection by that name, else a
+harness. A script or scheduled command that passes `--engine` is not one the
+migrator can reach: change it to `--connection` or `--harness`. A remembered
+name whose connection is no longer configured fails like any selection of an
+unconfigured name.
 

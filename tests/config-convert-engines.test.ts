@@ -311,6 +311,20 @@ describe("the defaults become the entries named default", () => {
     expect((connections["legacy-default"] as Dict).models).toMatchObject({ fast: "old" });
   });
 
+  test("an old default that moves aside is named in a note, for the scripts the migrator cannot reach", () => {
+    const moved = convert({
+      engines: { default: llm({ model: "old" }), lab: llm({ model: "new" }) },
+      defaults: { llmEngine: "lab" },
+    });
+    expect(moved.notes.join("\n")).toContain(
+      'engines.default is now connections.legacy-default, and "default" names another engine',
+    );
+    expect(moved.notes.join("\n")).toContain("--engine default");
+    // Nothing moved aside, nothing to say.
+    const kept = convert({ engines: { lab: llm() }, defaults: { llmEngine: "lab" } });
+    expect(kept.notes.join("\n")).not.toContain("names another engine");
+  });
+
   test("a legacy-default that already exists is not overwritten: the old default moves to the next free name, one name to one name", () => {
     const { config, targets, keys } = convert({
       engines: {

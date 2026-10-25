@@ -46,6 +46,7 @@ import { fileFlatCredentials, writeCredential } from "./credentials";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
 import { documentEndpoint, planKeyMoves } from "./migrate-keys";
 import { modelsFileExists, readModelsFile, retireModelsFile } from "./models-file";
+import { type EngineTargets, rememberEngineTargets, rememberedEngineTargets } from "./retired-engines";
 import { dropUnusableEntries, findUnusableEntries, type UnusableEntry } from "./unusable-entries";
 
 export { stripJsonComments } from "./config-io";
@@ -242,18 +243,21 @@ function inheritedEntries(
 }
 
 /**
- * What each engine of the retired `engines` form became, under the name it has now, while the file is still
- * in that form. The conversion renames the engine `defaults` named to `default` and moves an old `default`
- * aside, so an `engine:` selector (a flag, or a key in an asset or a task source) is resolved through this and
- * keeps meaning the service it always named. Empty once `akm migrate apply` has rewritten the file; the
- * references it could not rewrite then say what they say.
+ * What each old engine name now is, so an `engine:` selector (a flag, or a key in an asset or a task source)
+ * keeps meaning the service it always named: the conversion renames the engine `defaults` named to `default`
+ * and moves an old `default` aside. While the file is still in the `engines` form the answer is the
+ * conversion's own; after `akm migrate apply` has rewritten it, the names the migrator remembered, until
+ * every reference it can rewrite is rewritten. Resolution and the migrator both ask here.
  */
-export function retiredEngineTargets(): Readonly<Record<string, EngineTarget>> {
+export function retiredEngineTargets(): EngineTargets {
   const configPath = getConfigPath();
   const text = readConfigText(configPath);
   if (text === undefined) return {};
-  return convertEngineConfig(readConfigFile(text, configPath), { modelsOverlay: modelsOverlay(), env: process.env })
-    .targets;
+  const live = convertEngineConfig(readConfigFile(text, configPath), {
+    modelsOverlay: modelsOverlay(),
+    env: process.env,
+  }).targets;
+  return Object.keys(live).length > 0 ? live : rememberedEngineTargets();
 }
 
 /**
@@ -1285,6 +1289,8 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       // The keys are filed before the file that holds them is rewritten; a store
       // that cannot take them (malformed, unwritable) throws here and loses none.
       for (const move of plan.moves) writeCredential(move.slot, move.value, move.endpoint);
+      // The old engine names outlive the file that had them, until the references to them are migrated.
+      if (Object.keys(converted.targets).length > 0) rememberEngineTargets(converted.targets);
       backup = backupExistingConfig(configPath);
       writeConfigAtomic(configPath, body);
       cachedConfig = undefined;

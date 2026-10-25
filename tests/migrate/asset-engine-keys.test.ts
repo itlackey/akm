@@ -21,7 +21,11 @@ import {
   type ResolveEngineKey,
 } from "../../scripts/akm-migrate/migrate/engine-key-planner";
 import { runMigration } from "../../scripts/akm-migrate/run-migrate";
-import { resetConfigCache } from "../../src/core/config/config";
+import { selectionFromArgs } from "../../src/cli/selection";
+import { executionDefaultsFromFrontmatter } from "../../src/core/adapter/execution-source";
+import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
+import { executionDefaultsOf } from "../../src/execution/source";
+import { resolveTarget } from "../../src/integrations/agent/resolution";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 /** The text between the `---` fences at the top of a Markdown file. */
@@ -421,6 +425,61 @@ describe("the step", () => {
     // Nothing is left skipped, so the names are forgotten.
     const third = await runMigration({ apply: true });
     expect(third.assetEngineKeys).toMatchObject({ changed: 0, skipped: 0 });
+  });
+
+  test("a selector in a skipped asset, and the retired flag, keep their meaning between the migration and the retry", async () => {
+    const A = "http://old:8080/v1/chat/completions";
+    const B = "http://lab:8080/v1/chat/completions";
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: {
+        primary: {
+          path: stash(),
+          writable: false,
+          components: { main: { root: ".", adapter: "akm", writable: false } },
+        },
+      },
+      engines: {
+        lab: { kind: "llm", endpoint: B, model: "qwen3-32b" },
+        default: { kind: "llm", endpoint: A, model: "old-model" },
+      },
+      defaults: { llmEngine: "lab" },
+    });
+    const command = write("commands/a.md", "---\nname: a\nakm:\n  engine: default\n---\nA.\n");
+    const where = (layers: Parameters<typeof resolveTarget>[0]["layers"]): string => {
+      const runner = resolveTarget({ config: loadUserConfig(), modelWork: true, layers });
+      return runner.kind === "connection" ? runner.endpoint : `harness:${runner.name}`;
+    };
+    const assetSays = (): string => {
+      const frontmatter = parseYaml(frontmatterBlock(fs.readFileSync(command, "utf8"))) as Record<string, unknown>;
+      return where([executionDefaultsFromFrontmatter(frontmatter, { kind: "command" })]);
+    };
+    const flagSays = (engine: string): string => where([executionDefaultsOf(selectionFromArgs({ engine }))]);
+
+    // Before the migration the old `default` is service A.
+    expect(assetSays()).toBe(A);
+
+    const first = await runMigration({ apply: true });
+    expect(first.assetEngineKeys).toMatchObject({ changed: 0, skipped: 1 });
+    resetConfigCache();
+
+    // The config now calls B `default`, and the asset still says `engine: default`: it still means A.
+    expect(loadUserConfig().connections?.default?.endpoint).toBe(B);
+    expect(assetSays()).toBe(A);
+    expect(flagSays("default")).toBe(A);
+    expect(flagSays("lab")).toBe(B);
+
+    // Once the asset can be rewritten it is, to the name it always meant; nothing remembers the old names after.
+    const configPath = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
+    const migrated = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    migrated.bundles.primary.writable = true;
+    migrated.bundles.primary.components.main = { root: ".", adapter: "akm" };
+    fs.writeFileSync(configPath, JSON.stringify(migrated));
+    resetConfigCache();
+    const retry = await runMigration({ apply: true });
+    expect(retry.assetEngineKeys).toMatchObject({ changed: 1, skipped: 0 });
+    expect(fs.readFileSync(command, "utf8")).toContain("connection: legacy-default");
+    expect(assetSays()).toBe(A);
   });
 
   test("the assets wait when the config step failed: nothing is rewritten and the step is absent from the plan", async () => {

@@ -15,12 +15,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
-import { type AkmConfig, loadConfig, resetConfigCache } from "../../src/core/config/config";
+import { type AkmConfig, loadConfig, resetConfigCache, retiredEngineTargets } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
-import type { EngineTarget } from "../../src/core/config/convert-engines";
-import { isRecord } from "../../src/core/common";
+import { type EngineTargets, forgetEngineTargets } from "../../src/core/config/retired-engines";
 import { getDataDir } from "../../src/core/paths";
 import {
   type EngineKeyOutcome,
@@ -60,7 +58,7 @@ export interface EngineKeysMigrationStatus {
 }
 
 /** What each old engine name now is: what the conversion made of it, else what the configuration holds. */
-function resolverFor(config: AkmConfig, targets: Readonly<Record<string, EngineTarget>> = {}): ResolveEngineKey {
+function resolverFor(config: AkmConfig, targets: EngineTargets = {}): ResolveEngineKey {
   return (engine): EngineKeyResolution => {
     const converted = targets[engine];
     if (converted) {
@@ -104,32 +102,10 @@ function summarize(files: readonly EngineKeyOutcome[]): EngineKeysSummary {
   };
 }
 
-type EngineTargets = Readonly<Record<string, EngineTarget>>;
-
-/** Where the old names are kept until every reference to them has been rewritten. */
-function rememberedTargetsPath(): string {
-  return path.join(getDataDir(), "migrate", "engine-targets.json");
-}
-
-/** The names an earlier run's config step recorded, if any; a file that is not a name map holds none. */
-function rememberedTargets(): EngineTargets {
-  try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(rememberedTargetsPath(), "utf8"));
-    return isRecord(parsed) ? (parsed as EngineTargets) : {};
-  } catch {
-    return {};
-  }
-}
-
-function rememberTargets(targets: EngineTargets): void {
-  fs.mkdirSync(path.dirname(rememberedTargetsPath()), { recursive: true });
-  fs.writeFileSync(rememberedTargetsPath(), `${JSON.stringify(targets, null, 2)}\n`);
-}
-
 function plan(targets?: EngineTargets) {
   resetConfigCache();
   const config = loadConfig();
-  const known = targets && Object.keys(targets).length > 0 ? targets : rememberedTargets();
+  const known = targets && Object.keys(targets).length > 0 ? targets : retiredEngineTargets();
   return planEngineKeys(inspectEngineKeyFiles(taskRoots(config)), resolverFor(config, known));
 }
 
@@ -138,18 +114,17 @@ function statusOf(summary: EngineKeysSummary): EngineKeysMigrationStatus {
 }
 
 /** Read-only: what `apply` would rewrite. */
-export function inspectEngineKeysMigration(targets?: Readonly<Record<string, EngineTarget>>): EngineKeysMigrationStatus {
+export function inspectEngineKeysMigration(targets?: EngineTargets): EngineKeysMigrationStatus {
   return statusOf(summarize(plan(targets).files));
 }
 
 /** Rewrite every `engine:` key found, under one backup directory for the run. */
-export function applyEngineKeysMigration(targets?: Readonly<Record<string, EngineTarget>>): EngineKeysMigrationStatus {
+export function applyEngineKeysMigration(targets?: EngineTargets): EngineKeysMigrationStatus {
   return withConfigLock(() => {
-    if (targets && Object.keys(targets).length > 0) rememberTargets(targets);
     const before = plan(targets);
     const summary = summarize(before.files);
     // Nothing left skipped: every reference that could be rewritten is, and the old names are no longer needed.
-    if (summary.skipped === 0 && summary.changed === 0) fs.rmSync(rememberedTargetsPath(), { force: true });
+    if (summary.skipped === 0 && summary.changed === 0) forgetEngineTargets();
     if (summary.changed === 0) return statusOf(summary);
     const backupPath = path.join(getDataDir(), "backups", "asset-engine-keys", `${Date.now()}-${randomUUID()}`);
     const { rewritten, conflicts } = applyEngineKeysPlan(before, { backupRoot: backupPath });
@@ -165,7 +140,7 @@ export function applyEngineKeysMigration(targets?: Readonly<Record<string, Engin
         : file,
     );
     const left = files.filter((file) => file.status === "skipped").length;
-    if (left === 0) fs.rmSync(rememberedTargetsPath(), { force: true });
+    if (left === 0) forgetEngineTargets();
     // The report keeps what was rewritten, notes included.
     return {
       schemaVersion: 1,

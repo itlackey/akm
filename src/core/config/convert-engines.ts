@@ -305,6 +305,16 @@ function nameDefaults(defaults: Dict, converted: Converted, conversion: Conversi
       `Agent work ran on akm's own runtime${defaultEngine === undefined ? "" : ` (engines.${defaultEngine})`}; with the harness "${defaultHarnessName}" configured it now runs there. Remove that harness to keep agent work on akm's runtime.`,
     );
   }
+  for (const [kind, rename] of [
+    ["connections", connectionName],
+    ["harnesses", harnessName],
+  ] as const) {
+    const aside = rename("default");
+    if (aside === "default") continue;
+    conversion.notes.push(
+      `engines.default is now ${kind}.${aside}, and "default" names another engine: an engine: default key is rewritten by \`akm migrate apply\` where it can be, but a script or scheduled command that passes --engine default now reaches the new "default"; change it to the name ${aside}.`,
+    );
+  }
   const target = (engine: string): EngineTarget | undefined => {
     if (runtimes.has(engine)) {
       const runtime = runtimes.get(engine);

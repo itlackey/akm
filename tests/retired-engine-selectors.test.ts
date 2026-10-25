@@ -14,7 +14,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { loadUserConfig, normalizeConfigFile, resetConfigCache, retiredEngineTargets } from "../src/core/config/config";
-import { getConfigPath } from "../src/core/paths";
+import { forgetEngineTargets } from "../src/core/config/retired-engines";
+import { getConfigPath, getDataDir } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { resolveTarget } from "../src/integrations/agent/resolution";
 
@@ -78,11 +79,47 @@ describe("an engine: selector before the file is migrated", () => {
 });
 
 describe("an engine: selector after the file is migrated", () => {
-  test("is read against the file as it now is: the map is gone, with the engines it described", () => {
+  const migrate = () => {
     expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
     resetConfigCache();
+  };
+
+  test("keeps the meaning it had while the migrator remembers the old names", () => {
+    migrate();
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).engines).toBeUndefined();
+    expect(retiredEngineTargets()).toEqual({
+      default: { connection: "legacy-default" },
+      lab: { connection: "default" },
+      claude: { harness: "default" },
+      gemini: { harness: "gemini" },
+    });
+    expect(endpointOf("default")).toBe(A);
+    expect(endpointOf("lab")).toBe(B);
+    expect(endpointOf("claude", false)).toBe("harness:default");
+  });
+
+  test("is read against the file as it now is once the migrator has forgotten the names", () => {
+    migrate();
+    forgetEngineTargets();
     expect(retiredEngineTargets()).toEqual({});
-    // Nothing remembers that `default` once meant A: the migrator rewrote the references it could.
     expect(endpointOf("default")).toBe(B);
+  });
+
+  test("whose remembered target is gone is an error naming it, never another service", () => {
+    migrate();
+    const config = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    delete config.connections["legacy-default"];
+    fs.writeFileSync(getConfigPath(), JSON.stringify(config));
+    resetConfigCache();
+    expect(() => endpointOf("default")).toThrow(/Connection "legacy-default" is not configured/);
+  });
+
+  test("ignores an entry of the remembered file that is not a connection or harness name", () => {
+    migrate();
+    fs.writeFileSync(
+      path.join(getDataDir(), "migrate", "engine-targets.json"),
+      JSON.stringify({ default: "legacy-default", lab: { connection: "" }, gemini: { harness: "gemini" } }),
+    );
+    expect(retiredEngineTargets()).toEqual({ gemini: { harness: "gemini" } });
   });
 });
