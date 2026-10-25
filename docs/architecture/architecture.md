@@ -638,7 +638,7 @@ Agent programs are reachable by two execution paths, both behind
   its files under akm's data, cache and state directories), and the **opencode**
   host, which is the user's OpenCode for the `opencode` harness (their
   configuration, providers and default model, with their logins read from their
-  OpenCode 2 database, read-only, when it is up to date; OpenCode 1 is
+  OpenCode 2 database only when opening it would migrate nothing; OpenCode 1 is
   driven through its CLI, and akm reads its history read-only). A host serves any
   number of sessions; what differs per
   call (model, environment, request fields, persona) is set on the session.

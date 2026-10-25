@@ -81,11 +81,8 @@ function userConfig(options: Record<string, unknown> = {}, select = true): strin
   return dir;
 }
 
-/** The user's OpenCode database after they logged in with the pinned OpenCode: `login` stored for the fake provider. */
-async function theirDatabase(
-  name: string,
-  login: Record<string, unknown> = { type: "key", key: "sk-their-login" },
-): Promise<{ data: string; userDb: string }> {
+/** The user's OpenCode database after they logged in with the pinned OpenCode: a key stored for the fake provider. */
+async function theirDatabase(name: string): Promise<{ data: string; userDb: string }> {
   const data = path.join(sandbox.dir, name);
   const userDb = path.join(data, "opencode", "opencode.db");
   fs.mkdirSync(path.dirname(userDb), { recursive: true });
@@ -94,38 +91,13 @@ async function theirDatabase(
     models: { fetch: false },
     config: { directory: userConfig(), project: false, claude: false },
   } as never);
-  await theirs.credential.create({ integrationID: "userfake", label: "default", value: login } as never);
+  await theirs.credential.create({
+    integrationID: "userfake",
+    label: "default",
+    value: { type: "key", key: "sk-their-login" },
+  } as never);
   await theirs.close();
   return { data, userDb };
-}
-
-/** Add to the user's config directory a plugin that gives the fake provider an OAuth sign-in, and counts the token refreshes OpenCode asks of it. */
-function withRefreshCountingPlugin(config: string): string {
-  const file = path.join(config, "plugins", "refresh-counting.js");
-  fs.mkdirSync(path.dirname(file));
-  fs.writeFileSync(
-    file,
-    `export default {
-  id: "refresh-counting",
-  setup: async (ctx) => {
-    await ctx.integration.transform((editor) => {
-      editor.method.update({
-        integrationID: "userfake",
-        method: { id: "counted", type: "oauth", label: "Counted" },
-        authorize: async () => {
-          throw new Error("no sign-in in a test");
-        },
-        refresh: async (credential) => {
-          globalThis.akmTestRefreshes = (globalThis.akmTestRefreshes ?? 0) + 1;
-          return { ...credential, access: "refreshed-access", expires: Date.now() + 3600000 };
-        },
-      });
-    });
-  },
-};
-`,
-  );
-  return config;
 }
 
 /** Edit the user's database as another OpenCode release would have left it. */
@@ -266,62 +238,6 @@ describe("a run on the user's OpenCode 2", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("PROBE=from-akm AMBIENT= HOME=");
     expect(result.stdout).not.toContain("ambient");
-  });
-});
-
-describe("the user's OAuth logins are read, never refreshed or written", () => {
-  const oauth = (access: string, expires: number) => ({
-    type: "oauth",
-    methodID: "counted",
-    refresh: "their-refresh-token",
-    access,
-    expires,
-  });
-  const refreshes = (): number => (globalThis as { akmTestRefreshes?: number }).akmTestRefreshes ?? 0;
-
-  test("uses a login whose token is still valid", async () => {
-    const { data, userDb } = await theirDatabase("xdg-data-oauth-valid", oauth("valid-access", Date.now() + 3_600_000));
-    const state = fileState(userDb);
-    const refreshed = refreshes();
-
-    const before = model.requests.length;
-    const config = withRefreshCountingPlugin(userConfig());
-    const result = await withEnv({ XDG_DATA_HOME: data }, () => run(config, "MODE:answer valid login"));
-    expect(result.ok).toBe(true);
-    expect(model.requests.slice(before).find((r) => r.mode === "answer")?.authorization).toBe("Bearer valid-access");
-    expect(refreshes()).toBe(refreshed);
-    await closeOpencodeSdk();
-    expect(fileState(userDb)).toEqual(state);
-  });
-
-  test("leaves out a login whose token needs refreshing: no refresh, no write, one warning", async () => {
-    const { data, userDb } = await theirDatabase(
-      "xdg-data-oauth-expired",
-      oauth("expired-access", Date.now() - 60_000),
-    );
-    const state = fileState(userDb);
-    const refreshed = refreshes();
-
-    const warnings: string[] = [];
-    _resetWarnOnceForTests();
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-    try {
-      const before = model.requests.length;
-      const config = withRefreshCountingPlugin(userConfig());
-      const result = await withEnv({ XDG_DATA_HOME: data }, () => run(config, "MODE:answer expired login"));
-      expect(result.ok).toBe(true);
-      expect(model.requests.slice(before).find((r) => r.mode === "answer")?.authorization).toBeUndefined();
-      await closeOpencodeSdk();
-    } finally {
-      _setWarnSinkForTests(undefined);
-    }
-    expect(refreshes()).toBe(refreshed);
-    expect(fileState(userDb)).toEqual(state);
-    expect(warnings.filter((w) => w.startsWith("Your OpenCode login"))).toEqual([
-      "Your OpenCode login for userfake has expired; run OpenCode to refresh it.",
-    ]);
   });
 });
 

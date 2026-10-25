@@ -8,7 +8,6 @@
         "@clack/prompts": "^1.3.0",
         "@huggingface/transformers": "4.2.0",
         "@opencode/core": "2.1.4",
-        "@opencode/schema": "2.1.4",
         "@opencode/sdk": "2.1.4",
         "@opencode/util": "2.1.4",
         "citty": "^0.2.2",
