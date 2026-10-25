@@ -26,6 +26,7 @@ import {
   resolveConfigRefSource,
 } from "../core/config/config";
 import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
+import { isEnvReference } from "../core/config/schema/primitives";
 import { UsageError } from "../core/errors";
 import { getConfigPath } from "../core/paths";
 import { formatRegistryUrl } from "../core/registry-url";
@@ -51,15 +52,13 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
 }
 
 function redactConfigValue(value: unknown, path: string[] = []): unknown {
+  if (path.at(-1) === "apiKey" && typeof value === "string" && !isEnvReference(value)) return undefined;
   if (typeof value === "string" && isRegistryUrlPath(path)) return formatRegistryUrl(value);
   if (Array.isArray(value)) return value.map((child, index) => redactConfigValue(child, [...path, String(index)]));
   if (!value || typeof value !== "object") return value;
   const result: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (
-      key !== "apiKey" ||
-      (typeof child === "string" && /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$/.test(child))
-    ) {
+    if (key !== "apiKey" || (typeof child === "string" && isEnvReference(child))) {
       result[key] = redactConfigValue(child, [...path, key]);
     }
   }

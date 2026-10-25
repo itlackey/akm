@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { getConfigValue, listConfig, setConfigValue } from "../src/commands/config-cli";
 import { loadUserConfig, mutateConfig, resetConfigCache } from "../src/core/config/config";
 import { collectCredentialValues, deleteCredential, writeCredential } from "../src/core/config/credentials";
 import { getConfigPath } from "../src/core/paths";
@@ -107,6 +108,25 @@ describe("a literal apiKey in the file", () => {
     } finally {
       server.stop(true);
     }
+  });
+
+  test("is never printed by config get, for the key itself or for the entry that holds it", () => {
+    writeConfig({
+      ...withLiteral,
+      search: { curateRerank: { endpoint: "http://rerank:1/v1/rerank", model: "r", apiKey: LITERAL } },
+    });
+    const held = loadUserConfig();
+    for (const key of ["connections.lab.apiKey", "embedding.apiKey", "search.curateRerank.apiKey"]) {
+      expect(getConfigValue(held, key), key).toBeUndefined();
+    }
+    for (const key of ["connections.lab", "embedding", "search.curateRerank"]) {
+      expect(JSON.stringify(getConfigValue(held, key)), key).not.toContain(LITERAL);
+    }
+    expect(JSON.stringify(listConfig(held))).not.toContain(LITERAL);
+    // A reference is not a secret and prints as written.
+    expect(getConfigValue(setConfigValue(held, "connections.lab.apiKey", "$LAB_KEY"), "connections.lab.apiKey")).toBe(
+      "$LAB_KEY",
+    );
   });
 
   test("is redacted from output, as a key the config holds", () => {
