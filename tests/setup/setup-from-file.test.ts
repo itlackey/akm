@@ -39,8 +39,9 @@ describe("loadSetupConfigFromFile", () => {
   test("loads a JSON config file (happy path)", async () => {
     const filePath = path.join(workDir, "config.json");
     const payload = {
-      engines: { local: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "gpt-oss-20b" } },
-      defaults: { llmEngine: "local" },
+      connections: {
+        default: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "gpt-oss-20b" } },
+      },
       semanticSearchMode: "off",
     };
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf8");
@@ -56,13 +57,11 @@ describe("loadSetupConfigFromFile", () => {
     fs.writeFileSync(
       filePath,
       [
-        "engines:",
-        "  local:",
-        "    kind: llm",
+        "connections:",
+        "  default:",
         "    endpoint: http://localhost:11434/v1/chat/completions",
-        "    model: gpt-oss-20b",
-        "defaults:",
-        "  llmEngine: local",
+        "    models:",
+        "      fast: gpt-oss-20b",
         "semanticSearchMode: off",
         "",
       ].join("\n"),
@@ -72,8 +71,9 @@ describe("loadSetupConfigFromFile", () => {
     const result = await loadSetupConfigFromFile(filePath);
     expect(result.format).toBe("yaml");
     expect(JSON.parse(result.configJson)).toEqual({
-      engines: { local: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "gpt-oss-20b" } },
-      defaults: { llmEngine: "local" },
+      connections: {
+        default: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "gpt-oss-20b" } },
+      },
       semanticSearchMode: "off",
     });
   });
@@ -147,7 +147,7 @@ describe("loadSetupConfigFromFile", () => {
   test("throws ConfigError on malformed YAML", async () => {
     const filePath = path.join(workDir, "broken.yaml");
     // Inconsistent indentation breaks the YAML parser.
-    fs.writeFileSync(filePath, "engines:\n  local:\n    kind: llm\n   model: y\n", "utf8");
+    fs.writeFileSync(filePath, "connections:\n  default:\n    endpoint: http://x\n   models: y\n", "utf8");
 
     try {
       await loadSetupConfigFromFile(filePath);

@@ -348,8 +348,7 @@ describe("agent and output setup steps", () => {
       {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        engines: { claude: { kind: "agent", platform: "claude" } },
-        defaults: { engine: "claude" },
+        harnesses: { claude: {} },
       } as never,
       [
         { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
@@ -359,7 +358,7 @@ describe("agent and output setup steps", () => {
 
     expect(result).toEqual({
       default: "codex",
-      engines: { claude: { kind: "agent", platform: "claude" } },
+      harnesses: { claude: {} },
     });
   });
 
@@ -370,8 +369,7 @@ describe("agent and output setup steps", () => {
       {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        engines: { claude: { kind: "agent", platform: "claude" } },
-        defaults: { engine: "claude" },
+        harnesses: { claude: {} },
       } as never,
       [
         { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
@@ -381,7 +379,7 @@ describe("agent and output setup steps", () => {
 
     expect(result).toEqual({
       default: undefined,
-      engines: { claude: { kind: "agent", platform: "claude" } },
+      harnesses: { claude: {} },
     });
   });
 
@@ -389,15 +387,13 @@ describe("agent and output setup steps", () => {
     q.selects.push("keep");
 
     const existingLlm = {
-      provider: "lmstudio",
       endpoint: "http://localhost:7200/v1/chat/completions",
       model: "qwen/qwen3.5-9b",
     };
     const current = {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
-      engines: { default: { kind: "llm", ...existingLlm, supportsJsonSchema: true } },
-      defaults: { llmEngine: "default" },
+      connections: { default: { endpoint: existingLlm.endpoint, models: { fast: existingLlm.model } } },
     };
 
     const result = await stepLlm(current as never, "http://localhost:11434", ["llama3.2"]);

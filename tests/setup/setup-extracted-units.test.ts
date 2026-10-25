@@ -14,12 +14,13 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { AkmConfig, LlmConnectionConfig } from "../../src/core/config/config";
+import type { AkmConfig } from "../../src/core/config/config";
 import { deepMergeConfig, isPlainObject } from "../../src/core/config/deep-merge";
 import {
   cloneLlmConnection,
   readAgentEngineSelection,
   readCurrentLlmEngine,
+  type SetupConnection,
   writeAgentEngines,
   writeLlmEngine,
 } from "../../src/setup/engine-config";
@@ -69,102 +70,120 @@ describe("deepMergeConfig", () => {
   });
 });
 
-describe("setup LLM engine writer", () => {
-  test("readCurrentLlmEngine preserves an explicit unbounded timeout", () => {
-    const config = {
-      engines: { default: { kind: "llm", endpoint: "https://x/v1/chat/completions", model: "m", timeoutMs: null } },
-      defaults: { llmEngine: "default" },
-    } as unknown as AkmConfig;
+/** A config as setup reads it: the required `semanticSearchMode` plus what the test names. */
+const cfg = (partial: Partial<AkmConfig> = {}): AkmConfig => ({ semanticSearchMode: "off", ...partial });
 
-    expect(readCurrentLlmEngine(config)?.timeoutMs).toBeNull();
-  });
+describe("setup connection writer", () => {
+  test("readCurrentLlmEngine reads the default connection's endpoint, first model and key reference", () => {
+    const config = cfg({
+      connections: {
+        default: {
+          endpoint: "https://x/v1/chat/completions",
+          models: { fast: "m" },
+          apiKey: "$X_KEY",
+          timeoutMs: null,
+        },
+      },
+    });
 
-  test("writeLlmEngine establishes both the general and LLM defaults when neither exists", () => {
-    const base = {} as AkmConfig;
-    const llm: LlmConnectionConfig = { provider: "openai", endpoint: "https://x/v1", model: "gpt-4o-mini" };
-    const patch = writeLlmEngine(base, llm);
-    expect(patch.engines?.default).toEqual({ ...llm, kind: "llm", endpoint: "https://x/v1/chat/completions" });
-    expect(patch.defaults?.llmEngine).toBe("default");
-    expect(patch.defaults?.engine).toBe("default");
-  });
-
-  test("writeLlmEngine preserves a selected general agent default", () => {
-    const base = {
-      engines: { reviewer: { kind: "agent", platform: "claude" } },
-      defaults: { engine: "reviewer" },
-    } as unknown as AkmConfig;
-    const patch = writeLlmEngine(base, { endpoint: "https://x/v1", model: "m" });
-    expect(patch.defaults).toMatchObject({ engine: "reviewer", llmEngine: "default" });
-  });
-
-  test("writeLlmEngine(undefined) clears the default engine and defaults.llmEngine", () => {
-    const base = {
-      engines: { default: { kind: "llm", endpoint: "https://e/v1/chat/completions", model: "m" } },
-      defaults: { llmEngine: "default" },
-    } as unknown as AkmConfig;
-    const patch = writeLlmEngine(base, undefined);
-    expect(patch.engines?.default).toBeUndefined();
-    expect(patch.defaults?.llmEngine).toBeUndefined();
-  });
-
-  test("cloneLlmConfig deep-copies extraParams", () => {
-    const llm: LlmConnectionConfig = {
-      endpoint: "e",
+    expect(readCurrentLlmEngine(config)).toEqual({
+      endpoint: "https://x/v1/chat/completions",
       model: "m",
-      supportsJsonSchema: true,
-      extraParams: { top_p: 0.9, nested: { seed: 1 } },
-    };
+      apiKey: "$X_KEY",
+    });
+    expect(readCurrentLlmEngine(cfg())).toBeUndefined();
+  });
+
+  test("writeLlmEngine writes the default connection with the model under every standard alias", () => {
+    const patch = writeLlmEngine(cfg(), { endpoint: "https://x/v1/chat/completions", model: "gpt-4o-mini" });
+    expect(patch.connections).toEqual({
+      default: {
+        endpoint: "https://x/v1/chat/completions",
+        models: { fast: "gpt-4o-mini", balanced: "gpt-4o-mini", reasoning: "gpt-4o-mini" },
+      },
+    });
+  });
+
+  test("writeLlmEngine updates the connection that is already the default and keeps what it holds", () => {
+    const base = cfg({
+      connections: {
+        lab: {
+          endpoint: "https://old/v1/chat/completions",
+          models: { fast: "old", embedder: "keep-me" },
+          timeoutMs: null,
+          top_p: 0.9,
+        },
+      },
+    });
+
+    const patch = writeLlmEngine(base, { endpoint: "https://new/v1/chat/completions", model: "m", apiKey: "$NEW_KEY" });
+
+    expect(Object.keys(patch.connections ?? {})).toEqual(["lab"]);
+    expect(patch.connections?.lab).toEqual({
+      endpoint: "https://new/v1/chat/completions",
+      models: { fast: "m", embedder: "keep-me", balanced: "m", reasoning: "m" },
+      apiKey: "$NEW_KEY",
+      timeoutMs: null,
+      top_p: 0.9,
+    });
+  });
+
+  test("writeLlmEngine(undefined) removes the default connection and keeps the others", () => {
+    const base = cfg({
+      connections: {
+        default: { endpoint: "https://e/v1/chat/completions", models: { fast: "m" } },
+        other: { endpoint: "https://o/v1/chat/completions", models: { fast: "m" } },
+      },
+    });
+    const patch = writeLlmEngine(base, undefined);
+    expect(Object.keys(patch.connections ?? {})).toEqual(["other"]);
+  });
+
+  test("cloneLlmConnection deep-copies the connection", () => {
+    const llm: SetupConnection = { provider: "lab", endpoint: "e", model: "m", apiKey: "$K" };
     const clone = cloneLlmConnection(llm);
     expect(clone).toEqual(llm);
-    expect(clone?.extraParams).not.toBe(llm.extraParams);
+    expect(clone).not.toBe(llm);
     expect(cloneLlmConnection(undefined)).toBeUndefined();
   });
 });
 
-describe("setup agent engine writer", () => {
-  test("declining an agent default preserves an LLM-valued general default", () => {
-    const base = {
-      engines: { local: { kind: "llm", endpoint: "http://localhost/v1/chat/completions", model: "m" } },
-      defaults: { engine: "local", llmEngine: "local" },
-    } as unknown as AkmConfig;
-    const patch = writeAgentEngines(base, undefined);
-    expect(patch.defaults).toEqual(base.defaults);
+describe("setup harness writer", () => {
+  test("declining a harness leaves the configured harnesses as they are", () => {
+    const base = cfg({ harnesses: { claude: {} } });
+    expect(writeAgentEngines(base, undefined)).toEqual({ harnesses: { claude: {} } });
   });
 
-  test("explicit none clears an agent default and restores the LLM general default", () => {
-    const base = {
-      engines: {
-        local: { kind: "llm", endpoint: "http://localhost/v1/chat/completions", model: "m" },
-        claude: { kind: "agent", platform: "claude" },
-      },
-      defaults: { engine: "claude", llmEngine: "local" },
-    } as unknown as AkmConfig;
+  test("explicit none clears every harness", () => {
+    const base = cfg({
+      connections: { local: { endpoint: "http://localhost/v1/chat/completions", models: { fast: "m" } } },
+      harnesses: { claude: {} },
+    });
 
-    const patch = writeAgentEngines(base, { disabled: true });
-
-    expect(patch.defaults).toEqual({ engine: "local", llmEngine: "local" });
+    expect(writeAgentEngines(base, { disabled: true })).toEqual({ harnesses: {} });
   });
 
   test("writeAgentEngines + readAgentEngineSelection round-trips a CLI default", () => {
-    const base = {} as AkmConfig;
-    const applied = { ...base, ...writeAgentEngines(base, { default: "claude" }) } as AkmConfig;
-    expect(applied.defaults?.engine).toBe("claude");
-    expect(applied.engines?.claude).toEqual({ kind: "agent", platform: "claude" });
-    const block = readAgentEngineSelection(applied);
-    expect(block?.default).toBe("claude");
+    const applied = cfg(writeAgentEngines(cfg(), { default: "claude" }));
+    expect(applied.harnesses).toEqual({ claude: {} });
+    expect(readAgentEngineSelection(applied)?.default).toBe("claude");
   });
 
-  test("writeAgentEngines persists an opencode-sdk engine directly", () => {
-    const base = {} as AkmConfig;
-    const patch = writeAgentEngines(base, {
-      default: "default",
-      engines: { default: { kind: "agent", platform: "opencode-sdk", model: "m" } },
-    });
-    expect(patch.engines?.default).toMatchObject({ kind: "agent", platform: "opencode-sdk", model: "m" });
+  test("a chosen harness joining others is named default, so agent work runs on it", () => {
+    const base = cfg({ harnesses: { codex: {} } });
+    const patch = writeAgentEngines(base, { default: "claude" });
+    expect(patch.harnesses).toEqual({ codex: {}, default: { platform: "claude" } });
+    expect(readAgentEngineSelection(cfg({ ...base, ...patch }))?.default).toBe("default");
   });
 
-  test("getCurrentAgentBlock returns undefined when no agent config is present", () => {
-    expect(readAgentEngineSelection({} as AkmConfig)).toBeUndefined();
+  test("selected harnesses merge over the configured ones", () => {
+    const base = cfg({ harnesses: { codex: {} } });
+    const patch = writeAgentEngines(base, { default: "claude", harnesses: { claude: { bin: "/opt/claude" } } });
+    expect(patch.harnesses).toEqual({ codex: {}, default: { platform: "claude", bin: "/opt/claude" } });
+  });
+
+  test("readAgentEngineSelection returns undefined when no harness is configured", () => {
+    expect(readAgentEngineSelection(cfg())).toBeUndefined();
   });
 });
 
