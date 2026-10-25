@@ -137,7 +137,7 @@ export function renderSyncCommitMessage(
 }
 
 /**
- * How long the loop waits for its first engine response before printing one
+ * How long the loop waits for its first model response before printing one
  * "still waiting" line (#957): a dead endpoint otherwise looks like a slow run.
  * Armed when the loop starts, not at run start.
  */
@@ -193,7 +193,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const { budgetMs, budgetAbortController, scope, selectedStrategy, syncRepoDir, resolvedStateDbPath } = setup;
   let clearBudgetTimer = (): void => {};
   let clearFirstResponseHeartbeat = (): void => {};
-  // Set by the usage sink when any engine call terminates, prepass included.
+  // Set by the usage sink when any model call terminates, prepass included.
   let firstEngineResponseSeen = false;
   let initialGitPaths = new Set<string>();
   let preRunSync: ImproveSyncOutcome | undefined;
@@ -343,7 +343,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     }
     if (!firstEngineResponseSeen) {
       const firstResponseTimer = setTimeout(() => {
-        warn("[improve] Still waiting for the first engine response...");
+        warn("[improve] Still waiting for the first model response...");
       }, FIRST_ENGINE_RESPONSE_HEARTBEAT_MS);
       firstResponseTimer.unref?.();
       clearFirstResponseHeartbeat = () => clearTimeout(firstResponseTimer);

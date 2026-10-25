@@ -2930,9 +2930,9 @@ rather than hanging past its budget. SIGTERM/SIGINT/SIGHUP end a live run
 the same way, within a short bounded grace period, and the process exits
 with a stable per-signal code (`143`/`130`/`129`) rather than needing a
 `kill -9`. If a live run has waited more than a few seconds without any
-engine response at all, one default-level line ("Still waiting for the
-first engine response...") is printed so a scheduled run's log is never
-silently empty while an engine is slow or dead.
+model response at all, one default-level line ("Still waiting for the
+first model response...") is printed so a scheduled run's log is never
+silently empty while a model is slow or dead.
 
 For dry runs, `plannedRefs` is the effective post-limit work set, not every
 ref in the requested scope. The `plan` object preserves both views: raw scope
@@ -2962,7 +2962,10 @@ reflect/distill/consolidate only — `eligibleRefs`, the count of this run's
 allowedTypes/excludeRefPrefixes (reflect only)/process-disabled check; a count,
 not a per-ref matrix, to keep the envelope bounded). A row whose process has no
 connection or harness carries `unavailable: {configKey, reason}` — the same data
-behind `skippedProcesses` above, reshaped per process. This table is resolved
+behind `skippedProcesses` above, reshaped per process. Wherever a result says
+where work ran (`agent`, `command run`, `extract`, `llm_usage` rows, a workflow
+step's summary) the field is named `engine` and always holds a connection or
+harness name; scripts can rely on it. This table is resolved
 before any dispatch on every invocation (dry or live), so
 `akm improve --dry-run --strategy <name>` previews an ad-hoc strategy override
 without changing config first; `akm health` and `akm info` print the same
