@@ -69,7 +69,7 @@ export const ImproveConfigSchema = z
     harness: engineName.optional(),
     /** Where each improve process runs, over `connection` / `harness` above. */
     processes: ImproveProcessesSchema.optional(),
-    /** Where the judge of the reflect and distill quality gates runs, over the process's own settings. */
+    /** Where the judge of the reflect and distill quality gates runs, over `connection` / `harness` above (not over the process's own settings, which are the writer's). */
     qualityGate: ImproveWhereSchema.optional(),
     strategies: z.record(engineName, ImproveProfileConfigSchema).optional(),
     eventRetentionDays: nonNegativeNumber.optional(),

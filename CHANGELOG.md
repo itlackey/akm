@@ -93,7 +93,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     same literal or secret-store `apiKey` on a connection, `embedding` or
     `search.curateRerank`, are read and stored in `credentials.json` under the
     connection's new name, `embedding` or `curateRerank`, then removed from the
-    file. One note per key names it, never its value. `AKM_ENGINE_<NAME>_API_KEY`
+    file. A key that cannot be moved (its secret does not resolve, or
+    `credentials.json` already holds a different key under that name) stays on the
+    connection as `apiKey`, with a note. One note per key names it, never its value. `AKM_ENGINE_<NAME>_API_KEY`
     and `AKM_LLM_API_KEY`, when set, become `apiKey: "$VAR"`.
   - The user `models.json` is folded into the models of the connections and
     harnesses it names, then moved to

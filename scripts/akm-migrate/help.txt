@@ -12,7 +12,8 @@ order, and print one combined JSON plan (exit 1 when any step is blocked):
      source layout is refused, not converted: run this under akm 0.9.x. Keys akm no longer reads from config (an engine's
      `apiKeyFile`, a literal or `${secrets/...}` `apiKey`, and the same on a
      connection, `embedding` or `search.curateRerank`) move to
-     credentials.json, one note per key (never its value). The retired
+     credentials.json, one note per key (never its value); a key that cannot
+     be moved stays on the connection as `apiKey`, with a note. The retired
      models.json is folded into the models of the connections and harnesses
      it names (the entries it cannot place are listed in the notes), then
      moved to the config backups. A connection or harness akm cannot use stays in the
