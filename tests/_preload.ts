@@ -44,6 +44,7 @@ import { afterAll, afterEach, beforeEach, mock } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { registerTestRoot } from "../scripts/sweep-test-tmp";
 
 import { _resetParsedInvocationForTests } from "../src/cli/invocation";
 import { resetConfigCache } from "../src/core/config/config";
@@ -112,6 +113,7 @@ function removeSuiteRoot(): void {
 
 function installSuiteWideSandbox(): void {
   suiteSandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-test-suite-"));
+  registerTestRoot(suiteSandboxRoot);
   const home = path.join(suiteSandboxRoot, "home");
   fs.mkdirSync(home, { recursive: true });
   // Set the bottom layer ONLY. Test files that have their own `beforeAll`
@@ -152,8 +154,8 @@ function installSuiteWideSandbox(): void {
   // is SIGTERM/SIGINT/SIGHUP'd (e.g. an orphaned/hung `bun test` worker being
   // reaped) otherwise leaks its entire `akm-test-suite-*` root under /tmp — the
   // accumulation that filled tmpfs with tens of thousands of husks. SIGKILL is
-  // uncatchable, so the stale-husk sweep in scripts/sweep-test-tmp.ts is the
-  // backstop for that case.
+  // uncatchable, so the sweep in scripts/sweep-test-tmp.ts is the backstop for
+  // that case: it removes a registered root once its process is gone.
   //
   // Under `bun test` `exit` fires only on an explicit `process.exit()` (which
   // also skips the `afterAll` below); a normal end of run is the `afterAll`'s job.

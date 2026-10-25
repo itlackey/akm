@@ -201,7 +201,8 @@ async function dispatchRunner(
 /**
  * Run `work` in a scratch working directory that akm creates for it and removes
  * after, so the edit that model work on a CLI harness cannot be denied never
- * reaches the stash.
+ * reaches the stash. This function owns the directory's lifecycle: nothing else,
+ * the test tooling included, removes an `akm-model-work-*` directory.
  */
 async function inScratchDirectory(
   opts: RunAgentOptions,

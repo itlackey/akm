@@ -26,6 +26,7 @@ import { spyOn } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { registerTestRoot } from "../../scripts/sweep-test-tmp";
 
 export type Cleanup = () => void;
 
@@ -205,6 +206,7 @@ export async function withTTY<T>(isTTY: boolean, fn: () => T | Promise<T>): Prom
 
 export function makeStashDir(): SandboxedDir {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `akm-sb-stash2-${sandboxCounter++}-`));
+  registerTestRoot(dir);
   for (const sub of STASH_SKELETON_SUBDIRS) {
     fs.mkdirSync(path.join(dir, sub), { recursive: true });
   }
@@ -218,6 +220,7 @@ export function makeStashDir(): SandboxedDir {
  */
 export function makeSandboxDir(prefix = "akm-sb-dir"): SandboxedDir {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-${sandboxCounter++}-`));
+  registerTestRoot(dir);
   return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -233,6 +236,7 @@ export function makeSandboxDir(prefix = "akm-sb-dir"): SandboxedDir {
  */
 export function sandboxEnvDir(prefix: string, envVar: string, chain?: Cleanup): { dir: string; cleanup: Cleanup } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  registerTestRoot(dir);
   const previous = process.env[envVar];
   process.env[envVar] = dir;
 
@@ -297,7 +301,9 @@ export function sandboxHome(chain?: Cleanup): { dir: string; cleanup: Cleanup } 
  * call sites of this helper don't have to.
  */
 export function mockHomedir(): { dir: string; cleanup: Cleanup } {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "akm-mock-home-")));
+  const made = fs.mkdtempSync(path.join(os.tmpdir(), "akm-mock-home-"));
+  registerTestRoot(made);
+  const dir = fs.realpathSync(made);
   const spy = spyOn(os, "homedir").mockReturnValue(dir);
   return {
     dir,
@@ -402,6 +408,7 @@ export interface IsolatedAkmStorage {
  */
 export function withIsolatedAkmStorage(overrides?: Record<string, string | undefined>): IsolatedAkmStorage {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `akm-iso-${sandboxCounter++}-`));
+  registerTestRoot(root);
 
   const stashDir = path.join(root, "stash");
   const dataDir = path.join(root, "data");
