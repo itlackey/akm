@@ -16,6 +16,7 @@ import type { akmImprove } from "../../../src/commands/improve/improve";
 import {
   _setAkmImproveForTests,
   assertRequiredTargetsReachable,
+  improveCommand,
   requiredTargetProbeTimeoutMs,
 } from "../../../src/commands/improve/improve-cli";
 import type { ResolvedImprovePlan } from "../../../src/commands/improve/improve-strategies";
@@ -54,6 +55,17 @@ function writeNothingConfiguredConfig(): void {
 afterEach(() => {
   _setAkmImproveForTests();
   for (const d of disposers.splice(0)) d.cleanup();
+});
+
+describe("--require-targets says what it checks", () => {
+  test("its help names the processes and triage's judgment, and says the quality-gate judges are not probed", () => {
+    const help =
+      (improveCommand.args as Record<string, { description?: string }>)["require-targets"]?.description ?? "";
+    expect(help).toContain("an enabled process runs on");
+    expect(help).toContain("triage's judgment");
+    expect(help).toContain("quality-gate judges are not probed");
+    expect(help).not.toContain("akm health");
+  });
 });
 
 describe("akm improve --require-targets", () => {

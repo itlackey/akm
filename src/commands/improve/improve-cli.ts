@@ -339,7 +339,7 @@ export const improveCommand = defineCommand({
     "require-targets": {
       type: "boolean",
       description:
-        "Fail before the run starts (exit 78, before any indexing, lock, or log side effect) if a connection or harness the run needs is not usable: an enabled process has none configured, a connection's credential cannot be resolved in this process's environment, a connection does not answer one short completion (bounded by its timeoutMs, at most two minutes), or a harness binary is not on PATH. Without this flag, improve degrades gracefully instead: it skips the affected processes and reports them in the result's skippedProcesses. Recommended alongside --skip-if-locked for scheduled runs.",
+        "Fail before the run starts (exit 78, before any indexing, lock, or log side effect) if the connection or harness an enabled process runs on (and triage's judgment, when it is on) is not usable: an enabled process has none configured, a connection's credential cannot be resolved in this process's environment, a connection does not answer one short completion (bounded by its timeoutMs, at most two minutes), or a harness binary is not on PATH. The quality-gate judges are not probed. Without this flag, improve degrades gracefully instead: it skips the affected processes and reports them in the result's skippedProcesses. Recommended alongside --skip-if-locked for scheduled runs.",
       default: false,
     },
     // Retired spelling of --require-targets: parsed, left out of --help, warns once.
