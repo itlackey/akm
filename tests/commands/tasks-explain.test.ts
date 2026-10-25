@@ -151,7 +151,7 @@ function hasNamedVersionField(json: unknown, keyPattern: RegExp, expected: numbe
  * envelope — the exact `{layer, kind, via}` shape
  * `resolveExecution`'s `provenance` actually returns
  * (`src/integrations/agent/execution.ts`) —
- * structurally, not merely because the resolved engine NAME ("test-agent")
+ * structurally, not merely because the resolved connection NAME ("test-llm")
  * appears somewhere in the envelope (P2b test-review finding #3: a whole-
  * envelope substring probe for the engine name alone is satisfiable by an
  * envelope that prints the RESOLVED value with no provenance tracking at
@@ -212,9 +212,9 @@ describe("akm task explain <ref> — text output (B-52)", () => {
     expect(text).toMatch(/command/i);
     expect(text).toContain("explain-note");
 
-    // Effective execution settings: the config default engine resolves and
-    // surfaces even though the task itself declares no engine:.
-    expect(text).toContain("test-agent");
+    // Effective execution settings: the config's default connection resolves and
+    // surfaces even though the task itself names no connection or harness.
+    expect(text).toContain("test-llm");
 
     // Schedule bindings: cron, and the binding's own inputs.
     expect(text).toContain(SCHEDULE_CRON);

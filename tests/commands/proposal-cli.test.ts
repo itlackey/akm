@@ -83,8 +83,8 @@ describe("akm proposal drain strategy selector", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      defaults: { improveStrategy: "queue-only" },
       improve: {
+        strategy: "queue-only",
         strategies: {
           "queue-only": {
             processes: {
@@ -118,12 +118,12 @@ describe("akm proposal drain strategy selector", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: { reviewer: { kind: "agent", platform: "claude" } },
-      defaults: { improveStrategy: "enabled-judgment" },
+      harnesses: { reviewer: { platform: "claude" } },
       improve: {
+        strategy: "enabled-judgment",
         strategies: {
           "enabled-judgment": {
-            processes: { triage: { enabled: true, judgment: { enabled: true, engine: "reviewer" } } },
+            processes: { triage: { enabled: true, judgment: { enabled: true, harness: "reviewer" } } },
           },
         },
       },
@@ -140,7 +140,7 @@ describe("akm proposal drain strategy selector", () => {
       },
     );
     expect(selected.status).toBe(0);
-    expect(JSON.parse(selected.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "agent" });
+    expect(JSON.parse(selected.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "harness" });
   });
 
   test("--judgment overrides a disabled selected strategy", async () => {
@@ -150,11 +150,11 @@ describe("akm proposal drain strategy selector", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: { reviewer: { kind: "agent", platform: "claude" } },
+      harnesses: { reviewer: { platform: "claude" } },
       improve: {
         strategies: {
           "disabled-judgment": {
-            processes: { triage: { enabled: true, judgment: { enabled: false, engine: "reviewer" } } },
+            processes: { triage: { enabled: true, judgment: { enabled: false, harness: "reviewer" } } },
           },
         },
       },
@@ -174,7 +174,7 @@ describe("akm proposal drain strategy selector", () => {
       { stashDir },
     );
     expect(forced.status).toBe(0);
-    expect(JSON.parse(forced.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "agent" });
+    expect(JSON.parse(forced.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "harness" });
   });
 
   test("a stale-target refusal is auto-rejected, not left as a generic failure (STALE, R20)", async () => {

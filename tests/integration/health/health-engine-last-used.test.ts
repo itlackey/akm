@@ -37,13 +37,11 @@ function findAdvisory(checks: HealthCheckResult[], name: string): HealthCheckRes
 
 function configureStrategy(): void {
   writeSandboxConfig({
-    engines: {
-      ready: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "m" },
-    },
-    defaults: { llmEngine: "ready", improveStrategy: "lastused" },
+    connections: { ready: { endpoint: "https://example.test/v1/chat/completions", models: { fast: "m" } } },
     improve: {
+      strategy: "lastused",
       strategies: {
-        lastused: { processes: { reflect: { enabled: true, engine: "ready" } } },
+        lastused: { processes: { reflect: { enabled: true, connection: "ready" } } },
       },
     },
   });

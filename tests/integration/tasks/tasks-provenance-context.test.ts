@@ -55,8 +55,7 @@ beforeEach(() => {
     bundles: { fixture: { path: storage.stashDir, writable: true } },
     defaultBundle: "fixture",
     semanticSearchMode: "off",
-    engines: { opencode: { kind: "agent", platform: "opencode" } },
-    defaults: { engine: "opencode" },
+    harnesses: { opencode: { platform: "opencode" } },
   });
 });
 
@@ -299,8 +298,7 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
     } as AkmConfig;
     writeSandboxConfig({
       ...base,
-      engines: { "cli-audit": { kind: "agent", platform: "aider", bin: "/bin/true" } },
-      defaults: { engine: "cli-audit" },
+      harnesses: { "cli-audit": { platform: "aider", bin: "/bin/true" } },
       scheduler: {
         enabled: [{ kind: "task", ref: `fixture//tasks/${id}`, sourceId: bundleSourceId(base, "fixture") }],
       },

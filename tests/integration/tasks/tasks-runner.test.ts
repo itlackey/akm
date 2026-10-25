@@ -920,11 +920,10 @@ describe("runTask — command target", () => {
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: {
+        connections: {
           main: {
-            kind: "llm",
             endpoint: "https://api.example.com/v1/chat/completions",
-            model: "fixture",
+            models: { fast: "fixture" },
             credential: { names: ["ACME_LLM_KEY"], required: true },
           },
         },
@@ -1044,8 +1043,7 @@ describe("runTask — prompt target", () => {
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: { opencode: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "opencode" },
+        harnesses: { opencode: { platform: "opencode" } },
       }),
     );
     const schedulerContext = {
@@ -1079,51 +1077,6 @@ describe("runTask — prompt target", () => {
     expect(childEnv?.AKM_STATE_DIR).toBe(schedulerContext.AKM_STATE_DIR);
   });
 
-  test("dispatches an LLM prompt task through its selected engine", async () => {
-    writeTask("llm", promptTask("answer briefly", { engine: "fast", model: "qwen3-small" }));
-    process.env.AKM_CONFIG_DIR = configDir;
-    fs.mkdirSync(configDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(configDir, "config.json"),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        engines: {
-          fast: {
-            kind: "llm",
-            endpoint: "http://localhost:11434/v1/chat/completions",
-            model: "qwen3",
-          },
-        },
-        defaults: { engine: "fast", llmEngine: "fast" },
-      }),
-    );
-    const seen: { model?: string; prompt?: string } = {};
-
-    const result = await runTask("llm", {
-      bundleDir,
-      logDir,
-      chatCompletionImpl: async (connection, messages) => {
-        seen.model = connection.model;
-        seen.prompt = messages[0]?.content;
-        return "complete";
-      },
-      now: () => new Date("2025-01-01T00:00:00Z"),
-    });
-
-    expect(result.status).toBe("completed");
-    // D8 (spec docs/plans/specs/p1b-model-extraction.md §5.3, §6 F-2)
-    // corollary: a prepared command (agent/LLM) run now reports "command",
-    // not the former inverted "prompt" string.
-    expect(result.target).toEqual({ kind: "command", engine: "fast" });
-    expect(seen).toEqual({ model: "qwen3-small", prompt: "answer briefly" });
-    expect(result.notices?.map((notice) => [notice.code, notice.field])).toEqual([
-      ["untranslated-field", "runtime.workspace"],
-    ]);
-    const log = fs.readFileSync(result.log, "utf8");
-    expect(log).toContain("lowering_notice=untranslated-field adapter=llm field=runtime.workspace");
-    expect(log).not.toContain("lowering_notice=untranslated-field adapter=llm field=runtime.environment");
-  });
-
   test("a command task gets the 6-hour scheduled default timeout unless the task sets one", async () => {
     process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
@@ -1131,8 +1084,7 @@ describe("runTask — prompt target", () => {
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: { opencode: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "opencode" },
+        harnesses: { opencode: { platform: "opencode" } },
       }),
     );
     const timeouts: Record<string, number | null | undefined> = {};
@@ -1141,7 +1093,7 @@ describe("runTask — prompt target", () => {
       ["explicit", { timeout: 1000 }],
       ["optout", { timeout: null }],
     ] as const) {
-      writeTask(id, promptTask("say hello", { engine: "opencode", ...overrides }));
+      writeTask(id, promptTask("say hello", { harness: "opencode", ...overrides }));
       const result = await runTask(id, {
         bundleDir,
         logDir,
@@ -1156,7 +1108,7 @@ describe("runTask — prompt target", () => {
   });
 
   test("dispatches to runAgent (mocked) and writes captured stdout to the log", async () => {
-    writeTask("prompt", promptTask("say hello", { engine: "opencode" }));
+    writeTask("prompt", promptTask("say hello", { harness: "opencode" }));
 
     const fakeRunAgent: FakeRunAgent = async (...args) => {
       const prompt = args[1] as string;
@@ -1176,8 +1128,7 @@ describe("runTask — prompt target", () => {
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: { opencode: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "opencode" },
+        harnesses: { opencode: { platform: "opencode" } },
       }),
     );
 
@@ -1219,19 +1170,17 @@ describe("runTask — prompt target", () => {
   });
 
   test("passes a prompt-task model through the selected agent engine exactly", async () => {
-    writeTask("agent-model", promptTask("review this", { engine: "reviewer", model: "provider/exact-model" }));
+    writeTask("agent-model", promptTask("review this", { harness: "reviewer", model: "provider/exact-model" }));
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: {
+        harnesses: {
           reviewer: {
-            kind: "agent",
             platform: "opencode",
           },
         },
-        defaults: { engine: "reviewer" },
       }),
     );
     let captured: { model?: string } = {};
@@ -1252,14 +1201,13 @@ describe("runTask — prompt target", () => {
 
   test("redacts echoed agent credentials before task logs are persisted", async () => {
     const sentinel = "TASK-ECHO-SENTINEL";
-    writeTask("redacted", promptTask("say hello", { engine: "opencode" }));
+    writeTask("redacted", promptTask("say hello", { harness: "opencode" }));
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: { opencode: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "opencode" },
+        harnesses: { opencode: { platform: "opencode" } },
       }),
     );
 
@@ -1284,7 +1232,7 @@ describe("runTask — prompt target", () => {
   });
 
   test("agent failure surfaces as failed status with reason", async () => {
-    writeTask("fail", promptTask("boom", { engine: "opencode" }));
+    writeTask("fail", promptTask("boom", { harness: "opencode" }));
 
     process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
@@ -1292,8 +1240,7 @@ describe("runTask — prompt target", () => {
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: { opencode: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "opencode" },
+        harnesses: { opencode: { platform: "opencode" } },
       }),
     );
 
@@ -1335,7 +1282,7 @@ describe("runTask — prompt target", () => {
   // silently, and reproduces the exact scenario (timeout: 50) rather than only
   // the pre-existing non_zero_exit case above.
   test("agent timeout surfaces as failed status with reason timeout", async () => {
-    writeTask("timed-out", promptTask("content", { engine: "opencode", timeout: 50 }));
+    writeTask("timed-out", promptTask("content", { harness: "opencode", timeout: 50 }));
 
     process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
@@ -1343,8 +1290,7 @@ describe("runTask — prompt target", () => {
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: { opencode: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "opencode" },
+        harnesses: { opencode: { platform: "opencode" } },
       }),
     );
 

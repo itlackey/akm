@@ -23,15 +23,15 @@ import {
 } from "../../../src/commands/proposal/repository";
 import { writeSalienceToFrontmatter } from "../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../src/core/config/config";
-import { ConfigError } from "../../../src/core/errors";
 import type { EventsContext } from "../../../src/core/events";
-import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
+import { openStateDatabase } from "../../../src/core/state-db";
 import type { AgentRunResult } from "../../../src/integrations/agent";
 import type { RunnerSpec } from "../../../src/integrations/agent/runner";
+import type { ChatCompletionConfig } from "../../../src/llm/client";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { makeConfig } from "../../_helpers/factories";
+import { testLlmRunner } from "../../_helpers/llm-runner";
 import { mutateScopedEnv, withEnv } from "../../_helpers/sandbox";
-import { snapshotTree } from "../../_helpers/snapshot-tree";
 
 // ── Test setup ────────────────────────────────────────────────────────────
 //
@@ -539,34 +539,27 @@ describe("drainProposals — failed reporting (#921)", () => {
 // the resulting accept / reject write (the runner only judges). Mirrors reflect's dual test seams: an `llm`-mode
 // test injects a fake `chat`; an `agent`-mode test injects a fake `runAgentFn`.
 
-/** A minimal `llm` RunnerSpec — the injected `chat` seam ignores the connection. */
-const FAKE_LLM_RUNNER: RunnerSpec = {
-  kind: "llm",
-  engine: "fake-llm-judge",
-  connection: {
+/** A minimal connection RunnerSpec — the injected `chat` seam ignores the endpoint. */
+const FAKE_LLM_RUNNER = testLlmRunner(
+  {
     endpoint: "http://fake.invalid/v1/chat/completions",
     model: "provider/exact-fake-judge",
     temperature: 0.11,
     maxTokens: 77,
     contextLength: 8_192,
   },
-};
+  "fake-llm-judge",
+);
 
-/** A minimal `agent` RunnerSpec — the injected `runAgentFn` ignores the profile. */
+/** A minimal harness RunnerSpec — the injected `runAgentFn` ignores the binary. */
 const FAKE_AGENT_RUNNER: RunnerSpec = {
-  kind: "agent",
-  engine: "fake-agent-judge",
+  kind: "harness",
+  name: "fake-agent-judge",
+  platform: "claude",
+  bin: "fake-judge",
+  args: [],
+  model: "provider/exact-agent-judge",
   timeoutMs: 1_234,
-  profile: {
-    name: "fake-judge",
-    platform: "claude",
-    bin: "fake-judge",
-    args: [],
-    stdio: "captured",
-    envPassthrough: [],
-    parseOutput: "text",
-    model: "provider/exact-agent-judge",
-  },
 };
 
 function agentResult(stdout: string): AgentRunResult {
@@ -577,10 +570,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
   test("an unused judgment credential is not materialized when every proposal is already judged", async () => {
     const stash = makeStashDir();
     const accepted = seedJudged(stash, "lessons/deterministic-only", "extract", VALID_LESSON);
-    const runner: RunnerSpec = {
-      ...FAKE_LLM_RUNNER,
-      credential: { names: ["AKM_UNUSED_DRAIN_REQUIRED_KEY"], required: true },
-    };
+    const runner = { ...FAKE_LLM_RUNNER, apiKey: "$AKM_UNUSED_DRAIN_REQUIRED_KEY" };
     const chat = mock(async () => {
       throw new Error("deterministic-only drain reached judgment provider");
     });
@@ -594,48 +584,16 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     expect(chat).not.toHaveBeenCalled();
   });
 
-  test("missing required judgment credential propagates before proposal or event mutation", async () => {
-    const stash = makeStashDir();
-    seed(stash, "lessons/credential-boundary", "consolidate", BIG_LESSON);
-    const before = snapshotTree(stash);
-    const stateDir = path.dirname(getStateDbPath());
-    const stateBefore = snapshotTree(stateDir);
-    const eventContext = eventsCtx();
-    const runner: RunnerSpec = {
-      ...FAKE_LLM_RUNNER,
-      credential: { names: ["AKM_DRAIN_REQUIRED_KEY"], required: true },
-    };
-    const chat = mock(async () => {
-      throw new Error("required-credential judgment reached provider");
-    });
-
-    await withEnv({ AKM_DRAIN_REQUIRED_KEY: undefined }, async () => {
-      await expect(
-        drainProposals(baseOpts(stash, { judgment: runner, eventsCtx: eventContext }), fakeAccept(), fakeReject(), {
-          chat,
-        }),
-      ).rejects.toBeInstanceOf(ConfigError);
-    });
-
-    expect(chat).not.toHaveBeenCalled();
-    expect(snapshotTree(stash)).toEqual(before);
-    expect(snapshotTree(stateDir)).toEqual(stateBefore);
-    expect(fs.existsSync(eventContext.dbPath ?? "")).toBe(false);
-  });
-
   test("each deferred judgment reads the credential current at its dispatch", async () => {
     const stash = makeStashDir();
     const first = seed(stash, "lessons/rotation-first", "consolidate", BIG_LESSON);
     const second = seed(stash, "lessons/rotation-second", "consolidate", BIG_LESSON);
     const secret = "drain-original-092";
     const rotated = "drain-rotated-092";
-    const runner: RunnerSpec = {
-      ...FAKE_LLM_RUNNER,
-      credential: { names: ["AKM_DRAIN_ROTATING_KEY"], required: true },
-    };
+    const runner = { ...FAKE_LLM_RUNNER, apiKey: "$AKM_DRAIN_ROTATING_KEY" };
     const observed: Array<string | undefined> = [];
-    const chat = mock(async (dispatched: Extract<RunnerSpec, { kind: "llm" }>) => {
-      observed.push(dispatched.connection.apiKey);
+    const chat = mock(async (connection: ChatCompletionConfig) => {
+      observed.push(connection.apiKey);
       if (observed.length === 1) mutateScopedEnv("AKM_DRAIN_ROTATING_KEY", rotated);
       return JSON.stringify({ decision: "reject", reason: "rotation fixture" });
     });
@@ -664,12 +622,9 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     expect(chat).toHaveBeenCalledTimes(1);
     expect(chat).toHaveBeenCalledWith(
       expect.objectContaining({
-        connection: expect.objectContaining({
-          model: "provider/exact-fake-judge",
-          temperature: 0.11,
-          maxTokens: 77,
-          contextLength: 8_192,
-        }),
+        model: "provider/exact-fake-judge",
+        request: { temperature: 0.11, max_tokens: 77 },
+        contextLength: 8_192,
       }),
       [
         {
@@ -677,6 +632,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
           content: buildJudgmentPrompt(deferred, "needs-judgment", { liveAsset: undefined, siblings: [] }),
         },
       ],
+      expect.anything(),
     );
     expect(result.notices).toBeUndefined();
     // The ENGINE performed the accept (promote mode), not the runner.
@@ -1081,24 +1037,6 @@ describe("drainProposals — judgment tier (agent mode)", () => {
     expect(result.promoted).toEqual([deferred.id]);
     expect(result.deferred).toEqual([]);
     expect(promoteFn).toHaveBeenCalledTimes(1);
-  });
-
-  test("an agent judgment runner with no timeout of its own is bounded at 600 s", async () => {
-    const stash = makeStashDir();
-    seed(stash, "lessons/big", "consolidate", BIG_LESSON);
-    const { timeoutMs: _own, ...unbounded } = FAKE_AGENT_RUNNER;
-    let seenTimeoutMs: number | null | undefined;
-    const runAgentFn: NonNullable<JudgmentSeams["runAgentFn"]> = mock(async (_profile, _prompt, options) => {
-      seenTimeoutMs = options.timeoutMs;
-      return agentResult(JSON.stringify({ decision: "defer", reason: "needs a person" }));
-    });
-
-    await drainProposals(baseOpts(stash, { judgment: unbounded as RunnerSpec }), fakeAccept(), fakeReject(), {
-      runAgentFn,
-    });
-
-    expect(runAgentFn).toHaveBeenCalledTimes(1);
-    expect(seenTimeoutMs).toBe(600_000);
   });
 
   test("a failed agent run leaves the item unresolved", async () => {

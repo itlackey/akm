@@ -3,12 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm proposal new` gets the proposal as JSON on stdout from every engine
- * kind: an LLM and an agent CLI. The contract suite runs every transport; one
- * agent row stands for them here. Integration: it serves an LLM stub on
- * 127.0.0.1 and spawns fake CLI harness binaries. Nothing leaves loopback.
+ * `akm proposal new` gets the proposal as JSON on stdout from a harness. The
+ * contract suite runs every transport; one agent row stands for them here.
+ * Integration: it spawns fake CLI harness binaries. Nothing leaves the machine.
  *
- * Every stub replays a scripted reply, so a row sees what reached the engine
+ * Every stub replays a scripted reply, so a row sees what reached the harness
  * and what `proposal new` did with the reply.
  */
 
@@ -17,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { listProposals } from "../../../src/commands/proposal/repository";
 import { type CliResult, runCliCapture } from "../../_helpers/cli";
-import { clearHarnessCalls, fakeHarness, harnessCalls, serveLlmStub } from "../../_helpers/engine-stubs";
+import { clearHarnessCalls, fakeHarness, harnessCalls } from "../../_helpers/engine-stubs";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -40,7 +39,6 @@ const SCENARIOS: Record<string, readonly string[]> = {
   invalid: [NOT_A_PROPOSAL],
 };
 
-const { server: llmStub, bodies: llmBodies } = serveLlmStub(SCENARIOS);
 let bins: SandboxedDir;
 let storage: IsolatedAkmStorage;
 
@@ -55,38 +53,27 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  llmStub.stop(true);
   bins.cleanup();
 });
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
-  const llm = (scenario: string) => ({
-    kind: "llm",
-    endpoint: `http://127.0.0.1:${llmStub.port}/${scenario}/v1/chat/completions`,
-    model: "stub-model",
-  });
-  const agent = (platform: string, bin: string) => ({ kind: "agent", platform, bin: path.join(bins.dir, bin) });
+  const harness = (platform: string, bin: string) => ({ platform, bin: path.join(bins.dir, bin) });
   writeSandboxConfig({
     semanticSearchMode: "off",
     bundles: { work: { path: storage.stashDir, writable: true } },
     defaultBundle: "work",
     defaultWriteTarget: "work",
-    engines: {
-      llm: llm("proposal"),
-      "llm-repair": llm("repair"),
-      "llm-invalid": llm("invalid"),
-      claude: agent("claude", "claude-envelope"),
-      "claude-invalid": agent("claude", "plain-invalid"),
-      "claude-repair": agent("claude", "plain-repair"),
+    harnesses: {
+      claude: harness("claude", "claude-envelope"),
+      "claude-invalid": harness("claude", "plain-invalid"),
+      "claude-repair": harness("claude", "plain-repair"),
     },
-    defaults: { engine: "llm" },
   });
 });
 
 afterEach(() => {
   storage.cleanup();
-  llmBodies.length = 0;
   clearHarnessCalls(bins.dir);
 });
 
@@ -121,22 +108,8 @@ function expectProposalCreated(result: CliResult, engine: string): void {
   expect(proposals[0]?.payload.content).toContain("Return the proposal as JSON.");
 }
 
-describe("proposal new returns JSON for every engine kind", () => {
-  test("an LLM engine gets the schema as response_format and the prompt asks for JSON", async () => {
-    const result = await proposalNew("llm");
-
-    expectProposalCreated(result, "llm");
-    expect(llmBodies).toHaveLength(1);
-    const body = llmBodies[0] as { messages: Array<{ content: string }>; response_format?: unknown };
-    expect(body.response_format).toMatchObject({
-      type: "json_schema",
-      json_schema: { schema: { type: "object", required: expect.arrayContaining(["ref", "content"]) } },
-    });
-    const prompt = body.messages.map((message) => message.content).join("\n");
-    expect(prompt).toContain("Respond ONLY with a single JSON object");
-  });
-
-  test("a claude engine's JSON result envelope is unwrapped by the claude result extractor", async () => {
+describe("proposal new returns JSON from a harness", () => {
+  test("a claude harness's JSON result envelope is unwrapped by the claude result extractor", async () => {
     const result = await proposalNew("claude");
 
     expectProposalCreated(result, "claude");
@@ -147,17 +120,7 @@ describe("proposal new returns JSON for every engine kind", () => {
 });
 
 describe("a reply that is not a proposal gets one corrective retry", () => {
-  test("an LLM engine corrected by the retry creates the proposal", async () => {
-    const result = await proposalNew("llm-repair");
-
-    expectProposalCreated(result, "llm-repair");
-    expect(llmBodies).toHaveLength(2);
-    const retry = llmBodies[1]?.messages.map((message) => message.content).join("\n") ?? "";
-    expect(retry).toContain("failed validation");
-    expect(retry).toContain('"content"');
-  });
-
-  test("an agent CLI engine corrected by the retry creates the proposal", async () => {
+  test("a harness corrected by the retry creates the proposal", async () => {
     const result = await proposalNew("claude-repair");
 
     expectProposalCreated(result, "claude-repair");
@@ -166,7 +129,6 @@ describe("a reply that is not a proposal gets one corrective retry", () => {
   });
 
   test.each([
-    ["llm-invalid", () => llmBodies.length],
     ["claude-invalid", () => calls("plain-invalid").length],
   ])("%s: a reply still invalid after the retry fails clearly and creates nothing", async (engine, count) => {
     const result = await proposalNew(engine);

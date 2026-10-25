@@ -4,18 +4,18 @@
 
 /**
  * `akm proposal new --bundle <name>` queues the proposal for another configured
- * bundle. Drives the real CLI against an LLM stub on 127.0.0.1 (the way
+ * bundle. Drives the real CLI against a fake harness binary (the way
  * proposal-new-engines.test.ts does), with two configured bundles: the working
  * bundle `work` and a second one, `other`.
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { listProposals } from "../../../src/commands/proposal/repository";
 import { type CliResult, runCliCapture } from "../../_helpers/cli";
-import { serveLlmStub } from "../../_helpers/engine-stubs";
+import { fakeHarness, harnessCalls } from "../../_helpers/engine-stubs";
 import {
   type IsolatedAkmStorage,
   STASH_SKELETON_SUBDIRS,
@@ -28,8 +28,10 @@ const CONTENT =
   "---\ndescription: Proves proposal new --bundle\nwhen_to_use: Checking the bundle flag\n---\n\nQueued for another bundle.\n";
 const PROPOSAL = JSON.stringify({ ref: `skills/${NAME}`, content: CONTENT, confidence: 0.8 });
 
-const { server: llmStub, bodies: llmBodies } = serveLlmStub({ proposal: [PROPOSAL] });
 const extraDirs: string[] = [];
+let bin: string;
+/** The prompts the fake harness received, in order. */
+const promptsSent = () => harnessCalls(bin).map((call) => call.argv.at(-1) ?? "");
 let storage: IsolatedAkmStorage;
 let otherDir: string;
 let readonlyDir: string;
@@ -48,8 +50,14 @@ function makeBundleDir(prefix: string, convention?: string): string {
   return dir;
 }
 
+beforeAll(() => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-proposal-new-bin-"));
+  extraDirs.push(binDir);
+  bin = path.join(binDir, "agent");
+  fs.writeFileSync(bin, fakeHarness([PROPOSAL]), { mode: 0o755 });
+});
+
 afterAll(() => {
-  llmStub.stop(true);
   for (const dir of extraDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -71,20 +79,16 @@ beforeEach(() => {
     },
     defaultBundle: "work",
     defaultWriteTarget: "work",
-    engines: {
-      llm: {
-        kind: "llm",
-        endpoint: `http://127.0.0.1:${llmStub.port}/proposal/v1/chat/completions`,
-        model: "stub-model",
-      },
-    },
-    defaults: { engine: "llm" },
+    harnesses: { agent: { platform: "claude", bin } },
   });
 });
 
 afterEach(() => {
   storage.cleanup();
-  llmBodies.length = 0;
+  // The fake harness records each call beside itself (`agent.count`, `agent.call.<n>`).
+  for (const file of fs.readdirSync(path.dirname(bin))) {
+    if (file.startsWith("agent.")) fs.rmSync(path.join(path.dirname(bin), file), { force: true });
+  }
 });
 
 function proposalNew(...extra: string[]): Promise<CliResult> {
@@ -92,8 +96,7 @@ function proposalNew(...extra: string[]): Promise<CliResult> {
 }
 
 function promptSent(): string {
-  const body = llmBodies[0] as { messages: Array<{ content: string }> };
-  return body.messages.map((message) => message.content).join("\n");
+  return promptsSent()[0] ?? "";
 }
 
 describe("akm proposal new --bundle", () => {
@@ -132,7 +135,7 @@ describe("akm proposal new --bundle", () => {
     const result = await proposalNew("--bundle", "other");
 
     expect(result.code).toBe(0);
-    expect(llmBodies).toHaveLength(1);
+    expect(promptsSent()).toHaveLength(1);
     expect(promptSent()).toContain("OTHER-BUNDLE-CONVENTION");
     expect(promptSent()).not.toContain("WORK-BUNDLE-CONVENTION");
   });
@@ -156,7 +159,7 @@ describe("akm proposal new --bundle", () => {
       code: "INVALID_FLAG_VALUE",
       error: expect.stringContaining('No source named "nope" is configured'),
     });
-    expect(llmBodies).toHaveLength(0);
+    expect(promptsSent()).toHaveLength(0);
   });
 
   test("a read-only bundle is refused before any model call", async () => {
@@ -164,7 +167,7 @@ describe("akm proposal new --bundle", () => {
 
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain("source frozen is not writable");
-    expect(llmBodies).toHaveLength(0);
+    expect(promptsSent()).toHaveLength(0);
     expect(listProposals(readonlyDir)).toHaveLength(0);
   });
 });

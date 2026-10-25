@@ -6,7 +6,6 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { setSecret } from "../src/commands/env/secret";
 import * as healthChecks from "../src/commands/health/checks";
 import {
   HEALTH_CHECKS,
@@ -16,12 +15,10 @@ import {
 } from "../src/commands/health/checks";
 import type { AkmConfig } from "../src/core/config/config";
 import { validateConfigShape } from "../src/core/config/config-schema";
-import { withIsolatedAkmStorage } from "./_helpers/sandbox";
 
-const llm = {
-  kind: "llm" as const,
+const lab = {
   endpoint: "https://example.test/v1/chat/completions",
-  model: "fallback-model",
+  models: { fast: "fallback-model" },
 };
 
 describe("health engine probes", () => {
@@ -29,8 +26,7 @@ describe("health engine probes", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { shared: { kind: "agent", platform: "claude" } },
-      defaults: { engine: "shared", llmEngine: "shared" },
+      harnesses: { shared: { platform: "claude" } },
     };
     let spawnCalls = 0;
 
@@ -71,17 +67,15 @@ describe("health engine probes", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: {
+      connections: {
         zeta: {
-          ...llm,
           endpoint: "https://private-zeta.example/v1/chat/completions",
-          model: "private-zeta-model",
+          models: { fast: "private-zeta-model" },
           apiKey: "$PRIVATE_ZETA_HEALTH_TOKEN",
         },
         alpha: {
-          ...llm,
           endpoint: "https://private-alpha.example/v1/chat/completions",
-          model: "private-alpha-model",
+          models: { fast: "private-alpha-model" },
         },
       },
     };
@@ -127,135 +121,49 @@ describe("health engine probes", () => {
     expect(HEALTH_CHECKS.find((check) => check.name === "configured-engines")?.channel).toBe("hard");
   });
 
-  test("probes defaults.llmEngine independently from the general default", async () => {
+  test("probes the default connection independently from the default harness", async () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { fast: llm },
-      defaults: { llmEngine: "fast" },
+      connections: { fast: lab },
+      harnesses: { claude: {} },
+    };
+    const general = await runDefaultEngineProbe({
+      loadConfig: () => config,
+      spawnSync: (() => ({ status: 0 })) as never,
+    });
+    const result = await runDefaultLlmEngineProbe({ loadConfig: () => config });
+    // Agent work prefers the default harness; model work, the default connection.
+    expect(general.status).toBe("pass");
+    expect(general.evidence).toMatchObject({ engine: "claude", runtimeKind: "harness" });
+    expect(result.status).toBe("pass");
+    expect(result.message).toBe('Connection "fast" is configured. Reachability was not probed.');
+    expect(result.evidence).toMatchObject({ engine: "fast", runtimeKind: "connection", model: "fallback-model" });
+  });
+
+  test("with only a connection, agent work is probed on it: akm's own runtime runs there", async () => {
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      connections: { fast: lab },
     };
     const general = await runDefaultEngineProbe({ loadConfig: () => config });
-    const result = await runDefaultLlmEngineProbe({ loadConfig: () => config });
-    // No default engine: the general default is the embedded OpenCode.
     expect(general.status).toBe("pass");
-    expect(general.evidence).toMatchObject({ engine: "opencode-sdk" });
-    expect(result.status).toBe("pass");
-    expect(result.message).toBe('LLM engine "fast" is configured. Reachability was not probed.');
-    expect(result.evidence).toMatchObject({ engine: "fast", runtimeKind: "llm", model: "fallback-model" });
+    expect(general.evidence).toMatchObject({ engine: "fast", runtimeKind: "connection" });
   });
 
-  test("accepts the SDK fallback model and reports it as the effective model", async () => {
+  test("with nothing configured both default probes are unknown", async () => {
+    const config: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "off" };
+    expect((await runDefaultEngineProbe({ loadConfig: () => config })).status).toBe("unknown");
+    expect((await runDefaultLlmEngineProbe({ loadConfig: () => config })).status).toBe("unknown");
+  });
+
+  test("reports an unavailable key without exposing its name", async () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: {
-        sdk: { kind: "agent", platform: "opencode-sdk", bin: "opencode-test", llmEngine: "fallback" },
-        fallback: llm,
-      },
-      defaults: { engine: "sdk", llmEngine: "fallback" },
-    };
-    const inheritedModel = await runDefaultEngineProbe({
-      loadConfig: () => config,
-      spawnSync: (() => ({ status: 0 })) as never,
-    });
-    expect(inheritedModel.status).toBe("pass");
-    expect(inheritedModel.message).toBe('SDK engine "sdk" is available. Reachability was not probed.');
-    expect(inheritedModel.evidence).toMatchObject({
-      fallbackEngine: "fallback",
-      fallbackModel: "fallback-model",
-      model: "fallback-model",
-      configuredModel: null,
-      modelSource: "fallback",
-    });
-
-    const readyConfig: AkmConfig = {
-      ...config,
-      engines: {
-        ...config.engines,
-        sdk: { ...config.engines?.sdk, kind: "agent", platform: "opencode-sdk", model: "sdk-model" },
-      },
-    };
-    const ready = await runDefaultEngineProbe({
-      loadConfig: () => readyConfig,
-      spawnSync: (() => ({ status: 0 })) as never,
-    });
-    expect(ready.status).toBe("pass");
-    expect(ready.message).toBe('SDK engine "sdk" is available. Reachability was not probed.');
-    expect(ready.evidence).toMatchObject({ model: "sdk-model", configuredModel: "sdk-model", modelSource: "sdk" });
-  });
-
-  test("accepts native OpenCode SDK configuration without an AKM LLM fallback", async () => {
-    const config: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      engines: { sdk: { kind: "agent", platform: "opencode-sdk", model: "sdk-model" } },
-      defaults: { engine: "sdk" },
-    };
-    const result = await runDefaultEngineProbe({
-      loadConfig: () => config,
-      spawnSync: (() => ({ status: 0 })) as never,
-    });
-    expect(result.status).toBe("pass");
-    expect(result.message).toBe('SDK engine "sdk" is available.');
-    expect(result.evidence).toMatchObject({
-      model: "sdk-model",
-      fallbackEngine: null,
-    });
-  });
-
-  test("an SDK engine with no llmEngine of its own has no fallback to probe, whatever defaults.llmEngine names", async () => {
-    const config: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      engines: { sdk: { kind: "agent", platform: "opencode-sdk" }, fallback: llm },
-      defaults: { engine: "sdk", llmEngine: "fallback" },
-    };
-    let probed = 0;
-    const result = await runDefaultEngineProbe({
-      loadConfig: () => config,
-      spawnSync: (() => ({ status: 0 })) as never,
-      probeReachable: async () => {
-        probed += 1;
-        return { reachable: false, error: "ECONNREFUSED" };
-      },
-    });
-    // Dispatch gives this engine no LLM connection, so the probe reports none and checks no endpoint.
-    expect(probed).toBe(0);
-    expect(result.status).toBe("pass");
-    expect(result.message).toBe('SDK engine "sdk" is available.');
-    expect(result.evidence).toMatchObject({
-      fallbackEngine: null,
-      fallbackEndpoint: null,
-      fallbackModel: null,
-      model: null,
-      modelSource: null,
-    });
-  });
-
-  test("warns when an explicitly configured SDK fallback cannot be resolved", async () => {
-    const config: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      engines: { sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "missing" } },
-      defaults: { engine: "sdk" },
-    };
-    const result = await runDefaultEngineProbe({
-      loadConfig: () => config,
-      spawnSync: (() => ({ status: 0 })) as never,
-    });
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain("configured fallback LLM connection");
-  });
-
-  test("reports an unavailable required LLM credential without exposing its name", async () => {
-    const config: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      engines: {
-        agent: { kind: "agent", platform: "claude" },
-        improve: { ...llm, apiKey: "$PRIVATE_IMPROVE_TOKEN" },
-      },
-      defaults: { engine: "agent", llmEngine: "improve" },
+      connections: { improve: { ...lab, apiKey: "$PRIVATE_IMPROVE_TOKEN" } },
+      harnesses: { agent: { platform: "claude" } },
     };
     const general = await runDefaultEngineProbe({
       loadConfig: () => config,
@@ -265,16 +173,26 @@ describe("health engine probes", () => {
     const improve = await runDefaultLlmEngineProbe({ loadConfig: () => config, env: {} });
     expect(general.status).toBe("pass");
     expect(improve.status).toBe("warn");
-    expect(improve.message).toContain("required credential is unavailable");
+    expect(improve.message).toContain("its key is unavailable");
     expect(JSON.stringify(improve)).not.toContain("PRIVATE_IMPROVE_TOKEN");
   });
 
-  test("#950: names the env asset that supplies an unavailable required credential, never the variable name", async () => {
+  test("a key that is set is available", async () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { improve: { ...llm, apiKey: "$PRIVATE_IMPROVE_TOKEN" } },
-      defaults: { llmEngine: "improve" },
+      connections: { improve: { ...lab, apiKey: "$PRIVATE_IMPROVE_TOKEN" } },
+    };
+    const improve = await runDefaultLlmEngineProbe({ loadConfig: () => config, env: { PRIVATE_IMPROVE_TOKEN: "x" } });
+    expect(improve.status).toBe("pass");
+    expect(improve.evidence).toMatchObject({ requiredCredentialAvailable: true });
+  });
+
+  test("#950: names the env asset that supplies an unavailable key, never the variable name", async () => {
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      connections: { improve: { ...lab, apiKey: "$PRIVATE_IMPROVE_TOKEN" } },
     };
     const improve = await runDefaultLlmEngineProbe({
       loadConfig: () => config,
@@ -292,8 +210,7 @@ describe("health engine probes", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { improve: { ...llm, apiKey: "$PRIVATE_IMPROVE_TOKEN" } },
-      defaults: { llmEngine: "improve" },
+      connections: { improve: { ...lab, apiKey: "$PRIVATE_IMPROVE_TOKEN" } },
     };
     const improve = await runDefaultLlmEngineProbe({
       loadConfig: () => config,
@@ -301,41 +218,17 @@ describe("health engine probes", () => {
       listEnvAssets: () => [{ ref: "env/other", path: "/stash/env/other.env", keys: ["SOME_OTHER_VAR"] }],
     });
     expect(improve.status).toBe("warn");
-    expect(improve.message).toContain("required credential is unavailable");
+    expect(improve.message).toContain("its key is unavailable");
     expect(improve.evidence?.suppliedByEnvAsset).toBeNull();
   });
 
-  test("#950: SDK engine names the env asset that supplies its missing fallback credential", async () => {
+  test("#950: walks env assets at most once per probe run across multiple connections with missing keys", async () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: {
-        sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "improve" },
-        improve: { ...llm, apiKey: "$PRIVATE_IMPROVE_TOKEN" },
-      },
-      defaults: { engine: "sdk" },
-    };
-    const result = await runDefaultEngineProbe({
-      loadConfig: () => config,
-      spawnSync: (() => ({ status: 0 })) as never,
-      env: {},
-      listEnvAssets: () => [{ ref: "env/lab", path: "/stash/env/lab.env", keys: ["PRIVATE_IMPROVE_TOKEN"] }],
-    });
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain('SDK engine "sdk" is incomplete: missing');
-    expect(result.message).toContain("env/lab");
-    expect(result.message).toContain("akm env run env/lab");
-    expect(result.evidence).toMatchObject({ suppliedByEnvAsset: "env/lab" });
-    expect(JSON.stringify(result)).not.toContain("PRIVATE_IMPROVE_TOKEN");
-  });
-
-  test("#950: walks env assets at most once per probe run across multiple engines with missing credentials", async () => {
-    const config: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      engines: {
-        improve: { ...llm, apiKey: "$PRIVATE_IMPROVE_TOKEN" },
-        distill: { ...llm, endpoint: "https://example.test/v2/chat/completions", apiKey: "$PRIVATE_DISTILL_TOKEN" },
+      connections: {
+        improve: { ...lab, apiKey: "$PRIVATE_IMPROVE_TOKEN" },
+        distill: { ...lab, endpoint: "https://example.test/v2/chat/completions", apiKey: "$PRIVATE_DISTILL_TOKEN" },
       },
     };
     let calls = 0;
@@ -360,8 +253,7 @@ describe("health engine probes", () => {
       const config: AkmConfig = {
         configVersion: "0.9.0",
         semanticSearchMode: "off",
-        engines: { improve: { ...llm, apiKey: "$PRIVATE_IMPROVE_TOKEN" } },
-        defaults: { llmEngine: "improve" },
+        connections: { improve: { ...lab, apiKey: "$PRIVATE_IMPROVE_TOKEN" } },
         bundles: { lab: { path: labStashDir } },
         defaultBundle: "lab",
       };
@@ -377,81 +269,15 @@ describe("health engine probes", () => {
     }
   });
 
-  test("a secrets ref engine reports available only when the store resolves it (#953)", async () => {
-    const storage = withIsolatedAkmStorage();
-    try {
-      const config: AkmConfig = {
-        configVersion: "0.9.0",
-        semanticSearchMode: "off",
-        engines: {
-          agent: { kind: "agent", platform: "claude" },
-          improve: { ...llm, apiKey: "${secrets/953-health-probe-key}" },
-        },
-        defaults: { engine: "agent", llmEngine: "improve" },
-      };
-
-      const unavailable = await runDefaultLlmEngineProbe({ loadConfig: () => config, env: {} });
-      expect(unavailable.status).toBe("warn");
-      expect(unavailable.message).toContain("required credential is unavailable");
-
-      setSecret(path.join(storage.stashDir, "secrets", "953-health-probe-key"), Buffer.from("health-probe-secret"));
-      const available = await runDefaultLlmEngineProbe({ loadConfig: () => config, env: {} });
-      expect(available.status).not.toBe("warn");
-      expect(JSON.stringify(available)).not.toContain("health-probe-secret");
-    } finally {
-      storage.cleanup();
-    }
-  });
-
-  test("warns when an enabled active improve process lacks its required credential", () => {
+  test("warns when an enabled active improve process has no connection or harness", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: {
-        ready: llm,
-        private: { ...llm, apiKey: "$PRIVATE_REFLECT_TOKEN" },
-      },
-      defaults: { llmEngine: "ready", improveStrategy: "health-test" },
       improve: {
+        strategy: "health-test",
         strategies: {
-          "health-test": { processes: { reflect: { enabled: true, engine: "private" } } },
-        },
-      },
-    };
-    const probe = (
-      healthChecks as unknown as {
-        runActiveImproveStrategyProbe: (deps: { loadConfig: () => AkmConfig; env: NodeJS.ProcessEnv }) => {
-          status: string;
-          message: string;
-          evidence?: unknown;
-        };
-      }
-    ).runActiveImproveStrategyProbe;
-    expect(typeof probe).toBe("function");
-
-    const result = probe({ loadConfig: () => config, env: {} });
-
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain("reflect");
-    expect(result.evidence).toMatchObject({ strategy: "health-test", unavailableProcesses: ["reflect"] });
-    expect(JSON.stringify(result)).not.toContain("PRIVATE_REFLECT_TOKEN");
-  });
-
-  test("warns when SDK triage judgment lacks its required fallback credential", () => {
-    const config: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      engines: {
-        ready: llm,
-        fallback: { ...llm, apiKey: "$PRIVATE_SDK_FALLBACK_TOKEN" },
-        reviewer: { kind: "agent", platform: "opencode-sdk", model: "review", llmEngine: "fallback" },
-      },
-      defaults: { llmEngine: "ready", improveStrategy: "sdk-triage-health" },
-      improve: {
-        strategies: {
-          "sdk-triage-health": {
-            processes: { triage: { enabled: true, judgment: { engine: "reviewer" } } },
-          },
+          // Triage needs no connection, so it keeps the plan alive; reflect has nothing to run on.
+          "health-test": { processes: { reflect: { enabled: true }, triage: { enabled: true } } },
         },
       },
     };
@@ -459,26 +285,25 @@ describe("health engine probes", () => {
     const result = healthChecks.runActiveImproveStrategyProbe({ loadConfig: () => config, env: {} });
 
     expect(result.status).toBe("warn");
-    expect(result.message).toContain("triage.judgment");
+    expect(result.message).toContain("reflect");
     expect(result.evidence).toMatchObject({
-      strategy: "sdk-triage-health",
-      unavailableProcesses: ["triage.judgment"],
+      strategy: "health-test",
+      unavailableProcesses: expect.arrayContaining(["reflect"]),
     });
-    expect(JSON.stringify(result)).not.toContain("PRIVATE_SDK_FALLBACK_TOKEN");
   });
 
-  test("disabled triage judgment neither requires credentials nor appears unavailable", () => {
+  test("disabled triage judgment neither requires a connection nor appears unavailable", () => {
     const parsed = validateConfigShape({
       configVersion: "0.9.0",
-      engines: {
-        ready: llm,
-        private: { ...llm, apiKey: "$PRIVATE_DISABLED_JUDGMENT_TOKEN" },
+      connections: {
+        default: lab,
+        private: { ...lab, apiKey: "$PRIVATE_DISABLED_JUDGMENT_TOKEN" },
       },
-      defaults: { llmEngine: "ready", improveStrategy: "disabled-triage-health" },
       improve: {
+        strategy: "disabled-triage-health",
         strategies: {
           "disabled-triage-health": {
-            processes: { triage: { enabled: true, judgment: { enabled: false, engine: "private" } } },
+            processes: { triage: { enabled: true, judgment: { enabled: false, connection: "private" } } },
           },
         },
       },
@@ -493,15 +318,15 @@ describe("health engine probes", () => {
     expect(JSON.stringify(result)).not.toContain("PRIVATE_DISABLED_JUDGMENT_TOKEN");
   });
 
-  test("names the resolved engine per process on the active-improve-strategy probe (#913)", () => {
+  test("names the resolved connection per process on the active-improve-strategy probe (#913)", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { lab: llm, default: { ...llm, endpoint: "https://default.example/v1/chat/completions" } },
-      defaults: { llmEngine: "default", improveStrategy: "pinned" },
+      connections: { lab, default: { ...lab, endpoint: "https://default.example/v1/chat/completions" } },
       improve: {
+        strategy: "pinned",
         strategies: {
-          pinned: { processes: { extract: { enabled: true, engine: "lab" } } },
+          pinned: { processes: { extract: { enabled: true, connection: "lab" } } },
         },
       },
     };
@@ -513,17 +338,12 @@ describe("health engine probes", () => {
     expect(result.message).toContain('extract: "lab"');
   });
 
-  test("fails when every enabled LLM-backed process of the active strategy is unavailable (#957)", () => {
+  test("warns, naming the processes, when every enabled model-calling process of a chosen strategy has no connection or harness (#957)", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      // No credentialed fallback engine anywhere — every default-strategy
-      // process that needs an LLM engine resolves to "private", whose
-      // credential is not in `env`. proactiveMaintenance stays enabled (it
-      // has no engine capability) so the plan does not hit the separate
-      // ALL-disabled ConfigError guard.
-      engines: { private: { ...llm, apiKey: "$PRIVATE_ALL_UNAVAILABLE_TOKEN" } },
-      defaults: { llmEngine: "private" },
+      // Nothing configured. proactiveMaintenance stays enabled (it has no engine
+      // capability) so the plan does not hit the separate ALL-disabled guard.
       improve: {
         strategies: {
           default: { processes: { proactiveMaintenance: { enabled: true } } },
@@ -533,61 +353,37 @@ describe("health engine probes", () => {
 
     const result = healthChecks.runActiveImproveStrategyProbe({ loadConfig: () => config, env: {} });
 
-    expect(result.status).toBe("fail");
+    expect(result.status).toBe("warn");
     expect(result.message).toContain("no-op");
     expect(result.evidence).toMatchObject({
       strategy: "default",
       unavailableProcesses: expect.arrayContaining(["reflect", "distill", "consolidate", "validation"]),
     });
-    expect(JSON.stringify(result)).not.toContain("PRIVATE_ALL_UNAVAILABLE_TOKEN");
   });
 
-  test("fails for the shipped default strategy with no non-LLM process enabled and every LLM engine credential-unavailable (#957 round 2)", () => {
-    // Reproduces the issue's exact scenario: the *unmodified* default
-    // strategy (proactiveMaintenance and triage left disabled, as shipped —
-    // no `improve.strategies` override at all) with every capability:"llm"
-    // process pointed at a credential-unavailable engine. This used to trip
-    // buildImprovePlan's ALL-disabled ConfigError guard (every process ends
-    // up disabled, not just the LLM-backed ones), which made
-    // `resolveImprovePlan` throw and fall into the probe's catch block —
-    // regressing this exact case from `warn` to `unknown`/`warn` with a
-    // misleading "engine that is not configured" message instead of the
-    // accurate credential-unavailable `fail`.
-    const config: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      engines: { private: { ...llm, apiKey: "$PRIVATE_DEFAULT_STRATEGY_TOKEN" } },
-      defaults: { llmEngine: "private" },
-    };
+  test("is unknown for the shipped default strategy on an install with nothing configured yet (#957 round 2)", () => {
+    const config: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "off" };
 
     const result = healthChecks.runActiveImproveStrategyProbe({ loadConfig: () => config, env: {} });
 
-    expect(result.status).toBe("fail");
+    expect(result.status).toBe("unknown");
     expect(result.message).toContain("no-op");
-    expect(result.message).not.toContain("is unavailable:");
     expect(result.evidence).toMatchObject({
       strategy: "default",
       unavailableProcesses: expect.arrayContaining(["reflect", "distill", "consolidate"]),
     });
-    expect(JSON.stringify(result)).not.toContain("PRIVATE_DEFAULT_STRATEGY_TOKEN");
   });
 
-  test("fails when only LLM-backed processes are enabled and nothing else — every one named in unavailableProcesses (#957 addendum)", () => {
-    // Unlike the #957 (proactiveMaintenance stays enabled) and #957 round 2
-    // (relies on memoryInference silently disappearing via the autonomy gate)
-    // cases above, this pins the strategy explicitly: every LLM-backed
-    // process this strategy could enable is enabled and shares the single
-    // credential-unavailable "private" engine; every non-LLM-backed process
-    // (proactiveMaintenance, triage) and the autonomy-gated memoryInference
-    // lane are explicitly off, so nothing is left to keep the check at warn.
+  test("a chosen strategy that could run nothing at all is unavailable, not a no-op (#957 addendum)", () => {
+    // Every model-calling process is enabled and nothing else is: with no connection or harness
+    // the plan cannot run anything, so the probe reports the plan's own refusal.
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { private: { ...llm, apiKey: "$PRIVATE_ONLY_LLM_TOKEN" } },
-      defaults: { llmEngine: "private" },
       improve: {
+        strategy: "only-models",
         strategies: {
-          default: {
+          "only-models": {
             processes: {
               reflect: { enabled: true },
               distill: { enabled: true },
@@ -605,14 +401,9 @@ describe("health engine probes", () => {
 
     const result = healthChecks.runActiveImproveStrategyProbe({ loadConfig: () => config, env: {} });
 
-    expect(result.status).toBe("fail");
-    expect(result.message).toContain("no-op");
-    const evidence = result.evidence as { strategy: string; unavailableProcesses: string[] };
-    expect(evidence.strategy).toBe("default");
-    expect([...evidence.unavailableProcesses].sort()).toEqual(
-      ["consolidate", "distill", "reflect", "validation"].sort(),
-    );
-    expect(JSON.stringify(result)).not.toContain("PRIVATE_ONLY_LLM_TOKEN");
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain("No improve process can run");
+    expect(result.evidence).toMatchObject({ strategy: "only-models" });
   });
 });
 
@@ -621,15 +412,14 @@ describe("health engine reachability probe (#914)", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { fast: llm },
-      defaults: { llmEngine: "fast" },
+      connections: { fast: lab },
     };
     const result = await runDefaultLlmEngineProbe({
       loadConfig: () => config,
       probeReachable: async () => ({ reachable: true }),
     });
     expect(result.status).toBe("pass");
-    expect(result.message).toBe('LLM engine "fast" is configured and reachable.');
+    expect(result.message).toBe('Connection "fast" is configured and reachable.');
     expect(result.evidence).toMatchObject({ probed: true, reachable: true });
   });
 
@@ -637,23 +427,22 @@ describe("health engine reachability probe (#914)", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { fast: llm },
-      defaults: { llmEngine: "fast" },
+      connections: { fast: lab },
     };
     const result = await runDefaultLlmEngineProbe({
       loadConfig: () => config,
       probeReachable: async () => ({ reachable: false, error: "connection refused" }),
     });
     expect(result.status).toBe("fail");
-    expect(result.message).toBe('LLM engine "fast" is not reachable: connection refused');
+    expect(result.message).toBe('Connection "fast" is not reachable: connection refused');
     expect(result.evidence).toMatchObject({ probed: true, reachable: false, error: "connection refused" });
   });
 
-  test("warns (not fails) a non-default configured engine that refuses connections", async () => {
+  test("warns (not fails) a configured connection that refuses connections", async () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { backup: llm },
+      connections: { backup: lab },
     };
     const result = await runConfiguredEnginesProbe({
       loadConfig: () => config,
@@ -667,21 +456,19 @@ describe("health engine reachability probe (#914)", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { fast: llm },
-      defaults: { llmEngine: "fast" },
+      connections: { fast: lab },
     };
     const result = await runDefaultLlmEngineProbe({ loadConfig: () => config });
     expect(result.status).toBe("pass");
-    expect(result.message).toBe('LLM engine "fast" is configured. Reachability was not probed.');
+    expect(result.message).toBe('Connection "fast" is configured. Reachability was not probed.');
     expect(result.evidence).toMatchObject({ probed: false, reachable: null });
   });
 
-  test("does not probe when the required credential is unavailable", async () => {
+  test("does not probe when the key is unavailable", async () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { improve: { ...llm, apiKey: "$PRIVATE_NO_PROBE_TOKEN" } },
-      defaults: { llmEngine: "improve" },
+      connections: { improve: { ...lab, apiKey: "$PRIVATE_NO_PROBE_TOKEN" } },
     };
     let probeCalls = 0;
     const result = await runDefaultLlmEngineProbe({
@@ -694,15 +481,14 @@ describe("health engine reachability probe (#914)", () => {
     });
     expect(probeCalls).toBe(0);
     expect(result.status).toBe("warn");
-    expect(result.message).toContain("required credential is unavailable");
+    expect(result.message).toContain("its key is unavailable");
   });
 
   test("probes a shared endpoint once across default-llm-engine and configured-engines", async () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { primary: llm, mirror: { ...llm } },
-      defaults: { llmEngine: "primary" },
+      connections: { default: lab, mirror: { ...lab } },
     };
     let probeCalls = 0;
     const result = await healthChecks.runHealthEngineProbes({
@@ -721,8 +507,7 @@ describe("health engine reachability probe (#914)", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { down: llm },
-      defaults: { llmEngine: "down" },
+      connections: { down: lab },
     };
     const result = await healthChecks.runHealthEngineProbes({
       loadConfig: () => config,
@@ -731,25 +516,5 @@ describe("health engine reachability probe (#914)", () => {
     expect(result.defaultLlmEngine.status).toBe("fail");
     expect(result.defaultLlmEngine.message).toContain("connection refused");
     expect(result.configuredEngines.status).toBe("warn");
-  });
-
-  test("probes an SDK engine's LLM fallback connection", async () => {
-    const config: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      engines: {
-        sdk: { kind: "agent", platform: "opencode-sdk", bin: "opencode-test", llmEngine: "fallback" },
-        fallback: llm,
-      },
-      defaults: { engine: "sdk", llmEngine: "fallback" },
-    };
-    const result = await runDefaultEngineProbe({
-      loadConfig: () => config,
-      spawnSync: (() => ({ status: 0 })) as never,
-      probeReachable: async () => ({ reachable: false, error: "ECONNREFUSED" }),
-    });
-    expect(result.status).toBe("warn");
-    expect(result.message).toContain("its LLM fallback is not reachable: ECONNREFUSED");
-    expect(result.evidence).toMatchObject({ probed: true, reachable: false });
   });
 });

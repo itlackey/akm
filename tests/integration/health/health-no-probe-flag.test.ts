@@ -62,10 +62,7 @@ async function withNoRealCrontab<T>(fn: () => Promise<T>): Promise<T> {
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
   writeSandboxConfig({
-    engines: {
-      lab: { kind: "llm", endpoint: "http://127.0.0.1:9/v1/chat/completions", model: "test-model" },
-    },
-    defaults: { llmEngine: "lab" },
+    connections: { lab: { endpoint: "http://127.0.0.1:9/v1/chat/completions", models: { fast: "test-model" } } },
   });
 });
 

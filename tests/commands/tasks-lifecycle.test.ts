@@ -354,8 +354,7 @@ describe("task lifecycle failure handling", () => {
       bundles: { stash: { path: storage.stashDir, writable: true } },
       defaultBundle: "stash",
       semanticSearchMode: "off",
-      engines: { reviewer: { kind: "agent", platform: "opencode", bin: "fake-agent" } },
-      defaults: { engine: "reviewer" },
+      harnesses: { reviewer: { platform: "opencode", bin: "fake-agent" } },
     });
 
     const warnings: unknown[][] = [];
@@ -388,8 +387,7 @@ describe("task lifecycle failure handling", () => {
       bundles: { stash: { path: storage.stashDir, writable: true } },
       defaultBundle: "stash",
       semanticSearchMode: "off",
-      engines: { reviewer: { kind: "agent", platform: "opencode", bin: "fake-agent" } },
-      defaults: { engine: "reviewer" },
+      harnesses: { reviewer: { platform: "opencode", bin: "fake-agent" } },
     });
 
     const result = await akmTasksAdd(
