@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { setConfigValue, unsetConfigValue } from "../src/commands/config-cli";
 import { resolveImproveExecution } from "../src/commands/improve/execution";
 import { resolveQualityGateJudge } from "../src/commands/improve/stage";
 import { stripJsonComments } from "../src/core/common";
@@ -25,6 +26,7 @@ import {
 } from "../src/core/config/config";
 import { AkmConfigSchema } from "../src/core/config/config-schema";
 import { convertEngineConfig } from "../src/core/config/convert-engines";
+import { UsageError } from "../src/core/errors";
 import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { withEnvSync } from "./_helpers/sandbox";
@@ -707,6 +709,55 @@ describe("the loader reads the retired form in memory", () => {
     // The retired form still reads as it did.
     resetConfigCache();
     expect(Object.keys(loadUserConfig().connections ?? {})).toEqual(["default"]);
+  });
+
+  describe("removing what the engines form supplies", () => {
+    const engines = {
+      configVersion: "0.9.0",
+      engines: { lab: llm(), other: llm({ endpoint: "http://other/v1/chat/completions" }), claude: { kind: "agent" } },
+      defaults: { llmEngine: "lab", improveStrategy: "default" },
+    };
+
+    /** The one refusal an edit that removes converted keys gets, and the file it leaves alone. */
+    function refused(edit: (current: AkmConfig) => AkmConfig): string {
+      writeConfig(engines);
+      const before = fs.readFileSync(getConfigPath(), "utf8");
+      let message = "";
+      try {
+        mutateConfig(edit);
+      } catch (error) {
+        expect(error).toBeInstanceOf(UsageError);
+        message = (error as Error).message;
+      }
+      expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
+      return message;
+    }
+
+    test.each([
+      ["config unset connections.other", (current: AkmConfig) => unsetConfigValue(current, "connections.other")],
+      ["config unset improve.strategy", (current: AkmConfig) => unsetConfigValue(current, "improve.strategy")],
+      ["setup disabling agentic features", (current: AkmConfig) => ({ ...current, harnesses: {} })],
+    ])("%s is refused, naming akm migrate apply, and changes nothing", (_name, edit) => {
+      expect(refused(edit)).toContain("akm migrate");
+    });
+
+    test("one message names every converted key the edit removes", () => {
+      const message = refused((current) => ({ ...current, connections: {}, harnesses: {} }));
+      expect(message).toContain("connections.default");
+      expect(message).toContain("connections.other");
+      expect(message).toContain("harnesses.claude");
+    });
+
+    test("adding or changing a converted key still writes, and removal works once the file is converted", () => {
+      writeConfig(engines);
+      mutateConfig((current) => setConfigValue(current, "connections.other.timeoutMs", "5000"));
+      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).connections.other).toEqual({ timeoutMs: 5000 });
+
+      expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+      resetConfigCache();
+      mutateConfig((current) => unsetConfigValue(current, "connections.other"));
+      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).connections.other).toBeUndefined();
+    });
   });
 
   test("akm migrate apply writes the converted config, dropping nothing it could carry over", () => {

@@ -9,7 +9,7 @@ import { isDeepStrictEqual } from "node:util";
 import { isBundleSlug } from "../asset/asset-ref";
 import { deriveBundleId } from "../bundle-id";
 import { isRecord, resolveStashDir } from "../common";
-import { ConfigError } from "../errors";
+import { ConfigError, UsageError } from "../errors";
 import { isRefToken, substituteRefTokens } from "../ref-token";
 import { formatRegistryLabel, hasRegistryUrlCredentials } from "../registry-url";
 import {
@@ -909,11 +909,21 @@ function pruneUnchangedInheritedFields(before: unknown, after: unknown, localRaw
  * the schema does not know). Only the paths that changed are written, at the same
  * path in `target`; an object the file lacks gets only the changed part. The
  * keys of a nested map follow `after`, which is how a mutation says where it
- * inserted one (`bundles`); the top level keeps the file's authored order.
+ * inserted one (`bundles`); the top level keeps the file's authored order. A
+ * removal of a key the document does not hold is left undone and recorded in
+ * `unremoved`, with the path of the key.
  */
-function applyEdit(target: Record<string, unknown>, before: Record<string, unknown>, after: Record<string, unknown>) {
+function applyEdit(
+  target: Record<string, unknown>,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  unremoved: string[][] = [],
+  at: readonly string[] = [],
+): void {
   for (const key of Object.keys(before)) {
-    if (!Object.hasOwn(after, key)) delete target[key];
+    if (Object.hasOwn(after, key)) continue;
+    if (Object.hasOwn(target, key)) delete target[key];
+    else unremoved.push([...at, key]);
   }
   for (const [key, value] of Object.entries(after)) {
     const was = before[key];
@@ -927,7 +937,7 @@ function applyEdit(target: Record<string, unknown>, before: Record<string, unkno
       continue;
     }
     const part = existing ?? {};
-    applyEdit(part, isPlainObject(was) ? was : {}, value);
+    applyEdit(part, isPlainObject(was) ? was : {}, value, unremoved, [...at, key]);
     followKeyOrder(part, value);
     if (existing !== undefined || Object.keys(part).length > 0) target[key] = part;
   }
@@ -956,6 +966,7 @@ function editedConfigFile(
   current: AkmConfig,
   next: AkmConfig,
   persistTopLevelKeys: readonly (keyof AkmConfig)[] = [],
+  unremoved: string[][] = [],
 ): Record<string, unknown> {
   // A first write keeps the established full-default scaffold. Besides being
   // useful to a new user, the add -> rejected-install -> remove lifecycle
@@ -966,7 +977,7 @@ function editedConfigFile(
   // add -> remove lifecycle writes the same logical object twice and must come
   // back byte for byte.
   const body = structuredClone(document);
-  applyEdit(body, current, next);
+  applyEdit(body, current, next, unremoved);
   // A caller may need to persist an explicit user choice even when it equals the
   // schema default. Interactive setup uses this for semanticSearchMode: "off"
   // means the user declined the opt-in, not an incidental default.
@@ -975,6 +986,27 @@ function editedConfigFile(
   }
   body.configVersion = CURRENT_CONFIG_VERSION;
   return body;
+}
+
+/**
+ * A file still in the retired `engines` form holds `engines` and `defaults`, not
+ * the `connections`, `harnesses` and `improve` keys the reader makes of them, so
+ * removing one of those is a change the file cannot take: the next load would
+ * bring it back. Refuse it, once, until `akm migrate apply` has converted the file.
+ */
+function refuseRemovalFromRetiredForm(
+  unremoved: readonly string[][],
+  document: Record<string, unknown> | undefined,
+  converted: Record<string, unknown> | undefined,
+): void {
+  const fromRetiredForm = unremoved.filter(
+    (keyPath) => hasRawPath(converted, [...keyPath]) && !hasRawPath(document, [...keyPath]),
+  );
+  if (fromRetiredForm.length === 0) return;
+  throw new UsageError(
+    `Cannot remove ${fromRetiredForm.map((keyPath) => keyPath.join(".")).join(", ")}: it comes from the retired engines form this config.json still uses. ` +
+      "Run `akm migrate apply` to convert the file, then repeat the change.",
+  );
 }
 
 /**
@@ -1090,9 +1122,12 @@ export function mutateConfig(
     const mutated = mutate(current);
     if (mutated === current) return { config: current, written: false };
     const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
+    const unremoved: string[][] = [];
+    const body = editedConfigFile(document, current, next, [], unremoved);
+    refuseRemovalFromRetiredForm(unremoved, document, localRaw);
     if (text !== undefined) backupExistingConfig(configPath);
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    writeConfigAtomic(configPath, sanitizeConfigForWrite(editedConfigFile(document, current, next) as AkmConfig));
+    writeConfigAtomic(configPath, sanitizeConfigForWrite(body as AkmConfig));
     return { config: next, written: true };
   });
 }
@@ -1118,14 +1153,14 @@ export async function mutateConfigWithPrecommit<T>(
       localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
     const mutated = mutate(current);
     const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
+    const unremoved: string[][] = [];
+    const body = editedConfigFile(document, current, next, options?.persistTopLevelKeys, unremoved);
+    if (mutated !== current) refuseRemovalFromRetiredForm(unremoved, document, localRaw);
     if (text !== undefined) backupExistingConfig(configPath);
     const precommitResult = await precommit(next);
     if (mutated === current) return { config: current, written: false, precommit: precommitResult };
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    writeConfigAtomic(
-      configPath,
-      sanitizeConfigForWrite(editedConfigFile(document, current, next, options?.persistTopLevelKeys) as AkmConfig),
-    );
+    writeConfigAtomic(configPath, sanitizeConfigForWrite(body as AkmConfig));
     return { config: next, written: true, precommit: precommitResult };
   } finally {
     release();
