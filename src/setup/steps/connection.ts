@@ -169,21 +169,21 @@ const LLM_PRESETS: LlmPreset[] = [
     label: "Anthropic Claude (OpenAI SDK compat beta)",
     endpoint: "https://api.anthropic.com/v1/chat/completions",
     defaultModel: "claude-sonnet-4-5",
-    hint: "beta OpenAI-compat layer; set AKM_LLM_API_KEY; override the model if the default is unavailable",
+    hint: 'beta OpenAI-compat layer; apiKey: "$VAR" required; override the model if the default is unavailable',
   },
   {
     value: "openai",
     label: "OpenAI",
     endpoint: "https://api.openai.com/v1/chat/completions",
     defaultModel: "gpt-4o-mini",
-    hint: "AKM_LLM_API_KEY required",
+    hint: 'apiKey: "$VAR" required',
   },
   {
     value: "google",
     label: "Google Gemini (OpenAI-compat)",
     endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
     defaultModel: "gemini-2.0-flash",
-    hint: "OpenAI-compat endpoint, AKM_LLM_API_KEY required",
+    hint: 'OpenAI-compat endpoint, apiKey: "$VAR" required',
   },
 ];
 
@@ -319,14 +319,10 @@ export async function stepLlm(
     llm = llmConnection(preset.value, preset.endpoint, model.trim() || preset.defaultModel);
   }
 
-  // Remind the user about API key placement. We do not offer a "store in config"
-  // option because saveConfig() strips apiKey fields before writing — persisting
-  // secrets would need an encrypted/secure store that we don't ship.
+  // Setup stores no key; remind the user to reference one.
   const needsKey = llm.provider !== "ollama" && !llm.endpoint.includes("localhost");
-  if (needsKey && !process.env.AKM_LLM_API_KEY) {
-    p.log.info(
-      "This provider requires an API key. Set AKM_LLM_API_KEY in your shell (e.g. `export AKM_LLM_API_KEY=...`) before running `akm index`.",
-    );
+  if (needsKey && llm.apiKey === undefined) {
+    p.log.info('This provider requires an API key: reference it on the connection as `apiKey: "$VAR"`.');
   }
 
   // Capability probe — best-effort, never blocks setup.
@@ -388,7 +384,7 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
     });
   }
   providerOptions.push(
-    { value: "openai", label: "OpenAI", hint: "requires AKM_LLM_API_KEY" },
+    { value: "openai", label: "OpenAI", hint: 'requires apiKey: "$VAR"' },
     { value: "lmstudio", label: "LM Studio / local server", hint: lmStudioOptionHint(lmStudio) },
     { value: "custom", label: "Custom OpenAI-compatible endpoint" },
     { value: "skip", label: "Skip — disable enrichment features" },
@@ -462,9 +458,7 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
     const currentOpenAiModel =
       currentLlmSmall?.provider === "openai" ? (currentLlmSmall.model ?? "gpt-4o-mini") : "gpt-4o-mini";
     const model = await promptModelName({ placeholder: currentOpenAiModel, defaultValue: currentOpenAiModel });
-    if (!process.env.AKM_LLM_API_KEY) {
-      p.log.info("Set AKM_LLM_API_KEY in your shell before running `akm index`.");
-    }
+    p.log.info('OpenAI requires an API key: reference it on the connection as `apiKey: "$VAR"`.');
     llm = llmConnection("openai", "https://api.openai.com/v1/chat/completions", model.trim() || currentOpenAiModel);
   } else if (providerChoice === "lmstudio") {
     const currentLmsEndpoint =

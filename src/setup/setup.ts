@@ -738,12 +738,12 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   if (embedding?.apiKey === undefined && embedding?.provider !== "ollama") {
     // Only remind about API keys for non-Ollama remote providers
     if (embedding?.endpoint && !embedding.endpoint.includes("localhost")) {
-      p.log.info("Reminder: Set your embedding API key via the AKM_EMBED_API_KEY environment variable.");
+      p.log.info('Reminder: reference your embedding API key as `apiKey: "$VAR"`.');
     }
   }
   if (llm?.apiKey === undefined && llm?.provider !== "ollama") {
     if (llm?.endpoint && !llm.endpoint.includes("localhost")) {
-      p.log.info("Reminder: Set your LLM API key via the AKM_LLM_API_KEY environment variable.");
+      p.log.info('Reminder: reference your LLM API key as `apiKey: "$VAR"` on the connection.');
     }
   }
 
