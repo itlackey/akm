@@ -302,6 +302,75 @@ describe("a key in the older flat form", () => {
   });
 });
 
+describe("a flat key named like a namespace", () => {
+  const SERVICE = "https://embed.example.test/v1";
+  const endpoints = (named: Record<string, string>) => (slot: Parameters<typeof readCredential>[0]) =>
+    named["connection" in slot ? `connection:${slot.connection}` : `service:${slot.service}`];
+
+  for (const name of ["connections", "services"] as const) {
+    test(`"${name}" as a key is told from the namespace by its shape, and filed under its connection`, () => {
+      writeStoreFile({ [name]: "reserved-key" });
+      const result = fileFlatCredentials(endpoints({ [`connection:${name}`]: LAB }), true);
+
+      expect(result.filed).toEqual([name]);
+      expect(readStoreFile()).toEqual({ connections: { [name]: { key: "reserved-key", endpoint: LAB } } });
+      expect(readCredential({ connection: name }, LAB)).toBe("reserved-key");
+    });
+
+    test(`a write to another slot stops while "${name}" holds a key, and the key is not erased`, () => {
+      writeStoreFile({ [name]: "reserved-key" });
+      const before = fs.readFileSync(storePath(), "utf8");
+      const slot = name === "connections" ? lab : embedding;
+
+      expect(() => writeCredential(slot, "new-key", LAB)).toThrow(/older form.*refusing to overwrite/);
+      expect(fs.readFileSync(storePath(), "utf8")).toBe(before);
+    });
+  }
+
+  test("a key it cannot file stays, blocks the keys that would replace it, and is filed on a later run", () => {
+    writeStoreFile({ connections: "reserved-key", services: "other-key", lab: "lab-key", embedding: "embed-key" });
+    const before = fs.readFileSync(storePath(), "utf8");
+
+    const stuck = fileFlatCredentials(endpoints({ "connection:lab": LAB, "service:embedding": SERVICE }), true);
+    expect(stuck.filed).toEqual([]);
+    expect(stuck.notes.join("\n")).toContain('the key "lab" cannot be filed while the key "connections"');
+    expect(stuck.notes.join("\n")).toContain('the key "embedding" cannot be filed while the key "services"');
+    expect(fs.readFileSync(storePath(), "utf8")).toBe(before);
+
+    const later = fileFlatCredentials(
+      endpoints({
+        "connection:connections": LAB,
+        "connection:services": LAB,
+        "connection:lab": LAB,
+        "service:embedding": SERVICE,
+      }),
+      true,
+    );
+    expect([...later.filed].sort()).toEqual(["connections", "embedding", "lab", "services"]);
+    expect(readStoreFile()).toEqual({
+      connections: {
+        connections: { key: "reserved-key", endpoint: LAB },
+        services: { key: "other-key", endpoint: LAB },
+        lab: { key: "lab-key", endpoint: LAB },
+      },
+      services: { embedding: { key: "embed-key", endpoint: SERVICE } },
+    });
+  });
+
+  test("the namespace object of the same name is not a flat key", () => {
+    writeStoreFile({
+      connections: { lab: { key: "k", endpoint: LAB } },
+      services: { embedding: { key: "e", endpoint: SERVICE } },
+    });
+    const before = fs.readFileSync(storePath(), "utf8");
+
+    expect(fileFlatCredentials(() => LAB, true).filed).toEqual([]);
+    expect(fs.readFileSync(storePath(), "utf8")).toBe(before);
+    writeCredential(lab, "k2", LAB);
+    expect(readCredential(lab, LAB)).toBe("k2");
+  });
+});
+
 describe("resolveApiKey", () => {
   test("a $VAR reference reads that variable and never the store", () => {
     writeCredential(lab, "stored", LAB);

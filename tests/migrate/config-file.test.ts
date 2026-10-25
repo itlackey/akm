@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig, normalizeConfigFile, resetConfigCache } from "../../src/core/config/config";
-import { readCredential, writeCredential } from "../../src/core/config/credentials";
+import { type CredentialSlot, readCredential, writeCredential } from "../../src/core/config/credentials";
 import { getCacheDir, getConfigDir, getConfigPath } from "../../src/core/paths";
 import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -388,6 +388,42 @@ describe("a key credentials.json holds in the older flat form", () => {
     });
     expect(result.notes?.join("\n")).toContain('connection "cloud" already holds a different key or endpoint');
   });
+});
+
+describe("a flat key named connections or services", () => {
+  for (const name of ["connections", "services"]) {
+    test(`"${name}" is filed under the connection of that name, and a retry finds it when the first run could not`, () => {
+      fs.writeFileSync(credentialsPath(), JSON.stringify({ [name]: "SYNTHETIC_RESERVED_KEY" }));
+      writeConfig({ connections: { other: { endpoint: "https://other.invalid/v1", models: { fast: "m" } } } });
+
+      // No connection of that name yet: the key stays, and nothing else can be stored over it.
+      const first = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+      expect(first.notes?.join("\n")).toContain(`the key "${name}" belongs to no block`);
+      expect(storedKeys()).toEqual({ [name]: "SYNTHETIC_RESERVED_KEY" });
+      const neighbour = name === "connections" ? { connection: "other" } : { service: "embedding" };
+      expect(() =>
+        writeCredential(neighbour as CredentialSlot, "SYNTHETIC_NEW_KEY", "https://other.invalid/v1"),
+      ).toThrow(/older form/);
+      expect(storedKeys()).toEqual({ [name]: "SYNTHETIC_RESERVED_KEY" });
+
+      writeConfig({
+        connections: {
+          other: { endpoint: "https://other.invalid/v1", models: { fast: "m" } },
+          [name]: { endpoint: "https://reserved.invalid/v1", models: { fast: "m" } },
+        },
+      });
+      resetConfigCache();
+      const retry = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+      expect(retry.credentials).toEqual([name]);
+      expect(storedKeys()).toEqual({
+        connections: { [name]: { key: "SYNTHETIC_RESERVED_KEY", endpoint: "https://reserved.invalid/v1" } },
+      });
+      expect(readCredential({ connection: name }, "https://reserved.invalid/v1")).toBe("SYNTHETIC_RESERVED_KEY");
+      writeCredential(neighbour as CredentialSlot, "SYNTHETIC_NEW_KEY", "https://other.invalid/v1");
+      expect(readCredential({ connection: name }, "https://reserved.invalid/v1")).toBe("SYNTHETIC_RESERVED_KEY");
+    });
+  }
 });
 
 describe("the entries the reader drops", () => {

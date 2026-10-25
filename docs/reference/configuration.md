@@ -330,7 +330,10 @@ akm reads an API key from one of two places, and nowhere else:
   that block, after copying `credentials.json` to `<cache dir>/config-backups/`.
   A block that already has a stored key is never overwritten by it: the same key
   for the same endpoint just drops the older entry, and any other leaves both in
-  the file, with a note.
+  the file, with a note. A flat key called `connections` or `services` (a
+  connection of that name) is told from the namespace of that name by its shape and
+  filed first; until it is, a write that would replace it stops with an error
+  instead.
 
 `akm setup` asks for a key at a masked prompt and stores it in
 `credentials.json` for the endpoint it was typed for; `--api-key-env NAME` sets

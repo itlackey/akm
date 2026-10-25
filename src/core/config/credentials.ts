@@ -156,10 +156,22 @@ function writableStore(): Record<string, unknown> {
   return store.entries;
 }
 
-/** Store `key` for `slot` and `endpoint`, keeping every other entry as it is. */
+/**
+ * Store `key` for `slot` and `endpoint`, keeping every other entry as it is. A root
+ * `connections` or `services` that is not an object is a key of the older flat form
+ * (a connection of that name) in the namespace's place: it is kept, and the write stops,
+ * because the write would replace it. `akm migrate apply` files it under its endpoint.
+ */
 export function writeCredential(slot: CredentialSlot, key: string, endpoint: string): void {
   const entries = writableStore();
   const { group, name } = namespaceOf(slot);
+  const root = entries[group];
+  if (root !== undefined && !isRecord(root)) {
+    throw new ConfigError(
+      `${storePath()}: "${group}" holds ${typeof root === "string" ? "a key in the older form" : "something that is not an object"}, which is where the ${group} are stored, so ${describeSlot(slot)} cannot be stored beside it; refusing to overwrite it. ${typeof root === "string" ? "`akm migrate apply` files it under its endpoint; then store this key again." : "Fix the file, then store this key again."}`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
   writeStore({ ...entries, [group]: { ...groupOf(entries, group), [name]: { key, endpoint } } });
 }
 
@@ -249,8 +261,15 @@ export function fileFlatCredentials(
   const entries = { ...store.entries };
   const filed: string[] = [];
   const notes: string[] = [];
-  for (const [name, value] of Object.entries(store.entries)) {
-    if (typeof value !== "string" || (NAMESPACES as readonly string[]).includes(name)) continue;
+  // A key called `connections` or `services` is told from the namespace of that name by its shape: a string. It sits
+  // where the namespace goes, so it is filed first, and until it is, no other key can be filed into that namespace.
+  const rank = (name: string): number => {
+    const index = (NAMESPACES as readonly string[]).indexOf(name);
+    return index < 0 ? NAMESPACES.length : index;
+  };
+  for (const name of Object.keys(store.entries).sort((a, b) => rank(a) - rank(b))) {
+    const value = store.entries[name];
+    if (typeof value !== "string") continue;
     const slots: CredentialSlot[] =
       name === "curateRerank"
         ? [{ service: "curateRerank" }]
@@ -270,6 +289,13 @@ export function fileFlatCredentials(
       );
       continue;
     }
+    const { group, name: slotName } = namespaceOf(home.slot);
+    if (name !== group && entries[group] !== undefined && !isRecord(entries[group])) {
+      notes.push(
+        `credentials.json: the key "${name}" cannot be filed while the key "${group}" in the older form holds the place the ${group} go. It stays as it is; give the block called "${group}" an endpoint so it can be filed first, or remove it.`,
+      );
+      continue;
+    }
     const ahead = pending.find((move) => JSON.stringify(move.slot) === JSON.stringify(home.slot));
     const standing = slotStanding(
       home.slot,
@@ -283,11 +309,11 @@ export function fileFlatCredentials(
       );
       continue;
     }
-    if (standing === "free") {
-      const { group, name: slotName } = namespaceOf(home.slot);
+    if (standing === "free" || name === group) {
       entries[group] = { ...groupOf(entries, group), [slotName]: { key: value, endpoint: home.endpoint } };
     }
-    delete entries[name];
+    // The key called like its own namespace has just become that namespace's child, in the same place.
+    if (name !== group) delete entries[name];
     filed.push(name);
     notes.push(
       standing === "free"
