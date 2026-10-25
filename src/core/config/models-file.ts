@@ -10,7 +10,8 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { getCacheDir, getConfigDir } from "../paths";
+import { getConfigDir } from "../paths";
+import { copyToConfigBackups } from "./config-io";
 
 function modelsFilePath(): string {
   return path.join(getConfigDir(), "models.json");
@@ -31,10 +32,7 @@ export function modelsFileExists(): boolean {
 
 /** Move `models.json` to `<cacheDir>/config-backups/models.json.<timestamp>` and return where it went. */
 export function retireModelsFile(now = new Date()): string {
-  const backupDir = path.join(getCacheDir(), "config-backups");
-  fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
-  const target = path.join(backupDir, `models.json.${now.toISOString().replace(/[.:]/g, "-")}`);
-  fs.copyFileSync(modelsFilePath(), target, fs.constants.COPYFILE_EXCL);
+  const target = copyToConfigBackups(modelsFilePath(), (stamp) => `models.json.${stamp}`, now);
   fs.rmSync(modelsFilePath());
   return target;
 }
