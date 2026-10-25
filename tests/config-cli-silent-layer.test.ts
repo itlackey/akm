@@ -121,6 +121,27 @@ describe("akm config unset on an entry the reader drops", () => {
     expect(after).toBe(before);
   });
 
+  test("on a file still in the engines form the hint says to run akm migrate apply first", async () => {
+    const result = await withEnv(freshEnv(), async () => {
+      const file = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      // An LLM engine with no endpoint: the reader reads it as a connection it then drops.
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          configVersion: "0.9.0",
+          engines: { draft: { kind: "llm", model: "m" } },
+          defaults: { llmEngine: "draft" },
+        }),
+      );
+      return runCliCapture(["config", "unset", "connections.default.models"]);
+    });
+    expect(result.code).toBe(2);
+    const envelope = JSON.parse(result.stderr.slice(result.stderr.indexOf("{"))) as { hint?: string };
+    expect(envelope.hint).toContain("akm migrate apply");
+    expect(envelope.hint).not.toContain("by hand");
+  });
+
   test("an entry an extends base completes is in use: a key inside it is unset as ever", async () => {
     const { result, local } = await withEnv(freshEnv(), async () => {
       const dir = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm");

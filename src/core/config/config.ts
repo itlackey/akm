@@ -1060,20 +1060,24 @@ function configWriteBody(
  * The connection or harness that `key` (`connections.<name>[.…]`,
  * `harnesses.<name>[.…]`) is inside, when the reader drops it: this file holds it
  * and nothing, an `extends` base included, completes it. `akm config` cannot edit
- * an entry it cannot see.
+ * an entry it cannot see. `inFile` says whether the file itself holds the entry
+ * under that name, or it comes from the retired `engines` form.
  */
-export function unusableEntryAt(key: string): (UnusableEntry & { group: "connections" | "harnesses" }) | undefined {
+export function unusableEntryAt(
+  key: string,
+): (UnusableEntry & { group: "connections" | "harnesses"; inFile: boolean }) | undefined {
   const [group, name] = key.split(".");
   if (group !== "connections" && group !== "harnesses") return undefined;
   const configPath = getConfigPath();
   const text = readConfigText(configPath);
   if (text === undefined) return undefined;
-  const localRaw = readRetiredEngines(readConfigFile(text, configPath), configPath);
+  const document = readConfigFile(text, configPath);
+  const localRaw = readRetiredEngines(document, configPath);
   const entry = findUnusableEntries(localRaw).find(
     (found) => found.name === name && found.kind === (group === "connections" ? "connection" : "harness"),
   );
   if (!entry || Object.hasOwn(buildEffectiveConfig(localRaw, configPath)[group] ?? {}, entry.name)) return undefined;
-  return { ...entry, group };
+  return { ...entry, group, inFile: isRecord(document[group]) && Object.hasOwn(document[group], entry.name) };
 }
 
 export interface ConfigFileNormalization {
