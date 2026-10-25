@@ -17,6 +17,7 @@ Full per-directory indexes: [Guides](guides/README.md),
 - [Getting Started](guides/getting-started.md) -- Install akm, connect a source, and pull a curated shortlist in five to seven minutes
 - [Concepts](guides/concepts.md) -- Capabilities, bundles, adapters, asset types, and refs -- the mental model in one page
 - [Agent Install Guide](agents/agent-install.md) -- Step-by-step automated (non-interactive) install for agents
+- [Upgrade from 0.9 to 0.10](migration/v0.9-to-v0.10.md) -- The current upgrade path: the order to follow, every removed CLI spelling, config key and workflow feature with its replacement, and what a scheduled `akm improve` now does
 - `akm hints` (complete guide by default; `akm hints --detail brief` for the short one) -- The CLI reference agents load to use akm; always the embedded corpus at `src/assets/hints/cli-hints-{full,short}.md`
 
 ## Use
@@ -32,7 +33,6 @@ the task needs, and capture what you learn along the way.
 - [Environment & Secrets](reference/env-and-secrets.md) -- `akm env` and `akm secret`: exact operations, file modes, and the security guarantee
 - [Run Workflows](guides/run-workflows.md) -- Start or continue a run, check on it, resume it, or abandon it
 - [Scheduling](guides/scheduling.md) -- Run akm tasks through the OS scheduler (cron / launchd / schtasks) safely
-- [Migrate to 0.9.2](migration/v0.9.1-to-v0.9.2.md) -- Convert task-v2 sources safely and understand workflow resume compatibility
 - [Improve the Library](guides/improve-the-library.md) -- Feedback, history, and proposals -- how evidence turns into reviewable changes
 - Recipes: [Turn a Website into a Searchable Bundle](guides/recipes/website-source.md), [Headless Install](guides/recipes/headless-install.md)
 
@@ -56,7 +56,7 @@ Working on akm itself, not just using it.
 - [CLI](reference/cli.md) -- All `akm` commands and flags
 - [Configuration](reference/configuration.md) -- Connections, harnesses, strategies, bundles, and settings
 - [Supported Formats](reference/supported-formats.md) -- Every bundle format akm recognizes, its detection marker, and current read/write support
-- [Tasks](reference/tasks.md) -- Task-v3 files, targets, triggers, and fail-closed migration
+- [Tasks](reference/tasks.md) -- Task source v4 files, targets, triggers, and the explicit `akm migrate apply` conversion of v2 and v3 files
 - [Asset Types](reference/asset-types.md) -- The capability taxonomy, directory conventions, and per-type examples
 - [Refs](reference/refs.md) -- The ref grammar `akm search` emits and `akm show` consumes
 - [Memory](reference/memory.md) -- The `memory` asset type: capture, belief states, and derived memories
@@ -73,7 +73,7 @@ Working on akm itself, not just using it.
 - [Specs](architecture/README.md#specs-specs) -- Normative specifications (ref grammar, OKF support)
 - [Internals](architecture/README.md#internals-internals) -- Current-truth subsystem references (storage, indexing, classification, improve, health)
 - [Testing](architecture/README.md#testing-testing) -- Testing workflow
-- [Migration](migration/README.md) -- Upgrade guides and per-release migration notes
+- [Migration](migration/README.md) -- The current 0.9 to 0.10 upgrade guide, then the historical guides and per-release notes of earlier releases
 
 ## Execution boundary
 
