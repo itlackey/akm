@@ -32,7 +32,6 @@ import type {
   SessionRef,
   SessionSummary,
 } from "../../src/integrations/session-logs/types";
-import { _markJsonSchemaUnsupportedForTests } from "../../src/llm/client";
 import {
   type ExtractedSessionRow,
   getExtractedSession,
@@ -41,6 +40,7 @@ import {
   shouldSkipAlreadyExtractedSession,
   upsertExtractedSession,
 } from "../../src/storage/repositories/extract-sessions-repository";
+import { rejectJsonSchemaOn } from "../_helpers/json-schema-endpoint";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 // hashSessionContent (#602) is reached via the namespace import for ESM-safety;
@@ -758,7 +758,7 @@ describe("akmExtract — skip-already-extracted (content-hash)", () => {
     const config = configEnabled(stash);
     const connection = config.connections?.default;
     if (!connection) throw new Error("test fixture requires the default connection");
-    _markJsonSchemaUnsupportedForTests({ endpoint: connection.endpoint, model: "test-model" });
+    await rejectJsonSchemaOn({ endpoint: connection.endpoint, model: "test-model" });
     const malformed = "PRIVATE_SENTINEL: prose without a JSON object";
     let chatCalls = 0;
 

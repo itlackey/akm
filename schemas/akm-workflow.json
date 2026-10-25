@@ -86,7 +86,7 @@
       "properties": {
         "temperature": { "type": "number" },
         "max_tokens": { "type": "integer", "minimum": 1 },
-        "supports_json_schema": { "type": "boolean" },
+        "supports_json_schema": { "description": "Retired and ignored: akm retries without a schema when the endpoint rejects one.", "type": "boolean" },
         "extra_params": { "$ref": "#/definitions/extraParams" },
         "context_length": { "type": "integer", "minimum": 1 },
         "enable_thinking": { "type": "boolean" },

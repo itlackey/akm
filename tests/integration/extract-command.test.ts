@@ -38,7 +38,6 @@ import type {
   SessionRef,
   SessionSummary,
 } from "../../src/integrations/session-logs/types";
-import { _markJsonSchemaUnsupportedForTests } from "../../src/llm/client";
 import {
   getExtractedSession,
   getExtractedSessionsMap,
@@ -47,6 +46,7 @@ import {
 import { recordImproveLedger } from "../../src/storage/repositories/improve-ledger-repository";
 import { codexMessage, writeCodexRollout } from "../_helpers/codex-rollout";
 import { durableItemRef } from "../_helpers/durable-ref";
+import { rejectJsonSchemaOn } from "../_helpers/json-schema-endpoint";
 import { asLlmRunner } from "../_helpers/llm-runner";
 import {
   type IsolatedAkmStorage,
@@ -1475,13 +1475,13 @@ describe("akmExtract — candidate → proposal routing", () => {
 
 describe("akmExtract — LLM call wiring", () => {
   // The one corrective retry no longer depends on the engine's JSON Schema support.
-  test.each([false, true])("repairs malformed output once (supportsJsonSchema: %p)", async (supportsJsonSchema) => {
+  test.each([false, true])("repairs malformed output once (endpoint accepts a schema: %p)", async (schemaAccepted) => {
     const stash = makeStashDir();
     const session = fakeSession("ses_repair", Date.now() - 60_000);
     const config = configEnabled(stash);
     const connection = config.connections?.default;
     if (!connection) throw new Error("test fixture requires the default connection");
-    if (!supportsJsonSchema) _markJsonSchemaUnsupportedForTests({ endpoint: connection.endpoint, model: "test-model" });
+    if (!schemaAccepted) await rejectJsonSchemaOn({ endpoint: connection.endpoint, model: "test-model" });
     const responses = [
       "I found nothing worth keeping.",
       JSON.stringify({ candidates: [], rationale_if_empty: "No durable candidates were identified." }),

@@ -40,6 +40,7 @@ import { parseMarkdownToc } from "../core/asset/markdown";
 import { isRecord } from "../core/common";
 import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
 import { checkJsonSchemaDefinition, JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS } from "../core/json-schema";
+import { warnOnce } from "../core/warn";
 import { INPUT_NAME_PATTERN } from "../execution/input-contract";
 import { warnRetiredEngineKey } from "../execution/source";
 import { classifyTargetRef } from "../execution/target-ref";
@@ -1260,8 +1261,10 @@ function parseLlmOverrides(ctx: Ctx, raw: unknown, path: Path, label: string): L
     } else ctx.err([...path, "max_tokens"], `${label}.max_tokens must be a positive integer.`);
   }
   if (raw.supports_json_schema !== undefined) {
-    if (typeof raw.supports_json_schema === "boolean") result.supportsJsonSchema = raw.supports_json_schema;
-    else ctx.err([...path, "supports_json_schema"], `${label}.supports_json_schema must be a boolean.`);
+    warnOnce(
+      "workflow-supports-json-schema",
+      "A workflow's supports_json_schema is ignored: akm retries without a schema when the endpoint rejects one.",
+    );
   }
   if (raw.extra_params !== undefined) {
     if (!isRecord(raw.extra_params)) {

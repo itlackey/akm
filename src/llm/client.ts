@@ -139,8 +139,7 @@ export interface ChatCompletionOptions {
   /** Optional external abort signal for caller-driven cancellation. */
   signal?: AbortSignal;
   /**
-   * JSON Schema for structured output. When provided (and the connection's
-   * `supportsJsonSchema` is not explicitly `false`), sends
+   * JSON Schema for structured output. When provided, sends
    * `response_format: { type: "json_schema", json_schema: { name:
    * "akm_response", schema, strict: true } }` on the first attempt. If the
    * provider 4xx's, falls back once to the plain request without it, and
@@ -390,11 +389,6 @@ export function _resetEndpointSupportTrackersForTests(): void {
   maxCompletionTokensConnections.clear();
 }
 
-/** TEST-ONLY. Mark a connection as one this process has seen reject `response_format: json_schema`. */
-export function _markJsonSchemaUnsupportedForTests(config: Pick<ChatCompletionConfig, "endpoint" | "model">): void {
-  jsonSchemaUnsupportedConnections.add(connectionKey(config as ChatCompletionConfig));
-}
-
 /**
  * Whether this connection has already been proven, this process, not to
  * support `response_format: json_schema`. Callers choosing a prompt-framing
@@ -440,10 +434,8 @@ const RESPONSE_FORMAT_NAMED = /format_ignored|response_format|json_schema/;
  * inline fallback-once when a schema was requested and the provider 4xx's
  * (never retried by the transient-failure policy below, by design — 4xx is
  * a same-request-will-always-fail signal EXCEPT for this one specific,
- * request-shape-dependent case). No cached verdict gates the first attempt:
- * `config.supportsJsonSchema === false` is the only thing that skips it,
- * and that is a value a human (or workflow author) set explicitly, not one
- * a probe wrote automatically.
+ * request-shape-dependent case). Only what a real call this process made has
+ * shown (`isJsonSchemaKnownUnsupported`) skips the first attempt.
  *
  * The thinking-control fields get the same treatment (#1045): a 4xx that
  * names `chat_template_kwargs` or `enable_thinking` is answered by one retry
@@ -459,8 +451,7 @@ async function chatCompletionAttempt(
   timeoutMs: number | null,
   includeThinking = sendsThinkingFields(config, options) && !isThinkingControlKnownRejected(config),
 ): Promise<string> {
-  const wantsSchema =
-    Boolean(options?.responseSchema) && config.supportsJsonSchema !== false && !isJsonSchemaKnownUnsupported(config);
+  const wantsSchema = Boolean(options?.responseSchema) && !isJsonSchemaKnownUnsupported(config);
   // The schema attempt's error record is held, not emitted: when the retry without the schema
   // recovers the call, that call is ONE success, not a failure plus a success. Every other exit
   // flushes the held record, so a failed call is still recorded once.

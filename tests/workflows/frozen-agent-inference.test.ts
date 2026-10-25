@@ -10,6 +10,7 @@
 
 import { expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { freezeWorkflow } from "../_helpers/workflow";
 
 const CONFIG = {
@@ -40,4 +41,26 @@ test("a unit's llm: settings freeze into its request", () => {
   if (root?.kind !== "unit" || root.frozenTarget.kind !== "command") throw new Error("expected a frozen command unit");
 
   expect(root.frozenTarget.request.inference).toEqual({ temperature: 0.2, reasoningEffort: "low" });
+});
+
+test("a retired supports_json_schema is warned about once and ignored", () => {
+  const warnings: string[] = [];
+  _resetWarnOnceForTests();
+  _setWarnSinkForTests((level, args) => {
+    if (level === "warn") warnings.push(args.map(String).join(" "));
+  });
+  try {
+    const retired = WORKFLOW.replace(
+      "    reasoning_effort: low",
+      "    reasoning_effort: low\n    supports_json_schema: false",
+    );
+    const root = freezeWorkflow(retired, "workflows/demo.md", CONFIG).steps[0]?.root;
+    if (root?.kind !== "unit" || root.frozenTarget.kind !== "command")
+      throw new Error("expected a frozen command unit");
+
+    expect(root.frozenTarget.request.inference).toEqual({ temperature: 0.2, reasoningEffort: "low" });
+    expect(warnings.filter((warning) => warning.includes("supports_json_schema"))).toHaveLength(1);
+  } finally {
+    _setWarnSinkForTests(undefined);
+  }
 });

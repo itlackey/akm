@@ -24,8 +24,8 @@ const EXTRACT_CANDIDATE_NAME_PATTERN = "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:/[a-z
 const EXTRACT_CANDIDATE_NAME_RE = new RegExp(EXTRACT_CANDIDATE_NAME_PATTERN);
 
 /**
- * JSON Schema for the structured extract output. Passed to `chatCompletion`
- * unless the configured LLM connection sets `supportsJsonSchema: false`.
+ * JSON Schema for the structured extract output. Passed to `chatCompletion`,
+ * which drops it once for a provider that rejects it.
  *
  * Shape:
  *   {

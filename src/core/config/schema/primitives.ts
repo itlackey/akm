@@ -114,7 +114,6 @@ export const LlmInvocationOverridesSchema = z
   .object({
     temperature: z.number().finite().optional(),
     maxTokens: positiveInt.optional(),
-    supportsJsonSchema: z.boolean().optional(),
     extraParams: ExtraParamsSchema.optional(),
     contextLength: positiveInt.optional(),
     enableThinking: z.boolean().optional(),

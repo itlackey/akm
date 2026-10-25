@@ -412,7 +412,7 @@ describe("callStructured contract", () => {
     expect(seen?.aborted).toBe(true);
   });
 
-  test("(12) unsupported schema lowers optimistically, emits a structured notice, and preserves messages", async () => {
+  test("(12) a retired supportsJsonSchema setting is reported untranslated and the schema is still sent", async () => {
     const seenMessages: ChatMessage[][] = [];
     let seenOptions: Record<string, unknown> | undefined;
     let notices: readonly Readonly<LoweringNotice>[] = [];
@@ -440,12 +440,12 @@ describe("callStructured contract", () => {
 
     expect(result).toBe("ok");
     expect(seenMessages).toEqual([MESSAGES]);
-    expect(seenOptions && Object.hasOwn(seenOptions, "responseSchema")).toBe(false);
+    expect(seenOptions?.responseSchema).toEqual({ type: "object" });
     expect(notices).toEqual([
       expect.objectContaining({
         code: "untranslated-field",
         adapter: "connection",
-        field: "outputSchema",
+        field: "inference.supportsJsonSchema",
       }),
     ]);
   });

@@ -18,7 +18,6 @@ export type LlmInference = z.infer<typeof LlmInvocationOverridesSchema>;
 const PORTABLE_KEYS = [
   "temperature",
   "maxTokens",
-  "supportsJsonSchema",
   "extraParams",
   "contextLength",
   "enableThinking",
@@ -47,7 +46,7 @@ export function thinkingSetting(request: Readonly<Record<string, unknown>>): boo
   return typeof value === "boolean" ? value : undefined;
 }
 
-/** The wire fields for `inference`, in the order the request lists them. `contextLength` and `supportsJsonSchema` are not request fields. */
+/** The wire fields for `inference`, in the order the request lists them. `contextLength` is not a request field. */
 export function inferenceWireFields(inference: LlmInference | undefined): Record<string, unknown> {
   if (!inference) return {};
   return {

@@ -80,8 +80,7 @@ export interface MemoryInferTelemetry {
 
 /**
  * Strict JSON Schema for the derived-memory payload. Sent as `response_format`
- * unless the engine sets `supportsJsonSchema: false`; the client drops it once
- * for a provider that rejects it.
+ * and the client drops it once for a provider that rejects it.
  *
  * Every property is required (a strict provider refuses otherwise), so the
  * explicit no-change decision is `noChange: true` with the other fields empty.

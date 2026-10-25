@@ -287,7 +287,6 @@ function nonEmpty(value: object | null | undefined): boolean {
 const CHAT_INFERENCE_KEYS: readonly string[] = [
   "temperature",
   "maxTokens",
-  "supportsJsonSchema",
   "extraParams",
   "contextLength",
   "enableThinking",
@@ -314,10 +313,7 @@ function buildChat(
   }
   const chatOptions: ChatCompletionOptions = {};
   // Sent unless the call opts out; chatCompletion drops it once if the provider rejects it.
-  if (request.outputSchema) {
-    if (request.inference?.supportsJsonSchema !== false) chatOptions.responseSchema = request.outputSchema;
-    else skip("outputSchema");
-  }
+  if (request.outputSchema) chatOptions.responseSchema = request.outputSchema;
   if (request.runtime.workspace) skip("runtime.workspace");
   if (nonEmpty(request.runtime.environment)) skip("runtime.environment");
   const messages: ChatMessage[] = [

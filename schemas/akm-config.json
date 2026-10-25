@@ -272,9 +272,6 @@
               "type": "integer",
               "exclusiveMinimum": 0
             },
-            "supportsJsonSchema": {
-              "type": "boolean"
-            },
             "extraParams": {
               "type": "object",
               "additionalProperties": {}
@@ -329,9 +326,6 @@
               "maxTokens": {
                 "type": "integer",
                 "exclusiveMinimum": 0
-              },
-              "supportsJsonSchema": {
-                "type": "boolean"
               },
               "extraParams": {
                 "type": "object",
@@ -609,9 +603,6 @@
                       "type": "integer",
                       "exclusiveMinimum": 0
                     },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
                     "extraParams": {
                       "type": "object",
                       "additionalProperties": {}
@@ -670,9 +661,6 @@
                     "maxTokens": {
                       "type": "integer",
                       "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
                     },
                     "extraParams": {
                       "type": "object",
@@ -733,9 +721,6 @@
                       "type": "integer",
                       "exclusiveMinimum": 0
                     },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
                     "extraParams": {
                       "type": "object",
                       "additionalProperties": {}
@@ -794,9 +779,6 @@
                     "maxTokens": {
                       "type": "integer",
                       "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
                     },
                     "extraParams": {
                       "type": "object",
@@ -857,9 +839,6 @@
                       "type": "integer",
                       "exclusiveMinimum": 0
                     },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
                     "extraParams": {
                       "type": "object",
                       "additionalProperties": {}
@@ -919,9 +898,6 @@
                       "type": "integer",
                       "exclusiveMinimum": 0
                     },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
-                    },
                     "extraParams": {
                       "type": "object",
                       "additionalProperties": {}
@@ -980,9 +956,6 @@
                     "maxTokens": {
                       "type": "integer",
                       "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
                     },
                     "extraParams": {
                       "type": "object",
@@ -1045,9 +1018,6 @@
                 "maxTokens": {
                   "type": "integer",
                   "exclusiveMinimum": 0
-                },
-                "supportsJsonSchema": {
-                  "type": "boolean"
                 },
                 "extraParams": {
                   "type": "object",
@@ -1732,9 +1702,6 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
-                "supportsJsonSchema": {
-                  "type": "boolean"
-                },
                 "extraParams": {
                   "type": "object",
                   "additionalProperties": {}
@@ -1789,9 +1756,6 @@
                   "maxTokens": {
                     "type": "integer",
                     "exclusiveMinimum": 0
-                  },
-                  "supportsJsonSchema": {
-                    "type": "boolean"
                   },
                   "extraParams": {
                     "type": "object",
@@ -2069,9 +2033,6 @@
                           "type": "integer",
                           "exclusiveMinimum": 0
                         },
-                        "supportsJsonSchema": {
-                          "type": "boolean"
-                        },
                         "extraParams": {
                           "type": "object",
                           "additionalProperties": {}
@@ -2130,9 +2091,6 @@
                         "maxTokens": {
                           "type": "integer",
                           "exclusiveMinimum": 0
-                        },
-                        "supportsJsonSchema": {
-                          "type": "boolean"
                         },
                         "extraParams": {
                           "type": "object",
@@ -2193,9 +2151,6 @@
                           "type": "integer",
                           "exclusiveMinimum": 0
                         },
-                        "supportsJsonSchema": {
-                          "type": "boolean"
-                        },
                         "extraParams": {
                           "type": "object",
                           "additionalProperties": {}
@@ -2254,9 +2209,6 @@
                         "maxTokens": {
                           "type": "integer",
                           "exclusiveMinimum": 0
-                        },
-                        "supportsJsonSchema": {
-                          "type": "boolean"
                         },
                         "extraParams": {
                           "type": "object",
@@ -2317,9 +2269,6 @@
                           "type": "integer",
                           "exclusiveMinimum": 0
                         },
-                        "supportsJsonSchema": {
-                          "type": "boolean"
-                        },
                         "extraParams": {
                           "type": "object",
                           "additionalProperties": {}
@@ -2379,9 +2328,6 @@
                           "type": "integer",
                           "exclusiveMinimum": 0
                         },
-                        "supportsJsonSchema": {
-                          "type": "boolean"
-                        },
                         "extraParams": {
                           "type": "object",
                           "additionalProperties": {}
@@ -2440,9 +2386,6 @@
                         "maxTokens": {
                           "type": "integer",
                           "exclusiveMinimum": 0
-                        },
-                        "supportsJsonSchema": {
-                          "type": "boolean"
                         },
                         "extraParams": {
                           "type": "object",
@@ -2505,9 +2448,6 @@
                     "maxTokens": {
                       "type": "integer",
                       "exclusiveMinimum": 0
-                    },
-                    "supportsJsonSchema": {
-                      "type": "boolean"
                     },
                     "extraParams": {
                       "type": "object",

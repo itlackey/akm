@@ -41,7 +41,7 @@ describe("chatCompletion JSON Schema payload", () => {
       return Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
     });
     try {
-      await chatCompletion({ endpoint: url, model: "test-model", supportsJsonSchema: true }, messages, {
+      await chatCompletion({ endpoint: url, model: "test-model" }, messages, {
         responseSchema,
       });
       expect(requestBody).toEqual({
@@ -62,38 +62,15 @@ describe("chatCompletion JSON Schema payload", () => {
     }
   });
 
-  test("attempts the schema by default — no cached verdict gates the first request", async () => {
+  test("attempts the schema on the first request — nothing configured gates it", async () => {
     let requestBody: Record<string, unknown> | undefined;
     const { url, server } = createRequestServer((body) => {
       requestBody = body;
       return Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
     });
     try {
-      // No `supportsJsonSchema` set at all — the old design required an
-      // explicit `true`, sourced from a persisted setup-time probe. Now the
-      // absence of an opinion means "try it", not "assume unsupported".
       await chatCompletion({ endpoint: url, model: "test-model" }, messages, { responseSchema });
       expect(requestBody?.response_format).toBeDefined();
-    } finally {
-      server.stop(true);
-    }
-  });
-
-  test("an explicit supportsJsonSchema: false skips the schema attempt entirely", async () => {
-    let requestBody: Record<string, unknown> | undefined;
-    const { url, server } = createRequestServer((body) => {
-      requestBody = body;
-      return Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
-    });
-    try {
-      await chatCompletion({ endpoint: url, model: "test-model", supportsJsonSchema: false }, messages, {
-        responseSchema,
-      });
-      expect(requestBody).toEqual({
-        model: "test-model",
-        messages,
-        temperature: 0.3,
-      });
     } finally {
       server.stop(true);
     }
