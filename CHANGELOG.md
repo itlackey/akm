@@ -136,13 +136,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   installed binary's `--version` decides, per request. OpenCode 1 runs its CLI
   (the prompt on stdin). OpenCode 2 runs embedded in akm, with your config
   directory (`OPENCODE_CONFIG_DIR` too), providers, plugins and default model
-  (akm passes a model only when it names one), and your logins, which akm's
-  embedded OpenCode reads from your OpenCode 2 database through OpenCode's own
-  credential service when that database has every migration the embedded
-  OpenCode carries; a refreshed token is written back there. akm never creates
-  or migrates that file or stores a session in it: an older one is left
-  untouched, with one warning, and the run goes on without its logins. An
-  interactive `akm agent` still hands the terminal to the CLI.
+  (akm passes a model only when it names one), and your logins, which akm reads
+  from your OpenCode 2 database with SQLite, read-only, when that database has
+  every migration the embedded OpenCode carries. akm never creates, migrates or
+  writes that file: an older one is not read, and a login whose OAuth token has
+  expired is skipped and never refreshed, each with one warning, and the run
+  goes on without it. An interactive `akm agent` still hands the terminal to
+  the CLI.
   - Model work on the opencode harness is confined where OpenCode 2 is
     installed (its tools that edit, run commands or start subagents are denied;
     akm's read tools are added), in one fixed working directory. On OpenCode 1
