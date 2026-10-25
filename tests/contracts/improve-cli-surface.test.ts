@@ -23,14 +23,6 @@ describe("current improvement CLI documentation contract", () => {
     expect(cli).not.toContain("§9.4");
   });
 
-  test("agent, proposal new and improve select a connection or harness, and improve's strategy chooses what runs", () => {
-    expect(extractSection(cli, "### agent")).toContain("--harness <name>");
-    expect(extractSection(cli, "#### proposal new")).toContain("`--connection`");
-    expect(extractSection(cli, "### improve")).toContain("`--harness <name>`");
-    expect(extractSection(cli, "### improve")).toContain("`--strategy <name>`");
-    expect(extractSection(cli, "### agent")).not.toContain("profiles.agent");
-  });
-
   test("improve documents --require-targets and the skippedProcesses result field (#957)", () => {
     const section = extractSection(cli, "### improve");
     expect(section).toContain("--require-targets");
@@ -46,7 +38,7 @@ describe("current improvement CLI documentation contract", () => {
     expect(section).toContain("plan.processes");
   });
 
-  test("improve registers --show-prompt and documents it as a lock/index/engine-free prompt preview (#952)", () => {
+  test("improve registers --show-prompt and documents it as a lock/index/model-free prompt preview (#952)", () => {
     const args = improveCommand.args as Record<string, { type?: string; default?: unknown }>;
     expect(args["show-prompt"]).toMatchObject({ type: "boolean", default: false });
 

@@ -92,6 +92,55 @@ validate_workflow_syntax() {
 	"$CANDIDATE_DIR/actionlint/actionlint" "$PROJECT_ROOT"/.github/workflows/*.yml
 }
 
+# The built CLI configures and reports models: a config with one connection,
+# then a config with only a harness. Offline: the endpoint is a discard port and
+# every command that would ask it passes --no-probe.
+verify_model_surface() {
+	local root="$CANDIDATE_DIR/model-surface"
+	local out status
+
+	akm_in() {
+		local scenario="$1"
+		shift
+		env HOME="$root/$scenario/home" \
+			XDG_CONFIG_HOME="$root/$scenario/config" XDG_DATA_HOME="$root/$scenario/data" \
+			XDG_CACHE_HOME="$root/$scenario/cache" XDG_STATE_HOME="$root/$scenario/state" \
+			AKM_BUNDLE_DIR="$root/$scenario/bundle" \
+			"$PROJECT_ROOT/dist/akm" "$@"
+	}
+
+	# expect "<statuses>" "<needle>" "<label>" <scenario> <akm args...>
+	expect() {
+		local statuses="$1" needle="$2" label="$3"
+		shift 3
+		status=0
+		out="$(akm_in "$@" 2>&1)" || status=$?
+		if [[ " $statuses " != *" $status "* ]]; then
+			echo "$label: exited $status, expected one of: $statuses" >&2
+			echo "$out" >&2
+			return 1
+		fi
+		if ! grep -q -- "$needle" <<<"$out"; then
+			echo "$label: expected '$needle' in the output" >&2
+			echo "$out" >&2
+			return 1
+		fi
+	}
+
+	mkdir -p "$root/connection" "$root/harness"
+	expect "0" '"shape": "setup"' "setup --endpoint" \
+		connection setup --yes --no-init --no-probe --endpoint http://127.0.0.1:9/v1
+	expect "0" '"model": "smoke-model"' "models set" connection models set fast smoke-model --no-probe
+	expect "0" '"fast": "smoke-model"' "models" connection models --no-probe
+	expect "0 4" '"type": "connection"' "health --no-probe on a connection" connection health --no-probe
+	expect "0" '"type": "connection"' "info on a connection" connection info
+
+	expect "0" "" "config set harnesses.claude" harness config set harnesses.claude '{}' --silent
+	expect "78" 'akm setup' "models with no connection" harness models --no-probe
+	expect "0 4" '"type": "harness"' "health --no-probe on a harness" harness health --no-probe
+	expect "0" '"type": "harness"' "info on a harness" harness info
+}
+
 # Release acceptance for the packaged artifact. Lint, typecheck, the unit and
 # integration suites and the native-scheduler gates run in CI and Gated CI on
 # the same commit; release.yml requires both before it publishes.
@@ -109,6 +158,7 @@ run_step \
 	run_step \
 		"Verify Node task migration bundle" \
 		node -e 'const { spawnSync } = require("node:child_process"); const result = spawnSync(process.execPath, ["./dist/scripts/akm-migrate-node.js", "--help"], { encoding: "utf8" }); if (result.error || result.status !== 0) { console.error(result.error?.message ?? result.stderr); process.exit(1); } if (!result.stdout.includes("Usage: akm-migrate <command>") || !result.stdout.includes("state.db")) { console.error("Packaged Node migrator does not expose the combined status/apply surface"); process.exit(1); }'
+run_step "Verify model surface" verify_model_surface
 run_step "Package Acceptance" bun scripts/package-install.ts test-package --skip-build
 run_step "Pack Package Candidate" pack_package_candidate
 run_step \

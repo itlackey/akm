@@ -9,11 +9,13 @@
  */
 
 import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { STANDALONE_FROZEN_SCRIPT_ARG } from "../../src/tasks/standalone-script-entry";
+import { startFakeModel } from "../_helpers/fake-model-server";
+import { expectConnectionConfig, expectHarnessOnlyConfig, type SmokeRun } from "../_helpers/model-surface-smoke";
 import { makeSandboxDir } from "../_helpers/sandbox";
 
 const REQUESTED = process.env.AKM_STANDALONE_SCHEDULER_TESTS === "1";
@@ -283,3 +285,70 @@ test.skipIf(!ENABLED)("the compiled binary runs its embedded migrator exactly on
     sandbox.cleanup();
   }
 });
+
+/** Like `run`, without blocking this process's event loop, so a model server living in it can answer. */
+function runAsync(argv: string[], env: NodeJS.ProcessEnv): Promise<RunResult> {
+  return new Promise((resolve) => {
+    const child = spawn(argv[0]!, argv.slice(1), { env, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("close", (status) => resolve({ status: status ?? -1, stdout, stderr }));
+  });
+}
+
+/** A fresh sandbox for the compiled binary, with no agent program on its `PATH`. */
+function binarySandbox(binary: string): { env: NodeJS.ProcessEnv; run: SmokeRun; cleanup: () => void } {
+  const sandbox = makeSandboxDir("akm-linux-standalone-models");
+  const dirs = { home: "home", config: "config", data: "data", cache: "cache", state: "state", stash: "stash" };
+  for (const dir of Object.values(dirs)) fs.mkdirSync(path.join(sandbox.dir, dir), { recursive: true });
+  const env: NodeJS.ProcessEnv = {
+    PATH: "/usr/bin:/bin",
+    HOME: path.join(sandbox.dir, dirs.home),
+    XDG_CONFIG_HOME: path.join(sandbox.dir, dirs.config),
+    XDG_DATA_HOME: path.join(sandbox.dir, dirs.data),
+    XDG_CACHE_HOME: path.join(sandbox.dir, dirs.cache),
+    XDG_STATE_HOME: path.join(sandbox.dir, dirs.state),
+    AKM_BUNDLE_DIR: path.join(sandbox.dir, dirs.stash),
+    NO_COLOR: "1",
+    CI: "1",
+  };
+  return { env, run: (args) => run([binary, ...args], env), cleanup: sandbox.cleanup };
+}
+
+test.skipIf(!ENABLED)(
+  "the compiled binary configures and reports models, and runs agent work over a connection",
+  async () => {
+    const candidateBinary = path.resolve(process.env.AKM_STANDALONE_TEST_BIN ?? "");
+    expect(fs.existsSync(candidateBinary)).toBe(true);
+
+    const connection = binarySandbox(candidateBinary);
+    const harnessOnly = binarySandbox(candidateBinary);
+    const agent = binarySandbox(candidateBinary);
+    const model = startFakeModel();
+    try {
+      expectConnectionConfig(connection.run);
+      expectHarnessOnlyConfig(harnessOnly.run);
+
+      // Agent work with no harness runs on akm's own runtime: the embedded OpenCode inside the binary.
+      const setup = await runAsync([candidateBinary, "setup", "--yes", "--endpoint", model.url], agent.env);
+      expectSuccess(setup, "setup against the fake model");
+      const result = await runAsync([candidateBinary, "agent", "--prompt", "MODE:answer"], agent.env);
+      expectSuccess(result, "agent work over the connection");
+      const envelope = JSON.parse(result.stdout) as { ok: boolean; engine: string; stdout: string };
+      expect(envelope).toMatchObject({ ok: true, engine: "default" });
+      expect(envelope.stdout).toMatch(/^ANSWER-\d+$/);
+    } finally {
+      model.stop();
+      connection.cleanup();
+      harnessOnly.cleanup();
+      agent.cleanup();
+    }
+  },
+  180_000,
+);
