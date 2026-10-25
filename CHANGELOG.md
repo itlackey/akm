@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Changed
+### Added
 
 - Connections and harnesses replace engines (#1244). `config.json` names
   `connections`, the OpenAI-compatible endpoints akm reaches models through
@@ -15,44 +15,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   endpoint's own spelling, sent as written), and `harnesses`, the agent programs
   you already have (`platform`, `bin`, `args`, `workspace`, `agent`,
   `timeoutMs`, `models`). There is no `defaults` block: the entry named
-  `default`, or the only entry, is the default connection or harness.
-  - `models` maps an alias (`fast`, `balanced`, `reasoning`, or your own) to the
-    model's name, or to an object holding the name and request fields of its
-    own. A harness's `models` maps an alias to the harness's own model name,
-    over the map akm ships for its platform.
-  - A config in the old form (`engines`, `defaults.engine`,
-    `defaults.llmEngine`, `defaults.improveStrategy`, `workflow.judgeEngine`, a
-    strategy's `engine`, `model`, `llm` and `timeoutMs`) still loads: it is
-    read as the new form in memory, with one warning that names `akm migrate
-    apply`, and the file is rewritten only by `akm migrate apply`. An ordinary
-    write (`akm config set`) edits the file's own document and no longer
-    converts it or drops what the loader only reads; removing a value the old
-    form supplies is refused, naming `akm migrate apply`.
+  `default`, or the only entry, is the default connection or harness. Anywhere a
+  connection or harness can be named (config, a flag, an asset's `connection:`
+  or `harness:`) and none is, the default is used; a name that is not
+  configured is warned about once and the default is used. With neither
+  configured, model features and agent work are off, each command that needs one
+  says so and points at `akm setup`, and everything that needs no model keeps
+  working.
   - `improve.strategy` replaces `defaults.improveStrategy`. `improve.processes.
     <process>` and `improve.qualityGate` say where each process and the quality
-    gates run (`connection` or `harness`, `model`, `llm`, `timeoutMs`), and
-    `index` takes `connection`, `model`, `llm` and `timeoutMs`. A strategy says which
-    processes run, never where.
-  - Each kind of call asks for a shipped alias until something nearer names a
-    model: improve passes, extract, enrich and the index passes ask for `fast`;
-    judges (the reflect and distill quality gates, triage's judgment, workflow
-    gates) and agent work ask for `balanced`. A harness with a model map but no
-    entry for the alias warns once.
-  - Model work runs on any harness. Where a harness can be restricted it is;
-    where it cannot, the call runs unrestricted, with a notice. A config that
-    names an `opencode` harness for model work loads, and a native agent named
-    for model work is ignored with a notice.
+    gates run (`connection` or `harness`, `model`, `llm`, `timeoutMs`),
+    `improve.connection` and `improve.harness` where all of `akm improve`'s model
+    work runs, and `index` takes `connection`, `model`, `llm` and `timeoutMs`. A
+    strategy says which processes run, never where.
   - `embedding` with a `model` and no `endpoint` is served by the default
     connection: its endpoint and its key. With no connection, the built-in local
     embedder runs, with one warning.
   - A connection or harness its own schema rejects (no endpoint, an endpoint that
     is not a URL, a harness akm cannot run) is ignored with one warning naming
     it, instead of stopping every command; the rest of the file loads.
+- Aliases and `akm models`. A connection's `models` maps an alias (`fast`,
+  `balanced`, `reasoning`, or your own) to the model's name, or to an object
+  holding the name and request fields of its own; a harness's `models` maps an
+  alias to the harness's own model name, over the map akm ships for its platform
+  (Claude Code has one). An alias a connection does not map answers with its
+  first model. `akm models` lists a connection's aliases beside the models its
+  endpoint lists, and `akm models set <alias> <model>` changes one, keeping the
+  request fields of an alias that has them and warning when the endpoint does not
+  list the model. `--connection` picks another connection and `--no-probe` skips
+  the listing.
+- `--connection`, `--harness` and `--model` on `akm agent`, `akm command run`,
+  `akm improve`, `akm proposal new`, `akm proposal extract` and `akm task add`
+  say where one invocation runs and with which model; omitted means the default,
+  and `--connection` and `--harness` are mutually exclusive. A run's selection
+  reaches every call in it, the quality-gate judges of `akm improve` included.
+  `akm task add` writes them into the task, and `akm task explain` reads them
+  back.
 - Keys come from a `$VAR` reference (`apiKey: "$NAME"`) or from
   `<config dir>/credentials.json`, a `{ "<name>": "<key>" }` file (0600) keyed by
   the connection's name, `embedding` or `curateRerank`. A literal `apiKey` in
   `config.json` is kept, warned about once, and never read, sent or printed;
   `akm config get` masks it and the redactor treats it as a secret.
+- `akm health` has one `targets` check, and `akm info` a `targets` list, with a
+  row for each connection (its endpoint, whether its key is held and, for
+  health, whether the endpoint answers), each harness (its platform, whether its
+  binary is found and, when probing, its version) and each kind of work (improve,
+  judges, agents, extract, enrich, index, embedding, curate rerank) naming the
+  connection or harness and the model it resolves to. The rows are resolved by
+  the code the calls use, so the table cannot disagree with a dispatch. `akm
+  info` contacts nothing, and neither does `akm health --no-probe`.
+- `akm setup` asks which installed agent programs to enable (saying whether each
+  can run read-only for akm's own model calls), whether the default one also
+  takes akm's model calls, an endpoint with its key at a masked prompt and one
+  model for each alias, picked from the models the endpoint lists, and where
+  embeddings come from. A key you type is stored in `credentials.json` under the
+  connection's name. Each flag answers one question and `--yes` takes the
+  detected default for the rest: `--endpoint`, `--api-key-env`, `--name`,
+  `--harness`, `--embedding`, `--embedding-endpoint` and
+  `--embedding-api-key-env`. A rerun starts from the current config and keeps the
+  alias picks it has. `--no-probe` runs offline: the endpoint is not contacted,
+  no models are listed, and the connection has no model until `akm models set`
+  names one.
+  - Non-interactively, with no harness yet configured, `akm setup` enables every
+    agent program found on `PATH`, the first the default; with none, agent work
+    runs on the embedded OpenCode over the connection.
 - Agent work on a connection, with no harness, runs on akm's own runtime:
   OpenCode 2 embedded in akm's process (`@opencode/sdk`, #1244), with no
   `opencode` binary, no `opencode serve` and no port. It has no entry in config,
@@ -104,46 +130,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     installed (its tools that edit, run commands or start subagents are denied;
     akm's read tools are added), in one fixed working directory. On OpenCode 1
     it runs unrestricted in a scratch directory, with one warning.
-- `akm proposal extract --type opencode` and the improve extract gate read
-  OpenCode 2 history from the `session_v2` and `session_message` tables with
-  SQLite, read-only, from your OpenCode database and akm's own: top-level
-  sessions only, without subagent sessions or akm's model work. The content hash
-  of every session is unchanged, so nothing is extracted again. A file or
-  session that cannot be read (a session missing from its file, a file with
-  neither OpenCode layout) is recorded as `read_failed`, not as an empty
-  `too_short` session.
-- OpenCode's directories follow `XDG_DATA_HOME`, `XDG_CACHE_HOME` and
-  `XDG_CONFIG_HOME` on every platform, as OpenCode's own do (the data path was
-  wrong on macOS and ignored `XDG_DATA_HOME`); `akm health` follows
-  `XDG_CACHE_HOME` for OpenCode's plugin cache too.
-- `effect` 4.0.1, `@opencode/core` 2.1.4 and `@opencode/util` 2.1.4 are
-  dependencies, each at the version `@opencode/sdk` depends on.
-- `akm health` and `akm improve --require-engines` no longer check for an
-  OpenCode binary or client package.
-- A workflow run frozen by an earlier release (plan irVersion 7 or lower) whose
-  plan holds a command target is no longer resumed: it is abandoned (status
-  `failed`) with a message naming `akm workflow run <ref>` to start afresh.
-  Converting its engine runners would have changed unit input hashes and
-  published a second child run. Plans with no command target still decode. The
-  plan version is now 8, which freezes a connection or a harness where 7
-  froze an engine.
-- `akm migrate apply` converts the old form for good, under a backup of
-  `config.json`:
+- A config in the old form (`engines`, `defaults.engine`, `defaults.llmEngine`,
+  `defaults.improveStrategy`, `workflow.judgeEngine`, a strategy's `engine`,
+  `model`, `llm` and `timeoutMs`) still loads: it is read as the new form in
+  memory, with one warning that names `akm migrate apply`, and the file is
+  rewritten only by `akm migrate apply`. An ordinary write (`akm config set`)
+  edits the file's own document and no longer converts it or drops what the
+  loader only reads; removing a value the old form supplies is refused, naming
+  `akm migrate apply`. `akm migrate apply` converts it for good, under a backup
+  of `config.json`:
   - `engines` and `defaults` become `connections` and `harnesses` (the default
     engine is renamed `default`, and references follow), `defaults.improveStrategy`
     becomes `improve.strategy`, a strategy's per-process `engine` becomes
-    `connection` or `harness` by the target's kind, and the where-fields a strategy
-    carried move to `improve.processes` and `improve.qualityGate`. An engine
-    that is akm's own OpenCode runtime, or a setting akm no longer reads, is
-    dropped with a note.
+    `connection` or `harness` by the target's kind, the where-fields a strategy
+    carried move to `improve.processes` and `improve.qualityGate`, and
+    `index.defaults.*` and `index.<pass>.engine` become `index.*` and
+    `connection`. An engine that is akm's own OpenCode runtime, or a setting akm
+    no longer reads, is dropped with a note.
   - An engine's `apiKeyFile`, a literal or `${secrets/...}` `apiKey`, and the
     same literal or secret-store `apiKey` on a connection, `embedding` or
     `search.curateRerank`, are read and stored in `credentials.json` under the
     connection's new name, `embedding` or `curateRerank`, then removed from the
     file. A key that cannot be moved (its secret does not resolve, or
     `credentials.json` already holds a different key under that name) stays on the
-    connection as `apiKey`, with a note. One note per key names it, never its value. `AKM_ENGINE_<NAME>_API_KEY`
-    and `AKM_LLM_API_KEY`, when set, become `apiKey: "$VAR"`.
+    connection as `apiKey`, with a note. One note per key names it, never its
+    value. `AKM_ENGINE_<NAME>_API_KEY` and `AKM_LLM_API_KEY`, when set, become
+    `apiKey: "$VAR"`.
   - The user `models.json` is folded into the models of the connections and
     harnesses it names, then moved to
     `<cache dir>/config-backups/models.json.<timestamp>`. A connection's own
@@ -156,37 +168,128 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `harness:`, with a note). `akm migrate status` and `--dry-run` list the files.
   - A connection or harness the loader ignores stays in the file, with a note
     on what to fix; `akm migrate apply` never deletes one.
-- A non-interactive `akm setup` adds no harness when OpenCode is set up for the
-  user (a model in their OpenCode config, or saved credentials) or no agent CLI
-  is on `PATH`: agent work then runs on the embedded OpenCode over the
-  connection. Otherwise it enables the first agent CLI on `PATH`. It never picks
-  the OpenCode 1 CLI.
+
+### Changed
+
+- Each kind of call asks for a shipped alias until something nearer names a
+  model: improve passes, extract, enrich and the index passes ask for `fast`;
+  judges (the reflect and distill quality gates, triage's judgment, workflow
+  gates) and agent work ask for `balanced`. A harness with a model map but no
+  entry for the alias warns once.
+- Model work runs on any harness. Where a harness can be restricted it is: Claude
+  Code runs with its settings files ignored, only `Read` and `akm search`, `akm
+  show` and `akm curate`, no MCP servers and no saved transcript, Codex with
+  `--sandbox read-only`, and OpenCode 2 with its tools that edit files, run
+  commands or start subagents denied. Where it cannot (the other platforms, and
+  OpenCode 1), the call runs unrestricted, with a notice. A config that names an
+  `opencode` harness for model work loads, and a native agent named for model
+  work is ignored with a notice.
+- Harnesses are thin shells. akm writes only the arguments a program needs to run
+  without a person, hands it the prompt and takes its standard output as the
+  reply, as written: it no longer asks for JSON output or reads a result or a
+  session id out of it. A reply that must have a shape is parsed once by the
+  caller, from the schema instruction already in the prompt. Claude Code and pi
+  take the prompt on stdin, and their persona goes to `--append-system-prompt`
+  (appended to pi's own prompt). A harness's child gets
+  `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR` (and
+  `AKM_BUNDLE_DIR` when akm has one), so a program that runs `akm` uses the same
+  installation, and passes `CLAUDE_CONFIG_DIR` and `CODEX_HOME` through where it
+  passed `CLAUDE_CONFIG` and `CODEX_CONFIG`; `PI_API_KEY` is no longer passed.
+- `akm agent` with no `--prompt` starts the harness for a person, with the
+  terminal and the harness's model; a connection has nothing to start, and the
+  command says so, naming `--prompt` and a harness.
+- One loop corrects a reply that must have a shape. When the parser refuses the
+  reply, it is sent once more with what was wrong; reflect, distill, extract,
+  `akm proposal new`, the judges, the proposal drain's judgment and a workflow
+  unit with an output schema all use it. A call that fails ends as the dispatch
+  reported it, and a workflow exec step is never run twice to fix its output.
+- A model call has one timeout, and it is the resolver's: the call's own setting,
+  else the connection's or harness's `timeoutMs`, else ten minutes for model work
+  (agent work on a harness runs until it finishes). A retry after a transient
+  failure spends what is left of the call's budget, and `akm remember --enrich`
+  keeps its 10 s limit on the request itself.
+- `--engine NAME` on `akm agent`, `akm command run`, `akm task add`, `akm
+  proposal new` and `akm proposal extract`, and `--require-engines` on `akm
+  improve`, are still accepted, hidden from `--help` and completions, with one
+  warning each. `--engine` names a connection by that name, else a harness (`akm
+  task add --engine` writes `connection:` or `harness:`), and `--require-engines`
+  is `--require-targets`, which checks the connection or harness each enabled
+  process runs on and triage's judgment: that a process has one, that a
+  connection's credential resolves and it answers one short completion, and that
+  a harness binary is on `PATH`.
+- A workflow run frozen by an earlier release (plan irVersion 7 or lower) whose
+  plan holds a command target is no longer resumed: it is abandoned (status
+  `failed`) with a message naming `akm workflow run <ref>` to start afresh.
+  Converting its engine runners would have changed unit input hashes and
+  published a second child run. Plans with no command target still decode. The
+  plan version is now 8, which freezes a connection or a harness where 7
+  froze an engine.
+- `akm proposal extract --type opencode` and the improve extract gate read
+  OpenCode 2 history from the `session_v2` and `session_message` tables with
+  SQLite, read-only, from your OpenCode database and akm's own: top-level
+  sessions only, without subagent sessions or akm's model work. The content hash
+  of every session is unchanged, so nothing is extracted again. A file or
+  session that cannot be read (a session missing from its file, a file with
+  neither OpenCode layout) is recorded as `read_failed`, not as an empty
+  `too_short` session.
+- OpenCode's directories follow `XDG_DATA_HOME`, `XDG_CACHE_HOME` and
+  `XDG_CONFIG_HOME` on every platform, as OpenCode's own do (the data path was
+  wrong on macOS and ignored `XDG_DATA_HOME`); `akm health` follows
+  `XDG_CACHE_HOME` for OpenCode's plugin cache too.
+- Model work no longer counts as user demand. Model work run through
+  `structured-call`, `propose` or `drain` stamped no event source, so the `akm`
+  commands its agent ran were recorded as the user's, which feeds ranking; it now
+  stamps `improve` (a task's agent still records `task`, and an unknown source
+  `unknown`).
+- `GET /api/config` lists `connections` and `harnesses`, each a list of named
+  entries, where it listed `engines`, and the config page shows the two as
+  tables.
 - The npm package requires Node.js 24 or later (was 22): `@opencode/sdk` needs
-  it. CI tests Node 24 and 26.
+  it. CI tests Node 24 and 26. `effect` 4.0.1, `@opencode/core` 2.1.4 and
+  `@opencode/util` 2.1.4 are dependencies, each at the version `@opencode/sdk`
+  depends on.
 - Standalone binaries are built by `scripts/build-standalone.ts`, which stubs
   the embedded OpenCode's persistent-terminal helper and native file finder
   (neither is used by akm runs).
 
 ### Removed
 
-- `engines`, `defaults.engine`, `defaults.llmEngine`, `workflow.judgeEngine`, a
+- `engines`, the `defaults` block (`defaults.engine`, `defaults.llmEngine`, with
+  `defaults.improveStrategy` now `improve.strategy`), `workflow.judgeEngine`, a
   strategy's `engine`, `model`, `llm` and `timeoutMs`, `provider`, and
   `extraParams` as a key (write the request fields on the connection or model
   entry), all read from an old file and converted by `akm migrate apply`. An
   `extraParams` key that shadows a first-class setting (`temperature`,
   `maxTokens`, `enableThinking`, `reasoningEffort`) is dropped with a note, and
   the setting wins.
-- `models.json`, the user overlay and the one akm shipped, and `akm models`.
-  Aliases live on `connections.<name>.models`.
+- `models.json`, the user overlay and the one akm shipped, and the `akm models
+  list` and `akm models copy-defaults` commands that managed them. Aliases live
+  on `connections.<name>.models`, and `akm models` shows and changes them.
 - `apiKeyFile`, the implicit `AKM_ENGINE_<NAME>_API_KEY` and `AKM_LLM_API_KEY`
   lookups, and `${secrets/...}` as a connection key. Use `apiKey: "$VAR"` or
   `credentials.json`.
 - `supportsJsonSchema`. When an endpoint rejects a response schema, akm retries
   without one and remembers that for the rest of the process.
-- The load-time rule that refused model work on an `opencode` engine.
+- The fallback engine. With no engine configured, akm used the `opencode` binary
+  on `PATH`; with no connection and no harness, model features and agent work are
+  off and each command that needs one points at `akm setup`.
+- The `opencode-sdk` engine platform, and the load-time rule that refused model
+  work on an `opencode` engine.
+- The LLM feature gate, with the 600 s timeout it carried: curate's rerank reads
+  `search.curateRerank.enabled` and memory inference `index.memory.enabled`
+  themselves.
+- The per-harness result extractors and the JSON output modes they read.
+- The `default-engine`, `default-llm-engine`, `configured-engines`,
+  `active-improve-strategy`, `thinking-control` and `engine-last-used` checks of
+  `akm health`, and its hard failure for an unreachable default connection; an
+  unreachable connection is a warning in the `targets` check.
+- `akm setup --probe` and `--config`, and the engine, Ollama and provider steps
+  of the wizard.
 - The `opencode serve` server management, the OpenCode 1 and 2 HTTP adapters,
   the injected `akm-model-work` OpenCode agent, and the `@opencode-ai/sdk` and
-  `@opencode/client` dependencies.
+  `@opencode/client` dependencies. Agent work on a connection needs no OpenCode
+  binary or client package, so `akm health` and `akm improve --require-targets`
+  check for neither.
 - Asset tool requests. An agent or command's `tools:` (or a Claude command's
   `allowed-tools:`) is no longer read, a task's `tools:` is ignored with a
   warning, and `akm migrate apply` drops a v3 task's `akm.tools`. With them go
@@ -194,7 +297,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and dropped by `akm migrate apply`), the `EXECUTION_NOT_AUTHORIZED` error,
   `toolPolicy` in `akm show`, the harness builders' tool flags, and recognizing
   a file as an agent by its `tools:` key. Restrict an agent's tools in the
-  harness's own agent definition and select it with the engine's `agent`.
+  harness's own agent definition and select it with the harness's `agent`.
 - Bundles are fetched when added and on `akm bundle update`. `akm index` no
   longer re-fetches a git or website bundle after twelve hours, `--full` does
   not force a fetch, and a failed forced refresh reports the failure instead of
@@ -226,14 +329,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   frontmatter error from `akm distill` ("See v1 spec §13"), the two `agent-skills`
   lint details ("spec §4.5"), the bundle-identity-drift warning ("spec §11.5") and
   the unknown-`quality` warning ("v1 spec §4.2").
-
-### Fixed
-
-- Model work no longer counts as user demand. Model work run through
-  `structured-call`, `propose` or `drain` stamped no event source, so the `akm`
-  commands its agent ran were recorded as the user's, which feeds ranking; it now
-  stamps `improve` (a task's agent still records `task`, and an unknown source
-  `unknown`).
 
 ## [0.10.261013] - 2026-10-23
 
