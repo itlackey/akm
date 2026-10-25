@@ -179,6 +179,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     connection as `apiKey`, with a note. One note per key names it, never its
     value. `AKM_ENGINE_<NAME>_API_KEY` and `AKM_LLM_API_KEY`, when set, become
     `apiKey: "$VAR"`.
+  - A key in `credentials.json`'s older flat `{ "<name>": "<key>" }` form is
+    filed under the endpoint the config gives its block, after the file is copied
+    to `<cache dir>/config-backups/credentials.json.<timestamp>`. A block that
+    already has a stored key is never overwritten: the same key for the same
+    endpoint drops the older entry, and any other leaves both, with a note. A flat
+    key called `connections` or `services` is told from the namespace of that name
+    by its shape.
+  - The old engine names are kept in the data directory (`migrate/engine-targets.json`)
+    until no `engine:` key that names one is left in a file the migration can
+    reach, so an asset in a read-only bundle, or a block it could not rewrite,
+    keeps its meaning in the meantime, as does a retired `--engine` flag.
   - The user `models.json` is folded into the models of the connections and
     harnesses it names, then moved to
     `<cache dir>/config-backups/models.json.<timestamp>`. A connection's own
