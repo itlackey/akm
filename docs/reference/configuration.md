@@ -238,6 +238,11 @@ the major version `opencode --version` reports:
   read from your OpenCode database, and your default model unless akm names one.
   A model name is OpenCode's `provider/model`. Its sessions are stored in akm's
   own database, `<akm data dir>/opencode.db`.
+- Enabling this harness on OpenCode 2 opens your OpenCode database through
+  OpenCode's own database layer, as any OpenCode build opening it does: the
+  migrations bundled with the OpenCode that akm embeds run on it, it is put in
+  WAL mode and its file mode is set to 0600. akm stores no session in it. akm's
+  reads of your OpenCode history are separate and read-only.
 - OpenCode 1 runs as `opencode run`, with the prompt on stdin.
 
 Nobody can answer an akm run. On the embedded OpenCode (this harness and akm's
