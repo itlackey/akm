@@ -15,8 +15,13 @@
  *     `search.curateRerank` that the file already says in the current form.
  *
  * A key that cannot be read, or whose name `credentials.json` already holds a
- * different key for, is left where it is and named in a note. A note names the
- * key's place and its entry, never its value.
+ * different key for, is not moved. It stays in the file: on the block that held
+ * it, or, for an engine's `apiKey`, put back on the connection as `apiKey`
+ * exactly as it was, so the rewrite never leaves it in the backups alone (akm
+ * ignores a key held there, with a warning, until it is moved). An engine's
+ * `apiKeyFile` is the exception: it names a file, not a key, and a connection
+ * cannot hold it (an unowned key is sent as a request field), so a note names
+ * the path. A note names the key's place and its entry, never its value.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -78,6 +83,8 @@ interface Candidate {
   readonly source: string;
   /** Remove it from the document, once it is filed. */
   readonly remove?: () => void;
+  /** Put it back on the connection, when it is not filed: the conversion did not carry it. */
+  readonly restore?: () => void;
 }
 
 /** The keys of the converted document that are not `$VAR` references. */
@@ -113,17 +120,36 @@ function documentCandidates(config: Dict, options: KeyMoveOptions): Candidate[] 
 }
 
 /** The keys the conversion could not carry from an engine, read from the original document. */
-function engineCandidates(original: Dict, converted: ConvertEnginesResult, options: KeyMoveOptions): Candidate[] {
+function engineCandidates(
+  original: Dict,
+  converted: ConvertEnginesResult,
+  config: Dict,
+  options: KeyMoveOptions,
+): Candidate[] {
   const engines = isRecord(original.engines) ? original.engines : {};
   return converted.keys.flatMap(({ engine, connection, field }) => {
     const held = isRecord(engines[engine]) ? (engines[engine] as Dict)[field] : undefined;
     if (typeof held !== "string") return [];
+    if (field === "apiKeyFile") {
+      return [
+        {
+          name: connection,
+          from: `engines.${engine}.${field}`,
+          read: () => readKeyFile(held),
+          source: `its key file ${held}`,
+        },
+      ];
+    }
     return [
       {
         name: connection,
         from: `engines.${engine}.${field}`,
-        read: () => (field === "apiKeyFile" ? readKeyFile(held) : heldValue(held, options)),
-        source: field === "apiKeyFile" ? `its key file ${held}` : "the secret store reference or literal key",
+        read: () => heldValue(held, options),
+        source: isSecretRefToken(held) ? `the secret store reference ${held}` : "the literal key",
+        restore: () => {
+          const block = isRecord(config.connections) ? config.connections[connection] : undefined;
+          if (isRecord(block)) block.apiKey = held;
+        },
       },
     ];
   });
@@ -138,18 +164,24 @@ export function planKeyMoves(
   const planned = new Map<string, string>();
   const moves: MovedKey[] = [];
   const notes: string[] = [];
-  for (const candidate of [...engineCandidates(original, converted, options), ...documentCandidates(config, options)]) {
+  for (const candidate of [
+    ...engineCandidates(original, converted, config, options),
+    ...documentCandidates(config, options),
+  ]) {
+    const stays = candidate.restore ? " It stays on the connection as apiKey." : "";
     const value = candidate.read();
     if (value === undefined) {
+      candidate.restore?.();
       notes.push(
-        `${candidate.from}: ${candidate.source} could not be read, so no key moves; store it under "${candidate.name}" in credentials.json if it should have one.`,
+        `${candidate.from}: ${candidate.source} could not be read, so no key moves.${stays} Store it under "${candidate.name}" in credentials.json if it should have one.`,
       );
       continue;
     }
     const existing = planned.get(candidate.name) ?? readCredential(candidate.name);
     if (existing !== undefined && existing !== value) {
+      candidate.restore?.();
       notes.push(
-        `${candidate.from}: credentials.json already holds a different key for "${candidate.name}"; it is not replaced.`,
+        `${candidate.from}: credentials.json already holds a different key for "${candidate.name}"; it is not replaced.${stays}`,
       );
       continue;
     }

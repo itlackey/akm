@@ -150,23 +150,50 @@ describe("the keys an engines config holds that akm no longer reads", () => {
     expect(fs.existsSync(credentialsPath())).toBe(false);
   });
 
-  test("a key that cannot be read moves nothing, is named, and does not stop the rest", () => {
-    writeConfig({
-      engines: {
-        lab: llm({ apiKeyFile: path.join(storage.stashDir, "missing.key") }),
-        vault: llm({ apiKey: secretRef("gone") }),
-      },
-      defaults: { llmEngine: "lab" },
-    });
+  test("a secret reference that does not resolve stays on the connection as the apiKey it was, named in the note", () => {
+    writeConfig({ engines: { vault: llm({ apiKey: secretRef("gone") }) } });
 
     const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
 
     expect(result.applied).toBe(true);
     expect(fs.existsSync(credentialsPath())).toBe(false);
-    expect(result.notes?.join("\n")).toContain("engines.lab.apiKeyFile");
-    expect(result.notes?.join("\n")).toContain("engines.vault.apiKey");
-    expect(result.notes?.join("\n")).toContain('under "default" in credentials.json');
-    expect(Object.keys(readConfig().connections as Dict).sort()).toEqual(["default", "vault"]);
+    expect(((readConfig().connections as Record<string, Dict>).vault as Dict).apiKey).toBe(secretRef("gone"));
+    const notes = result.notes?.join("\n") ?? "";
+    expect(notes).toContain(`engines.vault.apiKey: the secret store reference ${secretRef("gone")} could not be read`);
+    expect(notes).toContain("It stays on the connection as apiKey.");
+    // The next run reads it from the connection and finds nothing more to do.
+    expect(normalizeConfigFile(getConfigPath(), { apply: false, resolveFromStore })).toMatchObject({ changed: false });
+  });
+
+  test("a key file that is missing cannot be carried: nothing is invented on the connection, and the note names the path", () => {
+    const missing = path.join(storage.stashDir, "missing.key");
+    writeConfig({ engines: { lab: llm({ apiKeyFile: missing }) }, defaults: { llmEngine: "lab" } });
+
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    expect(result.applied).toBe(true);
+    expect(fs.existsSync(credentialsPath())).toBe(false);
+    const connection = (readConfig().connections as Record<string, Dict>).default as Dict;
+    expect(connection).not.toHaveProperty("apiKey");
+    expect(connection).not.toHaveProperty("apiKeyFile");
+    const notes = result.notes?.join("\n") ?? "";
+    expect(notes).toContain(`engines.lab.apiKeyFile: its key file ${missing} could not be read`);
+    expect(notes).toContain('under "default" in credentials.json');
+  });
+
+  test("an engine's literal key that credentials.json holds a different key for stays on the connection, and is not replaced", () => {
+    writeCredential("cloud", "sk-already-stored");
+    writeConfig({ engines: { cloud: llm({ apiKey: "sk-cloud-literal" }) } });
+
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    expect(storedKeys()).toEqual({ cloud: "sk-already-stored" });
+    expect(((readConfig().connections as Record<string, Dict>).cloud as Dict).apiKey).toBe("sk-cloud-literal");
+    const notes = result.notes?.join("\n") ?? "";
+    expect(notes).toContain('credentials.json already holds a different key for "cloud"');
+    expect(notes).toContain("It stays on the connection as apiKey.");
+    expect(notes).not.toContain("sk-cloud-literal");
+    expect(result.credentials).toBeUndefined();
   });
 
   test("a key credentials.json already holds a different value for is not replaced, and the literal stays in the file", () => {
