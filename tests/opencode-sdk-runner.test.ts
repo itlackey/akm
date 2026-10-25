@@ -23,7 +23,7 @@ import { runOpencodeSdk } from "../src/integrations/harnesses/opencode/embedded/
 import { createSdkHost } from "../src/integrations/harnesses/opencode/embedded/sdk-host";
 import type { ChatCompletionConfig } from "../src/llm/client";
 import { type FakeModelServer, startFakeModel } from "./_helpers/fake-model-server";
-import { writeSandboxConfig } from "./_helpers/sandbox";
+import { withEnv, writeSandboxConfig } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
 const profile: AgentProfile = {
@@ -88,6 +88,13 @@ describe("a run on akm's internal runtime", () => {
     const result = await run("MODE:env go", { env: { AKM_PROBE: "from-akm" } });
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("PROBE=from-akm");
+  });
+
+  test("the commands it runs keep the process environment under the run's variables", async () => {
+    const result = await withEnv({ AKM_AMBIENT: "ambient" }, () =>
+      run("MODE:env go", { env: { AKM_PROBE: "from-akm" } }),
+    );
+    expect(result.stdout).toContain("PROBE=from-akm AMBIENT=ambient");
   });
 
   test("a question is cancelled with a message and the run carries on", async () => {

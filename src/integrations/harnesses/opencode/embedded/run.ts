@@ -110,6 +110,17 @@ interface Target {
   readonly settings: SessionSettings;
 }
 
+/**
+ * What a session's commands run with. OpenCode gives them the session's environment
+ * in place of the process's, so a run's variables go on top of the process's: the
+ * commands keep `PATH`, `HOME` and the rest, as they do on a session that sets none.
+ */
+function commandEnvironment(env: Readonly<Record<string, string>> | undefined): Record<string, string> | undefined {
+  if (!env || Object.keys(env).length === 0) return undefined;
+  const ambient = Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined);
+  return { ...Object.fromEntries(ambient), ...env };
+}
+
 /** The one place a run is made: create the session, set it up, drive its turn, and report. */
 async function runSession(
   target: Target,
@@ -148,7 +159,7 @@ async function runSession(
     });
     sessionId = session.id;
     const eventSource = opts.env?.AKM_EVENT_SOURCE;
-    const env = opts.env && Object.keys(opts.env).length > 0 ? opts.env : undefined;
+    const env = commandEnvironment(opts.env);
     sessions.set(session.id, {
       ...target.settings,
       ...(eventSource ? { eventSource } : {}),

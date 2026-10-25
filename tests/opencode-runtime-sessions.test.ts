@@ -105,7 +105,9 @@ describe("a session on the runtime", () => {
       env: { AKM_EVENT_SOURCE: "task", API_TOKEN: "t" },
       dispatch: { prompt: "p", systemPrompt: "BE BRIEF" },
     });
-    expect(calls[0]?.environment).toEqual({ AKM_EVENT_SOURCE: "task", API_TOKEN: "t" });
+    expect(calls[0]?.environment).toMatchObject({ AKM_EVENT_SOURCE: "task", API_TOKEN: "t" });
+    // OpenCode gives a session's commands its environment in place of the process's, so the process's is kept in it.
+    expect(calls[0]?.environment?.PATH).toBe(process.env.PATH);
     expect(calls[0]?.system).toBe("BE BRIEF");
   });
 
@@ -203,7 +205,7 @@ describe("a subagent session the run starts", () => {
   });
 
   test("has the run's environment set before that request goes out, so before any command it runs", async () => {
-    expect((await runWithSubagent()).seen?.environment).toEqual(env);
+    expect((await runWithSubagent()).seen?.environment).toMatchObject(env);
   });
 
   test("is forgotten with the run", async () => {

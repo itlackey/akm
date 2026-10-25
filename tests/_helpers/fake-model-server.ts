@@ -9,7 +9,7 @@
  *   answer    reply "ANSWER-<n>"
  *   question  call the `question` tool, then reply "Q-DONE"
  *   shell     call `shell`, then reply with the tool result
- *   env       call `shell` to print $AKM_PROBE, then reply with the tool result
+ *   env       call `shell` to print $AKM_PROBE and $AKM_AMBIENT, then reply with the tool result
  *   subagent  call `subagent`, whose prompt asks the child for MODE:env, then reply with its result
  *   write     call `write`, then reply with the tool result
  *   akm       call `akm_search`, then reply with the tool result
@@ -107,7 +107,12 @@ export function startFakeModel(): FakeModelServer {
       else if (mode === "env")
         reply = afterTool
           ? { content: `ENV:${result}` }
-          : { tool: { name: "shell", args: { command: 'echo "PROBE=$AKM_PROBE"', description: "probe" } } };
+          : {
+              tool: {
+                name: "shell",
+                args: { command: 'echo "PROBE=$AKM_PROBE AMBIENT=$AKM_AMBIENT"', description: "probe" },
+              },
+            };
       else if (mode === "subagent")
         reply = afterTool
           ? { content: `SUB:${result}` }
