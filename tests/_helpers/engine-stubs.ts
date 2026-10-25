@@ -12,7 +12,6 @@ import fs from "node:fs";
 
 /** What an LLM stub recorded of one request. */
 export interface LlmStubBody {
-  model?: string;
   messages: Array<{ content: string }>;
   response_format?: { json_schema?: { schema?: unknown } };
 }

@@ -17,7 +17,6 @@ import {
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import type { ConfiguredExecutionSettings } from "../../execution/source";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { applyAutonomyGate, type GatedLane } from "./autonomy-gate";
 import { resolveImproveExecution } from "./execution";
@@ -216,8 +215,6 @@ export interface ResolvedImprovePlan {
   processes: Readonly<Record<ImproveProcessName, ResolvedImproveProcess>>;
   triageJudgment: RunnerSpec | null;
   triageJudgmentNotices?: readonly Readonly<LoweringNotice>[];
-  /** What the run selected, which the stages' own judges resolve under (see {@link ImprovePlanOptions.run}). */
-  run?: Readonly<ConfiguredExecutionSettings>;
   /**
    * D8 — lanes the autonomy gate downgraded for this run. Empty when
    * `experimental.improveAutonomy` is set. The run reports each one so a gated
@@ -312,17 +309,11 @@ export function cloneAndFreeze<T>(value: T): Readonly<T> {
   return clone;
 }
 
-export interface ImprovePlanOptions {
-  repairValidationFailures?: boolean;
-  /** What the run selected (a flag naming a connection or harness): the nearest layer of every call in it, the judges included. */
-  run?: ConfiguredExecutionSettings;
-}
-
 /** Resolve every enabled process structurally before improve emits signals or performs I/O. */
 export function resolveImprovePlan(
   name: string | undefined,
   config: AkmConfig,
-  options: ImprovePlanOptions = {},
+  options: { repairValidationFailures?: boolean } = {},
 ): ResolvedImprovePlan {
   const selected = resolveImproveStrategy(name, config);
   // D8 — gate autonomy BEFORE the plan is built, so every downstream consumer
@@ -336,7 +327,7 @@ export function resolveImprovePlan(
 function buildImprovePlan(
   strategy: SelectedStrategy,
   config: AkmConfig,
-  options: ImprovePlanOptions,
+  options: { repairValidationFailures?: boolean },
 ): Omit<ResolvedImprovePlan, "autonomyGated"> {
   const processes = {} as Record<ImproveProcessName, ResolvedImproveProcess>;
   const engineUnavailable: EngineUnavailableProcess[] = [];
@@ -353,12 +344,7 @@ function buildImprovePlan(
     // step needs a model, so disabling repair must not create an LLM preflight.
     const skipsRepairEngine = processName === "validation" && options.repairValidationFailures === false;
     if (!skipsRepairEngine) {
-      const resolved = resolveImproveExecution({
-        config,
-        processName,
-        alias: SHIPPED_ALIAS.improve,
-        ...(options.run ? { run: options.run } : {}),
-      });
+      const resolved = resolveImproveExecution({ config, processName, alias: SHIPPED_ALIAS.improve });
       runner = resolved?.runner ?? null;
       notices = resolved?.notices ?? [];
     }
@@ -406,7 +392,6 @@ function buildImprovePlan(
           process: "triage",
           processName: "triage-judgment",
           alias: SHIPPED_ALIAS.judge,
-          ...(options.run ? { run: options.run } : {}),
         })
       : null;
   const triageJudgment = triageJudgmentResolution?.runner ?? null;
@@ -431,7 +416,6 @@ function buildImprovePlan(
     strategy: frozenStrategy,
     processes: frozenProcesses,
     triageJudgment: triageJudgment ? cloneAndFreeze(triageJudgment) : null,
-    ...(options.run ? { run: cloneAndFreeze(options.run) } : {}),
     ...(triageJudgmentResolution?.notices.length
       ? { triageJudgmentNotices: cloneAndFreeze(triageJudgmentResolution.notices) }
       : {}),

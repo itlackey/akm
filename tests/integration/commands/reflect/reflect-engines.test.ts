@@ -49,8 +49,6 @@ const SCENARIOS: Record<string, readonly string[]> = {
   valid: [reflectReply(PATCH)],
   repair: [PROSE, reflectReply(PATCH)],
   invalid: [PROSE],
-  // The proposal, then a passing verdict from the quality gate's judge.
-  judged: [reflectReply(PATCH), JSON.stringify({ scores: { need: 4, preservation: 4, quality: 4 }, reason: "ok" })],
   // What the engine says to a reflect run that names no asset: the asset, too.
   unscoped: [reflectReply(PATCH, { ref: REF })],
   // The first pass needs its repair; the second pass replies in prose again.
@@ -193,43 +191,6 @@ describe("reflect asks every engine kind for the same JSON reply", () => {
       required: string[];
     };
     expect(schema.required).toContain("ref");
-  });
-});
-
-describe("what an improve run selected is nearer than the quality gate's own settings, for the pass and its judge", () => {
-  const modelsOf = (prefix: string) => ({ fast: `${prefix}-fast`, balanced: `${prefix}-balanced` });
-  const endpoint = () => `http://127.0.0.1:${llmStub.port}/judged/v1/chat/completions`;
-  const gated = (qualityGate: Record<string, unknown>, run: { connection: string } | undefined) =>
-    akmReflect({
-      ref: REF,
-      stashDir: storage.stashDir,
-      assetContent: SOURCE,
-      improveProfile: { processes: { reflect: { enabled: true } } },
-      ...(run ? { run } : {}),
-      config: {
-        configVersion: "0.9.0",
-        semanticSearchMode: "off",
-        connections: {
-          x: { endpoint: endpoint(), models: modelsOf("x") },
-          default: { endpoint: endpoint(), models: modelsOf("default") },
-        },
-        improve: { qualityGate },
-      } as unknown as AkmConfig,
-    });
-
-  test("the judge runs on the connection the run named, under the judge alias, though improve.qualityGate names another", async () => {
-    const result = await gated({ connection: "default" }, { connection: "x" });
-
-    if (!result.ok) throw new Error(`expected a proposal, got ${result.reason}: ${result.error}`);
-    // The pass asks for fast, the judge for balanced, both on x.
-    expect(llmBodies.map((body) => body.model)).toEqual(["x-fast", "x-balanced"]);
-  });
-
-  test("without a selection, the gate names the judge's connection", async () => {
-    const result = await gated({ connection: "x" }, undefined);
-
-    if (!result.ok) throw new Error(`expected a proposal, got ${result.reason}: ${result.error}`);
-    expect(llmBodies.map((body) => body.model)).toEqual(["default-fast", "x-balanced"]);
   });
 });
 

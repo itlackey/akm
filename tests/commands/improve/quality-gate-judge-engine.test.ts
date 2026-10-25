@@ -83,18 +83,19 @@ describe("resolveQualityGateJudge (#1011)", () => {
     expect(asLlmRunner(runner).model).toBe("judge-model");
   });
 
-  test("improve.qualityGate.llm alone keeps the process's connection and overrides its settings", () => {
-    const runner = resolveQualityGateJudge(
-      gated(
-        { llm: { temperature: 0.5 } },
-        { distill: { connection: "other", llm: { temperature: 0.3 } } },
-        {},
-        { other: { endpoint: "http://localhost:11436/v1/chat/completions", models: { fast: "other-model" } } },
-      ),
-      undefined,
-      "distill",
+  test("improve.qualityGate.llm alone keeps the improve-wide connection; the process's own connection and settings are the writer's", () => {
+    const cfg = config(
+      {
+        improve: {
+          connection: "judge",
+          qualityGate: { llm: { temperature: 0.5 } },
+          processes: { distill: { connection: "other", llm: { temperature: 0.3 } } },
+        },
+      },
+      { other: { endpoint: "http://localhost:11436/v1/chat/completions", models: { fast: "other-model" } } },
     );
-    expect(runner?.name).toBe("other");
+    const runner = resolveQualityGateJudge(cfg, undefined, "distill");
+    expect(runner?.name).toBe("judge");
     expect(asLlmRunner(runner).inference?.temperature).toBe(0.5);
   });
 

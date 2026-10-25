@@ -232,7 +232,6 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
     signal: env.budgetSignal,
     eventsCtx: env.eventsCtx,
     ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
-    ...(resolvedPlan.run ? { run: resolvedPlan.run } : {}),
   } satisfies AkmReflectOptions;
   const result = await attributeStage(resolvedPlan, "reflect", () => env.reflectFn(reflectArgs));
   const reason = result.ok ? undefined : result.reason;
@@ -341,7 +340,6 @@ async function runLoopDistillPass(
       ...(improveProfile ? { improveProfile } : {}),
       config: options.config,
       llmRunner: resolvedPlan.processes.distill.runner,
-      ...(resolvedPlan.run ? { run: resolvedPlan.run } : {}),
       signal: env.budgetSignal,
       eventsCtx: env.eventsCtx,
       ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),

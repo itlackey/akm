@@ -18,7 +18,7 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { defaultFeedback } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import type { ConfiguredExecutionSettings, UnresolvedExecutionDefaults } from "../../execution/source";
+import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import type { RejectedProposalContext } from "../../integrations/agent/prompts";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { AgentRunResult } from "../../integrations/agent/spawn";
@@ -307,23 +307,24 @@ function gateNamesAJudge(gate: object): boolean {
 }
 
 /**
- * The judge of a process's quality gate (#1011): `improve.qualityGate`'s
- * connection or harness, model, timeout and inference over the process's own
- * settings, asking for the `judge` alias when nothing names a model, so a judge
- * never runs on the model that wrote. `undefined` when the strategy turns the
- * gate off or no connection or harness is configured, so the caller keeps its
- * own. What the run selected (`run`, a flag naming a connection or harness) is
- * nearer than the gate's own settings. The judge may be a connection or a harness; a harness that cannot
- * confine the model-work tool policy runs unrestricted, with a notice. Throws
- * when `improve.qualityGate` names a judge that resolves to nothing, before
- * anything is generated: the gate never falls back to another judge.
+ * The judge of a process's quality gate (#1011). Its layers are the improve-wide
+ * `improve.connection` / `improve.harness`, then `improve.qualityGate`'s
+ * connection or harness, model, timeout and inference, asking for the `judge`
+ * alias when neither names a model. The process's own `improve.processes.<name>`
+ * settings (its `model`, `llm`, connection) are the generation call's and do not
+ * reach the judge, so a `reasoning` model chosen for the writer is not the one
+ * that judges it. `undefined` when the strategy turns the gate off or no
+ * connection or harness is configured, so the caller keeps its own. The judge
+ * may be a connection or a harness; a harness that cannot confine the
+ * model-work tool policy runs unrestricted, with a notice. Throws when
+ * `improve.qualityGate` names a judge that resolves to nothing, before anything
+ * is generated: the gate never falls back to another judge.
  */
 export function resolveQualityGateJudge(
   config: AkmConfig,
   profile: ImproveProfileConfig | undefined,
   processName: "reflect" | "distill",
   onNotices?: NoticeSink,
-  run?: ConfiguredExecutionSettings,
 ): RunnerSpec | undefined {
   if (profile?.processes?.[processName]?.qualityGate?.enabled === false) return undefined;
   const gate = config.improve?.qualityGate;
@@ -331,9 +332,7 @@ export function resolveQualityGateJudge(
     config,
     processName: `${processName}-quality-judge`,
     alias: SHIPPED_ALIAS.judge,
-    process: processName,
     ...(gate ? { current: gate } : {}),
-    ...(run ? { run } : {}),
   });
   if (!resolved) {
     if (gate && gateNamesAJudge(gate)) {

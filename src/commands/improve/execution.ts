@@ -27,10 +27,8 @@ export interface ResolveImproveExecutionOptions {
    * farther than the process's own settings.
    */
   index?: ImproveExecutionLayer;
-  /** Nearer one-shot selection for this call, such as a quality gate's own judge settings. */
+  /** Nearer one-shot selection, such as an explicit CLI connection/harness/timeout. */
   current?: ImproveExecutionLayer;
-  /** What the run itself selected (a flag naming a connection or harness): the nearest layer of every call in it, judges included. */
-  run?: ImproveExecutionLayer;
 }
 
 export interface ResolvedImproveExecution {
@@ -40,8 +38,8 @@ export interface ResolvedImproveExecution {
 
 /**
  * Resolve improve-owned model work: `improve.connection` / `improve.harness`
- * -> index.<pass> -> `improve.processes.<name>` -> the call's own settings ->
- * the run's selection, nearest wins, over the default by name. A strategy adds no layer: it says which
+ * -> index.<pass> -> `improve.processes.<name>` -> current invocation, nearest
+ * wins, over the default by name. A strategy adds no layer: it says which
  * processes run, never where. `null` when no connection or harness is
  * configured for it.
  */
@@ -64,7 +62,6 @@ export function resolveImproveExecution(options: ResolveImproveExecutionOptions)
           ),
         },
         currentLayer(executionDefaultsOf(options.current)),
-        { id: "run", kind: "current", values: executionDefaultsOf(options.run) },
       ],
       modelWork: true,
     });

@@ -580,7 +580,7 @@ describe("Reflect quality gate — source context", () => {
       improve: {
         strategy: "default",
         processes: { reflect: { harness: "fake-agent" } },
-        qualityGate: { llm: { temperature: 0 } },
+        qualityGate: { harness: "fake-agent", llm: { temperature: 0 } },
         strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
       },
     } as AkmConfig;
