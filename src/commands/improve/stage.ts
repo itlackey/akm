@@ -571,7 +571,7 @@ async function runQualityJudge(
     return {
       pass: false,
       score: -1,
-      reason: "no engine configured — cannot judge, routed to review",
+      reason: "no connection or harness configured — cannot judge, routed to review",
       reviewNeeded: true,
     };
   const outcome = await callStage({

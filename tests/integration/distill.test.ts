@@ -2277,7 +2277,7 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
       source: "distill",
       gateDecision: { outcome: "deferred", reason: "quality-review", gate: "quality-gate" },
     });
-    expect(proposals[0]?.gateDecision?.judgeReason).toContain("no engine configured");
+    expect(proposals[0]?.gateDecision?.judgeReason).toContain("no connection or harness configured");
     const db = openStateDatabase();
     try {
       const row = listImproveLedgerRows(db, stash, ["distill"]).find(

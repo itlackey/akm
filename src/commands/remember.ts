@@ -317,7 +317,7 @@ export async function runLlmEnrich(body: string): Promise<EnrichmentResult> {
   const config = loadConfig();
   const resolved = resolveImproveExecution({ config, processName: "remember-enrich", alias: SHIPPED_ALIAS.enrich });
   if (!resolved) {
-    warn("Warning: --enrich requires an engine to be configured. Run `akm setup` to configure one.");
+    warn("Warning: --enrich requires a connection or harness to be configured. Run `akm setup` to configure one.");
     return { tags: [] };
   }
   const runner = resolved.runner;
