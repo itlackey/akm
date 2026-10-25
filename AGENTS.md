@@ -1,105 +1,49 @@
 # AKM Repo Notes
 
-## Workflow
-- Runtime and tooling are Bun-first. Use `bun install`.
-- CI runs `bun run check`, which is `bun run lint && bunx tsc --noEmit && bun run test:unit && bun run test:integration`.
-- Before committing, run `bunx biome check --write src/ tests/`. Repo guidance prefers the write-capable Biome pass, not just `bun run lint`.
-- Biome 2.4.14 (the pinned version) intermittently parses a file with the wrong grammar (`.ts` as JSON, JSON as JS) and reports errors against correct text: re-run it; don't edit the file it names. A misparse under `--write` has rewritten valid JSON into invalid JSON once, so check `git diff` after the write pass.
-- Running `akm` by hand (outside `bun test`) uses the real `HOME` and the owner's bundles; point `HOME`, `XDG_*`, `AKM_CONFIG_DIR`, `AKM_DATA_DIR` and `AKM_BUNDLE_DIR` at a scratch dir first.
-- Build with `bun run build`. It compiles `src/**` only into `dist/`; `dist/tests` should never appear.
-- Prefer focused verification with `bun test tests/<file>.test.ts`. `bun run check:changed` runs a small set of output/contract suites (output-baseline, registry-search, show-argv-entrypoint, output-shapes-unit) plus `bun run lint` and `bunx tsc --noEmit`. Read the suite's own exit code: piped through `| tail`/`| grep`, a red run reports the pipe's.
+akm is a Bun-first CLI. This file is how to work here and where to look; the linked documents hold the details. Read the one for the area you are changing before you change it.
 
-## Architecture
-- This is a CLI-first package. The one supported programmatic entry point is `akm-cli/api` (`src/api.ts`: `curate`, for in-process recall by the akm plugins; contract in `docs/reference/api.md`, export list pinned by `tests/contracts/api-surface.test.ts`). Everything else stays CLI-only: no other public API and no barrel exports. The `exports` map in `package.json` lists only `./api`, `./package.json` and `./dist/*` (the last keeps published plugin versions' deep imports of `dist/` working; it is not an API). `src/api.ts` must reuse the CLI's own code path (`runCurate`, `renderOutput`) and never write to stdout/stderr, change cwd, or leave process-level flags changed. `src/cli.ts` is the thin dispatcher; command implementations live under `src/commands/`, mostly in per-family directories (`src/commands/read/`, `src/commands/improve/`, `src/commands/sources/`, `src/commands/env/`, `src/commands/tasks/`, `src/commands/agent/`, `src/commands/proposal/`, `src/commands/health/`, `src/commands/lint/`), with a handful of standalone `*-cli.ts` files (e.g. `config-cli.ts`, `workflow-cli.ts`, `migrate-cli.ts`, `registry-cli.ts`) still at the top level.
-- Simplicity first, in both directions (core principles 1 and 11, `docs/architecture/akm-core-principles.md`): build only what the current design needs (YAGNI) — no speculative options, abstractions, guards, layers or tripwires — and build it with SOLID structure: one responsibility per module, extension in the one place that owns the policy, narrow interfaces, real types. Subtraction targets unjustified machinery, never clean design; a smaller diff that merges concerns or drops required error handling is not simpler.
-- If you touch providers, refs, search/show behavior, config, or output shaping, read `docs/architecture/architecture.md` first. `tests/contracts/` pins active contracts and is meant to catch contract drift.
-- Supported source providers are locked to `filesystem`, `git`, `website`, and `npm`. Do not add `context-hub`; do not reintroduce `openviking`.
-- `SourceProvider` is exactly `{ name, kind, path, sync? }`. All providers materialize files to local disk.
-- Asset refs are `[bundle//]conceptId[#fragment]`, where `conceptId` is subdir-qualified within its bundle (e.g. `skills/code-review`, `memories/vpn-note`, `knowledge/api-guide`, `env/prod`). Durable state stores the fully-qualified `bundle//conceptId`; the short bundle-omitted form is input sugar resolved against `defaultBundle`, then the remaining bundles in installation-priority order. Source locators like `github:owner/repo` are for `akm bundle add`, not for asset addressing. The old `[origin//]type:name` grammar is gone (the frozen migrator in `scripts/akm-migrate/migrate/` is the only place it survives).
-- `show` is local-index only: resolve through the FTS index, then read from disk. No per-provider `show` exists.
-- Registry results are opt-in, stay separate from normal stash hits, and live in `registryHits`, never `hits`.
-- All write-target branching by `source.kind` belongs in `src/core/write-source.ts`.
-- Write-target resolution order is `--target` -> `defaultWriteTarget` -> working stash (`defaultBundle`); there is no fallback to the first writable source.
-- `writable` defaults to `true` on `filesystem` and `false` on `git` / `website` / `npm`; `writable: true` on `website` or `npm` is rejected at config load.
-- Treat `enabled: false` as inert across content reads, writes, indexing, and execution. Explicit bundle lifecycle commands may still update a named disabled bundle without activating it. Never infer the default/trusted bundle from array position; carry bundle identity and default status explicitly.
-- `scheduler.enabled` is this host's list of scheduled refs (`bundle//tasks/x`) in memory; on disk it is written in the `{kind, ref, sourceId}` shape 0.9.16 reads (`schedulerEnabledOnDisk`, `src/core/config/config.ts`) until no supported release is strict about it. Removing a bundle drops its refs. A config without the list means "keep what is installed": the first `task sync`/`setup`/`enable`/`disable`/`add` after an upgrade takes the akm-written native rows as the choice and writes it (`enabledRefsFromInstalled`, `src/tasks/activation-config.ts`). An explicit list, empty or not, is never second-guessed. There are no grants, source identities or fire-time checks.
-- `extends` may share portable policy, but host authority stays local: sources/defaults, registries, scheduler/experimental state, credentials, executable argv/workspace, publication policy, and credential-bearing network connections must not be inherited. Bundle-relative chains require physical (realpath) containment.
-- Executable asset frontmatter cannot set child `workspace`, `environment`, or opaque `runtime`.
-- Harnesses are thin, replaceable internals (core principle 10, `docs/architecture/akm-core-principles.md`) and are registered in one place (core principle 2): each registers once in `HARNESS_REGISTRY`, and core code imports the registry, not a harness. Don't spread harness-specific code or concepts into akm core.
-- Unsafe CLI overrides name one risk. Use `--allow-insecure-transport` only for plain HTTP; do not add a combined bypass.
+## How to work
 
-## Tests
-- **Two test targets**: `bun run test:unit` (`scripts/test-unit.sh`) runs every `*.test.ts` under `tests/` except `tests/integration/` — that includes the top-level `tests/commands/` and `tests/workflows/` directories (59 files combined, verified 2026-07-27). Do not confuse those with the separate `tests/integration/commands/` and `tests/integration/workflows/` directories, which belong to `bun run test:integration` (`scripts/test-integration.sh`, `tests/integration/**` only). Both scripts shard their target across up to `min(nproc, 8)` concurrent `bun test` processes. `bun run check` runs both targets in sequence after lint and typecheck.
-- **Classification rule (ORG-03/04/05/06)**: a file belongs under `tests/integration/` iff it opens a real database (`openIndexDatabase`/`openExistingDatabase`), touches the network, or spawns a real process (`spawn`/`spawnSync`/`Bun.spawn`) — see `tests/integration/commands/sources/index-db-contention.test.ts` for the reasoning written out against a concrete file. Everything else (pure in-memory logic, mocked I/O) belongs under `tests/`, regardless of nesting. A file that looks like it should qualify for `tests/integration/` under a different rationale must say which clause it satisfies in a one-line header comment rather than being placed by feel. No `.test.ts` belongs under a `fixtures`/`_fixtures` path — those are data, not executable specs.
-- A test that spawns `bun test <fixture>` must pass `--timeout`: bun ignores `bunfig.toml`'s `timeout` (see the comment there), so the fixture dies at 5 s under load.
-- An index with `semanticSearchMode: "auto"` and no fake embedder downloads a Hugging Face model mid-test; use the deterministic embedder (`AKM_EMBED_DETERMINISTIC`) or `"off"`.
-- For a tight inner feedback loop, use `bun run test:unit` or `bun test tests/<specific-file>.test.ts`.
-- Semantic search e2e is gated: `AKM_SEMANTIC_TESTS=1 bun test tests/integration/semantic-search-e2e.test.ts`. First run downloads Hugging Face models.
-- Docker install coverage is gated: `AKM_DOCKER_TESTS=1 bun test tests/integration/docker-install.test.ts` or `./tests/docker/run-docker-tests.sh`.
-- Release validation is `./tests/release-check.sh [--skip-docker]`: workflow syntax, build, npm bin-target and migrator checks, package acceptance, and the upgrade rehearsal against the packed tarball, then an optional Docker matrix. Lint, typecheck and the test suites are `bun run check`; the Release workflow requires CI to have passed on the commit it publishes.
-- **`TMPDIR` must be a `/tmp`-family path** (`/tmp/...`, `/var/tmp/...`, or their macOS `/private/...` equivalents) when running the suites. `tests/setup-tmp-stash-guard.test.ts` exercises a production guard (`isTransientStashPath` in `src/core/paths.ts`) that is deliberately hardcoded to the real OS temp-dir families, not to whatever `TMPDIR` happens to be — a `TMPDIR` outside that family makes that file fail for reasons unrelated to the code under test. Separately, a `TMPDIR` containing the substrings `.cache` or `registry` used to mask a real lint-suppression bug (fixed in 0.9.5); avoid those substrings too.
-- **The suite is green-by-default.** `test:unit` and `test:integration` are expected to report 0 fail at all times; a red run means something is genuinely broken, not "pre-existing" noise to route around. If a test must be disabled, disable it explicitly (`.skip`) with a linked issue in the same change — never leave a failure standing or add an "expected failures" allowlist.
+**Think before coding.** Don't assume. Don't hide confusion. Surface tradeoffs.
+- State your assumptions explicitly. If uncertain, ask.
+- If a request has more than one reading, present them; don't pick one silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what is confusing and ask.
 
-### Test-isolation harness
-- `bunfig.toml` preloads `tests/_preload.ts` for every `bun test` invocation. The preload owns process state that crosses test boundaries:
-  - `HOME` and all four `XDG_*_HOME` env vars are pointed at a per-process sandbox dir at preload time. Test files never read the developer's real `~/.config/akm/`, `~/.cache/akm/`, etc. unless they go through `process.env.HOME` after explicitly restoring it. `CODEX_HOME` is pointed there too, because bun's `os.homedir()` keeps returning the real home, so the Codex session reader's `~/.codex` default would otherwise read the developer's real rollouts. Bun's `os.homedir()` ignores a runtime `HOME` change, so code that resolves a home directory must use the XDG variables (or `OPENCODE_TEST_HOME`, which the preload also sets for the embedded OpenCode); a test can never rely on `HOME` alone.
-  - Every test gets a `beforeEach`/`afterEach` that snapshots the harnessed env (HOME, CODEX_HOME, XDG_*, AKM_BUNDLE_DIR, AKM_CONFIG_DIR, AKM_CACHE_DIR, AKM_DATA_DIR, AKM_STATE_DIR, AKM_VERBOSE, AKM_LLM_API_KEY, AKM_EMBED_API_KEY, AKM_REGISTRY_URL, AKM_NPM_REGISTRY), `process.cwd()`, and `globalThis.fetch`, then restores them after.
-  - All module-level singletons in production code are reset between tests: `cachedConfig`, `embedCache`, `localEmbedder`, quiet/verbose flags, and the warn-module log file path.
-  - `mock.restore()` is called unconditionally on `afterEach`.
-  - A global `afterAll` ends the run: it closes the embedded OpenCode instances the SDK runner cached (`closeOpencodeSdk()`), then removes the suite sandbox dir. `bun test` does not emit `process.on("exit")` when a run ends normally (bun 1.4.1), so neither the runner's exit backstop nor the preload's `exit` listener fired there: a test that dispatched through the real runner left its OpenCode open and every run left its `/tmp/akm-test-suite-*` behind (both pinned by `tests/integration/opencode-sdk-suite-teardown.test.ts`). The `exit`/signal handlers still cover an explicit `process.exit()` and signal-kills. Don't rely on `process.on("exit")` for test-process cleanup.
-  - A tripwire **throws** if any test leaks an `AKM_*` / `XDG_*` / `HOME` env var that wasn't there at preload time, leaves `process.cwd()` changed, or leaves `globalThis.fetch` replaced.
-- Helpers live in `tests/_helpers/sandbox.ts`: `sandboxStashDir()`, `sandboxHome()`, `sandboxXdgConfigHome()`, `sandboxXdgDataHome()`, `writeSandboxConfig(partial)`, and `withMockedFetch(fn, mock)`. Use them rather than mutating env / fetch by hand.
-- New test files should not mutate `process.env.HOME =`, `process.chdir(...)`, or `globalThis.fetch =` directly. There is no lint gate for this any more (the static checker was deleted in 0.9.8 as redundant): `src/core/paths.ts` throws `TEST_ISOLATION_MISSING` at runtime when isolation is missing, and the preload tripwire above catches leaks. Use `withMockedFetch` for fetch swaps and restore cwd in a `finally` block when chdir is unavoidable.
+**Simplicity first.** The minimum code that solves the problem; nothing speculative.
+- No features beyond what was asked, no abstractions for single-use code, no flexibility or configurability nobody requested, no error handling for impossible scenarios.
+- If you wrote 200 lines and it could be 50, rewrite it. Would a senior engineer call it overcomplicated? Then simplify.
 
-## CLI Contract
-- Failures render to `stderr` as `{ok:false, error, code}`. The canonical exit-code table (`EXIT_CODES` in `src/cli/shared.ts`) is: `0` success, `1` general error / not found, `2` usage error, `4` health warn (`akm health` only), `70` internal / unclassified (any thrown value that is not an `AkmError` — sysexits `EX_SOFTWARE`), `75` transient / retry shortly (`TransientError` — sysexits `EX_TEMPFAIL`; another akm process holds a lock or is writing `state.db` or `index.db` right now, not a bad command line), `78` config error.
+**Surgical changes.** Touch only what you must; clean up only your own mess.
+- Don't "improve" adjacent code, comments or formatting, and don't refactor what isn't broken. Match the existing style.
+- Remove the imports, variables and functions your change made unused. Mention other dead code; don't delete it unless asked.
+- Every changed line traces to the request.
 
-## LLM Defaults
+**Goal-driven execution.** Define success criteria and loop until they are verified.
+- "Add validation" → write tests for the invalid inputs, then make them pass. "Fix the bug" → write a test that reproduces it, then make it pass. "Refactor X" → the tests pass before and after.
+- For a multi-step task, state a brief plan with a check for each step: `1. [step] → verify: [check]`.
 
-LLM defaults follow a "works correctly for the lowest common denominator" philosophy — a slow local model on a single-threaded server. Do not add per-call tuning knobs without a strong reason.
+## Correcting or simplifying an existing system
 
-- `max_tokens` is **not sent** by default in `chatCompletion`. The model/API already knows its own limits; a hardcoded default creates silent truncation failures. Users who need a cap can write `max_tokens` on a connection or one of its model entries in config.json. The only exception is `probeLlmReachable`, which sends `maxTokens: 16` because it expects a tiny fixed-shape response.
-- `DEFAULT_LLM_TIMEOUT_MS` (`src/integrations/agent/config.ts`) is **600 000 ms** (10 minutes), applied once by the resolver to a connection, and to model work on a harness, that sets no `timeoutMs`; no other layer adds a timeout of its own. There is a single timeout knob: `timeoutMs` on the connection or harness in config.json. The removed `featureGateTimeoutMs` field was a band-aid; do not re-add it.
-- `concurrency` defaults to **1** in `concurrentMap`. `connections.<name>.concurrency` is a valid schema field (akm never sends it); it is honored for workflow step concurrency caps — `targetConcurrency` in `src/workflows/freeze/step-values.ts` reads it for a step that runs on a connection through `defaultLlmEngineConcurrency` in `src/workflows/concurrency-policy.ts` (clamped to `1..64`; when unset it derives **1** for a loopback endpoint and **4** for a remote one), freezes it as the target's `concurrency` in the plan, and the workflow scheduler (`scheduleUnits` in `src/workflows/exec/scheduler.ts`) applies it as `llmConcurrency` to cap `map`/`over` step fan-out. A harness sets none.
-- **Workflow fan-out is parallel by default (0.9.1+).** A `map` step with no `concurrency:` freezes `DEFAULT_MAP_CONCURRENCY` (**4**), overridable per install by `workflow.defaultMapConcurrency` (set it to `1` for the pre-0.9.1 serial default) and per step by an authored `concurrency:` (an explicit `1` is honored and stays distinguishable from unset). All fan-out policy lives in `src/workflows/concurrency-policy.ts` and is resolved ONCE at freeze, so `plan_json` carries the widths and an in-flight/resumed run never changes behavior underneath itself. The scheduler's own `concurrency ?? 1` is a fail-safe for callers that name no width, not the map default. Effective width is `min(map concurrency, execution.maxConcurrency, connection concurrency, host CPU cap)`.
-- There is no top-level `llm` config key: it is an unknown key, named once and
-  ignored. Per-call tuning lives on a named connection (`connections.<name>.*`
-  request fields and `models` entries), and the settings that choose where a call
-  runs (`improve.processes`, `improve.qualityGate`, `index`) carry an `llm`
-  overlay for the portable settings.
+The failure to avoid is treating something other than the user's stated intent as the authority: the existing code, a prior decision, the shipped state, or an option you invented.
+1. Existing code is not a specification. Complexity you find is a suspect, not a requirement. When code contradicts the stated goal, the code changes; don't preserve, extend or build around it "to be safe".
+2. Subtract before you add. More abstraction is not the fix for over-engineering. Any new layer, option, mode or knob must earn its place against the stated goal; default to no.
+3. Maturity is not correctness. "Shipped", "ratified", "tested", "already there" are not evidence the thing is right.
+4. When told to remove something, remove it. If removal is genuinely risky, state the risk in one line and proceed.
+5. Don't manufacture decisions. Check whether what the user already said answers it, and never offer an option that contradicts their stated intent.
+6. If your recommendation contradicts the user's stated goal, you drifted, not them. Re-read the request.
+7. Match the response to the moment: state the change and the risk, then stop.
 
-## Code Style
-- Prefer external `.md` (or `.xml`) files over long inline strings in TypeScript. Multi-line template literals containing markdown, XML, or prose belong in a standalone file in the same directory as the module that uses them. Import them with `import x from "./x.md" with { type: "text" }` and use `.replace`/`.replaceAll` with `{{PLACEHOLDER}}` tokens at call time. This keeps templates editable without touching TS source and avoids escaping noise inside template literals. See `src/tasks/backends/schtasks.ts` (which imports `src/assets/backends/schtasks-template.xml`), `src/output/cli-hints.ts`, and `scripts/copy-assets.ts` for the established pattern.
+## Commands
+- `bun install`; `bun run build`.
+- Before committing: `bun run lint:fix`, `bunx tsc --noEmit`, the focused tests (`bun test tests/<file>.test.ts`), `bun run check:changed`. CI runs `bun run check`.
+- Run the working tree as `bun src/cli.ts …`. A bare `akm` is the installed copy, using the real config and bundles.
 
-## Defensive Code
-
-A guard, cap, version gate, or fencing check survives only if it passes **all three**:
-
-1. **It has demonstrably helped a real user.** Check the local evidence before defending it — the `events` table in `state.db`, task logs, issue history. A guard that has never fired in production is a candidate for deletion, not preservation.
-2. **Its failure mode costs less than the hazard it prevents.** A cap whose trip makes the CLI unusable is worse than the slowness it was guarding against.
-3. **The operation is not already gated behind a deliberate human command.** Anything a person explicitly typed does not get a second machine-level gate. The operator is not racing themselves.
-
-"This hazard is conceivable" is not a justification — that always answers yes, and it is how this codebase accumulated footguns. When in doubt, delete.
-
-Preference order when something must change: **remove the limit** > degrade with a warning > abort. Aborting is the last resort, not the default.
-
-### What this does not apply to
-
-Machinery that prevents **data loss or corruption** passes test 2 on its own merits and stays: backups, atomic writes, write-path validation that keeps malformed data out of the database, and path-containment checks that stop writes outside the bundle. The target is machinery that makes the tool refuse to do its job.
-
-### Reading persisted data
-
-Each stored format has one current shape in code and one converter from older shapes; readers use the converter and keep no tolerance of their own, and `akm migrate apply` runs the same converter to rewrite a user's files, with a backup. A reader never rewrites a user's file. Reads reach back to the 0.9.15 floor: above it, convert in memory, warn once and name `akm migrate apply`; below it, and for an older task source (the named exception), stop and name the migrator. akm's own stores (`state.db`, `index.db`) migrate forward when opened, with a backup before any destructive step. What a reader does with data from a newer release depends on the format, so `docs/architecture/persisted-data-compat.md` is the per-format contract and inventory: read it before touching any persisted format, and add a changed format's old shape to the upgrade rehearsal (`tests/integration/upgrade-rehearsal/`). Unknown config keys are kept in memory and named once (`unknownConfigKeyPaths`); `akm migrate apply` drops them.
-
-Runtime code never invents authority. The one host-local choice it fills in by itself is `scheduler.enabled`, and only from evidence the operator already created on this host: a config without the list takes the akm-written rows already installed in the native scheduler as the choice. Everything else that would need a new trust decision is reported, never invented.
-
-### Worked examples
-
-- **#857** — single-ref lookup walked the entire bundle tree, capped at 16,384 files, and aborted when tripped. Zero useful firings in months of local event history; its only production behavior was making the CLI unusable on a large bundle. Walk and cap deleted, replaced with closed-form candidate enumeration. Net −13 lines of source, every collision guarantee intact.
-- **`extra-params` (#815/#816)** — hard-rejected legacy keys. Degraded to warn-and-auto-lift; only genuinely conflicting keys still reject. This is the template for a guard that had to stay but had the wrong failure mode.
-- **`guarded-source` 1MiB cap** — kept once on the argument that the bytes are hashed, so a truncated read would be silently wrong. That argument rejects *truncation*; it never justified a *cap*. Correct answer was no truncation and no cap.
-- **Migrator TOCTOU fencing** — inode/device/ctime identity checks defending a window inside a human-typed `akm migrate apply` that already holds a cross-process lock and writes backups. A multi-tenant-daemon threat model applied to a single-user CLI.
-
-## Gotchas
-- `prepublishOnly` copies `.github/README.npm.md` over `README.md` before building, and `postpublish` restores `README.md` with `git checkout -- README.md`. Do not treat that README churn as a normal source edit.
-- `.github/workflows/ci.yml` ignores docs-only changes (`docs/**`, `README.md`, `CHANGELOG.md`, `schemas/**`, `CLAUDE.md`, `LICENSE`), so docs-only edits will not get normal CI coverage.
+## Where the details live
+- Contributing, code style, lint and commit rules, and known gotchas: `.github/CONTRIBUTING.md`.
+- How code here is written (guards, one place per policy, formats, comments, harnesses): `docs/architecture/akm-core-principles.md`.
+- What every command guarantees, and module boundaries: `docs/architecture/architecture.md`.
+- Stored formats and migration: `docs/architecture/persisted-data-compat.md`.
+- Writing, placing and running tests: `docs/architecture/testing/testing-workflow.md`.
+- Config, connections, harnesses, model-call defaults: `docs/reference/configuration.md`. Commands, flags, exit codes: `docs/reference/cli.md`.
+- Running from source, releases: `docs/maintainers/`.

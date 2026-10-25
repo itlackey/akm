@@ -55,15 +55,17 @@ each process runs](#where-each-process-runs) say how models are added.
 ## Scheduler activation
 
 `scheduler.enabled` is this host's list of scheduled refs, such as
-`stash//tasks/nightly`. A ref that is not listed is disabled. On disk each
-entry is still written as the `{kind, ref, sourceId}` object 0.9.16 reads,
-so that release keeps working against a config this one wrote; in memory it
-is the ref.
+`stash//tasks/nightly`, held and written as plain refs. A ref that is not
+listed is disabled, and removing a bundle drops its refs. A list that is
+present, empty or not, is the host's choice and is never second-guessed. The
+older `{kind, ref, sourceId}` entries are read as their `ref` and written back
+plain.
 A config without the list (written before 0.9.17) means "keep what is
-installed": the first `akm task sync` fills it from the akm-written native
-scheduler rows. The 0.9.17-alpha `{kind, ref, sourceId}` entries are read as
-their `ref`. Authored task/workflow files may describe schedules but cannot
-put themselves on the list.
+installed": the first `akm task sync`, `akm setup`, `akm task enable`, `akm task
+disable` or `akm task add` fills it from the akm-written native scheduler rows.
+There are no grants, source identities or fire-time checks. Authored
+task/workflow files may describe schedules but cannot put themselves on the
+list.
 
 This key is deliberately local: if a config uses `extends`, any `scheduler`
 section in the base is ignored with a warning. Only the top-level local config
@@ -106,7 +108,7 @@ akm reads these keys of a connection:
 | `models` | Alias to model. See [Aliases](#aliases). |
 | `contextLength` | The model's context window in tokens. `akm improve` sizes its prompts from it (consolidate's chunks, reflect's asset content); unset, it assumes 4096. |
 | `timeoutMs` | How long one call may take, in milliseconds; `null` runs unbounded. Unset, a model call stops after 600 000 (ten minutes) and agent work runs until it finishes. The ceiling is 2 147 483 647. |
-| `concurrency` | How many requests a workflow `map` step may have in flight on this connection. Unset, 1 on a loopback endpoint (a local model server runs one inference at a time) and 4 on a remote one. akm never sends it. |
+| `concurrency` | How many requests a workflow `map` step may have in flight on this connection, clamped to 1–64. Unset, 1 on a loopback endpoint (a local model server runs one inference at a time) and 4 on a remote one. akm never sends it. |
 
 Every other key, on the connection or in a model entry, is a request field in
 the endpoint's own spelling and is sent with each request as written (`top_p`,
@@ -143,6 +145,10 @@ then the process, then the model entry, then the connection. A connection and
 akm's own runtime take all of them. A harness takes none: set them in the
 program's own configuration, and akm reports each as an `untranslated-field`
 notice while the call goes on.
+
+akm sends no `max_tokens` unless one is written, on a connection, on a model
+entry or by the call: the model and its endpoint know their own limits, and a
+default cap would truncate replies silently.
 
 `enableThinking: false` turns thinking off and `reasoningEffort` takes a value
 such as `"none"`, `"low"` or `"high"`. akm sends **both** thinking fields,

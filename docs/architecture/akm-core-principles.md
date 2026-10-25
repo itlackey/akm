@@ -19,13 +19,24 @@ simplicity, then convenience.
 ### 1. Delete before you add
 
 The default answer to a new guard, cap, version gate, option, mode or layer
-is no. A guard survives only if it has demonstrably helped a real user, its
-failure mode costs less than the hazard it prevents, and the operation is
-not already behind a deliberate human command. "This hazard is
-conceivable" is not a reason. When something must change, remove the limit
-first, degrade with a warning second, abort last. Machinery that prevents
-data loss or corruption, such as backups, atomic writes, write-path
-validation and path containment, is exempt.
+is no. A guard, cap, version gate, or fencing check survives only if it
+passes **all three** tests:
+
+1. **It has demonstrably helped a real user.** Check the local evidence before defending it — the `events` table in `state.db`, task logs, issue history. A guard that has never fired in production is a candidate for deletion, not preservation.
+2. **Its failure mode costs less than the hazard it prevents.** A cap whose trip makes the CLI unusable is worse than the slowness it was guarding against.
+3. **The operation is not already gated behind a deliberate human command.** Anything a person explicitly typed does not get a second machine-level gate. The operator is not racing themselves.
+
+"This hazard is conceivable" is not a justification — that always answers yes,
+and it is how this codebase accumulated footguns. When in doubt, delete.
+
+Preference order when something must change: **remove the limit** > degrade
+with a warning > abort. Aborting is the last resort, not the default.
+
+What this does not apply to: machinery that prevents **data loss or
+corruption** passes test 2 on its own merits and stays: backups, atomic
+writes, write-path validation that keeps malformed data out of the database,
+and path-containment checks that stop writes outside the bundle. The target is
+machinery that makes the tool refuse to do its job.
 
 The same rule applies to code that is not a guard: build what the current
 design needs and nothing for a future one (YAGNI). No speculative option,
@@ -36,13 +47,22 @@ Why: every footgun this codebase has removed was a guard added because a
 hazard was conceivable; the limits made the tool refuse to do its job
 more often than they protected anyone.
 
-Enforced by: review. The worked examples in `AGENTS.md` are the precedent.
+Worked examples, which are the precedent:
+
+- **#857** — single-ref lookup walked the entire bundle tree, capped at 16,384 files, and aborted when tripped. Zero useful firings in months of local event history; its only production behavior was making the CLI unusable on a large bundle. Walk and cap deleted, replaced with closed-form candidate enumeration. Net −13 lines of source, every collision guarantee intact.
+- **`extra-params` (#815/#816)** — hard-rejected legacy keys. Degraded to warn-and-auto-lift; only genuinely conflicting keys still reject. This is the template for a guard that had to stay but had the wrong failure mode.
+- **`guarded-source` 1MiB cap** — kept once on the argument that the bytes are hashed, so a truncated read would be silently wrong. That argument rejects *truncation*; it never justified a *cap*. Correct answer was no truncation and no cap.
+- **Migrator TOCTOU fencing** — inode/device/ctime identity checks defending a window inside a human-typed `akm migrate apply` that already holds a cross-process lock and writes backups. A multi-tenant-daemon threat model applied to a single-user CLI.
+
+Enforced by: review.
 
 ### 2. One place per policy
 
 A rule lives in exactly one module and everything else calls it. Write
 destinations branch on source kind only in `src/core/write-source.ts`.
 Fan-out widths are decided once in `src/workflows/concurrency-policy.ts`.
+A call's timeout is resolved once in `src/integrations/agent/resolution.ts`,
+and no other layer adds one.
 Child-process environment allowlists come from `src/core/spawn-env.ts`.
 Every agent harness registers once in `HARNESS_REGISTRY`
 (`src/integrations/harnesses/index.ts`) and core imports the registry, not
@@ -54,11 +74,14 @@ the drift is invisible until a user hits the one that differs.
 
 Enforced by: `tests/harnesses-registry.test.ts` for the registry;
 `scripts/lint-secret-resolver-boundary.ts` for secret reads;
-`tests/contracts/module-boundaries.test.ts` for the module table. The write
-chokepoint and the no-direct-harness-imports rule are held by review; akm's
-own runtime (reached from `src/integrations/agent/runner-dispatch.ts`, and not a
-registered harness) and the OpenCode plugin upgrade and staleness checks still
-import the OpenCode folder directly, which is open work.
+`tests/contracts/module-boundaries.test.ts` for the module table;
+`tests/contracts/runtime-port-boundary.test.ts` for akm's own runtime, which
+lowering and dispatch reach only through the `AgentRuntime` port
+(`src/integrations/agent/runtime-port.ts`), composed in
+`src/integrations/agent/runtime.ts`. The write chokepoint and the
+no-direct-harness-imports rule are held by review; the OpenCode plugin upgrade
+and staleness checks still import the OpenCode folder's installation helpers
+directly, which is open work.
 
 ### 3. One current shape per format, one converter
 
@@ -126,20 +149,14 @@ Enforced by: `bun run lint` (`scripts/lint-doc-examples.ts`,
 
 `test:unit` and `test:integration` report zero failures at all times. A
 red run is a real break, never noise to route around; a test that must be
-disabled is disabled explicitly with a linked issue. A test that opens a
-real database, touches the network, or spawns a process lives under
-`tests/integration/`; everything else lives under `tests/`.
+disabled is disabled explicitly with a linked issue.
 
-Both runner scripts start every shard with its own throwaway `HOME`. The
-preload then points `HOME`, the four `XDG_*_HOME` variables,
-`CODEX_HOME` and `CLAUDE_CONFIG_DIR` at a sandbox and clears the `AKM_*_DIR` overrides, so code
-that resolves paths from environment variables, as `src/core/paths.ts`
-does, never reaches the developer's files. After each test it restores
-`cwd`, `fetch` and those variables, and it throws when a test leaked any of
-them. It cannot change `os.homedir()`: Bun ignores a runtime change to
-`HOME`, so under a bare `bun test <file>` a default built from
-`os.homedir()` reads the real home. Such a default needs its own override,
-as the Codex and Claude Code session readers have `CODEX_HOME` and `CLAUDE_CONFIG_DIR`.
+No test reads or writes a developer's real files: the runner scripts and the
+preload point everything a test can resolve from the environment at a
+sandbox, and a test that leaks fails. A default that is not resolved from the
+environment, such as `os.homedir()`, is outside that sandbox and needs its own
+override. [Testing Workflow](testing/testing-workflow.md) states the two
+targets, where a test belongs and how the sandbox works.
 
 Why: a suite that is "usually green" is a suite nobody trusts, and a test
 that reads a developer's real config passes on one machine and fails on
@@ -153,10 +170,16 @@ through `os.homedir()` outside the runner scripts are held by review.
 ### 7. Prose lives in files; comments say why
 
 Multi-line markdown, XML or prose belongs in a standalone file next to the
-module that uses it, imported as text and filled with `{{PLACEHOLDER}}`
-tokens. A code comment explains a constraint or a decision the code cannot
-show; it does not cite plans, specs, review rounds or history, and it does
-not restate the line beneath it.
+module that uses it, imported as text
+(`import x from "./x.md" with { type: "text" }`) and filled with
+`{{PLACEHOLDER}}` tokens through `.replace` or `.replaceAll` at call time.
+`src/tasks/backends/schtasks.ts` (which imports
+`src/assets/backends/schtasks-template.xml`), `src/output/cli-hints.ts` and
+`scripts/copy-assets.ts` are the established pattern.
+
+A code comment explains a constraint or a decision the code cannot show; it
+does not cite plans, specs, review rounds or history, and it does not restate
+the line beneath it.
 
 Why: templates inside template literals cannot be edited without touching
 source, and a comment that points at a document nobody can find is noise
@@ -177,10 +200,13 @@ Why: a user who reads a stale page loses more time than if the page had
 not existed, and a "normative" document the code ignores teaches
 contributors that documents do not matter.
 
-Enforced by: `scripts/lint-doc-examples.ts` (every command and flag in a
-doc exists) and the npm pack check in
+Enforced by: `scripts/lint-doc-examples.ts`, which reads the fenced examples
+in `docs/`, `src/assets/hints/`, `README.md`, `AGENTS.md` and `STABILITY.md`
+and checks that every command and flag in them exists (the migration documents
+of earlier releases, named in `HISTORICAL_MIGRATION_DOCS`, are exempt; the
+current migration guide and release note are read), and the npm pack check in
 `tests/integration/install/npm-pack-contents.test.ts` (no dead link ships).
-The rest is held by review.
+Whether a statement is true of the product is held by review.
 
 ### 9. CLI-first, Bun-first
 
@@ -210,8 +236,10 @@ akm core, and can be replaced without touching the rest of akm.
 
 Why: heavy machinery and tight coupling are the opposite of akm's goals.
 
-Enforced by: review. The seam is `HARNESS_REGISTRY` (principle 2), which akm's own
-runtime and the OpenCode plugin checks still bypass.
+Enforced by: review. The seam is `HARNESS_REGISTRY` (principle 2); akm's own
+runtime sits behind the `AgentRuntime` port (pinned by
+`tests/contracts/runtime-port-boundary.test.ts`), and only the OpenCode plugin
+checks still bypass the seam.
 
 ### 11. Simple is not sloppy
 

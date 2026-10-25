@@ -196,6 +196,12 @@ map's declared `concurrency`, the run's frozen `workflow.maxConcurrency`, the
 selected frozen connection's `concurrency` (a harness has none), and the current host's CPU-derived safety limit. Reapplying
 host safety keeps a run safe when it resumes on a smaller machine.
 
+`targetConcurrency` (`src/workflows/freeze/step-values.ts`) freezes the
+connection's value as the target's `concurrency` in the plan, and
+`scheduleUnits` (`src/workflows/exec/scheduler.ts`) applies it as
+`llmConcurrency` to cap `map` and `over` fan-out. The scheduler's own default of
+one is a fail-safe for a caller that names no width, not the `map` default.
+
 - **Unset (default):** the CPU-derived value `min(16, max(1, cores − 2))` — a
   conservative default that leaves headroom on the host and matches the
   original Claude-Code cap.

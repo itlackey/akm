@@ -30,6 +30,11 @@ Use an explicit invocation for the behavior you intend to test:
 - Isolated packed-package acceptance: `bun run test:package`
 - Intentional machine-wide checkout install: `bun run build:install`
 
+Running `akm` by hand, outside `bun test`, uses the real `HOME` and your
+bundles. To try something against scratch data instead, point `HOME`, `XDG_*`,
+`AKM_CONFIG_DIR`, `AKM_DATA_DIR` and `AKM_BUNDLE_DIR` at a scratch directory
+first.
+
 The global checkout install deliberately replaces the globally resolved `akm`;
 do not use it for routine inner-loop testing. Some development machines still
 have a machine-local wrapper for historical workflows. Treat it as transitional,
@@ -46,7 +51,8 @@ bun test
 ### Linting
 
 ```bash
-bun run lint
+bun run lint:fix   # Biome with --write; read git diff afterwards
+bun run lint       # what CI runs: Biome, the secret-resolver and shipped-assets lints, the doc-example lint
 ```
 
 ### Building
@@ -55,7 +61,13 @@ bun run lint
 bun run build
 ```
 
+The build compiles `src/**` only into `dist/`; `tests/release-check.sh` fails if
+`dist/tests` appears.
+
 ## Required local verification
+
+Before committing, run `bun run lint:fix`, `bunx tsc --noEmit` and the focused
+tests for what you changed (`bun test tests/<file>.test.ts`).
 
 Before pushing any branch that changes CLI output, search behavior, docs, or tests:
 
@@ -121,8 +133,46 @@ files at runtime from the release-notes directory.
 ## Code Style
 
 - **TypeScript** in strict mode, using ESM modules.
-- **Biome** for formatting and linting. Run `bun run lint` before submitting.
+- **Biome** for formatting and linting; see [Linting](#linting).
 - Keep functions small and well-named. Prefer explicit types over `any`.
+- Prose, templates and comments follow
+  [principle 7](../docs/architecture/akm-core-principles.md#7-prose-lives-in-files-comments-say-why);
+  the other rules for how code is written are in
+  [Core Principles](../docs/architecture/akm-core-principles.md).
+- Lessons from 0.10:
+  - No test-only exports from `src/` (`_…ForTests`) where a behaviour test would do.
+  - No plumbing without a production caller: a parameter, field or export only a
+    test uses is deleted.
+  - The CHANGELOG, the migration guide and the docs describe only behaviour that
+    shipped and was checked.
+  - New code and messages say "connection" and "harness", never "engine".
+  - A converter step must not lose entries to key order or name collisions, and a
+    test pins that.
+  - Instruction files carry no dated counts and no file:line citations.
+
+## Gotchas
+
+- Biome 2.4.14 (the pinned version) intermittently parses a file with the wrong
+  grammar (`.ts` as JSON, JSON as JS) and reports errors against correct text:
+  re-run it; don't edit the file it names. A misparse under `--write` has
+  rewritten valid JSON into invalid JSON once, so read `git diff` after
+  `bun run lint:fix`.
+- Read a test run's own exit code. Piped through `| tail` or `| grep`, a red run
+  reports the pipe's.
+- `TMPDIR` must be a `/tmp`-family path (`/tmp/...`, `/var/tmp/...`, or their
+  macOS `/private/...` equivalents) and must contain neither `.cache` nor
+  `registry`. `tests/setup-tmp-stash-guard.test.ts` exercises a production guard
+  (`isTransientStashPath` in `src/core/paths.ts`) that is hardcoded to the real
+  OS temp-dir families, not to whatever `TMPDIR` is, so any other `TMPDIR` makes
+  that file fail for reasons unrelated to the code under test. A `TMPDIR`
+  containing `.cache` or `registry` once masked a real lint-suppression bug
+  (fixed in 0.9.5).
+- `prepublishOnly` copies `.github/README.npm.md` over `README.md` before
+  building, and `postpublish` restores `README.md` with
+  `git checkout -- README.md`. That README churn is not a source edit.
+- `.github/workflows/ci.yml` ignores docs-only changes (`docs/**`, `README.md`,
+  any `CHANGELOG.md`, `CLAUDE.md`, `LICENSE`), so docs-only edits get no normal
+  CI coverage.
 
 ## Reporting Issues
 

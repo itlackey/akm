@@ -117,13 +117,15 @@ Failures classified by akm emit a JSON error envelope on **stderr** before
 exiting; stdout is normally left empty:
 
 ```json
-{"ok": false, "error": "<message>", "hint": "<optional hint>"}
+{"ok": false, "error": "<message>", "code": "<stable code>", "hint": "<optional hint>"}
 ```
 
-The `hint` field is present only when actionable remediation is available
-(e.g. a suggested flag or alternate command). Agents should check
-`ok === false` on the parsed stderr envelope or a non-zero exit code to
-detect failure. Scripts can rely on the exit code alone.
+The `code` field is the stable machine-readable code of a classified akm error
+(`INVALID_CONFIG_FILE`, `MISSING_REQUIRED_ARGUMENT`, ...); an unexpected
+internal error has none. The `hint` field is present only when actionable
+remediation is available (e.g. a suggested flag or alternate command). Agents
+should check `ok === false` on the parsed stderr envelope or a non-zero exit
+code to detect failure. Scripts can rely on the exit code alone.
 
 Every success envelope produced by the passthrough stamp — `config`, `clone`,
 `models`, `task-*`, `workflow-*`, `registry-*`, and the rest of that shared

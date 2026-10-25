@@ -89,9 +89,22 @@ written are in [Core Principles](akm-core-principles.md).
   current key, for the frozen endpoint only. Pinned by `tests/workflows/child-plan-immutability.test.ts`
   and `tests/workflows/immutable-execution-v4-red.test.ts`.
 - **Host authority is local and never inferred.** Inherited config shares
-  portable policy only; a disabled bundle is inert; the default bundle is
-  explicit. Pinned by `tests/config.test.ts` and
+  portable policy only. A disabled bundle (`enabled: false`) is inert across
+  content reads, writes, indexing and execution; an explicit bundle lifecycle
+  command may still update a named disabled bundle without activating it. The
+  default bundle is carried as explicit identity and default status, never
+  taken from array position. Runtime code never invents authority: the one
+  host-local choice it fills in by itself is `scheduler.enabled`, and only from
+  evidence the operator already created on this host (a config without the list
+  takes the akm-written rows already in the native scheduler as the choice;
+  see [Configuration](../reference/configuration.md#scheduler-activation)).
+  Anything else that would need a new trust decision is reported, never
+  invented. Pinned by `tests/config.test.ts` and
   `tests/source-source.test.ts`.
+- **An unsafe override names one risk.** `--allow-insecure-transport` allows
+  plain HTTP and nothing else, and there is no combined bypass. Pinned for the
+  flag by `tests/integration/registry/registry-network-boundary.test.ts`; the
+  absence of a combined bypass is held by review.
 
 ---
 

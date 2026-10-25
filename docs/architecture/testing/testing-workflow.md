@@ -18,6 +18,38 @@ covers the automated test workflow and test-authoring guidance.
 - binary lifecycle: install, run, `akm upgrade --check`, `akm upgrade`
 - cross-environment behavior on Ubuntu, Debian, Alpine, and Fedora containers
 
+## Test Targets
+
+`bun run check` runs lint and the typecheck, then both targets in sequence.
+
+- `bun run test:unit` (`scripts/test-unit.sh`) runs every `*.test.ts` under
+  `tests/` except `tests/integration/`. That includes the top-level
+  `tests/commands/` and `tests/workflows/` directories; do not confuse them with
+  the separate `tests/integration/commands/` and `tests/integration/workflows/`
+  directories.
+- `bun run test:integration` (`scripts/test-integration.sh`) runs
+  `tests/integration/**` only.
+
+**Where a test goes.** A file belongs under `tests/integration/` if it opens a
+real database (`openIndexDatabase`, `openExistingDatabase`), touches the network
+(a loopback server included), or spawns a real process (`spawn`, `spawnSync`,
+`Bun.spawn`); `tests/integration/commands/sources/index-db-contention.test.ts`
+writes the reasoning out against a concrete file. Everything else, such as pure
+in-memory logic and mocked I/O, belongs under `tests/`, however deeply nested.
+The real embedded OpenCode (its own SQLite database and a shell tool) and the
+loopback fake model are integration resources, and
+`tests/contracts/test-targets.test.ts` fails on a unit-target test that uses
+either. A file that seems to qualify for `tests/integration/` on any other
+ground says which clause it satisfies in a one-line header comment instead of
+being placed by feel. No `.test.ts` belongs under a `fixtures` or `_fixtures`
+path: those are data, not executable specs.
+
+**The suite is green by default.** `test:unit` and `test:integration` are
+expected to report 0 fail at all times, so a red run means something is broken,
+not "pre-existing" noise to route around. A test that must be disabled is
+`.skip`ped with a linked issue in the same change; never leave a failure
+standing and never add an "expected failures" allowlist.
+
 ## Test Layers In This Repo
 
 ### 1. Fast local correctness
@@ -26,7 +58,7 @@ Run these before any release candidate or merge:
 
 ```sh
 bun run test:unit
-bunx biome check --write src/ tests/
+bun run lint:fix
 bunx tsc --noEmit
 ```
 
@@ -53,10 +85,7 @@ Within one shard, every file assigned to that process still runs in **one
 shared process**: one `process.env`, one module-singleton namespace, and
 (under fake timers) one global clock for every file in that shard. A test that
 mutates shared state without restoring it, or that asserts on a wall-clock
-measurement, can pass on one scheduling and
-fail on another — the two release/0.8.0 flakes (scoring-pipeline Issue #14
-reading the wrong index DB after a sibling mutated `XDG_DATA_HOME`; the
-llm-client timeout test racing real timers) were both this class.
+measurement, can pass on one scheduling and fail on another.
 
 Rules (conventions, not statically enforced — the lint script that policed
 them was deleted in 0.9.8; the runtime guard in `src/core/paths.ts` throws
@@ -73,6 +102,14 @@ them was deleted in 0.9.8; the runtime guard in `src/core/paths.ts` throws
      around an in-process CLI invocation.
    - `makeStashDir` / `makeSandboxDir` — temp dirs that are NOT wired into env
      (pass them to `withEnv` or a subprocess env object yourself).
+   - `writeSandboxConfig(partial)` — merges `partial` into the sandboxed
+     `config.json` (call `sandboxXdgConfigHome` first).
+   - `withMockedFetch(run, mock)` — swaps `globalThis.fetch` for the duration of
+     `run` and restores it in a `finally`.
+
+   Do not assign `process.env.HOME =`, call `process.chdir(...)`, or assign
+   `globalThis.fetch =` directly. Use `withMockedFetch` for fetch swaps, and
+   restore the cwd in a `finally` block when a `chdir` is unavoidable.
 
    The DB path resolves from `XDG_DATA_HOME`; if you `akmIndex` then `akmSearch`,
    both must see the **same** sandboxed `XDG_DATA_HOME` or the search reads a
@@ -95,9 +132,54 @@ them was deleted in 0.9.8; the runtime guard in `src/core/paths.ts` throws
    ranking. Pass `skipLogging: true` when you need repeatable ranking across
    calls in a single test.
 
-If a file legitimately needs a literal env value (e.g. pure path-resolution unit
-tests) and restores via its own save/restore wrapper, add it to the linter's
-`ENV_ASSIGN_ALLOWED` set with a one-line justification — the list may only shrink.
+5. **Pass `--timeout` when a test spawns `bun test <fixture>`.** Bun ignores
+   `bunfig.toml`'s `timeout` (see the comment there), so the fixture dies at 5 s
+   under load.
+
+6. **Keep an index from downloading a model.** An index with
+   `semanticSearchMode: "auto"` and no fake embedder downloads a Hugging Face
+   model mid-test; use the deterministic embedder (`AKM_EMBED_DETERMINISTIC`) or
+   `"off"`.
+
+### The preload
+
+`bunfig.toml` preloads `tests/_preload.ts` for every `bun test` invocation. It
+owns the process state that crosses test boundaries:
+
+- At preload time `HOME` and all four `XDG_*_HOME` variables point at a
+  per-process sandbox directory, the `AKM_*_DIR` overrides are cleared, and so
+  are `AKM_VERBOSE`, `AKM_LLM_API_KEY` and `AKM_EMBED_API_KEY`. A test file never
+  reads the developer's real `~/.config/akm/` or `~/.cache/akm/`.
+- Bun's `os.homedir()` ignores a runtime `HOME` change, so the preload cannot
+  redirect a default built from it. Both runner scripts start every shard with its
+  own throwaway `HOME`, which `os.homedir()` does see; under a bare
+  `bun test <file>` it returns the real home. Code that resolves a home directory
+  therefore uses the XDG variables or an override of its own, and a test can never
+  rely on `HOME` alone. The preload points `CODEX_HOME` and `CLAUDE_CONFIG_DIR` at
+  the sandbox for the Codex and Claude Code session readers, and
+  `OPENCODE_TEST_HOME` for the embedded OpenCode.
+- Before each test it snapshots the harnessed environment (`HARNESSED` in the
+  preload: `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_TEST_HOME`, the
+  four `XDG_*_HOME` variables, `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`,
+  `AKM_CACHE_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_VERBOSE`,
+  `AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY`, `AKM_REGISTRY_URL`,
+  `AKM_NPM_REGISTRY`), `process.cwd()` and `globalThis.fetch`, and restores them
+  afterwards.
+- It resets the module-level singletons of production code between tests:
+  `cachedConfig`, `embedCache`, `localEmbedder`, the quiet and verbose flags and
+  the warn module's log file path. `mock.restore()` runs after every test.
+- A tripwire throws when a test leaks an `AKM_*`, `XDG_*` or `HOME` variable that
+  was not there at preload time, leaves `process.cwd()` changed, or leaves
+  `globalThis.fetch` replaced.
+- A global `afterAll` ends the run: it closes the embedded OpenCode instances
+  the SDK runner cached (`closeOpencodeSdk()`), then removes the suite sandbox
+  directory. `bun test` does not emit `process.on("exit")` when a run ends
+  normally, so neither the runner's exit backstop nor the preload's `exit`
+  listener fires there: a test that dispatched through the real runner left its
+  OpenCode open and every run left its `akm-test-suite-*` directory behind
+  (both pinned by `tests/integration/opencode-sdk-suite-teardown.test.ts`). The
+  `exit` and signal handlers still cover an explicit `process.exit()` and
+  signal-kills. Do not rely on `process.on("exit")` for test-process cleanup.
 
 ### 2. End-to-end CLI validation
 
@@ -147,7 +229,9 @@ can be:
 These cases are covered by `tests/integration/setup-run.test.ts` and the focused
 semantic/config suites.
 
-The real-model gate (`AKM_SEMANTIC_TESTS=1`) honors an explicit `HF_HOME` and
+The real-model gate runs with
+`AKM_SEMANTIC_TESTS=1 bun test tests/integration/semantic-search-e2e.test.ts`; its
+first run downloads Hugging Face models. It honors an explicit `HF_HOME` and
 otherwise uses the ignored, repo-local `.ci-cache/huggingface` directory. That
 path is outside the preload's disposable test `HOME`, so a second local run
 reuses the model without exposing the developer's normal AKM cache. Gated CI
@@ -228,7 +312,7 @@ Use this for most code changes:
 ```sh
 bun run test:unit
 bun run test:integration
-bunx biome check --write src/ tests/
+bun run lint:fix
 bunx tsc --noEmit
 ```
 
@@ -241,7 +325,7 @@ source management, or Docker assets:
 bun run test:unit
 bun test tests/integration/self-update.test.ts tests/integration/setup-run.test.ts tests/integration/install-script.test.ts
 ./tests/docker/run-docker-tests.sh
-bunx biome check --write src/ tests/
+bun run lint:fix
 bunx tsc --noEmit
 ```
 
