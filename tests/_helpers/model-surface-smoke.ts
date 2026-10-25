@@ -91,13 +91,25 @@ export function expectConnectionConfig(run: SmokeRun): void {
  * A config with only a harness: nothing to list or change on `akm models`, which says so and points at `akm setup`,
  * while health and info report the harness.
  */
+/**
+ * The error envelope akm prints on stderr. A runtime may print its own warnings
+ * on stderr around it (Node 26 does), so the envelope is the JSON object between
+ * the first `{` and the last `}`, not the whole stream.
+ */
+function errorEnvelope(stderr: string): { code?: string; hint?: string } {
+  const start = stderr.indexOf("{");
+  const end = stderr.lastIndexOf("}");
+  expect(start, `no JSON error envelope on stderr:\n${stderr}`).toBeGreaterThanOrEqual(0);
+  return JSON.parse(stderr.slice(start, end + 1)) as { code?: string; hint?: string };
+}
+
 export function expectHarnessOnlyConfig(run: SmokeRun): void {
   const set = run(["config", "set", "harnesses.claude", "{}", "--silent"]);
   expect(set.status, `config set harnesses.claude\n${set.stderr}`).toBe(0);
 
   const models = run(["models", "--no-probe"]);
   expect(models.status, `models without a connection\n${models.stdout}`).toBe(78);
-  const failure = JSON.parse(models.stderr) as { code?: string; hint?: string };
+  const failure = errorEnvelope(models.stderr);
   expect(failure.code).toBe("LLM_NOT_CONFIGURED");
   expect(failure.hint).toContain("akm setup");
 
