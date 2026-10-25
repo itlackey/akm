@@ -17,9 +17,6 @@ import { getRunLogDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { clearLogFile, setLogFile, warnOnce } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
-import { defaultWhich } from "../../integrations/agent/detect";
-import { materializeConnection } from "../../integrations/agent/runner-dispatch";
-import { type ChatCompletionConfig, probeLlmReachable } from "../../llm/client";
 import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/html-render";
 import { readStdin } from "../../runtime";
@@ -32,14 +29,7 @@ import {
   type TerminationReason,
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
-import {
-  type EngineProbeOutcome,
-  type EngineUnavailableProcessName,
-  type ResolvedImprovePlan,
-  type ResolvedImproveProcess,
-  resolveImprovePlan,
-  resolveImproveStrategy,
-} from "./improve-strategies";
+import { type ResolvedImprovePlan, resolveImprovePlan, resolveImproveStrategy } from "./improve-strategies";
 import { formatUsageReportTable } from "./improve-usage-report";
 import { renderReflectPromptPreview } from "./reflect";
 import { resolveQualityGateJudge, runReflectQualityJudge } from "./stage";
@@ -49,117 +39,6 @@ let akmImproveForRun: typeof akmImprove = akmImprove;
 /** Swap the CLI's improve work implementation in deterministic subprocess tests. */
 export function _setAkmImproveForTests(fake?: typeof akmImprove): void {
   akmImproveForRun = fake ?? akmImprove;
-}
-
-/**
- * `--require-targets` (#957): fail before any side effect when an enabled
- * process cannot run, naming what each is missing — a scheduled run would
- * rather fail loudly than index and then skip everything.
- */
-function assertRequiredTargetsAvailable(plan: ResolvedImprovePlan): void {
-  if (plan.engineUnavailable.length === 0) return;
-  const lines = plan.engineUnavailable.map((item) => `  - ${item.process} (${item.configKey}): ${item.reason}`);
-  throw new ConfigError(
-    `--require-targets: ${plan.engineUnavailable.length} improve process${plan.engineUnavailable.length === 1 ? "" : "es"} cannot run because ${plan.engineUnavailable.length === 1 ? "its" : "their"} connection or harness is not configured:\n${lines.join("\n")}`,
-    "LLM_NOT_CONFIGURED",
-  );
-}
-
-/**
- * One connection or harness `--require-targets` must prove usable, in the way
- * its kind allows: a connection gets one short completion, and a harness's
- * binary must resolve on PATH.
- */
-interface RequiredTarget {
-  process: EngineUnavailableProcessName;
-  engine: string;
-  connection?: ChatCompletionConfig;
-  bin?: string;
-}
-
-/** Every connection or harness the plan would dispatch to, triage's judgment included. */
-function collectRequiredTargets(plan: ResolvedImprovePlan): RequiredTarget[] {
-  const runners = (Object.entries(plan.processes) as [EngineUnavailableProcessName, ResolvedImproveProcess][])
-    .flatMap(([processName, process]) => (process.runner ? [[processName, process.runner] as const] : []))
-    .concat(plan.triageJudgment ? [["triage.judgment", plan.triageJudgment] as const] : []);
-  return runners.map(([processName, runner]) => ({
-    process: processName,
-    engine: runner.name,
-    ...(runner.kind === "harness" ? { bin: runner.bin } : { connection: materializeConnection(runner) }),
-  }));
-}
-
-/**
- * The bound on `--require-targets`' probe: the connection's own request
- * timeout, at most two minutes. A local server busy with another job queues
- * the probe behind that job, and a fixed 3s bound failed every scheduled
- * improve run on 2026-09-27 against a reachable endpoint; the cap still ends a
- * hung endpoint (#957) long before a run's own multi-minute calls would.
- */
-export function requiredTargetProbeTimeoutMs(connection: ChatCompletionConfig): number {
-  return Math.min(connection.timeoutMs ?? REQUIRED_TARGET_PROBE_MAX_MS, REQUIRED_TARGET_PROBE_MAX_MS);
-}
-
-const REQUIRED_TARGET_PROBE_MAX_MS = 120_000;
-
-/**
- * `--require-targets`, live: probe each connection's real completion path
- * (a gateway can list a model whose completion route is dead, #980), once per
- * endpoint + model, within {@link requiredTargetProbeTimeoutMs}, and look each
- * agent harness's binary up on PATH. Returns each target's latency for the run
- * result (R17); an unreachable one fails the run.
- */
-export async function assertRequiredTargetsReachable(
-  plan: ResolvedImprovePlan,
-  probeReachable: (connection: ChatCompletionConfig) => Promise<{ reachable: boolean; error?: string }> = (
-    connection,
-  ) => probeLlmReachable(connection, requiredTargetProbeTimeoutMs(connection)),
-  which: (bin: string) => string | undefined = defaultWhich,
-): Promise<EngineProbeOutcome[]> {
-  const targets = collectRequiredTargets(plan);
-  if (targets.length === 0) return [];
-  const probesByConnection = new Map<
-    string,
-    Promise<{ reach: { reachable: boolean; error?: string }; latencyMs: number }>
-  >();
-  const probeConnectionOnce = (connection: ChatCompletionConfig) => {
-    const key = `${connection.endpoint.replace(/\/+$/, "")}|${connection.model}`;
-    let pending = probesByConnection.get(key);
-    if (!pending) {
-      const probeStartedAt = Date.now();
-      pending = probeReachable(connection).then((reach) => ({ reach, latencyMs: Date.now() - probeStartedAt }));
-      probesByConnection.set(key, pending);
-    }
-    return pending;
-  };
-  const probed = await Promise.all(
-    targets.map(async (target) => {
-      if (target.bin !== undefined && which(target.bin) === undefined) {
-        return { ...target, reach: { reachable: false, error: `${target.bin} is not on PATH` }, latencyMs: 0 };
-      }
-      if (!target.connection) return { ...target, reach: { reachable: true }, latencyMs: 0 };
-      return { ...target, ...(await probeConnectionOnce(target.connection)) };
-    }),
-  );
-  const unreachable = probed.filter((item) => !item.reach.reachable);
-  if (unreachable.length > 0) {
-    const lines = unreachable.map(
-      (item) =>
-        `  - ${item.process} (${item.connection ? "connection" : "harness"} "${item.engine}", ${item.connection?.endpoint ?? item.bin}): ${item.reach.error ?? "did not respond"}`,
-    );
-    throw new ConfigError(
-      `--require-targets: ${unreachable.length} improve process${unreachable.length === 1 ? "" : "es"} cannot run because ${unreachable.length === 1 ? "its" : "their"} connection or harness completion path is not reachable:\n${lines.join("\n")}`,
-      "LLM_NOT_CONFIGURED",
-      "Check that each listed endpoint is up and serves its model, and that each listed agent binary is installed. The endpoint probe is one short completion, bounded by the connection's timeoutMs (at most two minutes).",
-    );
-  }
-  return probed.map((item) => ({
-    process: item.process,
-    engine: item.engine,
-    endpoint: item.connection?.endpoint ?? (item.bin as string),
-    reachable: item.reach.reachable,
-    latencyMs: item.latencyMs,
-  }));
 }
 
 /** `--show-prompt` (#952): print reflect's composed prompt for one ref — no lock, write or dispatch. */
@@ -336,14 +215,8 @@ export const improveCommand = defineCommand({
         "If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with 'already running' (exit 75). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress.",
       default: false,
     },
-    "require-targets": {
-      type: "boolean",
-      description:
-        "Fail before the run starts (exit 78, before any indexing, lock, or log side effect) if the connection or harness an enabled process runs on (and triage's judgment, when it is on) is not usable: an enabled process has none configured, a connection's credential cannot be resolved in this process's environment, a connection does not answer one short completion (bounded by its timeoutMs, at most two minutes), or a harness binary is not on PATH. The quality-gate judges are not probed. Without this flag, improve degrades gracefully instead: it skips the affected processes and reports them in the result's skippedProcesses. Recommended alongside --skip-if-locked for scheduled runs.",
-      default: false,
-    },
-    // Retired spelling of --require-targets: parsed, left out of --help, warns once.
-    "require-engines": { type: "boolean", hidden: true, description: "Retired: use --require-targets." },
+    // Retired: a run already stops at planning (exit 78) when no process has a connection or harness to run on.
+    "require-engines": { type: "boolean", hidden: true, description: "Retired: has no effect." },
     "show-prompt": {
       type: "boolean",
       description:
@@ -371,6 +244,12 @@ export const improveCommand = defineCommand({
     await runWithJsonErrors(async () => {
       // citty runs this body after a subcommand it dispatched too.
       if (hasSubcommand(args, new Set(Object.keys(IMPROVE_SUBCOMMANDS)))) return;
+      if (args["require-engines"]) {
+        warnOnce(
+          "retired-flag:--require-engines",
+          "--require-engines is retired and has no effect: akm improve already stops at planning (exit 78) when no process has a connection or harness to run on, and `akm health` checks the connections and harnesses.",
+        );
+      }
       const jsonToStdout = args["json-to-stdout"];
       const targetArg = getStringArg(args, "bundle");
       const taskArg = getStringArg(args, "task");
@@ -403,17 +282,6 @@ export const improveCommand = defineCommand({
         }
         await runShowPromptCli(scopeArg, scopeRef, taskArg, targetArg, resolvedPlan);
         return;
-      }
-      let engineProbe: EngineProbeOutcome[] | undefined;
-      if (args["require-engines"]) {
-        warnOnce(
-          "retired-flag:--require-engines",
-          "--require-engines is retired: use --require-targets, which does the same.",
-        );
-      }
-      if (args["require-targets"] || args["require-engines"]) {
-        assertRequiredTargetsAvailable(resolvedPlan);
-        engineProbe = await assertRequiredTargetsReachable(resolvedPlan);
       }
       const selectedStrategyName = resolvedPlan.strategy.name;
       const sensitiveValues = collectCredentialValues(effectiveConfig);
@@ -480,7 +348,6 @@ export const improveCommand = defineCommand({
                 ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
                 ...(skipIfLocked ? { skipIfLocked } : {}),
                 ...(strategyArg !== undefined ? { strategy: strategyArg } : {}),
-                ...(engineProbe !== undefined ? { engineProbe } : {}),
                 onBudgetHardKill: () => persistTerminated("budget_exhausted"),
                 ...(Object.keys(syncOverride).length > 0 ? { sync: syncOverride } : {}),
               }),

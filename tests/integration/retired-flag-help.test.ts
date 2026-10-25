@@ -17,13 +17,18 @@ const helpOf = (...args: string[]) =>
   spawnSync("bun", [cli, ...args, "--help"], { encoding: "utf8", timeout: 20_000 }).stdout ?? "";
 
 describe("--help leaves out the retired flags and lists their replacements", () => {
+  test("akm improve leaves out --require-engines, which has no replacement", () => {
+    const help = helpOf("improve");
+    expect(help).not.toContain("--require-engines");
+    expect(help).not.toContain("--require-targets");
+  });
+
   test.each([
     [["agent"], "--engine", "--harness"],
     [["command", "run"], "--engine", "--harness"],
     [["proposal", "new"], "--engine", "--harness"],
     [["proposal", "extract"], "--engine", "--harness"],
     [["task", "add"], "--engine", "--harness"],
-    [["improve"], "--require-engines", "--require-targets"],
   ])("akm %p", (command, retired, replacement) => {
     const help = helpOf(...command);
     expect(help).toContain(replacement);

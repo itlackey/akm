@@ -12,10 +12,10 @@
  * `--no-probe` would do nothing. The fix declares a positive `probe` arg
  * (default `true`); `--no-probe` is citty's automatic negation of it.
  *
- * This test exercises the CLI end-to-end (not just `runTargetsCheck`
+ * This test exercises the CLI end-to-end (not just `runConnectionsAndHarnessesCheck`
  * directly) specifically so a regression in the flag NAME/wiring — not just
  * the underlying probe logic already covered by
- * `tests/health-targets-check.test.ts` — fails loudly.
+ * `tests/health-connections-and-harnesses-check.test.ts` — fails loudly.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -74,14 +74,16 @@ function modelsResponse(): Response {
   return Response.json({ data: [{ id: "test-model" }] });
 }
 
-type TargetsCheck = {
+type ConnectionsAndHarnessesCheck = {
   name: string;
   status: string;
   message: string;
   evidence: { rows: Array<Record<string, unknown>> };
 };
-const targetsOf = (stdout: string): TargetsCheck =>
-  (JSON.parse(stdout) as { hardChecks: TargetsCheck[] }).hardChecks.find((c) => c.name === "targets") as TargetsCheck;
+const targetsOf = (stdout: string): ConnectionsAndHarnessesCheck =>
+  (JSON.parse(stdout) as { hardChecks: ConnectionsAndHarnessesCheck[] }).hardChecks.find(
+    (c) => c.name === "connections-and-harnesses",
+  ) as ConnectionsAndHarnessesCheck;
 
 describe("akm health --no-probe (#914)", () => {
   test("without --no-probe, the reachability probe actually fires (a real fetch)", async () => {

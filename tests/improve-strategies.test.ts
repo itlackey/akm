@@ -413,41 +413,43 @@ describe("resolveImprovePlan", () => {
     ).toThrow('"reflect" requires a connection or harness that is not configured');
   });
 
-  test("proactiveMaintenance uses no engine, so enabling it alone does not keep a plan with no engine alive (#1129)", () => {
-    expect(() =>
-      resolveImprovePlan("default", {
-        configVersion: "0.9.0",
-        semanticSearchMode: "auto",
-        // default's deterministic triage (#1143) also needs no connection or harness and would keep the plan alive.
-        improve: { strategies: { default: { processes: { triage: { enabled: false } } } } },
-      } as AkmConfig),
-    ).toThrow("No improve process can run");
+  test("a plan in which no process that calls a model can run stops at planning, whatever else is enabled (#1129)", () => {
+    // Triage (deterministic, #1143) and proactiveMaintenance need no connection or harness, and keep nothing alive:
+    // a run that could only do those would index, skip everything and look like success.
+    for (const triage of [true, false]) {
+      expect(() =>
+        resolveImprovePlan("default", {
+          configVersion: "0.9.0",
+          semanticSearchMode: "auto",
+          improve: { strategies: { default: { processes: { triage: { enabled: triage } } } } },
+        } as AkmConfig),
+      ).toThrow("No improve process can run");
+    }
   });
 
   test("disables just the processes with no connection or harness, instead of aborting the whole plan", () => {
-    const plan = resolveImprovePlan("default", {
-      configVersion: "0.9.0",
-      semanticSearchMode: "auto",
-      experimental: { improveAutonomy: true },
-      improve: {
-        strategies: {
-          // A process that needs no connection or harness keeps the plan alive; proactiveMaintenance alone would not.
-          default: { processes: { triage: { enabled: true } } },
-        },
-      },
-    } as AkmConfig);
+    // Validation without its repair step calls no model, so it keeps the plan alive; the processes that do are disabled.
+    const plan = resolveImprovePlan(
+      "default",
+      {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        experimental: { improveAutonomy: true },
+        improve: { strategies: { default: { processes: { triage: { enabled: true } } } } },
+      } as AkmConfig,
+      { repairValidationFailures: false },
+    );
 
-    for (const name of ["reflect", "distill", "consolidate", "memoryInference", "validation"] as const) {
+    for (const name of ["reflect", "distill", "consolidate", "memoryInference"] as const) {
       expect(plan.processes[name].enabled).toBe(false);
       expect(plan.processes[name].runner).toBeNull();
       expect(plan.strategy.config.processes?.[name]?.enabled).toBe(false);
     }
     expect(plan.processes.triage.enabled).toBe(true);
+    expect(plan.processes.validation.enabled).toBe(true);
 
     const disabledNames: string[] = plan.engineUnavailable.map((item) => item.process).sort();
-    expect(disabledNames).toEqual(
-      (["consolidate", "distill", "memoryInference", "reflect", "validation"] as string[]).sort(),
-    );
+    expect(disabledNames).toEqual((["consolidate", "distill", "memoryInference", "reflect"] as string[]).sort());
     for (const item of plan.engineUnavailable) {
       expect(item.configKey).toBe(`improve.processes.${item.process}.connection`);
       expect(item.reason).toContain("akm setup");
@@ -530,16 +532,16 @@ describe("projectResolvedProcessRouting (#947)", () => {
   });
 
   test("unresolved processes land in `unavailable` naming the configKey and reason", () => {
-    const plan = resolveImprovePlan("default", {
-      configVersion: "0.9.0",
-      semanticSearchMode: "auto",
-      experimental: { improveAutonomy: true },
-      improve: {
-        strategies: {
-          default: { processes: { triage: { enabled: true } } },
-        },
-      },
-    } as AkmConfig);
+    const plan = resolveImprovePlan(
+      "default",
+      {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        experimental: { improveAutonomy: true },
+        improve: { strategies: { default: { processes: { triage: { enabled: true } } } } },
+      } as AkmConfig,
+      { repairValidationFailures: false },
+    );
 
     const rows = projectResolvedProcessRouting(plan);
     const reflect = rows.find((row) => row.process === "reflect");

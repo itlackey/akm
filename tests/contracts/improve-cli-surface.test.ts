@@ -23,10 +23,16 @@ describe("current improvement CLI documentation contract", () => {
     expect(cli).not.toContain("§9.4");
   });
 
-  test("improve documents --require-targets and the skippedProcesses result field (#957)", () => {
+  test("improve documents the skippedProcesses result field (#957) and has no preflight flag", () => {
     const section = extractSection(cli, "### improve");
-    expect(section).toContain("--require-targets");
     expect(section).toContain("skippedProcesses");
+    expect(section).not.toContain("--require-targets");
+    expect(section).not.toContain("--preflight");
+    const args = improveCommand.args as Record<string, { hidden?: boolean }>;
+    expect(args["require-targets"]).toBeUndefined();
+    expect(args.preflight).toBeUndefined();
+    // The retired spelling of the 0.9 flag still parses, so an installed task keeps running, and is never advertised.
+    expect(args["require-engines"]?.hidden).toBe(true);
   });
 
   test("improve documents plan.processes and has no --plan alias (#947, #1091)", () => {

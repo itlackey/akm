@@ -48,12 +48,12 @@ function healthRows(result: SmokeResult): TargetRow[] {
     name: string;
     evidence?: { rows?: TargetRow[] };
   }>;
-  return checks.find((check) => check.name === "targets")?.evidence?.rows ?? [];
+  return checks.find((check) => check.name === "connections-and-harnesses")?.evidence?.rows ?? [];
 }
 
 /** The same rows as `akm info` prints them, without probing. */
 function infoRows(result: SmokeResult): TargetRow[] {
-  return (json(result, "info").targets ?? []) as TargetRow[];
+  return (json(result, "info").connectionsAndHarnesses ?? []) as TargetRow[];
 }
 
 /** A config with one connection: set up from flags, its models listed and changed, and reported by health and info. */

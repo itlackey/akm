@@ -68,7 +68,7 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
       lines.push(`  [${String(source.type ?? "?")}] ${String(label)}${disabled}`);
     }
   }
-  if (Array.isArray(r.targets)) lines.push(...renderTargetsTable(r.targets));
+  if (Array.isArray(r.connectionsAndHarnesses)) lines.push(...renderTargetsTable(r.connectionsAndHarnesses));
   const indexStats = r.indexStats as Record<string, unknown> | undefined;
   if (indexStats) {
     lines.push("indexStats:");

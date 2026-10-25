@@ -771,7 +771,6 @@ export function buildDryRunResult(
     ...(preparation?.planning ? { plan: buildResultExecutionPlan(run, preparation, collected, true) } : {}),
     ...(strategyFilteredRefs.length > 0 ? { strategyFilteredRefs } : {}),
     ...(run.resolvedPlan.engineUnavailable.length > 0 ? { skippedProcesses: run.resolvedPlan.engineUnavailable } : {}),
-    ...(run.options.engineProbe !== undefined ? { engineProbe: run.options.engineProbe } : {}),
     ...(preparation?.proactiveMaintenance ? { proactiveMaintenance: preparation.proactiveMaintenance } : {}),
   };
 }
@@ -1236,7 +1235,6 @@ function finalizeImproveResult(args: {
     ...(preparation.planning ? { plan: buildResultExecutionPlan(run, preparation, collected, false) } : {}),
     ...(strategyFilteredRefs.length > 0 ? { strategyFilteredRefs } : {}),
     ...(resolvedPlan.engineUnavailable.length > 0 ? { skippedProcesses: resolvedPlan.engineUnavailable } : {}),
-    ...(options.engineProbe !== undefined ? { engineProbe: options.engineProbe } : {}),
     ...(usageReport ? { usageReport } : {}),
     actions: persistedActions,
     ...(distillSkippedAggregate ? { distillSkipped: distillSkippedAggregate } : {}),

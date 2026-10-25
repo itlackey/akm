@@ -354,7 +354,7 @@ Returns a JSON object with:
 | `searchModes` | Active search modes (`fts`, optionally `semantic` and `hybrid`) |
 | `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
 | `registries` | Configured registries |
-| `targets` | The connections, harnesses and work that runs on them, as the rows `akm health` reports under its `targets` check, without contacting anything: each connection's endpoint and whether its key is held, each harness's platform and whether its binary is on `PATH`, and for each kind of work the connection or harness and model it resolves to |
+| `connectionsAndHarnesses` | The connections, harnesses and work that runs on them, as the rows `akm health` reports under its `connections-and-harnesses` check, without contacting anything: each connection's endpoint and whether its key is held, each harness's platform and whether its binary is on `PATH`, and for each kind of work the connection or harness and model it resolves to |
 | `sourceProviders` | Configured sources (filesystem, git, website, npm) |
 | `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `links` (declared links per kind with `total` and `unresolved`; absent when the index holds none), `lastBuiltAt`, `hasEmbeddings`, `unreadable` (index.db exists but the filesystem refuses to read it — a permissions problem), `unavailable` (index.db is readable but the SQLite-level read didn't complete: locked by another akm process, a newer layout this akm can't understand, or a corrupt file) |
 
@@ -2795,7 +2795,6 @@ akm improve memory
 akm improve skills/code-review
 akm improve workflows/release-checklist --task "reduce duplication"
 akm improve --skip-if-locked           # for high-frequency scheduled runs: skip (exit 0) if a run is already in progress
-akm improve --require-targets          # for scheduled runs: abort (exit 78) instead of degrading if a connection or harness the run needs is not usable
 akm improve --harness claude            # run every call of this run, judges included, on the claude harness
 akm improve --no-sync                  # skip the pre-run and end-of-run git sync entirely (default: on for git-backed bundles)
 akm improve --sync --no-push           # commit only, skip the push after it
@@ -2820,7 +2819,6 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | `--model <alias\|name>` | The model for every call of this run: an alias (`fast`, `balanced`, `reasoning`) or an exact name |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
-| `--require-targets` | Fail before the run starts (exit 78, before any indexing, lock, or log side effect) if a connection or harness the run needs is not usable: an enabled process has none configured, a connection does not answer one short completion (bounded by its `timeoutMs`, at most two minutes, once per distinct endpoint and model), or a harness binary is not on PATH. The completion is sent with the key the connection resolves to in this process, so an unset `$VAR` shows up here as a failed request when the endpoint wants a key. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
 | `--show-prompt` | Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or model call. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside `engine` (the connection or harness reflect would run on) and `engineKind` (`connection` or `harness`); pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
 | `--sync` / `--no-sync` | Sync the git-backed primary bundle like `akm sync` (fetch and merge the upstream, commit, push) before the run, and commit (and optionally push) when it finishes. A conflict or fetch failure before the run only warns; the run continues on the local state. Default: on for git-backed bundles (per profile config). |
 | `--push` / `--no-push` | Push after the pre-run and end-of-run sync commits when writable with a remote configured. `--no-push` commits only, skipping the push. Default: per profile config (`true`). `sync.push` stays outside the autonomy gate — this is a per-run opt-out, not a default change. |
@@ -2921,10 +2919,14 @@ skipped). `configKey` is the setting that would place the process
 (`improve.processes.<process>.connection`) and `reason` says that no connection
 or harness is configured and points at `akm setup`. `ok` and the exit code are
 unchanged either way, matching `extract`'s `skipReasons` contract: consumers
-that need to know branch on `skippedProcesses` (or pass `--require-targets` to
-abort instead of degrading). A `--dry-run` preview never dispatches, so it never
-aborts on this either — a strategy left with every process disabled this way
-still returns its plan, with the affected processes in `skippedProcesses`.
+that need to know branch on `skippedProcesses`. When no model-calling process
+can run at all (no connection or harness is configured, or several are and none
+is called `default`), there is nothing to degrade to: the run stops at planning
+with exit 78, naming what is missing, before it takes a lock, writes the index
+or opens a log, and `--dry-run` stops the same way. No flag asks for that. (The
+0.9 `--require-engines` is still accepted and does nothing, with one warning, so
+a task installed for 0.9 keeps running; `akm health` checks whether each
+connection answers and each harness is installed.)
 
 `--timeout-ms` is a run-wide wall-clock budget: when it expires, the run
 cooperatively aborts any in-flight model request (the same `AbortSignal`

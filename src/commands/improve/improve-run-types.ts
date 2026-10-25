@@ -25,7 +25,7 @@ import type { DeadUrl, DeadUrlCoverage } from "../url-checker";
 import type { akmDistill } from "./distill";
 import type { collectEligibleRefs, resolveImproveScope } from "./eligibility";
 import type { AkmExtractResult, countNewExtractCandidates } from "./extract";
-import type { EngineProbeOutcome, ResolvedImprovePlan } from "./improve-strategies";
+import type { ResolvedImprovePlan } from "./improve-strategies";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
 import type { akmReflect } from "./reflect";
 
@@ -62,8 +62,6 @@ export interface AkmImproveOptions {
   requireFeedbackSignal?: boolean;
   /** End-of-run auto-sync override (`--no-sync` / `--no-push`). */
   sync?: { enabled?: boolean; push?: boolean };
-  /** `--require-targets` probe outcomes, recorded on the result. */
-  engineProbe?: readonly EngineProbeOutcome[];
   /** Called once before the budget watchdog force-exits a run that did not drain (the CLI records the terminated run). */
   onBudgetHardKill?: () => void;
   // Test seams.

@@ -15,6 +15,7 @@
  */
 import {
   type AkmConfig,
+  ambiguousDefaultAdvice,
   type ConnectionConfig,
   defaultConnection,
   defaultHarness,
@@ -179,6 +180,7 @@ function runnerRow(
   process: ProcessName,
   base: Resolution,
   variants: ReadonlyArray<readonly [string, Resolution]> = [],
+  ambiguous?: string,
 ): ProcessRow {
   const overrides = variants
     .filter(([, variant]) => !sameTarget(variant, base))
@@ -187,7 +189,11 @@ function runnerRow(
       target: variant.runner?.name ?? null,
       model: variant.runner?.model ?? null,
     }));
-  const problem = base.problem ?? variants.find(([, variant]) => variant.problem)?.[1].problem;
+  // Work that resolves to nothing because the config has several entries and no default is not "not set up".
+  const problem =
+    base.problem ??
+    variants.find(([, variant]) => variant.problem)?.[1].problem ??
+    (base.runner ? undefined : ambiguous);
   return {
     type: "process",
     process,
@@ -199,9 +205,11 @@ function runnerRow(
   };
 }
 
-function embeddingRow(config: AkmConfig): ProcessRow {
+function embeddingRow(config: AkmConfig, ambiguous: string | undefined): ProcessRow {
   const off: ProcessRow = { type: "process", process: "embedding", kind: null, target: null, model: null };
   if (config.semanticSearchMode === "off") return off;
+  // A model with no endpoint of its own is served by the default connection; with none to choose, the built-in embedder runs instead.
+  const wantsDefaultConnection = config.embedding?.model !== undefined && config.embedding.endpoint === undefined;
   const embedding = effectiveEmbedding(config);
   if (embedding?.endpoint === undefined) {
     return {
@@ -209,6 +217,7 @@ function embeddingRow(config: AkmConfig): ProcessRow {
       kind: "local",
       target: "built-in",
       model: embedding?.localModel ?? DEFAULT_LOCAL_MODEL,
+      ...(wantsDefaultConnection && ambiguous ? { problem: ambiguous } : {}),
     };
   }
   const served = config.embedding?.endpoint === undefined;
@@ -233,6 +242,7 @@ function rerankRow(config: AkmConfig): ProcessRow {
 }
 
 function processRows(config: AkmConfig): ProcessRow[] {
+  const ambiguous = ambiguousDefaultAdvice(config);
   const improve = (processName: string, alias: keyof typeof SHIPPED_ALIAS, rest: object = {}): Resolution =>
     attempt(() => resolveImproveExecution({ config, processName, alias: SHIPPED_ALIAS[alias], ...rest })?.runner);
   const gate = config.improve?.qualityGate;
@@ -241,22 +251,33 @@ function processRows(config: AkmConfig): ProcessRow[] {
       "improve",
       improve("improve", "improve"),
       IMPROVE_ENGINE_PROCESSES.map((name) => [name, improve(name, "improve")] as const),
+      ambiguous,
     ),
-    runnerRow("judges", improve("judge", "judge"), [
-      ["triage judgment", improve("triage-judgment", "judge", { process: "triage" })],
-      ["quality gate", improve("quality-judge", "judge", gate ? { current: gate } : {})],
-    ]),
+    runnerRow(
+      "judges",
+      improve("judge", "judge"),
+      [
+        ["triage judgment", improve("triage-judgment", "judge", { process: "triage" })],
+        ["quality gate", improve("quality-judge", "judge", gate ? { current: gate } : {})],
+      ],
+      ambiguous,
+    ),
     runnerRow(
       "agents",
       attempt(() => resolveTarget({ config, layers: [{ model: SHIPPED_ALIAS.agent }] })),
+      [],
+      ambiguous,
     ),
-    runnerRow("extract", improve("extract", "extract")),
-    runnerRow("enrich", improve("remember-enrich", "enrich")),
+    runnerRow("extract", improve("extract", "extract"), [], ambiguous),
+    runnerRow("enrich", improve("remember-enrich", "enrich"), [], ambiguous),
     runnerRow(
       "index",
       attempt(() => resolveIndexPassExecution("memory", config).runner),
+      [],
+      // A pass that is switched off is not waiting for a default.
+      config.index?.memory?.enabled === false ? undefined : ambiguous,
     ),
-    embeddingRow(config),
+    embeddingRow(config, ambiguous),
     rerankRow(config),
   ];
 }

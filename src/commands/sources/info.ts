@@ -163,7 +163,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
       status: semanticStatus,
     },
     registries,
-    targets: safeTargets(config),
+    connectionsAndHarnesses: safeTargets(config),
     sourceProviders,
     indexStats,
   };

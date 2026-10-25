@@ -1373,19 +1373,21 @@ describe("previous-release corpus — a 0.9 `engines` config converts end to end
       new RegExp(`${KEY_FILE_SECRET}|${STORED_SECRET}|${LITERAL}|apiKeyFile`),
     );
 
-    // credentials.json: each key under the connection's name after the rename, 0600.
+    // credentials.json: each key for the connection (after the rename) and the endpoint it was stored for, 0600.
     const credentials = path.join(configDir, "credentials.json");
     expect(JSON.parse(fs.readFileSync(credentials, "utf8"))).toEqual({
-      default: KEY_FILE_SECRET,
-      cloud: STORED_SECRET,
-      hosted: LITERAL,
+      connections: {
+        default: { key: KEY_FILE_SECRET, endpoint: "http://lab:8080/v1/chat/completions" },
+        cloud: { key: STORED_SECRET, endpoint: "https://api.openai.com/v1/chat/completions" },
+        hosted: { key: LITERAL, endpoint: "https://hosted.example.com/v1/chat/completions" },
+      },
     });
     expect(fs.statSync(credentials).mode & 0o777).toBe(0o600);
     // The notes name places and entries, never values.
     const notes = (configFile?.notes ?? []).join("\n");
-    expect(notes).toContain('engines.lab.apiKeyFile: its key moves to credentials.json as "default"');
-    expect(notes).toContain('engines.cloud.apiKey: its key moves to credentials.json as "cloud"');
-    expect(notes).toContain('engines.hosted.apiKey: its key moves to credentials.json as "hosted"');
+    expect(notes).toContain('engines.lab.apiKeyFile: its key moves to credentials.json for "default"');
+    expect(notes).toContain('engines.cloud.apiKey: its key moves to credentials.json for "cloud"');
+    expect(notes).toContain('engines.hosted.apiKey: its key moves to credentials.json for "hosted"');
     expect(notes).toContain("models.json coder.nowhere: names no configured connection or harness");
     expect(JSON.stringify(plan)).not.toMatch(new RegExp(`${KEY_FILE_SECRET}|${STORED_SECRET}|${LITERAL}`));
 

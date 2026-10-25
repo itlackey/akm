@@ -5,7 +5,12 @@
 import consolidate from "../../assets/improve-strategies/consolidate.json" with { type: "json" };
 import defaultStrategy from "../../assets/improve-strategies/default.json" with { type: "json" };
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
-import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
+import {
+  type AkmConfig,
+  ambiguousDefaultAdvice,
+  type ImproveProcessConfig,
+  type ImproveProfileConfig,
+} from "../../core/config/config";
 import { ImproveProfileConfigSchema } from "../../core/config/config-schema";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import {
@@ -192,22 +197,6 @@ export interface EngineUnavailableProcess {
   reason: string;
 }
 
-/**
- * R17 — one `--require-targets` reachability probe outcome, recorded on the
- * improve run result so a passing (but slow or flaky) probe leaves a trace
- * instead of vanishing the moment the run proceeds. Built in
- * `improve-cli.ts`'s `assertRequiredTargetsReachable` from the same
- * `RequiredTarget` list the unreachable-abort path already computes.
- */
-export interface EngineProbeOutcome {
-  process: EngineUnavailableProcessName;
-  engine: string;
-  /** A connection's endpoint, or a harness's binary. */
-  endpoint: string;
-  reachable: boolean;
-  latencyMs: number;
-}
-
 /** Complete immutable process behavior for one improve invocation. */
 export interface ResolvedImprovePlan {
   /** Immutable config snapshot a process's connection or harness is resolved from again. */
@@ -386,12 +375,13 @@ function buildImprovePlan(
 
   if (
     engineUnavailable.length > 0 &&
-    // proactiveMaintenance makes no model call: it is a selector, so it alone does not keep a run alive.
-    !IMPROVE_ENGINE_PROCESSES.some((name) => processes[name].enabled)
+    // Triage without its judgment and proactiveMaintenance make no model call: they alone do not keep a run alive.
+    ![...MODEL_CALLING_PROCESSES].some((name) => processes[name].enabled)
   ) {
     const names = engineUnavailable.map((item) => `"${item.process}"`).join(", ");
+    const ambiguous = ambiguousDefaultAdvice(config);
     throw new ConfigError(
-      `No improve process can run: ${names} ${engineUnavailable.length === 1 ? "requires" : "require"} a connection or harness that is not configured. Run \`akm setup\`, or set improve.connection or improve.harness.`,
+      `No improve process can run: ${names} ${engineUnavailable.length === 1 ? "requires" : "require"} a connection or harness that ${ambiguous ? "has no default to run on" : "is not configured"}. ${ambiguous ? `${ambiguous}.` : "Run `akm setup`, or set improve.connection or improve.harness."}`,
       "LLM_NOT_CONFIGURED",
     );
   }

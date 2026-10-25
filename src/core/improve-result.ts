@@ -29,6 +29,7 @@ const COMMON_FIELDS = [
   "plan",
   "actions",
   "skippedProcesses",
+  // No longer written (the retired `--require-targets` probe wrote it); kept readable for envelopes a prior release wrote.
   "engineProbe",
   "distillSkipped",
   "validationFailures",

@@ -3,11 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { LlmUsageCrossTabRow } from "../commands/health/types";
-import type {
-  EngineProbeOutcome,
-  EngineUnavailableProcess,
-  ProcessRoutingRow,
-} from "../commands/improve/improve-strategies";
+import type { EngineUnavailableProcess, ProcessRoutingRow } from "../commands/improve/improve-strategies";
 import type { EligibilitySource, Proposal } from "../commands/proposal/proposal-types";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { MemoryInferenceResult } from "../indexer/passes/memory-inference";
@@ -900,21 +896,11 @@ export interface AkmImproveResult {
    * `ok` still means the run completed, not that it did work, and the exit
    * code follows `ok` — a scheduler must not start failing because one
    * process has nothing to run on while others still run. Consumers that need
-   * to know branch on this field's presence/length (or `akm improve
-   * --require-targets`, which aborts up front instead of degrading). Each
+   * to know branch on this field's presence/length. A run in which no model-calling
+   * process can run at all stops at planning (exit 78) instead. Each
    * `reason` names the setting that would give the process a connection or harness.
    */
   skippedProcesses?: readonly Readonly<EngineUnavailableProcess>[];
-  /**
-   * R17 — `--require-targets`'s reachability probe outcomes (one row per
-   * probed target: process, connection or harness name (`engine`), endpoint, reachable, latencyMs).
-   * A failing probe already aborts the run (exit 78) before this result is
-   * ever built, so every row present here is `reachable: true` — this
-   * exists so a slow or flapping gateway that still passed leaves a trace.
-   * Sourced verbatim from `AkmImproveOptions.engineProbe`. Omitted entirely
-   * when `--require-targets` was not passed.
-   */
-  engineProbe?: readonly Readonly<EngineProbeOutcome>[];
   actions?: ImproveActionResult[];
   /**
    * C1 (13-bus-factor) — bounded aggregate of the per-ref `distill-skipped`

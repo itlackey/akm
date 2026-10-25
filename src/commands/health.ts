@@ -34,6 +34,7 @@ import {
   SESSION_EXTRACTION_LEDGER_WINDOW_DAYS,
 } from "./health/checks";
 import { collectConfigSkewAdvisory } from "./health/config-skew";
+import { runConnectionsAndHarnessesCheck } from "./health/connections-and-harnesses-check";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
 import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
 import { emptyImproveMetrics, roundRate } from "./health/improve-metrics";
@@ -41,7 +42,6 @@ import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usag
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
-import { runTargetsCheck } from "./health/targets-check";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
 import {
   type AkmHealthResult,
@@ -93,7 +93,7 @@ export interface AkmHealthOptions {
    */
   stashExposureGit?: GitRunner;
   /**
-   * Probe each connection's endpoint for reachability in the `targets` check (#914). Off by default
+   * Probe each connection's endpoint for reachability in the `connections-and-harnesses` check (#914). Off by default
    * so library callers and tests stay offline; the CLI turns it on unless
    * `--no-probe` is given.
    */
@@ -708,9 +708,11 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
   try {
     const { windowResults, deltas } = resolveWindowComparePhase(options, db, stateDbPath, now);
     // Network probes overlap the local database phases below; awaited where consumed.
-    const targetsPromise = runTargetsCheck({ probeReachable: options.probe ? probeLlmEndpoint : undefined });
-    targetsPromise.catch(() => undefined);
-    // #950: same best-effort, --probe-gated discipline as targetsPromise
+    const connectionsAndHarnessesPromise = runConnectionsAndHarnessesCheck({
+      probeReachable: options.probe ? probeLlmEndpoint : undefined,
+    });
+    connectionsAndHarnessesPromise.catch(() => undefined);
+    // #950: same best-effort, --probe-gated discipline as connectionsAndHarnessesPromise
     // above — started here, alongside it, and awaited later.
     const versionDriftPromise = collectVersionDriftAdvisory(Boolean(options.probe), { cliVersion: pkgVersion });
     versionDriftPromise.catch(() => undefined);
@@ -741,7 +743,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
 
     const sessionExtractionLedger = gatherSessionExtractionLedgerPhase(db, now);
 
-    const targets = await targetsPromise;
+    const connectionsAndHarnesses = await connectionsAndHarnessesPromise;
     const versionDrift = await versionDriftPromise;
     const schedulerBinaryDrift = await schedulerBinaryDriftPromise;
 
@@ -769,7 +771,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       sessionExtractionLedger,
       autoAccept: improveSummary.autoAccept,
-      targets,
+      connectionsAndHarnesses,
       versionDrift,
       schedulerBinaryDrift,
     };

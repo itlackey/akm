@@ -76,15 +76,15 @@ describe("embedded task registry", () => {
     }
   });
 
-  // #957: scheduled improve runs should fail loudly (exit 78) rather than
-  // silently degrade when a connection or credential is unavailable — the whole
-  // point of a nightly job is that nobody is watching it fail quietly.
-  test("every scheduled improve template requires available engines (#957)", () => {
+  // A scheduled improve run stops at planning (exit 78) when nothing it needs is configured, with no flag
+  // asking for it (tests/commands/improve/improve-planning-stops.test.ts), so the templates carry none.
+  test("no scheduled improve template carries the retired preflight flags", () => {
     const scheduledImproveTasks = listEmbeddedTasks().filter(
       (t) => t.label === "core/improve" || t.label.startsWith("improve/"),
     );
     expect(scheduledImproveTasks.length).toBe(2);
-    for (const task of scheduledImproveTasks) expect(task.command).toContain("--require-targets");
+    for (const task of scheduledImproveTasks)
+      expect(task.command).not.toMatch(/--require-(targets|engines)|--preflight/);
   });
 
   test("every enabled embedded command resolves to a real top-level CLI command", () => {

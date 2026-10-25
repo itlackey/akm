@@ -65,14 +65,14 @@ export interface HealthCheckContext {
    */
   sessionExtractionLedger: { since: string; rows: ExtractOutcomeCount[] };
   autoAccept: ImproveHealthMetrics["autoAccept"];
-  /** The connections, harnesses and work table, collected once (`targets-check.ts`). */
-  targets: HealthCheckResult;
+  /** The connections, harnesses and work table, collected once (`connections-and-harnesses-check.ts`). */
+  connectionsAndHarnesses: HealthCheckResult;
   /**
    * #950: the `cli-version` advisory, computed once in `health.ts` alongside
    * the endpoint-reachability probe (same `--probe`/`--no-probe` gate, same
    * best-effort network discipline) so the check registry stays a pure
    * projection — no check performs its own network IO; the probes precompute
-   * into {@link targets} and the advisories the same way.
+   * into {@link connectionsAndHarnesses} and the advisories the same way.
    */
   versionDrift: HealthCheckResult;
   /**
@@ -318,9 +318,9 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     },
   },
   {
-    name: "targets",
+    name: "connections-and-harnesses",
     channel: "hard",
-    run: (ctx) => ctx.targets,
+    run: (ctx) => ctx.connectionsAndHarnesses,
   },
   {
     // C2 (13-bus-factor): the cron task-failure rate was computed and rendered
@@ -476,7 +476,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
   {
     // #950: best-effort "installed vs latest release" advisory, gated behind
     // the same --probe/--no-probe flag as endpoint reachability. Computed once
-    // in health.ts (network IO), projected here like targets.
+    // in health.ts (network IO), projected here like connectionsAndHarnesses.
     name: "cli-version",
     channel: "advisory",
     run: (ctx) => ctx.versionDrift,
@@ -486,7 +486,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     // doc comment above). Best-effort scheduler-binary-drift advisory, gated
     // behind the same --probe/--no-probe flag as endpoint reachability and
     // cli-version. Computed once in health.ts (process-spawn IO), projected
-    // here like versionDrift/targets.
+    // here like versionDrift/connectionsAndHarnesses.
     name: "scheduler-binary",
     channel: "advisory",
     run: (ctx) => ctx.schedulerBinaryDrift,

@@ -73,9 +73,9 @@ function checkStatusEntry(check: HealthCheckLike, detail: DetailLevel): StatusEn
     // Evidence is diagnostic detail, not the headline signal — gated behind
     // --detail the same way `formatSearchPlain`/`formatCuratePlain` gate
     // their own verbose fields (full path/editHint/whyMatched, "why" reasoning).
-    // The `targets` table is the exception: it is the check's answer, so it always shows.
+    // The `connections-and-harnesses` table is the exception: it is the check's answer, so it always shows.
     detailLines:
-      check.name === "targets" && Array.isArray(check.evidence?.rows)
+      check.name === "connections-and-harnesses" && Array.isArray(check.evidence?.rows)
         ? renderTargetsTable(check.evidence.rows)
         : detail === "brief"
           ? []
@@ -115,7 +115,9 @@ export function formatHealthPlain(r: Record<string, unknown>, detail: DetailLeve
 
   if (
     detail === "brief" &&
-    [...hardChecks, ...advisories].some((c) => c.name !== "targets" && c.evidence && Object.keys(c.evidence).length > 0)
+    [...hardChecks, ...advisories].some(
+      (c) => c.name !== "connections-and-harnesses" && c.evidence && Object.keys(c.evidence).length > 0,
+    )
   ) {
     lines.push("", "(evidence omitted at --detail brief; re-run with --detail normal or --detail full to see it)");
   }

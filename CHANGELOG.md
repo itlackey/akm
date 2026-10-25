@@ -59,7 +59,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   service hold different keys. A literal `apiKey` in
   `config.json` is kept, warned about once, and never read, sent or printed;
   `akm config get` masks it and the redactor treats it as a secret.
-- `akm health` has one `targets` check, and `akm info` a `targets` list, with a
+- `akm health` has one `connections-and-harnesses` check, and `akm info` a
+  `connectionsAndHarnesses` list, with a
   row for each connection (its endpoint, whether its key is held and, for
   health, whether the endpoint answers), each harness (its platform, whether its
   binary is found and, when probing, its version) and each kind of work (improve,
@@ -225,10 +226,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   improve`, are still accepted, hidden from `--help` and completions, with one
   warning each. `--engine` names a connection by that name, else a harness (`akm
   task add --engine` writes `connection:` or `harness:`), and `--require-engines`
-  is `--require-targets`, which checks the connection or harness each enabled
-  process runs on and triage's judgment: that a process has one, that a
-  connection's credential resolves and it answers one short completion, and that
-  a harness binary is on `PATH`.
+  does nothing: `akm improve` stops at planning (exit 78) before any lock, index
+  write or log when no process that calls a model has a connection or harness to
+  run on (or there are several and none is called `default`), with no flag asking
+  for it. `akm health` checks that each connection answers and each harness is
+  installed.
 - A workflow run frozen by an earlier release (plan irVersion 7 or lower) whose
   plan holds a command target is no longer resumed: it is abandoned (status
   `failed`) with a message naming `akm workflow run <ref>` to start afresh.
@@ -294,14 +296,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The `default-engine`, `default-llm-engine`, `configured-engines`,
   `active-improve-strategy`, `thinking-control` and `engine-last-used` checks of
   `akm health`, and its hard failure for an unreachable default connection; an
-  unreachable connection is a warning in the `targets` check.
+  unreachable connection is a warning in the `connections-and-harnesses` check.
 - `akm setup --probe` and `--config`, and the engine, Ollama and provider steps
   of the wizard.
 - The `opencode serve` server management, the OpenCode 1 and 2 HTTP adapters,
   the injected `akm-model-work` OpenCode agent, and the `@opencode-ai/sdk` and
   `@opencode/client` dependencies. Agent work on a connection needs no OpenCode
-  binary or client package, so `akm health` and `akm improve --require-targets`
-  check for neither.
+  binary or client package, so `akm health` checks for neither.
 - Asset tool requests. An agent or command's `tools:` (or a Claude command's
   `allowed-tools:`) is no longer read, a task's `tools:` is ignored with a
   warning, and `akm migrate apply` drops a v3 task's `akm.tools`. With them go

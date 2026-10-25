@@ -658,7 +658,7 @@ export interface InfoResponse {
    * reachability and versions; here nothing is contacted). Each connection's key
    * is reported as held, never its value.
    */
-  targets: TargetRow[];
+  connectionsAndHarnesses: TargetRow[];
   sourceProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
   indexStats: {
     entryCount: number;

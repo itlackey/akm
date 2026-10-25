@@ -21,7 +21,13 @@
  */
 
 import path from "node:path";
-import { type AkmConfig, defaultConnection, defaultHarness, retiredEngineTargets } from "../../core/config/config";
+import {
+  type AkmConfig,
+  ambiguousDefaultAdvice,
+  defaultConnection,
+  defaultHarness,
+  retiredEngineTargets,
+} from "../../core/config/config";
 import type { ConnectionConfig, HarnessConfig } from "../../core/config/config-types";
 import { apiKeyReference } from "../../core/config/credentials";
 import { deepMergeConfig } from "../../core/config/deep-merge";
@@ -186,10 +192,12 @@ function selectTarget(input: ResolveTargetInput): Target {
   }
   const target = defaultTarget(input.config, modelWork);
   if (target) return target;
+  const ambiguous = ambiguousDefaultAdvice(input.config);
   throw new ConfigError(
-    modelWork
-      ? "No connection or harness is configured, so there is nothing to run model work on."
-      : "No harness or connection is configured, so there is nothing to run agent work on.",
+    (ambiguous ? `${ambiguous}.` : undefined) ??
+      (modelWork
+        ? "No connection or harness is configured, so there is nothing to run model work on."
+        : "No harness or connection is configured, so there is nothing to run agent work on."),
     modelWork ? "LLM_NOT_CONFIGURED" : "AGENT_NOT_CONFIGURED",
   );
 }

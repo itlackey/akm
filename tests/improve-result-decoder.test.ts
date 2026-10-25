@@ -568,3 +568,15 @@ describe("decodeImproveResult", () => {
     ).toThrow(/deadUrlCoverage must be an object/);
   });
 });
+
+describe("an envelope an earlier release wrote with a field that is no longer written", () => {
+  test("still decodes with engineProbe, the reachability outcomes `--require-targets` recorded", () => {
+    const engineProbe = [
+      { process: "reflect", engine: "lab", endpoint: "https://a.example.test/v1", reachable: true, latencyMs: 42 },
+    ];
+    const decoded = decodeImproveResult(
+      JSON.stringify({ schemaVersion: 2, strategy: "default", ...common, engineProbe }),
+    );
+    expect((decoded.envelope as unknown as Record<string, unknown>).engineProbe).toEqual(engineProbe);
+  });
+});

@@ -68,6 +68,6 @@ describe("a retired flag is parsed and never advertised", () => {
     const { stdout: script } = await runCliCapture(["completions"]);
     expect(script).not.toContain("--engine");
     expect(script).not.toContain("--require-engines");
-    expect(script).toContain("--require-targets");
+    expect(script).not.toContain("--require-targets");
   });
 });

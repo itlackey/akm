@@ -76,7 +76,7 @@ the command is `akm improve`'s own:
 
 ```sh
 akm task add improve-team --schedule "15 3 * * *" \
-  --command "akm improve --bundle team --require-targets"
+  --command "akm improve --bundle team"
 ```
 
 Leave `--skip-if-locked` off a once-a-night run: if a short-cadence improve task
