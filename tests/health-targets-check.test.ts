@@ -107,6 +107,7 @@ describe("runTargetsCheck", () => {
   test("a version that cannot be read is no reason to warn", async () => {
     const result = await runTargetsCheck({
       loadConfig: () => config,
+      probeReachable: async () => ({ reachable: true }),
       which: onPath("claude"),
       spawnSync: versions({}),
     });
@@ -114,15 +115,20 @@ describe("runTargetsCheck", () => {
     expect(rowsOf(result)[1]).not.toHaveProperty("version");
   });
 
-  test("without a probe nothing is contacted, and the message says so", async () => {
-    const result = await runTargetsCheck({
-      loadConfig: () => config,
-      which: onPath("claude"),
-      spawnSync: versions({}),
-    });
+  test("without a probe nothing is contacted and no harness is run, and the message says so", async () => {
+    const ran: string[] = [];
+    const spawn = ((bin: string) => {
+      ran.push(bin);
+      return { status: 0, stdout: "9.9.9", stderr: "" };
+    }) as unknown as typeof spawnSync;
+
+    const result = await runTargetsCheck({ loadConfig: () => config, which: onPath("claude"), spawnSync: spawn });
+
+    expect(ran).toEqual([]);
     expect(result.status).toBe("pass");
     expect(result.message).toBe("1 connection and 1 harness, all ready. Reachability was not probed.");
     expect(rowsOf(result)[0]).not.toHaveProperty("reachable");
+    expect(rowsOf(result)[1]).not.toHaveProperty("version");
   });
 
   test("an endpoint two connections share is asked once", async () => {

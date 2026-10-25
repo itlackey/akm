@@ -382,7 +382,7 @@ akm health --report --window-compare 7d --format html
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `targets` reachability probes, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
+| `--no-probe` | Skip the `targets` reachability probes and harness `--version` runs, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
@@ -418,12 +418,12 @@ check's `status` instead of grepping akm's error text.
 
 `targets` is one table: a row for each configured connection (endpoint, whether
 its key is held, whether the endpoint answers) and harness (platform, whether
-its binary is found, its `--version`), then a row for each kind of work
+its binary is found, and with a probe its `--version`), then a row for each kind of work
 (`improve`, `judges`, `agents`, `extract`, `enrich`, `index`, `embedding`,
 `curate-rerank`) naming the connection or harness and the model it resolves to.
 The rows are in `evidence.rows`, each typed `connection`, `harness` or `process`;
 the text format always prints them. It is a `warn` when a key variable is unset,
-an endpoint does not answer (skipped by `--no-probe`), a harness is not
+an endpoint does not answer (the probes, and the harness `--version` runs, are skipped by `--no-probe`), a harness is not
 installed, or the config leaves a kind of work unresolvable, and `unknown` when
 nothing is configured.
 
