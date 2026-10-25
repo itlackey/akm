@@ -145,7 +145,6 @@ export function detectAgentCliProfiles(agent?: AkmConfig, whichFn: WhichFn = def
       args: harness.args ?? builtin?.args ?? [],
       stdio: "captured",
       envPassthrough: builtin?.envPassthrough ?? [],
-      parseOutput: "text",
     });
   }
   const profiles = [...profilesByName.values()];

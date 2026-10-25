@@ -27,7 +27,6 @@ function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
     args: [],
     stdio: "captured",
     envPassthrough: ["PATH"],
-    parseOutput: "text",
     ...overrides,
   };
 }
@@ -197,35 +196,8 @@ describe("runAgent — timeout", () => {
   });
 });
 
-describe("runAgent — JSON parse mode", () => {
-  test("parses JSON stdout and surfaces it via `parsed`", async () => {
-    const { spawn } = fakeSpawnFn({ exitCode: 0, stdout: '{"role":"agent"}' });
-    const result = await runAgent(makeProfile({ parseOutput: "json" }), "go", { spawn });
-    expect(result.ok).toBe(true);
-    expect(result.parsed).toEqual({ role: "agent" });
-  });
-
-  test("recovers a top-level JSON array embedded in prose", async () => {
-    // The old inline `{…}`-only scanner could not salvage a top-level array.
-    // parseEmbeddedJsonResponse handles both objects and arrays.
-    const { spawn } = fakeSpawnFn({
-      exitCode: 0,
-      stdout: 'Here are the results:\n[{"id":1},{"id":2}]\nDone.',
-    });
-    const result = await runAgent(makeProfile({ parseOutput: "json" }), "go", { spawn });
-    expect(result.ok).toBe(true);
-    expect(result.parsed).toEqual([{ id: 1 }, { id: 2 }]);
-  });
-
-  test("malformed JSON yields `parse_error`", async () => {
-    const { spawn } = fakeSpawnFn({ exitCode: 0, stdout: "not json {" });
-    const result = await runAgent(makeProfile({ parseOutput: "json" }), "go", { spawn });
-    expect(result.ok).toBe(false);
-    expect(result.reason).toBe("parse_error");
-    expect(result.error).toBeTruthy();
-  });
-
-  test("stdout read failure yields `spawn_failed`, not an empty parse_error", async () => {
+describe("runAgent — stdout capture", () => {
+  test("stdout read failure yields `spawn_failed`", async () => {
     const spawn: SpawnFn = () => ({
       exitCode: 0,
       exited: Promise.resolve(0),
@@ -234,31 +206,12 @@ describe("runAgent — JSON parse mode", () => {
       stdin: null,
       kill() {},
     });
-    const result = await runAgent(makeProfile({ parseOutput: "json" }), "go", { spawn });
+    const result = await runAgent(makeProfile(), "go", { spawn });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("spawn_failed");
     expect(result.stdout).toBe('{"partial":');
     expect(result.error).toContain("stdout read failed");
     expect(result.error).toContain("pipe broke");
-  });
-
-  // ── #284 GAP-HIGH 10: parseOutput=json + non-zero exit + non-JSON stderr ──
-
-  test("parseOutput=json + non-zero exit: non_zero_exit precedence (parse_error suppressed)", async () => {
-    // Non-zero exit must surface as `non_zero_exit`, not `parse_error`, even
-    // when the stdout/stderr payload is malformed JSON. The exit code is the
-    // primary failure signal; parse failures are downstream of a successful run.
-    const { spawn } = fakeSpawnFn({
-      exitCode: 5,
-      stdout: "not json {",
-      stderr: "agent panic: kernel ate my JSON",
-    });
-    const result = await runAgent(makeProfile({ parseOutput: "json" }), "go", { spawn });
-    expect(result.ok).toBe(false);
-    expect(result.reason).toBe("non_zero_exit");
-    expect(result.exitCode).toBe(5);
-    expect(result.stderr).toBe("agent panic: kernel ate my JSON");
-    expect(result.parsed).toBeUndefined();
   });
 });
 

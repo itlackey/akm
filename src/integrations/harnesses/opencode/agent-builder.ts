@@ -17,19 +17,22 @@
  */
 
 import { warnOnce } from "../../../core/warn";
-import type { AgentDispatchRequest, BuiltCommand, HarnessBuilder, HarnessSpawn } from "../harness";
+import {
+  type AgentDispatchRequest,
+  type BuiltCommand,
+  type HarnessBuilder,
+  type HarnessSpawn,
+  withoutLeading,
+  withoutModelFlag,
+} from "../harness";
 
 function flags(profile: HarnessSpawn, req: AgentDispatchRequest): string[] {
-  const args: string[] = [];
-  for (let index = 0; index < profile.args.length; index += 1) {
-    const arg = profile.args[index];
-    if (arg === undefined) continue;
-    if (req.model && arg === "--model") index += 1;
-    else if (!(req.model && arg.startsWith("--model="))) args.push(arg);
-  }
-  if (req.agent) args.push("--agent", req.agent);
-  if (req.model) args.push("--model", req.model);
-  return args;
+  // An interactive launch is the TUI, which `run` (headless) is not.
+  const args = req.prompt === undefined ? withoutLeading(profile.args, "run") : [...profile.args];
+  const out = req.model ? withoutModelFlag(args) : args;
+  if (req.agent) out.push("--agent", req.agent);
+  if (req.model) out.push("--model", req.model);
+  return out;
 }
 
 export const opencodeBuilder: HarnessBuilder = {
@@ -40,6 +43,6 @@ export const opencodeBuilder: HarnessBuilder = {
         "OpenCode 1 cannot restrict its tools, so model work on it runs unrestricted, in a scratch directory. OpenCode 2 runs it read-only.",
       );
     }
-    return { argv: [profile.bin, ...flags(profile, req)], stdin: req.prompt };
+    return { argv: [profile.bin, ...flags(profile, req)], ...(req.prompt !== undefined ? { stdin: req.prompt } : {}) };
   },
 };

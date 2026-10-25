@@ -230,7 +230,7 @@ describe("runExecution redacts what the child could have seen", () => {
             CLAUDE_CONFIG: values.safeClaudeConfig,
           },
         },
-        runAgent: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed, parsed: { echoed } }),
+        runAgent: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed }),
       },
     );
 
@@ -244,7 +244,7 @@ describe("runExecution redacts what the child could have seen", () => {
       built({ ...lab, apiKey: "$LAB_KEY" }, "p", { environment: { BOUND_VALUE: values.binding } }),
       {
         runOptions: { envSource: { LAB_KEY: values.credential } },
-        runSdk: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed, parsed: { echoed } }),
+        runSdk: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed }),
       },
     );
     expect(JSON.stringify(viaConnection)).not.toContain(values.credential);
@@ -263,7 +263,7 @@ describe("runExecution redacts what the child could have seen", () => {
     const echoed = Object.values(directories).join(" | ");
     const result = await runExecution(built(opencodeHarness), {
       runOptions: { envSource: { PATH: "/safe/bin", ...directories } },
-      runAgent: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed, parsed: { echoed } }),
+      runAgent: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed }),
     });
 
     expect(result.stdout).toBe(echoed);
@@ -290,7 +290,7 @@ describe("runExecution redacts what the child could have seen", () => {
       ],
       [
         "claude",
-        "CLAUDE_CONFIG",
+        "CLAUDE_CONFIG_DIR",
         "https://example.test/#/oauth/callback?code_verifier=RUNNER%20PKCE%20SENTINEL",
         "RUNNER PKCE SENTINEL",
       ],
@@ -300,7 +300,7 @@ describe("runExecution redacts what the child could have seen", () => {
       const echoed = `${value} | ${secret}`;
       const result = await runExecution(built(runner), {
         runOptions: { envSource: { [name]: value } },
-        runAgent: async () => ({ ...okResult(echoed), parsed: { echoed } }),
+        runAgent: async () => ({ ...okResult(echoed) }),
       });
       expect(JSON.stringify(result), `${platform} ${name}`).not.toContain(value);
       expect(JSON.stringify(result), `${platform} ${name}`).not.toContain(secret);

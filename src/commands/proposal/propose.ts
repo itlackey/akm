@@ -37,11 +37,7 @@ import {
   PROPOSAL_JSON_SCHEMA,
   validateProposalPayload,
 } from "../../integrations/agent/prompts";
-import {
-  collectDispatchSensitiveValues,
-  runExecution,
-  unwrapHarnessReply,
-} from "../../integrations/agent/runner-dispatch";
+import { collectDispatchSensitiveValues, runExecution } from "../../integrations/agent/runner-dispatch";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type CreateProposalInput,
@@ -172,7 +168,7 @@ async function dispatchProposalPrompt(
         const result = await runExecution(execution, { runOptions: options.runAgentOptions ?? {} });
         results.push(result);
         if (!result.ok) throw DISPATCH_FAILED;
-        return unwrapHarnessReply(execution.runner, result).text;
+        return result.stdout;
       },
       validate: validateProposalPayload,
     });

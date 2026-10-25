@@ -59,7 +59,6 @@ describe("akmAgentDispatch engine capability", () => {
       prompt: "",
       options: {
         stdio: "interactive",
-        parseOutput: "text",
         timeoutMs: 0,
         cwd: "/fixture/workspace",
       },
@@ -96,7 +95,7 @@ describe("akmAgentDispatch engine capability", () => {
     expect(sdkCalls[0]).toMatchObject({
       profile: "lab",
       prompt: "",
-      options: { stdio: "captured", parseOutput: "text" },
+      options: { stdio: "captured" },
       model: "fixture",
     });
   });

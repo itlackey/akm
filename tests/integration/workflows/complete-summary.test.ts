@@ -128,7 +128,7 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
         "#!/bin/sh",
         `printf '%s\\0' "$@" > '${argvPath}'`,
         `pwd -P > '${cwdPath}'`,
-        `printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"{\\"complete\\":true,\\"missing\\":[]}","session_id":"judge"}'`,
+        `printf '%s\\n' '{"complete":true,"missing":[]}'`,
       ].join("\n"),
       "utf8",
     );

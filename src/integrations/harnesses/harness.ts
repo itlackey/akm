@@ -18,7 +18,6 @@
  * config schema derives its platform enum from the registry).
  */
 
-import type { ExecutionJsonObject } from "../../execution/json";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { AgentProfile } from "../agent/profiles";
 import type { AgentRunResult, RunAgentOptions } from "../agent/spawn";
@@ -46,8 +45,8 @@ export interface HarnessSpawn {
 
 /** One request, as a builder sees it. */
 export interface AgentDispatchRequest {
-  /** User task / prompt to execute. */
-  prompt: string;
+  /** User task / prompt to execute. Absent: launch the program interactively, with nothing to run. */
+  prompt?: string;
   /** Exact harness-native agent name selected by a bare agent selector. Never alias-resolved. */
   agent?: string;
   /** System prompt body, for a harness that takes one. */
@@ -56,10 +55,6 @@ export interface AgentDispatchRequest {
   model?: string;
   /** Run under the model-work tool policy: the builder confines the run itself. */
   modelWork?: boolean;
-  /** Exact resolved inference object. */
-  inference?: ExecutionJsonObject | null;
-  /** JSON Schema the output must validate against; the prompt already carries it as an instruction. */
-  schema?: Record<string, unknown>;
 }
 
 /** A harness's view of one resolved request, before argv/SDK dispatch. */
@@ -129,30 +124,16 @@ export interface AkmHarness extends LowerTarget {
     prompt: string,
     opts: RunAgentOptions,
   ) => Promise<AgentRunResult> | undefined;
-  readonly resultExtractor?: AgentResultExtractor;
   /** Turn one request into the command to spawn. */
   build(spawn: HarnessSpawn, request: AgentDispatchRequest): BuiltCommand;
 }
-
-/**
- * Normalized payload extracted from one raw harness run: the final answer with
- * transport framing stripped, and the harness's session id when the output
- * reveals one.
- */
-export interface AgentResultExtraction {
-  text: string;
-  sessionId?: string;
-}
-
-/** Per-harness result extractor: a raw `AgentRunResult` to `{ text, sessionId? }`. */
-export type AgentResultExtractor = (result: AgentRunResult) => AgentResultExtraction;
 
 /** The `build` of a harness, kept apart from the rest of its descriptor. */
 export type HarnessBuilder = Pick<AkmHarness, "build">;
 
 /**
- * The model an engine's own `args` select, as `--model X` or `--model=X` (the
- * last one wins), for a builder that writes its own argv in place of those args.
+ * The model the config's own `args` select, as `--model X` or `--model=X` (the
+ * last one wins).
  */
 export function modelFromArgs(args: readonly string[]): string | undefined {
   let model: string | undefined;
@@ -162,4 +143,21 @@ export function modelFromArgs(args: readonly string[]): string | undefined {
     else if (arg?.startsWith("--model=")) model = arg.slice("--model=".length);
   }
   return model;
+}
+
+/** `args` without any `--model X` or `--model=X`, for a builder that adds the request's model itself, so it is passed once. */
+export function withoutModelFlag(args: readonly string[]): string[] {
+  const kept: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+    if (arg === "--model") index += 1;
+    else if (!arg.startsWith("--model=")) kept.push(arg);
+  }
+  return kept;
+}
+
+/** `args` less a leading `subcommand` the builder writes itself, so an authored one is not doubled. */
+export function withoutLeading(args: readonly string[], subcommand: string): string[] {
+  return args[0] === subcommand ? args.slice(1) : [...args];
 }

@@ -472,7 +472,7 @@ describe("callStructured contract", () => {
     // A harness that cannot confine the policy runs the call unrestricted, with one notice.
     const stdout = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(new TextEncoder().encode("from codex"));
+        controller.enqueue(new TextEncoder().encode("from gemini"));
         controller.close();
       },
     });
@@ -481,7 +481,7 @@ describe("callStructured contract", () => {
     const ran = await callStructured<string>({
       feature: "memory_inference",
       akmConfig: GATED,
-      runner: harness("codex", "codex-stub"),
+      runner: harness("gemini", "gemini-stub"),
       messages: [{ role: "user", content: "judge this" }],
       request: {
         runOptions: {
@@ -506,7 +506,7 @@ describe("callStructured contract", () => {
       fallback: "FB",
     });
     expect(spawned).toBe(1);
-    expect(ran).toContain("from codex");
+    expect(ran).toContain("from gemini");
     expect(notices.map((notice) => notice.code)).toContain("model-work-unrestricted");
   });
 

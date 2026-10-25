@@ -130,15 +130,15 @@ real database, touches the network, or spawns a process lives under
 `tests/integration/`; everything else lives under `tests/`.
 
 Both runner scripts start every shard with its own throwaway `HOME`. The
-preload then points `HOME`, the four `XDG_*_HOME` variables and
-`CODEX_HOME` at a sandbox and clears the `AKM_*_DIR` overrides, so code
+preload then points `HOME`, the four `XDG_*_HOME` variables,
+`CODEX_HOME` and `CLAUDE_CONFIG_DIR` at a sandbox and clears the `AKM_*_DIR` overrides, so code
 that resolves paths from environment variables, as `src/core/paths.ts`
 does, never reaches the developer's files. After each test it restores
 `cwd`, `fetch` and those variables, and it throws when a test leaked any of
 them. It cannot change `os.homedir()`: Bun ignores a runtime change to
 `HOME`, so under a bare `bun test <file>` a default built from
 `os.homedir()` reads the real home. Such a default needs its own override,
-as the Codex session reader has `CODEX_HOME`.
+as the Codex and Claude Code session readers have `CODEX_HOME` and `CLAUDE_CONFIG_DIR`.
 
 Why: a suite that is "usually green" is a suite nobody trusts, and a test
 that reads a developer's real config passes on one machine and fails on

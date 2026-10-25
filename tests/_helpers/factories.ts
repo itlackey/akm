@@ -32,7 +32,7 @@ export function quietQualityGateConfig(): AkmConfig {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
     harnesses: {
-      "fake-agent": { platform: "claude", bin: "fake-agent" },
+      "fake-agent": { platform: "gemini", bin: "fake-agent" },
     },
     improve: {
       strategy: "default",
@@ -99,7 +99,6 @@ export function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile
     args: [],
     stdio: "captured",
     envPassthrough: ["PATH"],
-    parseOutput: "text",
     ...overrides,
   };
 }

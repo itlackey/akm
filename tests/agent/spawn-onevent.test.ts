@@ -28,7 +28,6 @@ function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
     args: [],
     stdio: "captured",
     envPassthrough: ["PATH"],
-    parseOutput: "text",
     ...overrides,
   };
 }

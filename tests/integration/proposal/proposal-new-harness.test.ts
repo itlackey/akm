@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { listProposals } from "../../../src/commands/proposal/repository";
 import { type CliResult, runCliCapture } from "../../_helpers/cli";
-import { clearHarnessCalls, fakeHarness, harnessCalls } from "../../_helpers/engine-stubs";
+import { clearHarnessCalls, fakeHarness, harnessCalls, promptOf } from "../../_helpers/engine-stubs";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -44,10 +44,7 @@ let storage: IsolatedAkmStorage;
 
 beforeAll(() => {
   bins = makeSandboxDir("akm-proposal-new-bin");
-  // claude answers in its JSON result envelope when asked for it; the plain stubs print the reply as it is.
-  fs.writeFileSync(path.join(bins.dir, "claude-envelope"), fakeHarness(SCENARIOS.proposal ?? [], "claude"), {
-    mode: 0o755,
-  });
+  fs.writeFileSync(path.join(bins.dir, "plain-proposal"), fakeHarness(SCENARIOS.proposal ?? []), { mode: 0o755 });
   fs.writeFileSync(path.join(bins.dir, "plain-repair"), fakeHarness(SCENARIOS.repair ?? []), { mode: 0o755 });
   fs.writeFileSync(path.join(bins.dir, "plain-invalid"), fakeHarness(SCENARIOS.invalid ?? []), { mode: 0o755 });
 });
@@ -65,7 +62,7 @@ beforeEach(() => {
     defaultBundle: "work",
     defaultWriteTarget: "work",
     harnesses: {
-      claude: harness("claude", "claude-envelope"),
+      claude: harness("claude", "plain-proposal"),
       "claude-invalid": harness("claude", "plain-invalid"),
       "claude-repair": harness("claude", "plain-repair"),
     },
@@ -109,13 +106,14 @@ function expectProposalCreated(result: CliResult, engine: string): void {
 }
 
 describe("proposal new returns JSON from a harness", () => {
-  test("a claude harness's JSON result envelope is unwrapped by the claude result extractor", async () => {
+  test("a claude harness gets the prompt, with the schema instruction, on stdin and answers in plain text", async () => {
     const result = await proposalNew("claude");
 
     expectProposalCreated(result, "claude");
-    const [call] = calls("claude-envelope");
-    expect(call?.argv.join(" ")).toContain("--output-format json");
-    expect(call?.argv.at(-1)).toContain(SCHEMA_INSTRUCTION);
+    const [call] = calls("plain-proposal");
+    expect(call?.argv).toContain("-p");
+    expect(call?.argv).not.toContain("--output-format");
+    expect(promptOf(call)).toContain(SCHEMA_INSTRUCTION);
   });
 });
 
@@ -125,7 +123,7 @@ describe("a reply that is not a proposal gets one corrective retry", () => {
 
     expectProposalCreated(result, "claude-repair");
     expect(calls("plain-repair")).toHaveLength(2);
-    expect(calls("plain-repair")[1]?.argv.at(-1)).toContain("failed validation");
+    expect(promptOf(calls("plain-repair")[1])).toContain("failed validation");
   });
 
   test.each([

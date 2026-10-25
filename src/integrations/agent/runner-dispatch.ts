@@ -16,17 +16,12 @@ import path from "node:path";
 import type { AkmConfig } from "../../core/config/config";
 import { resolveApiKey } from "../../core/config/credentials";
 import type { LlmInference } from "../../core/llm-inference";
-import {
-  collectSensitiveValues,
-  isEnvPassthroughValueSafeToExpose,
-  redactSensitiveText,
-  redactSensitiveValue,
-} from "../../core/redaction";
+import { collectSensitiveValues, isEnvPassthroughValueSafeToExpose, redactSensitiveText } from "../../core/redaction";
 import type { ExecutionJsonObject } from "../../execution/json";
 import { type ChatCompletionConfig, chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { getHarness } from "../harnesses";
-import { type AgentResultExtraction, modelFromArgs } from "../harnesses/harness";
+import { modelFromArgs } from "../harnesses/harness";
 import { closeOpencodeSdk } from "../harnesses/opencode/embedded/host";
 import { runOpencodeSdk } from "../harnesses/opencode/embedded/run";
 import type { BuiltExecution } from "./execution";
@@ -50,8 +45,7 @@ export interface RunExecutionOptions {
     connection: ChatCompletionConfig,
   ) => Promise<AgentRunResult>;
   /**
-   * Operational overrides: stdio, parseOutput, signal, envSource, spawn,
-   * timers and onEvent. The request's timeout, cwd and env are not replaced.
+   * Operational overrides: stdio, signal, envSource, spawn, timers and onEvent. The request's timeout, cwd and env are not replaced.
    */
   readonly runOptions?: Partial<RunAgentOptions>;
   /** Stamped into the child env as `AKM_EVENT_SOURCE` (usage-event provenance). */
@@ -60,7 +54,6 @@ export interface RunExecutionOptions {
 
 const OPERATIONAL_OPTIONS = [
   "stdio",
-  "parseOutput",
   "signal",
   "envSource",
   "spawn",
@@ -95,7 +88,6 @@ function redactResult(result: AgentRunResult, sensitiveValues: readonly string[]
     stdout: redactSensitiveText(result.stdout, sensitiveValues),
     stderr: redactSensitiveText(result.stderr, sensitiveValues),
     ...(result.error !== undefined ? { error: redactSensitiveText(result.error, sensitiveValues) } : {}),
-    ...(result.parsed !== undefined ? { parsed: redactSensitiveValue(result.parsed, sensitiveValues) } : {}),
   };
 }
 
@@ -244,22 +236,10 @@ function isConfinedAgentWork(execution: BuiltExecution): boolean {
   return execution.request.modelWork && execution.messages === undefined;
 }
 
-/** A successful reply's text, unwrapped from its harness's framing (claude's `--output-format json` result envelope, for one). */
-export function unwrapHarnessReply(runner: RunnerSpec, result: AgentRunResult): AgentResultExtraction {
-  const extractor = runner.kind === "harness" ? getHarness(runner.platform)?.resultExtractor : undefined;
-  return extractor ? extractor(result) : { text: result.stdout };
-}
-
-/** A model-work reply's answer: its harness's framing stripped, and no answer is a `parse_error`. */
+/** A model-work reply must end with an answer: an agent that stops with none (opencode at its step limit, for one) has failed. */
 function modelWorkAnswer(runner: RunnerSpec, result: AgentRunResult): AgentRunResult {
-  const extracted = unwrapHarnessReply(runner, result);
-  const answer = {
-    ...result,
-    stdout: extracted.text,
-    ...(extracted.sessionId ? { sessionId: extracted.sessionId } : {}),
-  };
-  if (extracted.text.trim() !== "") return answer;
-  return { ...answer, ok: false, reason: "parse_error", error: `"${runner.name}" returned no answer.` };
+  if (result.stdout.trim() !== "") return result;
+  return { ...result, ok: false, reason: "parse_error", error: `"${runner.name}" returned no answer.` };
 }
 
 /**
@@ -358,7 +338,6 @@ export async function executeInteractiveAgentInvocation(
   });
   const opts: RunAgentOptions = {
     stdio: runner.kind === "connection" ? "captured" : "interactive",
-    parseOutput: "text",
     timeoutMs: input.timeoutMs ?? runner.timeoutMs,
     ...(input.cwd
       ? { cwd: input.cwd }

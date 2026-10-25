@@ -93,7 +93,7 @@ function reviewer() {
 
 describe("harnesses: config harness → argv", () => {
   test("claude gets the alias-resolved model, the persona as its system prompt, and the prompt", async () => {
-    const { argv } = await spawnedFor({
+    const { argv, stdin } = await spawnedFor({
       content: "Review the diff.",
       config: config({ harnesses: { claude: {} } }),
       persona: reviewer(),
@@ -101,14 +101,13 @@ describe("harnesses: config harness → argv", () => {
     });
     expect(argv).toEqual([
       "claude",
-      "--system-prompt",
+      "--append-system-prompt",
       "You review carefully.\n",
       "--model",
       "claude-haiku-4-5-20251001",
-      "--print",
-      "--",
-      "Review the diff.",
+      "-p",
     ]);
+    expect(stdin).toBe("Review the diff.");
   });
 
   test("opencode gets the persona composed into its prompt, since `opencode run` has no --system-prompt", async () => {
@@ -139,7 +138,7 @@ describe("harnesses: config harness → argv", () => {
       config: config({ harnesses: { pi: {} } }),
       layers: [currentLayer({ harness: "pi", model: "provider/exact" })],
     });
-    expect(argv).toEqual(["pi", "--model", "provider/exact", "-p", "--", "Plan it."]);
+    expect(argv).toEqual(["pi", "--model", "provider/exact", "-p", "Plan it."]);
   });
 
   test("a harness that maps other aliases but not this one passes none, and notes it once", () => {

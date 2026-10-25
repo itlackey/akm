@@ -399,7 +399,7 @@ describe("Reflect quality gate — source context", () => {
           apiKey: "$AKM_REFLECT_JUDGE_ROTATING_KEY",
         },
       },
-      harnesses: { "fake-agent": { platform: "claude", bin: "fake-agent" } },
+      harnesses: { "fake-agent": { platform: "gemini", bin: "fake-agent" } },
       improve: {
         strategy: "default",
         strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
@@ -446,7 +446,7 @@ describe("Reflect quality gate — source context", () => {
           models: { fast: "test-model" },
         },
       },
-      harnesses: { "fake-agent": { platform: "claude", bin: "fake-agent" } },
+      harnesses: { "fake-agent": { platform: "gemini", bin: "fake-agent" } },
       improve: {
         strategy: "default",
         strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
@@ -507,7 +507,7 @@ describe("Reflect quality gate — source context", () => {
           connections: {
             judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test-model" } },
           },
-          harnesses: { "fake-agent": { platform: "claude", bin: "fake-agent" } },
+          harnesses: { "fake-agent": { platform: "gemini", bin: "fake-agent" } },
           improve: { strategy: "default", strategies: { default: { processes } } },
         } as AkmConfig,
         assetContent: sourceContent,
@@ -533,7 +533,7 @@ describe("Reflect quality gate — source context", () => {
         general: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "general-model" } },
         judge: { endpoint: "http://localhost:11435/v1/chat/completions", models: { fast: "judge-model" } },
       },
-      harnesses: { "fake-agent": { platform: "claude", bin: "fake-agent" } },
+      harnesses: { "fake-agent": { platform: "gemini", bin: "fake-agent" } },
       improve: {
         strategy: "default",
         qualityGate: { connection: "judge" },
@@ -627,7 +627,7 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
         connections: {
           judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test-model" } },
         },
-        harnesses: { "fake-agent": { platform: "claude", bin: "fake-agent" } },
+        harnesses: { "fake-agent": { platform: "gemini", bin: "fake-agent" } },
         improve: {
           strategy: "default",
           strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
@@ -778,7 +778,7 @@ describe("Reflect routing — a judged patch is staged for the drain", () => {
         connections: {
           judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test-model" } },
         },
-        harnesses: { "fake-agent": { platform: "claude", bin: "fake-agent" } },
+        harnesses: { "fake-agent": { platform: "gemini", bin: "fake-agent" } },
         improve: {
           strategy: "default",
           strategies: { default: { processes: { reflect: { qualityGate: { enabled: judge !== undefined } } } } },

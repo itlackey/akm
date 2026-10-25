@@ -16,7 +16,6 @@
  * this is a pre-emptive guarantee against the #222 invariant.
  */
 import { ConfigError } from "../../core/errors";
-import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { collectAllowlistedEnv } from "../../core/spawn-env";
 import {
   runManagedSubprocess,
@@ -28,7 +27,7 @@ import {
 import { getHarness } from "../harnesses";
 import type { AgentDispatchRequest } from "../harnesses/harness";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
-import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
+import type { AgentProfile, AgentStdioMode } from "./profiles";
 
 /** Stable failure-reason vocabulary. Wider strings are not allowed.
  *
@@ -81,15 +80,13 @@ export type AgentFailureReason =
 
 /**
  * Per-call options for {@link runAgent}. All fields are optional. Caller
- * may override `stdio`, `timeoutMs`, and `parseOutput`.
+ * may override `stdio` and `timeoutMs`.
  */
 export interface RunAgentOptions {
   /** Override `profile.stdio`. Captured = pipe stdout/stderr; interactive = inherit. */
   stdio?: AgentStdioMode;
   /** Override the profile/global timeout (ms). null = no timeout (runs until the process exits). */
   timeoutMs?: number | null;
-  /** Override `profile.parseOutput`. */
-  parseOutput?: AgentParseMode;
   /** Extra env vars merged on top of the profile-derived env. */
   env?: Record<string, string>;
   /** Working directory for the child. */
@@ -152,7 +149,7 @@ export interface AgentRunResult {
   stdout: string;
   stderr: string;
   durationMs: number;
-  /** Parsed JSON when `parseOutput === "json"` and parsing succeeded. */
+  /** Reflect's telemetry, which it builds itself; no dispatch sets it. Goes with reflect's result round trip. */
   parsed?: unknown;
   reason?: AgentFailureReason;
   /** Safe typed discriminator for a caught direct-LLM transport error; absent for agent/SDK and generic failures. */
@@ -209,10 +206,8 @@ function streamFailureMessage(
  *   • `spawn_failed`  — the spawn call threw synchronously.
  *   • `timeout`       — exceeded the resolved timeout.
  *   • `non_zero_exit` — child exited with a non-zero code.
- *   • `parse_error`   — `parseOutput === "json"` and stdout was not JSON.
  *
- * `ok === true` requires exit code 0 and (if `parseOutput === "json"`)
- * a successful `JSON.parse`.
+ * `ok === true` requires exit code 0.
  */
 export async function runAgent(
   profile: AgentProfile,
@@ -222,7 +217,6 @@ export async function runAgent(
   const stdioMode = options.stdio ?? profile.stdio;
   // null = explicitly disabled (no kill timer). undefined = runtime default.
   const timeoutMs: number | null = options.timeoutMs !== undefined ? options.timeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
-  const parseOutput = options.parseOutput ?? profile.parseOutput;
   const setTimeoutImpl = options.setTimeoutFn ?? setTimeout;
   const clearTimeoutImpl = options.clearTimeoutFn ?? clearTimeout;
 
@@ -385,25 +379,6 @@ export async function runAgent(
       reason: "non_zero_exit",
       error: `agent CLI "${profile.name}" exited with code ${exitCode}`,
     };
-  }
-
-  if (parseOutput === "json" && stdioMode === "captured") {
-    // Strip <think> blocks and code fences, then parse with embedded-JSON
-    // fallback for local LLMs that emit prose around the payload. Handles
-    // both top-level `{…}` and `[…]` structures.
-    const parsed = parseEmbeddedJsonResponse(stdout);
-    if (parsed === undefined) {
-      return {
-        ok: false,
-        exitCode,
-        stdout,
-        stderr,
-        durationMs,
-        reason: "parse_error",
-        error: "no JSON structure found in agent output",
-      };
-    }
-    return { ok: true, exitCode, stdout, stderr, durationMs, parsed };
   }
 
   return { ok: true, exitCode, stdout, stderr, durationMs };

@@ -71,17 +71,11 @@ export function lowerRequest(target: LowerTarget, request: ResolvedExecutionRequ
     dispatch.agent = request.agent;
   }
   // Every agent transport gets the schema as the one instruction.
-  if (request.outputSchema) {
-    prompt = withSchemaInstruction(prompt, request.outputSchema);
-    dispatch.schema = request.outputSchema as Record<string, unknown>;
-  }
+  if (request.outputSchema) prompt = withSchemaInstruction(prompt, request.outputSchema);
   dispatch.prompt = prompt;
   if (request.model) dispatch.model = request.model.model;
-  if (Object.hasOwn(request, "inference")) {
-    dispatch.inference = request.inference ?? null;
-    for (const key of Object.keys(request.inference ?? {}).sort()) {
-      if (!supportedInference.has(key)) skip(`inference.${key}`);
-    }
+  for (const key of Object.keys(request.inference ?? {}).sort()) {
+    if (!supportedInference.has(key)) skip(`inference.${key}`);
   }
   if (request.modelWork) {
     if (target.confinable) dispatch.modelWork = true;

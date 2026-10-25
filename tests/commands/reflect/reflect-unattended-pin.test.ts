@@ -42,15 +42,29 @@ function asReadableStream(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-function spySpawn(onSpawn: (cmd: string[], env: Record<string, string>, cwd?: string) => void, stdout = ""): SpawnFn {
+/** What a spawned harness was given: its command, env and working directory, and what was written to its stdin. */
+interface Spawned {
+  cmd: string[];
+  env: Record<string, string>;
+  cwd?: string;
+  stdin: string;
+}
+
+function spySpawn(onSpawn: (spawned: Spawned) => void, stdout = ""): SpawnFn {
   return (cmd, options) => {
-    onSpawn(cmd, options.env ?? {}, options.cwd);
+    const spawned: Spawned = { cmd, env: options.env ?? {}, ...(options.cwd ? { cwd: options.cwd } : {}), stdin: "" };
+    onSpawn(spawned);
+    const decoder = new TextDecoder();
     const proc: SpawnedSubprocess = {
       exitCode: 0,
       exited: Promise.resolve(0),
       stdout: asReadableStream(stdout),
       stderr: asReadableStream(""),
-      stdin: null,
+      stdin: new WritableStream<Uint8Array>({
+        write(chunk) {
+          spawned.stdin += decoder.decode(chunk, { stream: true });
+        },
+      }),
       kill: () => undefined,
     };
     return proc;
@@ -83,7 +97,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
   test("eventSource=improve runs a harness process under the model-work tool policy", async () => {
     const stash = makeStashDir();
     const config = agentModeConfig();
-    let seen: { cmd: string[]; env: Record<string, string>; cwd?: string } | undefined;
+    let seen: Spawned | undefined;
     const payload = reflectReply({ description: "Alpha, the first memory" });
 
     const result = await akmReflect({
@@ -92,17 +106,18 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
       eventSource: "improve",
       config,
       improveProfile: config.improve?.strategies?.default,
-      runAgentOptions: { spawn: spySpawn((cmd, env, cwd) => (seen = { cmd, env, cwd }), payload) },
+      runAgentOptions: { spawn: spySpawn((spawned) => (seen = spawned), payload) },
     });
 
     expect(result.ok).toBe(true);
     // claude runs confined to the model-work tools, in its own scratch directory, not the stash.
     expect(seen?.cmd.slice(1, 3)).toEqual(["--restricted", "--strict-mcp-config"]);
     expect(seen?.cmd).toContain("--permission-mode");
-    expect(seen?.cmd).toContain("Read,Edit,Bash(akm search *),Bash(akm show *)");
+    expect(seen?.cmd).toContain("Read,Bash(akm search *),Bash(akm show *),Bash(akm curate *)");
+    expect(seen?.cmd).toContain("--no-session-persistence");
     expect(path.basename(seen?.cwd ?? "")).toStartWith("akm-model-work-");
     // The proposal comes back as the JSON reply of the output schema, which the prompt ends with.
-    expect(seen?.cmd.at(-1)).toContain("Respond with ONLY a JSON value matching this JSON Schema");
+    expect(seen?.stdin).toContain("Respond with ONLY a JSON value matching this JSON Schema");
   });
 
   test("eventSource=improve runs a harness that cannot confine the policy unrestricted, in the scratch directory", async () => {
@@ -110,7 +125,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
     const config = agentModeConfig({
       harnesses: { "fake-agent": { platform: "pi", bin: "fake-agent" } },
     } as Partial<AkmConfig>);
-    let seen: { cmd: string[]; cwd?: string } | undefined;
+    let seen: Spawned | undefined;
     const payload = reflectReply({ description: "Alpha, the first memory" });
 
     const result = await akmReflect({
@@ -119,7 +134,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
       eventSource: "improve",
       config,
       improveProfile: config.improve?.strategies?.default,
-      runAgentOptions: { spawn: spySpawn((cmd, _env, cwd) => (seen = { cmd, cwd }), payload) },
+      runAgentOptions: { spawn: spySpawn((spawned) => (seen = spawned), payload) },
     });
 
     expect(result.ok).toBe(true);

@@ -24,7 +24,6 @@ const profile: AgentProfile = {
   args: [],
   stdio: "captured",
   envPassthrough: [],
-  parseOutput: "text",
 };
 const connection: ChatCompletionConfig = { endpoint: "https://lab.invalid/v1/chat/completions", model: "glm-5" };
 

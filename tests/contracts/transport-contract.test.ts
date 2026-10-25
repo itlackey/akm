@@ -84,8 +84,6 @@ const CLI_SCRIPTS: Record<string, string> = {
   reply: `#!${process.execPath}\nconst input = require("node:fs").readFileSync(0, "utf8");\nconsole.log(JSON.stringify([...process.argv.slice(2), ...(input ? [input] : [])]));\n`,
   // Prints what reached it: argv and working directory.
   probe: `#!${process.execPath}\nconsole.log(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }));\n`,
-  // Claude Code's --output-format json result envelope around the reply.
-  envelope: `#!/bin/sh\necho '${JSON.stringify({ type: "result", result: REPLY, session_id: "envelope-session" })}'\n`,
   // Records its pid beside itself, then outlives any timeout a row sets.
   hang: `#!/bin/sh\necho $$ > "$0.pid"\nexec sleep 30\n`,
   // Each counts its calls beside itself; repair answers prose first, then the reply.
@@ -177,12 +175,7 @@ const CLI_HARNESSES: Transport[] = HARNESS_CONFIG_PLATFORMS.map((platform) => ({
   selects: { harness: "contract" },
   config: (scenario) => ({ harnesses: { contract: { platform, bin: path.join(bins.dir, scenario) } } }),
   delivered: (result) => {
-    const argv = JSON.parse(result.stdout) as string[];
-    const schemaFile = argv.includes("--output-schema") ? argv[argv.indexOf("--output-schema") + 1] : undefined;
-    return {
-      prompt: argv.join("\n"),
-      ...(schemaFile ? { nativeSchema: JSON.parse(fs.readFileSync(schemaFile, "utf8")) } : {}),
-    };
+    return { prompt: (JSON.parse(result.stdout) as string[]).join("\n") };
   },
 }));
 
@@ -293,14 +286,13 @@ describe("C1: a provider or harness error is ok:false, never ok with empty outpu
 describe("C2: structured output", () => {
   const schema = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
   const instruction = `\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(schema)}`;
-  // A connection's chat gets the schema as response_format; every agent transport gets the
-  // one instruction, and codex also gets its --output-schema file.
+  // A connection's chat gets the schema as response_format; every agent transport gets the one instruction.
   const rows: [string, Transport, { native: boolean; instructions: number }][] = [
     [CHAT.name, CHAT, { native: true, instructions: 0 }],
     ...CLI_HARNESSES.map((harness): [string, Transport, { native: boolean; instructions: number }] => [
       harness.name,
       harness,
-      { native: harness.name === "codex", instructions: 1 },
+      { native: false, instructions: 1 },
     ]),
     [RUNTIME.name, RUNTIME, { native: false, instructions: 1 }],
   ];
@@ -335,18 +327,6 @@ describe("C2: structured output", () => {
       expect(outcome).toEqual({ ok: true, raw: expect.stringContaining(want) });
       expect(calls(transport, "repair")).toBe(count);
     }
-  });
-
-  test("claude: a stage call gets the answer out of claude's result envelope", async () => {
-    const claude = CLI_HARNESSES.find((harness) => harness.name === "claude") as Transport;
-    const outcome = await callStage({
-      feature: "distill",
-      runner: runnerFor(claude, "envelope"),
-      prompt: "Reply with a verdict.",
-      request: { responseSchema: { type: "object", properties: { verdict: { type: "string" } } } },
-    });
-
-    expect(outcome).toEqual({ ok: true, raw: REPLY });
   });
 });
 

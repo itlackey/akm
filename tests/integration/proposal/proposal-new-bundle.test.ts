@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { listProposals } from "../../../src/commands/proposal/repository";
 import { type CliResult, runCliCapture } from "../../_helpers/cli";
-import { fakeHarness, harnessCalls } from "../../_helpers/engine-stubs";
+import { fakeHarness, harnessCalls, promptOf } from "../../_helpers/engine-stubs";
 import {
   type IsolatedAkmStorage,
   STASH_SKELETON_SUBDIRS,
@@ -31,7 +31,7 @@ const PROPOSAL = JSON.stringify({ ref: `skills/${NAME}`, content: CONTENT, confi
 const extraDirs: string[] = [];
 let bin: string;
 /** The prompts the fake harness received, in order. */
-const promptsSent = () => harnessCalls(bin).map((call) => call.argv.at(-1) ?? "");
+const promptsSent = () => harnessCalls(bin).map((call) => promptOf(call));
 let storage: IsolatedAkmStorage;
 let otherDir: string;
 let readonlyDir: string;

@@ -24,7 +24,6 @@ export type {
 } from "./detect";
 export { _setAgentDetectForTests, defaultWhich, detectAgentCliProfiles } from "./detect";
 export type {
-  AgentParseMode,
   AgentProfile,
   AgentStdioMode,
 } from "./profiles";

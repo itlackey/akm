@@ -78,8 +78,9 @@ const HARNESSED: readonly string[] = [
   "XDG_STATE_HOME",
   // Home directory itself.
   "HOME",
-  // Codex session-log root (pointed into the sandbox at preload).
+  // Codex and Claude Code session-log roots (pointed into the sandbox at preload).
   "CODEX_HOME",
+  "CLAUDE_CONFIG_DIR",
   // Diagnostic / secret env vars production code reads.
   "AKM_VERBOSE",
   "AKM_LLM_API_KEY",
@@ -141,6 +142,8 @@ function installSuiteWideSandbox(): void {
   // `extract --auto` and `improve` would read the developer's real rollouts.
   // Codex's own `CODEX_HOME` overrides that default (and a developer's export).
   process.env.CODEX_HOME = path.join(suiteSandboxRoot, "codex-home");
+  // Likewise Claude Code's config directory, which holds the `projects` transcripts the Claude reader scans.
+  process.env.CLAUDE_CONFIG_DIR = path.join(suiteSandboxRoot, "claude-home");
   // Teardown must fire on signal-kills too, not just clean exit. A worker that
   // is SIGTERM/SIGINT/SIGHUP'd (e.g. an orphaned/hung `bun test` worker being
   // reaped) otherwise leaks its entire `akm-test-suite-*` root under /tmp — the

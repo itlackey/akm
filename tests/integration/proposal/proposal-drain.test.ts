@@ -1022,7 +1022,6 @@ describe("drainProposals — judgment tier (agent mode)", () => {
       buildJudgmentPrompt(deferred, "needs-judgment", { liveAsset: undefined, siblings: [] }),
       expect.objectContaining({
         stdio: "captured",
-        parseOutput: "text",
         timeoutMs: 1_234,
         dispatch: expect.objectContaining({
           model: "provider/exact-agent-judge",

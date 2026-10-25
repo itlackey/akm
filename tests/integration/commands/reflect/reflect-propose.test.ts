@@ -254,7 +254,7 @@ describe("akm reflect", () => {
     const sentinel = "REFLECT-ECHO-SENTINEL";
     const stash = makeStashDir();
     const echoed = reflectReply({ description: `Use ripgrep before grep ${sentinel}` });
-    const result = await withEnv({ ANTHROPIC_API_KEY: sentinel }, () =>
+    const result = await withEnv({ GEMINI_API_KEY: sentinel }, () =>
       akmReflect({
         ref: "lessons/rg-over-grep",
         stashDir: stash,
@@ -552,7 +552,7 @@ describe("akm propose", () => {
     const sentinel = "PROPOSE-ECHO-SENTINEL";
     const stash = makeStashDir();
     const echoed = VALID_SKILL_PAYLOAD.replace("Say hi politely.", `Say hi politely. ${sentinel}`);
-    const result = await withEnv({ ANTHROPIC_API_KEY: sentinel }, () =>
+    const result = await withEnv({ GEMINI_API_KEY: sentinel }, () =>
       akmPropose({
         type: "skill",
         name: "hello",

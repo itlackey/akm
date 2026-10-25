@@ -3,43 +3,35 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * GitHub Copilot CLI harness (P2 integration, plan §"The adapter contract").
- *
- * Per-harness barrel gathering the Copilot CLI integration surfaces:
- *   - agent command builder → ./agent-builder.ts    (copilotBuilder)
- *   - result extractor      → ./result-extractor.ts (copilotResultExtractor)
- *
- * It also defines {@link CopilotHarness}, the {@link AkmHarness} descriptor
- * that `HARNESS_REGISTRY` registers. This is the LOCAL Copilot CLI
- * (`copilot -p …`); the cloud "Copilot coding agent" is a separate, future
- * descriptor.
+ * GitHub Copilot CLI (`copilot`), the local headless CLI and not the cloud coding
+ * agent. `-p` runs one prompt; `--allow-all-tools` is what lets it run without
+ * asking for approval at each tool.
  */
 
-import type { AkmHarness } from "../harness";
-import { copilotBuilder } from "./agent-builder";
-import { copilotResultExtractor } from "./result-extractor";
+import {
+  type AgentDispatchRequest,
+  type AkmHarness,
+  type BuiltCommand,
+  type HarnessSpawn,
+  withoutModelFlag,
+} from "../harness";
 
-export { COPILOT_PLATFORM, copilotBuilder } from "./agent-builder";
-export { copilotResultExtractor } from "./result-extractor";
-
-/**
- * GitHub Copilot CLI (local headless CLI, not the cloud coding agent).
- *
- * Canonical id is `'copilot'`; no alias or distinct runtime identity.
- */
 export class CopilotHarness implements AkmHarness {
   readonly id = "copilot" as const;
   readonly displayName = "GitHub Copilot CLI";
-  readonly build = copilotBuilder.build;
-  readonly profile = { bin: "copilot", args: [], envPassthrough: ["GH_TOKEN", "GITHUB_TOKEN"] };
-  readonly resultExtractor = copilotResultExtractor;
-  // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // Session-id env marker only. The matrix's other candidates (GH_TOKEN,
-  // bare COPILOT_* presence vars) are credential/presence flags that would
-  // stamp identity onto manual runs, so they are deliberately NOT registered
-  // (see `AkmHarness.identityEnv`).
-  readonly identityEnv = ["COPILOT_SESSION_ID"] as const;
+  readonly profile = {
+    bin: "copilot",
+    args: [],
+    envPassthrough: ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"],
+  };
   readonly systemPrompt = false;
   readonly nativeAgent = false;
   readonly confinable = false;
+
+  build({ bin, args }: HarnessSpawn, req: AgentDispatchRequest): BuiltCommand {
+    const argv = [bin, ...(req.model ? withoutModelFlag(args) : args)];
+    if (req.model) argv.push("--model", req.model);
+    if (req.prompt !== undefined) argv.push("--allow-all-tools", "-p", req.prompt);
+    return { argv };
+  }
 }

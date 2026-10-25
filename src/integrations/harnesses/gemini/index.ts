@@ -3,43 +3,33 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Gemini CLI harness (P2 integration, plan §"The adapter contract").
- *
- * Per-harness barrel gathering the Gemini CLI integration surfaces:
- *   - agent command builder → ./agent-builder.ts    (geminiBuilder)
- *   - result extractor      → ./result-extractor.ts (geminiResultExtractor)
- *
- * It also defines {@link GeminiHarness}, the {@link AkmHarness} descriptor
- * that `HARNESS_REGISTRY` registers. Dispatch-only: no native session-log
- * reader or config importer yet.
+ * Gemini CLI (`gemini`). `-p` runs one prompt headless. Autonomy flags
+ * (`--yolo`, `--approval-mode`) belong in the config's `args`, where the user opts in.
  */
 
-import type { AkmHarness } from "../harness";
-import { geminiBuilder } from "./agent-builder";
-import { geminiResultExtractor } from "./result-extractor";
+import {
+  type AgentDispatchRequest,
+  type AkmHarness,
+  type BuiltCommand,
+  type HarnessSpawn,
+  withoutModelFlag,
+} from "../harness";
 
-export { GEMINI_PLATFORM, geminiBuilder } from "./agent-builder";
-export { geminiResultExtractor } from "./result-extractor";
-
-/**
- * Gemini CLI.
- *
- * Canonical id is `'gemini'`; no alias or distinct runtime identity.
- */
 export class GeminiHarness implements AkmHarness {
   readonly id = "gemini" as const;
   readonly displayName = "Gemini CLI";
-  readonly build = geminiBuilder.build;
   readonly profile = { bin: "gemini", args: [], envPassthrough: ["GEMINI_API_KEY", "GOOGLE_API_KEY"] };
-  readonly resultExtractor = geminiResultExtractor;
-  // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // The matrix's identity marker: Gemini CLI stamps GEMINI_CLI=1 only on
-  // processes it spawns, so it genuinely means "running under gemini" (it is
-  // not a user-profile config var) — but its VALUE ("1") is a bare flag, not
-  // a session id, so it is registered as `presenceEnv` (harness inference
-  // only), never `identityEnv` (whose values persist as agent_session_id).
+  // GEMINI_CLI=1 is stamped only on processes Gemini CLI spawns, so it means "running under
+  // gemini"; its value is a bare flag, not a session id.
   readonly presenceEnv = ["GEMINI_CLI"] as const;
   readonly systemPrompt = false;
   readonly nativeAgent = false;
   readonly confinable = false;
+
+  build({ bin, args }: HarnessSpawn, req: AgentDispatchRequest): BuiltCommand {
+    const argv = [bin, ...(req.model ? withoutModelFlag(args) : args)];
+    if (req.model) argv.push("--model", req.model);
+    if (req.prompt !== undefined) argv.push("-p", req.prompt);
+    return { argv };
+  }
 }

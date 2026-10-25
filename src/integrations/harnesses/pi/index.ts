@@ -3,40 +3,31 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Pi coding-agent CLI harness (P2 integration, plan §"The adapter contract").
- *
- * Per-harness barrel gathering the Pi integration surfaces:
- *   - agent command builder → ./agent-builder.ts    (piBuilder)
- *   - result extractor      → ./result-extractor.ts (piResultExtractor)
- *
- * It also defines {@link PiHarness}, the {@link AkmHarness} descriptor that
- * `HARNESS_REGISTRY` registers. Dispatch-only: no native session-log reader or
- * config importer yet.
+ * Pi coding-agent CLI (`pi`). `-p` is its print mode; the prompt follows it as the
+ * message. No `--` separator: after one, pi does not take the message.
  */
 
-import type { AkmHarness } from "../harness";
-import { piBuilder } from "./agent-builder";
-import { piResultExtractor } from "./result-extractor";
+import {
+  type AgentDispatchRequest,
+  type AkmHarness,
+  type BuiltCommand,
+  type HarnessSpawn,
+  withoutModelFlag,
+} from "../harness";
 
-export { PI_PLATFORM, piBuilder } from "./agent-builder";
-export { piResultExtractor } from "./result-extractor";
-
-/**
- * Pi coding-agent CLI.
- *
- * Canonical id is `'pi'`; no alias or distinct runtime identity.
- */
 export class PiHarness implements AkmHarness {
   readonly id = "pi" as const;
   readonly displayName = "Pi";
-  readonly build = piBuilder.build;
-  readonly profile = { bin: "pi", args: [], envPassthrough: ["PI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"] };
-  readonly resultExtractor = piResultExtractor;
-  // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // Session-id env marker only — the matrix's bare PI_* presence vars must
-  // not stamp identity onto manual runs (see `AkmHarness.identityEnv`).
-  readonly identityEnv = ["PI_SESSION_ID"] as const;
+  readonly profile = { bin: "pi", args: [], envPassthrough: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"] };
   readonly systemPrompt = true;
   readonly nativeAgent = false;
   readonly confinable = false;
+
+  build({ bin, args }: HarnessSpawn, req: AgentDispatchRequest): BuiltCommand {
+    const argv = [bin, ...(req.model ? withoutModelFlag(args) : args)];
+    if (req.systemPrompt) argv.push("--system-prompt", req.systemPrompt);
+    if (req.model) argv.push("--model", req.model);
+    if (req.prompt !== undefined) argv.push("-p", req.prompt);
+    return { argv };
+  }
 }

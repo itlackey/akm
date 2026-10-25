@@ -15,7 +15,6 @@ import type { AkmHarness } from "../harnesses/harness";
 import type { ConnectionRunner, HarnessRunner } from "./runner";
 
 export type AgentStdioMode = "captured" | "interactive";
-export type AgentParseMode = "text" | "json";
 
 /**
  * Concrete profile used by the spawn wrapper. Built-ins are immutable;
@@ -39,8 +38,6 @@ export interface AgentProfile {
    * overrides may extend the list.
    */
   readonly envPassthrough: readonly string[];
-  /** How the wrapper should attempt to parse stdout. */
-  readonly parseOutput: AgentParseMode;
   /** Exact model selected for this dispatch. */
   readonly model?: string;
 }
@@ -69,7 +66,6 @@ function builtinProfiles(): Record<string, AgentProfile> {
       // invocations a spawned agent makes are recorded as machine traffic; it is a
       // provenance tag, never a secret.
       envPassthrough: [...COMMON_SPAWN_ENV_PASSTHROUGH, ...harness.profile.envPassthrough],
-      parseOutput: "text",
     };
   }
   return builtins;
@@ -108,7 +104,6 @@ export function harnessProfile(runner: HarnessRunner): AgentProfile {
     args: runner.args,
     stdio: "captured",
     envPassthrough: getBuiltinAgentProfile(runner.platform)?.envPassthrough ?? [],
-    parseOutput: "text",
     ...(runner.model ? { model: runner.model } : {}),
   };
 }
@@ -121,7 +116,6 @@ export function runtimeProfile(connection: ConnectionRunner): AgentProfile {
     args: [],
     stdio: "captured",
     envPassthrough: [],
-    parseOutput: "text",
     model: connection.model,
   };
 }

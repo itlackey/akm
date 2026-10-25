@@ -195,15 +195,12 @@ describe("the judge thinks only when its own connection enables thinking", () =>
   test("a judge on a harness gets the asset's ref and the tool rules; the plain judge gets neither", async () => {
     const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "akm-judge-harness-"));
     try {
-      const argvPath = path.join(sandbox, "argv.bin");
+      const promptPath = path.join(sandbox, "prompt.txt");
       const bin = path.join(sandbox, "judge-claude");
+      // Claude Code reads the prompt on stdin and answers in plain text.
       fs.writeFileSync(
         bin,
-        [
-          "#!/bin/sh",
-          `printf '%s\\0' "$@" > '${argvPath}'`,
-          `printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":${JSON.stringify(PASSING_VERDICT).replaceAll("'", "")},"session_id":"j"}'`,
-        ].join("\n"),
+        ["#!/bin/sh", `cat > '${promptPath}'`, `printf '%s\n' '${PASSING_VERDICT.replaceAll("'", "")}'`].join("\n"),
         "utf8",
       );
       fs.chmodSync(bin, 0o755);
@@ -214,7 +211,7 @@ describe("the judge thinks only when its own connection enables thinking", () =>
         ref: "knowledge/x",
       });
       expect(result.pass).toBe(true);
-      const sent = fs.readFileSync(argvPath).toString("utf8");
+      const sent = fs.readFileSync(promptPath, "utf8");
       expect(sent).toContain("Tools: The asset is `knowledge/x`: read it with akm_show");
     } finally {
       fs.rmSync(sandbox, { recursive: true, force: true });

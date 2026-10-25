@@ -116,9 +116,8 @@ describe("derived lists", () => {
 
 describe("workflow agent identity markers", () => {
   it("session-id vars are on identityEnv, presence-only flags on presenceEnv", () => {
-    expect([...(requireHarness("claude").identityEnv ?? [])]).toEqual(["CLAUDE_SESSION_ID"]);
-    expect([...(requireHarness("copilot").identityEnv ?? [])]).toEqual(["COPILOT_SESSION_ID"]);
-    expect([...(requireHarness("pi").identityEnv ?? [])]).toEqual(["PI_SESSION_ID"]);
+    // Claude Code exports CLAUDE_CODE_SESSION_ID to the commands it runs.
+    expect([...(requireHarness("claude").identityEnv ?? [])]).toEqual(["CLAUDE_CODE_SESSION_ID"]);
     // OpenCode 2's shell tool exports OPENCODE_SESSION_ID for the commands it runs.
     expect([...(requireHarness("opencode").identityEnv ?? [])]).toEqual(["OPENCODE_SESSION_ID"]);
     // CODEX_SANDBOX=seatbelt and GEMINI_CLI=1 carry a sandbox mode and a bare flag, never a session id.
@@ -126,7 +125,8 @@ describe("workflow agent identity markers", () => {
     expect([...(requireHarness("codex").presenceEnv ?? [])]).toEqual(["CODEX_SANDBOX"]);
     expect(requireHarness("gemini").identityEnv).toBeUndefined();
     expect([...(requireHarness("gemini").presenceEnv ?? [])]).toEqual(["GEMINI_CLI"]);
-    for (const id of ["aider", "amazonq", "openhands"]) {
+    // No other harness sets a session variable on the processes it spawns.
+    for (const id of ["copilot", "pi", "aider", "amazonq", "openhands"]) {
       expect(requireHarness(id).identityEnv).toBeUndefined();
       expect(requireHarness(id).presenceEnv).toBeUndefined();
     }

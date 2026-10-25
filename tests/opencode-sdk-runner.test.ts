@@ -33,7 +33,6 @@ const profile: AgentProfile = {
   args: [],
   stdio: "captured",
   envPassthrough: [],
-  parseOutput: "text",
 };
 
 let model: FakeModelServer;

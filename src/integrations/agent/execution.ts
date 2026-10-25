@@ -326,7 +326,6 @@ export function buildExecution(request: ResolvedExecutionRequestV1, runner: Runn
   const workspace = request.runtime.workspace;
   const options: RunAgentOptions = {
     stdio: "captured",
-    parseOutput: "text",
     ...(request.runtime.timeoutMs !== undefined ? { timeoutMs: request.runtime.timeoutMs } : {}),
     ...(typeof workspace === "string" ? { cwd: workspace } : {}),
     ...(environment ? { env: { ...environment } } : {}),

@@ -47,31 +47,36 @@ export function serveLlmStub(
 /** What a fake harness binary saw on one call. */
 export interface HarnessCall {
   argv: string[];
+  /** What was written to its stdin: the prompt, for a harness that reads it there. */
+  stdin: string;
   eventSource: string | null;
   cwd: string;
 }
 
 /**
- * A fake harness binary. It records each call's argv, event source and working
- * directory beside itself (`<bin>.call.<n>`, `<bin>.count`) and replies per
- * {@link scriptedReply}: as Claude Code's result envelope when `--output-format
- * json` is passed and `framing` says so, as plain text otherwise.
+ * A fake harness binary. It records each call's argv, stdin, event source and
+ * working directory beside itself (`<bin>.call.<n>`, `<bin>.count`) and prints
+ * the scripted reply as plain text, per {@link scriptedReply}. Stdin is read unless
+ * `readStdin` is false: an interactive launch inherits the terminal's.
  */
-export function fakeHarness(replies: readonly string[], framing: "plain" | "claude" = "plain"): string {
+export function fakeHarness(replies: readonly string[], options: { readStdin?: boolean } = {}): string {
   return `#!${process.execPath}
 const fs = require("node:fs");
 const self = process.argv[1];
 const argv = process.argv.slice(2);
+const stdin = ${options.readStdin === false ? '""' : 'fs.readFileSync(0, "utf8")'};
 const countFile = self + ".count";
 const call = (fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, "utf8")) : 0) + 1;
 fs.writeFileSync(countFile, String(call));
-fs.writeFileSync(self + ".call." + call, JSON.stringify({ argv, eventSource: process.env.AKM_EVENT_SOURCE ?? null, cwd: process.cwd() }));
+fs.writeFileSync(self + ".call." + call, JSON.stringify({ argv, stdin, eventSource: process.env.AKM_EVENT_SOURCE ?? null, cwd: process.cwd() }));
 const replies = ${JSON.stringify(replies)};
-const text = replies[Math.min(call, replies.length) - 1];
-const format = argv.indexOf("--output-format");
-const envelope = ${JSON.stringify(framing)} === "claude" && format >= 0 && argv[format + 1] === "json";
-process.stdout.write((envelope ? JSON.stringify({ type: "result", subtype: "success", is_error: false, result: text, session_id: "fake-claude-session" }) : text) + "\\n");
+process.stdout.write(replies[Math.min(call, replies.length) - 1] + "\\n");
 `;
+}
+
+/** The prompt a recorded call carried: its stdin, or the last argument of a harness that takes it on the command line. */
+export function promptOf(call: HarnessCall | undefined): string {
+  return call?.stdin ? call.stdin : (call?.argv.at(-1) ?? "");
 }
 
 /** The calls the fake harness at `bin` recorded, in order. */

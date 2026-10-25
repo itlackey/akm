@@ -26,6 +26,7 @@ import {
   fakeHarness,
   type HarnessCall,
   harnessCalls,
+  promptOf,
   serveLlmStub,
 } from "../../../_helpers/engine-stubs";
 import { reflectReply } from "../../../_helpers/factories";
@@ -112,7 +113,7 @@ const claudeCalls = (scenario: string): HarnessCall[] => harnessCalls(path.join(
 const CLAUDE: Transport = {
   name: "claude",
   engine: (scenario) => ({ harnesses: { contract: { platform: "claude", bin: path.join(bins.dir, scenario) } } }),
-  prompts: (scenario) => claudeCalls(scenario).map((call) => call.argv.at(-1) ?? ""),
+  prompts: (scenario) => claudeCalls(scenario).map((call) => promptOf(call)),
 };
 
 const TRANSPORTS: [string, Transport][] = [LLM, CLAUDE].map((transport) => [transport.name, transport]);

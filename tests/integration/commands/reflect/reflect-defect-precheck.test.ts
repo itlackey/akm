@@ -144,7 +144,7 @@ function config(gate: boolean): AkmConfig {
   return {
     ...quietQualityGateConfig(),
     connections: { judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "judge-model" } } },
-    harnesses: { "fake-agent": { platform: "claude", bin: "fake-agent" } },
+    harnesses: { "fake-agent": { platform: "gemini", bin: "fake-agent" } },
     improve: {
       strategy: "default",
       strategies: {
