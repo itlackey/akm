@@ -357,7 +357,7 @@ describe("chatCompletion against an API that rejects the thinking-control fields
       return rejectsThinking(body) ?? ok();
     });
     try {
-      await chatCompletion({ endpoint: url, model: "gpt-test", enableThinking: true }, messages);
+      await chatCompletion({ endpoint: url, model: "gpt-test", inference: { enableThinking: true } }, messages);
       expect(requestBodies).toHaveLength(2);
       expect(requestBodies[1]).not.toHaveProperty("chat_template_kwargs");
     } finally {
@@ -421,25 +421,18 @@ describe("chatCompletion against an API that rejects the thinking-control fields
 describe("chatCompletion thinking controls", () => {
   const messages = [{ role: "user" as const, content: "Return a result" }];
 
-  // #949: which wire form a backend honors depends on the backend, not on
-  // akm's own `provider` label — a gateway in front of a local model can drop
-  // one form or the other, and `provider` says nothing about what actually
-  // sits behind the endpoint. Both `chat_template_kwargs.enable_thinking` and
-  // top-level `enable_thinking` are sent whenever `enableThinking` is
-  // resolved, for every `provider` value (including none at all).
-  test.each([
-    ["vllm"],
-    ["openai"],
-    ["lmstudio"],
-    [undefined],
-  ])("sends both thinking-control wire forms regardless of provider (provider: %s)", async (provider) => {
+  // #949: which wire form a backend honors depends on the backend — a gateway
+  // in front of a local model can drop one form or the other. Both
+  // `chat_template_kwargs.enable_thinking` and top-level `enable_thinking` are
+  // sent whenever `enableThinking` is resolved.
+  test("sends both thinking-control wire forms", async () => {
     let requestBody: Record<string, unknown> | undefined;
     const { url, server } = createRequestServer((body) => {
       requestBody = body;
       return Response.json({ choices: [{ message: { content: "ok" } }] });
     });
     try {
-      await chatCompletion({ endpoint: url, model: "test-model", provider }, messages, {
+      await chatCompletion({ endpoint: url, model: "test-model" }, messages, {
         enableThinking: false,
       });
       expect(requestBody).toEqual({
@@ -461,11 +454,9 @@ describe("chatCompletion thinking controls", () => {
       return Response.json({ choices: [{ message: { content: "ok" } }] });
     });
     try {
-      await chatCompletion(
-        { endpoint: url, model: "test-model", provider: "vllm", reasoningEffort: "none" },
-        messages,
-        { enableThinking: false },
-      );
+      await chatCompletion({ endpoint: url, model: "test-model", inference: { reasoningEffort: "none" } }, messages, {
+        enableThinking: false,
+      });
       expect(requestBody).toEqual({
         model: "test-model",
         messages,
@@ -491,8 +482,7 @@ describe("chatCompletion thinking controls", () => {
           {
             endpoint: url,
             model: "test-model",
-            provider: "vllm",
-            extraParams: { chat_template_kwargs: { enable_thinking: true } },
+            inference: { extraParams: { chat_template_kwargs: { enable_thinking: true } } },
           },
           messages,
           { enableThinking: false },
@@ -516,8 +506,7 @@ describe("chatCompletion thinking controls", () => {
           {
             endpoint: url,
             model: "test-model",
-            reasoningEffort: "none",
-            extraParams: { reasoning_effort: "high" },
+            inference: { reasoningEffort: "none", extraParams: { reasoning_effort: "high" } },
           },
           messages,
         ),
@@ -535,7 +524,7 @@ describe("chatCompletion thinking controls", () => {
       return Response.json({ choices: [{ message: { content: "ok" } }] });
     });
     try {
-      await chatCompletion({ endpoint: url, model: "test-model", provider: "lmstudio" }, messages);
+      await chatCompletion({ endpoint: url, model: "test-model" }, messages);
       expect(requestBody).toEqual({
         model: "test-model",
         messages,
@@ -558,7 +547,7 @@ describe("chatCompletion thinking controls", () => {
       }),
     );
     try {
-      await chatCompletion({ endpoint: url, model: "test-model", enableThinking: false }, messages);
+      await chatCompletion({ endpoint: url, model: "test-model", inference: { enableThinking: false } }, messages);
       expect(warnings).toEqual([expect.stringContaining("returned 17 reasoning tokens despite thinking being off")]);
     } finally {
       server.stop(true);

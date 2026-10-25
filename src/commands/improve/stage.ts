@@ -13,7 +13,7 @@ import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
 import type { EventsContext } from "../../core/events";
-import { thinkingSetting } from "../../core/llm-inference";
+import { effectiveRequestFields, thinkingSetting } from "../../core/llm-inference";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { defaultFeedback } from "../../core/structured";
 import { warn } from "../../core/warn";
@@ -615,7 +615,9 @@ async function runQualityJudge(
     prompt,
     request: {
       // Off unless the judge's own connection enables thinking (a slower, separate judge, #1011).
-      enableThinking: runner.kind === "connection" && thinkingSetting(runner.request) === true,
+      enableThinking:
+        runner.kind === "connection" &&
+        thinkingSetting(effectiveRequestFields(runner.request, runner.inference)) === true,
       temperature: 0,
       responseSchema: judgeResponseSchema(keys),
       ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),

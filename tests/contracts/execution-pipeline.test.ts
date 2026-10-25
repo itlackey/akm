@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { renderMarkdownExecutionSource } from "../../src/core/adapter/execution-source";
 import type { AkmConfig } from "../../src/core/config/config";
+import { effectiveRequestFields } from "../../src/core/llm-inference";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { canonicalResolvedExecutionRequest, createResolvedPersona } from "../../src/execution/resolved-request";
@@ -25,6 +26,7 @@ import {
 } from "../../src/integrations/agent/execution";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
 import { getHarness, HARNESS_CONFIG_PLATFORMS } from "../../src/integrations/harnesses";
+import type { ChatCompletionConfig } from "../../src/llm/client";
 import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { withEnv } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
@@ -358,14 +360,16 @@ describe("connections: config connection → chat call", () => {
       layers: [currentLayer({ inference: { temperature: 0 } })],
       modelWork: true,
     });
-    let seen: { request?: unknown; temperature?: unknown } = {};
+    let seen: Pick<ChatCompletionConfig, "request" | "inference"> = {};
     await runExecution(buildExecution(resolved.request, resolved.runner), {
       chat: async (connection) => {
-        seen = { request: connection.request, temperature: connection.temperature };
+        seen = { request: connection.request, inference: connection.inference };
         return "ok";
       },
     });
-    expect(seen).toEqual({ request: { top_p: 0.9, temperature: 0 }, temperature: 0 });
+    // The connection's and the model entry's fields as written; the layers' settings beside them, translated when sent.
+    expect(seen).toEqual({ request: { top_p: 0.9, temperature: 0.1 }, inference: { temperature: 0 } });
+    expect(effectiveRequestFields(seen.request, seen.inference)).toEqual({ top_p: 0.9, temperature: 0 });
   });
 });
 

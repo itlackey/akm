@@ -131,25 +131,8 @@
           "models": {
             "type": "object",
             "additionalProperties": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "model": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "required": [
-                    "model"
-                  ],
-                  "additionalProperties": {}
-                },
-                {
-                  "type": "string",
-                  "minLength": 1
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           }
         },
@@ -276,10 +259,6 @@
               "type": "object",
               "additionalProperties": {}
             },
-            "contextLength": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
             "enableThinking": {
               "type": "boolean"
             },
@@ -330,10 +309,6 @@
               "extraParams": {
                 "type": "object",
                 "additionalProperties": {}
-              },
-              "contextLength": {
-                "type": "integer",
-                "exclusiveMinimum": 0
               },
               "enableThinking": {
                 "type": "boolean"
@@ -607,10 +582,6 @@
                       "type": "object",
                       "additionalProperties": {}
                     },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
                     "enableThinking": {
                       "type": "boolean"
                     },
@@ -665,10 +636,6 @@
                     "extraParams": {
                       "type": "object",
                       "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
                     },
                     "enableThinking": {
                       "type": "boolean"
@@ -725,10 +692,6 @@
                       "type": "object",
                       "additionalProperties": {}
                     },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
                     "enableThinking": {
                       "type": "boolean"
                     },
@@ -783,10 +746,6 @@
                     "extraParams": {
                       "type": "object",
                       "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
                     },
                     "enableThinking": {
                       "type": "boolean"
@@ -843,10 +802,6 @@
                       "type": "object",
                       "additionalProperties": {}
                     },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
                     "enableThinking": {
                       "type": "boolean"
                     },
@@ -902,10 +857,6 @@
                       "type": "object",
                       "additionalProperties": {}
                     },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    },
                     "enableThinking": {
                       "type": "boolean"
                     },
@@ -960,10 +911,6 @@
                     "extraParams": {
                       "type": "object",
                       "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
                     },
                     "enableThinking": {
                       "type": "boolean"
@@ -1022,10 +969,6 @@
                 "extraParams": {
                   "type": "object",
                   "additionalProperties": {}
-                },
-                "contextLength": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
                 },
                 "enableThinking": {
                   "type": "boolean"
@@ -1561,25 +1504,8 @@
               "models": {
                 "type": "object",
                 "additionalProperties": {
-                  "anyOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "model": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "required": [
-                        "model"
-                      ],
-                      "additionalProperties": {}
-                    },
-                    {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  ]
+                  "type": "string",
+                  "minLength": 1
                 }
               }
             },
@@ -1706,10 +1632,6 @@
                   "type": "object",
                   "additionalProperties": {}
                 },
-                "contextLength": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
                 "enableThinking": {
                   "type": "boolean"
                 },
@@ -1760,10 +1682,6 @@
                   "extraParams": {
                     "type": "object",
                     "additionalProperties": {}
-                  },
-                  "contextLength": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0
                   },
                   "enableThinking": {
                     "type": "boolean"
@@ -2037,10 +1955,6 @@
                           "type": "object",
                           "additionalProperties": {}
                         },
-                        "contextLength": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
-                        },
                         "enableThinking": {
                           "type": "boolean"
                         },
@@ -2095,10 +2009,6 @@
                         "extraParams": {
                           "type": "object",
                           "additionalProperties": {}
-                        },
-                        "contextLength": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
                         },
                         "enableThinking": {
                           "type": "boolean"
@@ -2155,10 +2065,6 @@
                           "type": "object",
                           "additionalProperties": {}
                         },
-                        "contextLength": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
-                        },
                         "enableThinking": {
                           "type": "boolean"
                         },
@@ -2213,10 +2119,6 @@
                         "extraParams": {
                           "type": "object",
                           "additionalProperties": {}
-                        },
-                        "contextLength": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
                         },
                         "enableThinking": {
                           "type": "boolean"
@@ -2273,10 +2175,6 @@
                           "type": "object",
                           "additionalProperties": {}
                         },
-                        "contextLength": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
-                        },
                         "enableThinking": {
                           "type": "boolean"
                         },
@@ -2332,10 +2230,6 @@
                           "type": "object",
                           "additionalProperties": {}
                         },
-                        "contextLength": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
-                        },
                         "enableThinking": {
                           "type": "boolean"
                         },
@@ -2390,10 +2284,6 @@
                         "extraParams": {
                           "type": "object",
                           "additionalProperties": {}
-                        },
-                        "contextLength": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0
                         },
                         "enableThinking": {
                           "type": "boolean"
@@ -2452,10 +2342,6 @@
                     "extraParams": {
                       "type": "object",
                       "additionalProperties": {}
-                    },
-                    "contextLength": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
                     },
                     "enableThinking": {
                       "type": "boolean"

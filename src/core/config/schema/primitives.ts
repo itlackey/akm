@@ -115,7 +115,6 @@ export const LlmInvocationOverridesSchema = z
     temperature: z.number().finite().optional(),
     maxTokens: positiveInt.optional(),
     extraParams: ExtraParamsSchema.optional(),
-    contextLength: positiveInt.optional(),
     enableThinking: z.boolean().optional(),
     reasoningEffort: nonEmptyString.optional(),
   })

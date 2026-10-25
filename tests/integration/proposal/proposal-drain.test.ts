@@ -544,8 +544,7 @@ const FAKE_LLM_RUNNER = testLlmRunner(
   {
     endpoint: "http://fake.invalid/v1/chat/completions",
     model: "provider/exact-fake-judge",
-    temperature: 0.11,
-    maxTokens: 77,
+    inference: { temperature: 0.11, maxTokens: 77 },
     contextLength: 8_192,
   },
   "fake-llm-judge",
@@ -623,7 +622,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     expect(chat).toHaveBeenCalledWith(
       expect.objectContaining({
         model: "provider/exact-fake-judge",
-        request: { temperature: 0.11, max_tokens: 77 },
+        inference: { temperature: 0.11, maxTokens: 77 },
         contextLength: 8_192,
       }),
       [

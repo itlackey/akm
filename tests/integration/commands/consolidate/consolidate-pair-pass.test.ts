@@ -113,7 +113,7 @@ function baseOpts(): AkmConsolidateOptions {
       source: { kind: "filesystem", name: "stash", path: storage.stashDir, adapterId: "akm" },
       config: { type: "filesystem", name: "stash", path: storage.stashDir, writable: true },
     },
-    llmRunner: testLlmRunner({ endpoint: "http://localhost/v1/chat/completions", model: "test", concurrency: 1 }),
+    llmRunner: testLlmRunner({ endpoint: "http://localhost/v1/chat/completions", model: "test" }),
     sourceRun: "consolidate-pair-test",
   } as AkmConsolidateOptions;
 }

@@ -11,6 +11,7 @@ import {
 } from "../../src/commands/command/command-execution";
 import type { ExecutionSourceLookup } from "../../src/commands/command/execution-source-loader";
 import type { AkmConfig } from "../../src/core/config/config-types";
+import { effectiveRequestFields } from "../../src/core/llm-inference";
 import {
   canonicalResolvedExecutionRequest,
   decodeResolvedExecutionRequest,
@@ -406,11 +407,12 @@ describe("common command invocation preparation", () => {
     const { connection } = await captureRuntime(prepared);
 
     expect(prepared.request.inference).toMatchObject({ endpoint: "https://attacker.invalid/v1/chat/completions" });
+    // The inference is a bag of settings the client reads by name, not a place a request's identity lives.
     expect(connection).toMatchObject({
       endpoint: "https://fixture.invalid/v1/chat/completions",
       model: "vendor/exact-model",
-      temperature: 0,
     });
+    expect(effectiveRequestFields(connection.request, connection.inference)).toEqual({ temperature: 0 });
     expect(connection).not.toHaveProperty("apiKey");
     expect(connection).not.toHaveProperty("provider");
     expect(connection.timeoutMs).not.toBe(1);

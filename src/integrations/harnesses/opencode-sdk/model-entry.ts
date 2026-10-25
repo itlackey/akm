@@ -20,13 +20,7 @@
 import type { ExecutionJsonObject } from "../../../execution/json";
 
 /** The inference keys the OpenCode SDK harness translates. */
-export const OPENCODE_INFERENCE = [
-  "temperature",
-  "reasoningEffort",
-  "enableThinking",
-  "maxTokens",
-  "contextLength",
-] as const;
+export const OPENCODE_INFERENCE = ["temperature", "reasoningEffort", "enableThinking", "maxTokens"] as const;
 
 const isPositiveInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value > 0;

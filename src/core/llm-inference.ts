@@ -11,31 +11,25 @@
  * writes in the endpoint's spelling is sent as written (`request`), under these.
  */
 import type { z } from "zod";
+import { isPlainObject } from "./config/deep-merge";
 import type { LlmInvocationOverridesSchema } from "./config/schema/primitives";
 
 export type LlmInference = z.infer<typeof LlmInvocationOverridesSchema>;
 
-const PORTABLE_KEYS = [
+/**
+ * The portable settings a request's inference may carry and an endpoint's
+ * request translates: `temperature`, `maxTokens`, `reasoningEffort` (an asset's
+ * `effort:` is the same setting) and `enableThinking`, plus `extraParams`, whose
+ * entries are inlined as request fields. `contextLength` is a connection's own
+ * key, not a per-call setting.
+ */
+export const PORTABLE_INFERENCE_KEYS = [
   "temperature",
   "maxTokens",
-  "extraParams",
-  "contextLength",
-  "enableThinking",
   "reasoningEffort",
+  "enableThinking",
+  "extraParams",
 ] as const;
-
-/**
- * The portable settings of `inference` and nothing else. A request's inference is
- * free-form JSON (an asset may write any key), so what reaches a connection is
- * picked from it: an `endpoint`, `apiKey` or `model` an asset wrote is not a setting.
- */
-export function portableInference(inference: LlmInference | null | undefined): LlmInference {
-  const portable: Record<string, unknown> = {};
-  for (const key of PORTABLE_KEYS) {
-    if (inference?.[key] !== undefined) portable[key] = inference[key];
-  }
-  return portable as LlmInference;
-}
 
 /** Whether a request's fields turn thinking on or off, in either of the two spellings an endpoint reads; `undefined` when they say nothing. */
 export function thinkingSetting(request: Readonly<Record<string, unknown>>): boolean | undefined {
@@ -46,7 +40,7 @@ export function thinkingSetting(request: Readonly<Record<string, unknown>>): boo
   return typeof value === "boolean" ? value : undefined;
 }
 
-/** The wire fields for `inference`, in the order the request lists them. `contextLength` is not a request field. */
+/** The wire fields for `inference`, in the order the request lists them. */
 export function inferenceWireFields(inference: LlmInference | undefined): Record<string, unknown> {
   if (!inference) return {};
   return {
@@ -63,4 +57,33 @@ export function inferenceWireFields(inference: LlmInference | undefined): Record
       : {}),
     ...(inference.reasoningEffort !== undefined ? { reasoning_effort: inference.reasoningEffort } : {}),
   };
+}
+
+/**
+ * `over` laid on `base`, one level deep: a field that is an object on both sides
+ * (`chat_template_kwargs`) is merged key by key, so a call's `enableThinking`
+ * does not erase the `thinking_budget` beside it; any other field of `over` wins.
+ */
+export function mergeRequestFields(
+  base: Readonly<Record<string, unknown>>,
+  over: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(over)) {
+    const was = merged[key];
+    merged[key] = isPlainObject(was) && isPlainObject(value) ? { ...was, ...value } : value;
+  }
+  return merged;
+}
+
+/**
+ * The fields a request carries: `request` as written, with the translation of
+ * `inference` laid on it. The one place portable settings meet an endpoint's own
+ * spelling.
+ */
+export function effectiveRequestFields(
+  request: Readonly<Record<string, unknown>> | undefined,
+  inference: LlmInference | null | undefined,
+): Record<string, unknown> {
+  return mergeRequestFields(request ?? {}, inferenceWireFields(inference ?? undefined));
 }

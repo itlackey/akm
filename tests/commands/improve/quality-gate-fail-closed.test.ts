@@ -90,7 +90,7 @@ describe("runLessonQualityJudge — fail-CLOSED (07 P0-2)", () => {
       async (connection, _messages, options) => {
         // Resolved execution canonicalizes inference onto the lowered
         // connection; assert the same effective provider value.
-        enableThinking = options?.enableThinking ?? connection.enableThinking;
+        enableThinking = options?.enableThinking ?? connection.inference?.enableThinking;
         return JSON.stringify({ score: 4.5, reason: "adds new info" });
       },
     );
@@ -196,7 +196,7 @@ describe("runLessonQualityJudge — pinned temperature (R13)", () => {
       "some lesson body",
       "some source body",
       async (connection, _messages, options) => {
-        receivedTemperature = options?.temperature ?? (connection as unknown as { temperature?: number }).temperature;
+        receivedTemperature = options?.temperature ?? connection.inference?.temperature;
         return JSON.stringify({ score: 4.5, reason: "adds new info" });
       },
     );

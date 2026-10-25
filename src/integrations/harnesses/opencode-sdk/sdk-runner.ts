@@ -25,6 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { OpenCode } from "@opencode/sdk";
 import { isRecord, toErrorMessage } from "../../../core/common";
+import { mergeRequestFields } from "../../../core/llm-inference";
 import { getCacheDir, getDataDir } from "../../../core/paths";
 import { warnOnce } from "../../../core/warn";
 import type { ExecutionJsonObject } from "../../../execution/json";
@@ -74,12 +75,13 @@ function canonicalProviderBase(endpoint: string): string {
   return endpoint.replace(/\/chat\/completions$/, "").replace(/\/+$/, "");
 }
 
-/** The inference a fallback LLM connection carries, which OpenCode can take. */
+/** The inference a connection carries, which OpenCode can take: its portable settings and its context window. */
 function fallbackInference(llm: ChatCompletionConfig | undefined): ExecutionJsonObject {
   const out: Record<string, unknown> = {};
-  for (const key of ["temperature", "maxTokens", "contextLength", "enableThinking", "reasoningEffort"] as const) {
-    if (llm?.[key] !== undefined) out[key] = llm[key];
+  for (const key of ["temperature", "maxTokens", "enableThinking", "reasoningEffort"] as const) {
+    if (llm?.inference?.[key] !== undefined) out[key] = llm.inference[key];
   }
+  if (llm?.contextLength !== undefined) out.contextLength = llm.contextLength;
   return out as ExecutionJsonObject;
 }
 
@@ -101,8 +103,12 @@ export function modelConfig(
   const merged = inference === null ? undefined : { ...fallbackInference(llm), ...inference };
   const portable = opencodeModelEntry(merged);
   if (llm?.endpoint || llm?.apiKey) {
-    // The connection's request fields, in the endpoint's own spelling, go to the model as written, under the portable settings.
-    const options = { ...llm.request, ...(portable.options as Record<string, unknown> | undefined) };
+    // The connection's request fields, in the endpoint's own spelling, go to the model as written (with the
+    // `extraParams` entries inlined), under the portable settings.
+    const options = mergeRequestFields(
+      { ...llm.request, ...llm.inference?.extraParams },
+      (portable.options as Record<string, unknown> | undefined) ?? {},
+    );
     const entry = { ...portable, ...(Object.keys(options).length > 0 ? { options } : {}) };
     const modelId = model?.startsWith("akm-custom/") ? model.slice("akm-custom/".length) : model;
     return {

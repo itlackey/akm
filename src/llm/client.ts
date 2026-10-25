@@ -11,7 +11,7 @@
 
 import { fetchWithTimeout, readBodyWithByteCap } from "../core/common";
 import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
-import { inferenceWireFields, type LlmInference } from "../core/llm-inference";
+import { effectiveRequestFields, type LlmInference } from "../core/llm-inference";
 import { redactErrorBody, redactSensitiveText } from "../core/redaction";
 import { warn, warnVerbose } from "../core/warn";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../integrations/agent/config";
@@ -88,15 +88,19 @@ export interface ChatMessage {
  * settings (`temperature`, `maxTokens`, ...), which are translated to the
  * endpoint's fields and sent over them.
  */
-export type ChatCompletionConfig = LlmInference & {
+export type ChatCompletionConfig = {
   /** The OpenAI-compatible base URL (`…/v1`), or the chat-completions URL itself. */
   endpoint: string;
   model: string;
   /** The key itself, read at the dispatch boundary; never a reference. */
   apiKey?: string;
   timeoutMs?: number | null;
+  /** The connection's context window, in tokens. */
+  contextLength?: number;
   /** Request fields in the endpoint's own spelling. */
   request?: Readonly<Record<string, unknown>>;
+  /** Portable settings, translated over `request` when the request is sent. */
+  inference?: LlmInference;
 };
 
 /** The base of an OpenAI-compatible endpoint: the URL without `/chat/completions` or a trailing slash. */
@@ -521,7 +525,7 @@ async function retryWithoutSchema(
 /** Whether this request carries the two thinking-control fields, from a setting or as written. */
 function sendsThinkingFields(config: ChatCompletionConfig, options: ChatCompletionOptions | undefined): boolean {
   return (
-    (options?.enableThinking ?? config.enableThinking) !== undefined ||
+    (options?.enableThinking ?? config.inference?.enableThinking) !== undefined ||
     config.request?.chat_template_kwargs !== undefined ||
     config.request?.enable_thinking !== undefined
   );
@@ -539,16 +543,12 @@ function requestFields(
   includeThinking: boolean,
 ): Record<string, unknown> {
   const settings: LlmInference = {
-    ...config,
+    ...config.inference,
     ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
     ...(options?.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
     ...(options?.enableThinking !== undefined ? { enableThinking: options.enableThinking } : {}),
   };
-  const fields: Record<string, unknown> = {
-    temperature: 0.3,
-    ...config.request,
-    ...inferenceWireFields(settings),
-  };
+  const fields: Record<string, unknown> = effectiveRequestFields({ temperature: 0.3, ...config.request }, settings);
   const key = connectionKey(config);
   if (temperatureRejectedConnections.has(key)) delete fields.temperature;
   if (!includeThinking) {
@@ -571,8 +571,8 @@ async function chatCompletionAttemptOnce(
   includeThinking: boolean,
   held?: HeldUsage,
 ): Promise<string> {
-  if (config.extraParams !== undefined) {
-    const issue = validateExtraParams(config.extraParams)[0];
+  if (config.inference?.extraParams !== undefined) {
+    const issue = validateExtraParams(config.inference.extraParams)[0];
     if (issue) throw new Error(formatExtraParamsIssue("LLM extraParams", issue));
   }
   const headers: Record<string, string> = { "Content-Type": "application/json" };

@@ -13,6 +13,7 @@
 import { describe, expect, test } from "bun:test";
 import { resolveImproveExecution } from "../../../src/commands/improve/execution";
 import type { AkmConfig } from "../../../src/core/config/config";
+import { effectiveRequestFields } from "../../../src/core/llm-inference";
 import { buildExecution, resolveExecution } from "../../../src/integrations/agent/execution";
 import { runExecution } from "../../../src/integrations/agent/runner-dispatch";
 import type { ChatCompletionConfig } from "../../../src/llm/client";
@@ -61,7 +62,12 @@ describe("improve model work on a connection", () => {
     expect(resolved.notices.filter((notice) => (notice.field ?? "").startsWith("inference."))).toEqual([]);
     const { connection } = await dispatchedAgain(resolved.runner);
     expect(connection).toMatchObject({ model: "krang/chat/qwen3.8-27b" });
-    expect(connection.request).toEqual({ temperature: 0.2, reasoning_effort: "low" });
+    // The runner the plan froze holds the connection's fields and the process's settings apart.
+    expect(resolved.runner).toMatchObject({ request: {}, inference: { temperature: 0.2, reasoningEffort: "low" } });
+    expect(effectiveRequestFields(connection.request, connection.inference)).toEqual({
+      temperature: 0.2,
+      reasoning_effort: "low",
+    });
   });
 
   test("with no setting anywhere, akm sends nothing of its own", async () => {
@@ -70,13 +76,14 @@ describe("improve model work on a connection", () => {
     const { again, connection } = await dispatchedAgain(runner);
 
     expect(again.request).not.toHaveProperty("inference");
-    expect(connection.request).toEqual({});
+    expect(effectiveRequestFields(connection.request, connection.inference)).toEqual({});
   });
 
   test("the connection's own request fields stay under the overlay", async () => {
     const config = configFor({ ...CONNECTION, top_p: 0.9, temperature: 0.7 }, { temperature: 0.2 });
     const { connection } = await dispatchedAgain(resolveReflect(config).runner);
 
-    expect(connection.request).toEqual({ top_p: 0.9, temperature: 0.2 });
+    expect(connection.request).toEqual({ top_p: 0.9, temperature: 0.7 });
+    expect(effectiveRequestFields(connection.request, connection.inference)).toEqual({ top_p: 0.9, temperature: 0.2 });
   });
 });

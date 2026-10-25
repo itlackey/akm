@@ -27,7 +27,7 @@ import { apiKeyReference } from "../../core/config/credentials";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { STANDARD_ALIASES } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
-import { inferenceWireFields, type LlmInference } from "../../core/llm-inference";
+import type { LlmInference } from "../../core/llm-inference";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warnOnce } from "../../core/warn";
 import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
@@ -49,10 +49,6 @@ export interface ResolveTargetInput {
 const CONNECTION_OWNED_KEYS = new Set(["endpoint", "apiKey", "models", "contextLength", "timeoutMs", "concurrency"]);
 
 type ModelEntry = string | { readonly model: string; readonly [field: string]: unknown };
-
-function modelName(entry: ModelEntry): string {
-  return typeof entry === "string" ? entry : entry.model;
-}
 
 function present(layer: UnresolvedExecutionDefaults, key: keyof UnresolvedExecutionDefaults): boolean {
   return layer[key] !== undefined;
@@ -240,15 +236,15 @@ function connectionRunner(
     Object.entries(connection).filter(([key]) => !CONNECTION_OWNED_KEYS.has(key)),
   );
   const inference = mergeLayerInference(layers) as LlmInference | null | undefined;
-  const contextLength = inference?.contextLength ?? connection.contextLength;
   return {
     kind: "connection",
     name,
     endpoint: connection.endpoint,
     model,
-    request: { ...connectionFields, ...entryFields, ...inferenceWireFields(inference ?? undefined) },
+    request: { ...connectionFields, ...entryFields },
+    ...(inference && Object.keys(inference).length > 0 ? { inference } : {}),
     ...(apiKeyReference(connection.apiKey) !== undefined ? { apiKey: connection.apiKey } : {}),
-    ...(contextLength !== undefined ? { contextLength } : {}),
+    ...(connection.contextLength !== undefined ? { contextLength: connection.contextLength } : {}),
     ...(connection.concurrency !== undefined ? { concurrency: connection.concurrency } : {}),
     timeoutMs: firstTimeout(layerTimeout(layers), connection.timeoutMs, DEFAULT_LLM_TIMEOUT_MS),
   };
@@ -266,13 +262,10 @@ function harnessModel(
   aliases: ReadonlySet<string>,
 ): string | undefined {
   if (requested === null) return undefined;
-  const own: Readonly<Record<string, ModelEntry>> = harness.models ?? {};
+  const own: Readonly<Record<string, string>> = harness.models ?? {};
   const shipped = getHarness(platform)?.models ?? {};
-  if (requested === undefined) {
-    const first = Object.values(own)[0];
-    return first === undefined ? undefined : modelName(first);
-  }
-  if (Object.hasOwn(own, requested)) return modelName(own[requested] as ModelEntry);
+  if (requested === undefined) return Object.values(own)[0];
+  if (Object.hasOwn(own, requested)) return own[requested];
   if (Object.hasOwn(shipped, requested)) return shipped[requested];
   if (!aliases.has(requested)) return requested;
   // A harness with no map at all picks its own model whatever is asked; only one that maps others is worth a word.

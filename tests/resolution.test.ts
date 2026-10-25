@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../src/core/config/config";
 import { deepMergeConfig } from "../src/core/config/deep-merge";
 import { ConfigError } from "../src/core/errors";
+import { effectiveRequestFields } from "../src/core/llm-inference";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import type { UnresolvedExecutionDefaults } from "../src/execution/source";
 import { parseTimeout, resolveTarget } from "../src/integrations/agent/resolution";
@@ -174,7 +175,9 @@ describe("the model", () => {
   test("a model entry's own fields are request fields, under the layer's inference", () => {
     const runner = connectionFor(config, [{ model: "reasoning", inference: { maxTokens: 100 } }]);
     expect(runner.model).toBe("glm-5");
-    expect(runner.request).toEqual({ reasoning_effort: "high", max_tokens: 100 });
+    expect(runner.request).toEqual({ reasoning_effort: "high", max_tokens: 16384 });
+    expect(runner.inference).toEqual({ maxTokens: 100 });
+    expect(wire(runner)).toEqual({ reasoning_effort: "high", max_tokens: 100 });
   });
 
   test("a name that is not an alias anywhere is the exact model", () => {
@@ -202,8 +205,11 @@ describe("the model", () => {
   });
 });
 
+/** The fields the client sends for a runner: its request fields with its settings translated over them. */
+const wire = (runner: ConnectionRunner) => effectiveRequestFields(runner.request, runner.inference);
+
 describe("the request", () => {
-  test("is the connection's request fields, then the model entry's, then the layers' inference", () => {
+  test("is the connection's request fields, then the model entry's, as written; the layers' settings are carried apart", () => {
     const config = configOf({
       connections: {
         default: {
@@ -220,9 +226,18 @@ describe("the request", () => {
       temperature: 0.7,
       top_p: 0.9,
     });
-    expect(
-      connectionFor(config, [{ model: "reasoning" }, { inference: { temperature: 0, maxTokens: 512 } }]).request,
-    ).toEqual({
+    const reasoning = connectionFor(config, [
+      { model: "reasoning" },
+      { inference: { temperature: 0, maxTokens: 512 } },
+    ]);
+    expect(reasoning.request).toEqual({
+      chat_template_kwargs: { enable_thinking: false },
+      temperature: 0.2,
+      top_p: 0.9,
+      reasoning_effort: "high",
+    });
+    expect(reasoning.inference).toEqual({ temperature: 0, maxTokens: 512 });
+    expect(wire(reasoning)).toEqual({
       chat_template_kwargs: { enable_thinking: false },
       temperature: 0,
       top_p: 0.9,
@@ -255,7 +270,7 @@ describe("the request", () => {
 
   test("effort is reasoningEffort, in whichever layer and whichever word the nearest layer used", () => {
     const config = configOf({ connections: { default: lab } });
-    const request = (layers: UnresolvedExecutionDefaults[]) => connectionFor(config, layers).request;
+    const request = (layers: UnresolvedExecutionDefaults[]) => wire(connectionFor(config, layers));
     expect(request([{ inference: { effort: "low" } }])).toMatchObject({ reasoning_effort: "low" });
     expect(request([{ inference: { reasoningEffort: "low" } }, { inference: { effort: "high" } }])).toMatchObject({
       reasoning_effort: "high",
@@ -269,12 +284,39 @@ describe("the request", () => {
     const config = configOf({ connections: { default: lab } });
     const runner = connectionFor(config, [{ inference: { temperature: 0.9 } }, { inference: null }]);
     expect(runner.request).toEqual({});
+    expect(runner).not.toHaveProperty("inference");
   });
 
-  test("contextLength in a layer's inference outranks the connection's", () => {
+  test("contextLength is the connection's own key: a layer's inference does not set it", () => {
     const config = configOf({ connections: { default: { ...lab, contextLength: 8192 } } });
     expect(connectionFor(config).contextLength).toBe(8192);
-    expect(connectionFor(config, [{ inference: { contextLength: 4096 } }]).contextLength).toBe(4096);
+    expect(connectionFor(config, [{ inference: { contextLength: 4096 } }]).contextLength).toBe(8192);
+    expect(connectionFor(configOf({ connections: { default: lab } })).contextLength).toBeUndefined();
+  });
+
+  test("a layer's enableThinking does not erase the thinking fields a model entry wrote beside it", () => {
+    const config = configOf({
+      connections: {
+        default: {
+          endpoint: "http://lab:8080/v1",
+          models: {
+            reasoning: { model: "r", chat_template_kwargs: { enable_thinking: true, thinking_budget: 8192 } },
+          },
+        },
+      },
+    });
+    const runner = connectionFor(config, [{ model: "reasoning" }, { inference: { enableThinking: false } }]);
+    expect(runner.request).toEqual({ chat_template_kwargs: { enable_thinking: true, thinking_budget: 8192 } });
+    expect(wire(runner)).toEqual({
+      chat_template_kwargs: { enable_thinking: false, thinking_budget: 8192 },
+      enable_thinking: false,
+    });
+  });
+
+  test("an extraParams object in a layer's inference is inlined as request fields", () => {
+    const config = configOf({ connections: { default: { ...lab, top_p: 0.9 } } });
+    const runner = connectionFor(config, [{ inference: { extraParams: { top_k: 40 }, temperature: 0.1 } }]);
+    expect(wire(runner)).toEqual({ top_p: 0.9, temperature: 0.1, top_k: 40 });
   });
 });
 
@@ -338,7 +380,7 @@ describe("a harness", () => {
   });
 
   test("its models map an alias; the shipped map for claude covers the rest", () => {
-    const config = configOf({ harnesses: { claude: { models: { fast: { model: "claude-haiku-custom" } } } } });
+    const config = configOf({ harnesses: { claude: { models: { fast: "claude-haiku-custom" } } } });
     expect(harnessFor(config, [{ model: "fast" }]).model).toBe("claude-haiku-custom");
     expect(harnessFor(config, [{ model: "reasoning" }]).model).toBe("claude-opus-4-7");
     expect(harnessFor(config, [{ model: "claude-exact-1" }]).model).toBe("claude-exact-1");

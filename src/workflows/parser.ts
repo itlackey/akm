@@ -1233,6 +1233,12 @@ function parseEnumField(
   return undefined;
 }
 
+/** Keys a unit's `llm:` once took and akm no longer reads: warned about once, then ignored. */
+const RETIRED_LLM_KEYS: Readonly<Record<string, string>> = {
+  supports_json_schema: "akm retries without a schema when the endpoint rejects one",
+  context_length: "the context window is a connection's setting (contextLength)",
+};
+
 /** Parse only invocation tuning. Connection identity belongs to a named engine. */
 function parseLlmOverrides(ctx: Ctx, raw: unknown, path: Path, label: string): LlmInvocationOverrides | undefined {
   if (raw === undefined) return undefined;
@@ -1260,11 +1266,8 @@ function parseLlmOverrides(ctx: Ctx, raw: unknown, path: Path, label: string): L
       result.maxTokens = raw.max_tokens;
     } else ctx.err([...path, "max_tokens"], `${label}.max_tokens must be a positive integer.`);
   }
-  if (raw.supports_json_schema !== undefined) {
-    warnOnce(
-      "workflow-supports-json-schema",
-      "A workflow's supports_json_schema is ignored: akm retries without a schema when the endpoint rejects one.",
-    );
+  for (const [key, why] of Object.entries(RETIRED_LLM_KEYS)) {
+    if (raw[key] !== undefined) warnOnce(`workflow-llm-${key}`, `A workflow's llm.${key} is ignored: ${why}.`);
   }
   if (raw.extra_params !== undefined) {
     if (!isRecord(raw.extra_params)) {
@@ -1281,11 +1284,6 @@ function parseLlmOverrides(ctx: Ctx, raw: unknown, path: Path, label: string): L
         result.extraParams = raw.extra_params;
       }
     }
-  }
-  if (raw.context_length !== undefined) {
-    if (typeof raw.context_length === "number" && Number.isInteger(raw.context_length) && raw.context_length > 0) {
-      result.contextLength = raw.context_length;
-    } else ctx.err([...path, "context_length"], `${label}.context_length must be a positive integer.`);
   }
   if (raw.enable_thinking !== undefined) {
     if (typeof raw.enable_thinking === "boolean") result.enableThinking = raw.enable_thinking;

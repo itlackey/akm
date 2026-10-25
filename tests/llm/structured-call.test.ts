@@ -317,8 +317,8 @@ describe("callStructured contract", () => {
         maxTokens: 1234,
         enableThinking: false,
         chat: async (config) => {
-          seenMaxTokens = config.maxTokens;
-          seenEnableThinking = config.enableThinking;
+          seenMaxTokens = config.inference?.maxTokens;
+          seenEnableThinking = config.inference?.enableThinking;
           return "ok";
         },
       },
@@ -645,7 +645,7 @@ describe("callStructured contract", () => {
               observed.push({
                 apiKey: connection.apiKey,
                 model: connection.model,
-                temperature: connection.temperature,
+                temperature: connection.inference?.temperature,
                 message: messages.at(-1)?.content,
                 timeoutMs: options?.timeoutMs,
                 schemaType: options?.responseSchema?.type,

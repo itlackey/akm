@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../src/core/config/config";
 import { loadUserConfig, normalizeConfigFile, resetConfigCache } from "../src/core/config/config";
+import { effectiveRequestFields } from "../src/core/llm-inference";
 import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import type { LoweringNotice } from "../src/execution/resolved-request";
@@ -241,7 +242,10 @@ describe("resolveIndexPassExecution", () => {
 
     const runner = asLlmRunner(resolveIndexPassExecution("enrichment", config).runner);
     expect(runner.model).toBe("pass-target");
-    expect(runner.request).toEqual({ temperature: 0.2, max_tokens: 400 });
+    // The connection's own fields as written; the pass's settings (over the index's) beside them.
+    expect(runner.request).toEqual({ temperature: 0.9, max_tokens: 999 });
+    expect(runner.inference).toEqual({ temperature: 0.2, maxTokens: 400 });
+    expect(effectiveRequestFields(runner.request, runner.inference)).toEqual({ temperature: 0.2, max_tokens: 400 });
     expect(runner.timeoutMs).toBe(2_000);
   });
 
@@ -325,7 +329,7 @@ describe("config loader: `index` block parsing", () => {
       index: { enrichment: { llm: { temperature: 0.2, maxTokens: 64 } } },
     });
     const resolved = resolveIndexPassExecution("enrichment", loadUserConfig()).runner;
-    expect(asLlmRunner(resolved).request).toEqual({ temperature: 0.2, max_tokens: 64 });
+    expect(asLlmRunner(resolved).inference).toEqual({ temperature: 0.2, maxTokens: 64 });
   });
 
   test("keeps an unknown key under a pass entry and names it once instead of failing config load", () => {

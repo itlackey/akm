@@ -2190,7 +2190,8 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(asLlmRunner(plan.runner)).toMatchObject({
       endpoint: "http://192.168.0.205:1234/v1/chat/completions",
       model: "process-model",
-      request: { temperature: 0.2, max_tokens: 321 },
+      request: {},
+      inference: { temperature: 0.2, maxTokens: 321 },
     });
     expect(plan.process.maxTotalChars).toBe(1234);
 

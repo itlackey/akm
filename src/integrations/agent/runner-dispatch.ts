@@ -15,13 +15,14 @@ import os from "node:os";
 import path from "node:path";
 import type { AkmConfig } from "../../core/config/config";
 import { resolveApiKey } from "../../core/config/credentials";
-import { type LlmInference, portableInference } from "../../core/llm-inference";
+import type { LlmInference } from "../../core/llm-inference";
 import {
   collectSensitiveValues,
   isEnvPassthroughValueSafeToExpose,
   redactSensitiveText,
   redactSensitiveValue,
 } from "../../core/redaction";
+import type { ExecutionJsonObject } from "../../execution/json";
 import { type ChatCompletionConfig, chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { getHarness } from "../harnesses";
@@ -29,7 +30,7 @@ import { closeOpencodeSdk, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-
 import { type AgentResultExtraction, modelFromArgs } from "./builder-shared";
 import type { BuiltExecution } from "./execution";
 import { type AgentProfile, harnessProfile, runtimeProfile } from "./profiles";
-import { resolveTarget } from "./resolution";
+import { mergeLayerInference, resolveTarget } from "./resolution";
 import type { ConnectionRunner, RunnerSpec } from "./runner";
 import { type AgentFailureReason, type AgentRunResult, type RunAgentOptions, runAgent } from "./spawn";
 
@@ -157,7 +158,9 @@ function recordDispatchUsage(execution: BuiltExecution, result: AgentRunResult):
 
 /**
  * The chat connection a connection runner stands for: its key read now, and the
- * request's portable settings on top. The one place a connection's key is read for a call.
+ * portable settings of the runner's choosing layers and of this call's request
+ * (the request's nearer), which the client translates. The one place a
+ * connection's key is read for a call.
  */
 export function materializeConnection(
   runner: ConnectionRunner,
@@ -165,11 +168,15 @@ export function materializeConnection(
   envSource: NodeJS.ProcessEnv = process.env,
 ): ChatCompletionConfig {
   const apiKey = resolveApiKey(runner.apiKey, runner.name, envSource);
+  const settings = mergeLayerInference([
+    { inference: runner.inference as ExecutionJsonObject | undefined },
+    { inference: inference as ExecutionJsonObject | null | undefined },
+  ]) as LlmInference | null | undefined;
   return {
-    ...portableInference(inference),
     endpoint: runner.endpoint,
     model: runner.model,
     request: runner.request,
+    ...(settings ? { inference: settings } : {}),
     timeoutMs: runner.timeoutMs,
     ...(runner.contextLength !== undefined ? { contextLength: runner.contextLength } : {}),
     ...(apiKey ? { apiKey } : {}),

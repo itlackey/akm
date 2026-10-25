@@ -22,6 +22,7 @@ import memoryInferSystemPrompt from "../assets/prompts/memory-infer-system.md" w
 import memoryInferUserPrompt from "../assets/prompts/memory-infer-user.md" with { type: "text" };
 import { toErrorMessage } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
+import { effectiveRequestFields } from "../core/llm-inference";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { warn } from "../core/warn";
 import type { LoweringNotice } from "../execution/resolved-request";
@@ -103,7 +104,8 @@ export const DERIVED_MEMORY_JSON_SCHEMA = {
 
 /** The temperature a connection's request fields set, if any. */
 function configuredTemperature(runner: RunnerSpec): number | undefined {
-  const temperature = runner.kind === "connection" ? runner.request.temperature : undefined;
+  const temperature =
+    runner.kind === "connection" ? effectiveRequestFields(runner.request, runner.inference).temperature : undefined;
   return typeof temperature === "number" ? temperature : undefined;
 }
 

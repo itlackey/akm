@@ -88,7 +88,7 @@ describe("resolveQualityGateJudge (#1011)", () => {
       "distill",
     );
     expect(runner?.name).toBe("other");
-    expect(asLlmRunner(runner).request.temperature).toBe(0.5);
+    expect(asLlmRunner(runner).inference?.temperature).toBe(0.5);
   });
 
   test("one setting serves the judges of reflect and distill", () => {
@@ -176,7 +176,7 @@ describe("the judge thinks only when its own connection enables thinking", () =>
       "source",
       [],
       async (connection, _messages, options) => {
-        thinking = options?.enableThinking ?? connection.enableThinking;
+        thinking = options?.enableThinking ?? connection.inference?.enableThinking;
         return PASSING_VERDICT;
       },
       { llmRunner },
@@ -225,7 +225,7 @@ describe("the judge thinks only when its own connection enables thinking", () =>
   test("otherwise the judge keeps thinking off, as before", async () => {
     let thinking: boolean | undefined;
     await runReflectQualityJudge(config(), "candidate", "source", [], async (connection, _messages, options) => {
-      thinking = options?.enableThinking ?? connection.enableThinking;
+      thinking = options?.enableThinking ?? connection.inference?.enableThinking;
       return PASSING_VERDICT;
     });
     expect(thinking).toBe(false);

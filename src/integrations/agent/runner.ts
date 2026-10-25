@@ -19,6 +19,8 @@ export interface ConnectionRunner {
   readonly model: string;
   /** Request fields sent as written: the connection's, under the model entry's. */
   readonly request: Readonly<Record<string, unknown>>;
+  /** The portable settings the layers that chose this runner set; the client translates them over `request` when it sends. */
+  readonly inference?: LlmInference;
   readonly apiKey?: string;
   readonly contextLength?: number;
   readonly concurrency?: number;

@@ -37,7 +37,13 @@ let work: string;
 
 beforeAll(() => {
   model = startFakeModel();
-  llm = { endpoint: model.url, model: "fake-model", apiKey: "test-key", contextLength: 40000, maxTokens: 4000 };
+  llm = {
+    endpoint: model.url,
+    model: "fake-model",
+    apiKey: "test-key",
+    contextLength: 40000,
+    inference: { maxTokens: 4000 },
+  };
   work = fs.mkdtempSync(path.join(process.env.HOME ?? "/tmp", "sdk-work-"));
 });
 
@@ -214,6 +220,25 @@ describe("runOpencodeSdk", () => {
     expect(sent?.params.top_p).toBe(0.9);
     expect(sent?.params.chat_template_kwargs).toEqual({ enable_thinking: false });
     expect(sent?.params.reasoning_effort).toBe("low");
+  });
+
+  test("a call's enableThinking does not erase the thinking fields the connection wrote beside it", async () => {
+    const connection: ChatCompletionConfig = {
+      ...llm,
+      request: { chat_template_kwargs: { enable_thinking: true, thinking_budget: 8192 } },
+      inference: { enableThinking: false, extraParams: { top_k: 40 } },
+    };
+    const before = model.requests.length;
+    const result = await runOpencodeSdk(
+      profile,
+      "MODE:answer with merged thinking fields",
+      { cwd: work, timeoutMs: 60_000 },
+      connection,
+    );
+    expect(result.ok).toBe(true);
+    const sent = model.requests.slice(before).find((r) => r.mode === "answer");
+    expect(sent?.params.chat_template_kwargs).toEqual({ enable_thinking: false, thinking_budget: 8192 });
+    expect(sent?.params.top_k).toBe(40);
   });
 
   test("a turn longer than one page of history is read across pages", async () => {

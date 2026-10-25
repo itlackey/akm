@@ -1,4 +1,3 @@
-import { inferenceWireFields } from "../../src/core/llm-inference";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../../src/integrations/agent/config";
 import type { ConnectionRunner, RunnerSpec } from "../../src/integrations/agent/runner";
 import type { ChatCompletionConfig } from "../../src/llm/client";
@@ -11,7 +10,8 @@ export function testLlmRunner(config: ChatCompletionConfig, name = "test-llm"): 
     name,
     endpoint: config.endpoint,
     model: config.model,
-    request: { ...config.request, ...inferenceWireFields(config) },
+    request: { ...config.request },
+    ...(config.inference ? { inference: config.inference } : {}),
     ...(config.contextLength !== undefined ? { contextLength: config.contextLength } : {}),
     timeoutMs: Object.hasOwn(config, "timeoutMs") ? (config.timeoutMs ?? null) : DEFAULT_LLM_TIMEOUT_MS,
   };

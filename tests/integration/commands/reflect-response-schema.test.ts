@@ -113,7 +113,7 @@ function installChatSpy(): void {
       responseSchema: options?.responseSchema,
       // The resolved boundary canonicalizes inference onto the symbolic LLM
       // connection before dispatch; the effective provider option is unchanged.
-      enableThinking: options?.enableThinking ?? config.enableThinking,
+      enableThinking: options?.enableThinking ?? config.inference?.enableThinking,
       messageCount: messages.length,
       prompt: messages[0]?.content ?? "",
     });
@@ -383,7 +383,7 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA for the selected LLM engine"
       config: await reflectLlmConfig(),
       assetContent: `---\ndescription: Reserve enough response capacity for thinking models\nwhen_to_use: When direct reflection sends a content-derived output ceiling\n---\n\n${sourceBody}`,
       chat: async (connection) => {
-        observedMaxTokens.push(connection.maxTokens);
+        observedMaxTokens.push(connection.inference?.maxTokens);
         return JSON.stringify({
           confidence: 0.9,
           frontmatterPatch: { ...NULL_PATCH, description: "Reserve response capacity for a thinking model" },

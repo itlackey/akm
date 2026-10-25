@@ -88,7 +88,7 @@
         "max_tokens": { "type": "integer", "minimum": 1 },
         "supports_json_schema": { "description": "Retired and ignored: akm retries without a schema when the endpoint rejects one.", "type": "boolean" },
         "extra_params": { "$ref": "#/definitions/extraParams" },
-        "context_length": { "type": "integer", "minimum": 1 },
+        "context_length": { "description": "Retired and ignored: the context window is a connection's setting.", "type": "integer", "minimum": 1 },
         "enable_thinking": { "type": "boolean" },
         "reasoning_effort": { "type": "string", "minLength": 1 }
       }

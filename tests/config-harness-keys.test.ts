@@ -69,3 +69,19 @@ describe("a harness's default agent", () => {
     expect(warnings.some((w) => w.includes('Harness "h"') && w.includes("no native agents"))).toBe(true);
   });
 });
+
+describe("a harness's models", () => {
+  const configWith = (models: unknown) => ({
+    configVersion: "0.9.0" as const,
+    semanticSearchMode: "off" as const,
+    harnesses: { claude: { models } },
+  });
+
+  test("map an alias to a model name", () => {
+    expect(validateConfigShape(configWith({ fast: "claude-haiku-4-5" })).ok).toBe(true);
+  });
+
+  test("take no request fields: an entry that is an object is refused", () => {
+    expect(validateConfigShape(configWith({ fast: { model: "claude-haiku-4-5", temperature: 0.2 } })).ok).toBe(false);
+  });
+});

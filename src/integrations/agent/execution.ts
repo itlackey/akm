@@ -25,6 +25,7 @@
 import type { AkmConfig } from "../../core/config/config-types";
 import type { StandardAlias } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
+import { PORTABLE_INFERENCE_KEYS } from "../../core/llm-inference";
 import {
   createInlineResolvedCommand,
   createResolvedExecutionRequest,
@@ -283,16 +284,6 @@ function nonEmpty(value: object | null | undefined): boolean {
   return value !== null && value !== undefined && Object.keys(value).length > 0;
 }
 
-/** The inference keys the chat transport translates; any other is reported untranslated. */
-const CHAT_INFERENCE_KEYS: readonly string[] = [
-  "temperature",
-  "maxTokens",
-  "extraParams",
-  "contextLength",
-  "enableThinking",
-  "reasoningEffort",
-];
-
 function buildChat(
   request: ResolvedExecutionRequestV1,
   runner: Extract<RunnerSpec, { kind: "connection" }>,
@@ -309,7 +300,7 @@ function buildChat(
     notices.push(untranslated("connection", field));
   };
   for (const key of Object.keys(request.inference ?? {}).sort()) {
-    if (!CHAT_INFERENCE_KEYS.includes(key)) skip(`inference.${key}`);
+    if (!(PORTABLE_INFERENCE_KEYS as readonly string[]).includes(key)) skip(`inference.${key}`);
   }
   const chatOptions: ChatCompletionOptions = {};
   // Sent unless the call opts out; chatCompletion drops it once if the provider rejects it.

@@ -41,7 +41,6 @@ export interface UnresolvedExecutionDefaults {
   readonly timeout?: string | number | null;
   readonly workspace?: string | null;
   readonly environment?: Readonly<Record<string, string>> | null;
-  readonly runtime?: ExecutionJsonObject | null;
 }
 
 /** What a config block (`improve.processes.<name>`, `index.<pass>`) or a flag says about where a call runs and how. */
@@ -156,7 +155,7 @@ export function cloneUnresolvedExecutionDefaults(
     }
     out.timeout = timeout;
   }
-  for (const key of ["inference", "outputSchema", "runtime"] as const) {
+  for (const key of ["inference", "outputSchema"] as const) {
     if (!present(key)) continue;
     out[key] = record[key] === null ? null : cloneExecutionJsonObject(record[key], `${path}.${key}`);
   }
