@@ -418,6 +418,16 @@ describe("models.json folds into the models of what it named", () => {
     expect(notes.join("\n")).not.toContain("names no configured connection");
   });
 
+  test("the note that the config already names a model is made only for the config's own choice, not an explicit column that came first", () => {
+    const current = { connections: { lab: { endpoint: "http://lab:8080/v1" } } };
+    const { config, notes } = convert(current, {
+      modelsOverlay: overlay({ balanced: { lab: "column", "*": "wild" } }),
+    });
+
+    expect(modelsOf(config, "connections", "lab")).toEqual({ balanced: "column" });
+    expect(notes.join("\n")).not.toContain("already names a model");
+  });
+
   test("a config already in the connections form gets its aliases filled, and keeps the ones it names", () => {
     const current = {
       connections: {

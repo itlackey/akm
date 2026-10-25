@@ -335,7 +335,11 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
     );
     const harnessNames = harnessNamed.filter((name) => !hasModel(written(out.harnesses)[name], alias));
     if (connectionNames.length === 0 && harnessNames.length === 0) {
-      notes.push(`${where}: the config already names a model for it, so it is not carried over.`);
+      // Only the config's own choice is worth a note; an explicit column that came first is the overlay's own.
+      const keptByConfig =
+        candidates.some((name) => hasModel(written(out.connections)[name], alias)) ||
+        harnessNamed.some((name) => hasModel(written(out.harnesses)[name], alias));
+      if (keptByConfig) notes.push(`${where}: the config already names a model for it, so it is not carried over.`);
       continue;
     }
     for (const name of connectionNames) {
