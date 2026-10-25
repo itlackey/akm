@@ -3,8 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Pi coding-agent CLI (`pi`). `-p` is its print mode; the prompt follows it as the
- * message. No `--` separator: after one, pi does not take the message.
+ * Pi coding-agent CLI (`pi`). `-p` is its print mode, and it reads the message from
+ * piped stdin: as an argument a prompt that starts with `-`, `--` or `@` is taken as an
+ * option or a file include. The persona is appended to pi's own system prompt, which
+ * is the one that explains pi's tools.
  */
 
 import {
@@ -25,9 +27,10 @@ export class PiHarness implements AkmHarness {
 
   build({ bin, args }: HarnessSpawn, req: AgentDispatchRequest): BuiltCommand {
     const argv = [bin, ...(req.model ? withoutModelFlag(args) : args)];
-    if (req.systemPrompt) argv.push("--system-prompt", req.systemPrompt);
+    if (req.systemPrompt) argv.push("--append-system-prompt", req.systemPrompt);
     if (req.model) argv.push("--model", req.model);
-    if (req.prompt !== undefined) argv.push("-p", req.prompt);
-    return { argv };
+    if (req.prompt === undefined) return { argv };
+    argv.push("-p");
+    return { argv, stdin: req.prompt };
   }
 }

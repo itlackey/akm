@@ -49,9 +49,9 @@ const SHELLS: Record<string, Shell> = {
     modelFlag: true,
   },
   pi: {
-    headless: { argv: ["pi", "-p", PROMPT] },
+    headless: { argv: ["pi", "-p"], stdin: PROMPT },
     interactive: { argv: ["pi"] },
-    model: { argv: ["pi", "--model", "m-1", "-p", PROMPT] },
+    model: { argv: ["pi", "--model", "m-1", "-p"], stdin: PROMPT },
     passthrough: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
     modelFlag: true,
   },
@@ -185,14 +185,15 @@ describe("what a request adds", () => {
     });
   });
 
-  test("pi: a persona as the system prompt", () => {
-    expect(build("pi", { prompt: PROMPT, systemPrompt: "be terse" }).argv).toEqual([
-      "pi",
-      "--system-prompt",
-      "be terse",
-      "-p",
-      PROMPT,
-    ]);
+  test("pi: a persona appended to pi's own system prompt, and the prompt on stdin whatever it starts with", () => {
+    expect(build("pi", { prompt: PROMPT, systemPrompt: "be terse" })).toEqual({
+      argv: ["pi", "--append-system-prompt", "be terse", "-p"],
+      stdin: PROMPT,
+    });
+    // As an argument these would be read as an option, an unknown flag and a file include.
+    for (const prompt of ["- item one", "--word", "@file"]) {
+      expect(build("pi", { prompt })).toEqual({ argv: ["pi", "-p"], stdin: prompt });
+    }
   });
 
   test("opencode: a native agent", () => {

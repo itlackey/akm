@@ -134,12 +134,13 @@ describe("harnesses: config harness → argv", () => {
   });
 
   test("pi passes an exact model through untouched and composes nothing it has no channel for", async () => {
-    const { argv } = await spawnedFor({
+    const { argv, stdin } = await spawnedFor({
       content: "Plan it.",
       config: config({ harnesses: { pi: {} } }),
       layers: [currentLayer({ harness: "pi", model: "provider/exact" })],
     });
-    expect(argv).toEqual(["pi", "--model", "provider/exact", "-p", "Plan it."]);
+    expect(argv).toEqual(["pi", "--model", "provider/exact", "-p"]);
+    expect(stdin).toBe("Plan it.");
   });
 
   test("a harness that maps other aliases but not this one passes none, and notes it once", () => {
