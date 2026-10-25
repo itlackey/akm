@@ -27,6 +27,6 @@ section names are intentionally absent from this active suite.
 | `extension-points.test.ts` | Supported source and registry provider boundaries |
 | `improve-cli-surface.test.ts` | Current improvement CLI surface |
 | `engine-boundary.test.ts` | Engine lowering and stateless LLM boundary |
-| `engine-interchange.test.ts` | One cross-engine contract over the LLM path, every CLI harness and opencode-sdk |
+| `transport-contract.test.ts` | One contract over a connection's chat, every CLI harness and the internal runtime |
 | `lesson-type.test.ts` | Lesson registration and lint behavior |
 | `response-schemas-strict.test.ts` | Every response schema akm sends is valid for a strict structured-output provider |

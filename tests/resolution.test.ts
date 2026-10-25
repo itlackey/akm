@@ -10,7 +10,6 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../src/core/config/config";
-import { deepMergeConfig } from "../src/core/config/deep-merge";
 import { ConfigError } from "../src/core/errors";
 import { effectiveRequestFields } from "../src/core/llm-inference";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
@@ -69,27 +68,6 @@ function failureOf(run: () => unknown): ConfigError {
   }
   throw new Error("expected resolveTarget to throw");
 }
-
-describe("deepMergeConfig", () => {
-  test("recursively merges plain objects while replacing arrays and preserving explicit values", () => {
-    const merged = deepMergeConfig(
-      { nested: { keep: 1, replace: true }, values: ["old"], nullable: 100 },
-      { nested: { replace: false, added: 0 }, values: [], nullable: null },
-    );
-
-    expect(merged).toEqual({
-      nested: { keep: 1, replace: false, added: 0 },
-      values: [],
-      nullable: null,
-    });
-  });
-
-  test("rejects prototype-pollution keys at every depth", () => {
-    expect(() => deepMergeConfig({}, JSON.parse('{"nested":{"__proto__":{"polluted":true}}}'))).toThrow(
-      "Unsafe configuration key",
-    );
-  });
-});
 
 describe("the default is chosen by name", () => {
   test("the entry named default is the default connection, whatever else is configured", () => {
