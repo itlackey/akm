@@ -79,17 +79,18 @@ export function mergeRequestFields(
 
 /**
  * The fields of a request that are not the user's to set: the model akm resolved, the conversation and tool
- * state the transport builds, whether the reply streams, and the response format the caller asks for. A
- * connection or model entry that writes one of them is ignored for that field, on both transports.
+ * state the transport builds, whether the reply streams, and the response format the caller asks for. Whichever
+ * way one is written (a connection or model entry's request fields, or an `extraParams` of a call, a process or
+ * a workflow step) it is ignored for that field, on both transports.
  */
 export const OWNED_REQUEST_FIELDS = ["model", "messages", "tools", "stream", "response_format"] as const;
 
-function withoutOwnedFields(request: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+function withoutOwnedFields(request: Record<string, unknown>): Record<string, unknown> {
   const written = OWNED_REQUEST_FIELDS.filter((field) => Object.hasOwn(request, field));
   if (written.length === 0) return request;
   warnOnce(
     `request-fields:owned:${written.join(",")}`,
-    `Request field${written.length === 1 ? "" : "s"} ${written.map((field) => `"${field}"`).join(", ")} in a connection's or model entry's fields ${written.length === 1 ? "is" : "are"} ignored: akm sets the model, the conversation, the tools, streaming and the response format itself.`,
+    `Request field${written.length === 1 ? "" : "s"} ${written.map((field) => `"${field}"`).join(", ")} in a connection's or model entry's request fields, or in an extraParams, ${written.length === 1 ? "is" : "are"} ignored: akm sets the model, the conversation, the tools, streaming and the response format itself.`,
   );
   return Object.fromEntries(
     Object.entries(request).filter(([field]) => !(OWNED_REQUEST_FIELDS as readonly string[]).includes(field)),
@@ -97,13 +98,13 @@ function withoutOwnedFields(request: Readonly<Record<string, unknown>>): Readonl
 }
 
 /**
- * The fields a request carries: `request` as written (less the fields akm owns), with the translation of
- * `inference` laid on it. The one place portable settings meet an endpoint's own
- * spelling, and where both transports take the user's fields from.
+ * The fields a request carries: `request` as written, with the translation of `inference` laid on it, less the
+ * fields akm owns, which are taken out of the merged result so no layer can bring one back. The one place
+ * portable settings meet an endpoint's own spelling, and where both transports take the user's fields from.
  */
 export function effectiveRequestFields(
   request: Readonly<Record<string, unknown>> | undefined,
   inference: LlmInference | null | undefined,
 ): Record<string, unknown> {
-  return mergeRequestFields(withoutOwnedFields(request ?? {}), inferenceWireFields(inference ?? undefined));
+  return withoutOwnedFields(mergeRequestFields(request ?? {}, inferenceWireFields(inference ?? undefined)));
 }

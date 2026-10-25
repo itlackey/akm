@@ -9,9 +9,11 @@
 // tests/integration/opencode-sdk-runner.test.ts runs the same runner on the real OpenCode.
 
 import { describe, expect, test } from "bun:test";
+import type { AkmConfig } from "../src/core/config/config-types";
 import { getConfigDir } from "../src/core/paths";
 import { _setWarnSinkForTests } from "../src/core/warn";
 import { runtimeProfile } from "../src/integrations/agent/profiles";
+import { resolveTarget } from "../src/integrations/agent/resolution";
 import { closeOpencodeSdk, hostFor } from "../src/integrations/harnesses/opencode/embedded/host";
 import { runOpencodeSdk } from "../src/integrations/harnesses/opencode/embedded/run";
 import { runnerModel } from "../src/integrations/harnesses/opencode/embedded/runner-models";
@@ -208,6 +210,27 @@ describe("the settings the plugin applies to a session's model requests", () => 
     expect(body.stream).toBe(true);
     for (const field of ["messages", "tools", "response_format"]) expect(body).not.toHaveProperty(field);
     expect(body.top_p).toBe(0.9);
+  });
+
+  test("never take the tools from an extraParams of a call, a process or a workflow step either", async () => {
+    const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
+    const runner = resolveTarget({
+      config: {
+        connections: { lab: { endpoint: "https://lab.invalid/v1/chat/completions", models: { fast: "glm-5" } } },
+      } as unknown as AkmConfig,
+      modelWork: true,
+      layers: [{ inference: { extraParams: { tools: [{ type: "function" }], top_k: 40 } } }],
+    });
+    if (runner.kind !== "connection") throw new Error("expected a connection");
+    await run(
+      "p",
+      {},
+      { endpoint: runner.endpoint, model: runner.model, request: runner.request, inference: runner.inference },
+    );
+    const body = calls[0]?.requestBody ?? {};
+    expect(body).not.toHaveProperty("tools");
+    expect(body.top_k).toBe(40);
+    expect(body.model).toBe("glm-5");
   });
 
   test("send an output cap when the connection or the call writes one, by the name it wrote it", async () => {

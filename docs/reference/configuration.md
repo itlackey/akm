@@ -117,8 +117,9 @@ all its models and a model entry's override them; an object field on both sides
 `stream` and `response_format` are akm's, on a direct call and in akm's own
 runtime alike: the resolved model, the conversation and tool state, whether the
 reply streams and the response format a caller asks for are never replaced. A
-connection or model entry that writes one of them is ignored for that field,
-with one warning.
+connection or model entry, or an `extraParams` of a call, a process or a
+workflow step, that writes one of them is ignored for that field, with one
+warning (the final fields are checked, whichever layer brought it).
 
 A transient failure (an HTTP 5xx, a dropped connection) is retried once, within
 what is left of the call's timeout. A 4xx is not.

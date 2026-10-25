@@ -13,8 +13,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { AkmConfig } from "../src/core/config/config-types";
+import { LlmInvocationOverridesSchema } from "../src/core/config/schema/primitives";
 import { effectiveRequestFields, OWNED_REQUEST_FIELDS } from "../src/core/llm-inference";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+import { resolveTarget } from "../src/integrations/agent/resolution";
 import { chatCompletion } from "../src/llm/client";
 import { withMockedFetch } from "./_helpers/sandbox";
 
@@ -55,6 +58,56 @@ describe("effectiveRequestFields", () => {
   test("says nothing when none is written", () => {
     expect(effectiveRequestFields({ top_p: 0.9 }, undefined)).toEqual({ top_p: 0.9 });
     expect(warnings).toEqual([]);
+  });
+});
+
+describe("an extraParams of a call, a process or a workflow step", () => {
+  // The schema keeps `model`, `messages`, `stream` and `response_format` out of an extraParams; `tools` it lets through.
+  const extras = { tools: [{ type: "function" }], top_k: 40 };
+
+  test("is accepted by the schema, and its tools are taken out of the final fields", () => {
+    const inference = LlmInvocationOverridesSchema.parse({ extraParams: extras });
+    expect(inference.extraParams).toHaveProperty("tools");
+    expect(effectiveRequestFields({ top_p: 0.9 }, inference)).toEqual({ top_p: 0.9, top_k: 40 });
+    expect(warnings.filter((w) => w.includes("ignored"))).toHaveLength(1);
+    expect(warnings[0]).toContain('"tools"');
+  });
+
+  test("is taken out whatever layer brought it, and every owned field is taken out of the merged result", () => {
+    const merged = { ...written, ...extras };
+    const fields = effectiveRequestFields({}, { extraParams: merged } as never);
+    expect(fields).toEqual({ top_p: 0.9, provider: { order: ["a"] }, top_k: 40 });
+  });
+
+  test("never reaches the chat transport's body when the layers resolve to a connection", async () => {
+    const runner = resolveTarget({
+      config: {
+        connections: { lab: { endpoint: "https://example.invalid/v1", models: { fast: "resolved" } } },
+      } as unknown as AkmConfig,
+      modelWork: true,
+      layers: [{ inference: { extraParams: extras } }, { inference: { extraParams: { tools: [] } } }],
+    });
+    expect(runner.kind).toBe("connection");
+    if (runner.kind !== "connection") return;
+    let body: Record<string, unknown> = {};
+    await withMockedFetch(
+      () =>
+        chatCompletion(
+          {
+            endpoint: runner.endpoint,
+            model: runner.model,
+            request: runner.request,
+            ...(runner.inference ? { inference: runner.inference } : {}),
+          },
+          [{ role: "user", content: "hi" }],
+        ),
+      async (_url, init) => {
+        body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Response.json({ choices: [{ message: { content: "ok" } }] });
+      },
+    );
+    expect(body).not.toHaveProperty("tools");
+    expect(body.top_k).toBe(40);
   });
 });
 
