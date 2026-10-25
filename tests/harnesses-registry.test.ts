@@ -25,12 +25,12 @@ import {
   VALID_HARNESS_IDS,
 } from "../src/integrations/harnesses";
 
-// The pre-unification trio leads the registry: the generated JSON-schema enum
+// The pre-unification pair leads the registry: the generated JSON-schema enum
 // order must not change. Everything after is appended.
-const LEGACY_PREFIX = ["opencode", "claude", "opencode-sdk"];
+const LEGACY_PREFIX = ["opencode", "claude"];
 
 describe("HARNESS_REGISTRY membership", () => {
-  it("keeps the legacy trio first so the schema enum order is stable", () => {
+  it("keeps the legacy pair first so the schema enum order is stable", () => {
     expect(HARNESS_REGISTRY.slice(0, LEGACY_PREFIX.length).map((h) => h.id as string)).toEqual(LEGACY_PREFIX);
   });
 
@@ -97,16 +97,10 @@ describe("workflow-engine descriptor fields (P2, plan §'Capability matrix')", (
     expect([...(claude.identityEnv ?? [])]).toEqual(["CLAUDE_SESSION_ID"]);
   });
 
-  it("opencode (CLI path): OPENCODE_SESSION_ID", () => {
+  it("opencode: OPENCODE_SESSION_ID, which OpenCode 2's shell tool exports for the commands it runs", () => {
     const opencode = getHarness("opencode");
     if (!opencode) throw new Error("opencode harness not registered");
     expect([...(opencode.identityEnv ?? [])]).toEqual(["OPENCODE_SESSION_ID"]);
-  });
-
-  it("opencode-sdk: no env marker", () => {
-    const sdk = getHarness("opencode-sdk");
-    if (!sdk) throw new Error("opencode-sdk harness not registered");
-    expect(sdk.identityEnv).toBeUndefined();
   });
 
   // WI-9.7 (H1): the sessionLogs↔sessionLogProvider PAIRING (a session-log-
@@ -143,11 +137,11 @@ describe("defaultProfileName — registry-derived headless default (#566)", () =
   it("returns the canonical id for each dispatch-capable detected harness", () => {
     expect(defaultProfileName("opencode")).toBe("opencode");
     expect(defaultProfileName("claude")).toBe("claude");
-    expect(defaultProfileName("opencode-sdk")).toBe("opencode-sdk");
   });
 
   it("returns undefined for 'none' and unknown ids (no spurious default)", () => {
     expect(defaultProfileName("none")).toBeUndefined();
+    expect(defaultProfileName("opencode-sdk")).toBeUndefined();
     expect(defaultProfileName("cursor")).toBeUndefined();
     expect(defaultProfileName("claude-code")).toBeUndefined();
   });
@@ -158,10 +152,11 @@ describe("defaultProfileName — registry-derived headless default (#566)", () =
 // the registry: removing or renaming an id must fail here until a state
 // migration ships for the old key (see 027-extract-sessions-seen-harness-rename).
 // Adding a harness needs no edit here.
+// (`opencode-sdk`, akm's own runtime, was never a persisted harness id: it has no
+// session logs and no identity marker, so it is not listed.)
 const PERSISTED_HARNESS_IDS = [
   "opencode",
   "claude",
-  "opencode-sdk",
   "codex",
   "copilot",
   "pi",

@@ -17,6 +17,11 @@ export interface AgentLowererOptions {
   readonly personaChannel: "native" | "prompt";
   /** Inference keys this harness carries; any other key is reported untranslated. */
   readonly inference?: readonly string[];
+  /**
+   * What the transport can do, for one that is not a registered harness (akm's own
+   * runtime); a registered harness's capabilities are read from its descriptor.
+   */
+  readonly capabilities?: { readonly nativeAgent: boolean; readonly modelWork: boolean };
 }
 
 /** The notice for a request field a transport does not carry; dispatch continues. */
@@ -39,6 +44,7 @@ export function createAgentRequestLowerer(
   options: AgentLowererOptions,
 ): (profile: AgentProfile, request: ResolvedExecutionRequestV1) => LoweredAgentDispatch {
   const supportedInference = new Set(options.inference ?? []);
+  const capabilities = () => options.capabilities ?? getHarness(options.adapter)?.capabilities;
   return (_profile, request) => {
     const notices: Readonly<LoweringNotice>[] = [];
     const skip = (field: string): void => {
@@ -74,7 +80,7 @@ export function createAgentRequestLowerer(
         message: `The ${options.adapter} transport ignores native agent ${JSON.stringify(request.agent)} for model work.`,
       });
     } else if (typeof request.agent === "string") {
-      if (!getHarness(options.adapter)?.capabilities.nativeAgent) {
+      if (!capabilities()?.nativeAgent) {
         throw new ConfigError(
           `The ${options.adapter} transport cannot consume native agent selector ${JSON.stringify(request.agent)}.`,
           "INVALID_CONFIG_FILE",
@@ -97,7 +103,7 @@ export function createAgentRequestLowerer(
       }
     }
     if (request.modelWork) {
-      if (getHarness(options.adapter)?.capabilities.modelWork) dispatch.modelWork = true;
+      if (capabilities()?.modelWork) dispatch.modelWork = true;
       else {
         notices.push({
           code: "model-work-unrestricted",

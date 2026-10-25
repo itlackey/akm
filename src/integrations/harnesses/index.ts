@@ -13,7 +13,7 @@
  * Adding a harness: create `./<id>/index.ts`, add its class here. Removing:
  * delete both. This module must stay free of runtime `core/config` imports
  * (config derives `VALID_HARNESS_IDS` from here), so a harness's heavy runner
- * (e.g. `opencode-sdk/sdk-runner.ts`) is imported by its caller, not here.
+ * (e.g. `opencode/embedded/run.ts`) is imported when it runs, not here.
  */
 import { AiderHarness } from "./aider";
 import { AmazonqHarness } from "./amazonq";
@@ -22,7 +22,6 @@ import { CodexHarness } from "./codex";
 import { CopilotHarness } from "./copilot";
 import { GeminiHarness } from "./gemini";
 import { OpencodeHarness } from "./opencode";
-import { OpencodeSdkHarness } from "./opencode-sdk";
 import { OpenhandsHarness } from "./openhands";
 import { PiHarness } from "./pi";
 import type { AkmHarness } from "./types";
@@ -39,15 +38,13 @@ export { isSessionLogHarness } from "./types";
  * `z.enum(...)`, and the `platform` union all need the literal types.
  */
 // Order is significant: VALID_HARNESS_IDS derives from this array and feeds the
-// committed JSON-schema enum order. The original [opencode, claude,
-// opencode-sdk] prefix is preserved so the pre-unification portion of the
-// generated schema enum does not reorder; the seven P2 harness adapters are
-// appended after it, which extends the enum additively (schemas/akm-config.json
-// is regenerated in lockstep).
+// committed JSON-schema enum order. The original [opencode, claude] prefix is
+// preserved so the pre-unification portion of the generated schema enum does not
+// reorder; the seven P2 harness adapters are appended after it, which extends the
+// enum additively (schemas/akm-config.json is regenerated in lockstep).
 export const HARNESS_REGISTRY = Object.freeze([
   new OpencodeHarness(),
   new ClaudeHarness(),
-  new OpencodeSdkHarness(),
   new CodexHarness(),
   new CopilotHarness(),
   new PiHarness(),
@@ -85,14 +82,9 @@ const idsWith = (flag: (h: AkmHarness) => boolean): ReadonlySet<string> =>
 
 /** Harness ids whose `capabilities.agentDispatch` is `true`. */
 export const HARNESS_AGENT_DISPATCH_IDS = idsWith((h) => h.capabilities.agentDispatch);
-/**
- * The embedded OpenCode that runs agent work over a connection. It is akm's own
- * runtime, not a program the user enables, so it has no name in config.
- */
-export const INTERNAL_RUNTIME_ID = "opencode-sdk";
-/** The platforms a `harnesses` entry may name: every dispatchable harness except the internal runtime. */
+/** The platforms a `harnesses` entry may name: every dispatchable harness. */
 export const HARNESS_CONFIG_PLATFORMS = Object.freeze(
-  VALID_HARNESS_IDS.filter((id) => HARNESS_AGENT_DISPATCH_IDS.has(id) && id !== INTERNAL_RUNTIME_ID),
+  VALID_HARNESS_IDS.filter((id) => HARNESS_AGENT_DISPATCH_IDS.has(id)),
 ) as unknown as readonly [(typeof VALID_HARNESS_IDS)[number], ...(typeof VALID_HARNESS_IDS)[number][]];
 /** Harness ids that can run a named native agent, so a harness may name a default `agent`. */
 export const HARNESS_NATIVE_AGENT_IDS = idsWith((h) => h.capabilities.nativeAgent);

@@ -15,7 +15,7 @@
  * config schema derives its platform enum from the registry).
  */
 
-import type { AgentCommandBuilder, AgentRequestLowerer, AgentResultExtractor } from "../agent/builder-shared";
+import type { AgentCommandBuilder, AgentResultExtractor } from "../agent/builder-shared";
 import type { AgentProfile } from "../agent/profiles";
 import type { AgentRunResult, RunAgentOptions } from "../agent/spawn";
 import type { SessionLogHarness } from "../session-logs/types";
@@ -69,17 +69,15 @@ interface AkmHarnessCommon {
    * CLI spawn path. `BUILTIN_BUILDERS` in `agent/builders.ts` is DERIVED from
    * this field so the
    * builder registry cannot drift from the harness registry. Absent for
-   * harnesses that dispatch without argv construction (opencode-sdk) — and
-   * for dispatch-capable CLIs that do not have a dedicated builder yet, in
-   * which case dispatch fails loudly rather than falling back to a
-   * wrong-flag-shape default (see `getCommandBuilder`).
+   * dispatch-capable CLIs that do not have a dedicated builder yet, in which
+   * case dispatch fails loudly rather than falling back to a wrong-flag-shape
+   * default (see `getCommandBuilder`).
    */
   readonly agentBuilder?: AgentCommandBuilder;
 
   /**
    * Built-in CLI profile defaults (`agent/profiles.ts` DERIVES its built-in
-   * profiles from this). Absent for a harness with no spawned CLI of its own
-   * (opencode-sdk).
+   * profiles from this). Absent for a harness with no spawned CLI of its own.
    */
   readonly profile?: HarnessProfileDefaults;
 
@@ -95,9 +93,6 @@ interface AkmHarnessCommon {
    * `setup/harness-config-import.ts` DERIVES its importer list from this.
    */
   readonly configImporter?: HarnessConfigImporter;
-
-  /** Resolved-request lowering for non-argv transports such as OpenCode SDK. */
-  readonly executionLowerer?: AgentRequestLowerer;
 
   /**
    * Runs the request inside akm's process when the installed harness supports
@@ -237,7 +232,6 @@ export abstract class BaseHarness implements AkmHarnessCommon {
   readonly profile?: HarnessProfileDefaults;
   readonly models?: HarnessModelMap;
   readonly configImporter?: HarnessConfigImporter;
-  readonly executionLowerer?: AgentRequestLowerer;
   readonly runInProcess?: AkmHarnessCommon["runInProcess"];
   readonly identityEnv?: readonly string[];
   readonly presenceEnv?: readonly string[];

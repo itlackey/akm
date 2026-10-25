@@ -10,7 +10,7 @@
  * intentionally small internal shape. The wrapper is in `./spawn.ts`.
  */
 import { COMMON_SPAWN_ENV_PASSTHROUGH } from "../../core/spawn-env";
-import { getHarness, HARNESS_REGISTRY, INTERNAL_RUNTIME_ID } from "../harnesses";
+import { getHarness, HARNESS_REGISTRY } from "../harnesses";
 import type { AkmHarness } from "../harnesses/types";
 import type { ConnectionRunner, HarnessRunner } from "./runner";
 
@@ -131,7 +131,6 @@ export function harnessProfile(runner: HarnessRunner): AgentProfile {
 export function runtimeProfile(connection: ConnectionRunner): AgentProfile {
   return {
     name: connection.name,
-    platform: INTERNAL_RUNTIME_ID,
     personaChannel: "native",
     bin: "",
     args: [],

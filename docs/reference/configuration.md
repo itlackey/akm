@@ -99,7 +99,6 @@ The registered harnesses (generated from the harness registry; do not edit):
 | --- | --- | --- | --- | --- | --- |
 | `opencode` | OpenCode | `opencode` | yes | yes | yes |
 | `claude` | Claude Code | `claude` | yes | yes | yes |
-| `opencode-sdk` | OpenCode SDK | in-process | no | yes | yes |
 | `codex` | OpenAI Codex CLI | `codex` | yes | no | no |
 | `copilot` | GitHub Copilot CLI | `copilot` | no | no | no |
 | `pi` | Pi | `pi` | no | no | no |

@@ -14,12 +14,7 @@ import { checkHarnessDocsDrift } from "../scripts/gen-config-schema";
 import { validateConfigShape } from "../src/core/config/config-schema";
 import { getCommandBuilder } from "../src/integrations/agent/builders";
 import { getBuiltinAgentProfile } from "../src/integrations/agent/profiles";
-import {
-  type AkmHarness,
-  HARNESS_REGISTRY,
-  INTERNAL_RUNTIME_ID,
-  VALID_HARNESS_IDS,
-} from "../src/integrations/harnesses";
+import { type AkmHarness, HARNESS_REGISTRY, VALID_HARNESS_IDS } from "../src/integrations/harnesses";
 
 const HARNESS_DIR = path.resolve(import.meta.dir, "..", "src", "integrations", "harnesses");
 
@@ -32,27 +27,19 @@ describe.each(
     expect(h.displayName.length).toBeGreaterThan(0);
   });
 
-  test("dispatch: a spawned CLI has a builder and a profile; the SDK path has a lowerer", () => {
+  test("dispatch: it has a builder that lowers a request, and a profile", () => {
     expect(h.capabilities.agentDispatch).toBe(true);
-    const lower = h.agentBuilder?.lower ?? h.executionLowerer?.lower;
-    expect(typeof lower).toBe("function");
-    if (h.agentBuilder) {
-      expect(h.agentBuilder.platform).toBe(id);
-      expect(getCommandBuilder(id)).toBe(h.agentBuilder);
-      expect(h.profile?.bin).toBeTruthy();
-      expect(getBuiltinAgentProfile(id)?.bin).toBe(h.profile?.bin ?? "");
-      expect(getBuiltinAgentProfile(id)?.envPassthrough).toContain("PATH");
-    } else {
-      expect(h.profile).toBeUndefined();
-      expect(getBuiltinAgentProfile(id)).toBeUndefined();
-    }
+    expect(typeof h.agentBuilder?.lower).toBe("function");
+    expect(h.agentBuilder?.platform).toBe(id);
+    expect(getCommandBuilder(id)).toBe(h.agentBuilder as NonNullable<typeof h.agentBuilder>);
+    expect(h.profile?.bin).toBeTruthy();
+    expect(getBuiltinAgentProfile(id)?.bin).toBe(h.profile?.bin ?? "");
+    expect(getBuiltinAgentProfile(id)?.envPassthrough).toContain("PATH");
   });
 
-  test("the config schema accepts it as a harness platform, except akm's own runtime", () => {
+  test("the config schema accepts it as a harness platform", () => {
     expect(VALID_HARNESS_IDS as readonly string[]).toContain(id);
-    expect(validateConfigShape({ configVersion: "0.9.0", harnesses: { e: { platform: id } } }).ok).toBe(
-      id !== INTERNAL_RUNTIME_ID,
-    );
+    expect(validateConfigShape({ configVersion: "0.9.0", harnesses: { e: { platform: id } } }).ok).toBe(true);
   });
 
   test("session logs: a provider is declared exactly when the capability is, and names this harness", () => {

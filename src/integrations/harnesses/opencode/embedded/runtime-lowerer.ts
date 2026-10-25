@@ -15,7 +15,8 @@ import { PORTABLE_INFERENCE_KEYS } from "../../../../core/llm-inference";
 import { createAgentRequestLowerer } from "../../../agent/request-lowering";
 
 export const runtimeLowerer = createAgentRequestLowerer({
-  adapter: "opencode-sdk",
+  adapter: "akm-runtime",
   personaChannel: "native",
   inference: PORTABLE_INFERENCE_KEYS,
+  capabilities: { nativeAgent: true, modelWork: true },
 });
