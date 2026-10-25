@@ -735,6 +735,20 @@ describe("OpenCodeProvider.listSessions (opencode.db)", () => {
 });
 
 describe("OpenCodeProvider.readSession (opencode.db)", () => {
+  test("fails for a session that is not in the file, so extract records read_failed, not an empty session", async () => {
+    const base = makeTempDir("akm-opencode-db-missing-");
+    writeOpenCodeDb(base, [
+      { id: "ses_here", title: "here", directory: "/d", created: 1700000000000, updated: 1700001000000, messages: [] },
+    ]);
+    await expect(
+      new OpenCodeProvider().readSession({
+        harness: "opencode",
+        sessionId: "ses_gone",
+        filePath: path.join(base, "opencode.db"),
+      }),
+    ).rejects.toThrow("session ses_gone is not in the file");
+  });
+
   test("reads messages, joins text parts, and extracts inline refs", async () => {
     const base = makeTempDir("akm-opencode-db-read-");
     writeOpenCodeDb(base, [

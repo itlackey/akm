@@ -64,12 +64,14 @@ export function listV1Sessions(db: Database, sinceMs: number): OpenCodeSessionMe
 
 /**
  * One event per message, text-parts concatenated in time order. Throws on an
- * incompatible schema; individual unparsable rows are skipped.
+ * incompatible schema or a session that is not in the file; individual unparsable
+ * rows are skipped.
  */
 export function readV1Session(db: Database, harness: string, sessionId: string, filePath: string): OpenCodeSessionRead {
   const meta = db
     .prepare<Omit<SessionRow, "id">>("SELECT title, directory, time_created, time_updated FROM session WHERE id = ?")
     .get(sessionId);
+  if (!meta) throw new Error(`session ${sessionId} is not in the file`);
 
   const messages = db
     .prepare<{ id: string; data: string; time_created: number | null }>(
@@ -117,5 +119,5 @@ export function readV1Session(db: Database, harness: string, sessionId: string, 
     inlineRefs.push(...extractInlineRefMentions(text, ts));
   }
   events.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
-  return { meta: meta ? toMeta(meta, sessionId) : { sessionId }, events, inlineRefs };
+  return { meta: toMeta(meta, sessionId), events, inlineRefs };
 }
