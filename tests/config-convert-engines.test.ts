@@ -17,6 +17,7 @@ import { stripJsonComments } from "../src/core/common";
 import {
   type AkmConfig,
   loadUserConfig,
+  mutateConfig,
   normalizeConfigFile,
   resetConfigCache,
   unknownConfigKeyPaths,
@@ -544,6 +545,35 @@ describe("the loader reads the retired form in memory", () => {
       JSON.stringify({ version: 1, aliases: { fast: { lab: "qwen3-8b" } } }),
     );
     expect(loadUserConfig().connections?.default?.models).toMatchObject({ fast: "qwen3-8b", balanced: "qwen3-32b" });
+  });
+
+  test("an ordinary write leaves the retired form in the file: engines, defaults, apiKeyFile and judgeEngine stay", () => {
+    const document = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      engines: { lab: llm({ apiKeyFile: "/run/lab-key" }), claude: { kind: "agent", platform: "claude" } },
+      defaults: { llmEngine: "lab", improveStrategy: "nightly" },
+      workflow: { judgeEngine: "lab", maxConcurrency: 2 },
+      improve: { strategies: { nightly: { processes: { reflect: { engine: "lab", model: "fast" } } } } },
+    };
+    writeConfig(document);
+
+    const written = mutateConfig((current) => ({ ...current, output: { format: "text" } })).written;
+
+    expect(written).toBe(true);
+    const after = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as Dict;
+    // Everything the reader converts in memory is exactly as the file had it…
+    expect(after.engines).toEqual(document.engines);
+    expect(after.defaults).toEqual(document.defaults);
+    expect(after.workflow).toEqual(document.workflow);
+    expect(after.improve).toEqual(document.improve);
+    expect(after).not.toHaveProperty("connections");
+    expect(after).not.toHaveProperty("harnesses");
+    // …and the edit is the only thing added.
+    expect(after.output).toEqual({ format: "text" });
+    // The retired form still reads as it did.
+    resetConfigCache();
+    expect(Object.keys(loadUserConfig().connections ?? {})).toEqual(["default"]);
   });
 
   test("akm migrate apply writes the converted config, dropping nothing it could carry over", () => {

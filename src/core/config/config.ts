@@ -172,9 +172,19 @@ export function loadUserConfig(): AkmConfig {
  * the file that extends it.
  */
 function runConfigFilePipeline(text: string, sourcePath?: string): Record<string, unknown> {
+  return readRetiredEngines(readConfigFile(text, sourcePath), sourcePath);
+}
+
+/**
+ * A config file as it says it: parsed, with the retired `secret://` forms and
+ * `configVersion` read, and nothing else converted. An ordinary write edits this
+ * document, so what a read converts in memory (the retired `engines` form) is
+ * not rewritten until `akm migrate apply`.
+ */
+function readConfigFile(text: string, sourcePath?: string): Record<string, unknown> {
   const raw = parseConfigText(text, sourcePath);
   const lifted = readRetiredSecretRefs(raw, [], sourcePath) as Record<string, unknown>;
-  return readConfigVersion(readRetiredEngines(lifted, sourcePath), sourcePath);
+  return readConfigVersion(lifted, sourcePath);
 }
 
 /** The user's `models.json` (retired), parsed; absent or unreadable is no overlay. */
@@ -838,7 +848,7 @@ export interface ConfigMutationResult {
    * returns, `extends` chain already merged in, every field intact
    * including credential references (`embedding.apiKey`,
    * `connections.<name>.apiKey`, ...). #953 field gap: this is NOT the pruned write body — pruning
-   * (`configWriteBody`/`pruneUnchangedInheritedFields`, #945) only decides
+   * (`editedConfigFile`, #945) only decides
    * what gets written to the local config FILE when it uses `extends`; a
    * caller that keeps using this returned `config` for the rest of its run
    * (as `src/indexer/indexer.ts`'s `akmIndexReal` does after
@@ -891,10 +901,86 @@ function pruneUnchangedInheritedFields(before: unknown, after: unknown, localRaw
 }
 
 /**
- * What to persist for a `mutateConfig`/`mutateConfigWithPrecommit` write:
- * only the changed-or-already-local fields. This applies both to inherited
- * configs and ordinary configs: lifecycle mutations must not serialize every
- * schema default merely because validation materialized it in memory (#972).
+ * Apply the edit `before` → `after` to `target` (the file's own document) and
+ * nothing else: a key that is the same on both sides is left as the file has it,
+ * whatever shape that is, so an unrelated write neither converts nor drops what
+ * the reader only reads (the retired `engines` form, an inherited field, a key
+ * the schema does not know). Only the paths that changed are written, at the same
+ * path in `target`; an object the file lacks gets only the changed part. The
+ * keys of a nested map follow `after`, which is how a mutation says where it
+ * inserted one (`bundles`); the top level keeps the file's authored order.
+ */
+function applyEdit(target: Record<string, unknown>, before: Record<string, unknown>, after: Record<string, unknown>) {
+  for (const key of Object.keys(before)) {
+    if (!Object.hasOwn(after, key)) delete target[key];
+  }
+  for (const [key, value] of Object.entries(after)) {
+    const was = before[key];
+    if (isDeepStrictEqual(value, was)) continue;
+    if (!isPlainObject(value) || !isPlainObject(was)) {
+      target[key] = value;
+      continue;
+    }
+    const existing = target[key];
+    if (existing !== undefined && !isPlainObject(existing)) {
+      target[key] = value;
+      continue;
+    }
+    const part = existing ?? {};
+    applyEdit(part, was, value);
+    followKeyOrder(part, value);
+    if (existing !== undefined || Object.keys(part).length > 0) target[key] = part;
+  }
+}
+
+/** Put the keys of `target` in the order of `order`, those it does not name after. */
+function followKeyOrder(target: Record<string, unknown>, order: Record<string, unknown>): void {
+  const keys = [
+    ...Object.keys(order).filter((key) => Object.hasOwn(target, key)),
+    ...Object.keys(target).filter((key) => !Object.hasOwn(order, key)),
+  ];
+  const entries = keys.map((key) => [key, target[key]] as const);
+  for (const key of Object.keys(target)) delete target[key];
+  for (const [key, value] of entries) target[key] = value;
+}
+
+/**
+ * What an ordinary `mutateConfig`/`mutateConfigWithPrecommit` write persists:
+ * the file's own document with the edit `current` → `next` applied
+ * ({@link applyEdit}). Lifecycle mutations must not serialize every schema
+ * default merely because validation materialized it in memory (#972), nor the
+ * fields that only came along from `extends` (#945).
+ */
+function editedConfigFile(
+  document: Record<string, unknown> | undefined,
+  current: AkmConfig,
+  next: AkmConfig,
+  persistTopLevelKeys: readonly (keyof AkmConfig)[] = [],
+): Record<string, unknown> {
+  // A first write keeps the established full-default scaffold. Besides being
+  // useful to a new user, the add -> rejected-install -> remove lifecycle
+  // relies on that symmetry to return a pristine install to DEFAULT_CONFIG.
+  if (document === undefined) return next;
+
+  // Keys stay in their authored order and new ones follow in `next` order: the
+  // add -> remove lifecycle writes the same logical object twice and must come
+  // back byte for byte.
+  const body = structuredClone(document);
+  applyEdit(body, current, next);
+  // A caller may need to persist an explicit user choice even when it equals the
+  // schema default. Interactive setup uses this for semanticSearchMode: "off"
+  // means the user declined the opt-in, not an incidental default.
+  for (const key of persistTopLevelKeys) {
+    if (Object.hasOwn(next, key)) body[key] = next[key];
+  }
+  body.configVersion = CURRENT_CONFIG_VERSION;
+  return body;
+}
+
+/**
+ * What `akm migrate apply` persists: the file read as the current shape
+ * (the retired `engines` form converted, the schema's own normalizations), only
+ * the changed-or-already-local fields.
  */
 function configWriteBody(
   localRaw: Record<string, unknown> | undefined,
@@ -997,7 +1083,8 @@ export function mutateConfig(
     if (text === undefined && options?.absentNoop) {
       return { config: { ...DEFAULT_CONFIG }, written: false };
     }
-    const localRaw = text === undefined ? undefined : runConfigFilePipeline(text, configPath);
+    const document = text === undefined ? undefined : readConfigFile(text, configPath);
+    const localRaw = document === undefined ? undefined : readRetiredEngines(document, configPath);
     const current =
       localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
     const mutated = mutate(current);
@@ -1005,7 +1092,7 @@ export function mutateConfig(
     const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
     if (text !== undefined) backupExistingConfig(configPath);
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    writeConfigAtomic(configPath, sanitizeConfigForWrite(configWriteBody(localRaw, current, next)));
+    writeConfigAtomic(configPath, sanitizeConfigForWrite(editedConfigFile(document, current, next) as AkmConfig));
     return { config: next, written: true };
   });
 }
@@ -1025,7 +1112,8 @@ export async function mutateConfigWithPrecommit<T>(
   const release = acquireConfigLock();
   try {
     const text = readConfigText(configPath);
-    const localRaw = text === undefined ? undefined : runConfigFilePipeline(text, configPath);
+    const document = text === undefined ? undefined : readConfigFile(text, configPath);
+    const localRaw = document === undefined ? undefined : readRetiredEngines(document, configPath);
     const current =
       localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
     const mutated = mutate(current);
@@ -1036,7 +1124,7 @@ export async function mutateConfigWithPrecommit<T>(
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     writeConfigAtomic(
       configPath,
-      sanitizeConfigForWrite(configWriteBody(localRaw, current, next, options?.persistTopLevelKeys)),
+      sanitizeConfigForWrite(editedConfigFile(document, current, next, options?.persistTopLevelKeys) as AkmConfig),
     );
     return { config: next, written: true, precommit: precommitResult };
   } finally {
