@@ -37,6 +37,10 @@ test("a bun test run closes the embedded OpenCode hosts its tests opened and rem
   const fixture = path.join(sandbox.dir, "open-host.test.ts");
   // Completes a dispatch through the real SDK and never closes the host, and records its HOME
   // (`<suite sandbox>/home`) for the assertion below. The factory marks the host's close.
+  // Its test carries its own budget: `bun test` ignores bunfig's `timeout`, so without one it gets bun's 5 s
+  // default, which a cold host boot plus a turn overruns under load (~1.4 s idle, ~9 s with four processes
+  // on one core, as CI's shards share its runner). The budget is the dispatch's own 30 s deadline plus the
+  // boot and close, and stays under the spawn's 60 s so the child reports its own failure.
   fs.writeFileSync(
     fixture,
     [
@@ -61,7 +65,7 @@ test("a bun test run closes the embedded OpenCode hosts its tests opened and rem
       `  const result = await runOpencodeSdk(profile as never, { timeoutMs: 30_000, dispatch: { prompt: "MODE:answer ping" } }, { endpoint: model.url, model: "fake-model" });`,
       `  model.stop();`,
       `  expect(result.ok).toBe(true);`,
-      `});`,
+      `}, 45_000);`,
     ].join("\n"),
   );
 
