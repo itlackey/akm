@@ -81,12 +81,6 @@ export function writeCredential(name: string, value: string): void {
   writeStore({ ...writableStore(), [name]: value });
 }
 
-/** Remove the key stored under `name`. */
-export function deleteCredential(name: string): void {
-  const { [name]: _removed, ...rest } = writableStore();
-  writeStore(rest);
-}
-
 /**
  * The key of the block named `name`, whose config `apiKey` is `apiKey`: the
  * variable it references, else `credentials.json[name]`. An unset variable is

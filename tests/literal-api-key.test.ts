@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getConfigValue, listConfig, setConfigValue } from "../src/commands/config-cli";
 import { loadUserConfig, mutateConfig, resetConfigCache } from "../src/core/config/config";
-import { collectCredentialValues, deleteCredential, writeCredential } from "../src/core/config/credentials";
+import { collectCredentialValues, writeCredential } from "../src/core/config/credentials";
 import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { buildExecution, resolveExecution } from "../src/integrations/agent/execution";
@@ -21,6 +21,7 @@ import { runExecution } from "../src/integrations/agent/runner-dispatch";
 import type { ChatCompletionConfig } from "../src/llm/client";
 import { embed } from "../src/llm/embedder";
 import { effectiveEmbedding } from "../src/llm/embedders/connection";
+import { clearCredentials } from "./_helpers/credentials";
 
 const LITERAL = "sk-literal-left-in-the-file";
 
@@ -43,7 +44,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   _setWarnSinkForTests(undefined);
-  deleteCredential("lab");
+  clearCredentials();
   resetConfigCache();
 });
 

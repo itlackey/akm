@@ -12,7 +12,6 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   collectCredentialValues,
-  deleteCredential,
   readCredential,
   resolveApiKey,
   writeCredential,
@@ -62,15 +61,6 @@ describe("the store", () => {
     expect(mode(storePath())).toBe(0o600);
   });
 
-  test("deleting removes one key and keeps the rest; deleting a name that is not there is harmless", () => {
-    writeCredential("lab", "one");
-    writeCredential("embedding", "two");
-    deleteCredential("lab");
-    expect(readStoreFile()).toEqual({ embedding: "two" });
-    deleteCredential("missing");
-    expect(readStoreFile()).toEqual({ embedding: "two" });
-  });
-
   test("an empty stored value reads as no key", () => {
     fs.mkdirSync(path.dirname(storePath()), { recursive: true });
     fs.writeFileSync(storePath(), JSON.stringify({ lab: "" }));
@@ -87,7 +77,6 @@ describe("the store", () => {
       expect(readCredential("lab")).toBeUndefined();
       expect(warnings.filter((w) => w.includes("is not a JSON object of keys"))).toHaveLength(1);
       expect(() => writeCredential("lab", "new")).toThrow(/is not a JSON object of keys; refusing to overwrite/);
-      expect(() => deleteCredential("lab")).toThrow(/refusing to overwrite/);
       expect(fs.readFileSync(storePath(), "utf8")).toBe(corrupt);
     }
   });

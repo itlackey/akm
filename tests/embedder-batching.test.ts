@@ -17,7 +17,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import type { EmbeddingConnectionConfig } from "../src/core/config/config";
-import { deleteCredential, writeCredential } from "../src/core/config/credentials";
+import { writeCredential } from "../src/core/config/credentials";
 import { EmbeddingConnectionConfigSchema } from "../src/core/config/schema/embedding";
 import { _setWarnSinkForTests } from "../src/core/warn";
 import {
@@ -33,6 +33,7 @@ import {
   resolveEmbeddingTimeoutMs,
 } from "../src/llm/embedders/remote";
 import type { EmbeddingVector } from "../src/llm/embedders/types";
+import { clearCredentials } from "./_helpers/credentials";
 import { withMockedFetch } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
@@ -693,8 +694,7 @@ describe("RemoteEmbedder.embedBatch: stops dispatching after the first onBatch f
 
 describe("describeEmbeddingCredential (#953)", () => {
   afterEach(() => {
-    deleteCredential("embedding");
-    deleteCredential("default");
+    clearCredentials();
   });
 
   test("no apiKey with nothing stored reports 'none configured'", () => {

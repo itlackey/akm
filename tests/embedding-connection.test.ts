@@ -9,12 +9,13 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../src/core/config/config";
-import { deleteCredential, writeCredential } from "../src/core/config/credentials";
+import { writeCredential } from "../src/core/config/credentials";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { _setEmbedderForTests, embed, resolveEmbeddingModelId } from "../src/llm/embedder";
 import { effectiveEmbedding } from "../src/llm/embedders/connection";
 import { hasRemoteEndpoint } from "../src/llm/embedders/remote";
 import { prepareSemanticSearchAssets } from "../src/setup/semantic-assets";
+import { clearCredentials } from "./_helpers/credentials";
 import { withEnv } from "./_helpers/sandbox";
 
 const LAB = { endpoint: "http://lab:8080/v1/chat/completions", models: { fast: "qwen3-8b" } };
@@ -34,7 +35,7 @@ beforeEach(() => {
 
 afterEach(() => {
   _setWarnSinkForTests(undefined);
-  deleteCredential("default");
+  clearCredentials();
 });
 
 describe("effectiveEmbedding", () => {
