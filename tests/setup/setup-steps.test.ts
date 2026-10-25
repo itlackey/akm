@@ -78,9 +78,26 @@ describe("stepHarnesses", () => {
 
     const [question] = prompts.of("confirm");
     expect(question?.message).toContain("Use gemini for akm's own model calls too");
-    expect(question?.message).toContain("cannot be restricted to read-only");
+    expect(question?.message).toContain(
+      "Model work on gemini cannot be restricted: it can edit files and run commands.",
+    );
     expect(question?.initialValue).toBe(true);
     expect(result.modelCallsOnHarness).toBe(false);
+  });
+
+  test("interactive: choosing a harness that cannot be restricted for model calls says so again, beside the answer; a restricted one does not", async () => {
+    const warned = (): string[] => prompts.output.filter((line) => line.includes("cannot be restricted: it can edit"));
+    prompts.answers.multiselect.push(["gemini"]);
+    prompts.answers.confirm.push(true);
+    expect((await stepHarnesses(input())).modelCallsOnHarness).toBe(true);
+    expect(warned()).toEqual(["Model work on gemini cannot be restricted: it can edit files and run commands."]);
+
+    prompts.answers.multiselect.push(["claude"]);
+    prompts.answers.confirm.push(true);
+    const before = warned().length;
+    await stepHarnesses(input());
+    expect(warned()).toHaveLength(before);
+    expect(prompts.of("confirm")[1]?.message).toContain("Model calls run read-only.");
   });
 
   test("interactive: with several selected, asks which one is the default", async () => {

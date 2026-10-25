@@ -16,7 +16,7 @@ import type { InstalledHarness } from "../detect";
 import { prompt } from "../prompt";
 import type { SetupFlags } from "../setup-flags";
 import type { HarnessAnswer } from "../setup-plan";
-import { runsReadOnly } from "../summary";
+import { runsReadOnly, unrestrictedModelWorkNote } from "../summary";
 
 export interface HarnessStepResult {
   /** Absent: the harnesses stay as they are. */
@@ -77,12 +77,15 @@ export async function stepHarnesses(input: HarnessStepInput): Promise<HarnessSte
     return result(false);
   }
   if (!input.interactive) return result(runsReadOnly(defaultPlatform));
+  const readOnly = runsReadOnly(defaultPlatform);
   const yes = await prompt(() =>
     p.confirm({
-      message: `Use ${defaultPlatform} for akm's own model calls too (improve, judging, extraction)? ${readOnlyNote(defaultPlatform)}.`,
+      message: `Use ${defaultPlatform} for akm's own model calls too (improve, judging, extraction)? ${readOnly ? "Model calls run read-only." : unrestrictedModelWorkNote(defaultPlatform)}`,
       initialValue: true,
     }),
   );
+  // Said again once it is chosen, so it stays in the transcript beside the answer.
+  if (yes && !readOnly) p.log.warn(unrestrictedModelWorkNote(defaultPlatform));
   return result(yes);
 }
 

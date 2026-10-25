@@ -233,8 +233,17 @@ platform:
 - Every other platform, and OpenCode 1, cannot be restricted: the run is
   unrestricted, in the scratch directory, and akm reports that.
 
-What model work changes reaches the library only as a proposal, through the
-review queue.
+Where model work is restricted (the three above), what it changes in the library
+reaches it only as a proposal, through the review queue. Where it cannot be
+restricted, nothing but its scratch working directory stands between the run and
+your files: the program keeps its own tools and runs with the file and command
+authority of the user running akm, in the environment a harness run gets (the
+akm directories included), so it can edit files and run commands, in or outside
+the library, and akm does not check what it did. `akm setup` says so when you
+enable such a harness for akm's model calls ("Model work on `<name>` cannot be
+restricted: it can edit files and run commands."), and its summary repeats it.
+Any harness may be enabled for model calls; a connection is the way to keep
+them from touching anything.
 
 **OpenCode.** The `opencode` platform runs your own OpenCode, choosing how from
 the major version `opencode --version` reports:

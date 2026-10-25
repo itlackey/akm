@@ -44,7 +44,9 @@ describe("describeRuns", () => {
     expect(runs.modelCalls).toContain("read-only");
     // codex is confinable since step 3 (`--sandbox read-only`); gemini is not.
     const gemini = describeRuns(cfg({ harnesses: { gemini: {} } }));
-    expect(gemini.modelCalls).toContain("cannot be restricted to read-only");
+    expect(gemini.modelCalls).toContain(
+      'Model work on "gemini" cannot be restricted: it can edit files and run commands.',
+    );
   });
 
   test("nothing configured is off, and a connection with no model yet is not nothing", () => {

@@ -23,6 +23,11 @@ export function runsReadOnly(platform: string): boolean {
   return getHarness(platform)?.confinable === true;
 }
 
+/** What setup says, wherever it names a harness that takes akm's model calls and cannot be restricted. */
+export function unrestrictedModelWorkNote(name: string): string {
+  return `Model work on ${name} cannot be restricted: it can edit files and run commands.`;
+}
+
 function modelSuffix(row: ProcessRow): string {
   return row.model ? ` (${row.model})` : "";
 }
@@ -39,7 +44,7 @@ function describeWork(row: ProcessRow, rows: readonly TargetRow[], modelWork: bo
       modelWork && platform?.type === "harness"
         ? runsReadOnly(platform.platform)
           ? ", read-only"
-          : ", cannot be restricted to read-only"
+          : `. ${unrestrictedModelWorkNote(`"${row.target}"`)}`
         : "";
     return `harness "${row.target}"${modelSuffix(row)}${restriction}`;
   }

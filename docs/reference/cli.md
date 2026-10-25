@@ -190,7 +190,10 @@ The wizard asks, in order:
 
 1. **Agent programs.** Which installed agent programs (Claude Code, Codex,
    OpenCode, ...) akm may use; each is shown with whether akm can run it
-   read-only for its own model calls. With several, you pick the default.
+   read-only for its own model calls. With several, you pick the default. When a
+   harness that cannot be restricted is enabled for akm's model calls, setup says
+   "Model work on `<name>` cannot be restricted: it can edit files and run
+   commands." where you choose, and in its summary line.
 2. **Model calls.** Whether the default agent program also takes akm's own
    model calls (improve, judging, extraction). It is asked only when a harness is
    enabled and there is no connection yet and no `--endpoint`, because a connection
