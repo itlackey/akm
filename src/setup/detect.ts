@@ -464,19 +464,20 @@ function opencodeUsable(): boolean {
 
 /**
  * The default agent harness for a non-interactive setup, best effort:
- *   1. `opencode-sdk` (embedded, no binary), when OpenCode is set up for the user.
+ *   1. none, when OpenCode is set up for the user: akm's own embedded runtime
+ *      needs no harness entry.
  *   2. the first agent CLI on PATH, in registry order (`claude`, `codex`, ...).
  *      The legacy OpenCode 1 CLI is never picked: OpenCode runs embedded.
- *   3. `opencode-sdk`.
+ *   3. none: agent work runs on the embedded runtime.
  */
 export async function detectHarness(whichFn: WhichFn = defaultWhich): Promise<DetectedHarness> {
-  if (opencodeUsable()) return "opencode-sdk";
+  if (opencodeUsable()) return "none";
   for (const harness of AGENT_DISPATCH_HARNESSES) {
     if (harness.id === "opencode-sdk" || harness.id === "opencode") continue;
     const bin = getBuiltinAgentProfile(harness.id)?.bin;
     if (bin && whichFn(bin)) return harness.id;
   }
-  return "opencode-sdk";
+  return "none";
 }
 
 /**

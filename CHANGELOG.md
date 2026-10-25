@@ -107,10 +107,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `harness:`, with a note). `akm migrate status` and `--dry-run` list the files.
   - A connection or harness the loader ignores stays in the file as written,
     with a note on what to fix; `akm migrate apply` never deletes one.
-- A non-interactive `akm setup` picks `opencode-sdk` when OpenCode is set up for
-  the user (a model in their OpenCode config, or saved credentials), else the
-  first agent CLI on `PATH`, else `opencode-sdk`. It never picks the OpenCode 1
-  CLI.
+- A non-interactive `akm setup` adds no harness when OpenCode is set up for the
+  user (a model in their OpenCode config, or saved credentials) or no agent CLI
+  is on `PATH`: agent work then runs on the embedded OpenCode over the
+  connection. Otherwise it enables the first agent CLI on `PATH`. It never picks
+  the OpenCode 1 CLI.
 - The npm package requires Node.js 24 or later (was 22): `@opencode/sdk` needs
   it. CI tests Node 24 and 26.
 - Standalone binaries are built by `scripts/build-standalone.ts`, which stubs

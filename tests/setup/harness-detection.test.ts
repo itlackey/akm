@@ -4,8 +4,9 @@
 
 /**
  * Harness auto-detection for a non-interactive setup, and PATH probing. The
- * embedded OpenCode needs no binary, so it is picked when OpenCode is set up
- * for the user; otherwise the first agent CLI on PATH; otherwise OpenCode.
+ * embedded OpenCode needs no binary and no harness entry, so nothing is picked
+ * when OpenCode is set up for the user or no agent CLI is on PATH; otherwise the
+ * first agent CLI on PATH.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -34,17 +35,17 @@ afterEach(() => {
 });
 
 describe("detectHarness", () => {
-  test("picks the embedded OpenCode when the user's OpenCode config selects a model", async () => {
+  test("picks no harness when the user's OpenCode config selects a model: the embedded runtime needs no entry", async () => {
     write(configFile(), {
       model: "lab/m",
       provider: { lab: { options: { baseURL: "http://127.0.0.1:1/v1" }, models: { m: {} } } },
     });
-    expect(await detectHarness(whichFor("claude"))).toBe("opencode-sdk");
+    expect(await detectHarness(whichFor("claude"))).toBe("none");
   });
 
-  test("picks the embedded OpenCode when the user has logged in to OpenCode", async () => {
+  test("picks no harness when the user has logged in to OpenCode", async () => {
     write(authFile(), {});
-    expect(await detectHarness(whichFor("claude"))).toBe("opencode-sdk");
+    expect(await detectHarness(whichFor("claude"))).toBe("none");
   });
 
   test("otherwise picks the first agent CLI on PATH, in registry order, never the OpenCode 1 CLI", async () => {
@@ -55,9 +56,9 @@ describe("detectHarness", () => {
     expect(await detectHarness(whichFor("q"))).toBe("amazonq");
   });
 
-  test("picks the embedded OpenCode when nothing else is installed", async () => {
-    expect(await detectHarness(whichFor())).toBe("opencode-sdk");
-    expect(await detectHarness(whichFor("opencode"))).toBe("opencode-sdk");
+  test("picks no harness when no agent CLI is on PATH, the OpenCode 1 CLI included", async () => {
+    expect(await detectHarness(whichFor())).toBe("none");
+    expect(await detectHarness(whichFor("opencode"))).toBe("none");
   });
 });
 
