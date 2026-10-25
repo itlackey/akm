@@ -5,11 +5,11 @@
 /**
  * Which OpenCode major an installed `opencode` binary is.
  *
- * akm runs OpenCode 2 embedded (`../opencode-sdk`) and needs no binary. The
- * binary matters only to the legacy OpenCode 1 CLI harness, which refuses an
- * OpenCode 2 binary, and to plugin upgrades, which refresh a plugin cache with
- * the major that owns it. {@link detectOpencodeMajor} runs `<bin> --version`
- * once per binary per process.
+ * The opencode harness runs OpenCode 2 embedded (`./embedded/`) and OpenCode 1
+ * through its CLI; the installed binary's major decides which, once per request
+ * (`./index.ts`). Plugin upgrades also ask it, to refresh a plugin cache with the
+ * major that owns it. {@link detectOpencodeMajor} runs `<bin> --version` once per
+ * binary per process.
  */
 
 import childProcess from "node:child_process";

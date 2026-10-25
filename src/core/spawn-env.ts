@@ -5,12 +5,11 @@
 /**
  * The ONE allowlist-based child-environment primitive.
  *
- * Three akm code paths spawn a child from an explicit list of environment
+ * Two akm code paths spawn a child from an explicit list of environment
  * variable NAMES — the agent-CLI spawn wrapper
- * (`integrations/agent/spawn.ts`, `profile.envPassthrough`), the workflow
- * `exec` unit runner (`workflows/exec/exec-unit.ts`), and the opencode-sdk
- * server spawn (`integrations/harnesses/opencode-sdk/sdk-runner.ts`) — and
- * all build their allowlist from {@link COMMON_SPAWN_ENV_PASSTHROUGH} /
+ * (`integrations/agent/spawn.ts`, `profile.envPassthrough`) and the workflow
+ * `exec` unit runner (`workflows/exec/exec-unit.ts`) — and both build their
+ * allowlist from {@link COMMON_SPAWN_ENV_PASSTHROUGH} /
  * {@link spawnEnvNamesFor}. Keeping that in one leaf module is what makes
  * "allowlist" a single reviewable mechanism instead of independent
  * implementations that drift apart.

@@ -62,9 +62,3 @@ for (const provider of HARNESSES) {
 export function getAvailableHarnesses(): SessionLogHarness[] {
   return HARNESSES.filter((harness) => harness.isAvailable());
 }
-
-export function normalizeSessionTopic(text: string): string | undefined {
-  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
-  if (normalized.length < 10) return undefined;
-  return normalized.slice(0, 60);
-}

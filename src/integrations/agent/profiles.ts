@@ -85,9 +85,9 @@ function builtinProfiles(): Record<string, AgentProfile> {
 }
 
 /**
- * The OpenCode CLI binary: the legacy OpenCode 1 harness runs it, and plugin
- * upgrades refresh OpenCode's plugin caches with it. The `opencode-sdk`
- * runtime runs OpenCode embedded and needs no binary.
+ * The OpenCode CLI binary: the opencode harness runs it for OpenCode 1 and asks
+ * it for its major, and plugin upgrades refresh OpenCode's plugin caches with it.
+ * akm's own runtime and OpenCode 2 run embedded and need no binary.
  */
 export const OPENCODE_BIN = "opencode";
 

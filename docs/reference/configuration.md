@@ -164,7 +164,7 @@ nothing installed beyond akm. It ignores `bin` and `args`, with a warning.
   [Engines for unattended model work](#engines-for-unattended-model-work)).
 - Credentials stay where OpenCode keeps them; akm copies none.
 - Every session is stored in akm's own OpenCode database,
-  `<akm data dir>/opencode.db`. Open it with `OPENCODE_DB=<that path> opencode`.
+  `<akm data dir>/opencode.db`.
 
 `platform: "opencode"` is the legacy OpenCode 1 CLI (`opencode run`), kept for
 existing setups and treated like any other agent CLI. akm sends the prompt on

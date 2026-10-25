@@ -82,8 +82,8 @@ const CLI_SCRIPTS: Record<string, string> = {
   "exit-1": `#!/bin/sh\necho "${PROVIDER_MESSAGE}" >&2\nexit 1\n`,
   // Prints the argv it was given, then its stdin when it got one, so a row can see what reached the harness.
   reply: `#!${process.execPath}\nconst input = require("node:fs").readFileSync(0, "utf8");\nconsole.log(JSON.stringify([...process.argv.slice(2), ...(input ? [input] : [])]));\n`,
-  // Prints what reached it: argv, working directory and the injected opencode config.
-  probe: `#!${process.execPath}\nconsole.log(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), config: process.env.OPENCODE_CONFIG_CONTENT ?? null }));\n`,
+  // Prints what reached it: argv and working directory.
+  probe: `#!${process.execPath}\nconsole.log(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }));\n`,
   // Claude Code's --output-format json result envelope around the reply.
   envelope: `#!/bin/sh\necho '${JSON.stringify({ type: "result", result: REPLY, session_id: "envelope-session" })}'\n`,
   // Records its pid beside itself, then outlives any timeout a row sets.
@@ -419,7 +419,7 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
       .map((notice) => (notice.field ?? "").slice("inference.".length))
       .sort();
 
-  type Probe = { argv: string[]; cwd: string; config: string | null };
+  type Probe = { argv: string[]; cwd: string };
   const probed = (result: AgentRunResult): Probe => JSON.parse(result.stdout) as Probe;
 
   test("connection chat: every field is sent as its wire form", async () => {
@@ -452,10 +452,7 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
 
   // Anything else runs through the user's own harness config, where inference is set.
   test("a CLI harness sends nothing of it and reports every field untranslated", async () => {
-    const sent = ({ result }: { result: AgentRunResult }) => {
-      const { argv, config } = probed(result);
-      return { argv, config };
-    };
+    const sent = ({ result }: { result: AgentRunResult }) => probed(result).argv;
     for (const harness of CLI_HARNESSES) {
       const withInference = await dispatchBuilt(harness, "probe", { model: MODEL, inference: INFERENCE });
       const without = await dispatchBuilt(harness, "probe", { model: MODEL });
