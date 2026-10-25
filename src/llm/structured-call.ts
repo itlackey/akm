@@ -40,7 +40,7 @@ import type { AkmConfig } from "../core/config/config";
 import { ConfigError } from "../core/errors";
 import type { LoweringNotice, ResolvedConversationMessage } from "../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../execution/source";
-import { buildExecution, resolveExecution } from "../integrations/agent/execution";
+import { buildExecution, currentLayer, resolveExecution } from "../integrations/agent/execution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 import { runExecution } from "../integrations/agent/runner-dispatch";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../integrations/agent/spawn";
@@ -250,7 +250,7 @@ export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise
       content: terminal.content,
       conversation: terminal.conversation,
       runner,
-      current: resolveStructuredCurrent(opts.current, request),
+      layers: [currentLayer(resolveStructuredCurrent(opts.current, request) ?? {})],
       modelWork: true,
     });
     const lowered = buildExecution(prepared.request, prepared.runner);

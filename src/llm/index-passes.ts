@@ -4,9 +4,8 @@
 
 import type { AkmConfig, IndexPassConfig } from "../core/config/config";
 import { ConfigError } from "../core/errors";
-import { cloneExecutionJsonObject } from "../execution/json";
 import type { LoweringNotice } from "../execution/resolved-request";
-import type { UnresolvedExecutionDefaults } from "../execution/source";
+import { executionDefaultsOf } from "../execution/source";
 import { buildExecution, resolveExecution } from "../integrations/agent/execution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 
@@ -16,23 +15,6 @@ const NO_LOWERING_NOTICES: readonly Readonly<LoweringNotice>[] = Object.freeze([
 export interface ResolvedIndexPassExecution {
   readonly runner: RunnerSpec | undefined;
   readonly notices: readonly Readonly<LoweringNotice>[];
-}
-
-function own(value: object | undefined, key: PropertyKey): boolean {
-  return value !== undefined && Object.hasOwn(value, key);
-}
-
-/** Adapt one index layer (the index-wide settings, or one pass's) into the shared execution vocabulary. */
-function indexExecutionDefaults(layer: Partial<IndexPassConfig> | undefined): UnresolvedExecutionDefaults {
-  if (!layer) return {};
-  return {
-    ...(own(layer, "connection") ? { connection: layer.connection } : {}),
-    ...(own(layer, "model") ? { model: layer.model } : {}),
-    ...(own(layer, "timeoutMs") ? { timeout: layer.timeoutMs } : {}),
-    ...(own(layer, "llm") && layer.llm !== undefined
-      ? { inference: cloneExecutionJsonObject(layer.llm, "index pass LLM inference") }
-      : {}),
-  };
 }
 
 /**
@@ -49,8 +31,14 @@ export function resolveIndexPassExecution(passName: string, config: AkmConfig): 
     const prepared = resolveExecution({
       content: "",
       config,
-      invocationDefaults: indexExecutionDefaults(config.index as Partial<IndexPassConfig> | undefined),
-      current: indexExecutionDefaults(pass),
+      layers: [
+        {
+          id: "index",
+          kind: "invocation-defaults",
+          values: executionDefaultsOf(config.index as Partial<IndexPassConfig> | undefined),
+        },
+        { id: `index.${passName}`, kind: "invocation-defaults", values: executionDefaultsOf(pass) },
+      ],
       modelWork: true,
     });
     const lowered = buildExecution(prepared.request, prepared.runner);

@@ -11,7 +11,7 @@ import {
   type ResolvedExecutionRequestV1,
 } from "../../src/execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../../src/execution/source";
-import { buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
+import { buildExecution, currentLayer, resolveExecution } from "../../src/integrations/agent/execution";
 import { checkWorkflowPlan, compileWorkflowSource, workflowStepInstructions } from "../../src/workflows/compile";
 import { defaultMapConcurrency, workflowMaxConcurrency } from "../../src/workflows/concurrency-policy";
 import {
@@ -158,8 +158,12 @@ function freezeCommandTarget(
   const prepared = resolveExecution({
     content: instructions,
     config,
-    ...(invocationDefaults ? { invocationDefaults } : {}),
-    current,
+    layers: [
+      ...(invocationDefaults
+        ? [{ id: "invocation-defaults", kind: "invocation-defaults" as const, values: invocationDefaults }]
+        : []),
+      currentLayer(current),
+    ],
     modelWork,
   });
   const resolved = durableRequest(prepared.request);

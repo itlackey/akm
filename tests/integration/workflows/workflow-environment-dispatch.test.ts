@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { readEvents } from "../../../src/core/events";
-import { buildExecution, resolveExecution } from "../../../src/integrations/agent/execution";
+import { buildExecution, currentLayer, resolveExecution } from "../../../src/integrations/agent/execution";
 import { runExecution } from "../../../src/integrations/agent/runner-dispatch";
 import {
   collectWorkflowDispatchSensitiveValues,
@@ -77,7 +77,7 @@ describe("materializing a frozen environment at dispatch", () => {
     const resolved = resolveExecution({
       content: "post it",
       runner,
-      current: { environment: materialized.values },
+      layers: [currentLayer({ environment: materialized.values })],
     });
     const echoed = `posted to ${materialized.values.HOOK_URL} with ${materialized.values.HOOK_TOKEN}`;
 

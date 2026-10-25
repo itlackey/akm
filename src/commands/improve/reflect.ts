@@ -35,7 +35,7 @@ import { resolveStandardsContext } from "../../core/standards/resolve-standards-
 import { warnOnce } from "../../core/warn";
 import { lookup } from "../../indexer/indexer";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
-import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
+import { buildExecution, currentLayer, resolveExecution } from "../../integrations/agent/execution";
 import {
   buildReflectOutputRepairPrompt,
   buildReflectPrompt,
@@ -806,7 +806,7 @@ function resolveReflectRunner(options: AkmReflectOptions): {
     lowered = lower({
       content: "reflect engine selection",
       config,
-      current: { engine: options.engine },
+      layers: [currentLayer({ engine: options.engine })],
       modelWork: true,
     });
   } else if (options.improveProfile) {

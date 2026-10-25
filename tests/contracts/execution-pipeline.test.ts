@@ -19,6 +19,7 @@ import { canonicalResolvedExecutionRequest, createResolvedPersona } from "../../
 import {
   buildExecution,
   buildExecutionFromWire,
+  currentLayer,
   type ResolveExecutionInput,
   resolveExecution,
 } from "../../src/integrations/agent/execution";
@@ -94,7 +95,7 @@ describe("harnesses: config harness → argv", () => {
       content: "Review the diff.",
       config: config({ harnesses: { claude: {} } }),
       persona: reviewer(),
-      current: { model: "fast" },
+      layers: [currentLayer({ model: "fast" })],
     });
     expect(argv).toEqual([
       "claude",
@@ -124,7 +125,7 @@ describe("harnesses: config harness → argv", () => {
       config: config({
         harnesses: { oc: { platform: "opencode", models: { balanced: "opencode/claude-sonnet-4-6" } } },
       }),
-      current: { model: "balanced" },
+      layers: [currentLayer({ model: "balanced" })],
     });
     expect(argv).toEqual(["opencode", "run", "--model", "opencode/claude-sonnet-4-6"]);
     expect(stdin).toBe("Summarise.");
@@ -134,7 +135,7 @@ describe("harnesses: config harness → argv", () => {
     const { argv } = await spawnedFor({
       content: "Plan it.",
       config: config({ harnesses: { pi: {} } }),
-      current: { harness: "pi", model: "provider/exact" },
+      layers: [currentLayer({ harness: "pi", model: "provider/exact" })],
     });
     expect(argv).toEqual(["pi", "--model", "provider/exact", "-p", "--", "Plan it."]);
   });
@@ -148,7 +149,7 @@ describe("harnesses: config harness → argv", () => {
     const resolved = resolveExecution({
       content: "Think.",
       config: config({ harnesses: { pi: {} } }),
-      current: { model: "reasoning" },
+      layers: [currentLayer({ model: "reasoning" })],
     });
     expect(resolved.request.model).toBeUndefined();
     expect(warnings.filter((w) => w.includes('Harness "pi" has no model for "reasoning"'))).toHaveLength(1);
@@ -164,8 +165,10 @@ describe("harnesses: config harness → argv", () => {
       const resolved = resolveExecution({
         content: "Think.",
         config: config(harness),
-        commandLayer: { id: "command", values: { inference: { effort: "high" } } },
-        current: { inference: { reasoningEffort: "low" } },
+        layers: [
+          { kind: "command", id: "command", values: { inference: { effort: "high" } } },
+          currentLayer({ inference: { reasoningEffort: "low" } }),
+        ],
       });
 
       expect(resolved.request.inference).toEqual({ reasoningEffort: "low" });
@@ -175,7 +178,7 @@ describe("harnesses: config harness → argv", () => {
       const resolved = resolveExecution({
         content: "Think.",
         config: config(harness),
-        current: { inference: { effort: "high", reasoningEffort: "low" } },
+        layers: [currentLayer({ inference: { effort: "high", reasoningEffort: "low" } })],
       });
 
       expect(resolved.request.inference).toEqual({ reasoningEffort: "low" });
@@ -185,7 +188,7 @@ describe("harnesses: config harness → argv", () => {
       const resolved = resolveExecution({
         content: "Think.",
         config: config(harness),
-        current: { inference: { effort: null } },
+        layers: [currentLayer({ inference: { effort: null } })],
       });
 
       expect(resolved.request.inference).toEqual({ reasoningEffort: null });
@@ -195,7 +198,7 @@ describe("harnesses: config harness → argv", () => {
       const resolved = resolveExecution({
         content: "Think.",
         config: config(harness),
-        current: { inference: { effort: "high", temperature: 0 } },
+        layers: [currentLayer({ inference: { effort: "high", temperature: 0 } })],
       });
 
       expect(resolved.request.inference).not.toHaveProperty("effort");
@@ -256,12 +259,12 @@ describe("target selection", () => {
     const base = { content: "x", config: config({ harnesses }) };
     expect(resolveExecution(base).request.target.name).toBe("default");
     expect(
-      resolveExecution({ ...base, commandLayer: { id: "cmd", values: { harness: "pi" } } }).request.target.name,
+      resolveExecution({ ...base, layers: [{ kind: "command", id: "cmd", values: { harness: "pi" } }] }).request.target
+        .name,
     ).toBe("pi");
     const nearest = resolveExecution({
       ...base,
-      commandLayer: { id: "cmd", values: { harness: "pi" } },
-      current: { harness: "default" },
+      layers: [{ kind: "command", id: "cmd", values: { harness: "pi" } }, currentLayer({ harness: "default" })],
     });
     expect(nearest.request.target.name).toBe("default");
     expect(nearest.provenance.target).toEqual({ layer: "current-invocation", kind: "current", via: "explicit" });
@@ -273,7 +276,7 @@ describe("target selection", () => {
     overrideSeam(_setWarnSinkForTests, (level: string, args: unknown[]) => {
       if (level === "warn") warnings.push(args.map(String).join(" "));
     });
-    const input = { content: "x", config: config({ harnesses }), current: { harness: "codex" } };
+    const input = { content: "x", config: config({ harnesses }), layers: [currentLayer({ harness: "codex" })] };
     expect(resolveExecution(input).request.target.name).toBe("default");
     expect(resolveExecution(input).request.target.name).toBe("default");
     expect(warnings.filter((w) => w.includes('"codex" is not configured'))).toHaveLength(1);
@@ -292,7 +295,7 @@ describe("connections: config connection → chat call", () => {
       const resolved = resolveExecution({
         content: "Classify this.",
         config: config({ connections: { local: LAB } }),
-        current: { connection: "local", outputSchema: { type: "object" }, timeout: "2m" },
+        layers: [currentLayer({ connection: "local", outputSchema: { type: "object" }, timeout: "2m" })],
         conversation: [{ role: "assistant", content: "Earlier draft." }],
         persona: reviewer(),
         modelWork: true,
@@ -352,7 +355,7 @@ describe("connections: config connection → chat call", () => {
           local: { ...LAB, top_p: 0.9, models: { fast: { model: "local/qwen", temperature: 0.1 } } },
         },
       }),
-      current: { inference: { temperature: 0 } },
+      layers: [currentLayer({ inference: { temperature: 0 } })],
       modelWork: true,
     });
     let seen: { request?: unknown; temperature?: unknown } = {};
@@ -371,8 +374,10 @@ describe("provenance and notices", () => {
     const resolved = resolveExecution({
       content: "x",
       config: config({ connections: { local: { ...LAB, timeoutMs: 1000, temperature: 0.5 } } }),
-      commandLayer: { id: "fixture//commands/review", values: { model: "exact/model" } },
-      current: { timeout: 5000 },
+      layers: [
+        { kind: "command", id: "fixture//commands/review", values: { model: "exact/model" } },
+        currentLayer({ timeout: 5000 }),
+      ],
     });
     expect(resolved.provenance).toMatchObject({
       target: { layer: "installation-defaults", kind: "installation", via: "explicit" },
@@ -386,7 +391,7 @@ describe("provenance and notices", () => {
     const resolved = resolveExecution({
       content: "x",
       config: config({ harnesses: { oc: { platform: "opencode" } } }),
-      current: { outputSchema: { type: "object" }, inference: { vendorKnob: 1 } },
+      layers: [currentLayer({ outputSchema: { type: "object" }, inference: { vendorKnob: 1 } })],
     });
     const built = buildExecution(resolved.request, resolved.runner);
     // The schema travels as the prompt instruction, so only the inference knob is noted.
@@ -454,7 +459,7 @@ describe("dispatch options", () => {
     const resolved = resolveExecution({
       content: "x",
       config: config({ harnesses: { pi: {} } }),
-      current: { environment: { KEEP: "request-value" }, timeout: 1000 },
+      layers: [currentLayer({ environment: { KEEP: "request-value" }, timeout: 1000 })],
     });
     let env: Record<string, string> = {};
     let cwd: string | undefined;
@@ -487,12 +492,12 @@ describe("a harness's default agent", () => {
   });
 
   test("a request's own agent wins", () => {
-    const resolved = resolveExecution({ content: "x", config: oc, current: { agent: "reviewer" } });
+    const resolved = resolveExecution({ content: "x", config: oc, layers: [currentLayer({ agent: "reviewer" })] });
     expect(buildExecution(resolved.request, resolved.runner).options.dispatch?.agent).toBe("reviewer");
   });
 
   test("an explicit null agent clears it", () => {
-    const resolved = resolveExecution({ content: "x", config: oc, current: { agent: null } });
+    const resolved = resolveExecution({ content: "x", config: oc, layers: [currentLayer({ agent: null })] });
     expect(buildExecution(resolved.request, resolved.runner).options.dispatch?.agent).toBeUndefined();
   });
 
@@ -547,7 +552,7 @@ describe("the model-work tool policy", () => {
     const resolved = resolveExecution({
       content: "x",
       config: modelWork,
-      current: { agent: "reviewer" },
+      layers: [currentLayer({ agent: "reviewer" })],
       modelWork: true,
     });
     const built = buildExecution(resolved.request, resolved.runner);
@@ -625,7 +630,7 @@ describe("the model-work tool policy", () => {
     const { argv } = await spawnedFor({
       content: "x",
       config: config({ harnesses }),
-      current: { harness: "argsonly" },
+      layers: [currentLayer({ harness: "argsonly" })],
       modelWork: true,
     });
     expect(argv[argv.indexOf("--model") + 1]).toBe(model);

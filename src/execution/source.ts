@@ -44,6 +44,30 @@ export interface UnresolvedExecutionDefaults {
   readonly runtime?: ExecutionJsonObject | null;
 }
 
+/** What a config block (`improve.processes.<name>`, `index.<pass>`) or a flag says about where a call runs and how. */
+export interface ConfiguredExecutionSettings {
+  readonly connection?: string;
+  readonly harness?: string;
+  readonly engine?: string;
+  readonly model?: string;
+  readonly llm?: object;
+  /** `null` runs unbounded. */
+  readonly timeoutMs?: number | null;
+}
+
+/** Those settings as one layer's defaults. A setting that is absent says nothing; `null` is a real value. */
+export function executionDefaultsOf(settings: ConfiguredExecutionSettings | undefined): UnresolvedExecutionDefaults {
+  if (!settings) return {};
+  return {
+    ...(settings.connection !== undefined ? { connection: settings.connection } : {}),
+    ...(settings.harness !== undefined ? { harness: settings.harness } : {}),
+    ...(settings.engine !== undefined ? { engine: settings.engine } : {}),
+    ...(settings.model !== undefined ? { model: settings.model } : {}),
+    ...(settings.llm !== undefined ? { inference: cloneExecutionJsonObject(settings.llm, "inference") } : {}),
+    ...(settings.timeoutMs !== undefined ? { timeout: settings.timeoutMs } : {}),
+  };
+}
+
 interface AdapterRenderedExecutionSourceBase {
   readonly schemaVersion: typeof EXECUTION_SOURCE_SCHEMA_VERSION;
   readonly content: string;

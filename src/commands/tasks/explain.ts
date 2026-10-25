@@ -89,7 +89,7 @@ import {
 } from "../../execution/input-contract";
 import { createInlineResolvedCommand } from "../../execution/resolved-request";
 import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
-import { resolveExecution } from "../../integrations/agent/execution";
+import { currentLayer, resolveExecution } from "../../integrations/agent/execution";
 import { isSchedulerRefEnabled } from "../../tasks/activation-config";
 import type { PreparableTaskDocument } from "../../tasks/prepare/prepared-execution";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
@@ -289,8 +289,10 @@ function resolveExecutionSettings(document: PreparableTaskDocument): ExecutionSe
   const prepared = resolveExecution({
     command: createInlineResolvedCommand({ template: "", content: "" }),
     config: loadConfig(),
-    commandLayer: { id: "task-explain", values: {} },
-    ...(Object.keys(current).length > 0 ? { current } : {}),
+    layers: [
+      { id: "task-explain", kind: "command", values: {} },
+      ...(Object.keys(current).length > 0 ? [currentLayer(current)] : []),
+    ],
   });
   const target = prepared.request.target;
   return {

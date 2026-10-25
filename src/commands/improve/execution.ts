@@ -2,56 +2,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { AkmConfig, ImproveWhere } from "../../core/config/config";
-import { deepMergeConfig } from "../../core/config/deep-merge";
+import type { AkmConfig } from "../../core/config/config";
 import { IMPROVE_ENGINE_PROCESSES } from "../../core/config/engine-semantics";
 import { ConfigError } from "../../core/errors";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import type { UnresolvedExecutionDefaults } from "../../execution/source";
-import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
+import { type ConfiguredExecutionSettings, executionDefaultsOf } from "../../execution/source";
+import { buildExecution, currentLayer, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 
 /** The settings a layer of improve's cascade can carry: where to run, which model, and how. */
-type ImproveExecutionLayer = Pick<ImproveWhere, "connection" | "harness" | "model" | "timeoutMs" | "llm"> & {
-  /** A flag's name: a connection by that name, else a harness. */
-  readonly engine?: string;
-};
-
-function own(value: object | undefined, key: PropertyKey): boolean {
-  return value !== undefined && Object.hasOwn(value, key);
-}
-
-function cascadeDefaults(layer: ImproveExecutionLayer | undefined): UnresolvedExecutionDefaults {
-  if (!layer) return {};
-  return {
-    ...(own(layer, "connection") ? { connection: layer.connection } : {}),
-    ...(own(layer, "harness") ? { harness: layer.harness } : {}),
-    ...(own(layer, "engine") ? { engine: layer.engine } : {}),
-    ...(own(layer, "model") ? { model: layer.model } : {}),
-    ...(own(layer, "llm") ? { inference: layer.llm as UnresolvedExecutionDefaults["inference"] } : {}),
-    ...(own(layer, "timeoutMs") ? { timeout: layer.timeoutMs ?? null } : {}),
-  };
-}
-
-const TARGET_KEYS = ["connection", "harness", "engine"] as const;
-
-/**
- * `nearer` over `farther`. A layer that names a connection or harness replaces the
- * farther layer's choice of one, whichever of the keys either used.
- */
-function mergeDefaults(
-  farther: UnresolvedExecutionDefaults,
-  nearer: UnresolvedExecutionDefaults,
-): UnresolvedExecutionDefaults {
-  const names = TARGET_KEYS.some((key) => nearer[key] !== undefined);
-  const base = names
-    ? Object.fromEntries(Object.entries(farther).filter(([key]) => !(TARGET_KEYS as readonly string[]).includes(key)))
-    : farther;
-  return deepMergeConfig(
-    base as Record<string, unknown>,
-    nearer as Record<string, unknown>,
-  ) as UnresolvedExecutionDefaults;
-}
+type ImproveExecutionLayer = ConfiguredExecutionSettings;
 
 export interface ResolveImproveExecutionOptions {
   config: AkmConfig;
@@ -81,21 +41,24 @@ export interface ResolvedImproveExecution {
  * configured for it.
  */
 export function resolveImproveExecution(options: ResolveImproveExecutionOptions): ResolvedImproveExecution | null {
-  const improveWide = cascadeDefaults(options.config.improve);
-  const indexDefaults = cascadeDefaults(options.index);
   const processKey = options.process ?? options.processName;
-  const processDefaults = cascadeDefaults(
-    (IMPROVE_ENGINE_PROCESSES as readonly string[]).includes(processKey)
-      ? (options.config.improve?.processes as Record<string, ImproveWhere | undefined> | undefined)?.[processKey]
-      : undefined,
-  );
-  const currentDefaults = cascadeDefaults(options.current);
+  const processes = options.config.improve?.processes as Record<string, ConfiguredExecutionSettings> | undefined;
   try {
     const prepared = resolveExecution({
       content: `improve ${options.processName} execution selection`,
       config: options.config,
-      invocationDefaults: mergeDefaults(improveWide, indexDefaults),
-      current: mergeDefaults(processDefaults, currentDefaults),
+      layers: [
+        { id: "improve", kind: "invocation-defaults", values: executionDefaultsOf(options.config.improve) },
+        { id: "index", kind: "invocation-defaults", values: executionDefaultsOf(options.index) },
+        {
+          id: `improve.processes.${processKey}`,
+          kind: "invocation-defaults",
+          values: executionDefaultsOf(
+            (IMPROVE_ENGINE_PROCESSES as readonly string[]).includes(processKey) ? processes?.[processKey] : undefined,
+          ),
+        },
+        currentLayer(executionDefaultsOf(options.current)),
+      ],
       modelWork: true,
     });
     const lowered = buildExecution(prepared.request, prepared.runner);

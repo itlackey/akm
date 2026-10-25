@@ -29,7 +29,7 @@ import { resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveEntryProvenance } from "../../indexer/installations";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
-import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
+import { buildExecution, currentLayer, resolveExecution } from "../../integrations/agent/execution";
 import {
   type AgentProposalPayload,
   buildProposePrompt,
@@ -147,7 +147,7 @@ async function dispatchProposalPrompt(
     outputSchema: PROPOSAL_JSON_SCHEMA,
   };
   const lower = (content: string) => {
-    const prepared = resolveExecution({ content, config, current });
+    const prepared = resolveExecution({ content, config, layers: [currentLayer(current)] });
     return { prepared, lowered: buildExecution(prepared.request, prepared.runner) };
   };
   // Resolution and lowering come before the entry event opens durable state; provider and

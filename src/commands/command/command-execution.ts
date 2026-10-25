@@ -22,7 +22,9 @@ import { recordIndexedShowUsage } from "../../indexer/usage/show-usage";
 import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
 import {
   buildExecution,
+  currentLayer,
   type ExecutionFieldProvenance,
+  type ExecutionLayer,
   type ResolvedExecution,
   resolveExecution,
 } from "../../integrations/agent/execution";
@@ -224,17 +226,21 @@ export async function prepareCommandInvocation(
   }
   const persona = renderedPersona ? createResolvedPersona(renderedPersona) : selectedAgent.present ? null : undefined;
 
+  const layers: ExecutionLayer[] = [
+    ...(renderedPersona
+      ? [{ id: renderedPersona.identity.ref, kind: "agent" as const, values: renderedPersona.defaults }]
+      : []),
+    { id: renderedCommand?.identity.ref ?? "inline-command", kind: "command", values: commandDefaults },
+    ...(options.invocationDefaults
+      ? [{ id: "invocation-defaults", kind: "invocation-defaults" as const, values: options.invocationDefaults }]
+      : []),
+    ...(options.current ? [currentLayer(options.current)] : []),
+  ];
   return resolveExecution({
     command,
     config: options.config,
     ...(persona !== undefined ? { persona } : {}),
-    ...(renderedPersona ? { agentLayer: { id: renderedPersona.identity.ref, values: renderedPersona.defaults } } : {}),
-    commandLayer: {
-      id: renderedCommand?.identity.ref ?? "inline-command",
-      values: commandDefaults,
-    },
-    ...(options.invocationDefaults ? { invocationDefaults: options.invocationDefaults } : {}),
-    ...(options.current ? { current: options.current } : {}),
+    layers,
   });
 }
 

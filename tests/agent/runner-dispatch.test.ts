@@ -5,7 +5,12 @@
 import { describe, expect, test } from "bun:test";
 import type { UnresolvedExecutionDefaults } from "../../src/execution/source";
 import type { AgentRunResult } from "../../src/integrations/agent";
-import { type BuiltExecution, buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
+import {
+  type BuiltExecution,
+  buildExecution,
+  currentLayer,
+  resolveExecution,
+} from "../../src/integrations/agent/execution";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { ConnectionRunner, HarnessRunner, RunnerSpec } from "../../src/integrations/agent/runner";
 import {
@@ -54,7 +59,12 @@ function built(
   current?: UnresolvedExecutionDefaults,
   modelWork = false,
 ): BuiltExecution {
-  const resolved = resolveExecution({ content, runner, modelWork, ...(current ? { current } : {}) });
+  const resolved = resolveExecution({
+    content,
+    runner,
+    modelWork,
+    ...(current ? { layers: [currentLayer(current)] } : {}),
+  });
   return buildExecution(resolved.request, resolved.runner);
 }
 

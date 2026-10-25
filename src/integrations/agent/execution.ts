@@ -44,20 +44,28 @@ import { mergeLayerInference, parseTimeout, resolveTarget, withReasoningEffort }
 import { decodeFrozenRunnerSpec, type RunnerSpec } from "./runner";
 import type { RunAgentOptions } from "./spawn";
 
-/** One named layer of execution defaults, e.g. a persona's or a command's frontmatter. */
-export interface ExecutionLayer {
-  readonly id: string;
-  readonly values: UnresolvedExecutionDefaults;
-}
-
-type LayerKind = "agent" | "command" | "invocation-defaults" | "current";
-
 /** Which layer set one request field. */
 export interface ExecutionFieldProvenance {
   readonly layer: string;
-  readonly kind: LayerKind | "installation";
+  readonly kind: "agent" | "command" | "invocation-defaults" | "current" | "installation";
   /** `default` marks a value no layer or configuration set, so the caller's own policy may replace it. */
   readonly via: "explicit" | "source" | "default";
+}
+
+/**
+ * One layer of execution defaults: a shipped default, a persona's or a command's
+ * frontmatter, a plan's defaults, a flag. A call's layers are listed farthest to
+ * nearest and the nearest layer that sets a field wins.
+ */
+export interface ExecutionLayer {
+  readonly id: string;
+  readonly kind: ExecutionFieldProvenance["kind"];
+  readonly values: UnresolvedExecutionDefaults;
+}
+
+/** The layer for a call's own flags and arguments: nearer than every other. */
+export function currentLayer(values: UnresolvedExecutionDefaults): ExecutionLayer {
+  return { id: "current-invocation", kind: "current", values };
 }
 
 export interface ResolveExecutionInput {
@@ -72,10 +80,8 @@ export interface ResolveExecutionInput {
   /** Ordered turns before the terminal user command. */
   readonly conversation?: readonly Readonly<ResolvedConversationMessage>[];
   readonly persona?: ResolvedPersonaContent | null;
-  readonly agentLayer?: ExecutionLayer;
-  readonly commandLayer?: ExecutionLayer;
-  readonly invocationDefaults?: UnresolvedExecutionDefaults;
-  readonly current?: UnresolvedExecutionDefaults;
+  /** The layers that speak for the call, farthest to nearest. */
+  readonly layers?: readonly ExecutionLayer[];
   /** Run as unattended model work: confined, and on a connection a direct call. */
   readonly modelWork?: boolean;
 }
@@ -104,12 +110,6 @@ export interface BuiltExecution {
   readonly notices: readonly Readonly<LoweringNotice>[];
 }
 
-interface Layer {
-  readonly id: string;
-  readonly kind: LayerKind;
-  readonly values: UnresolvedExecutionDefaults;
-}
-
 function has(values: object | null | undefined, key: string): boolean {
   return (
     values !== null &&
@@ -119,7 +119,10 @@ function has(values: object | null | undefined, key: string): boolean {
   );
 }
 
-function nearest(layers: readonly Layer[], key: keyof UnresolvedExecutionDefaults): Layer | undefined {
+function nearest(
+  layers: readonly ExecutionLayer[],
+  key: keyof UnresolvedExecutionDefaults,
+): ExecutionLayer | undefined {
   for (let index = layers.length - 1; index >= 0; index -= 1) {
     const layer = layers[index];
     if (layer && has(layer.values, key)) return layer;
@@ -127,13 +130,13 @@ function nearest(layers: readonly Layer[], key: keyof UnresolvedExecutionDefault
   return undefined;
 }
 
-function explicit(layer: Layer): ExecutionFieldProvenance {
-  return { layer: layer.id, kind: layer.kind, via: "explicit" };
+function explicit(layer: ExecutionLayer): ExecutionFieldProvenance {
+  return { layer: layer.id, kind: layer.kind, via: layer.kind === "installation" ? "default" : "explicit" };
 }
 
 /** Record which layer set each inference key, mirroring {@link mergeLayerInference}. */
 function recordInferenceProvenance(
-  layers: readonly Layer[],
+  layers: readonly ExecutionLayer[],
   provenance: Record<string, ExecutionFieldProvenance>,
 ): void {
   for (const layer of layers) {
@@ -152,7 +155,7 @@ function recordInferenceProvenance(
 }
 
 /** A journaled runner under this call's layers: the nearest layer's timeout and (exact) model replace its own. */
-function applyLayers(runner: RunnerSpec, layers: readonly Layer[]): RunnerSpec {
+function applyLayers(runner: RunnerSpec, layers: readonly ExecutionLayer[]): RunnerSpec {
   const timeout = nearest(layers, "timeout")?.values.timeout;
   const model = nearest(layers, "model")?.values.model;
   return {
@@ -174,18 +177,7 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
       ...(input.argumentInput !== undefined ? { argumentInput: input.argumentInput } : {}),
       content: input.content ?? "",
     });
-  const layers: Layer[] = [
-    ...(input.agentLayer ? [{ ...input.agentLayer, kind: "agent" as const }] : []),
-    {
-      id: input.commandLayer?.id ?? "inline-command",
-      kind: "command",
-      values: input.commandLayer?.values ?? {},
-    },
-    ...(input.invocationDefaults
-      ? [{ id: "invocation-defaults", kind: "invocation-defaults" as const, values: input.invocationDefaults }]
-      : []),
-    ...(input.current ? [{ id: "current-invocation", kind: "current" as const, values: input.current }] : []),
-  ];
+  const layers = input.layers ?? [];
   const modelWork = input.modelWork === true;
 
   let runner: RunnerSpec;
@@ -233,7 +225,7 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
   const inference = mergeLayerInference(layers.map((layer) => layer.values));
   recordInferenceProvenance(layers, provenance);
 
-  const select = (key: keyof UnresolvedExecutionDefaults, field: string): Layer | undefined => {
+  const select = (key: keyof UnresolvedExecutionDefaults, field: string): ExecutionLayer | undefined => {
     const layer = nearest(layers, key);
     if (layer) provenance[field] = explicit(layer);
     return layer;
