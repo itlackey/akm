@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { AkmConfig, ConnectionConfig, HarnessConfig, HarnessId } from "../core/config/config";
+import { modelForEveryAlias } from "../core/config/model-aliases";
 
 const CHAT_SUFFIX = "/chat/completions";
 
@@ -127,7 +128,7 @@ export function upsertDetectedLlmEngine(
   if (reused) return { config, name, reused };
   const connection: ConnectionConfig = {
     endpoint,
-    models: { fast: candidate.model, balanced: candidate.model, reasoning: candidate.model },
+    models: modelForEveryAlias(candidate.model),
     ...(candidate.apiKeyEnvVar ? { apiKey: `$${candidate.apiKeyEnvVar}` } : {}),
   };
   return { config: { ...config, connections: { ...connections, [name]: connection } }, name, reused };

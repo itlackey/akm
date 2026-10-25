@@ -12,8 +12,9 @@
 
 import { createHash } from "node:crypto";
 import type { AkmConfig } from "../../core/config/config";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { UsageError } from "../../core/errors";
-import { resolveExecution } from "../../integrations/agent/execution";
+import { resolveExecution, shippedAlias } from "../../integrations/agent/execution";
 import { checkWorkflowPlan } from "../compile";
 import { defaultMapConcurrency, workflowMaxConcurrency } from "../concurrency-policy";
 import { canonicalJson } from "../ir/plan-hash";
@@ -100,6 +101,7 @@ function resolveJudge(source: FreezeStep, rubric: string, context: ResolutionCon
   const prepared = resolveExecution({
     content: rubric.trim() || "Judge workflow completion.",
     config: context.config,
+    layers: [shippedAlias(SHIPPED_ALIAS.judge)],
     modelWork: true,
   });
   return commandResult(source, { onError: "fail", source: source.source }, prepared, context);

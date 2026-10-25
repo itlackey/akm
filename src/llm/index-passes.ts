@@ -3,10 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { AkmConfig, IndexPassConfig } from "../core/config/config";
+import { SHIPPED_ALIAS } from "../core/config/model-aliases";
 import { ConfigError } from "../core/errors";
 import type { LoweringNotice } from "../execution/resolved-request";
 import { executionDefaultsOf } from "../execution/source";
-import { buildExecution, resolveExecution } from "../integrations/agent/execution";
+import { buildExecution, resolveExecution, shippedAlias } from "../integrations/agent/execution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 
 const NO_LOWERING_NOTICES: readonly Readonly<LoweringNotice>[] = Object.freeze([]);
@@ -32,6 +33,7 @@ export function resolveIndexPassExecution(passName: string, config: AkmConfig): 
       content: "",
       config,
       layers: [
+        shippedAlias(SHIPPED_ALIAS.index),
         {
           id: "index",
           kind: "invocation-defaults",

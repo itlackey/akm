@@ -23,6 +23,7 @@
  */
 
 import type { AkmConfig } from "../../core/config/config-types";
+import type { StandardAlias } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
 import {
   createInlineResolvedCommand,
@@ -61,6 +62,11 @@ export interface ExecutionLayer {
   readonly id: string;
   readonly kind: ExecutionFieldProvenance["kind"];
   readonly values: UnresolvedExecutionDefaults;
+}
+
+/** The farthest layer of a call: the alias its kind of work asks for until something nearer names a model. */
+export function shippedAlias(alias: StandardAlias): ExecutionLayer {
+  return { id: "shipped-alias", kind: "installation", values: { model: alias } };
 }
 
 /** The layer for a call's own flags and arguments: nearer than every other. */

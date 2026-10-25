@@ -358,13 +358,18 @@ describe("a harness", () => {
     expect(harnessFor(configOf({ harnesses: { claude: {} } })).model).toBeUndefined();
   });
 
-  test("an alias it has no model for passes no model, with one notice", () => {
-    const config = configOf({ harnesses: { opencode: {} } });
-    expect(harnessFor(config, [{ model: "fast" }]).model).toBeUndefined();
-    expect(harnessFor(config, [{ model: "fast" }]).model).toBeUndefined();
-    expect(warnings.filter((w) => w.includes('"opencode"') && w.includes('"fast"'))).toHaveLength(1);
+  test("an alias it has no model for passes no model; a harness that maps others says so once", () => {
+    // A harness with no map at all picks its own model whatever is asked.
+    const unmapped = configOf({ harnesses: { opencode: {} } });
+    expect(harnessFor(unmapped, [{ model: "fast" }]).model).toBeUndefined();
+    expect(warnings).toEqual([]);
+
+    const mapped = configOf({ harnesses: { aider: { models: { fast: "f" } } } });
+    expect(harnessFor(mapped, [{ model: "reasoning" }]).model).toBeUndefined();
+    expect(harnessFor(mapped, [{ model: "reasoning" }]).model).toBeUndefined();
+    expect(warnings.filter((w) => w.includes('"aider"') && w.includes('"reasoning"'))).toHaveLength(1);
     // An exact name is not an alias: the harness is handed it.
-    expect(harnessFor(config, [{ model: "anthropic/x" }]).model).toBe("anthropic/x");
+    expect(harnessFor(unmapped, [{ model: "anthropic/x" }]).model).toBe("anthropic/x");
   });
 
   test("its default agent is kept on a platform with native agents and ignored, with a notice, elsewhere", () => {

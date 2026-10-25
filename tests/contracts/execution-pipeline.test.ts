@@ -140,7 +140,7 @@ describe("harnesses: config harness → argv", () => {
     expect(argv).toEqual(["pi", "--model", "provider/exact", "-p", "--", "Plan it."]);
   });
 
-  test("a harness with no model for an alias passes none, and notes it once", () => {
+  test("a harness that maps other aliases but not this one passes none, and notes it once", () => {
     const warnings: string[] = [];
     _resetWarnOnceForTests();
     overrideSeam(_setWarnSinkForTests, (level: string, args: unknown[]) => {
@@ -148,7 +148,7 @@ describe("harnesses: config harness → argv", () => {
     });
     const resolved = resolveExecution({
       content: "Think.",
-      config: config({ harnesses: { pi: {} } }),
+      config: config({ harnesses: { pi: { models: { fast: "provider/small" } } } }),
       layers: [currentLayer({ model: "reasoning" })],
     });
     expect(resolved.request.model).toBeUndefined();

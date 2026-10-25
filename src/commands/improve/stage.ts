@@ -10,6 +10,7 @@
  */
 
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
 import type { EventsContext } from "../../core/events";
 import { thinkingSetting } from "../../core/llm-inference";
@@ -75,7 +76,7 @@ export function stageRunner(
   onNotices?: NoticeSink,
 ): RunnerSpec | undefined {
   if (Object.hasOwn(frozen, "llmRunner")) return frozen.llmRunner ?? undefined;
-  const resolved = resolveImproveExecution({ config, processName });
+  const resolved = resolveImproveExecution({ config, processName, alias: SHIPPED_ALIAS.improve });
   if (resolved) onNotices?.(resolved.notices);
   return resolved?.runner;
 }
@@ -324,6 +325,7 @@ export function resolveQualityGateJudge(
   const resolved = resolveImproveExecution({
     config,
     processName: `${processName}-quality-judge`,
+    alias: SHIPPED_ALIAS.judge,
     process: processName,
     current: gate,
   });
@@ -595,7 +597,7 @@ async function runQualityJudge(
 ): Promise<QualityJudgeResult> {
   const resolved =
     !options.runnerSelectionFrozen && !options.llmRunner
-      ? resolveImproveExecution({ config, processName: `${feature}-judge` })
+      ? resolveImproveExecution({ config, processName: `${feature}-judge`, alias: SHIPPED_ALIAS.judge })
       : null;
   if (resolved) options.onNotices?.(resolved.notices);
   const runner = options.llmRunner ?? resolved?.runner;

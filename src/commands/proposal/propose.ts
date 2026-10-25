@@ -19,6 +19,7 @@ import { placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { generatedContentRejection } from "../../core/content-safety";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -29,7 +30,7 @@ import { resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveEntryProvenance } from "../../indexer/installations";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
-import { buildExecution, currentLayer, resolveExecution } from "../../integrations/agent/execution";
+import { buildExecution, currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
 import {
   type AgentProposalPayload,
   buildProposePrompt,
@@ -147,7 +148,11 @@ async function dispatchProposalPrompt(
     outputSchema: PROPOSAL_JSON_SCHEMA,
   };
   const lower = (content: string) => {
-    const prepared = resolveExecution({ content, config, layers: [currentLayer(current)] });
+    const prepared = resolveExecution({
+      content,
+      config,
+      layers: [shippedAlias(SHIPPED_ALIAS.agent), currentLayer(current)],
+    });
     return { prepared, lowered: buildExecution(prepared.request, prepared.runner) };
   };
   // Resolution and lowering come before the entry event opens durable state; provider and

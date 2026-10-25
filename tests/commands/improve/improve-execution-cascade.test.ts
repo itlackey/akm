@@ -28,7 +28,7 @@ const config = (improve: Record<string, unknown> = {}): AkmConfig =>
 const resolve = (
   improve: Record<string, unknown>,
   options: Partial<Parameters<typeof resolveImproveExecution>[0]> = {},
-) => resolveImproveExecution({ config: config(improve), processName: "reflect", ...options })?.runner;
+) => resolveImproveExecution({ config: config(improve), processName: "reflect", alias: "fast", ...options })?.runner;
 
 /** `improve` with the reflect process saying where it runs. */
 const reflect = (where: Record<string, unknown>, improve: Record<string, unknown> = {}) => ({

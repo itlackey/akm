@@ -79,6 +79,7 @@ import fs from "node:fs";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { makeBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { NotFoundError } from "../../core/errors";
 import {
   applyInputDefaults,
@@ -89,7 +90,7 @@ import {
 } from "../../execution/input-contract";
 import { createInlineResolvedCommand } from "../../execution/resolved-request";
 import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
-import { currentLayer, resolveExecution } from "../../integrations/agent/execution";
+import { currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
 import { isSchedulerRefEnabled } from "../../tasks/activation-config";
 import type { PreparableTaskDocument } from "../../tasks/prepare/prepared-execution";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
@@ -290,6 +291,7 @@ function resolveExecutionSettings(document: PreparableTaskDocument): ExecutionSe
     command: createInlineResolvedCommand({ template: "", content: "" }),
     config: loadConfig(),
     layers: [
+      shippedAlias(SHIPPED_ALIAS.agent),
       { id: "task-explain", kind: "command", values: {} },
       ...(Object.keys(current).length > 0 ? [currentLayer(current)] : []),
     ],

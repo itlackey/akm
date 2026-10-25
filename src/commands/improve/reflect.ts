@@ -24,6 +24,7 @@ import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring
 import { isWithin, resolveStashDir, safeRealpath } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { generatedContentRejection } from "../../core/content-safety";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
@@ -35,7 +36,7 @@ import { resolveStandardsContext } from "../../core/standards/resolve-standards-
 import { warnOnce } from "../../core/warn";
 import { lookup } from "../../indexer/indexer";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
-import { buildExecution, currentLayer, resolveExecution } from "../../integrations/agent/execution";
+import { buildExecution, currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
 import {
   buildReflectOutputRepairPrompt,
   buildReflectPrompt,
@@ -806,11 +807,11 @@ function resolveReflectRunner(options: AkmReflectOptions): {
     lowered = lower({
       content: "reflect engine selection",
       config,
-      layers: [currentLayer({ engine: options.engine })],
+      layers: [shippedAlias(SHIPPED_ALIAS.improve), currentLayer({ engine: options.engine })],
       modelWork: true,
     });
   } else if (options.improveProfile) {
-    const resolved = resolveImproveExecution({ config, processName: "reflect" });
+    const resolved = resolveImproveExecution({ config, processName: "reflect", alias: SHIPPED_ALIAS.improve });
     if (!resolved) {
       throw new ConfigError(
         "Reflect requires a connection or harness for the active improve strategy.",
@@ -820,7 +821,12 @@ function resolveReflectRunner(options: AkmReflectOptions): {
     }
     lowered = resolved;
   } else {
-    lowered = lower({ content: "reflect engine selection", config, modelWork: true });
+    lowered = lower({
+      content: "reflect engine selection",
+      config,
+      layers: [shippedAlias(SHIPPED_ALIAS.improve)],
+      modelWork: true,
+    });
   }
   const runnerSpec = lowered.runner;
   return { config, activeStrategy, runnerSpec, engineName: runnerSpec.name, notices: lowered.notices };
@@ -1212,7 +1218,11 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     } else if (runnerSpec.kind === "connection") {
       judgeRunner = runnerSpec;
     } else {
-      const resolved = resolveImproveExecution({ config, processName: "reflect_proposal_quality-judge" });
+      const resolved = resolveImproveExecution({
+        config,
+        processName: "reflect_proposal_quality-judge",
+        alias: SHIPPED_ALIAS.judge,
+      });
       if (resolved) notices.add(resolved.notices);
       judgeRunner = resolved?.runner;
     }

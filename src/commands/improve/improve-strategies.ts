@@ -14,6 +14,7 @@ import {
   IMPROVE_PROCESS_NAMES,
   REMOVED_IMPROVE_STRATEGY_NAMES,
 } from "../../core/config/engine-semantics";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -343,7 +344,7 @@ function buildImprovePlan(
     // step needs a model, so disabling repair must not create an LLM preflight.
     const skipsRepairEngine = processName === "validation" && options.repairValidationFailures === false;
     if (!skipsRepairEngine) {
-      const resolved = resolveImproveExecution({ config, processName });
+      const resolved = resolveImproveExecution({ config, processName, alias: SHIPPED_ALIAS.improve });
       runner = resolved?.runner ?? null;
       notices = resolved?.notices ?? [];
     }
@@ -390,6 +391,7 @@ function buildImprovePlan(
           config,
           process: "triage",
           processName: "triage-judgment",
+          alias: SHIPPED_ALIAS.judge,
         })
       : null;
   const triageJudgment = triageJudgmentResolution?.runner ?? null;

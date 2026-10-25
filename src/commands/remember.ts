@@ -14,6 +14,7 @@ import { serializeFrontmatter } from "../core/asset/asset-serialize";
 import { DESCRIPTION_MAX_CHARS } from "../core/authoring-rules";
 import { toErrorMessage, tryReadStdinText } from "../core/common";
 import { loadConfig } from "../core/config/config";
+import { SHIPPED_ALIAS } from "../core/config/model-aliases";
 import { ConfigError, UsageError } from "../core/errors";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { DURATION_UNITS, parseDuration as parseDurationSpec } from "../core/time";
@@ -313,7 +314,7 @@ const LLM_ENRICH_TIMEOUT_MS = 10_000;
  */
 export async function runLlmEnrich(body: string): Promise<EnrichmentResult> {
   const config = loadConfig();
-  const resolved = resolveImproveExecution({ config, processName: "remember-enrich" });
+  const resolved = resolveImproveExecution({ config, processName: "remember-enrich", alias: SHIPPED_ALIAS.enrich });
   if (!resolved) {
     warn("Warning: --enrich requires an engine to be configured. Run `akm setup` to configure one.");
     return { tags: [] };

@@ -20,6 +20,7 @@ import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import {
@@ -225,6 +226,7 @@ export function resolveStandaloneExtractPlan(
       ...(Object.hasOwn(selection, "timeoutMs") ? { timeoutMs: selection.timeoutMs ?? null } : {}),
     },
     processName: "extract",
+    alias: SHIPPED_ALIAS.extract,
   });
   if (!resolved) {
     throw new ConfigError(
@@ -1022,7 +1024,7 @@ function resolveExtractRun(
   } else if (options.llmRunner) {
     llmRunner = options.llmRunner;
   } else {
-    const resolved = resolveImproveExecution({ config, processName: "extract" });
+    const resolved = resolveImproveExecution({ config, processName: "extract", alias: SHIPPED_ALIAS.extract });
     llmRunner = resolved?.runner;
     if (resolved) notices.add(resolved.notices);
   }

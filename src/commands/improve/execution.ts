@@ -4,10 +4,11 @@
 
 import type { AkmConfig } from "../../core/config/config";
 import { IMPROVE_ENGINE_PROCESSES } from "../../core/config/engine-semantics";
+import type { StandardAlias } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { type ConfiguredExecutionSettings, executionDefaultsOf } from "../../execution/source";
-import { buildExecution, currentLayer, resolveExecution } from "../../integrations/agent/execution";
+import { buildExecution, currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 
 /** The settings a layer of improve's cascade can carry: where to run, which model, and how. */
@@ -17,6 +18,8 @@ export interface ResolveImproveExecutionOptions {
   config: AkmConfig;
   /** What the call is for. When it names an improve process, `improve.processes.<name>` applies to it. */
   processName: string;
+  /** The alias this kind of call asks for when no layer names a model. */
+  alias: StandardAlias;
   /** The `improve.processes` entry that applies, for a call that is not itself an improve process (a judge). */
   process?: (typeof IMPROVE_ENGINE_PROCESSES)[number];
   /**
@@ -48,6 +51,7 @@ export function resolveImproveExecution(options: ResolveImproveExecutionOptions)
       content: `improve ${options.processName} execution selection`,
       config: options.config,
       layers: [
+        shippedAlias(options.alias),
         { id: "improve", kind: "invocation-defaults", values: executionDefaultsOf(options.config.improve) },
         { id: "index", kind: "invocation-defaults", values: executionDefaultsOf(options.index) },
         {

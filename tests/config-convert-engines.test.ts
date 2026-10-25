@@ -585,13 +585,20 @@ describe("the example configs load unchanged and validate", () => {
   test("3-power.jsonc: triage runs on the anthropic connection's reasoning model, and the quality gate judges on anthropic", () => {
     const raw = JSON.parse(stripJsonComments(fs.readFileSync(path.join(examples, "3-power.jsonc"), "utf8"))) as Dict;
     const config = AkmConfigSchema.parse({ configVersion: "0.9.0", semanticSearchMode: "off", ...raw }) as AkmConfig;
-    const triage = resolveImproveExecution({ config, processName: "triage-judgment", process: "triage" })?.runner;
+    const triage = resolveImproveExecution({
+      config,
+      processName: "triage-judgment",
+      process: "triage",
+      alias: "balanced",
+    })?.runner;
     expect(triage).toMatchObject({ kind: "connection", name: "anthropic", model: "claude-opus-4-7" });
-    const distill = resolveImproveExecution({ config, processName: "distill" })?.runner;
+    const distill = resolveImproveExecution({ config, processName: "distill", alias: "fast" })?.runner;
     expect(distill).toMatchObject({ kind: "connection", name: "default", model: "qwen3-32b" });
+    // Nothing names a model for the gate's judge, so it asks for the shipped judge alias: `balanced`.
     expect(resolveQualityGateJudge(config, undefined, "reflect")).toMatchObject({
       kind: "connection",
       name: "anthropic",
+      model: "claude-sonnet-4-5",
     });
   });
 });

@@ -34,7 +34,7 @@ function configFor(connection: Record<string, unknown>, llm?: Record<string, unk
 }
 
 function resolveReflect(config: AkmConfig) {
-  const resolved = resolveImproveExecution({ config, processName: "reflect" });
+  const resolved = resolveImproveExecution({ config, processName: "reflect", alias: "fast" });
   if (!resolved) throw new Error("no runner resolved");
   return resolved;
 }

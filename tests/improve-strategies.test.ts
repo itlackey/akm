@@ -565,7 +565,7 @@ describe("projectResolvedProcessRouting (#947)", () => {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
         connections: { default: lab },
-        harnesses: { reviewer: { platform: "claude", models: { fast: "review" } } },
+        harnesses: { reviewer: { platform: "claude", models: { balanced: "review" } } },
         improve: {
           processes: { triage: { harness: "reviewer", timeoutMs: null } },
           strategies: { "reflect-distill": strategy(REFLECT_DISTILL) },

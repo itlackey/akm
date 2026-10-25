@@ -4,6 +4,7 @@
 
 import { type AkmConfig, defaultConnection, defaultHarness, type HarnessConfig } from "../core/config/config";
 import { resolveApiKey } from "../core/config/credentials";
+import { modelForEveryAlias } from "../core/config/model-aliases";
 import type { ChatCompletionConfig } from "../llm/client";
 
 /** An OpenAI-compatible connection as setup holds it while it runs: where it is and the model picked for every alias. */
@@ -30,8 +31,6 @@ export function probeConnection(llm: SetupConnection): ChatCompletionConfig {
   const apiKey = resolveApiKey(llm.apiKey, "default");
   return { endpoint: llm.endpoint, model: llm.model, ...(apiKey ? { apiKey } : {}) };
 }
-
-const STANDARD_ALIASES = ["fast", "balanced", "reasoning"] as const;
 
 export function readCurrentLlmEngine(config: AkmConfig): SetupConnection | undefined {
   const found = defaultConnection(config);
@@ -61,7 +60,7 @@ export function writeLlmEngine(config: AkmConfig, llm: SetupConnection | undefin
   const existing = connections[name];
   const models = {
     ...(existing?.models ?? {}),
-    ...Object.fromEntries(STANDARD_ALIASES.map((alias) => [alias, llm.model])),
+    ...modelForEveryAlias(llm.model),
   };
   connections[name] = {
     ...existing,

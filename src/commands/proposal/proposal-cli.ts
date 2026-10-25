@@ -19,6 +19,7 @@ import { parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { UsageError } from "../../core/errors";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { installLlmUsagePersistenceIfAbsent } from "../../llm/usage-persist";
@@ -532,6 +533,7 @@ const proposalDrainCommand = defineJsonCommand({
             config: cfg,
             process: "triage",
             processName: "proposal-triage-judgment",
+            alias: SHIPPED_ALIAS.judge,
           })
         : null;
     const judgment = judgmentResolution?.runner ?? null;

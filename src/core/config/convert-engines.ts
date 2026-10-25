@@ -13,6 +13,7 @@ import { getHarness } from "../../integrations/harnesses";
  */
 import { isRecord } from "../common";
 import { inferenceWireFields, type LlmInference } from "../llm-inference";
+import { modelForEveryAlias } from "./model-aliases";
 import { isEnvReference } from "./schema/primitives";
 
 type Dict = Record<string, unknown>;
@@ -31,7 +32,6 @@ export interface ConvertEnginesResult {
   readonly changed: boolean;
 }
 
-const ALIASES = ["fast", "balanced", "reasoning"] as const;
 const LLM_ENGINE_KEYS = new Set([
   "kind",
   "provider",
@@ -66,7 +66,7 @@ const EXECUTION_KEYS = ["connection", "harness", "model", "llm", "timeoutMs"] as
 
 const str = (value: unknown): string | undefined => (typeof value === "string" && value ? value : undefined);
 const allAliases = (model: string | undefined): Dict | undefined =>
-  model === undefined ? undefined : Object.fromEntries(ALIASES.map((alias) => [alias, model]));
+  model === undefined ? undefined : modelForEveryAlias(model);
 
 /** `holder[key]` as an object, made on `holder` when it is not one yet. */
 function objectAt(holder: Dict, key: string): Dict {

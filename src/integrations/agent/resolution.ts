@@ -24,6 +24,7 @@ import path from "node:path";
 import { type AkmConfig, defaultConnection, defaultHarness } from "../../core/config/config";
 import type { ConnectionConfig, HarnessConfig } from "../../core/config/config-types";
 import { deepMergeConfig } from "../../core/config/deep-merge";
+import { STANDARD_ALIASES } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
 import { inferenceWireFields, type LlmInference } from "../../core/llm-inference";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
@@ -42,9 +43,6 @@ export interface ResolveTargetInput {
   readonly modelWork?: boolean;
   readonly layers: readonly UnresolvedExecutionDefaults[];
 }
-
-/** The aliases every config understands; a connection or harness may add its own. */
-const STANDARD_ALIASES = ["fast", "balanced", "reasoning"];
 
 /** The keys of a connection that akm reads; every other key is a request field. */
 const CONNECTION_OWNED_KEYS = new Set(["endpoint", "apiKey", "models", "contextLength", "timeoutMs", "concurrency"]);
@@ -187,7 +185,7 @@ function selectTarget(input: ResolveTargetInput): Target {
 
 /** Every alias this config knows: the standard ones and any a connection or harness maps. */
 function knownAliases(config: AkmConfig): ReadonlySet<string> {
-  const aliases = new Set(STANDARD_ALIASES);
+  const aliases = new Set<string>(STANDARD_ALIASES);
   for (const entry of [...Object.values(config.connections ?? {}), ...Object.values(config.harnesses ?? {})]) {
     for (const alias of Object.keys(entry.models ?? {})) aliases.add(alias);
   }
@@ -276,10 +274,13 @@ function harnessModel(
   if (Object.hasOwn(own, requested)) return modelName(own[requested] as ModelEntry);
   if (Object.hasOwn(shipped, requested)) return shipped[requested];
   if (!aliases.has(requested)) return requested;
-  warnOnce(
-    `resolution:no-model:${name}:${requested}`,
-    `Harness "${name}" has no model for "${requested}", so it uses its own default. Map one under harnesses.${name}.models.`,
-  );
+  // A harness with no map at all picks its own model whatever is asked; only one that maps others is worth a word.
+  if (Object.keys(own).length > 0 || Object.keys(shipped).length > 0) {
+    warnOnce(
+      `resolution:no-model:${name}:${requested}`,
+      `Harness "${name}" has no model for "${requested}", so it uses its own default. Map one under harnesses.${name}.models.`,
+    );
+  }
   return undefined;
 }
 

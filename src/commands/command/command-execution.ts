@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { AkmConfig } from "../../core/config/config-types";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { UsageError } from "../../core/errors";
 import {
   createInlineResolvedCommand,
@@ -27,6 +28,7 @@ import {
   type ExecutionLayer,
   type ResolvedExecution,
   resolveExecution,
+  shippedAlias,
 } from "../../integrations/agent/execution";
 import { type RunExecutionOptions, runExecution } from "../../integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../integrations/agent/spawn";
@@ -227,6 +229,7 @@ export async function prepareCommandInvocation(
   const persona = renderedPersona ? createResolvedPersona(renderedPersona) : selectedAgent.present ? null : undefined;
 
   const layers: ExecutionLayer[] = [
+    shippedAlias(SHIPPED_ALIAS.agent),
     ...(renderedPersona
       ? [{ id: renderedPersona.identity.ref, kind: "agent" as const, values: renderedPersona.defaults }]
       : []),

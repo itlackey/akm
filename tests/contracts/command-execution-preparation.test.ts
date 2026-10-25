@@ -262,9 +262,11 @@ describe("common command invocation preparation", () => {
     };
 
     const omitted = await wire({});
-    for (const field of ["agent", "persona", "model", "inference", "outputSchema"]) {
+    for (const field of ["agent", "persona", "inference", "outputSchema"]) {
       expect(Object.hasOwn(omitted, field)).toBe(false);
     }
+    // Nothing names a model, so agent work asks for its shipped alias.
+    expect(omitted).toMatchObject({ model: { model: "claude-sonnet-4-6", alias: "balanced" } });
     const cleared = await wire({ model: null, inference: null, outputSchema: null });
     expect(cleared).toMatchObject({ inference: null, outputSchema: null });
     expect(Object.hasOwn(cleared, "model")).toBe(false);
