@@ -118,11 +118,10 @@ export interface JudgmentVerdict {
   reason: string;
 }
 
-/** Test seams for the judgment dispatch (chat, harness and runtime transports). */
+/** Test seams for the judgment dispatch (chat and harness transports). */
 export interface JudgmentSeams {
   chat?: RunExecutionOptions["chat"];
   runAgentFn?: NonNullable<RunExecutionOptions["runAgent"]>;
-  runSdkFn?: NonNullable<RunExecutionOptions["runSdk"]>;
 }
 
 /** A consolidate promotion: a memory proposed as a new knowledge note. The only kind the judgment tier may accept. */
@@ -343,7 +342,6 @@ async function dispatchJudgment(
     notices = lowered.notices;
     const result = await runExecution(lowered, {
       ...(seams.runAgentFn ? { runAgent: seams.runAgentFn } : {}),
-      ...(seams.runSdkFn ? { runSdk: seams.runSdkFn } : {}),
       ...(seams.chat ? { chat: seams.chat } : {}),
     });
     if (!result.ok) return { verdict: null, notices, error: result.error ?? result.reason ?? "unknown error" };

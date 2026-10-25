@@ -9,7 +9,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import path from "node:path";
 import { OpenCode } from "@opencode/sdk";
-import type { LlmConnectionConfig } from "../src/core/config/config";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import {
   _setOpencodeHostFactoryForTests,
@@ -17,6 +16,7 @@ import {
   closeOpencodeSdk,
   runOpencodeSdk,
 } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import type { ChatCompletionConfig } from "../src/llm/client";
 import { type FakeModelServer, startFakeModel } from "./_helpers/fake-model-server";
 import { installFakeOpencodeHost } from "./_helpers/fake-opencode-host";
 import { overrideSeam } from "./_helpers/seams";
@@ -32,7 +32,7 @@ const profile: AgentProfile = {
 };
 
 let model: FakeModelServer;
-let llm: LlmConnectionConfig;
+let llm: ChatCompletionConfig;
 let work: string;
 
 beforeAll(() => {
@@ -195,6 +195,25 @@ describe("runOpencodeSdk", () => {
     } finally {
       fs.rmSync(path.join(config, "opencode.json"));
     }
+  });
+
+  test("the connection's request fields reach the model as written", async () => {
+    const connection: ChatCompletionConfig = {
+      ...llm,
+      request: { top_p: 0.9, chat_template_kwargs: { enable_thinking: false }, reasoning_effort: "low" },
+    };
+    const before = model.requests.length;
+    const result = await runOpencodeSdk(
+      profile,
+      "MODE:answer with request fields",
+      { cwd: work, timeoutMs: 60_000 },
+      connection,
+    );
+    expect(result.ok).toBe(true);
+    const sent = model.requests.slice(before).find((r) => r.mode === "answer");
+    expect(sent?.params.top_p).toBe(0.9);
+    expect(sent?.params.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(sent?.params.reasoning_effort).toBe("low");
   });
 
   test("a turn longer than one page of history is read across pages", async () => {

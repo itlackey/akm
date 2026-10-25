@@ -44,7 +44,7 @@ import {
   type ReflectPromptInput,
 } from "../../integrations/agent/prompts";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { collectDispatchSensitiveValues, type RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
+import { collectDispatchSensitiveValues } from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported, LlmCallError } from "../../llm/client";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import type { EligibilitySource } from "../proposal/proposal-types";
@@ -91,8 +91,6 @@ export interface AkmReflectOptions {
   target?: NonNullable<CreateProposalInput["target"]>;
   /** Test seam: forwarded to the agent spawn. */
   runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
-  /** Test seam: SDK generation without a real SDK server. */
-  runSdk?: RunExecutionOptions["runSdk"];
   /** Test seam: proposal clock / id. */
   ctx?: ProposalsContext;
   /** The improve run's events context (its long-lived state.db handle). */
@@ -391,8 +389,7 @@ export interface RunReflectIterationOptions {
   onNotices?: (notices: readonly Notice[]) => void;
   /** The child process's environment: an agent or SDK engine has one, an LLM does not. */
   environment?: Record<string, string>;
-  /** Test seams: the SDK dispatch, and the agent spawn's operational options. */
-  runSdk?: RunExecutionOptions["runSdk"];
+  /** Test seam: the agent spawn's operational options. */
   runOptions?: AkmReflectOptions["runAgentOptions"];
 }
 
@@ -555,7 +552,6 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
         // Visible chain-of-thought can exhaust the output before the envelope.
         enableThinking: false,
         ...(opts.chat ? { chat: opts.chat } : {}),
-        ...(opts.runSdk ? { runSdk: opts.runSdk } : {}),
         ...(opts.runOptions ? { runOptions: opts.runOptions } : {}),
       },
       ...(opts.environment ? { current: { environment: opts.environment } } : {}),
@@ -949,7 +945,6 @@ async function runReflectRefineIterations(args: {
       ? {}
       : {
           ...(Object.keys(agentEnv).length > 0 ? { environment: agentEnv } : {}),
-          ...(options.runSdk ? { runSdk: options.runSdk } : {}),
           ...(options.runAgentOptions ? { runOptions: options.runAgentOptions } : {}),
         };
   for (let iter = 0; iter < maxRefineIters; iter++) {

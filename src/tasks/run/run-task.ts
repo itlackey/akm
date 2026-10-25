@@ -74,7 +74,6 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
         provenance,
         runAgentImpl: options.runAgentImpl,
         agentOptions: options.agentOptions,
-        chatCompletionImpl: options.chatCompletionImpl,
       });
     }
     options.beforeNativeDispatch?.(task);

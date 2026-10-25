@@ -99,8 +99,11 @@ export function modelConfig(
 ): Record<string, unknown> {
   const model = named ?? llm?.model;
   const merged = inference === null ? undefined : { ...fallbackInference(llm), ...inference };
-  const entry = opencodeModelEntry(merged);
+  const portable = opencodeModelEntry(merged);
   if (llm?.endpoint || llm?.apiKey) {
+    // The connection's request fields, in the endpoint's own spelling, go to the model as written, under the portable settings.
+    const options = { ...llm.request, ...(portable.options as Record<string, unknown> | undefined) };
+    const entry = { ...portable, ...(Object.keys(options).length > 0 ? { options } : {}) };
     const modelId = model?.startsWith("akm-custom/") ? model.slice("akm-custom/".length) : model;
     return {
       ...(modelId ? { model: `akm-custom/${modelId}` } : {}),
@@ -118,12 +121,12 @@ export function modelConfig(
   }
   if (!model) return {};
   const slash = model.indexOf("/");
-  if (slash <= 0 || Object.keys(entry).length === 0) return { model };
+  if (slash <= 0 || Object.keys(portable).length === 0) return { model };
   warnOnce(
     `opencode-sdk-inference-overlay:${model}`,
     `[akm] OpenCode model ${JSON.stringify(model)} comes from your OpenCode config, so akm applies its inference settings (${Object.keys(merged ?? {}).join(", ")}) best effort, and OpenCode may ignore some. Run it through a connection, or set them in your OpenCode config, to apply them reliably.`,
   );
-  return { model, provider: { [model.slice(0, slash)]: { models: { [model.slice(slash + 1)]: entry } } } };
+  return { model, provider: { [model.slice(0, slash)]: { models: { [model.slice(slash + 1)]: portable } } } };
 }
 
 /**

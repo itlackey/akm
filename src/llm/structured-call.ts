@@ -42,7 +42,7 @@ import type { LoweringNotice, ResolvedConversationMessage } from "../execution/r
 import type { UnresolvedExecutionDefaults } from "../execution/source";
 import { buildExecution, resolveExecution } from "../integrations/agent/execution";
 import type { RunnerSpec } from "../integrations/agent/runner";
-import { type RunExecutionOptions, runExecution } from "../integrations/agent/runner-dispatch";
+import { runExecution } from "../integrations/agent/runner-dispatch";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../integrations/agent/spawn";
 import { type ChatCompletionConfig, type ChatMessage, isContextSizeError, LlmCallError } from "./client";
 import {
@@ -95,11 +95,7 @@ export interface CallStructuredRequest {
   /** Override the connection's `enableThinking` for this call. */
   enableThinking?: boolean;
   onRetryAttempt?: () => void;
-  /**
-   * Transport overrides for tests: the SDK dispatch, and the agent spawn's
-   * operational options. Production callers leave them unset.
-   */
-  runSdk?: RunExecutionOptions["runSdk"];
+  /** Test seam: the agent spawn's operational options. Production callers leave it unset. */
   runOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
   /**
    * Transport override for tests. Production callers leave it unset.
@@ -265,7 +261,6 @@ export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise
       const runOptions = { ...request?.runOptions, ...(signal ? { signal } : {}) };
       const result = await runExecution(lowered, {
         ...(request?.chat ? { chat: request.chat } : {}),
-        ...(request?.runSdk ? { runSdk: request.runSdk } : {}),
         ...(request?.onRetryAttempt ? { onRetryAttempt: request.onRetryAttempt } : {}),
         ...(Object.keys(runOptions).length > 0 ? { runOptions } : {}),
       });

@@ -26,7 +26,6 @@ import type { TaskLogLineInput } from "../../core/logs-db";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunAgentOptions } from "../../integrations/agent";
 import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
-import type { chatCompletion } from "../../llm/client";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskV3Command } from "../prepare/prepared-execution";
 import { finishAttempt } from "./attempt-lifecycle";
@@ -41,7 +40,6 @@ export async function runPreparedCommandTask(input: {
   startedAt: Date;
   now: () => Date;
   runAgentImpl?: RunExecutionOptions["runAgent"];
-  chatCompletionImpl?: typeof chatCompletion;
   agentOptions?: Partial<RunAgentOptions>;
   historyReserved: boolean;
   provenance: ExecutionProvenanceContext;
@@ -49,7 +47,6 @@ export async function runPreparedCommandTask(input: {
   const { task, logPath, startedAt, now, agentOptions, provenance } = input;
   const dispatchOptions: DispatchPreparedCommandOptions = {
     ...(input.runAgentImpl ? { runAgent: input.runAgentImpl } : {}),
-    ...(input.chatCompletionImpl ? { chat: input.chatCompletionImpl } : {}),
     ...(agentOptions ? { runOptions: agentOptions } : {}),
     // F-1 (R-07 fix, spec §5.2 point 3): threads the resolved event source
     // into the dispatched engine's child env and the recorded usage events.
