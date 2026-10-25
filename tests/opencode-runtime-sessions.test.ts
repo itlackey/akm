@@ -79,6 +79,15 @@ describe("the runtime host", () => {
     expect(lifecycle.created).toBe(2);
   });
 
+  test("closing waits for a close that something else started", async () => {
+    // Resetting the host factory closes the hosts too, without waiting; a later close must still wait for them.
+    const { lifecycle } = installFakeOpencodeHost({ reply: () => "ok", closeDelayMs: 50 });
+    await run("p");
+    void closeOpencodeSdk();
+    await closeOpencodeSdk();
+    expect(lifecycle.closed).toBe(1);
+  });
+
   test("loads akm's read tools", async () => {
     const { tools } = installFakeOpencodeHost({ reply: () => "ok" });
     await run("p");

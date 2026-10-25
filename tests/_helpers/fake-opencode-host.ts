@@ -63,6 +63,8 @@ export interface FakeOpencodeOptions {
   readonly reply: (call: FakeOpencodeCall) => string | FakeOpencodeReply | Promise<string | FakeOpencodeReply>;
   /** Hold every host's creation until this settles (an in-flight start). */
   readonly ready?: Promise<void>;
+  /** How long closing a host takes. */
+  readonly closeDelayMs?: number;
   /** Called with every session the fake interrupts. */
   readonly onInterrupt?: (sessionID: string) => void | Promise<void>;
 }
@@ -282,6 +284,7 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
         },
       },
       close: async () => {
+        if (options.closeDelayMs) await new Promise((resolve) => setTimeout(resolve, options.closeDelayMs));
         lifecycle.closed += 1;
       },
     };

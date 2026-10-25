@@ -145,9 +145,16 @@ export function hostFor(kind: HostKind): Promise<HostHandle> {
   return handle;
 }
 
+/** Closes in progress, started by whoever: `closeOpencodeSdk` waits for all of them, not only its own. */
+let closing: Promise<void> = Promise.resolve();
+
 /** Close every embedded OpenCode this process started. */
-export async function closeOpencodeSdk(): Promise<void> {
+export function closeOpencodeSdk(): Promise<void> {
   const open = [...hosts.values()];
   hosts.clear();
-  await Promise.all(open.map(async (handle) => (await handle.catch(() => undefined))?.host.close().catch(() => {})));
+  const closed = Promise.all(
+    open.map(async (handle) => (await handle.catch(() => undefined))?.host.close().catch(() => {})),
+  ).then(() => {});
+  closing = Promise.all([closing, closed]).then(() => {});
+  return closing;
 }
