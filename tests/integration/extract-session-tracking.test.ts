@@ -32,6 +32,7 @@ import type {
   SessionRef,
   SessionSummary,
 } from "../../src/integrations/session-logs/types";
+import { _markJsonSchemaUnsupportedForTests } from "../../src/llm/client";
 import {
   type ExtractedSessionRow,
   getExtractedSession,
@@ -74,15 +75,14 @@ function configEnabled(stashDir: string): AkmConfig {
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
     defaultWriteTarget: "stash",
-    engines: {
+    connections: {
       default: {
-        kind: "llm",
         endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test",
-        supportsJsonSchema: true,
+        models: { fast: "test" },
       },
     },
     improve: {
+      strategy: "tracking",
       strategies: {
         // #561 — disable session indexing so chat-call assertions count only the
         // distillation call (session indexing has dedicated coverage elsewhere).
@@ -91,7 +91,6 @@ function configEnabled(stashDir: string): AkmConfig {
         },
       },
     },
-    defaults: { llmEngine: "default", improveStrategy: "tracking" },
   } as AkmConfig;
 }
 
@@ -757,9 +756,9 @@ describe("akmExtract — skip-already-extracted (content-hash)", () => {
     const session = fakeSession("ses_malformed", Date.now());
     const db = openStateDatabase(":memory:");
     const config = configEnabled(stash);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.supportsJsonSchema = false;
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    _markJsonSchemaUnsupportedForTests({ endpoint: connection.endpoint, model: "test-model" });
     const malformed = "PRIVATE_SENTINEL: prose without a JSON object";
     let chatCalls = 0;
 

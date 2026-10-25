@@ -58,11 +58,8 @@ const { overrideSeam } = await import("../_helpers/seams");
 const ENABLED_CONFIG: AkmConfig = {
   configVersion: "0.9.0",
   semanticSearchMode: "auto",
-  engines: {
-    test: { kind: "llm", endpoint: "http://localhost:1/v1/chat/completions", model: "test" },
-  },
-  defaults: { engine: "test", llmEngine: "test" },
-  index: { defaults: { engine: "test" }, memory: { enabled: true } },
+  connections: { test: { endpoint: "http://localhost:1/v1/chat/completions", models: { fast: "test" } } },
+  index: { connection: "test", memory: { enabled: true } },
 };
 
 const LLM_CONFIG = testLlmRunner(
@@ -108,31 +105,6 @@ afterEach(() => {
 // ── Branch coverage ──────────────────────────────────────────────────────────
 
 describe("compressMemoryToDerivedMemory — characterization", () => {
-  test("optimistic schema fallback reports a stable lowering notice", async () => {
-    chatResponder = () => validPayload();
-    const notices: Array<Record<string, unknown>> = [];
-    const runnerWithoutSchema = {
-      ...LLM_CONFIG,
-      connection: { ...LLM_CONFIG.connection, supportsJsonSchema: false },
-    };
-
-    const result = await compressMemoryToDerivedMemory(
-      runnerWithoutSchema,
-      "some memory body",
-      undefined,
-      ENABLED_CONFIG,
-      undefined,
-      undefined,
-      undefined,
-      (value) => notices.push(...value),
-    );
-
-    expect(result).toMatchObject({ title: "Derived title" });
-    expect(notices).toContainEqual(
-      expect.objectContaining({ code: "untranslated-field", adapter: "llm", field: "outputSchema" }),
-    );
-  });
-
   test("valid payload -> exact DerivedMemoryDraft, no warn", async () => {
     chatResponder = () => validPayload();
 

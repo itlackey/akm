@@ -97,12 +97,11 @@ describe("resolveImproveStrategy", () => {
     expect(reflectDistill.config.processes?.proactiveMaintenance?.enabled).toBe(true);
   });
 
-  test("uses defaults.improveStrategy before the built-in default", () => {
+  test("uses improve.strategy before the built-in default", () => {
     const selected = resolveImproveStrategy(undefined, {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
-      defaults: { improveStrategy: "quick" },
-      improve: { strategies: { quick: strategy(QUICK) } },
+      improve: { strategy: "quick", strategies: { quick: strategy(QUICK) } },
     });
     expect(selected.name).toBe("quick");
   });
@@ -216,23 +215,24 @@ describe("shouldSkipRef excludeRefPrefixes (reflect only)", () => {
 });
 
 describe("resolveImprovePlan", () => {
-  const llm = { kind: "llm" as const, endpoint: "https://example.test/v1/chat/completions", model: "base" };
+  const lab = { endpoint: "https://example.test/v1/chat/completions", models: { fast: "base" } };
 
   test("resolves one frozen fallback connection for every enabled process before dispatch", () => {
     const plan = resolveImprovePlan("quick", {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
-      engines: { default: llm, validation: { ...llm, model: "repair" } },
-      defaults: { llmEngine: "default" },
+      connections: { default: lab, validation: { ...lab, models: { fast: "repair" } } },
       improve: {
-        strategies: { quick: strategy(QUICK, { processes: { validation: { enabled: true, engine: "validation" } } }) },
+        strategies: {
+          quick: strategy(QUICK, { processes: { validation: { enabled: true, connection: "validation" } } }),
+        },
       },
     });
 
     expect(plan.strategy.name).toBe("quick");
-    expect(plan.processes.reflect.runner?.engine).toBe("default");
-    expect(plan.processes.validation.runner?.engine).toBe("validation");
-    expect(asLlmRunner(plan.processes.validation.runner).connection.model).toBe("repair");
+    expect(plan.processes.reflect.runner?.name).toBe("default");
+    expect(plan.processes.validation.runner?.name).toBe("validation");
+    expect(asLlmRunner(plan.processes.validation.runner).model).toBe("repair");
     expect(plan.processes.distill).toMatchObject({ enabled: false, runner: null });
     expect(Object.keys(plan.processes).sort()).toEqual([
       "consolidate",
@@ -252,8 +252,7 @@ describe("resolveImprovePlan", () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { default: llm },
-      defaults: { llmEngine: "default" },
+      connections: { default: lab },
       // D8 — `consolidate` and `memoryInference` are only *enabled* when autonomy
       // is opted into; without this the gate disables them and they resolve no
       // runner, which is the gate working rather than the preflight failing.
@@ -275,7 +274,7 @@ describe("resolveImprovePlan", () => {
     };
     const plan = resolveImprovePlan("all", config);
     for (const name of ["reflect", "distill", "consolidate", "memoryInference", "extract", "validation"] as const) {
-      expect(plan.processes[name].runner?.engine).toBe("default");
+      expect(plan.processes[name].runner?.name).toBe("default");
     }
     expect(Object.isFrozen(plan.processes.extract.config.triage)).toBe(true);
     const sourceExtract = config.improve?.strategies?.all?.processes?.extract;
@@ -288,46 +287,33 @@ describe("resolveImprovePlan", () => {
       const plan = resolveImprovePlan("quick", {
         configVersion: "0.9.0",
         semanticSearchMode: "off",
-        engines: {
-          default: {
-            ...llm,
-            apiKey: "$IMPROVE_PLAN_API_KEY",
-          },
-        },
-        defaults: { llmEngine: "default" },
+        connections: { default: { ...lab, apiKey: "$IMPROVE_PLAN_API_KEY" } },
         improve: { strategies: { quick: strategy(QUICK) } },
       });
 
-      expect(asLlmRunner(plan.processes.reflect.runner).credential).toEqual({
-        names: ["IMPROVE_PLAN_API_KEY"],
-        required: true,
-      });
-      expect(asLlmRunner(plan.processes.reflect.runner).connection.apiKey).toBeUndefined();
+      expect(asLlmRunner(plan.processes.reflect.runner).apiKey).toBe("$IMPROVE_PLAN_API_KEY");
       expect(JSON.stringify(plan)).not.toContain("plan-secret-sentinel");
     });
   });
 
-  test("preflights default fallbacks and accepts an agent triage judgment", () => {
+  test("preflights default fallbacks and accepts a harness triage judgment", () => {
     const plan = resolveImprovePlan("reflect-distill", {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
-      engines: {
-        default: llm,
-        reviewer: { kind: "agent", platform: "claude", model: "review" },
-      },
-      defaults: { llmEngine: "default" },
+      connections: { default: lab },
+      harnesses: { reviewer: { platform: "claude", models: { fast: "review" } } },
       improve: {
         strategies: {
           "reflect-distill": strategy(REFLECT_DISTILL, {
-            processes: { triage: { judgment: { engine: "reviewer", timeoutMs: null } } },
+            processes: { triage: { judgment: { harness: "reviewer", timeoutMs: null } } },
           }),
         },
       },
     });
 
-    expect(plan.processes.reflect.runner?.engine).toBe("default");
-    expect(plan.processes.distill.runner?.engine).toBe("default");
-    expect(plan.triageJudgment?.kind).toBe("agent");
+    expect(plan.processes.reflect.runner?.name).toBe("default");
+    expect(plan.processes.distill.runner?.name).toBe("default");
+    expect(plan.triageJudgment?.kind).toBe("harness");
     expect(plan.triageJudgment?.timeoutMs).toBeNull();
   });
 
@@ -335,57 +321,54 @@ describe("resolveImprovePlan", () => {
     const plan = resolveImprovePlan("no-judgment", {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
-      engines: { default: llm },
-      defaults: { llmEngine: "default" },
+      connections: { default: lab },
       improve: { strategies: { "no-judgment": { processes: { triage: { enabled: true } } } } },
     });
 
     expect(plan.triageJudgment).toBeNull();
   });
 
-  test("uses judgment then triage then strategy then defaults.llmEngine precedence", () => {
-    const engines: AkmConfig["engines"] = {
-      default: { ...llm, model: "default" },
-      strategy: { ...llm, model: "strategy" },
-      judgment: { ...llm, model: "judgment" },
-      reviewer: { kind: "agent" as const, platform: "claude", model: "agent-base" },
-    };
+  test("uses judgment then triage then improve-wide then the default by name for the judge", () => {
     const base = {
       configVersion: "0.9.0" as const,
       semanticSearchMode: "auto" as const,
-      engines,
-      defaults: { llmEngine: "default" },
+      connections: {
+        default: { ...lab, models: { fast: "default" } },
+        wide: { ...lab, models: { fast: "wide" } },
+        judgment: { ...lab, models: { fast: "judgment" } },
+      },
+      harnesses: { reviewer: { platform: "claude" as const, models: { fast: "agent-base" } } },
     };
 
     const explicit = resolveImprovePlan("precedence", {
       ...base,
       improve: {
+        connection: "wide",
         strategies: {
           precedence: {
-            engine: "strategy",
             processes: {
               triage: {
                 enabled: true,
-                engine: "reviewer",
-                judgment: { engine: "judgment" },
+                harness: "reviewer",
+                judgment: { connection: "judgment" },
               },
             },
           },
         },
       },
     });
-    expect(explicit.triageJudgment).toMatchObject({ kind: "llm", engine: "judgment" });
+    expect(explicit.triageJudgment).toMatchObject({ kind: "connection", name: "judgment" });
 
     const triage = resolveImprovePlan("precedence", {
       ...base,
       improve: {
+        connection: "wide",
         strategies: {
           precedence: {
-            engine: "strategy",
             processes: {
               triage: {
                 enabled: true,
-                engine: "reviewer",
+                harness: "reviewer",
                 model: "agent-override",
                 judgment: { timeoutMs: null },
               },
@@ -395,59 +378,56 @@ describe("resolveImprovePlan", () => {
       },
     });
     expect(triage.triageJudgment).toMatchObject({
-      kind: "agent",
-      engine: "reviewer",
+      kind: "harness",
+      name: "reviewer",
       timeoutMs: null,
-      profile: { model: "agent-override" },
+      model: "agent-override",
     });
 
-    const strategy = resolveImprovePlan("precedence", {
+    const wide = resolveImprovePlan("precedence", {
       ...base,
       improve: {
-        strategies: {
-          precedence: { engine: "strategy", processes: { triage: { enabled: true, judgment: {} } } },
-        },
+        connection: "wide",
+        strategies: { precedence: { processes: { triage: { enabled: true, judgment: {} } } } },
       },
     });
-    expect(strategy.triageJudgment).toMatchObject({ kind: "llm", engine: "strategy" });
+    expect(wide.triageJudgment).toMatchObject({ kind: "connection", name: "wide" });
 
     const fallback = resolveImprovePlan("precedence", {
       ...base,
       improve: { strategies: { precedence: { processes: { triage: { enabled: true, judgment: {} } } } } },
     });
-    expect(fallback.triageJudgment).toMatchObject({ kind: "llm", engine: "default" });
+    expect(fallback.triageJudgment).toMatchObject({ kind: "connection", name: "default" });
   });
 
-  test("rejects a model-only selection, and an engine that cannot confine the model-work tool policy, before dispatch", () => {
+  test("rejects a model-only selection, and a harness that cannot confine the model-work tool policy, before dispatch", () => {
     expect(() =>
       resolveImprovePlan("quick", {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
         improve: {
-          strategies: { quick: strategy(QUICK, { processes: { reflect: { model: "model-without-engine" } } }) },
+          strategies: { quick: strategy(QUICK, { processes: { reflect: { model: "model-without-connection" } } }) },
         },
       }),
-    ).toThrow('"reflect" requires an engine that is not configured');
+    ).toThrow('"reflect" requires a connection or harness that is not configured');
     expect(() =>
       resolveImprovePlan("quick", {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        engines: { wrong: { kind: "agent", platform: "pi" } },
-        defaults: { llmEngine: "wrong" },
+        harnesses: { wrong: { platform: "pi" } },
         improve: { strategies: { quick: strategy(QUICK) } },
       }),
     ).toThrow("The pi transport cannot enforce the model-work tool policy.");
   });
 
-  test("an agent engine that confines the policy runs model work", () => {
+  test("a harness that confines the policy runs model work", () => {
     const plan = resolveImprovePlan("quick", {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
-      engines: { agent: { kind: "agent", platform: "claude" } },
-      defaults: { llmEngine: "agent" },
+      harnesses: { agent: { platform: "claude" } },
       improve: { strategies: { quick: strategy(QUICK) } },
     });
-    expect(plan.processes.reflect.runner).toMatchObject({ kind: "agent", engine: "agent" });
+    expect(plan.processes.reflect.runner).toMatchObject({ kind: "harness", name: "agent" });
     expect(plan.engineUnavailable).toEqual([]);
   });
 
@@ -458,7 +438,7 @@ describe("resolveImprovePlan", () => {
         semanticSearchMode: "auto",
         improve: { strategies: { quick: strategy(QUICK) } },
       }),
-    ).toThrow('"reflect" requires an engine that is not configured');
+    ).toThrow('"reflect" requires a connection or harness that is not configured');
   });
 
   test("proactiveMaintenance uses no engine, so enabling it alone does not keep a plan with no engine alive (#1129)", () => {
@@ -472,12 +452,10 @@ describe("resolveImprovePlan", () => {
     ).toThrow("No improve process can run");
   });
 
-  test("disables just the processes with no usable LLM engine, instead of aborting the whole plan", () => {
+  test("disables just the processes with no connection or harness, instead of aborting the whole plan", () => {
     const plan = resolveImprovePlan("default", {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
-      engines: { "only-agent": { kind: "agent", platform: "claude", bin: "/bin/true" } },
-      defaults: { engine: "only-agent" },
       experimental: { improveAutonomy: true },
       improve: {
         strategies: {
@@ -499,142 +477,40 @@ describe("resolveImprovePlan", () => {
       (["consolidate", "distill", "memoryInference", "reflect", "validation"] as string[]).sort(),
     );
     for (const item of plan.engineUnavailable) {
-      expect(item.configKey).toBe(`improve.strategies.default.processes.${item.process}.engine`);
-      expect(item.reason).toContain("Set defaults.llmEngine or improve.strategies.default.processes");
+      expect(item.configKey).toBe(`improve.strategies.default.processes.${item.process}.connection`);
+      expect(item.reason).toContain("akm setup");
     }
   });
 
-  test("a resolved but uncredentialed process lands in engineUnavailable naming the engine, not the variable (#957)", () => {
-    const config: AkmConfig = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      engines: {
-        ready: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "ready-model" },
-        private: {
-          kind: "llm",
-          endpoint: "https://example.test/v1/chat/completions",
-          model: "private-model",
-          apiKey: "$PRIVATE_957_TOKEN",
-        },
-      },
-      defaults: { llmEngine: "ready", improveStrategy: "credential-test" },
-      improve: {
-        strategies: {
-          "credential-test": { processes: { reflect: { enabled: true, engine: "private" } } },
-        },
-      },
-    };
-
-    const plan = resolveImprovePlan("credential-test", config, { env: {} });
-
-    expect(plan.processes.reflect.enabled).toBe(false);
-    expect(plan.processes.reflect.runner).toBeNull();
-    const unavailable = plan.engineUnavailable.find((item) => item.process === "reflect");
-    expect(unavailable).toBeDefined();
-    expect(unavailable?.configKey).toBe("improve.strategies.credential-test.processes.reflect.engine");
-    expect(unavailable?.reason).toContain('engine "private"');
-    expect(unavailable?.reason).toContain("$PRIVATE_957_TOKEN");
-    // #800/#957 round 3 — the structurally resolved engine/model still show up
-    // on the engineUnavailable entry even though `runner` stays null; no
-    // contextLength was configured on "private", so it stays unset.
-    expect(unavailable?.engine).toBe("private");
-    expect(unavailable?.model).toBe("private-model");
-    expect(unavailable?.contextLength).toBeUndefined();
-    // Other processes on the credentialed "ready" fallback still run.
-    expect(plan.processes.distill.enabled).toBe(true);
-    expect(plan.processes.distill.runner?.engine).toBe("ready");
-  });
-
-  test("throws the existing all-unavailable ConfigError when credential unavailability alone disables every process (#957)", () => {
-    expect(() =>
-      resolveImprovePlan(
-        "default",
-        {
-          configVersion: "0.9.0",
-          semanticSearchMode: "off",
-          engines: {
-            private: {
-              kind: "llm",
-              endpoint: "https://example.test/v1/chat/completions",
-              model: "private-model",
-              apiKey: "$PRIVATE_ALL_957_TOKEN",
-            },
-          },
-          defaults: { llmEngine: "private" },
-          // The default strategy's deterministic triage needs no engine, so it
-          // is switched off here: the case is every engine-backed process gone.
-          improve: { strategies: { default: { processes: { triage: { enabled: false } } } } },
-        } as AkmConfig,
-        { env: {} },
-      ),
-    ).toThrow("No improve process can run");
-  });
-
-  test("allowAllDisabled returns the plan instead of throwing when credential unavailability alone disables every process (#957 round 2)", () => {
-    const plan = resolveImprovePlan(
-      "default",
-      {
-        configVersion: "0.9.0",
-        semanticSearchMode: "off",
-        engines: {
-          private: {
-            kind: "llm",
-            endpoint: "https://example.test/v1/chat/completions",
-            model: "private-model",
-            apiKey: "$PRIVATE_ALL_957_ALLOW_TOKEN",
-          },
-        },
-        defaults: { llmEngine: "private" },
-        // Deterministic triage needs no engine; switched off (see the case above).
-        improve: { strategies: { default: { processes: { triage: { enabled: false } } } } },
-      } as AkmConfig,
-      { env: {}, allowAllDisabled: true },
-    );
-
-    // Every process that uses an engine is off; proactiveMaintenance (on in `default`) uses none.
-    const { proactiveMaintenance: _selector, ...engineProcesses } = plan.processes;
-    expect(Object.values(engineProcesses).some((process) => process.enabled)).toBe(false);
-    const disabledNames = plan.engineUnavailable.map((item) => item.process).sort();
-    expect(disabledNames).toEqual(["consolidate", "distill", "reflect", "validation"]);
-    for (const item of plan.engineUnavailable) {
-      expect(item.reason).toContain('engine "private"');
-      expect(item.reason).toContain("PRIVATE_ALL_957_ALLOW_TOKEN");
-    }
-  });
-
-  test("does not require a validation engine when repair is disabled", () => {
+  test("does not require a validation connection when repair is disabled", () => {
     const plan = resolveImprovePlan(
       "default",
       {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        engines: { default: llm },
-        defaults: { llmEngine: "default" },
+        connections: { default: lab },
       },
       { repairValidationFailures: false },
     );
-    expect(plan.processes.reflect.runner?.engine).toBe("default");
+    expect(plan.processes.reflect.runner?.name).toBe("default");
     expect(plan.processes.validation).toMatchObject({ enabled: true, runner: null });
   });
 
-  test("an agent triage judgment takes llm overrides as inference it reports untranslated", () => {
+  test("a harness triage judgment takes llm overrides as inference it reports untranslated", () => {
     const plan = resolveImprovePlan("reflect-distill", {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
-      engines: {
-        llm: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "base" },
-        reviewer: { kind: "agent", platform: "claude" },
-      },
-      defaults: { llmEngine: "llm" },
+      connections: { default: lab },
+      harnesses: { reviewer: { platform: "claude" } },
       improve: {
         strategies: {
           "reflect-distill": strategy(REFLECT_DISTILL, {
-            processes: { triage: { judgment: { engine: "reviewer", llm: { temperature: 0 } } } },
+            processes: { triage: { judgment: { harness: "reviewer", llm: { temperature: 0 } } } },
           }),
         },
       },
     });
-    expect(plan.triageJudgment).toMatchObject({ kind: "agent", engine: "reviewer" });
+    expect(plan.triageJudgment).toMatchObject({ kind: "harness", name: "reviewer" });
     expect(plan.triageJudgmentNotices).toContainEqual(
       expect.objectContaining({ code: "untranslated-field", adapter: "claude", field: "inference.temperature" }),
     );
@@ -642,16 +518,17 @@ describe("resolveImprovePlan", () => {
 });
 
 describe("projectResolvedProcessRouting (#947)", () => {
-  const llm = { kind: "llm" as const, endpoint: "https://example.test/v1/chat/completions", model: "base" };
+  const lab = { endpoint: "https://example.test/v1/chat/completions", models: { fast: "base" } };
 
-  test("one row per IMPROVE_PROCESS_NAMES name, engine/model only for resolved llm processes", () => {
+  test("one row per IMPROVE_PROCESS_NAMES name, connection/model only for resolved processes", () => {
     const plan = resolveImprovePlan("quick", {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
-      engines: { default: llm, validation: { ...llm, model: "repair" } },
-      defaults: { llmEngine: "default" },
+      connections: { default: lab, validation: { ...lab, models: { fast: "repair" } } },
       improve: {
-        strategies: { quick: strategy(QUICK, { processes: { validation: { enabled: true, engine: "validation" } } }) },
+        strategies: {
+          quick: strategy(QUICK, { processes: { validation: { enabled: true, connection: "validation" } } }),
+        },
       },
     });
 
@@ -669,7 +546,7 @@ describe("projectResolvedProcessRouting (#947)", () => {
     expect(rows.map((row) => row.process).sort()).toEqual(expectedProcesses.sort());
 
     const reflect = rows.find((row) => row.process === "reflect");
-    expect(reflect).toMatchObject({ enabled: true, engine: "default", model: "base", engineKind: "llm" });
+    expect(reflect).toMatchObject({ enabled: true, engine: "default", model: "base", engineKind: "connection" });
     expect(reflect?.notices).toEqual([]);
 
     const validation = rows.find((row) => row.process === "validation");
@@ -679,17 +556,15 @@ describe("projectResolvedProcessRouting (#947)", () => {
     expect(distill).toMatchObject({ enabled: false });
     expect(distill?.engine).toBeUndefined();
 
-    // No credential-related unavailability and no triage.judgment configured.
+    // Nothing unavailable and no triage.judgment configured.
     expect(rows.every((row) => row.unavailable === undefined)).toBe(true);
     expect(rows.some((row) => row.process === "triage.judgment")).toBe(false);
   });
 
-  test("unresolved engines land in `unavailable` naming the configKey and reason", () => {
+  test("unresolved processes land in `unavailable` naming the configKey and reason", () => {
     const plan = resolveImprovePlan("default", {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
-      engines: { "only-agent": { kind: "agent", platform: "claude", bin: "/bin/true" } },
-      defaults: { engine: "only-agent" },
       experimental: { improveAutonomy: true },
       improve: {
         strategies: {
@@ -702,8 +577,8 @@ describe("projectResolvedProcessRouting (#947)", () => {
     const reflect = rows.find((row) => row.process === "reflect");
     expect(reflect?.enabled).toBe(false);
     expect(reflect?.engine).toBeUndefined();
-    expect(reflect?.unavailable?.configKey).toBe("improve.strategies.default.processes.reflect.engine");
-    expect(reflect?.unavailable?.reason).toContain("Set defaults.llmEngine or improve.strategies.default.processes");
+    expect(reflect?.unavailable?.configKey).toBe("improve.strategies.default.processes.reflect.connection");
+    expect(reflect?.unavailable?.reason).toContain("akm setup");
   });
 
   test("includes a triage.judgment row only when judgment is configured, with its own engineKind", () => {
@@ -711,8 +586,7 @@ describe("projectResolvedProcessRouting (#947)", () => {
       resolveImprovePlan("no-judgment", {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        engines: { default: llm },
-        defaults: { llmEngine: "default" },
+        connections: { default: lab },
         improve: { strategies: { "no-judgment": { processes: { triage: { enabled: true } } } } },
       }),
     );
@@ -722,50 +596,18 @@ describe("projectResolvedProcessRouting (#947)", () => {
       resolveImprovePlan("reflect-distill", {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        engines: {
-          default: llm,
-          reviewer: { kind: "agent", platform: "claude", model: "review" },
-        },
-        defaults: { llmEngine: "default" },
+        connections: { default: lab },
+        harnesses: { reviewer: { platform: "claude", models: { fast: "review" } } },
         improve: {
           strategies: {
             "reflect-distill": strategy(REFLECT_DISTILL, {
-              processes: { triage: { judgment: { engine: "reviewer", timeoutMs: null } } },
+              processes: { triage: { judgment: { harness: "reviewer", timeoutMs: null } } },
             }),
           },
         },
       }),
     );
     const judgmentRow = withJudgment.find((row) => row.process === "triage.judgment");
-    expect(judgmentRow).toMatchObject({ enabled: true, engine: "reviewer", engineKind: "agent" });
-    expect(judgmentRow?.model).toBeUndefined();
-  });
-
-  test("a credential-unavailable process still reports its resolved engine/model, unlike an unconfigured one (#800/#957 round 3)", () => {
-    const plan = resolveImprovePlan(
-      "credential-test",
-      {
-        configVersion: "0.9.0",
-        semanticSearchMode: "off",
-        engines: {
-          private: {
-            kind: "llm",
-            endpoint: "https://example.test/v1/chat/completions",
-            model: "private-model",
-            apiKey: "$PRIVATE_ROUTING_957_TOKEN",
-          },
-        },
-        defaults: { llmEngine: "private" },
-        improve: {
-          strategies: { "credential-test": { processes: { reflect: { enabled: true } } } },
-        },
-      } as AkmConfig,
-      { env: {}, allowAllDisabled: true },
-    );
-
-    const rows = projectResolvedProcessRouting(plan);
-    const reflect = rows.find((row) => row.process === "reflect");
-    expect(reflect).toMatchObject({ enabled: false, engine: "private", model: "private-model", engineKind: "llm" });
-    expect(reflect?.unavailable?.reason).toContain("$PRIVATE_ROUTING_957_TOKEN");
+    expect(judgmentRow).toMatchObject({ enabled: true, engine: "reviewer", engineKind: "harness", model: "review" });
   });
 });

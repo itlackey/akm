@@ -143,12 +143,16 @@ function config(gate: boolean): AkmConfig {
   if (!gate) return quietQualityGateConfig();
   return {
     ...quietQualityGateConfig(),
-    engines: {
-      "fake-agent": { kind: "agent", platform: "claude", bin: "fake-agent" },
-      judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "judge-model" },
+    connections: { judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "judge-model" } } },
+    harnesses: { "fake-agent": { platform: "claude", bin: "fake-agent" } },
+    improve: {
+      strategy: "default",
+      strategies: {
+        default: {
+          processes: { reflect: { qualityGate: { enabled: true } } },
+        },
+      },
     },
-    defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
-    improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
   } as AkmConfig;
 }
 
@@ -163,6 +167,8 @@ async function reflect(
     ref: REF,
     stashDir: storage.stashDir,
     config: config(gate),
+    // Reflect runs on the harness; the judge, with no harness named, on the default connection.
+    engine: "fake-agent",
     assetContent: SOURCE,
     ...(defectFilter ? { defectFilter } : {}),
     runAgentOptions: { spawn: fakeSpawn(reflectReply(patch)) },

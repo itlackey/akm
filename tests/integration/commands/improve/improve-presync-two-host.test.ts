@@ -74,8 +74,8 @@ function setup(): { remote: string; b: string } {
 
 const config = {
   semanticSearchMode: "off",
-  defaults: { improveStrategy: "presync-test" },
   improve: {
+    strategy: "presync-test",
     strategies: {
       "presync-test": {
         processes: Object.fromEntries(

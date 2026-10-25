@@ -32,12 +32,22 @@ function cascadeDefaults(layer: ImproveExecutionLayer | undefined): UnresolvedEx
   };
 }
 
+const TARGET_KEYS = ["connection", "harness", "engine"] as const;
+
+/**
+ * `nearer` over `farther`. A layer that names a connection or harness replaces the
+ * farther layer's choice of one, whichever of the keys either used.
+ */
 function mergeDefaults(
   farther: UnresolvedExecutionDefaults,
   nearer: UnresolvedExecutionDefaults,
 ): UnresolvedExecutionDefaults {
+  const names = TARGET_KEYS.some((key) => nearer[key] !== undefined);
+  const base = names
+    ? Object.fromEntries(Object.entries(farther).filter(([key]) => !(TARGET_KEYS as readonly string[]).includes(key)))
+    : farther;
   return deepMergeConfig(
-    farther as Record<string, unknown>,
+    base as Record<string, unknown>,
     nearer as Record<string, unknown>,
   ) as UnresolvedExecutionDefaults;
 }

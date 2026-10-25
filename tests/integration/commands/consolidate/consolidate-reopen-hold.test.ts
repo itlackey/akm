@@ -67,11 +67,10 @@ beforeEach(() => {
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
     defaultWriteTarget: "stash",
-    engines: {
-      planner: { kind: "llm", endpoint: "https://consolidate.example.test/v1/chat/completions", model: "planner" },
+    connections: {
+      planner: { endpoint: "https://consolidate.example.test/v1/chat/completions", models: { fast: "planner" } },
     },
-    defaults: { llmEngine: "planner", improveStrategy: "default" },
-    improve: { strategies: { default: { processes: { consolidate: { enabled: true } } } } },
+    improve: { strategy: "default", strategies: { default: { processes: { consolidate: { enabled: true } } } } },
   } as AkmConfig;
   for (const dir of ["memories", "knowledge"]) fs.mkdirSync(path.join(stash, dir), { recursive: true });
 });

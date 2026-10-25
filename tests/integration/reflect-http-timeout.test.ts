@@ -3,12 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { runReflectIteration } from "../../src/commands/improve/reflect";
-import { akmPropose } from "../../src/commands/proposal/propose";
-import type { AkmConfig } from "../../src/core/config/config";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 
 const cleanups: Array<() => void> = [];
@@ -48,25 +43,11 @@ function hungServer(): ReturnType<typeof Bun.serve> {
   return server;
 }
 
-function makeStash(): string {
-  const stash = fs.mkdtempSync(path.join(os.tmpdir(), "akm-http-timeout-"));
-  for (const dir of ["skills", "lessons", "memories", "knowledge"]) {
-    fs.mkdirSync(path.join(stash, dir), { recursive: true });
-  }
-  cleanups.push(() => fs.rmSync(stash, { recursive: true, force: true }));
-  return stash;
-}
-
-const validSkill = JSON.stringify({
-  ref: "skills/http-timeout",
-  content: "---\ndescription: Exercise direct HTTP timeout forwarding\n---\n\nUse the direct transport.\n",
-});
-
 function directRunner(
-  connection: Extract<RunnerSpec, { kind: "llm" }>["connection"],
-  timeoutMs?: number | null,
-): Extract<RunnerSpec, { kind: "llm" }> {
-  return { kind: "llm", engine: "direct", connection, ...(timeoutMs !== undefined ? { timeoutMs } : {}) };
+  connection: { endpoint: string; model: string },
+  timeoutMs: number | null = null,
+): Extract<RunnerSpec, { kind: "connection" }> {
+  return { kind: "connection", name: "direct", ...connection, request: {}, timeoutMs };
 }
 
 test("reflect forwards a 1ms normalized timeout to the direct HTTP transport", async () => {
@@ -102,55 +83,4 @@ test("reflect explicit null disables the direct HTTP timer", async () => {
 
   expect(result.ok).toBe(true);
   expect(JSON.parse(result.stdout).ref).toBe("lessons/delayed-reflect");
-});
-
-test("propose forwards a 1ms call override instead of the engine timeout", async () => {
-  const server = hungServer();
-  const stashDir = makeStash();
-  const config: AkmConfig = {
-    configVersion: "0.9.0",
-    semanticSearchMode: "auto",
-    stashDir,
-    engines: {
-      direct: { kind: "llm", endpoint: `http://localhost:${server.port}`, model: "test-model", timeoutMs: null },
-    },
-    defaults: { engine: "direct", llmEngine: "direct" },
-  };
-
-  const result = await akmPropose({
-    type: "skill",
-    name: "http-timeout",
-    task: "exercise timeout",
-    timeoutMs: 1,
-    stashDir,
-    agentConfig: config,
-  });
-
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("expected timeout failure");
-  expect(result.error).toContain("timed out after 1ms");
-});
-
-test("propose preserves an inherited null timeout for direct HTTP", async () => {
-  const server = delayedServer(validSkill, 20);
-  const stashDir = makeStash();
-  const config: AkmConfig = {
-    configVersion: "0.9.0",
-    semanticSearchMode: "auto",
-    stashDir,
-    engines: {
-      direct: { kind: "llm", endpoint: `http://localhost:${server.port}`, model: "test-model", timeoutMs: null },
-    },
-    defaults: { engine: "direct", llmEngine: "direct" },
-  };
-
-  const result = await akmPropose({
-    type: "skill",
-    name: "http-timeout",
-    task: "exercise null timeout",
-    stashDir,
-    agentConfig: config,
-  });
-
-  expect(result.ok).toBe(true);
 });

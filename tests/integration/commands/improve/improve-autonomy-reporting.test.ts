@@ -14,8 +14,8 @@ import { overrideSeam } from "../../../_helpers/seams";
 const config = {
   configVersion: "0.9.0",
   semanticSearchMode: "off",
-  defaults: { improveStrategy: "contradiction-report" },
   improve: {
+    strategy: "contradiction-report",
     strategies: {
       "contradiction-report": {
         processes: {

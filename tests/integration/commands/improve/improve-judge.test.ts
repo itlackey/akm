@@ -56,10 +56,10 @@ describe("akm improve judge", () => {
     try {
       saveConfig({
         semanticSearchMode: "off",
-        engines: {
-          gate: { kind: "llm", endpoint: `http://127.0.0.1:${server.port}/v1/chat/completions`, model: "gate-model" },
+        connections: {
+          gate: { endpoint: `http://127.0.0.1:${server.port}/v1/chat/completions`, models: { fast: "gate-model" } },
         },
-        improve: { strategies: { default: { processes: { reflect: { qualityGate: { engine: "gate" } } } } } },
+        improve: { strategies: { default: { processes: { reflect: { qualityGate: { connection: "gate" } } } } } },
       });
 
       const result = await spawnJudge(
@@ -92,6 +92,6 @@ describe("akm improve judge", () => {
     const result = await spawnJudge(JSON.stringify({ source: "a", candidate: "b" }));
 
     expect(result.code).not.toBe(0);
-    expect(result.stdout + result.stderr).toContain("processes.reflect.qualityGate.engine");
+    expect(result.stdout + result.stderr).toContain("processes.reflect.qualityGate.connection");
   });
 });

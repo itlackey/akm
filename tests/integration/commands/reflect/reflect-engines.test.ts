@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Reflect has one path for every engine kind: an LLM and an agent CLI are each
+ * Reflect has one path for every kind of target: a connection and a harness are each
  * asked for the same JSON reply, the reply is held to the same contract, and an
  * invalid one is repaired once. The contract suite runs every transport; one
  * agent row stands for them here.
@@ -81,10 +81,10 @@ afterEach(() => {
   clearHarnessCalls(bins.dir);
 });
 
-/** One engine kind, and how to see what reached it. */
+/** One kind of target, and how to see what reached it. */
 interface Transport {
   readonly name: string;
-  /** The engine config entry that runs `scenario`. */
+  /** The config entries, named `contract`, that run `scenario`. */
   engine(scenario: string): Record<string, unknown>;
   /** Each dispatch's prompt, in order. */
   prompts(scenario: string): string[];
@@ -95,9 +95,12 @@ interface Transport {
 const LLM: Transport = {
   name: "llm",
   engine: (scenario) => ({
-    kind: "llm",
-    endpoint: `http://127.0.0.1:${llmStub.port}/${scenario}/v1/chat/completions`,
-    model: "stub-model",
+    connections: {
+      contract: {
+        endpoint: `http://127.0.0.1:${llmStub.port}/${scenario}/v1/chat/completions`,
+        models: { fast: "stub-model" },
+      },
+    },
   }),
   prompts: () => llmBodies.map((body) => body.messages.map((message) => message.content).join("\n")),
   nativeSchema: () => llmBodies[0]?.response_format?.json_schema?.schema,
@@ -108,7 +111,7 @@ const claudeCalls = (scenario: string): HarnessCall[] => harnessCalls(path.join(
 
 const CLAUDE: Transport = {
   name: "claude",
-  engine: (scenario) => ({ kind: "agent", platform: "claude", bin: path.join(bins.dir, scenario) }),
+  engine: (scenario) => ({ harnesses: { contract: { platform: "claude", bin: path.join(bins.dir, scenario) } } }),
   prompts: (scenario) => claudeCalls(scenario).map((call) => call.argv.at(-1) ?? ""),
 };
 
@@ -119,9 +122,11 @@ function reflect(transport: Transport, scenario: string, options: Parameters<typ
   const config = {
     configVersion: "0.9.0",
     semanticSearchMode: "off",
-    engines: { contract: transport.engine(scenario) },
-    defaults: { engine: "contract", improveStrategy: "default" },
-    improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } } },
+    ...transport.engine(scenario),
+    improve: {
+      strategy: "default",
+      strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } },
+    },
   } as unknown as AkmConfig;
   return akmReflect({
     ref: REF,

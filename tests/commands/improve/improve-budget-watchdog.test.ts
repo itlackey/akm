@@ -225,8 +225,8 @@ describe("akmImprove whole-run deadline", () => {
     const config = {
       semanticSearchMode: "off",
       stashDir: storage.stashDir,
-      defaults: { improveStrategy: "quiet-test" },
       improve: {
+        strategy: "quiet-test",
         strategies: {
           "quiet-test": {
             processes: {

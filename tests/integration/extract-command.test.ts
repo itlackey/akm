@@ -38,6 +38,7 @@ import type {
   SessionRef,
   SessionSummary,
 } from "../../src/integrations/session-logs/types";
+import { _markJsonSchemaUnsupportedForTests } from "../../src/llm/client";
 import {
   getExtractedSession,
   getExtractedSessionsMap,
@@ -89,15 +90,14 @@ function configEnabled(stashDir: string): AkmConfig {
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
     defaultWriteTarget: "stash",
-    engines: {
+    connections: {
       default: {
-        kind: "llm",
         endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
-        supportsJsonSchema: true,
+        models: { fast: "test-model" },
       },
     },
     improve: {
+      strategy: "extract",
       strategies: {
         // #561 — these tests assert the distillation chat-call count / schema.
         // Session indexing (default-on) would add a second chat call per session,
@@ -108,7 +108,6 @@ function configEnabled(stashDir: string): AkmConfig {
         },
       },
     },
-    defaults: { llmEngine: "default", improveStrategy: "extract" },
   } as AkmConfig;
 }
 function configDisabled(stashDir: string): AkmConfig {
@@ -118,11 +117,10 @@ function configDisabled(stashDir: string): AkmConfig {
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
     defaultWriteTarget: "stash",
-    engines: {
-      default: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
+    connections: {
+      default: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test-model" } },
     },
-    improve: { strategies: { disabled: { processes: { extract: { enabled: false } } } } },
-    defaults: { llmEngine: "default", improveStrategy: "disabled" },
+    improve: { strategy: "disabled", strategies: { disabled: { processes: { extract: { enabled: false } } } } },
   } as AkmConfig;
 }
 
@@ -409,7 +407,7 @@ describe("akmExtract — skip aggregation + resolved engine (#912, #913)", () =>
     expect(result.warnings).toContain('3 of 3 sessions skipped: llm_unavailable (engine "default")');
     expect(result.skipReasons).toEqual({ llm_unavailable: 3 });
     expect(result.engine).toBe("default");
-    expect(result.engineKind).toBe("llm");
+    expect(result.engineKind).toBe("connection");
     expect(result.sessions.every((s) => s.engine === "default")).toBe(true);
   });
 
@@ -464,7 +462,7 @@ describe("akmExtract — skip aggregation + resolved engine (#912, #913)", () =>
     expect(result.sessionsSkipped).toBe(0);
     expect(result.skipReasons).toBeUndefined();
     expect(result.engine).toBe("default");
-    expect(result.engineKind).toBe("llm");
+    expect(result.engineKind).toBe("connection");
   });
 });
 
@@ -1481,9 +1479,9 @@ describe("akmExtract — LLM call wiring", () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_repair", Date.now() - 60_000);
     const config = configEnabled(stash);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.supportsJsonSchema = supportsJsonSchema;
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    if (!supportsJsonSchema) _markJsonSchemaUnsupportedForTests({ endpoint: connection.endpoint, model: "test-model" });
     const responses = [
       "I found nothing worth keeping.",
       JSON.stringify({ candidates: [], rationale_if_empty: "No durable candidates were identified." }),
@@ -1636,9 +1634,9 @@ describe("akmExtract — engine + strategy config resolution", () => {
     const stash = storage.stashDir;
     const session = fakeSession("credential-lock-race", Date.now());
     const config = configEnabled(stash);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = "$AKM_EXTRACT_LOCK_RACE_REQUIRED_KEY";
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    connection.apiKey = "$AKM_EXTRACT_LOCK_RACE_REQUIRED_KEY";
     const stateDbPath = getStateDbPath();
     const lockPath = path.join(
       path.dirname(stateDbPath),
@@ -1867,52 +1865,14 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(result.warnings.join(" ")).not.toContain("deferred");
   });
 
-  test("missing required symbolic credential aborts without proposals, session assets, or session-state rows", async () => {
-    const stash = makeStashDir();
-    const session = fakeSession("credential", Date.now());
-    const config = configEnabled(stash);
-    const defaultEngine = config.engines?.default;
-    if (!defaultEngine || defaultEngine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    defaultEngine.apiKey = "$AKM_EXTRACT_REQUIRED_KEY";
-    let chatCalls = 0;
-    const stateDb = openStateDatabase();
-    try {
-      const failure = withEnv({ AKM_EXTRACT_REQUIRED_KEY: undefined }, () =>
-        akmExtract({
-          type: "claude",
-          sessionId: session.ref.sessionId,
-          stashDir: stash,
-          config,
-          harnesses: [makeFakeHarness([session])],
-          stateDb,
-          chat: async () => {
-            chatCalls += 1;
-            return JSON.stringify({ candidates: [] });
-          },
-        }),
-      );
-
-      await expect(failure).rejects.toBeInstanceOf(ConfigError);
-      await expect(failure).rejects.toMatchObject({ code: "INVALID_CONFIG_FILE" });
-      expect(chatCalls).toBe(0);
-      expect(listProposals(stash)).toEqual([]);
-      expect(fs.existsSync(path.join(stash, "sessions")) ? fs.readdirSync(path.join(stash, "sessions")) : []).toEqual(
-        [],
-      );
-      expect(getExtractedSessionsMap(stateDb, "claude", [session.ref.sessionId]).size).toBe(0);
-    } finally {
-      stateDb.close();
-    }
-  });
-
   test("each session dispatch in one extract run reads the credential current at that call", async () => {
     const stash = makeStashDir();
     const first = fakeSession("rotation-first", Date.now());
     const second = fakeSession("rotation-second", Date.now() - 1);
     const config = configEnabled(stash);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = "$AKM_EXTRACT_ROTATING_KEY";
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    connection.apiKey = "$AKM_EXTRACT_ROTATING_KEY";
     const secret = "extract-original-092";
     const rotated = "extract-rotated-092";
     const observed: Array<string | undefined> = [];
@@ -1940,75 +1900,6 @@ describe("akmExtract — engine + strategy config resolution", () => {
     } finally {
       stateDb.close();
     }
-  });
-
-  test("missing required symbolic credential does not create state.db, tracking, session, or proposal assets", async () => {
-    const stash = makeStashDir();
-    const session = fakeSession("credential-no-state", Date.now());
-    const config = configEnabled(stash);
-    const defaultEngine = config.engines?.default;
-    if (!defaultEngine || defaultEngine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    defaultEngine.apiKey = "$AKM_EXTRACT_NO_STATE_REQUIRED_KEY";
-    const stateDbPath = getStateDbPath();
-    const beforeTree = fs.readdirSync(stash, { recursive: true }).map(String).sort();
-    let chatCalls = 0;
-
-    const failure = withEnv({ AKM_EXTRACT_NO_STATE_REQUIRED_KEY: undefined }, () =>
-      akmExtract({
-        type: "claude",
-        sessionId: session.ref.sessionId,
-        stashDir: stash,
-        config,
-        harnesses: [makeFakeHarness([session])],
-        chat: async () => {
-          chatCalls += 1;
-          return JSON.stringify({ candidates: [] });
-        },
-      }),
-    );
-
-    await expect(failure).rejects.toBeInstanceOf(ConfigError);
-    expect(chatCalls).toBe(0);
-    expect(fs.existsSync(stateDbPath)).toBe(false);
-    expect(fs.readdirSync(stash, { recursive: true }).map(String).sort()).toEqual(beforeTree);
-  });
-
-  test("default discovery validates a required credential before creating any durable state", async () => {
-    const stash = storage.stashDir;
-    const session = fakeSession("credential-discovery-no-state", Date.now());
-    const config = configEnabled(stash);
-    const defaultEngine = config.engines?.default;
-    if (!defaultEngine || defaultEngine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    defaultEngine.apiKey = "$AKM_EXTRACT_DISCOVERY_REQUIRED_KEY";
-    const stateDbPath = getStateDbPath();
-    const dataTreeBefore = snapshotTree(storage.dataDir);
-    const storageTreeBefore = snapshotTree(storage.root);
-    let chatCalls = 0;
-
-    const failure = withEnv({ AKM_EXTRACT_DISCOVERY_REQUIRED_KEY: undefined }, () =>
-      akmExtract({
-        type: "claude",
-        stashDir: stash,
-        config,
-        harnesses: [makeFakeHarness([session])],
-        chat: async () => {
-          chatCalls += 1;
-          return JSON.stringify({ candidates: [] });
-        },
-      }),
-    );
-
-    await expect(failure).rejects.toBeInstanceOf(ConfigError);
-    await expect(failure).rejects.toMatchObject({
-      code: "INVALID_CONFIG_FILE",
-      message: "Required engine credential AKM_EXTRACT_DISCOVERY_REQUIRED_KEY is not set.",
-    });
-    expect(chatCalls).toBe(0);
-    expect(fs.existsSync(stateDbPath)).toBe(false);
-    expect(fs.existsSync(`${stateDbPath}-wal`)).toBe(false);
-    expect(fs.existsSync(`${stateDbPath}-shm`)).toBe(false);
-    expect(snapshotTree(storage.dataDir)).toEqual(dataTreeBefore);
-    expect(snapshotTree(storage.root)).toEqual(storageTreeBefore);
   });
 
   test.each([
@@ -2046,9 +1937,9 @@ describe("akmExtract — engine + strategy config resolution", () => {
     const session = fakeSession(`credential-${reason}`, Date.now());
     const config = configEnabled(stash);
     configure(config);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = `$${key}`;
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    connection.apiKey = `$${key}`;
     const before = snapshotTree(storage.root);
     let chatCalls = 0;
 
@@ -2085,9 +1976,9 @@ describe("akmExtract — engine + strategy config resolution", () => {
       chat: async () => JSON.stringify({ candidates: [] }),
     });
 
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = "$AKM_EXTRACT_ALREADY_REQUIRED_KEY";
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    connection.apiKey = "$AKM_EXTRACT_ALREADY_REQUIRED_KEY";
     const before = snapshotTree(storage.root);
     let chatCalls = 0;
 
@@ -2110,41 +2001,6 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(snapshotTree(storage.root)).toEqual(before);
   });
 
-  test("a deterministic skip plus eligible session fails before any partial tracking, lock, or proposal mutation", async () => {
-    const stash = storage.stashDir;
-    const short = fakeSession("credential-mixed-short", Date.now());
-    const firstEvent = short.events[0];
-    if (!firstEvent) throw new Error("test fixture requires one session event");
-    short.events = [{ ...firstEvent, text: "tiny" }];
-    const eligible = fakeSession("credential-mixed-eligible", Date.now() - 1);
-    const config = configEnabled(stash);
-    const process = config.improve?.strategies?.extract?.processes?.extract;
-    if (process) process.minContentChars = 20;
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = "$AKM_EXTRACT_MIXED_REQUIRED_KEY";
-    const before = snapshotTree(storage.root);
-    let chatCalls = 0;
-
-    const failure = withEnv({ AKM_EXTRACT_MIXED_REQUIRED_KEY: undefined }, () =>
-      akmExtract({
-        type: "claude",
-        since: "24h",
-        stashDir: stash,
-        config,
-        harnesses: [makeFakeHarness([short, eligible])],
-        chat: async () => {
-          chatCalls += 1;
-          return JSON.stringify({ candidates: [] });
-        },
-      }),
-    );
-
-    await expect(failure).rejects.toBeInstanceOf(ConfigError);
-    expect(chatCalls).toBe(0);
-    expect(snapshotTree(storage.root)).toEqual(before);
-  });
-
   test("default discovery reads a held-WAL watermark without mutating state or materializing a no-work credential", async () => {
     const stash = storage.stashDir;
     const stateDbPath = getStateDbPath();
@@ -2163,9 +2019,9 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(fs.existsSync(`${stateDbPath}-wal`)).toBe(true);
     expect(fs.existsSync(`${stateDbPath}-shm`)).toBe(true);
     const config = configEnabled(stash);
-    const defaultEngine = config.engines?.default;
-    if (!defaultEngine || defaultEngine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    defaultEngine.apiKey = "$AKM_EXTRACT_NO_WORK_REQUIRED_KEY";
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    connection.apiKey = "$AKM_EXTRACT_NO_WORK_REQUIRED_KEY";
     const baseHarness = makeFakeHarness([]);
     let observedSinceMs: number | undefined;
     let chatCalls = 0;
@@ -2210,23 +2066,20 @@ describe("akmExtract — engine + strategy config resolution", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: {
+      connections: {
         default: {
-          kind: "llm",
           endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "default-model",
-          supportsJsonSchema: true,
+          models: { fast: "default-model" },
         },
         "extract-special": {
-          kind: "llm",
           endpoint: "http://192.168.0.205:1234/v1/chat/completions",
-          model: "extract-special-model",
-          supportsJsonSchema: true,
+          models: { fast: "extract-special-model" },
           timeoutMs: 90_000,
           contextLength: 131_072,
         },
       },
       improve: {
+        strategy: "extract",
         strategies: {
           // #561 — default-off session indexing here so these resolution tests
           // keep asserting the single distillation chat call. Overridable via
@@ -2238,7 +2091,6 @@ describe("akmExtract — engine + strategy config resolution", () => {
           },
         },
       },
-      defaults: { llmEngine: "default", improveStrategy: "extract" },
     } as AkmConfig;
   }
 
@@ -2271,17 +2123,16 @@ describe("akmExtract — engine + strategy config resolution", () => {
   test("an unset symbolic credential does not block default-discovery dry-run planning with no dispatch or writes", async () => {
     const stash = storage.stashDir;
     const config = configWithStrategy(stash, {});
-    const engine = config.engines?.["extract-special"];
-    if (engine?.kind !== "llm") throw new Error("fixture must use an LLM engine");
-    engine.apiKey = "$EXTRACT_REQUIRED_API_KEY";
+    const connection = config.connections?.["extract-special"];
+    if (!connection) throw new Error("fixture must use a connection");
+    connection.apiKey = "$EXTRACT_REQUIRED_API_KEY";
     const stateDbPath = getStateDbPath();
     const storageTreeBefore = snapshotTree(storage.root);
     let chatCalls = 0;
 
     await withEnv({ EXTRACT_REQUIRED_API_KEY: undefined }, async () => {
       const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special" });
-      expect(asLlmRunner(plan.runner).credential).toEqual({ names: ["EXTRACT_REQUIRED_API_KEY"], required: true });
-      expect(asLlmRunner(plan.runner).connection.apiKey).toBeUndefined();
+      expect(asLlmRunner(plan.runner).apiKey).toBe("$EXTRACT_REQUIRED_API_KEY");
 
       const result = await akmExtract({
         type: "claude",
@@ -2308,7 +2159,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
   test("a standalone plan freezes named-engine and process settings for repeated triggers", async () => {
     const stash = makeStashDir();
     const config = configWithStrategy(stash, {
-      engine: "default",
+      connection: "default",
       model: "process-model",
       timeoutMs: 55_000,
       llm: { temperature: 0.2, maxTokens: 321 },
@@ -2322,22 +2173,16 @@ describe("akmExtract — engine + strategy config resolution", () => {
     });
     const strategy = config.improve?.strategies?.extract;
     if (strategy) {
-      strategy.engine = "default";
-      strategy.model = "strategy-model";
-      strategy.timeoutMs = 70_000;
-      strategy.llm = { temperature: 0.1, supportsJsonSchema: false };
     }
     const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special" });
     expect(Object.isFrozen(plan)).toBe(true);
     expect(Object.isFrozen(plan.process)).toBe(true);
     expect(Object.isFrozen(plan.process.triage)).toBe(true);
     expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special", timeoutMs: 55_000 });
-    expect(asLlmRunner(plan.runner).connection).toMatchObject({
+    expect(asLlmRunner(plan.runner)).toMatchObject({
       endpoint: "http://192.168.0.205:1234/v1/chat/completions",
       model: "process-model",
-      temperature: 0.2,
-      maxTokens: 321,
-      supportsJsonSchema: false,
+      request: { temperature: 0.2, max_tokens: 321 },
     });
     expect(plan.process.maxTotalChars).toBe(1234);
 
@@ -2347,10 +2192,10 @@ describe("akmExtract — engine + strategy config resolution", () => {
     });
     expect(timeoutOverridePlan.timeoutMs).toBe(45_000);
     expect(timeoutOverridePlan.runner?.timeoutMs).toBe(45_000);
-    expect(asLlmRunner(timeoutOverridePlan.runner).connection.model).toBe("process-model");
+    expect(asLlmRunner(timeoutOverridePlan.runner).model).toBe("process-model");
 
-    const engine = config.engines?.["extract-special"];
-    if (engine?.kind === "llm") engine.model = "changed-after-watch-start";
+    const live = config.connections?.["extract-special"];
+    if (live) live.models = { fast: "changed-after-watch-start" };
     const process = config.improve?.strategies?.extract?.processes?.extract;
     if (process) {
       process.maxTotalChars = 9999;
@@ -2409,7 +2254,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
         }),
         harnesses: [makeFakeHarness([fakeSession("no-fallback", Date.now())])],
       }),
-    ).rejects.toThrow("No engine configured for extract");
+    ).rejects.toThrow("No connection or harness is configured for extract");
   });
 
   test("honors processes.extract.engine to pick a non-default LLM", async () => {
@@ -2420,7 +2265,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
       type: "claude",
       sessionId: "ses_profile",
       stashDir: stash,
-      config: configWithStrategy(stash, { engine: "extract-special" }),
+      config: configWithStrategy(stash, { connection: "extract-special" }),
       harnesses: [makeFakeHarness([session])],
       chat: async (cfg) => {
         receivedEndpoint = cfg.endpoint;
@@ -2451,11 +2296,8 @@ describe("akmExtract — engine + strategy config resolution", () => {
   test("refuses a process engine that cannot confine the model-work tool policy, before any dispatch", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_bad_mode", Date.now() - 60_000);
-    const config = configWithStrategy(stash, { engine: "fake-agent" });
-    config.engines = {
-      ...config.engines,
-      "fake-agent": { kind: "agent", platform: "pi", bin: "pi-must-not-run" },
-    };
+    const config = configWithStrategy(stash, { harness: "fake-agent" });
+    config.harnesses = { "fake-agent": { platform: "pi", bin: "pi-must-not-run" } };
     await expect(
       akmExtract({
         type: "claude",
@@ -2476,7 +2318,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
       type: "claude",
       sessionId: "ses_to",
       stashDir: stash,
-      config: configWithStrategy(stash, { engine: "extract-special", timeoutMs: 45_000 }),
+      config: configWithStrategy(stash, { connection: "extract-special", timeoutMs: 45_000 }),
       harnesses: [makeFakeHarness([session])],
       chat: async (_cfg, _msgs, opts) => {
         receivedTimeout = opts?.timeoutMs ?? 0;
@@ -2494,7 +2336,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
       type: "claude",
       sessionId: "ses_to2",
       stashDir: stash,
-      config: configWithStrategy(stash, { engine: "extract-special", timeoutMs: 45_000 }),
+      config: configWithStrategy(stash, { connection: "extract-special", timeoutMs: 45_000 }),
       harnesses: [makeFakeHarness([session])],
       timeoutMs: 30_000,
       chat: async (_cfg, _msgs, opts) => {

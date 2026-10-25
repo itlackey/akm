@@ -98,21 +98,18 @@ function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
   const base: AkmConfig = {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
-    engines: {
+    connections: {
       test: {
-        kind: "llm",
         endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
-        model: "test-model",
+        models: { fast: "test-model" },
       },
     },
-    defaults: { engine: "test", llmEngine: "test" },
-    index: { defaults: { engine: "test" } },
+    index: { connection: "test" },
   };
   return {
     ...base,
     ...overrides,
-    engines: { ...base.engines, ...overrides?.engines },
-    defaults: { ...base.defaults, ...overrides?.defaults },
+    connections: { ...base.connections, ...overrides?.connections },
     index: { ...base.index, ...overrides?.index },
   };
 }

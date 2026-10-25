@@ -41,30 +41,12 @@ function freshEnv(stashDir: string): Record<string, string> {
   };
 }
 
-// A config where the default strategy's "reflect" process is pinned to an
-// engine whose credential is not (and, deliberately, will never be) in the
-// process environment, while `defaults.llmEngine` ("ready") remains fully
-// available — so `resolveImprovePlan` disables just "reflect" instead of
-// hitting the separate ALL-disabled ConfigError.
-function writePartiallyUnavailableConfig(): void {
+// A config with no connection or harness at all: the default strategy's deterministic triage needs none,
+// so the plan resolves, and every process that does need one is unavailable.
+function writeNothingConfiguredConfig(): void {
   writeSandboxConfig({
     configVersion: "0.9.0",
     semanticSearchMode: "off",
-    engines: {
-      ready: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "ready-model" },
-      private: {
-        kind: "llm",
-        endpoint: "https://example.test/v1/chat/completions",
-        model: "private-model",
-        apiKey: "$MISSING_957_CLI_TOKEN",
-      },
-    },
-    defaults: { llmEngine: "ready" },
-    improve: {
-      strategies: {
-        default: { processes: { reflect: { engine: "private" } } },
-      },
-    },
   });
 }
 
@@ -74,7 +56,7 @@ afterEach(() => {
 });
 
 describe("akm improve --require-engines", () => {
-  test("aborts with exit 78 before akmImprove runs, naming the unresolved reference per process", async () => {
+  test("aborts with exit 78 before akmImprove runs, naming each process that has no connection or harness", async () => {
     const stash = makeStashDir();
     disposers.push(stash);
     const fakeAkmImprove = mock(async () => {
@@ -83,16 +65,15 @@ describe("akm improve --require-engines", () => {
     _setAkmImproveForTests(fakeAkmImprove as unknown as typeof akmImprove);
 
     const result = await withEnv(freshEnv(stash.dir), async () => {
-      writePartiallyUnavailableConfig();
+      writeNothingConfiguredConfig();
       return runCliCapture(["improve", "--dry-run", "--require-engines"]);
     });
 
     expect(result.code).toBe(78);
     expect(result.stderr).toContain("--require-engines");
     expect(result.stderr).toContain("reflect");
-    expect(result.stderr).toContain("private");
-    expect(result.stderr).toContain("$MISSING_957_CLI_TOKEN");
-    expect(result.stderr).toContain("is not set in this environment");
+    expect(result.stderr).toContain("improve.strategies.default.processes.reflect.connection");
+    expect(result.stderr).toContain("akm setup");
     expect(fakeAkmImprove).not.toHaveBeenCalled();
   });
 
@@ -101,7 +82,7 @@ describe("akm improve --require-engines", () => {
     disposers.push(stash);
 
     const result = await withEnv(freshEnv(stash.dir), async () => {
-      writePartiallyUnavailableConfig();
+      writeNothingConfiguredConfig();
       return runCliCapture(["improve", "--dry-run"]);
     });
 
@@ -111,17 +92,21 @@ describe("akm improve --require-engines", () => {
       skippedProcesses?: Array<{ process: string; configKey: string; reason: string }>;
     };
     expect(parsed.ok).toBe(true);
-    expect(parsed.skippedProcesses).toEqual([
+    expect(parsed.skippedProcesses).toContainEqual(
       expect.objectContaining({
         process: "reflect",
-        configKey: "improve.strategies.default.processes.reflect.engine",
-        reason: expect.stringContaining('engine "private"'),
+        configKey: "improve.strategies.default.processes.reflect.connection",
+        reason: expect.stringContaining("akm setup"),
       }),
-    ]);
+    );
   });
 });
 
 /** Minimal `ResolvedImprovePlan` fixture: only the fields `collectRequiredEngineTargets` reads. */
+function connectionRunner(name: string, endpoint: string, model: string, extra: Record<string, unknown> = {}) {
+  return { kind: "connection", name, endpoint, model, request: {}, timeoutMs: null, ...extra };
+}
+
 function planWithTargets(
   processes: Record<string, { endpoint: string; model: string; engine: string }>,
 ): ResolvedImprovePlan {
@@ -129,7 +114,7 @@ function planWithTargets(
     processes: Object.fromEntries(
       Object.entries(processes).map(([process, { endpoint, model, engine }]) => [
         process,
-        { enabled: true, config: {}, runner: { kind: "llm", engine, connection: { endpoint, model } } },
+        { enabled: true, config: {}, runner: connectionRunner(engine, endpoint, model) },
       ]),
     ),
     triageJudgment: null,
@@ -157,18 +142,15 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     expect(outcomes.map((o) => o.process).sort()).toEqual(["distill", "reflect"]);
   });
 
-  test("the probe carries the engine's credential, read as a dispatch reads it", async () => {
+  test("the probe carries the connection's credential, read as a dispatch reads it", async () => {
     const plan = {
       processes: {
         reflect: {
           enabled: true,
           config: {},
-          runner: {
-            kind: "llm",
-            engine: "keyed",
-            connection: { endpoint: "https://keyed.example.test/v1", model: "keyed-model" },
-            credential: { names: ["AKM_PROBE_KEY_TEST"], required: true },
-          },
+          runner: connectionRunner("keyed", "https://keyed.example.test/v1", "keyed-model", {
+            apiKey: "$AKM_PROBE_KEY_TEST",
+          }),
         },
       },
     } as unknown as ResolvedImprovePlan;
@@ -192,18 +174,10 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
         reflect: {
           enabled: true,
           config: {},
-          runner: {
-            kind: "llm",
-            engine: "shared",
-            connection: { endpoint: "https://shared.example.test/v1", model: "shared-model" },
-          },
+          runner: connectionRunner("shared", "https://shared.example.test/v1", "shared-model"),
         },
       },
-      triageJudgment: {
-        kind: "llm",
-        engine: "shared",
-        connection: { endpoint: "https://shared.example.test/v1", model: "shared-model" },
-      },
+      triageJudgment: connectionRunner("shared", "https://shared.example.test/v1", "shared-model"),
     } as unknown as ResolvedImprovePlan;
     const probeReachable = mock(async () => ({ reachable: true }));
 
@@ -215,50 +189,36 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     expect(outcomes[0]?.latencyMs).toBe(outcomes[1]?.latencyMs);
   });
 
-  test("an agent engine is checked by its binary, an SDK engine by its LLM fallback only", async () => {
-    const profile = (name: string, bin: string) => ({
-      name,
-      bin,
-      args: [],
-      stdio: "captured",
-      envPassthrough: [],
-      parseOutput: "text",
-    });
+  test("a harness is checked by its binary, a connection by a short completion", async () => {
     const plan = {
       processes: {
         reflect: {
           enabled: true,
           config: {},
-          runner: { kind: "agent", engine: "cc", profile: profile("cc", "claude") },
+          runner: { kind: "harness", name: "cc", platform: "claude", bin: "claude", args: [], timeoutMs: null },
         },
         distill: {
           enabled: true,
           config: {},
-          runner: {
-            kind: "sdk",
-            engine: "sdk",
-            profile: profile("sdk", ""),
-            fallbackConnection: { endpoint: "https://fallback.example.test/v1", model: "fallback-model" },
-          },
+          runner: connectionRunner("lab", "https://lab.example.test/v1", "lab-model"),
         },
       },
       triageJudgment: null,
     } as unknown as ResolvedImprovePlan;
     const probeReachable = mock(async () => ({ reachable: true }));
-    // The SDK engine runs embedded: no binary is looked up for it.
     const onPath = new Set(["claude"]);
     const which = (bin: string) => (onPath.has(bin) ? `/usr/bin/${bin}` : undefined);
 
     const outcomes = await assertRequiredEnginesReachable(plan, probeReachable, which);
 
-    // Only the SDK's LLM fallback is probed over the network.
+    // Only the connection is probed over the network.
     expect(probeReachable).toHaveBeenCalledTimes(1);
     expect(outcomes).toEqual([
       expect.objectContaining({ process: "reflect", engine: "cc", endpoint: "claude", reachable: true }),
       expect.objectContaining({
         process: "distill",
-        engine: "sdk",
-        endpoint: "https://fallback.example.test/v1",
+        engine: "lab",
+        endpoint: "https://lab.example.test/v1",
         reachable: true,
       }),
     ]);
@@ -298,11 +258,7 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
           reflect: {
             enabled: true,
             config: {},
-            runner: {
-              kind: "llm",
-              engine: "busy",
-              connection: { provider: "openai", endpoint, model: "busy-model", timeoutMs: 10_000 },
-            },
+            runner: connectionRunner("busy", endpoint, "busy-model", { timeoutMs: 10_000 }),
           },
         },
         triageJudgment: null,
@@ -318,7 +274,7 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     }
   }, 20_000);
 
-  test("the probe bound is the engine's own timeout, at most two minutes", () => {
+  test("the probe bound is the connection's own timeout, at most two minutes", () => {
     const connection = (timeoutMs?: number | null) =>
       ({
         endpoint: "https://x.example.test/v1",

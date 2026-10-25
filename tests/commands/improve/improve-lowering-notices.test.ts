@@ -27,8 +27,8 @@ test("improve dedupes safe lowering notices through JSON and text output", async
       semanticSearchMode: "off",
       bundles: { stash: { path: stash.dir, writable: true } },
       defaultBundle: "stash",
-      defaults: { improveStrategy: "notices" },
       improve: {
+        strategy: "notices",
         strategies: {
           notices: {
             processes: {
@@ -44,11 +44,10 @@ test("improve dedupes safe lowering notices through JSON and text output", async
           },
         },
       },
-      engines: {
+      connections: {
         dormant: {
-          kind: "llm",
           endpoint: "https://example.test/v1/chat/completions",
-          model: "unused",
+          models: { fast: "unused" },
           apiKey: "$IMPROVE_NOTICE_API_KEY",
         },
       },
@@ -148,8 +147,8 @@ test("dry-run preserves the same plan-owned lowering notices as live output with
       semanticSearchMode: "off",
       bundles: { stash: { path: stash.dir, writable: true } },
       defaultBundle: "stash",
-      defaults: { improveStrategy: "plan-notices", llmEngine: "planner" },
       improve: {
+        strategy: "plan-notices",
         strategies: {
           "plan-notices": {
             processes: {
@@ -168,11 +167,10 @@ test("dry-run preserves the same plan-owned lowering notices as live output with
           },
         },
       },
-      engines: {
+      connections: {
         planner: {
-          kind: "llm",
           endpoint: "https://example.test/v1/chat/completions",
-          model: "unused",
+          models: { fast: "unused" },
           apiKey: "$IMPROVE_PLAN_NOTICE_API_KEY",
         },
       },
@@ -239,7 +237,7 @@ test("dry-run preserves the same plan-owned lowering notices as live output with
     expect(dry.notices).toEqual([
       expect.objectContaining({
         code: "untranslated-field",
-        adapter: "llm",
+        adapter: "connection",
         field: "inference.unsupportedPlannerField",
       }),
     ]);

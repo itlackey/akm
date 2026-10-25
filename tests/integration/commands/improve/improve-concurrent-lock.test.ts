@@ -45,8 +45,8 @@ function writeQuietConfig(configDir: string): void {
     JSON.stringify({
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      defaults: { improveStrategy: "quiet-test" },
       improve: {
+        strategy: "quiet-test",
         strategies: {
           "quiet-test": {
             processes: {

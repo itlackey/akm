@@ -31,8 +31,7 @@ function configWith(
     ...(experimental ? { experimental } : {}),
     ...(withEngine
       ? {
-          engines: { test: { kind: "llm", endpoint: "http://localhost:1/v1/chat/completions", model: "test" } },
-          defaults: { llmEngine: "test" },
+          connections: { test: { endpoint: "http://localhost:1/v1/chat/completions", models: { fast: "test" } } },
         }
       : {}),
   } as Parameters<typeof resolveImprovePlan>[1];
@@ -47,12 +46,12 @@ describe("resolveImprovePlan applies the autonomy gate", () => {
   });
 
   test("autonomy OFF still requires the planner's engine", () => {
-    expect(() => resolveImprovePlan("consolidate", configWith())).toThrow(/requires an engine/);
+    expect(() => resolveImprovePlan("consolidate", configWith())).toThrow(/requires a connection or harness/);
   });
 
   test("autonomy ON does not change the review-only planner's engine requirement", () => {
     expect(() => resolveImprovePlan("consolidate", configWith({ improveAutonomy: true }))).toThrow(
-      /requires an engine/,
+      /requires a connection or harness/,
     );
   });
 

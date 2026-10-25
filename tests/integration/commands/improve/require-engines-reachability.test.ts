@@ -87,14 +87,12 @@ describe("akm improve --require-engines — reachability probe (#957)", () => {
     try {
       saveConfig({
         semanticSearchMode: "off",
-        engines: {
+        connections: {
           gateway: {
-            kind: "llm",
             endpoint: `http://localhost:${server.port}/v1/chat/completions`,
-            model: "gateway-model",
+            models: { fast: "gateway-model" },
           },
         },
-        defaults: { llmEngine: "gateway" },
       });
 
       const result = await spawnImprove(["--require-engines"]);
@@ -109,16 +107,15 @@ describe("akm improve --require-engines — reachability probe (#957)", () => {
     }
   });
 
-  test("a refusing endpoint aborts fast with exit 78, naming the engine and endpoint", async () => {
+  test("a refusing endpoint aborts fast with exit 78, naming the connection and endpoint", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      engines: {
+      connections: {
         // Port 1 is privileged and unbound in every dev/CI sandbox — refuses
         // the connection immediately (ECONNREFUSED), no race with a real
         // listener.
-        dead: { kind: "llm", endpoint: "http://127.0.0.1:1/v1", model: "dead-model" },
+        dead: { endpoint: "http://127.0.0.1:1/v1", models: { fast: "dead-model" } },
       },
-      defaults: { llmEngine: "dead" },
     });
 
     const result = await spawnImprove(["--require-engines"]);
@@ -130,22 +127,21 @@ describe("akm improve --require-engines — reachability probe (#957)", () => {
     expect(result.stderr).toContain("http://127.0.0.1:1/v1");
   }, 20_000);
 
-  test("a hanging endpoint aborts within the engine's own timeout with exit 78, never reaching a full run", async () => {
+  test("a hanging endpoint aborts within the connection's own timeout with exit 78, never reaching a full run", async () => {
     const server = hangingServer();
     try {
       saveConfig({
         semanticSearchMode: "off",
-        engines: {
-          hung: { kind: "llm", endpoint: `http://localhost:${server.port}/v1`, model: "hung-model", timeoutMs: 2_000 },
+        connections: {
+          hung: { endpoint: `http://localhost:${server.port}/v1`, models: { fast: "hung-model" }, timeoutMs: 2_000 },
         },
-        defaults: { llmEngine: "hung" },
       });
 
       const result = await spawnImprove(["--require-engines"]);
 
       expect(result.code).toBe(78);
-      // The probe is bounded by the engine's own timeoutMs (capped at two
-      // minutes), so this 2s engine ends it in a handful of seconds.
+      // The probe is bounded by the connection's own timeoutMs (capped at two
+      // minutes), so this 2s connection ends it in a handful of seconds.
       expect(result.elapsedMs).toBeLessThan(10_000);
       expect(result.stderr).toContain("--require-engines");
       expect(result.stderr).toContain("hung");

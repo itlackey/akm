@@ -53,7 +53,6 @@ beforeEach(() => {
       semanticSearchMode: "off",
       bundles: { stash: { path: storage.stashDir, writable: true } },
       defaultBundle: "stash",
-      defaults: { engine: "test-improve-llm" },
     }),
   );
 });

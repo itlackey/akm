@@ -78,8 +78,8 @@ function cheapConfig(): AkmConfig {
   return {
     configVersion: "0.9.0",
     semanticSearchMode: "off",
-    defaults: { improveStrategy: "probe-test" },
     improve: {
+      strategy: "probe-test",
       strategies: {
         "probe-test": {
           processes: {

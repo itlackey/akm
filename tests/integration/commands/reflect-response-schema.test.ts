@@ -26,14 +26,19 @@ import { akmReflect, REFLECT_JSON_SCHEMA, runReflectIteration } from "../../../s
 import { splitFrontmatter } from "../../../src/commands/improve/reflect-noise";
 import { validateProposal } from "../../../src/commands/proposal/validators/proposals";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
-import type { AkmConfig, LlmProfileConfig } from "../../../src/core/config/config";
+import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { parseAgentProposalPayload, REFLECT_TRUNCATION_MARKER } from "../../../src/integrations/agent/prompts";
-import type { RunnerSpec } from "../../../src/integrations/agent/runner";
-import { _setChatCompletionForTests } from "../../../src/llm/client";
+import {
+  _markJsonSchemaUnsupportedForTests,
+  _resetEndpointSupportTrackersForTests,
+  _setChatCompletionForTests,
+  type ChatCompletionConfig,
+} from "../../../src/llm/client";
 import { quietQualityGateConfig } from "../../_helpers/factories";
+import { testLlmRunner } from "../../_helpers/llm-runner";
 import { type IsolatedAkmStorage, mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 import { overrideSeam } from "../../_helpers/seams";
 
@@ -67,34 +72,37 @@ function makeStashDir(): string {
   return storage.stashDir;
 }
 
-function fakeLlmConnection(): LlmProfileConfig {
+function fakeLlmConnection(): ChatCompletionConfig {
   return {
     endpoint: "http://localhost:11434/v1/chat/completions",
     model: "test-model",
-    supportsJsonSchema: true,
   };
 }
 
-function fakeLlmRunner(): Extract<RunnerSpec, { kind: "llm" }> {
-  return { kind: "llm", engine: "test-llm", connection: fakeLlmConnection() };
+function fakeLlmRunner() {
+  return testLlmRunner(fakeLlmConnection(), "test-llm");
 }
 
-function reflectLlmConfig(connection: LlmProfileConfig = fakeLlmConnection(), apiKey?: string): AkmConfig {
+/**
+ * A config whose only target is a connection. `supportsJsonSchema: false` stands for an endpoint this
+ * process has already seen reject `response_format`, so reflect frames its reply instead.
+ */
+function reflectLlmConfig(
+  options: { apiKey?: string; supportsJsonSchema?: boolean; contextLength?: number } = {},
+): AkmConfig {
+  const connection = fakeLlmConnection();
+  if (options.supportsJsonSchema === false) _markJsonSchemaUnsupportedForTests(connection);
   const base = quietQualityGateConfig();
   return {
     ...base,
-    engines: {
-      ...base.engines,
+    harnesses: undefined,
+    connections: {
       "test-llm": {
-        kind: "llm",
-        ...connection,
-        ...(apiKey ? { apiKey } : {}),
+        endpoint: connection.endpoint,
+        models: { fast: connection.model },
+        ...(options.contextLength !== undefined ? { contextLength: options.contextLength } : {}),
+        ...(options.apiKey ? { apiKey: options.apiKey } : {}),
       },
-    },
-    defaults: {
-      ...base.defaults,
-      engine: "test-llm",
-      llmEngine: "test-llm",
     },
   };
 }
@@ -106,6 +114,7 @@ const framedReply = (patch: Record<string, string | null> = {}, confidence = 0.8
   `AKM_REFLECT_CONFIDENCE: ${confidence}\nAKM_REFLECT_FRONTMATTER_PATCH: ${JSON.stringify({ ...NULL_PATCH, ...patch })}`;
 
 beforeEach(() => {
+  _resetEndpointSupportTrackersForTests();
   overrideSeam(_setChatCompletionForTests, async (config, messages, options) => {
     capturedCalls.push({
       responseSchema: options?.responseSchema,
@@ -195,52 +204,6 @@ describe("REFLECT_JSON_SCHEMA — top-level shape", () => {
 // ── 2. Wiring ───────────────────────────────────────────────────────────────
 
 describe("runReflectIteration — responseSchema is plumbed to chatCompletion", () => {
-  test("missing required symbolic credential remains a hard config failure", async () => {
-    const runner: Extract<RunnerSpec, { kind: "llm" }> = {
-      kind: "llm",
-      engine: "reflect",
-      connection: fakeLlmConnection(),
-      credential: { names: ["AKM_REFLECT_REQUIRED_KEY"], required: true },
-    };
-
-    const failure = withEnv({ AKM_REFLECT_REQUIRED_KEY: undefined }, () =>
-      runReflectIteration({
-        prompt: "test prompt",
-        runner,
-        iteration: 0,
-        outputMode: "json_schema",
-      }),
-    );
-
-    await expect(failure).rejects.toBeInstanceOf(ConfigError);
-    expect(capturedCalls.length).toBe(0);
-  });
-
-  test("full reflect command leaves assets, proposals, and state untouched when a required credential is missing", async () => {
-    const stash = makeStashDir();
-    const sourcePath = path.join(stash, "memories", "credential-boundary.md");
-    const original = "---\ndescription: Credential boundary\n---\n\nOriginal memory body.\n";
-    fs.writeFileSync(sourcePath, original, "utf8");
-    const eventDbPath = path.join(makeTempDir("akm-reflect-required-credential-state-"), "state.db");
-    const defaultStateDbPath = getStateDbPath();
-    await withEnv({ AKM_REFLECT_REQUIRED_KEY: undefined }, async () => {
-      await expect(
-        akmReflect({
-          ref: "memories/credential-boundary",
-          assetContent: original,
-          stashDir: stash,
-          config: reflectLlmConfig(fakeLlmConnection(), "$AKM_REFLECT_REQUIRED_KEY"),
-          eventsCtx: { dbPath: eventDbPath },
-        }),
-      ).rejects.toBeInstanceOf(ConfigError);
-    });
-
-    expect(capturedCalls).toHaveLength(0);
-    expect(fs.readFileSync(sourcePath, "utf8")).toBe(original);
-    expect(fs.existsSync(eventDbPath)).toBe(false);
-    expect(fs.existsSync(defaultStateDbPath)).toBe(false);
-  });
-
   test("direct generation and refinement each read the credential current at that call", async () => {
     const stash = makeStashDir();
     const original = "reflect-direct-original-secret";
@@ -253,7 +216,7 @@ describe("runReflectIteration — responseSchema is plumbed to chatCompletion", 
         ref: "knowledge/direct-rotation",
         assetContent: source,
         stashDir: stash,
-        config: reflectLlmConfig(fakeLlmConnection(), "$AKM_REFLECT_DIRECT_ROTATING_KEY"),
+        config: reflectLlmConfig({ apiKey: "$AKM_REFLECT_DIRECT_ROTATING_KEY" }),
         maxRefineIters: 2,
         chat: async (connection) => {
           observed.push(connection.apiKey);
@@ -562,7 +525,7 @@ describe("akmReflect — direct LLM output recovery", () => {
     const result = await akmReflect({
       ref: "lessons/framed-output",
       stashDir: stash,
-      config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
+      config: reflectLlmConfig({ supportsJsonSchema: false }),
       assetContent: source,
       chat: async (_config, messages, options) => {
         prompts.push(messages.at(-1)?.content ?? "");
@@ -592,7 +555,7 @@ describe("akmReflect — direct LLM output recovery", () => {
     const result = await akmReflect({
       ref: "lessons/repair-output",
       stashDir: stash,
-      config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
+      config: reflectLlmConfig({ supportsJsonSchema: false }),
       assetContent:
         "---\ndescription: Repair malformed direct reflect output once\nwhen_to_use: When the first model response violates its output contract\n---\n\n# Old output\n\nParsing fails permanently.\n",
       chat: async (_config, messages) => {
@@ -622,7 +585,7 @@ describe("akmReflect — direct LLM output recovery", () => {
     const result = await akmReflect({
       ref: "lessons/framed-frontmatter-patch",
       stashDir: stash,
-      config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
+      config: reflectLlmConfig({ supportsJsonSchema: false }),
       assetContent: "---\ntitle: Framed metadata patch\n---\n\n# Existing lesson\n\nMetadata is missing.\n",
       chat: async () => framedReply({ description, when_to_use: whenToUse }, 0.85),
     });
@@ -646,7 +609,7 @@ describe("akmReflect — direct LLM output recovery", () => {
     const result = await akmReflect({
       ref: "lessons/required-framed-patch",
       stashDir: stash,
-      config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
+      config: reflectLlmConfig({ supportsJsonSchema: false }),
       assetContent: "---\ntitle: Required framed patch\n---\n\n# Existing lesson\n\nMetadata is missing.\n",
       chat: async (_config, messages) => {
         calls += 1;
@@ -680,7 +643,7 @@ describe("akmReflect — direct LLM output recovery", () => {
     const result = await akmReflect({
       ref: "lessons/framed-self-refine",
       stashDir: stash,
-      config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
+      config: reflectLlmConfig({ supportsJsonSchema: false }),
       maxRefineIters: 2,
       assetContent:
         "---\ndescription: Preserve framed prior drafts during self refinement\nwhen_to_use: When direct reflect runs multiple semantic iterations\n---\n\n# Existing draft\n\nRefine this guidance.\n",
@@ -715,7 +678,7 @@ describe("akmReflect — direct LLM output recovery", () => {
       const result = await akmReflect({
         ref: "knowledge/invalid-confidence",
         stashDir: stash,
-        config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
+        config: reflectLlmConfig({ supportsJsonSchema: false }),
         assetContent:
           "---\ndescription: Reject invalid direct reflect confidence values\n---\n\n# Existing confidence guidance\n\nValidate confidence strictly.\n",
         chat: async () => {
@@ -771,7 +734,7 @@ describe("akmReflect — direct LLM output recovery", () => {
       const result = await akmReflect({
         ref: "lessons/double-failure",
         stashDir: stash,
-        config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema }),
+        config: reflectLlmConfig({ supportsJsonSchema }),
         assetContent:
           "---\ndescription: Stop after one failed response repair attempt\nwhen_to_use: When a model repeatedly violates the output contract\n---\n\n# Old failure\n\nRetry forever.\n",
         chat: async () => {
@@ -802,7 +765,7 @@ describe("akmReflect — direct LLM output recovery", () => {
     const result = await akmReflect({
       ref: "lessons/shared-repair-budget",
       stashDir: stash,
-      config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
+      config: reflectLlmConfig({ supportsJsonSchema: false }),
       maxRefineIters: 2,
       assetContent:
         "---\ndescription: Share one output repair across refinement iterations\nwhen_to_use: When semantic refinement is configured for direct reflect\n---\n\n# Existing body\n\nDo not multiply repair attempts.\n",
@@ -827,7 +790,7 @@ describe("akmReflect — direct LLM output recovery", () => {
     const result = await akmReflect({
       ref: "lessons/aborted-repair",
       stashDir: stash,
-      config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
+      config: reflectLlmConfig({ supportsJsonSchema: false }),
       assetContent: "# Existing body\n\nKeep the existing body after cancellation.\n",
       signal: controller.signal,
       chat: async () => {
@@ -849,7 +812,7 @@ describe("akmReflect — direct LLM output recovery", () => {
     const result = await akmReflect({
       ref: "lessons/expired-repair",
       stashDir: stash,
-      config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
+      config: reflectLlmConfig({ supportsJsonSchema: false }),
       assetContent: "# Existing body\n\nKeep the existing body after timeout.\n",
       timeoutMs: 0,
       chat: async () => {
@@ -868,7 +831,7 @@ describe("akmReflect — direct LLM output recovery", () => {
     const stash = makeStashDir();
     let reflectCalls = 0;
     let judgeCalls = 0;
-    const config = reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false });
+    const config = reflectLlmConfig({ supportsJsonSchema: false });
     const processes = config.improve?.strategies?.default?.processes;
     if (!processes) throw new Error("quiet quality-gate fixture is missing the default process config");
     processes.reflect = { qualityGate: { enabled: true } };
@@ -935,7 +898,6 @@ describe("akmReflect — content budget is context-aware on the direct-LLM path"
   test("a large configured engines.<name>.contextLength sends the full asset instead of truncating at the flat 12k cap", async () => {
     const stash = makeStashDir();
     const config = reflectLlmConfig({
-      ...fakeLlmConnection(),
       supportsJsonSchema: false,
       // Comfortably large: even after halving the usable window to reserve
       // room for the response (see the next test), this must still fit the
@@ -971,7 +933,6 @@ describe("akmReflect — content budget is context-aware on the direct-LLM path"
     // that the reflect rewrite's own output gets a reserved half rather than
     // the request consuming the entire context window on input alone.
     const config = reflectLlmConfig({
-      ...fakeLlmConnection(),
       supportsJsonSchema: false,
       contextLength: 16_000,
     });
@@ -996,7 +957,7 @@ describe("akmReflect — content budget is context-aware on the direct-LLM path"
 
   test("an unconfigured contextLength still truncates around the flat 12k floor", async () => {
     const stash = makeStashDir();
-    const config = reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false });
+    const config = reflectLlmConfig({ supportsJsonSchema: false });
     let capturedPrompt = "";
     const result = await akmReflect({
       ref: "knowledge/large-asset-default",

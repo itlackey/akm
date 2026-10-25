@@ -98,8 +98,8 @@ function childPath(name: string): string {
 function config(): AkmConfig {
   return {
     semanticSearchMode: "off",
-    engines: { index: { kind: "llm", endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "scripted" } },
-    index: { defaults: { engine: "index" } },
+    connections: { index: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "scripted" } } },
+    index: { connection: "index" },
   };
 }
 
@@ -168,15 +168,14 @@ describe("a successful no-change decision", () => {
     writeMemory("note", TOOL_COUNT_NOTE);
     const keyed: AkmConfig = {
       semanticSearchMode: "off",
-      engines: {
+      connections: {
         index: {
-          kind: "llm",
           endpoint: "http://127.0.0.1:1/v1/chat/completions",
-          model: "scripted",
+          models: { fast: "scripted" },
           apiKey: "$AKM_NOCHANGE_REQUIRED_KEY",
         },
       },
-      index: { defaults: { engine: "index" } },
+      index: { connection: "index" },
     };
     await withDb(async (db) => {
       // First run has the credential and records the decision.

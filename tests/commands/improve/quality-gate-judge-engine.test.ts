@@ -1,15 +1,21 @@
 /**
  * 0.9.23: a quality gate may name its own judge (#1011), the judge thinks only
- * when that engine enables thinking, and memory inference uses the configured
+ * when that connection enables thinking, and memory inference uses the configured
  * temperature (0.1 only when nothing sets one).
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { resolveImprovePlan } from "../../../src/commands/improve/improve-strategies";
-import { resolveQualityGateJudge, runReflectQualityJudge } from "../../../src/commands/improve/stage";
+import {
+  buildReflectJudgePrompt,
+  resolveQualityGateJudge,
+  runReflectQualityJudge,
+} from "../../../src/commands/improve/stage";
 import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
 import { validateConfigShape } from "../../../src/core/config/config-schema";
 import { ConfigError } from "../../../src/core/errors";
-import { resolveEngine } from "../../../src/integrations/agent/engine-resolution";
 import { compressMemoryToDerivedMemory } from "../../../src/llm/memory-infer";
 import {
   clearLlmUsageSink,
@@ -17,30 +23,28 @@ import {
   setLlmUsageSink,
   withLlmStage,
 } from "../../../src/llm/usage-telemetry";
-import { installFakeOpencodeHost } from "../../_helpers/fake-opencode-host";
 import { asLlmRunner } from "../../_helpers/llm-runner";
 import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
 
 beforeEach(() => fakeOpencodeMajor(1));
 
-function config(engines: Record<string, unknown> = {}): AkmConfig {
+function config(extra: Record<string, unknown> = {}, connections: Record<string, unknown> = {}): AkmConfig {
   return {
     semanticSearchMode: "auto",
     stashDir: "/tmp/does-not-matter",
     sources: [],
     defaultWriteTarget: "stash",
-    engines: {
-      default: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "gen-model" },
+    connections: {
+      default: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "gen-model" } },
       judge: {
-        kind: "llm",
         endpoint: "http://localhost:11435/v1/chat/completions",
-        model: "judge-model",
-        enableThinking: true,
+        models: { fast: "judge-model" },
+        chat_template_kwargs: { enable_thinking: true },
       },
-      agent: { kind: "agent", platform: "claude", bin: "fake-agent" },
-      ...engines,
+      ...connections,
     },
-    defaults: { llmEngine: "default" },
+    harnesses: { agent: { platform: "claude", bin: "fake-agent" } },
+    ...extra,
   } as unknown as AkmConfig;
 }
 
@@ -58,24 +62,29 @@ describe("resolveQualityGateJudge (#1011)", () => {
     ).toBeUndefined();
   });
 
-  test("qualityGate.engine selects that engine for the judge", () => {
+  test("qualityGate.connection selects that connection for the judge", () => {
     const runner = resolveQualityGateJudge(
       config(),
-      strategy({ reflect: { qualityGate: { engine: "judge" } } }),
+      strategy({ reflect: { qualityGate: { connection: "judge" } } }),
       "reflect",
     );
-    expect(runner?.engine).toBe("judge");
-    expect(asLlmRunner(runner).connection.model).toBe("judge-model");
+    expect(runner?.name).toBe("judge");
+    expect(asLlmRunner(runner).model).toBe("judge-model");
   });
 
-  test("qualityGate.llm alone keeps the process's engine and overrides its settings", () => {
+  test("qualityGate.llm alone keeps the process's connection and overrides its settings", () => {
     const runner = resolveQualityGateJudge(
-      config({ other: { kind: "llm", endpoint: "http://localhost:11436/v1/chat/completions", model: "other-model" } }),
-      strategy({ distill: { engine: "other", llm: { temperature: 0.3 }, qualityGate: { llm: { temperature: 0.5 } } } }),
+      config(
+        {},
+        { other: { endpoint: "http://localhost:11436/v1/chat/completions", models: { fast: "other-model" } } },
+      ),
+      strategy({
+        distill: { connection: "other", llm: { temperature: 0.3 }, qualityGate: { llm: { temperature: 0.5 } } },
+      }),
       "distill",
     );
-    expect(runner?.engine).toBe("other");
-    expect(asLlmRunner(runner).connection.temperature).toBe(0.5);
+    expect(runner?.name).toBe("other");
+    expect(asLlmRunner(runner).request.temperature).toBe(0.5);
   });
 
   test("an explicit timeoutMs: null names a judge too", () => {
@@ -84,72 +93,84 @@ describe("resolveQualityGateJudge (#1011)", () => {
       strategy({ reflect: { qualityGate: { timeoutMs: null } } }),
       "reflect",
     );
-    expect(runner?.engine).toBe("default");
+    expect(runner?.name).toBe("default");
+    expect(runner?.timeoutMs).toBeNull();
   });
 
   test("a gate that is off names no judge, whatever else it sets", () => {
     expect(
       resolveQualityGateJudge(
         config(),
-        strategy({ reflect: { qualityGate: { enabled: false, engine: "agent" } } }),
+        strategy({ reflect: { qualityGate: { enabled: false, harness: "agent" } } }),
         "reflect",
       ),
     ).toBeUndefined();
   });
 
-  test("the judge may be an agent engine that confines the model-work tool policy", () => {
+  test("the judge may be a harness that confines the model-work tool policy", () => {
     const runner = resolveQualityGateJudge(
       config(),
-      strategy({ reflect: { qualityGate: { engine: "agent" } } }),
+      strategy({ reflect: { qualityGate: { harness: "agent" } } }),
       "reflect",
     );
-    expect(runner).toMatchObject({ kind: "agent", engine: "agent" });
+    expect(runner).toMatchObject({ kind: "harness", name: "agent" });
   });
 
-  test("a gate that resolves to no engine at all fails instead of falling back", () => {
-    const noDefault = { ...config(), defaults: {} } as AkmConfig;
+  test("a gate that resolves to no connection or harness at all fails instead of falling back", () => {
+    const nothing = config({ harnesses: undefined, connections: undefined });
     expect(() =>
-      resolveQualityGateJudge(noDefault, strategy({ reflect: { qualityGate: { model: "judge-model" } } }), "reflect"),
+      resolveQualityGateJudge(nothing, strategy({ reflect: { qualityGate: { model: "judge-model" } } }), "reflect"),
     ).toThrow(ConfigError);
   });
 });
 
-describe("qualityGate.engine is checked when the config loads", () => {
-  function gateEngineErrors(engine: string): string[] {
+describe("a quality gate's judge is checked when it resolves, not when the config loads", () => {
+  const reviewers = {
+    judge: { endpoint: "http://localhost:11435/v1/chat/completions", models: { fast: "judge-model" } },
+  };
+
+  function gateErrors(gate: Record<string, unknown>): string[] {
     const result = validateConfigShape({
       configVersion: "0.9.0",
-      engines: {
-        judge: { kind: "llm", endpoint: "http://localhost:11435/v1/chat/completions", model: "judge-model" },
-        reviewer: { kind: "agent", platform: "pi" },
-        confined: { kind: "agent", platform: "claude" },
-      },
-      improve: { strategies: { custom: { processes: { reflect: { qualityGate: { engine } } } } } },
+      connections: reviewers,
+      harnesses: { reviewer: { platform: "pi" }, confined: { platform: "claude" } },
+      improve: { strategies: { custom: { processes: { reflect: { qualityGate: gate } } } } },
     });
     return result.ok ? [] : result.errors.map((issue) => `${issue.path}: ${issue.message}`);
   }
 
-  test("an LLM engine, or an agent that confines the model-work tool policy, is accepted", () => {
-    expect(gateEngineErrors("judge")).toEqual([]);
-    expect(gateEngineErrors("confined")).toEqual([]);
+  test("any name loads: a harness that cannot confine the policy, or one that is not configured", () => {
+    expect(gateErrors({ connection: "judge" })).toEqual([]);
+    expect(gateErrors({ harness: "confined" })).toEqual([]);
+    expect(gateErrors({ harness: "reviewer" })).toEqual([]);
+    expect(gateErrors({ connection: "missing" })).toEqual([]);
   });
 
-  test("an agent that cannot confine the policy, or a missing engine, is rejected", () => {
-    const path = "improve.strategies.custom.processes.reflect.qualityGate.engine";
-    expect(gateEngineErrors("reviewer")).toEqual([
-      `${path}: engine "reviewer" (platform pi) cannot confine the model-work tool policy, which unattended model work requires. Use an LLM engine, or an agent engine on claude or opencode-sdk.`,
-    ]);
-    expect(gateEngineErrors("missing")).toEqual([`${path}: engine does not name a configured engine`]);
+  test("a harness that cannot confine the policy is refused when the judge resolves", () => {
+    const cfg = config({ harnesses: { reviewer: { platform: "pi" } } });
+    expect(() =>
+      resolveQualityGateJudge(cfg, strategy({ reflect: { qualityGate: { harness: "reviewer" } } }), "reflect"),
+    ).toThrow("The pi transport cannot enforce the model-work tool policy.");
+  });
+
+  test("a connection that is not configured uses the default one", () => {
+    const runner = resolveQualityGateJudge(
+      config(),
+      strategy({ reflect: { qualityGate: { connection: "missing" } } }),
+      "reflect",
+    );
+    expect(runner?.name).toBe("default");
   });
 });
 
-describe("the judge thinks only when its own engine enables thinking", () => {
-  test("a judge engine with enableThinking: true asks for thinking", async () => {
+describe("the judge thinks only when its own connection enables thinking", () => {
+  test("a judge connection that enables thinking asks for thinking", async () => {
     const llmRunner = resolveQualityGateJudge(
       config(),
-      strategy({ reflect: { qualityGate: { engine: "judge" } } }),
+      strategy({ reflect: { qualityGate: { connection: "judge" } } }),
       "reflect",
     );
-    if (!llmRunner) throw new Error("expected the judge engine to resolve");
+    if (!llmRunner) throw new Error("expected the judge connection to resolve");
     let thinking: boolean | undefined;
     await runReflectQualityJudge(
       config(),
@@ -165,28 +186,38 @@ describe("the judge thinks only when its own engine enables thinking", () => {
     expect(thinking).toBe(true);
   });
 
-  test("a judge on an opencode-sdk runner runs; its thinking comes from the provider fallback", async () => {
-    const cfg = config({
-      "sdk-judge": { kind: "agent", platform: "opencode-sdk", llmEngine: "judge" },
-    });
-    installFakeOpencodeHost({ reply: () => PASSING_VERDICT });
-    const result = await runReflectQualityJudge(cfg, "candidate", "source", [], undefined, {
-      llmRunner: resolveEngine("sdk-judge", cfg),
-    });
-    expect(result.pass).toBe(true);
-  });
+  test("a judge on a harness gets the asset's ref and the tool rules; the plain judge gets neither", async () => {
+    const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "akm-judge-harness-"));
+    try {
+      const argvPath = path.join(sandbox, "argv.bin");
+      const bin = path.join(sandbox, "judge-claude");
+      fs.writeFileSync(
+        bin,
+        [
+          "#!/bin/sh",
+          `printf '%s\\0' "$@" > '${argvPath}'`,
+          `printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":${JSON.stringify(PASSING_VERDICT).replaceAll("'", "")},"session_id":"j"}'`,
+        ].join("\n"),
+        "utf8",
+      );
+      fs.chmodSync(bin, 0o755);
+      const cfg = config({ harnesses: { agent: { platform: "claude", bin } } });
+      const llmRunner = resolveQualityGateJudge(
+        cfg,
+        strategy({ reflect: { qualityGate: { harness: "agent" } } }),
+        "reflect",
+      );
+      const result = await runReflectQualityJudge(cfg, "candidate", "source", [], undefined, {
+        llmRunner,
+        ref: "knowledge/x",
+      });
+      expect(result.pass).toBe(true);
+      const sent = fs.readFileSync(argvPath).toString("utf8");
+      expect(sent).toContain("Tools: The asset is `knowledge/x`: read it with akm_show");
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true });
+    }
 
-  test("a judge on an agent engine gets the asset's ref and the tool rules; the plain judge gets neither", async () => {
-    const cfg = config({
-      "sdk-judge": { kind: "agent", platform: "opencode-sdk", llmEngine: "judge" },
-    });
-    const { calls } = installFakeOpencodeHost({ reply: () => PASSING_VERDICT });
-    await runReflectQualityJudge(cfg, "candidate", "source", [], undefined, {
-      llmRunner: resolveEngine("sdk-judge", cfg),
-      ref: "knowledge/x",
-    });
-    const sent = calls.map((call) => call.prompt).join("\n");
-    expect(sent).toContain("Tools: The asset is `knowledge/x`: read it with akm_show");
     let plain = "";
     await runReflectQualityJudge(config(), "candidate", "source", [], async (_connection, messages) => {
       plain = messages.map((m) => m.content).join("\n");
@@ -194,6 +225,7 @@ describe("the judge thinks only when its own engine enables thinking", () => {
     });
     expect(plain).toContain("Return ONLY valid JSON");
     expect(plain).not.toContain("Tools:");
+    expect(buildReflectJudgePrompt("candidate", "source", [])).not.toContain("Tools:");
   });
 
   test("otherwise the judge keeps thinking off, as before", async () => {
@@ -213,13 +245,13 @@ describe("a judge's usage is credited to the engine that served it", () => {
     clearLlmUsageSink();
   });
 
-  test("inside a stage planned on another engine", async () => {
+  test("inside a stage planned on another connection", async () => {
     const llmRunner = resolveQualityGateJudge(
       config(),
-      strategy({ reflect: { qualityGate: { engine: "judge" } } }),
+      strategy({ reflect: { qualityGate: { connection: "judge" } } }),
       "reflect",
     );
-    if (!llmRunner) throw new Error("expected the judge engine to resolve");
+    if (!llmRunner) throw new Error("expected the judge connection to resolve");
     globalThis.fetch = (async () =>
       new Response(JSON.stringify({ choices: [{ message: { content: PASSING_VERDICT } }] }), {
         status: 200,
@@ -246,16 +278,18 @@ describe("memory inference uses the configured temperature", () => {
     globalThis.fetch = originalFetch;
   });
 
-  async function temperatureSent(engineTemperature?: number, processTemperature?: number): Promise<unknown> {
+  async function temperatureSent(connectionTemperature?: number, processTemperature?: number): Promise<unknown> {
     const cfg = {
-      ...config({
-        default: {
-          kind: "llm",
-          endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "gen-model",
-          ...(engineTemperature === undefined ? {} : { temperature: engineTemperature }),
+      ...config(
+        {},
+        {
+          default: {
+            endpoint: "http://localhost:11434/v1/chat/completions",
+            models: { fast: "gen-model" },
+            ...(connectionTemperature === undefined ? {} : { temperature: connectionTemperature }),
+          },
         },
-      }),
+      ),
       // Memory inference is an autonomy lane: off unless improveAutonomy is on.
       experimental: { improveAutonomy: true },
       improve: {
@@ -273,7 +307,7 @@ describe("memory inference uses the configured temperature", () => {
     } as AkmConfig;
     // The runner improve hands memory inference.
     const runner = resolveImprovePlan("default", cfg).processes.memoryInference.runner;
-    if (!runner || runner.kind !== "llm") throw new Error("expected an LLM runner for memory inference");
+    if (!runner || runner.kind !== "connection") throw new Error("expected a connection runner for memory inference");
     let body: Record<string, unknown> | undefined;
     globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
       body = JSON.parse(String(init?.body));
@@ -287,15 +321,15 @@ describe("memory inference uses the configured temperature", () => {
     return body?.temperature;
   }
 
-  test("0.1 when neither the engine nor the process sets a temperature", async () => {
+  test("0.1 when neither the connection nor the process sets a temperature", async () => {
     expect(await temperatureSent()).toBe(0.1);
   });
 
-  test("the engine's temperature when it sets one", async () => {
+  test("the connection's temperature when it sets one", async () => {
     expect(await temperatureSent(0.4)).toBe(0.4);
   });
 
-  test("the process's llm.temperature over the engine's", async () => {
+  test("the process's llm.temperature over the connection's", async () => {
     expect(await temperatureSent(0.4, 0.6)).toBe(0.6);
   });
 });

@@ -60,10 +60,8 @@ function config() {
     semanticSearchMode: "off" as const,
     bundles: { stash: { path: storage.stashDir } },
     defaultBundle: "stash",
-    engines: {
-      memory: { kind: "llm" as const, endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "scripted" },
-    },
-    index: { defaults: { engine: "memory" } },
+    connections: { memory: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "scripted" } } },
+    index: { connection: "memory" },
   };
 }
 const parentFile = () => path.join(storage.stashDir, "memories", "tunnel.md");

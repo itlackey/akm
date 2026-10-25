@@ -390,6 +390,11 @@ export function _resetEndpointSupportTrackersForTests(): void {
   maxCompletionTokensConnections.clear();
 }
 
+/** TEST-ONLY. Mark a connection as one this process has seen reject `response_format: json_schema`. */
+export function _markJsonSchemaUnsupportedForTests(config: Pick<ChatCompletionConfig, "endpoint" | "model">): void {
+  jsonSchemaUnsupportedConnections.add(connectionKey(config as ChatCompletionConfig));
+}
+
 /**
  * Whether this connection has already been proven, this process, not to
  * support `response_format: json_schema`. Callers choosing a prompt-framing

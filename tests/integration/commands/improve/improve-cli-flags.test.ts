@@ -43,10 +43,7 @@ function spawnImprove(args: string[], stashDir: string): { status: number; stdou
     JSON.stringify({
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: {
-        test: { kind: "llm", endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "test" },
-      },
-      defaults: { llmEngine: "test" },
+      connections: { test: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "test" } } },
     }),
   );
   const result = spawnSync("bun", [cliPath, ...args], {

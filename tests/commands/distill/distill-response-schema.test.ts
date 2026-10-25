@@ -45,14 +45,14 @@ function configEnabled(stashDir: string): AkmConfig {
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
     defaultWriteTarget: "stash",
-    engines: {
+    connections: {
       default: {
-        kind: "llm",
         endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
+        models: { fast: "test-model" },
       },
     },
     improve: {
+      strategy: "test",
       strategies: {
         // Quality gate OFF: these tests exercise the structured-output chat seam
         // round-trip, not the LLM-as-judge. The gate defaults ON and fails CLOSED
@@ -60,7 +60,6 @@ function configEnabled(stashDir: string): AkmConfig {
         test: { processes: { distill: { enabled: true, qualityGate: { enabled: false } } } },
       },
     },
-    defaults: { llmEngine: "default", improveStrategy: "test" },
   };
 }
 

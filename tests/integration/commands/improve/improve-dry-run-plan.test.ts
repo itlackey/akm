@@ -361,16 +361,14 @@ describe("#800 effective dry-run planner", () => {
     const config = withImproveAutonomy(
       withTestImproveLlm({
         semanticSearchMode: "off",
-        engines: {
+        connections: {
           "consolidate-engine-a": {
-            kind: "llm",
             endpoint: "http://127.0.0.1:1/v1/chat/completions",
-            model: "model-a",
+            models: { fast: "model-a" },
           },
           "consolidate-engine-b": {
-            kind: "llm",
             endpoint: "http://127.0.0.1:1/v1/chat/completions",
-            model: "model-b",
+            models: { fast: "model-b" },
           },
         },
         improve: {
@@ -379,7 +377,7 @@ describe("#800 effective dry-run planner", () => {
               processes: {
                 reflect: { enabled: true, limit: 4 },
                 distill: { enabled: false },
-                consolidate: { enabled: true, engine: "consolidate-engine-a" },
+                consolidate: { enabled: true, connection: "consolidate-engine-a" },
                 memoryInference: { enabled: false },
                 extract: { enabled: false },
                 validation: { enabled: false },
@@ -387,7 +385,7 @@ describe("#800 effective dry-run planner", () => {
                 proactiveMaintenance: { enabled: false },
               },
             },
-            alt: { processes: { consolidate: { engine: "consolidate-engine-b" } } },
+            alt: { processes: { consolidate: { connection: "consolidate-engine-b" } } },
           },
         },
       } as AkmConfig),
@@ -408,7 +406,7 @@ describe("#800 effective dry-run planner", () => {
     expect(defaultRun.plan?.mode).toBe("estimate");
 
     const reflectRow = defaultRun.plan?.processes.find((row) => row.process === "reflect");
-    expect(reflectRow).toMatchObject({ enabled: true, engine: "test-improve-llm", model: "test-model" });
+    expect(reflectRow).toMatchObject({ enabled: true, engine: "default", model: "test-model" });
     expect(Array.isArray(reflectRow?.notices)).toBe(true);
     expect(reflectRow?.eligibleRefs).toBe(defaultRun.plan?.effectiveRefs.length);
 
@@ -703,33 +701,24 @@ describe("#800 effective dry-run planner", () => {
     });
   });
 
-  // #800/#957 — once the shared "planner" engine's credential is unavailable,
-  // the enabled "consolidate" override loses its runner (folded into
-  // `engineUnavailable`), which used to trip the "no improve process can run"
-  // guard even on a dry run that never dispatches (#958). `--dry-run`/`--plan`
-  // now passes `allowAllDisabled` so the guard returns the plan instead of
-  // throwing, and the credential-unavailable process carries its structurally
-  // resolved engine/model/contextLength on its `engineUnavailable` entry so
-  // this preview can still show them without ever materializing the
-  // credential. "reflect" is disabled here so exactly one process
-  // (consolidate) is unavailable.
-  test("consolidation preview reads frozen context length without materializing a required credential", async () => {
+  // #800 — a dry run never dispatches, so it never reads the connection's key: the preview
+  // reads the frozen context length from the connection and plans consolidation without a
+  // network call, whether or not the key variable is set.
+  test("consolidation preview reads frozen context length without dispatching or reading a key", async () => {
     const { stashDir } = isolatedStorage();
     const credentialName = "AKM_800_CONSOLIDATION_PLAN_KEY";
     const config = plannerConfig({
       reflect: { enabled: false },
       consolidate: { enabled: true, maxChunkSize: 50 },
     });
-    config.engines = {
+    config.connections = {
       planner: {
-        kind: "llm",
         endpoint: "https://example.test/v1/chat/completions",
-        model: "planner",
+        models: { fast: "planner" },
         contextLength: 8_000,
         apiKey: `$${credentialName}`,
       },
     };
-    config.defaults = { ...config.defaults, llmEngine: "planner" };
     config.index = { enrichment: { enabled: false } };
     for (let i = 0; i < 3; i++) writeMemory(stashDir, `credential-free-${i}`);
     saveConfig(config);
@@ -747,23 +736,17 @@ describe("#800 effective dry-run planner", () => {
     );
 
     expect(networkCalls).toBe(0);
-    // The credential is unavailable, so this dry run now reports consolidate
-    // as skipped rather than reporting it as runnable.
-    expect(result.plan?.consolidation.wouldRun).toBe(false);
-    expect(result.skippedProcesses).toHaveLength(1);
-    expect(result.skippedProcesses?.[0]?.process).toBe("consolidate");
-    expect(result.skippedProcesses?.[0]?.reason).toContain(`$${credentialName}`);
-    // The preview still reads the resolved context length without
-    // materializing the credential.
+    expect(result.plan?.consolidation.wouldRun).toBe(true);
+    expect(result.skippedProcesses ?? []).toEqual([]);
     expect(result.plan?.consolidation.effective.chunkSize).toBe(computeSafeChunkSize(8_000, 500, 50));
     const consolidateRow = result.plan?.processes.find((row) => row.process === "consolidate");
     expect(consolidateRow).toMatchObject({
       process: "consolidate",
-      enabled: false,
+      enabled: true,
       engine: "planner",
       model: "planner",
     });
-    expect(consolidateRow?.unavailable).toBeDefined();
+    expect(consolidateRow?.unavailable).toBeUndefined();
     expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual(result.plannedRefs);
   });
 

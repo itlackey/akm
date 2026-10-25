@@ -57,8 +57,8 @@ function writeMemory(name: string, body: string): void {
 function triageEnabledConfig(enabled: boolean): AkmConfig {
   return {
     semanticSearchMode: "off",
-    defaults: { improveStrategy: "triage-test" },
     improve: {
+      strategy: "triage-test",
       strategies: {
         "triage-test": {
           processes: {

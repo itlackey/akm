@@ -61,12 +61,12 @@ const PATCH = { description: "NEW_MARKER How to rotate the WireGuard VPN key" };
 function config(): AkmConfig {
   return {
     ...quietQualityGateConfig(),
-    engines: {
-      "fake-agent": { kind: "agent", platform: "claude", bin: "fake-agent" },
-      judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "judge-model" },
+    connections: { judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "judge-model" } } },
+    harnesses: { "fake-agent": { platform: "claude", bin: "fake-agent" } },
+    improve: {
+      strategy: "default",
+      strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
     },
-    defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
-    improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
   } as AkmConfig;
 }
 
@@ -93,6 +93,8 @@ describe("reflect after a judge pass", () => {
       ref: "knowledge/vpn-rotation",
       stashDir: storage.stashDir,
       config: config(),
+      // Reflect runs on the harness; the judge, with no harness named, on the default connection.
+      engine: "fake-agent",
       assetContent: OLD,
       runAgentOptions: { spawn: fakeSpawn(reflectReply(PATCH)) },
       chat: async (_connection: unknown, messages: ChatMessage[]) => {

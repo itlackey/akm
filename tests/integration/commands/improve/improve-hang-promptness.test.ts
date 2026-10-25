@@ -109,10 +109,7 @@ const REFLECT_ONLY_STRATEGIES = {
 function configureHungEngine(port: number): void {
   saveConfig({
     semanticSearchMode: "off",
-    engines: {
-      hung: { kind: "llm", endpoint: `http://localhost:${port}/v1`, model: "hung-model" },
-    },
-    defaults: { llmEngine: "hung" },
+    connections: { hung: { endpoint: `http://localhost:${port}/v1`, models: { fast: "hung-model" } } },
     improve: { strategies: REFLECT_ONLY_STRATEGIES },
   });
 }
@@ -173,10 +170,7 @@ function configureSlowPrepassFastEngine(embedPort: number, chatPort: number): vo
   saveConfig({
     semanticSearchMode: "auto",
     embedding: { endpoint: `http://localhost:${embedPort}/v1`, model: "slow-embed-model" },
-    engines: {
-      fast: { kind: "llm", endpoint: `http://localhost:${chatPort}/v1`, model: "fast-model" },
-    },
-    defaults: { llmEngine: "fast" },
+    connections: { fast: { endpoint: `http://localhost:${chatPort}/v1`, models: { fast: "fast-model" } } },
     improve: { strategies: REFLECT_ONLY_STRATEGIES },
   });
 }

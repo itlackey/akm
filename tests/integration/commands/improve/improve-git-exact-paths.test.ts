@@ -27,8 +27,8 @@ afterEach(() => {
 
 const config = {
   semanticSearchMode: "off",
-  defaults: { improveStrategy: "exact-paths-test" },
   improve: {
+    strategy: "exact-paths-test",
     strategies: {
       "exact-paths-test": {
         processes: Object.fromEntries(

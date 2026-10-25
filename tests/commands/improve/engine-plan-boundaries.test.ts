@@ -14,10 +14,9 @@ import { akmReflect } from "../../../src/commands/improve/reflect";
 import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
 import { makeStashDir, withMockedFetch } from "../../_helpers/sandbox";
 
-const llm = (model: string) => ({
-  kind: "llm" as const,
+const lab = (model: string) => ({
   endpoint: "https://example.test/v1/chat/completions",
-  model,
+  models: { fast: model },
 });
 
 function disabledProcesses(overrides: Record<string, unknown> = {}): ImproveProfileConfig["processes"] {
@@ -36,7 +35,7 @@ function disabledProcesses(overrides: Record<string, unknown> = {}): ImproveProf
   } as ImproveProfileConfig["processes"];
 }
 
-describe("improve engine-plan boundaries", () => {
+describe("improve plan boundaries", () => {
   test("a missing fallback fails before index or stash side effects", async () => {
     const ensureIndexFn = mock(async () => undefined);
     await expect(
@@ -51,7 +50,7 @@ describe("improve engine-plan boundaries", () => {
         },
         ensureIndexFn,
       }),
-    ).rejects.toThrow("require an engine that is not configured");
+    ).rejects.toThrow("require a connection or harness that is not configured");
     expect(ensureIndexFn).not.toHaveBeenCalled();
   });
 
@@ -67,8 +66,7 @@ describe("improve engine-plan boundaries", () => {
         semanticSearchMode: "off",
         bundles: { stash: { path: stash.dir, writable: true } },
         defaultBundle: "stash",
-        defaults: { improveStrategy: "structural" },
-        improve: { strategies: { structural: { processes: disabledProcesses() } } },
+        improve: { strategy: "structural", strategies: { structural: { processes: disabledProcesses() } } },
       };
       const resolvedPlan = resolveImprovePlan("structural", config, { repairValidationFailures: false });
       const result = await runImprovePreparationStage({
@@ -102,11 +100,10 @@ describe("improve engine-plan boundaries", () => {
         configVersion: "0.9.0",
         stashDir: stash.dir,
         semanticSearchMode: "off",
-        engines: { repair: llm("repair-model") },
-        defaults: { llmEngine: "repair" },
+        connections: { repair: lab("repair-model") },
         improve: {
           strategies: {
-            repair: { processes: disabledProcesses({ validation: { enabled: true, engine: "repair" } }) },
+            repair: { processes: disabledProcesses({ validation: { enabled: true, connection: "repair" } }) },
           },
         },
       };
@@ -148,14 +145,14 @@ describe("improve engine-plan boundaries", () => {
         semanticSearchMode: "off",
         bundles: { stash: { path: stash.dir, writable: true } },
         defaultBundle: "stash",
-        engines: { consolidate: llm("contradiction-model") },
+        connections: { consolidate: lab("contradiction-model") },
         improve: {
           strategies: {
             contradictions: {
               processes: disabledProcesses({
                 consolidate: {
                   enabled: true,
-                  engine: "consolidate",
+                  connection: "consolidate",
                   contradictionDetection: { enabled: true },
                 },
               }),
@@ -188,7 +185,7 @@ describe("improve engine-plan boundaries", () => {
     }
   });
 
-  test("reflect dispatches through its frozen named-engine config when live config changes", async () => {
+  test("reflect dispatches through its frozen named-connection config when live config changes", async () => {
     const stash = makeStashDir();
     try {
       const memoryDir = path.join(stash.dir, "memories");
@@ -199,31 +196,31 @@ describe("improve engine-plan boundaries", () => {
         semanticSearchMode: "off",
         bundles: { stash: { path: stash.dir, writable: true } },
         defaultBundle: "stash",
-        engines: { reflect: llm("reflect-model"), distill: llm("distill-model") },
+        connections: { reflect: lab("reflect-model"), distill: lab("distill-model") },
         improve: {
           strategies: {
             split: {
               processes: disabledProcesses({
                 reflect: {
                   enabled: true,
-                  engine: "reflect",
+                  connection: "reflect",
                   model: "process-model",
                   allowedTypes: ["memory"],
                 },
-                distill: { enabled: true, engine: "distill", allowedTypes: ["memory"] },
+                distill: { enabled: true, connection: "distill", allowedTypes: ["memory"] },
               }),
             },
           },
         },
       };
       const plan = resolveImprovePlan("split", config, { repairValidationFailures: false });
-      const reflectEngine = config.engines?.reflect;
-      const distillEngine = config.engines?.distill;
-      if (reflectEngine?.kind === "llm") reflectEngine.model = "changed-reflect-model";
-      if (distillEngine?.kind === "llm") distillEngine.model = "changed-distill-model";
+      const reflectConnection = config.connections?.reflect;
+      const distillConnection = config.connections?.distill;
+      if (reflectConnection) reflectConnection.models = { fast: "changed-reflect-model" };
+      if (distillConnection) distillConnection.models = { fast: "changed-distill-model" };
       const liveProcesses = config.improve?.strategies?.split?.processes;
-      if (liveProcesses?.reflect) liveProcesses.reflect.engine = "distill";
-      if (liveProcesses?.distill) liveProcesses.distill.engine = "reflect";
+      if (liveProcesses?.reflect) liveProcesses.reflect.connection = "distill";
+      if (liveProcesses?.distill) liveProcesses.distill.connection = "reflect";
       let reflectOptions: Record<string, unknown> | undefined;
       let distillOptions: Record<string, unknown> | undefined;
       const dispatchedModels: string[] = [];
@@ -283,16 +280,16 @@ describe("improve engine-plan boundaries", () => {
       expect(reflectOptions).not.toHaveProperty("runner");
       expect(reflectOptions).not.toHaveProperty("engine");
       expect(reflectOptions?.config).not.toBe(config);
-      expect((reflectOptions?.config as AkmConfig).engines?.reflect).toMatchObject({ model: "reflect-model" });
+      expect((reflectOptions?.config as AkmConfig).connections?.reflect).toMatchObject({
+        models: { fast: "reflect-model" },
+      });
       expect((reflectOptions?.improveProfile as ImproveProfileConfig).processes?.reflect).toMatchObject({
-        engine: "reflect",
+        connection: "reflect",
         model: "process-model",
       });
       expect(dispatchedModels.length).toBeGreaterThan(0);
       expect(new Set(dispatchedModels)).toEqual(new Set(["process-model"]));
-      expect((distillOptions?.llmRunner as { connection?: { model?: string } }).connection?.model).toBe(
-        "distill-model",
-      );
+      expect((distillOptions?.llmRunner as { model?: string }).model).toBe("distill-model");
       expect(distillOptions?.llmConfig).toBeUndefined();
       expect(distillOptions?.config).toBe(config);
     } finally {
@@ -308,8 +305,7 @@ describe("improve engine-plan boundaries", () => {
         semanticSearchMode: "off",
         bundles: { stash: { path: stash.dir, writable: true } },
         defaultBundle: "stash",
-        defaults: { improveStrategy: "disabled" },
-        improve: { strategies: { disabled: { processes: disabledProcesses() } } },
+        improve: { strategy: "disabled", strategies: { disabled: { processes: disabledProcesses() } } },
       };
       const plan = resolveImprovePlan("disabled", config, { repairValidationFailures: false });
       const controller = new AbortController();
