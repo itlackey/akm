@@ -137,12 +137,11 @@ function planYaml(
   const rewrites: EngineKeyRewrite[] = [];
   const notes: string[] = [];
   const places = enginePlaces(document.contents, role);
-  // A task source older than v4 still on disk is one the task step left blocked: renaming a key in it would keep the
-  // task step from converting it once the blocker is fixed.
+  // A task source older than v4 still on disk is one the task step left blocked. `engine` is a field of it, and
+  // renaming the key would keep the task step from converting it once the blocker is fixed, so only the name moves:
+  // an engine the conversion renamed (`lab` is now `default`) is a name no later run could recover.
   const version = pairOf(document.contents, "version")?.value;
-  if (role === "task" && places.some(({ map }) => pairOf(map, "engine")) && !(isScalar(version) && version.value === 4)) {
-    return { problem: "it is not task source v4; convert it to v4 first, then run this step again" };
-  }
+  const nameOnly = role === "task" && !(isScalar(version) && version.value === 4);
   for (const { at, map } of places) {
     const pair = pairOf(map, "engine");
     if (!pair) continue;
@@ -160,12 +159,21 @@ function planYaml(
     const key = scalarText(pair.key, yaml);
     const name = scalarText(pair.value, yaml);
     if (!key || !name) continue;
+    if (nameOnly) {
+      if (resolution.name === value) continue;
+      splices.push({ start: offset + name.start, end: offset + name.end, text: name.text.replace(value, resolution.name) });
+      rewrites.push({ at: where, from: `engine: ${value}`, to: `engine: ${resolution.name}` });
+      continue;
+    }
     splices.push({ start: offset + key.start, end: offset + key.end, text: key.text.replace("engine", resolution.key) });
     if (resolution.name !== value) {
       splices.push({ start: offset + name.start, end: offset + name.end, text: name.text.replace(value, resolution.name) });
     }
     rewrites.push({ at: where, from: `engine: ${value}`, to: `${resolution.key}: ${resolution.name}` });
     if (resolution.note) notes.push(`${where}: ${resolution.note}`);
+  }
+  if (nameOnly && rewrites.length === 0 && places.some(({ map }) => pairOf(map, "engine"))) {
+    return { problem: "it is not task source v4; convert it to v4 first, then run this step again" };
   }
   return { splices, rewrites, notes };
 }

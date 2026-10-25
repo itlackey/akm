@@ -80,6 +80,14 @@ describe("planEngineKeyFile", () => {
     ).toBe("unchanged");
   });
 
+  test("a task source older than v4 keeps its engine key; only an engine the conversion renamed has its name moved", () => {
+    const outcome = plan("task", "version: 2\nrun: echo\nengine: lab # the model\n");
+    expect(after(outcome)).toBe("version: 2\nrun: echo\nengine: default # the model\n");
+    expect(outcome).toMatchObject({ rewrites: [{ at: "engine", from: "engine: lab", to: "engine: default" }] });
+    // A name that did not change leaves the file for the task step, untouched.
+    expect(plan("task", "version: 3\nrun: echo\nengine: claude\n").status).toBe("skipped");
+  });
+
   test("a task source older than v4 is left for the task step and reported, with its bytes untouched", () => {
     for (const text of [
       "version: 2\nrun: echo\nengine: claude\n",
@@ -226,6 +234,24 @@ describe("the step", () => {
     expect(plan.assetEngineKeys).toMatchObject({ changed: 0, skipped: 1 });
     expect(plan.assetEngineKeys?.files[0]).toMatchObject({ filePath: file });
     expect(plan.assetEngineKeys?.files[0]?.reason).toContain("convert it to v4 first");
+    expect(fs.readFileSync(file, "utf8")).toBe("version: 2\nrun: echo hi\nengine: lab\n");
+  });
+
+  test("a v2 task source that names the engine the conversion renamed has only that name moved, so a later run still reads it", async () => {
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: { primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } } },
+      engines: { lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "m" } },
+      defaults: { llmEngine: "lab" },
+    });
+    const file = write("tasks/old.yml", "version: 2\nrun: echo hi\nengine: lab\n");
+
+    const plan = await runMigration({ apply: false });
+
+    expect(plan.assetEngineKeys).toMatchObject({ changed: 1, skipped: 0 });
+    expect(plan.assetEngineKeys?.files[0]?.rewrites).toEqual([
+      { at: "engine", from: "engine: lab", to: "engine: default" },
+    ]);
     expect(fs.readFileSync(file, "utf8")).toBe("version: 2\nrun: echo hi\nengine: lab\n");
   });
 
