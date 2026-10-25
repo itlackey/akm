@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveImprovePlan } from "../../../../src/commands/improve/improve-strategies";
 import { akmReflect } from "../../../../src/commands/improve/reflect";
 import { splitFrontmatter } from "../../../../src/commands/improve/reflect-noise";
 import { drainProposals } from "../../../../src/commands/proposal/drain";
@@ -513,6 +514,48 @@ describe("Reflect quality gate — source context", () => {
 
     expect(result.ok).toBe(true);
     expect(models).toEqual(["judge-model"]);
+  });
+
+  test("a run-level --harness moves reflect and its judge to that harness: two harness calls, no LLM call", async () => {
+    const stash = makeStashDir();
+    // The config's only default is a connection, so without the run's selection both calls would go there.
+    const bin = agent([
+      reflectReply(PATCH),
+      JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "ok" }),
+    ]);
+    const config = {
+      ...quietQualityGateConfig(),
+      connections: {
+        general: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "general-model" } },
+      },
+      harnesses: { "fake-agent": { platform: "claude", bin } },
+      improve: {
+        strategy: "default",
+        strategies: { default: { processes: { reflect: { enabled: true, qualityGate: { enabled: true } } } } },
+      },
+    } as AkmConfig;
+    // What `akm improve --harness fake-agent` builds, and what the improve loop hands reflect from it.
+    const plan = resolveImprovePlan("default", config, { run: { harness: "fake-agent" } });
+    let llmCalls = 0;
+
+    const result = await akmReflect({
+      ref: "knowledge/run-selection",
+      stashDir: stash,
+      config,
+      improveProfile: plan.strategy.config,
+      llmRunner: plan.processes.reflect.runner,
+      ...(plan.run ? { run: plan.run } : {}),
+      assetContent: `---\ndescription: Run selection\n---\n\n${LONG_SOURCE_BODY}\n`,
+      chat: async () => {
+        llmCalls += 1;
+        return "must not run";
+      },
+    });
+
+    if (!result.ok) throw new Error(`expected a proposal, got ${result.reason}: ${result.error}`);
+    expect(llmCalls).toBe(0);
+    expect(harnessCalls(bin)).toHaveLength(2);
+    expect(result.proposal.gateDecision).toMatchObject({ outcome: "staged", scores: { need: 5 } });
   });
 
   test("a gate whose settings resolve to an agent judges with that agent, under the model-work tool policy", async () => {
