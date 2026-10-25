@@ -118,7 +118,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `engines`, `defaults.engine`, `defaults.llmEngine`, `workflow.judgeEngine`, a
   strategy's `engine`, `model`, `llm` and `timeoutMs`, `provider`, and
   `extraParams` as a key (write the request fields on the connection or model
-  entry), all read from an old file and converted by `akm migrate apply`.
+  entry), all read from an old file and converted by `akm migrate apply`. An
+  `extraParams` key that shadows a first-class setting (`temperature`,
+  `maxTokens`, `enableThinking`, `reasoningEffort`) is dropped with a note, and
+  the setting wins.
 - `models.json`, the user overlay and the one akm shipped, and `akm models`.
   Aliases live on `connections.<name>.models`.
 - `apiKeyFile`, the implicit `AKM_ENGINE_<NAME>_API_KEY` and `AKM_LLM_API_KEY`

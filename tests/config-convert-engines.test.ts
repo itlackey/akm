@@ -102,6 +102,28 @@ describe("engines.<n> kind llm → connections.<n>", () => {
     }
   });
 
+  test("an extraParams key that shadows a first-class setting is dropped with a note naming the key; the setting wins", () => {
+    const { config, notes } = convert({
+      engines: {
+        lab: llm({
+          temperature: 0.2,
+          maxTokens: 4096,
+          extraParams: { temperature: 0.9, maxTokens: 1, top_p: 0.5 },
+        }),
+        other: llm({ extraParams: { temperature: 0.9 } }),
+      },
+    });
+    expect((config.connections as Dict).lab).toMatchObject({ temperature: 0.2, max_tokens: 4096, top_p: 0.5 });
+    expect((config.connections as Dict).lab).not.toHaveProperty("maxTokens");
+    const text = notes.join("\n");
+    expect(text).toContain("engines.lab: extraParams.temperature is dropped");
+    expect(text).toContain("engines.lab: extraParams.maxTokens is dropped");
+    expect(text).not.toContain("0.9");
+    // With no first-class setting to shadow, the key is an ordinary request field.
+    expect((config.connections as Dict).other).toMatchObject({ temperature: 0.9 });
+    expect(text).not.toContain("engines.other");
+  });
+
   test("drops provider and supportsJsonSchema, naming supportsJsonSchema: false", () => {
     const { config, notes } = convert({ engines: { lab: llm({ provider: "lmstudio", supportsJsonSchema: false }) } });
     expect((config.connections as Dict).lab).not.toHaveProperty("provider");

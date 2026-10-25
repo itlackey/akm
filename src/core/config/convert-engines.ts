@@ -12,6 +12,7 @@ import { getHarness } from "../../integrations/harnesses";
  * Whatever it cannot carry over is named in `notes` and dropped.
  */
 import { isRecord } from "../common";
+import { normalizeExtraParamKey } from "../extra-params";
 import { inferenceWireFields, type LlmInference } from "../llm-inference";
 import { deepMergeConfig } from "./deep-merge";
 import { modelForEveryAlias } from "./model-aliases";
@@ -97,6 +98,28 @@ function implicitKeyVariable(name: string, defaults: Dict, env: NodeJS.ProcessEn
   return undefined;
 }
 
+/**
+ * The request fields an old engine's (or a `models.json` entry's) inference
+ * becomes. The first-class settings win over `extraParams`: an `extraParams` key
+ * that names the same field as one of them (`temperature`, `maxTokens`/`max_tokens`,
+ * `enableThinking`, `reasoningEffort`, `chat_template_kwargs`) is dropped, with a
+ * note that names the key and not its value.
+ */
+function wireFieldsOf(inference: LlmInference, where: string, notes: string[]): Dict {
+  const { extraParams, ...settings } = inference;
+  const firstClass = inferenceWireFields(settings);
+  const taken = new Set(Object.keys(firstClass).map(normalizeExtraParamKey));
+  const extras: Dict = {};
+  for (const [key, value] of Object.entries(isRecord(extraParams) ? extraParams : {})) {
+    if (taken.has(normalizeExtraParamKey(key))) {
+      notes.push(`${where}: extraParams.${key} is dropped, because the setting it shadows takes precedence.`);
+    } else {
+      extras[key] = value;
+    }
+  }
+  return { ...extras, ...firstClass };
+}
+
 /** `holder[key]` as an object, made on `holder` when it is not one yet. */
 function objectAt(holder: Dict, key: string): Dict {
   if (!isRecord(holder[key])) holder[key] = {};
@@ -162,13 +185,17 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
     }
     Object.assign(
       connection,
-      inferenceWireFields({
-        temperature: engine.temperature,
-        maxTokens: engine.maxTokens,
-        extraParams: engine.extraParams,
-        enableThinking: engine.enableThinking,
-        reasoningEffort: engine.reasoningEffort,
-      } as LlmInference),
+      wireFieldsOf(
+        {
+          temperature: engine.temperature,
+          maxTokens: engine.maxTokens,
+          extraParams: engine.extraParams,
+          enableThinking: engine.enableThinking,
+          reasoningEffort: engine.reasoningEffort,
+        } as LlmInference,
+        `engines.${name}`,
+        notes,
+      ),
     );
     connections[name] = connection;
   }
@@ -252,8 +279,8 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
   for (const { alias, column, profile } of entries) {
     const p: Dict = typeof profile === "string" ? { model: profile } : isRecord(profile) ? profile : {};
     const { effort, ...portable } = (isRecord(p.inference) ? p.inference : {}) as LlmInference & { effort?: string };
-    const wire = inferenceWireFields({ ...portable, reasoningEffort: portable.reasoningEffort ?? effort });
     const where = `models.json ${alias}.${column === "*" ? "(all)" : column}`;
+    const wire = wireFieldsOf({ ...portable, reasoningEffort: portable.reasoningEffort ?? effort }, where, notes);
     if (p.engine !== undefined) {
       notes.push(`${where}: an engine indirection is not carried over.`);
       continue;
