@@ -124,10 +124,11 @@ describe("engines.<n> kind llm → connections.<n>", () => {
     expect(text).not.toContain("engines.other");
   });
 
-  test("drops provider and supportsJsonSchema, naming supportsJsonSchema: false", () => {
+  test("drops provider and supportsJsonSchema, each with a note", () => {
     const { config, notes } = convert({ engines: { lab: llm({ provider: "lmstudio", supportsJsonSchema: false }) } });
     expect((config.connections as Dict).lab).not.toHaveProperty("provider");
     expect((config.connections as Dict).lab).not.toHaveProperty("supportsJsonSchema");
+    expect(notes.join("\n")).toContain("engines.lab: provider is not a setting any more");
     expect(notes.join("\n")).toContain("supportsJsonSchema");
   });
 

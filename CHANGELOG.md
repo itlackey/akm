@@ -105,8 +105,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     sources becomes `connection:` or `harness:` by what the name is now, under
     one backup directory per run (a name that is neither is written as
     `harness:`, with a note). `akm migrate status` and `--dry-run` list the files.
-  - A connection or harness the loader ignores stays in the file as written,
-    with a note on what to fix; `akm migrate apply` never deletes one.
+  - A connection or harness the loader ignores stays in the file, with a note
+    on what to fix; `akm migrate apply` never deletes one.
 - A non-interactive `akm setup` adds no harness when OpenCode is set up for the
   user (a model in their OpenCode config, or saved credentials) or no agent CLI
   is on `PATH`: agent work then runs on the embedded OpenCode over the

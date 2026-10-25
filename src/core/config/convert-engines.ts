@@ -180,6 +180,9 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
     }
     const model = str(engine.model);
     if (model !== undefined) ownModelOf.push({ kind: "connections", engine: name, model });
+    if (engine.provider !== undefined) {
+      notes.push(`engines.${name}: provider is not a setting any more (akm does not branch on it); it is dropped.`);
+    }
     if (engine.supportsJsonSchema === false) {
       notes.push(
         `engines.${name}: supportsJsonSchema is not a setting any more; akm retries without a schema when the endpoint rejects one.`,

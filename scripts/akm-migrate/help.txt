@@ -7,9 +7,9 @@ order, and print one combined JSON plan (exit 1 when any step is blocked):
 
   1. config.json rewritten in its current shape (unknown keys dropped, the
      `engines`/`defaults` form converted to `connections`/`harnesses` with
-     `defaults.improveStrategy` as `improve.strategy`, the legacy source
-     layout converted, `configVersion` set to the current value) -- backed
-     up first. Keys akm no longer reads from config (an engine's
+     `defaults.improveStrategy` as `improve.strategy`, `configVersion` set
+     to the current value) -- backed up first. A config in the pre-0.9.15
+     source layout is refused, not converted: run this under akm 0.9.x. Keys akm no longer reads from config (an engine's
      `apiKeyFile`, a literal or `${secrets/...}` `apiKey`, and the same on a
      connection, `embedding` or `search.curateRerank`) move to
      credentials.json, one note per key (never its value). The retired
