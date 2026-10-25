@@ -42,9 +42,9 @@ import type {
 } from "./config-types";
 import { isOpaqueSchema, resolveSchemaAt } from "./config-walker";
 import { convertEngineConfig, type EngineTarget } from "./convert-engines";
-import { writeCredential } from "./credentials";
+import { fileFlatCredentials, writeCredential } from "./credentials";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
-import { planKeyMoves } from "./migrate-keys";
+import { documentEndpoint, planKeyMoves } from "./migrate-keys";
 import { modelsFileExists, readModelsFile, retireModelsFile } from "./models-file";
 import { dropUnusableEntries, findUnusableEntries, type UnusableEntry } from "./unusable-entries";
 
@@ -1197,7 +1197,9 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       | Record<string, unknown>
       | undefined;
     if (strategies && Object.hasOwn(strategies, "graph-refresh")) delete strategies["graph-refresh"];
-    const notes = [...converted.notes, ...plan.notes];
+    // A key in the older flat form is filed only under an endpoint this file itself gives the block.
+    const flat = fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), false);
+    const notes = [...converted.notes, ...plan.notes, ...flat.notes];
     keepUnusableEntries(body, localRaw, current, notes);
     const hasModelsFile = modelsFileExists();
     if (hasModelsFile) {
@@ -1210,17 +1212,20 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       .sort();
     const reported = {
       keys,
-      ...(plan.moves.length > 0 ? { credentials: plan.moves.map((move) => move.name) } : {}),
+      ...(plan.moves.length > 0 || flat.filed.length > 0
+        ? { credentials: [...plan.moves.map((move) => move.name), ...flat.filed] }
+        : {}),
       ...(notes.length > 0 ? { notes } : {}),
       ...(Object.keys(converted.targets).length > 0 ? { engineTargets: converted.targets } : {}),
     };
-    const changed = keys.length > 0 || hasModelsFile;
+    const changed = keys.length > 0 || hasModelsFile || flat.filed.length > 0;
     if (!changed || !options.apply) return { ...reported, changed, applied: false };
     let backup: ReturnType<typeof backupExistingConfig>;
+    if (flat.filed.length > 0) fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), true);
     if (keys.length > 0) {
       // The keys are filed before the file that holds them is rewritten; a store
       // that cannot take them (malformed, unwritable) throws here and loses none.
-      for (const move of plan.moves) writeCredential(move.name, move.value);
+      for (const move of plan.moves) writeCredential(move.slot, move.value, move.endpoint);
       backup = backupExistingConfig(configPath);
       writeConfigAtomic(configPath, body);
       cachedConfig = undefined;

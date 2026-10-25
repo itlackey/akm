@@ -335,7 +335,9 @@ describe("runSetupWizard", () => {
       },
     });
     const credentialsPath = path.join(path.dirname(DEFAULT_CONFIG_PATH), "credentials.json");
-    expect(JSON.parse(fs.readFileSync(credentialsPath, "utf8"))).toEqual({ default: secret });
+    expect(JSON.parse(fs.readFileSync(credentialsPath, "utf8"))).toEqual({
+      connections: { default: { key: secret, endpoint: "https://api.example.test/v1" } },
+    });
     expect(fs.statSync(credentialsPath).mode & 0o777).toBe(0o600);
 
     expect(fs.readFileSync(DEFAULT_CONFIG_PATH, "utf8")).not.toContain(secret);

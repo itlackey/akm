@@ -9,7 +9,9 @@
  * `credentials.json`. Nothing here prompts, reads the network or writes.
  */
 import type { AkmConfig, ConnectionConfig, EmbeddingConnectionConfig, HarnessConfig } from "../core/config/config";
+import type { CredentialSlot } from "../core/config/credentials";
 import { entryWithModel } from "../core/config/model-aliases";
+import { sameEndpoint } from "../core/endpoint-url";
 
 /** How a key is supplied: the variable that holds it, or the key typed at the masked prompt. */
 export type KeyAnswer = { readonly env: string } | { readonly pasted: string };
@@ -50,10 +52,16 @@ export type SetupPatch = {
   embedding?: EmbeddingConnectionConfig | undefined;
 };
 
+/** A key typed at a masked prompt, to be stored for the block and the endpoint it was typed for. */
+export interface PendingCredential {
+  readonly slot: CredentialSlot;
+  readonly key: string;
+  readonly endpoint: string;
+}
+
 export interface SetupChange {
   readonly patch: SetupPatch;
-  /** Keys to store in `credentials.json`, by the name of the block they belong to. */
-  readonly credentials: Readonly<Record<string, string>>;
+  readonly credentials: readonly PendingCredential[];
 }
 
 /** `base`, or `base-2`, `base-3`, ... when `taken` has it. */
@@ -112,7 +120,11 @@ function connectionEntry(existing: ConnectionConfig | undefined, answer: Connect
   for (const [alias, model] of Object.entries(answer.picks)) models[alias] = entryWithModel(models[alias], model);
   const { apiKey, endpoint: _endpoint, models: _models, ...others } = existing ?? { endpoint: answer.endpoint };
   const key = answer.key;
-  const keptKey = key === undefined && apiKey !== undefined ? { apiKey } : {};
+  // A key belongs to the endpoint it was given for: it is kept for the same server only.
+  const keptKey =
+    key === undefined && apiKey !== undefined && existing && sameEndpoint(existing.endpoint, answer.endpoint)
+      ? { apiKey }
+      : {};
   return {
     endpoint: answer.endpoint,
     ...(key && "env" in key ? { apiKey: `$${key.env}` } : keptKey),
@@ -133,14 +145,20 @@ function embeddingBlock(
     case "connection":
       return current?.endpoint === undefined && current?.model === answer.model ? current : { model: answer.model };
     case "endpoint": {
-      const apiKey = answer.key && "env" in answer.key ? { apiKey: `$${answer.key.env}` } : {};
-      const same = current?.endpoint === answer.endpoint && current.model === answer.model;
-      if (same) {
+      // A key belongs to the endpoint it was given for: another endpoint starts without one.
+      const apiKey =
+        answer.key === undefined
+          ? current?.apiKey !== undefined &&
+            current.endpoint !== undefined &&
+            sameEndpoint(current.endpoint, answer.endpoint)
+            ? { apiKey: current.apiKey }
+            : {}
+          : "env" in answer.key
+            ? { apiKey: `$${answer.key.env}` }
+            : {};
+      if (current?.endpoint === answer.endpoint && current.model === answer.model) {
         const { apiKey: _apiKey, ...kept } = current;
-        return {
-          ...kept,
-          ...(answer.key === undefined && current.apiKey !== undefined ? { apiKey: current.apiKey } : apiKey),
-        };
+        return { ...kept, ...apiKey };
       }
       return { endpoint: answer.endpoint, model: answer.model, ...apiKey };
     }
@@ -150,7 +168,7 @@ function embeddingBlock(
 /** The config keys and credentials the answers change, over the current config. */
 export function applySetupAnswers(current: AkmConfig, answers: SetupAnswers): SetupChange {
   const patch: SetupPatch = {};
-  const credentials: Record<string, string> = {};
+  const credentials: PendingCredential[] = [];
 
   if (answers.harnesses) {
     const entries = harnessEntries(current.harnesses, answers.harnesses.platforms, answers.harnesses.default);
@@ -163,14 +181,20 @@ export function applySetupAnswers(current: AkmConfig, answers: SetupAnswers): Se
       ...(current.connections ?? {}),
       [connection.name]: connectionEntry(current.connections?.[connection.name], connection),
     };
-    if (connection.key && "pasted" in connection.key) credentials[connection.name] = connection.key.pasted;
+    if (connection.key && "pasted" in connection.key) {
+      credentials.push({
+        slot: { connection: connection.name },
+        key: connection.key.pasted,
+        endpoint: connection.endpoint,
+      });
+    }
   }
 
   const embedding = answers.embedding;
   if (embedding) {
     patch.embedding = embeddingBlock(current.embedding, embedding);
     if (embedding.kind === "endpoint" && embedding.key && "pasted" in embedding.key) {
-      credentials.embedding = embedding.key.pasted;
+      credentials.push({ slot: { service: "embedding" }, key: embedding.key.pasted, endpoint: embedding.endpoint });
     }
   }
 

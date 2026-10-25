@@ -154,11 +154,11 @@ describe("remote embed", () => {
       },
     });
     try {
-      writeCredential("embedding", "store-secret-value");
       const config: EmbeddingConnectionConfig = {
         endpoint: `http://localhost:${server.port}`,
         model: "test-model",
       };
+      writeCredential({ service: "embedding" }, "store-secret-value", config.endpoint as string);
       await embed("stored credential header test", config);
       expect(capturedAuth).toBe("Bearer store-secret-value");
     } finally {

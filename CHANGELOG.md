@@ -52,8 +52,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm task add` writes them into the task, and `akm task explain` reads them
   back.
 - Keys come from a `$VAR` reference (`apiKey: "$NAME"`) or from
-  `<config dir>/credentials.json`, a `{ "<name>": "<key>" }` file (0600) keyed by
-  the connection's name, `embedding` or `curateRerank`. A literal `apiKey` in
+  `<config dir>/credentials.json` (0600), where each key is stored for one
+  endpoint: `{ "connections": { "<name>": { "key", "endpoint" } }, "services":
+  { "embedding" | "curateRerank": { "key", "endpoint" } } }`. A key is read for
+  that endpoint alone, and a connection called `embedding` and the embedding
+  service hold different keys. A literal `apiKey` in
   `config.json` is kept, warned about once, and never read, sent or printed;
   `akm config get` masks it and the redactor treats it as a secret.
 - `akm health` has one `targets` check, and `akm info` a `targets` list, with a
@@ -68,8 +71,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   can run read-only for akm's own model calls), whether the default one also
   takes akm's model calls, an endpoint with its key at a masked prompt and one
   model for each alias, picked from the models the endpoint lists, and where
-  embeddings come from. A key you type is stored in `credentials.json` under the
-  connection's name. Each flag answers one question and `--yes` takes the
+  embeddings come from. A key you type is stored in `credentials.json` for the
+  connection and its endpoint. Each flag answers one question and `--yes` takes the
   detected default for the rest: `--endpoint`, `--api-key-env`, `--name`,
   `--harness`, `--embedding`, `--embedding-endpoint` and
   `--embedding-api-key-env`. A rerun starts from the current config and keeps the
@@ -108,7 +111,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - OpenCode's logs, repositories and binaries are kept under akm's data and
     cache directories. Sessions are stored in akm's own OpenCode database,
     `<akm data dir>/opencode.db`. The embedded OpenCode opens no other database,
-    except your OpenCode database for your logins on the opencode harness
+    except your OpenCode 2 database for your logins on the opencode harness
     (below); reading OpenCode 2 history (below) opens yours read-only.
   - Another process's unfinished turns are never resumed (OpenCode resumes
     every top-level session whose turn did not finish, whichever process owns
@@ -124,7 +127,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (the prompt on stdin). OpenCode 2 runs embedded in akm, with your config
   directory (`OPENCODE_CONFIG_DIR` too), providers, plugins and default model
   (akm passes a model only when it names one), and your logins, which akm's
-  embedded OpenCode reads from your OpenCode database through OpenCode's own
+  embedded OpenCode reads from your OpenCode 2 database through OpenCode's own
   credential service; a refreshed token is written back there, and akm never
   creates that file or stores a session in it. An interactive `akm agent` still
   hands the terminal to the CLI.
@@ -151,10 +154,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     no longer reads, is dropped with a note.
   - An engine's `apiKeyFile`, a literal or `${secrets/...}` `apiKey`, and the
     same literal or secret-store `apiKey` on a connection, `embedding` or
-    `search.curateRerank`, are read and stored in `credentials.json` under the
-    connection's new name, `embedding` or `curateRerank`, then removed from the
-    file. A key that cannot be moved (its secret does not resolve, or
-    `credentials.json` already holds a different key under that name) stays on the
+    `search.curateRerank`, are read and stored in `credentials.json` for the
+    connection's new name (or the `embedding` or `curateRerank` service) and the
+    endpoint the block names, then removed from the file. A key that cannot be
+    moved (its secret does not resolve, the block names no endpoint of its own, or
+    `credentials.json` already holds a different key or endpoint for that slot) stays on the
     connection as `apiKey`, with a note. One note per key names it, never its
     value. `AKM_ENGINE_<NAME>_API_KEY` and `AKM_LLM_API_KEY`, when set, become
     `apiKey: "$VAR"`.

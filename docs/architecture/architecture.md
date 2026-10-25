@@ -610,7 +610,7 @@ Agent programs are reachable by two execution paths, both behind
   user's; its files under akm's data, cache and state directories), and the **opencode**
   host, which is the user's OpenCode for the `opencode` harness (their
   configuration, providers and default model, with their logins read from their
-  OpenCode database). A host serves any number of sessions; what differs per
+  OpenCode 2 database; OpenCode 1 is driven through its CLI and nothing of it is opened). A host serves any number of sessions; what differs per
   call (model, environment, request fields, persona) is set on the session.
 - Both hosts load akm's plugin: `akm_search`, `akm_show` and `akm_curate` run in
   akm's process, and the connection's key and request fields are laid over the

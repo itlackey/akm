@@ -81,7 +81,7 @@ describe("generateEmbeddingsForDb: embedding-credential diagnostics (#953)", () 
       seedOneEntry(db);
       mockEmbedder();
 
-      writeCredential("embedding", "stored-embedding-secret");
+      writeCredential({ service: "embedding" }, "stored-embedding-secret", "http://localhost:1");
 
       const messages: string[] = [];
       const result = await generateEmbeddingsForDb(db, configWithApiKey(undefined), (e) => messages.push(e.message));

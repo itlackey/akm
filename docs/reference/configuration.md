@@ -101,7 +101,7 @@ akm reads these keys of a connection:
 | Key | Meaning |
 | --- | --- |
 | `endpoint` | Required. The OpenAI-compatible base URL (`http://localhost:11434/v1`) or the chat-completions URL itself, starting with `http://` or `https://`. Requests go to `<base>/chat/completions` and the model list is read from `<base>/models`; a query string on the URL (a gateway's `api-version`, say) stays after the path on every request, and a `#fragment` is dropped. A username or password in the URL is warned about; put the key in `apiKey` or `credentials.json`. |
-| `apiKey` | A `$VAR` or `${VAR}` reference to an environment variable. Absent, the key is the one stored under the connection's name in `credentials.json`. See [Credentials](#credentials). |
+| `apiKey` | A `$VAR` or `${VAR}` reference to an environment variable. Absent, the key is the one stored in `credentials.json` for the connection and its endpoint. See [Credentials](#credentials). |
 | `models` | Alias to model. See [Aliases](#aliases). |
 | `contextLength` | The model's context window in tokens. `akm improve` sizes its prompts from it (consolidate's chunks, reflect's asset content); unset, it assumes 4096. |
 | `timeoutMs` | How long one call may take, in milliseconds; `null` runs unbounded. Unset, a model call stops after 600 000 (ten minutes) and agent work runs until it finishes. The ceiling is 2 147 483 647. |
@@ -235,7 +235,7 @@ review queue.
 the major version `opencode --version` reports:
 - OpenCode 2 runs embedded in akm's process (no server, no port), with your
   OpenCode configuration (providers, plugins, MCP servers, agents), your logins
-  read from your OpenCode database, and your default model unless akm names one.
+  read from your OpenCode 2 database, and your default model unless akm names one.
   A model name is OpenCode's `provider/model`. Its sessions are stored in akm's
   own database, `<akm data dir>/opencode.db`.
 - Enabling this harness on OpenCode 2 opens your OpenCode database through
@@ -243,7 +243,8 @@ the major version `opencode --version` reports:
   migrations bundled with the OpenCode that akm embeds run on it, it is put in
   WAL mode and its file mode is set to 0600. akm stores no session in it. akm's
   reads of your OpenCode history are separate and read-only.
-- OpenCode 1 runs as `opencode run`, with the prompt on stdin.
+- OpenCode 1 runs as `opencode run`, with the prompt on stdin. It keeps its logins
+  in `auth.json`; akm never opens anything of OpenCode 1's.
 
 Nobody can answer an akm run. On the embedded OpenCode (this harness and akm's
 own runtime) akm cancels every question and rejects every permission request,
@@ -274,14 +275,32 @@ akm reads an API key from one of two places, and nowhere else:
 - **A `$VAR` reference.** `"apiKey": "$LOCAL_LLM_KEY"` (or `"${LOCAL_LLM_KEY}"`)
   names an environment variable, read when the call is made. An unset or empty
   variable is warned about once and the request goes without a key.
-- **`credentials.json`.** With no `apiKey`, the key is the entry stored under the
-  block's name in `credentials.json`, next to `config.json`: a flat `{ "<name>":
-  "<key>" }` map, written with mode 0600. The name is the connection's name, or
-  `embedding` or `curateRerank` for those blocks. An `embedding` that runs on the
-  default connection uses that connection's key.
+- **`credentials.json`.** With no `apiKey`, the key is the entry stored for the
+  block in `credentials.json`, next to `config.json`, written with mode 0600:
+
+  ```json
+  { "connections": { "<name>": { "key": "…", "endpoint": "…" } },
+    "services":    { "embedding": { "key": "…", "endpoint": "…" } } }
+  ```
+
+  A key is stored for one endpoint and read for that endpoint alone. Change a
+  block's endpoint and the old key is not sent to the new one (it is named once,
+  without its value, and the block goes without until a key is stored for the new
+  endpoint). A connection's name and a service (`embedding`, `curateRerank`) are
+  different namespaces, so a connection called `embedding` and the embedding
+  service hold different keys. An `embedding` that runs on the default connection
+  uses that connection's entry. A connection that only an `extends` base defines
+  has the base's endpoint, so it uses a stored key only when you stored one for
+  that exact endpoint; a connection of the same name stored for another endpoint,
+  or a key in the older flat `{ "<name>": "<key>" }` form, which names no
+  endpoint, is not used (`akm migrate apply` files a flat entry under the
+  endpoint your own config gives that block).
 
 `akm setup` asks for a key at a masked prompt and stores it in
-`credentials.json`; `--api-key-env NAME` sets `apiKey: "$NAME"` instead. A key
+`credentials.json` for the endpoint it was typed for; `--api-key-env NAME` sets
+`apiKey: "$NAME"` instead. Setup an endpoint change that comes with no key does
+not carry the old key to the new endpoint (a `$VAR` is dropped from the entry, a
+stored key stays for the old endpoint), and says so. A key
 is never written to `config.json` or passed on a command line. A literal
 `apiKey` in the file, or a `${secrets/...}` reference, is warned about once and
 ignored (never sent), and `akm config set` refuses to write one. `akm migrate
@@ -625,7 +644,7 @@ unless a remote `embedding` config is provided.
 `embedding` configures the connection used for semantic search and
 `akm improve`'s memory-inference/consolidate passes when they call an
 embedding model: `provider`, `endpoint`, `model`, `apiKey` (a `$VAR` reference,
-or the `embedding` entry of `credentials.json`; see
+or the `embedding` service's entry in `credentials.json`; see
 [Credentials](#credentials)), `dimension`, `localModel`,
 `maxInputTokens`, `maxTokens`, `batchSize`, `contextLength`, `timeoutMs`,
 `queryTimeoutMs`, `queryTemplate`, `documentTemplate`, `concurrency`, and
@@ -770,7 +789,7 @@ or malformed response keeps the fused order.
 | `search.curateRerank.enabled` | Turn the rerank pass on (default `false`) |
 | `search.curateRerank.endpoint` | Full URL of the reranker's rerank endpoint |
 | `search.curateRerank.model` | Model name sent to the endpoint (optional) |
-| `search.curateRerank.apiKey` | `$VAR` reference (optional); absent, the `curateRerank` entry of `credentials.json` |
+| `search.curateRerank.apiKey` | `$VAR` reference (optional); absent, the `curateRerank` service's entry in `credentials.json` |
 | `search.curateRerank.timeoutMs` | Request timeout (default `10000`) |
 | `search.curateRerank.topN` | How many of the top fused candidates to rerank (default `30`, max `50`) |
 
@@ -1040,7 +1059,7 @@ asset keys move as the table says.
 | `defaults.engine` naming an agent engine, when there are several | That harness is renamed `default`. |
 | `defaults.improveStrategy` | `improve.strategy`. |
 | `models.json` | Folded into the `models` of the connections and harnesses it names; what it cannot place is listed in the notes. The file moves to `config-backups/` in the cache directory. |
-| `apiKeyFile`, a literal `apiKey`, a `${secrets/...}` `apiKey` | The key moves to `credentials.json`, under the connection's name; a note names where it was, never its value. A key that cannot be read stays on the connection as it was, with a note. |
+| `apiKeyFile`, a literal `apiKey`, a `${secrets/...}` `apiKey` | The key moves to `credentials.json` for the connection and its endpoint; a note names where it was, never its value. A key that cannot be read stays on the connection as it was, with a note. |
 | `AKM_ENGINE_<NAME>_API_KEY` or `AKM_LLM_API_KEY` set in the environment | `apiKey: "$AKM_ENGINE_<NAME>_API_KEY"` (or `$AKM_LLM_API_KEY`) on that connection. |
 | `improve.strategies.<name>.engine`, `model`, `llm`, `timeoutMs` | Dropped, with a note: a strategy says which processes run, not where. |
 | `engine`, `model`, `llm`, `timeoutMs` on a strategy's process, its `qualityGate` or its `triage.judgment` | Moved to `improve.processes.<process>` or `improve.qualityGate`, with `engine` becoming `connection` or `harness` by what it named. When that place already says, the first one is kept, with a note. |

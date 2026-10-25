@@ -708,7 +708,7 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 | Path | Contents | Retention |
 |---|---|---|
 | `$CONFIG/config.json` | User config (bundle dirs, sources, connections, harnesses, feature flags, registries). JSONC — `//` and `/* */` comments stripped at parse time. | Manual |
-| `$CONFIG/credentials.json` | The API keys akm holds, as a flat `{ "<name>": "<key>" }` map keyed by a connection's name, `embedding` or `curateRerank`. Written atomically with mode `0600` (directory `0700` when akm creates it) by `akm setup` and `akm migrate apply`; never part of `config.json`. See [Credentials](../../reference/configuration.md#credentials). | Manual |
+| `$CONFIG/credentials.json` | The API keys akm holds, as `{ "connections": { "<name>": { "key", "endpoint" } }, "services": { "embedding" \| "curateRerank": { "key", "endpoint" } } }`: each key with the endpoint it was stored for. Written atomically with mode `0600` (directory `0700` when akm creates it) by `akm setup` and `akm migrate apply`; never part of `config.json`. See [Credentials](../../reference/configuration.md#credentials). | Manual |
 | `<cwd>/.akm/config.json` | Project-scoped config overrides. Walked up to filesystem root; all ancestors merged. | Manual |
 | `$CACHE/config-backups/config-<ISO-ts>.json` | Pre-save snapshot of `config.json`, written by `backupExistingConfig()` in `src/core/config/config-io.ts` before each config write. `config.latest.json` is a second copy (not a symlink) always overwritten with the newest snapshot. Dir created/chmod'd `0700`; both the timestamped file and `config.latest.json` are chmod'd `0600` (08-F4, mirroring the env-cli write-mode convention). This is the only live backup location — legacy `$DATA/config-backups/` and `$CONFIG/config-backups/` write paths have been removed. | Capped at `MAX_CONFIG_BACKUPS = 5` most-recent timestamped snapshots; `pruneOldBackups()` deletes the rest on every write |
 | `$CONFIG/akm.lock` | Legacy location. Removed in v0.8.0 — akm reads ONLY from `$DATA/akm.lock`. Run the migration script to copy this file to `$DATA/akm.lock` before upgrading. | Legacy |
@@ -928,7 +928,7 @@ not affect ranking, salience, real-query labels, or GRR.
 | 2 | `$DATA/state.db` | SQLite 3 (WAL) | Durable event and usage logs, proposals, task history, and workflow run state |
 | 3 | `$STASH/.akm/memory-cleanup/belief-transitions.jsonl` | JSONL | Belief state transition audit log |
 | 4 | `$CONFIG/config.json` | JSONC | User configuration |
-| 4a | `$CONFIG/credentials.json` | JSON | API keys by connection name (0600) |
+| 4a | `$CONFIG/credentials.json` | JSON | API keys by connection or service, each with its endpoint (0600) |
 | 5 | `<cwd>/.akm/config.json` | JSONC | Project-scoped config overrides |
 | 6 | `$CACHE/config-backups/config-<ts>.json` | JSON | Config pre-save backups (0600 files / 0700 dir; capped at 5) |
 | 7 | `$DATA/akm.lock` | JSON | Installed bundle lockfile |

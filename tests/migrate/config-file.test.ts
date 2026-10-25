@@ -74,10 +74,13 @@ describe("the keys an engines config holds that akm no longer reads", () => {
 
     expect(result.applied).toBe(true);
     // The default engine is renamed to `default`; its key is filed under that name.
+    const lab = "http://lab:8080/v1/chat/completions";
     expect(storedKeys()).toEqual({
-      default: "sk-lab-from-a-file",
-      cloud: "sk-cloud-literal",
-      vault: "sk-from-the-secret-store",
+      connections: {
+        default: { key: "sk-lab-from-a-file", endpoint: lab },
+        cloud: { key: "sk-cloud-literal", endpoint: lab },
+        vault: { key: "sk-from-the-secret-store", endpoint: lab },
+      },
     });
     expect(fs.statSync(credentialsPath()).mode & 0o777).toBe(0o600);
     expect(result.credentials).toEqual(["default", "cloud", "vault"]);
@@ -95,9 +98,11 @@ describe("the keys an engines config holds that akm no longer reads", () => {
 
     // One note per key, naming its place and its entry, never the value.
     const notes = (result.notes ?? []).join("\n");
-    expect(notes).toContain('engines.lab.apiKeyFile: its key moves to credentials.json as "default"');
-    expect(notes).toContain('engines.cloud.apiKey: its key moves to credentials.json as "cloud"');
-    expect(notes).toContain('engines.vault.apiKey: its key moves to credentials.json as "vault"');
+    expect(notes).toContain(
+      'engines.lab.apiKeyFile: its key moves to credentials.json for "default" at http://lab:8080/v1/chat/completions',
+    );
+    expect(notes).toContain('engines.cloud.apiKey: its key moves to credentials.json for "cloud"');
+    expect(notes).toContain('engines.vault.apiKey: its key moves to credentials.json for "vault"');
     for (const value of ["sk-lab-from-a-file", "sk-cloud-literal", "sk-from-the-secret-store"]) {
       expect(notes).not.toContain(value);
       expect(JSON.stringify(result)).not.toContain(value);
@@ -105,10 +110,10 @@ describe("the keys an engines config holds that akm no longer reads", () => {
 
     // What was applied is now current: nothing is left to do, and the connections read their keys.
     expect(normalizeConfigFile(getConfigPath(), { apply: false, resolveFromStore }).changed).toBe(false);
-    expect(readCredential("default")).toBe("sk-lab-from-a-file");
+    expect(readCredential({ connection: "default" }, "http://lab:8080/v1/chat/completions")).toBe("sk-lab-from-a-file");
   });
 
-  test("a literal or secret-store apiKey on a connection, embedding and search.curateRerank moves under that block's name", () => {
+  test("a literal or secret-store apiKey on a connection, embedding and search.curateRerank moves to credentials.json for that block and its endpoint", () => {
     writeConfig({
       connections: {
         cloud: { endpoint: "https://api.example.com/v1", models: { fast: "m" }, apiKey: "sk-cloud-literal" },
@@ -121,9 +126,11 @@ describe("the keys an engines config holds that akm no longer reads", () => {
     const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
 
     expect(storedKeys()).toEqual({
-      cloud: "sk-cloud-literal",
-      embedding: "sk-from-the-secret-store",
-      curateRerank: "sk-rerank-literal",
+      connections: { cloud: { key: "sk-cloud-literal", endpoint: "https://api.example.com/v1" } },
+      services: {
+        embedding: { key: "sk-from-the-secret-store", endpoint: "https://embed.example.com/v1" },
+        curateRerank: { key: "sk-rerank-literal", endpoint: "https://rerank.example.com/v1" },
+      },
     });
     const written = readConfig();
     const connections = written.connections as Record<string, Dict>;
@@ -145,7 +152,7 @@ describe("the keys an engines config holds that akm no longer reads", () => {
     const result = normalizeConfigFile(getConfigPath(), { apply: false, resolveFromStore });
 
     expect(result).toMatchObject({ changed: true, applied: false, credentials: ["default"] });
-    expect(result.notes?.join("\n")).toContain('engines.lab.apiKey: its key moves to credentials.json as "default"');
+    expect(result.notes?.join("\n")).toContain('engines.lab.apiKey: its key moves to credentials.json for "default"');
     expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
     expect(fs.existsSync(credentialsPath())).toBe(false);
   });
@@ -182,22 +189,24 @@ describe("the keys an engines config holds that akm no longer reads", () => {
   });
 
   test("an engine's literal key that credentials.json holds a different key for stays on the connection, and is not replaced", () => {
-    writeCredential("cloud", "sk-already-stored");
+    writeCredential({ connection: "cloud" }, "sk-already-stored", "http://lab:8080/v1/chat/completions");
     writeConfig({ engines: { cloud: llm({ apiKey: "sk-cloud-literal" }) } });
 
     const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
 
-    expect(storedKeys()).toEqual({ cloud: "sk-already-stored" });
+    expect(storedKeys()).toEqual({
+      connections: { cloud: { key: "sk-already-stored", endpoint: "http://lab:8080/v1/chat/completions" } },
+    });
     expect(((readConfig().connections as Record<string, Dict>).cloud as Dict).apiKey).toBe("sk-cloud-literal");
     const notes = result.notes?.join("\n") ?? "";
-    expect(notes).toContain('credentials.json already holds a different key for "cloud"');
+    expect(notes).toContain('credentials.json already holds a different key or endpoint for "cloud"');
     expect(notes).toContain("It stays on the connection as apiKey.");
     expect(notes).not.toContain("sk-cloud-literal");
     expect(result.credentials).toBeUndefined();
   });
 
   test("a key credentials.json already holds a different value for is not replaced, and the literal stays in the file", () => {
-    writeCredential("cloud", "sk-already-stored");
+    writeCredential({ connection: "cloud" }, "sk-already-stored", "https://api.example.com/v1");
     writeConfig({
       connections: {
         cloud: { endpoint: "https://api.example.com/v1", models: { fast: "m" }, apiKey: "sk-other-literal" },
@@ -206,8 +215,12 @@ describe("the keys an engines config holds that akm no longer reads", () => {
 
     const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
 
-    expect(storedKeys()).toEqual({ cloud: "sk-already-stored" });
-    expect(result.notes?.join("\n")).toContain('credentials.json already holds a different key for "cloud"');
+    expect(storedKeys()).toEqual({
+      connections: { cloud: { key: "sk-already-stored", endpoint: "https://api.example.com/v1" } },
+    });
+    expect(result.notes?.join("\n")).toContain(
+      'credentials.json already holds a different key or endpoint for "cloud"',
+    );
     expect(((readConfig().connections as Record<string, Dict>).cloud as Dict).apiKey).toBe("sk-other-literal");
   });
 

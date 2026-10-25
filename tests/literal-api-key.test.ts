@@ -78,7 +78,7 @@ describe("a literal apiKey in the file", () => {
     };
 
     await runExecution(built, { chat });
-    writeCredential("lab", "from-the-store");
+    writeCredential({ connection: "lab" }, "from-the-store", "http://lab:1/v1");
     await runExecution(built, { chat });
 
     expect(sent).toEqual([undefined, "from-the-store"]);

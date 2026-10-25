@@ -12,7 +12,7 @@
 import { abortableDelay, backoffDelay, fetchWithTimeout, isHttpUrl, readBodyWithByteCap } from "../../core/common";
 import { concurrentMap } from "../../core/concurrent";
 import type { EmbeddingConnectionConfig } from "../../core/config/config";
-import { apiKeyReference, readCredential, resolveApiKey } from "../../core/config/credentials";
+import { apiKeyReference, type CredentialSlot, readCredential, resolveApiKey } from "../../core/config/credentials";
 import { defaultConcurrencyForEndpoint } from "../../core/loopback";
 import { redactErrorBody, redactSensitiveText } from "../../core/redaction";
 import { warnVerbose } from "../../core/warn";
@@ -964,9 +964,13 @@ export class RemoteEmbedder implements Embedder {
     return results;
   }
 
+  private resolveKey(): string | undefined {
+    return resolveApiKey(this.config.apiKey, embeddingSlot(this.config), this.config.endpoint ?? "");
+  }
+
   private buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const resolvedKey = resolveApiKey(this.config.apiKey, this.config.credentialName ?? "embedding");
+    const resolvedKey = this.resolveKey();
     if (resolvedKey) {
       headers.Authorization = `Bearer ${resolvedKey}`;
     }
@@ -983,7 +987,7 @@ export class RemoteEmbedder implements Embedder {
    * far unredacted and uncapped, at readBodyWithByteCap's 10 MB default.
    */
   private safeErrorBody(body: string): string {
-    const resolvedKey = resolveApiKey(this.config.apiKey, this.config.credentialName ?? "embedding");
+    const resolvedKey = this.resolveKey();
     return redactSensitiveText(redactErrorBody(body), resolvedKey ? [resolvedKey] : []);
   }
 }
@@ -1061,6 +1065,11 @@ export function hasRemoteEndpoint(config: EmbeddingConnectionConfig): boolean {
   return isHttpUrl(config.endpoint);
 }
 
+/** Where the embedding key is stored: the serving connection's slot when a connection serves the model, else the embedding service's own. */
+function embeddingSlot(config: EmbeddingConnectionConfig): CredentialSlot {
+  return config.credentialName !== undefined ? { connection: config.credentialName } : { service: "embedding" };
+}
+
 /**
  * Describe WHERE the embedding key comes from, never its value: the `$VAR`
  * reference in `embedding.apiKey` (or its default connection's), the key in
@@ -1075,5 +1084,5 @@ export function hasRemoteEndpoint(config: EmbeddingConnectionConfig): boolean {
 export function describeEmbeddingCredential(config: EmbeddingConnectionConfig): string {
   const reference = apiKeyReference(config.apiKey);
   if (reference) return `${reference} (env)`;
-  return readCredential(config.credentialName ?? "embedding") ? "credentials.json" : "none configured";
+  return readCredential(embeddingSlot(config), config.endpoint ?? "") ? "credentials.json" : "none configured";
 }

@@ -100,7 +100,7 @@ nothing is injected. Each read records an `env_access` event. See
 
 The API keys of model connections, `embedding` and `search.curateRerank` are
 not secrets-store references: they are a `$VAR` environment reference or an
-entry of `credentials.json`, and a `${secrets/...}` in an `apiKey` is ignored
+entry of `credentials.json` stored for the endpoint, and a `${secrets/...}` in an `apiKey` is ignored
 with a warning (see [Configuration: Credentials](configuration.md#credentials)).
 The `secrets/` store is for the secrets your own agents, tasks and bundle
 sources need.

@@ -94,7 +94,7 @@ describe("akm models", () => {
       env: { endpoint: "https://env.example.test/v1", apiKey: "$ENV_KEY" },
       stored: { endpoint: "https://stored.example.test/v1" },
     });
-    writeCredential("stored", "stored-key");
+    writeCredential({ connection: "stored" }, "stored-key", "https://stored.example.test/v1");
     const viaEnv = endpoint("https://env.example.test/v1");
     const viaStore = endpoint("https://stored.example.test/v1");
 

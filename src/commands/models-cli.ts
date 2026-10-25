@@ -55,7 +55,7 @@ function targetConnection(config: AkmConfig, name: string | undefined): { name: 
 /** The models the connection's endpoint lists, or none when it cannot say. */
 async function availableModels(name: string, connection: ConnectionConfig, probe: boolean): Promise<string[]> {
   if (!probe) return [];
-  const apiKey = resolveApiKey(connection.apiKey, name);
+  const apiKey = resolveApiKey(connection.apiKey, { connection: name }, connection.endpoint);
   const listed = await listEndpointModels({ endpoint: connection.endpoint, ...(apiKey ? { apiKey } : {}) });
   if (listed.ok) return listed.models;
   warn(`Could not list models from ${connection.endpoint} (${listed.error}).`);

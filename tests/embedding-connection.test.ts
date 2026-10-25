@@ -92,7 +92,8 @@ describe("effectiveEmbedding", () => {
 });
 
 describe("an embedding on the default connection sends that connection's key", () => {
-  async function authSeenBy(config: AkmConfig): Promise<string> {
+  /** The Authorization header the embedding request carried; `storedKey` is stored for the stand-in server's own endpoint. */
+  async function authSeenBy(config: AkmConfig, storedKey?: string): Promise<string> {
     let auth = "";
     const server = Bun.serve({
       port: 0,
@@ -105,6 +106,9 @@ describe("an embedding on the default connection sends that connection's key", (
       },
     });
     try {
+      if (storedKey !== undefined) {
+        writeCredential({ connection: "default" }, storedKey, `http://localhost:${server.port}/v1`);
+      }
       const wired = {
         ...config,
         connections: Object.fromEntries(
@@ -130,9 +134,8 @@ describe("an embedding on the default connection sends that connection's key", (
   });
 
   test("the key stored under the connection's name", async () => {
-    writeCredential("default", "from-store");
     const config = configOf({ embedding: { model: "m" }, connections: { default: LAB } });
-    expect(await authSeenBy(config)).toBe("Bearer from-store");
+    expect(await authSeenBy(config, "from-store")).toBe("Bearer from-store");
   });
 
   test("no key anywhere sends none", async () => {

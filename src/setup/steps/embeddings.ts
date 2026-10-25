@@ -9,15 +9,16 @@
 
 import * as p from "../../cli/clack";
 import { type AkmConfig, defaultConnection, type EmbeddingConnectionConfig } from "../../core/config/config";
-import { resolveApiKey } from "../../core/config/credentials";
+import { apiKeyReference, resolveApiKey, storedCredential } from "../../core/config/credentials";
 import { sameEndpoint } from "../../core/endpoint-url";
 import { UsageError } from "../../core/errors";
+import { redactUrlCredentials } from "../../core/redaction";
 import { isEmbeddingModel } from "../../llm/model-list";
 import { prompt } from "../prompt";
 import { describeSemanticSearchAssets, isRemoteEmbeddingConfig } from "../semantic-assets";
 import type { SetupFlags } from "../setup-flags";
 import type { ConnectionAnswer, EmbeddingAnswer, KeyAnswer } from "../setup-plan";
-import { listModels, pickModel, promptApiKey, promptEndpoint, promptModelName } from "./connection-shared";
+import { listModels, pickModel, promptApiKey, promptEndpoint, promptModelName, warnUser } from "./connection-shared";
 
 export interface SemanticSearchChoice {
   mode: "off" | "auto";
@@ -47,11 +48,30 @@ function servingEndpoint(input: EmbeddingStepInput): string | undefined {
   return input.connection?.endpoint ?? defaultConnection(input.current)?.connection.endpoint;
 }
 
+/**
+ * A key belongs to the endpoint it was given for. When the embedding endpoint changes and no
+ * key comes with the new one, the current key is not carried over; say so.
+ */
+function warnOfDroppedKey(
+  current: EmbeddingConnectionConfig | undefined,
+  endpoint: string,
+  keyGiven: boolean,
+  interactive: boolean,
+): void {
+  if (keyGiven || current?.endpoint === undefined || sameEndpoint(current.endpoint, endpoint)) return;
+  if (apiKeyReference(current.apiKey) === undefined && storedCredential({ service: "embedding" }) === undefined) return;
+  warnUser(
+    `The embedding endpoint changed, so its current key is not used with ${redactUrlCredentials(endpoint)}. Give the new endpoint's key with --embedding-api-key-env (or at the prompt).`,
+    interactive,
+  );
+}
+
 function fromFlags(input: EmbeddingStepInput): EmbeddingAnswer {
   const { flags } = input;
   if (flags.embedding === "off" || flags.embedding === "local") return { kind: flags.embedding };
   const model = flags.embedding as string;
   if (flags.embeddingEndpoint !== undefined) {
+    warnOfDroppedKey(input.current.embedding, flags.embeddingEndpoint, Boolean(flags.embeddingApiKeyEnv), false);
     return {
       kind: "endpoint",
       endpoint: flags.embeddingEndpoint,
@@ -106,15 +126,18 @@ async function askSource(input: EmbeddingStepInput): Promise<EmbeddingAnswer> {
     ...(current.embedding?.endpoint ? { initialValue: current.embedding.endpoint } : {}),
   });
   if (endpoint === undefined) return { kind: "local" };
-  const held = resolveApiKey(current.embedding?.apiKey, "embedding", process.env, true);
+  // A key belongs to the endpoint it was given for, so the current one is offered for that endpoint alone.
+  const unchangedEndpoint =
+    current.embedding?.endpoint !== undefined && sameEndpoint(current.embedding.endpoint, endpoint);
+  const held = unchangedEndpoint
+    ? resolveApiKey(current.embedding?.apiKey, { service: "embedding" }, endpoint, process.env, true)
+    : undefined;
   const typed = await promptApiKey(
     held !== undefined ? "Embedding API key (blank keeps the current one)" : "Embedding API key (blank for none)",
   );
   const key: KeyAnswer | undefined = typed ? { pasted: typed } : undefined;
+  warnOfDroppedKey(current.embedding, endpoint, key !== undefined, true);
 
-  // The held key is sent only to the endpoint it belongs to.
-  const unchangedEndpoint =
-    current.embedding?.endpoint !== undefined && sameEndpoint(current.embedding.endpoint, endpoint);
   const listed = input.probe ? await listModels(endpoint, typed ?? (unchangedEndpoint ? held : undefined), true) : [];
   const embeddingModels = listed.filter(isEmbeddingModel);
   const model =

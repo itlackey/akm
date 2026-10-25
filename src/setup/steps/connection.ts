@@ -8,10 +8,11 @@
  */
 
 import { type AkmConfig, type ConnectionConfig, defaultConnection } from "../../core/config/config";
-import { resolveApiKey } from "../../core/config/credentials";
+import { apiKeyReference, resolveApiKey, storedCredential } from "../../core/config/credentials";
 import { entryModel, STANDARD_ALIASES } from "../../core/config/model-aliases";
 import { sameEndpoint } from "../../core/endpoint-url";
 import { UsageError } from "../../core/errors";
+import { redactUrlCredentials } from "../../core/redaction";
 import { warn } from "../../core/warn";
 import { isEmbeddingModel } from "../../llm/model-list";
 import type { LocalServerResult } from "../detect";
@@ -55,8 +56,13 @@ function listingKey(
     return value || undefined;
   }
   return existing && sameEndpoint(existing.endpoint, endpoint)
-    ? resolveApiKey(existing.apiKey, name, process.env, true)
+    ? resolveApiKey(existing.apiKey, { connection: name }, existing.endpoint, process.env, true)
     : undefined;
+}
+
+/** Whether the connection has a key of its own: a `$VAR` it references, or one stored for it, at whatever endpoint. */
+function holdsKey(existing: ConnectionConfig, name: string): boolean {
+  return apiKeyReference(existing.apiKey) !== undefined || storedCredential({ connection: name }) !== undefined;
 }
 
 /** One model per alias: the connection's current pick is kept; the others are chosen from the endpoint's list, or typed. */
@@ -154,13 +160,22 @@ export async function stepConnection(input: ConnectionStepInput): Promise<Connec
     return NOTHING;
   }
 
+  // A key belongs to the endpoint it was given for, so the current one is offered for that endpoint alone.
+  const sameServer = existing !== undefined && sameEndpoint(existing.endpoint, endpoint);
   let key: KeyAnswer | undefined;
   if (flags.apiKeyEnv !== undefined) {
     key = { env: flags.apiKeyEnv };
   } else if (interactive) {
-    const hasKey = resolveApiKey(existing?.apiKey, name, process.env, true) !== undefined;
+    const hasKey =
+      sameServer && resolveApiKey(existing?.apiKey, { connection: name }, endpoint, process.env, true) !== undefined;
     const typed = await promptApiKey(hasKey ? "API key (blank keeps the current one)" : "API key (blank for none)");
     if (typed) key = { pasted: typed };
+  }
+  if (key === undefined && existing && !sameServer && holdsKey(existing, name)) {
+    warnUser(
+      `The endpoint of "${name}" changed, so its current key is not used with ${redactUrlCredentials(endpoint)}. Give the new endpoint's key with --api-key-env (or at the prompt).`,
+      interactive,
+    );
   }
 
   const listed = input.probe ? await listModels(endpoint, listingKey(key, existing, name, endpoint), interactive) : [];

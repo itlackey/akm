@@ -22,7 +22,7 @@ describe("a connection answer", () => {
       connection: { name: "default", endpoint: "http://localhost:11434/v1", picks },
     });
     expect(patch.connections).toEqual({ default: { endpoint: "http://localhost:11434/v1", models: picks } });
-    expect(credentials).toEqual({});
+    expect(credentials).toEqual([]);
   });
 
   test("a key named by a variable is written as a $VAR reference", () => {
@@ -30,14 +30,16 @@ describe("a connection answer", () => {
       connection: { name: "default", endpoint: "https://api.example.test/v1", key: { env: "EXAMPLE_KEY" }, picks },
     });
     expect(patch.connections?.default?.apiKey).toBe("$EXAMPLE_KEY");
-    expect(credentials).toEqual({});
+    expect(credentials).toEqual([]);
   });
 
-  test("a pasted key goes to credentials.json under the connection's name and never into the config", () => {
+  test("a pasted key goes to credentials.json for the connection and its endpoint, and never into the config", () => {
     const { patch, credentials } = applySetupAnswers(cfg(), {
       connection: { name: "lab", endpoint: "https://api.example.test/v1", key: { pasted: "sk-typed-secret" }, picks },
     });
-    expect(credentials).toEqual({ lab: "sk-typed-secret" });
+    expect(credentials).toEqual([
+      { slot: { connection: "lab" }, key: "sk-typed-secret", endpoint: "https://api.example.test/v1" },
+    ]);
     expect(JSON.stringify(patch)).not.toContain("sk-typed-secret");
     expect(patch.connections?.lab).not.toHaveProperty("apiKey");
   });
@@ -48,14 +50,14 @@ describe("a connection answer", () => {
       connection: { name: "default", endpoint: "https://e/v1", key: { pasted: "typed" }, picks },
     });
     expect(patch.connections?.default).not.toHaveProperty("apiKey");
-    expect(credentials).toEqual({ default: "typed" });
+    expect(credentials).toEqual([{ slot: { connection: "default" }, key: "typed", endpoint: "https://e/v1" }]);
   });
 
-  test("no key answer keeps the key the connection has, and everything else it holds", () => {
+  test("no key answer keeps the key the connection has for the same endpoint, and everything else it holds", () => {
     const current = cfg({
       connections: {
         default: {
-          endpoint: "https://old/v1",
+          endpoint: "https://new/v1/chat/completions",
           apiKey: "$KEPT",
           timeoutMs: 900000,
           top_p: 0.9,
@@ -75,6 +77,17 @@ describe("a connection answer", () => {
       top_p: 0.9,
     });
     expect(patch.connections?.other).toEqual({ endpoint: "https://other/v1" });
+  });
+
+  test("a key belongs to its endpoint: with no key answer, a connection moved to another server starts without the $VAR it had", () => {
+    const current = cfg({
+      connections: { default: { endpoint: "https://a.example.test/v1", apiKey: "$A_KEY", models: picks } },
+    });
+    const { patch, credentials } = applySetupAnswers(current, {
+      connection: { name: "default", endpoint: "https://b.example.test/v1", picks },
+    });
+    expect(patch.connections?.default).toEqual({ endpoint: "https://b.example.test/v1", models: picks });
+    expect(credentials).toEqual([]);
   });
 
   test("a pick for an alias whose entry carries request fields changes the model and keeps the fields", () => {
@@ -175,14 +188,16 @@ describe("an embedding answer", () => {
       embedding: { kind: "endpoint", endpoint: "https://emb.example.test/v1", model: "e5", key: { env: "EMB_KEY" } },
     });
     expect(patch.embedding).toEqual({ endpoint: "https://emb.example.test/v1", model: "e5", apiKey: "$EMB_KEY" });
-    expect(credentials).toEqual({});
+    expect(credentials).toEqual([]);
   });
 
-  test("another endpoint's pasted key goes to credentials.json under embedding", () => {
+  test("another endpoint's pasted key goes to credentials.json for the embedding service and its endpoint", () => {
     const { patch, credentials } = applySetupAnswers(cfg(), {
       embedding: { kind: "endpoint", endpoint: "https://emb.example.test/v1", model: "e5", key: { pasted: "typed" } },
     });
-    expect(credentials).toEqual({ embedding: "typed" });
+    expect(credentials).toEqual([
+      { slot: { service: "embedding" }, key: "typed", endpoint: "https://emb.example.test/v1" },
+    ]);
     expect(patch.embedding).toEqual({ endpoint: "https://emb.example.test/v1", model: "e5" });
   });
 
@@ -200,8 +215,26 @@ describe("an embedding answer", () => {
       apiKey: "$EMB_KEY",
     });
   });
+
+  test("a key belongs to its endpoint: another endpoint starts without the $VAR the block had, and the same one keeps it for another model", () => {
+    const current = cfg({
+      embedding: { endpoint: "https://emb.example.test/v1", model: "e5", apiKey: "$EMB_KEY" },
+    });
+    const moved = applySetupAnswers(current, {
+      embedding: { kind: "endpoint", endpoint: "https://other.example.test/v1", model: "e5" },
+    });
+    expect(moved.patch.embedding).toEqual({ endpoint: "https://other.example.test/v1", model: "e5" });
+    const remodelled = applySetupAnswers(current, {
+      embedding: { kind: "endpoint", endpoint: "https://emb.example.test/v1", model: "bge" },
+    });
+    expect(remodelled.patch.embedding).toEqual({
+      endpoint: "https://emb.example.test/v1",
+      model: "bge",
+      apiKey: "$EMB_KEY",
+    });
+  });
 });
 
 test("answers that name nothing change nothing", () => {
-  expect(applySetupAnswers(cfg(), {})).toEqual({ patch: {}, credentials: {} });
+  expect(applySetupAnswers(cfg(), {})).toEqual({ patch: {}, credentials: [] });
 });

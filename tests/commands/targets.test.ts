@@ -63,7 +63,7 @@ describe("connection rows", () => {
   });
 
   test("the key is reported as held, never its value: a $VAR set or not, an entry in credentials.json, or none", () => {
-    writeCredential("stored", "the-stored-secret");
+    writeCredential({ connection: "stored" }, "the-stored-secret", "http://c/v1");
     const all = rows(
       cfg({
         connections: {

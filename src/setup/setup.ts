@@ -45,7 +45,7 @@ import { type DetectedEnvironment, detectEnvironment, renderDetectionSummary } f
 import { bail, prompt } from "./prompt";
 import { prepareSemanticSearchAssets } from "./semantic-assets";
 import type { SetupFlags } from "./setup-flags";
-import { applySetupAnswers, type SetupAnswers } from "./setup-plan";
+import { applySetupAnswers, type PendingCredential, type SetupAnswers } from "./setup-plan";
 import { canonicalSetupGitUrl } from "./source-identity";
 import { createSetupContext, runSetupSteps, type SetupContext, type SetupDraftConfig, type SetupStep } from "./steps";
 import { type ConnectionStepResult, stepConnection } from "./steps/connection";
@@ -363,7 +363,7 @@ function finalizeSetupDraft(draft: SetupDraftConfig): AkmConfig {
 /** What the steps decide that is not config: the semantic-search choice, and keys bound for `credentials.json`. */
 interface SetupOutcome {
   semantic: SemanticSearchChoice;
-  credentials: Record<string, string>;
+  credentials: PendingCredential[];
 }
 
 const NOTHING_DETECTED: DetectedEnvironment = {
@@ -395,7 +395,7 @@ export function buildSetupSteps(options: {
   /** Latest semantic-search choice and pending keys; populated by the harness, connection and embedding steps. */
   outcome: SetupOutcome;
 } {
-  const outcome: SetupOutcome = { semantic: options.semanticSearchOutcome, credentials: {} };
+  const outcome: SetupOutcome = { semantic: options.semanticSearchOutcome, credentials: [] };
   const detection = options.detection ?? NOTHING_DETECTED;
   const flags = options.flags ?? {};
   const probe = options.probe !== false;
@@ -406,7 +406,7 @@ export function buildSetupSteps(options: {
   const applyAnswers = (ctx: SetupContext, answers: SetupAnswers): void => {
     const change = applySetupAnswers(ctx.config, answers);
     ctx.replace(change.patch);
-    Object.assign(outcome.credentials, change.credentials);
+    outcome.credentials.push(...change.credentials);
   };
 
   const steps: SetupStep[] = [
@@ -513,9 +513,9 @@ export function buildSetupSteps(options: {
   return { steps, outcome };
 }
 
-/** Keys the user typed at a masked prompt, filed under the name of the block they belong to. */
-function storeCredentials(credentials: Readonly<Record<string, string>>): void {
-  for (const [name, value] of Object.entries(credentials)) writeCredential(name, value);
+/** Keys the user typed at a masked prompt, filed for the block and endpoint they were typed for. */
+function storeCredentials(credentials: readonly PendingCredential[]): void {
+  for (const { slot, key, endpoint } of credentials) writeCredential(slot, key, endpoint);
 }
 
 /**
@@ -692,7 +692,7 @@ async function applyNonInteractiveDefaults(
   base: SetupDraftConfig,
   stashDir: string,
   opts: { noProbe?: boolean; flags?: SetupFlags },
-): Promise<{ config: SetupDraftConfig; credentials: Record<string, string> }> {
+): Promise<{ config: SetupDraftConfig; credentials: PendingCredential[] }> {
   const detection = await detectEnvironment({
     existingStashDir: primaryBundlePath(base),
     probe: opts.noProbe !== true,
@@ -867,7 +867,7 @@ export async function runSetupFromConfig(opts: {
   // defaults. Steps start from `merged` and their nonInteractive path only
   // populates absent values, so nothing the file or existing config supplied
   // is overwritten.
-  let credentials: Record<string, string> = {};
+  let credentials: PendingCredential[] = [];
   if (opts.applyDefaults) {
     const applied = await applyNonInteractiveDefaults(merged, stashDir, opts);
     merged = applied.config;

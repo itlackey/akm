@@ -80,7 +80,7 @@ export async function rerankDocuments(
   }
   if (documents.length === 0) return [];
 
-  const resolvedKey = resolveApiKey(config.apiKey, "curateRerank");
+  const resolvedKey = resolveApiKey(config.apiKey, { service: "curateRerank" }, config.endpoint);
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (resolvedKey) headers.Authorization = `Bearer ${resolvedKey}`;
 

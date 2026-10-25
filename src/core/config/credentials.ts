@@ -3,28 +3,58 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * API keys akm holds for the user: `<configDir>/credentials.json`, a flat
- * `{ "<name>": "<key>" }` map (0600), each key stored under
- * the name of the block it belongs to: a connection's name, `embedding`, or
- * `curateRerank`. A block whose `apiKey` is a `$VAR` reference reads that
- * variable and never touches this file. The bundle's `secrets/` store is for
- * secrets the user's own agents need and has nothing to do with these.
+ * API keys akm holds for the user: `<configDir>/credentials.json` (0600).
+ *
+ *     { "connections": { "<name>": { "key": "…", "endpoint": "…" } },
+ *       "services":    { "embedding": { "key": "…", "endpoint": "…" },
+ *                        "curateRerank": { … } } }
+ *
+ * A key is stored for one endpoint and is read for that endpoint alone: the
+ * entry records the endpoint it was stored for, and a block whose endpoint is
+ * now another gets no key, with a word saying so. A connection's name and a
+ * service's slot are different namespaces, so a connection called `embedding`
+ * and the embedding service hold different keys. A block whose `apiKey` is a
+ * `$VAR` reference reads that variable and never touches this file. The bundle's
+ * `secrets/` store is for secrets the user's own agents need and has nothing to
+ * do with these.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { isRecord, writeFileAtomic } from "../common";
+import { sameEndpoint } from "../endpoint-url";
 import { ConfigError } from "../errors";
 import { getConfigDir } from "../paths";
-import { collectSensitiveValues } from "../redaction";
+import { collectSensitiveValues, redactUrlCredentials } from "../redaction";
 import { warnOnce } from "../warn";
 import type { AkmConfig } from "./config-types";
 import { envReferenceName, isEnvReference } from "./schema/primitives";
+
+/** Where a key is stored: a connection, by its name, or one of the two services that have an endpoint of their own. */
+export type CredentialSlot = { readonly connection: string } | { readonly service: "embedding" | "curateRerank" };
+
+/** A key and the endpoint it was stored for. */
+export interface StoredCredential {
+  readonly key: string;
+  readonly endpoint: string;
+}
+
+const NAMESPACES = ["connections", "services"] as const;
 
 function storePath(): string {
   return path.join(getConfigDir(), "credentials.json");
 }
 
-/** What is wrong with the store, if anything: it cannot be read, or it is not a JSON object of keys. */
+function namespaceOf(slot: CredentialSlot): { group: (typeof NAMESPACES)[number]; name: string } {
+  return "connection" in slot
+    ? { group: "connections", name: slot.connection }
+    : { group: "services", name: slot.service };
+}
+
+function describeSlot(slot: CredentialSlot): string {
+  return "connection" in slot ? `connection "${slot.connection}"` : `the ${slot.service} service`;
+}
+
+/** What is wrong with the store, if anything: it cannot be read, or it is not a JSON object. */
 type StoreRead = { readonly entries: Record<string, unknown> } | { readonly problem: string };
 
 /** The stored entries; an absent file holds none. */
@@ -42,9 +72,9 @@ function readStore(): StoreRead {
     const parsed: unknown = JSON.parse(text);
     if (isRecord(parsed)) return { entries: parsed };
   } catch {
-    // Falls through: not JSON is not a JSON object of keys.
+    // Falls through: not JSON is not a JSON object.
   }
-  return { problem: `${storePath()} is not a JSON object of keys` };
+  return { problem: `${storePath()} is not a JSON object` };
 }
 
 function writeStore(entries: Record<string, unknown>): void {
@@ -52,22 +82,66 @@ function writeStore(entries: Record<string, unknown>): void {
   writeFileAtomic(storePath(), `${JSON.stringify(entries, null, 2)}\n`, 0o600);
 }
 
-/** The key stored under `name`, if any. A store that cannot be used, or an entry that is not a string, is named once and ignored. */
-export function readCredential(name: string): string | undefined {
+/** The group of entries (`connections` or `services`) a store holds; anything else there is not one. */
+function groupOf(entries: Record<string, unknown>, group: (typeof NAMESPACES)[number]): Record<string, unknown> {
+  const held = entries[group];
+  return isRecord(held) ? held : {};
+}
+
+/** Whether a stored value is the current shape of an entry. */
+function isStoredCredential(value: unknown): value is StoredCredential {
+  return isRecord(value) && typeof value.key === "string" && typeof value.endpoint === "string";
+}
+
+/**
+ * The stored entry for `slot`, if the store has one in the current shape. One
+ * the store has in any other shape (the flat `{ "<name>": "<key>" }` an earlier
+ * build wrote, which names no endpoint) is named once and ignored: `akm migrate
+ * apply` files it under the endpoint it belongs to.
+ */
+export function storedCredential(slot: CredentialSlot): StoredCredential | undefined {
   const store = readStore();
   if ("problem" in store) {
     warnOnce(`credentials:unusable:${storePath()}`, `${store.problem}; ignoring it.`);
     return undefined;
   }
-  const value = store.entries[name];
-  if (value !== undefined && typeof value !== "string") {
+  const { group, name } = namespaceOf(slot);
+  const held = groupOf(store.entries, group)[name];
+  if (held === undefined) {
+    const flat = store.entries[name];
+    if (typeof flat === "string") {
+      warnOnce(
+        `credentials:flat:${storePath()}:${name}`,
+        `${storePath()}: the key "${name}" is in the older form, which names no endpoint, so it is not used; \`akm migrate apply\` files it under the endpoint it belongs to.`,
+      );
+    }
+    return undefined;
+  }
+  if (!isStoredCredential(held)) {
     warnOnce(
-      `credentials:not-a-string:${storePath()}:${name}`,
-      `${storePath()}: the entry "${name}" is not a string; ignoring it.`,
+      `credentials:malformed:${storePath()}:${group}:${name}`,
+      `${storePath()}: the entry for ${describeSlot(slot)} is not { "key": "…", "endpoint": "…" }; ignoring it.`,
     );
     return undefined;
   }
-  return value || undefined;
+  return held;
+}
+
+/**
+ * The key stored for `slot` and `endpoint`. A key stored for another endpoint is
+ * not read: it is named once, without its value, and the block goes without.
+ */
+export function readCredential(slot: CredentialSlot, endpoint: string): string | undefined {
+  const held = storedCredential(slot);
+  if (!held) return undefined;
+  if (!sameEndpoint(held.endpoint, endpoint)) {
+    warnOnce(
+      `credentials:endpoint:${storePath()}:${describeSlot(slot)}:${held.endpoint}:${endpoint}`,
+      `The key stored for ${describeSlot(slot)} belongs to ${redactUrlCredentials(held.endpoint)}, not ${redactUrlCredentials(endpoint)}, so it is not sent there. Store a key for the new endpoint with \`akm setup\`.`,
+    );
+    return undefined;
+  }
+  return held.key || undefined;
 }
 
 function writableStore(): Record<string, unknown> {
@@ -76,24 +150,95 @@ function writableStore(): Record<string, unknown> {
   return store.entries;
 }
 
-/** Store `value` under `name`, keeping every other entry as it is. */
-export function writeCredential(name: string, value: string): void {
-  writeStore({ ...writableStore(), [name]: value });
+/** Store `key` for `slot` and `endpoint`, keeping every other entry as it is. */
+export function writeCredential(slot: CredentialSlot, key: string, endpoint: string): void {
+  const entries = writableStore();
+  const { group, name } = namespaceOf(slot);
+  writeStore({ ...entries, [group]: { ...groupOf(entries, group), [name]: { key, endpoint } } });
+}
+
+/** The entries the store holds in the current shape, by slot, whatever endpoint each is stored for. */
+export function storedCredentials(): Array<{ slot: CredentialSlot; credential: StoredCredential }> {
+  const store = readStore();
+  if ("problem" in store) return [];
+  return NAMESPACES.flatMap((group) =>
+    Object.entries(groupOf(store.entries, group)).flatMap(([name, held]) =>
+      isStoredCredential(held)
+        ? [
+            {
+              slot: group === "connections" ? { connection: name } : { service: name as "embedding" | "curateRerank" },
+              credential: held,
+            },
+          ]
+        : [],
+    ),
+  );
 }
 
 /**
- * The key of the block named `name`, whose config `apiKey` is `apiKey`: the
- * variable it references, else `credentials.json[name]`. An unset variable is
- * named once and sends no key. `quiet` is for callers that only collect values to redact.
+ * File every key the store holds in the older flat `{ "<name>": "<key>" }` form under
+ * the endpoint of the block it belongs to, as `endpointOf` says: a name that is a
+ * connection's, or `curateRerank`, or `embedding` (the service's, or a connection
+ * called that: one of the two must have an endpoint, or it is not filed). An entry
+ * that cannot be filed stays as it is, and a note says why. Writes only when `apply`.
+ */
+export function fileFlatCredentials(
+  endpointOf: (slot: CredentialSlot) => string | undefined,
+  apply: boolean,
+): { readonly filed: readonly string[]; readonly notes: readonly string[] } {
+  const store = readStore();
+  if ("problem" in store) return { filed: [], notes: [`${store.problem}; its keys were not filed.`] };
+  const entries = { ...store.entries };
+  const filed: string[] = [];
+  const notes: string[] = [];
+  for (const [name, value] of Object.entries(store.entries)) {
+    if (typeof value !== "string" || (NAMESPACES as readonly string[]).includes(name)) continue;
+    const slots: CredentialSlot[] =
+      name === "curateRerank"
+        ? [{ service: "curateRerank" }]
+        : name === "embedding"
+          ? [{ service: "embedding" }, { connection: name }]
+          : [{ connection: name }];
+    const homes = slots.flatMap((slot) => {
+      const endpoint = endpointOf(slot);
+      return endpoint === undefined ? [] : [{ slot, endpoint }];
+    });
+    const home = homes[0];
+    if (homes.length !== 1 || home === undefined) {
+      notes.push(
+        homes.length > 1
+          ? `credentials.json: the key "${name}" could belong to the embedding service or to the connection of that name; store it again with \`akm setup\`. It stays as it is.`
+          : `credentials.json: the key "${name}" belongs to no block this config gives an endpoint, so it cannot be bound to one. It stays as it is.`,
+      );
+      continue;
+    }
+    const { group, name: slotName } = namespaceOf(home.slot);
+    entries[group] = { ...groupOf(entries, group), [slotName]: { key: value, endpoint: home.endpoint } };
+    delete entries[name];
+    filed.push(name);
+    notes.push(
+      `credentials.json: the key "${name}" is filed for ${describeSlot(home.slot)} at ${redactUrlCredentials(home.endpoint)}.`,
+    );
+  }
+  if (apply && filed.length > 0) writeStore(entries);
+  return { filed, notes };
+}
+
+/**
+ * The key of the block stored in `slot`, whose config `apiKey` is `apiKey` and
+ * whose endpoint is `endpoint`: the variable it references, else the key stored
+ * for that endpoint. An unset variable is named once and sends no key. `quiet`
+ * is for callers that only collect values to redact.
  */
 export function resolveApiKey(
   apiKey: string | undefined,
-  name: string,
+  slot: CredentialSlot,
+  endpoint: string,
   env: NodeJS.ProcessEnv = process.env,
   quiet = false,
 ): string | undefined {
   const variable = apiKey === undefined ? undefined : envReferenceName(apiKey);
-  if (variable === undefined) return readCredential(name);
+  if (variable === undefined) return readCredential(slot, endpoint);
   const value = env[variable]?.trim();
   if (!value && !quiet) {
     warnOnce(
@@ -112,20 +257,28 @@ export function apiKeyReference(apiKey: string | undefined): string | undefined 
   return apiKey !== undefined && isEnvReference(apiKey) ? apiKey : undefined;
 }
 
-/** Every key the config can resolve now, and any left in it as written, for redaction. */
+/**
+ * Every key akm could send or has been given, for redaction: whatever the store
+ * holds, the variables the config's blocks reference, and any key left in the
+ * file as written.
+ */
 export function collectCredentialValues(
   config: Pick<AkmConfig, "connections" | "embedding" | "search">,
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  const blocks: Array<[string, { apiKey?: string } | undefined]> = [
-    ...Object.entries(config.connections ?? {}),
-    ["embedding", config.embedding],
-    ["curateRerank", config.search?.curateRerank],
+  const blocks: Array<{ apiKey?: string } | undefined> = [
+    ...Object.values(config.connections ?? {}),
+    config.embedding,
+    config.search?.curateRerank,
   ];
-  return collectSensitiveValues(
-    blocks.flatMap(([name, block]) => [
-      resolveApiKey(block?.apiKey, name, env, true),
-      apiKeyReference(block?.apiKey) === undefined ? block?.apiKey : undefined,
-    ]),
-  );
+  return collectSensitiveValues([
+    ...storedCredentials().map(({ credential }) => credential.key),
+    ...blocks.flatMap((block) => {
+      const variable = block?.apiKey === undefined ? undefined : envReferenceName(block.apiKey);
+      return [
+        variable === undefined ? undefined : env[variable]?.trim(),
+        apiKeyReference(block?.apiKey) === undefined ? block?.apiKey : undefined,
+      ];
+    }),
+  ]);
 }

@@ -60,7 +60,7 @@ export function collectDispatchSensitiveValues(
 ): string[] {
   const values: (string | undefined)[] = [];
   if (runner.kind === "connection") {
-    values.push(resolveApiKey(runner.apiKey, runner.name, envSource, true));
+    values.push(resolveApiKey(runner.apiKey, { connection: runner.name }, runner.endpoint, envSource, true));
   } else {
     for (const name of harnessProfile(runner).envPassthrough) {
       if (!isEnvPassthroughValueSafeToExpose(name, envSource[name])) values.push(envSource[name]);
@@ -145,7 +145,7 @@ export function materializeConnection(
   inference?: LlmInference | null,
   envSource: NodeJS.ProcessEnv = process.env,
 ): ChatCompletionConfig {
-  const apiKey = resolveApiKey(runner.apiKey, runner.name, envSource);
+  const apiKey = resolveApiKey(runner.apiKey, { connection: runner.name }, runner.endpoint, envSource);
   const settings = mergeLayerInference([
     { inference: runner.inference as ExecutionJsonObject | undefined },
     { inference: inference as ExecutionJsonObject | null | undefined },

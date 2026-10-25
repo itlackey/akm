@@ -96,10 +96,9 @@ describe("akm index embedding requests carry the stored credential (#953)", () =
   }
 
   test("in-process akmIndex({ full: true }) sends Bearer <stored key> on every embedding request", async () => {
-    writeCredential("embedding", "store-secret-value");
-
     const capture = createAuthCapturingEmbeddingServer();
     server = capture.server;
+    writeCredential({ service: "embedding" }, "store-secret-value", capture.url);
 
     writeMemory("entry-1.md", "First memory entry for the credential test.");
     writeMemory("entry-2.md", "Second memory entry for the credential test.");
@@ -119,10 +118,9 @@ describe("akm index embedding requests carry the stored credential (#953)", () =
   });
 
   test("an embedding with only a model runs on the default connection and sends the key stored under its name", async () => {
-    writeCredential("lab", "connection-store-secret-value");
-
     const capture = createAuthCapturingEmbeddingServer();
     server = capture.server;
+    writeCredential({ connection: "lab" }, "connection-store-secret-value", capture.url);
 
     writeMemory("entry-1.md", "First memory entry for the default-connection embedding test.");
 
@@ -142,10 +140,9 @@ describe("akm index embedding requests carry the stored credential (#953)", () =
   });
 
   test("the real CLI child process (`bun src/cli.ts index --full`) sends Bearer <stored key> too", async () => {
-    writeCredential("embedding", "cli-store-secret-value");
-
     const capture = createAuthCapturingEmbeddingServer();
     server = capture.server;
+    writeCredential({ service: "embedding" }, "cli-store-secret-value", capture.url);
 
     writeMemory("entry-1.md", "First memory entry for the CLI credential test.");
 
@@ -260,10 +257,9 @@ describe("akm bundle update: the update's embedding phase carries the stored cre
   }
 
   test("akmUpdate sends Bearer <stored key> on every embedding request", async () => {
-    writeCredential("embedding", "bundle-update-store-secret-value");
-
     const capture = createAuthCapturingEmbeddingServer();
     server = capture.server;
+    writeCredential({ service: "embedding" }, "bundle-update-store-secret-value", capture.url);
 
     const id = "credential-probe";
     const cacheDir = path.join(getRegistryCacheDir(), `${id}-cache`);
@@ -345,10 +341,9 @@ describe("akm remember write path: indexWrittenAssets carries the stored credent
   });
 
   test("generateEmbeddingsForDb, called at indexWrittenAssets's own fresh loadConfig(), sends Bearer <stored key>", async () => {
-    writeCredential("embedding", "remember-store-secret-value");
-
     const capture = createAuthCapturingEmbeddingServer();
     server = capture.server;
+    writeCredential({ service: "embedding" }, "remember-store-secret-value", capture.url);
 
     fs.writeFileSync(
       path.join(storage.stashDir, "memories", "seed-memory.md"),
@@ -399,10 +394,9 @@ describe("known-good control: improve consolidate's embedding path (#953)", () =
   });
 
   test("embedBatch(texts, config.embedding, ...) from the improve consolidate call shape sends Bearer <stored key>", async () => {
-    writeCredential("embedding", "consolidate-store-secret-value");
-
     const capture = createAuthCapturingEmbeddingServer();
     server = capture.server;
+    writeCredential({ service: "embedding" }, "consolidate-store-secret-value", capture.url);
 
     writeSandboxConfig({
       embedding: { endpoint: capture.url, model: "mock", dimension: 8 },

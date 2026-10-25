@@ -50,7 +50,7 @@ AKM writes to these locations on your machine. All paths follow [XDG Base Direct
 | Path | Contents | Safe to delete? |
 |---|---|---|
 | `config.json` | Your AKM configuration: connections, harnesses, improve strategies, bundles (bundle sources), and experimental opt-ins — see [Configuration](configuration.md) | **No** — deleting resets all settings |
-| `credentials.json` | The API keys akm holds for your connections, `embedding` and `search.curateRerank`, as a flat `{ "<name>": "<key>" }` map written with mode 0600 (see [Credentials](configuration.md#credentials)) | **No** — deleting it removes those keys; akm sends requests without them |
+| `credentials.json` | The API keys akm holds for your connections and for the `embedding` and `search.curateRerank` services, each with the endpoint it was stored for, written with mode 0600 (see [Credentials](configuration.md#credentials)) | **No** — deleting it removes those keys; akm sends requests without them |
 
 Override: set `AKM_CONFIG_DIR` or `XDG_CONFIG_HOME`.
 

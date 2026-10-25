@@ -5,17 +5,18 @@
 /**
  * `akm migrate apply`'s key step. akm reads a key from a `$VAR` reference or
  * from `credentials.json`, nowhere else. The keys a config still holds in any
- * other form are read once, filed in `credentials.json` under the name of the
- * block they belong to (a connection's name, `embedding`, `curateRerank`) and
- * removed from the document:
+ * other form are read once, filed in `credentials.json` for the block they
+ * belong to (a connection, or the `embedding` or `curateRerank` service) and the
+ * endpoint that block names, and removed from the document:
  *
  *   - an engine's `apiKeyFile`, a literal `apiKey` or a `${secrets/...}` one,
  *     which the conversion to a connection cannot carry;
  *   - the same literal or secret-store `apiKey` on a connection, `embedding` or
  *     `search.curateRerank` that the file already says in the current form.
  *
- * A key that cannot be read, or whose name `credentials.json` already holds a
- * different key for, is not moved. It stays in the file: on the block that held
+ * A key that cannot be read, whose block names no endpoint to file it for, or
+ * whose slot `credentials.json` already holds a different key or endpoint for,
+ * is not moved. It stays in the file: on the block that held
  * it, or, for an engine's `apiKey`, put back on the connection as `apiKey`
  * exactly as it was, so the rewrite never leaves it in the backups alone (akm
  * ignores a key held there, with a warning, until it is moved). An engine's
@@ -27,15 +28,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isRecord } from "../common";
+import { sameEndpoint } from "../endpoint-url";
+import { redactUrlCredentials } from "../redaction";
 import { isSecretRefToken } from "../ref-token";
 import type { ConvertEnginesResult } from "./convert-engines";
-import { readCredential } from "./credentials";
+import { type CredentialSlot, storedCredential } from "./credentials";
 import { isEnvReference } from "./schema/primitives";
 
 type Dict = Record<string, unknown>;
 
 export interface MovedKey {
-  /** The `credentials.json` entry. */
+  /** The `credentials.json` entry, and the endpoint it is filed for. */
+  readonly slot: CredentialSlot;
+  readonly endpoint: string;
+  /** The block's name, for the note that reports the move. */
   readonly name: string;
   readonly value: string;
   /** Where the config held it, as a key path. */
@@ -76,6 +82,9 @@ function heldValue(value: string, options: KeyMoveOptions): string | undefined {
 
 interface Candidate {
   readonly name: string;
+  readonly slot: CredentialSlot;
+  /** The endpoint of the block the key belongs to; none, and the key cannot be filed. */
+  readonly endpoint: string | undefined;
   readonly from: string;
   /** The value, or why there is none. */
   readonly read: () => string | undefined;
@@ -89,25 +98,37 @@ interface Candidate {
 
 /** The keys of the converted document that are not `$VAR` references. */
 function documentCandidates(config: Dict, options: KeyMoveOptions): Candidate[] {
-  const blocks: Array<[string, Dict]> = [];
+  const blocks: Array<{ name: string; slot: CredentialSlot; from: string; block: Dict }> = [];
   if (isRecord(config.connections)) {
-    for (const [name, block] of Object.entries(config.connections)) if (isRecord(block)) blocks.push([name, block]);
+    for (const [name, block] of Object.entries(config.connections)) {
+      if (isRecord(block)) blocks.push({ name, slot: { connection: name }, from: `connections.${name}.apiKey`, block });
+    }
   }
   const search = isRecord(config.search) ? config.search : {};
-  if (isRecord(config.embedding)) blocks.push(["embedding", config.embedding]);
-  if (isRecord(search.curateRerank)) blocks.push(["curateRerank", search.curateRerank]);
-  return blocks.flatMap(([name, block]) => {
+  if (isRecord(config.embedding)) {
+    blocks.push({
+      name: "embedding",
+      slot: { service: "embedding" },
+      from: "embedding.apiKey",
+      block: config.embedding,
+    });
+  }
+  if (isRecord(search.curateRerank)) {
+    blocks.push({
+      name: "curateRerank",
+      slot: { service: "curateRerank" },
+      from: "search.curateRerank.apiKey",
+      block: search.curateRerank,
+    });
+  }
+  return blocks.flatMap(({ name, slot, from, block }) => {
     const apiKey = block.apiKey;
     if (typeof apiKey !== "string" || isEnvReference(apiKey)) return [];
-    const from =
-      name === "embedding"
-        ? "embedding.apiKey"
-        : name === "curateRerank"
-          ? "search.curateRerank.apiKey"
-          : `connections.${name}.apiKey`;
     return [
       {
         name,
+        slot,
+        endpoint: typeof block.endpoint === "string" ? block.endpoint : undefined,
         from,
         read: () => heldValue(apiKey, options),
         source: isSecretRefToken(apiKey) ? "the secret store reference" : "the literal key",
@@ -117,6 +138,20 @@ function documentCandidates(config: Dict, options: KeyMoveOptions): Candidate[] 
       },
     ];
   });
+}
+
+/** The endpoint the document gives the block that `slot` stands for, if it gives one. */
+export function documentEndpoint(config: Dict, slot: CredentialSlot): string | undefined {
+  const search = isRecord(config.search) ? config.search : {};
+  const block =
+    "connection" in slot
+      ? isRecord(config.connections)
+        ? config.connections[slot.connection]
+        : undefined
+      : slot.service === "embedding"
+        ? config.embedding
+        : search.curateRerank;
+  return isRecord(block) && typeof block.endpoint === "string" ? block.endpoint : undefined;
 }
 
 /** The keys the conversion could not carry from an engine, read from the original document. */
@@ -134,6 +169,8 @@ function engineCandidates(
       return [
         {
           name: connection,
+          slot: { connection },
+          endpoint: documentEndpoint(config, { connection }),
           from: `engines.${engine}.${field}`,
           read: () => readKeyFile(held),
           source: `its key file ${held}`,
@@ -143,6 +180,8 @@ function engineCandidates(
     return [
       {
         name: connection,
+        slot: { connection },
+        endpoint: documentEndpoint(config, { connection }),
         from: `engines.${engine}.${field}`,
         read: () => heldValue(held, options),
         source: isSecretRefToken(held) ? `the secret store reference ${held}` : "the literal key",
@@ -161,7 +200,7 @@ export function planKeyMoves(
   options: KeyMoveOptions = {},
 ): KeyMovePlan {
   const config = structuredClone(converted.config);
-  const planned = new Map<string, string>();
+  const planned = new Map<string, MovedKey>();
   const moves: MovedKey[] = [];
   const notes: string[] = [];
   for (const candidate of [
@@ -177,17 +216,30 @@ export function planKeyMoves(
       );
       continue;
     }
-    const existing = planned.get(candidate.name) ?? readCredential(candidate.name);
-    if (existing !== undefined && existing !== value) {
+    const { endpoint } = candidate;
+    if (endpoint === undefined) {
       candidate.restore?.();
       notes.push(
-        `${candidate.from}: credentials.json already holds a different key for "${candidate.name}"; it is not replaced.${stays}`,
+        `${candidate.from}: the block names no endpoint of its own, so its key cannot be filed for one and no key moves.${stays} Store it for the endpoint that serves it with \`akm setup\`.`,
       );
       continue;
     }
-    planned.set(candidate.name, value);
-    moves.push({ name: candidate.name, value, from: candidate.from });
-    notes.push(`${candidate.from}: its key moves to credentials.json as "${candidate.name}".`);
+    const slotKey = JSON.stringify(candidate.slot);
+    const stored = storedCredential(candidate.slot);
+    const existing = planned.get(slotKey) ?? (stored ? { value: stored.key, endpoint: stored.endpoint } : undefined);
+    if (existing !== undefined && (existing.value !== value || !sameEndpoint(existing.endpoint, endpoint))) {
+      candidate.restore?.();
+      notes.push(
+        `${candidate.from}: credentials.json already holds a different key or endpoint for "${candidate.name}"; it is not replaced.${stays}`,
+      );
+      continue;
+    }
+    const move: MovedKey = { slot: candidate.slot, endpoint, name: candidate.name, value, from: candidate.from };
+    planned.set(slotKey, move);
+    moves.push(move);
+    notes.push(
+      `${candidate.from}: its key moves to credentials.json for "${candidate.name}" at ${redactUrlCredentials(endpoint)}.`,
+    );
     candidate.remove?.();
   }
   return { config, moves, notes };

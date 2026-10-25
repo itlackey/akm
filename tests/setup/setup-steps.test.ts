@@ -12,6 +12,7 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
+import { writeCredential } from "../../src/core/config/credentials";
 import { UsageError } from "../../src/core/errors";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import type { InstalledHarness } from "../../src/setup/detect";
@@ -233,6 +234,45 @@ describe("stepConnection", () => {
     await withEnv({ LAB_KEY: "env-key" }, () => server.serve(() => stepConnection(input({ current }))));
 
     expect(server.requests[0]?.authorization).toBeNull();
+  });
+
+  test("a new endpoint with no key given does not carry the old one: a $VAR or a stored key, the user is told, and the prompt does not offer it", async () => {
+    const warnings: string[] = [];
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    const server = endpoint(MODELS);
+    const flags = parseSetupFlags({ endpoint: "https://new.example.test/v1" });
+    for (const held of [{ apiKey: "$LAB_KEY" }, {}]) {
+      warnings.length = 0;
+      if (!("apiKey" in held))
+        writeCredential({ connection: "default" }, "stored-old-key", "https://old.example.test/v1");
+      const current = cfg({ connections: { default: { endpoint: "https://old.example.test/v1", ...held } } });
+
+      const result = await withEnv({ LAB_KEY: "env-key" }, () =>
+        server.serve(() => stepConnection(input({ current, flags, interactive: false }))),
+      );
+
+      expect(result.answer?.key).toBeUndefined();
+      expect(
+        warnings.filter((w) => w.includes("its current key is not used with https://new.example.test/v1")),
+      ).toHaveLength(1);
+      expect(warnings.join("\n")).not.toContain("env-key");
+      expect(warnings.join("\n")).not.toContain("stored-old-key");
+    }
+    expect(server.requests.every((request) => request.authorization === null)).toBe(true);
+  });
+
+  test("interactive: a new endpoint's key prompt does not offer to keep the current one", async () => {
+    const server = endpoint(MODELS);
+    const current = cfg({ connections: { default: { endpoint: "https://old.example.test/v1", apiKey: "$LAB_KEY" } } });
+    prompts.answers.text.push("https://new.example.test/v1");
+    prompts.answers.password.push("");
+    prompts.answers.select.push("qwen3-8b", "qwen3-8b", "qwen3-8b");
+
+    await withEnv({ LAB_KEY: "env-key" }, () => server.serve(() => stepConnection(input({ current }))));
+
+    expect(prompts.of("password")[0]?.message).toBe("API key (blank for none)");
   });
 
   test("interactive: when the endpoint cannot list its models, say so and take one name for every alias", async () => {
@@ -534,6 +574,32 @@ describe("stepEmbeddings", () => {
     prompts.answers.confirm.push(false);
     await withEnv({ EMB_KEY: "held-key" }, () => other.serve(() => stepEmbeddings(input({ current }))));
     expect(other.requests[0]?.authorization).toBeNull();
+  });
+
+  test("a new embedding endpoint with no key given does not carry the old one, and the user is told", async () => {
+    const warnings: string[] = [];
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    const current = cfg({
+      embedding: { endpoint: "https://emb.example.test/v1", model: "e5", apiKey: "$EMB_KEY" },
+    });
+    const flags = parseSetupFlags({ embedding: "e5", embeddingEndpoint: "https://other.example.test/v1" });
+
+    const result = await stepEmbeddings(input({ current, flags, interactive: false }));
+
+    expect(result.answer).toEqual({ kind: "endpoint", endpoint: "https://other.example.test/v1", model: "e5" });
+    expect(warnings.filter((w) => w.includes("embedding endpoint changed"))).toHaveLength(1);
+    // The same endpoint is not a change.
+    warnings.length = 0;
+    await stepEmbeddings(
+      input({
+        current,
+        flags: parseSetupFlags({ embedding: "e5", embeddingEndpoint: "https://emb.example.test/v1" }),
+        interactive: false,
+      }),
+    );
+    expect(warnings).toEqual([]);
   });
 
   test("--embedding off, local, or a model on the connection, with no question asked", async () => {

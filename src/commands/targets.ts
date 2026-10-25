@@ -107,7 +107,7 @@ export interface TargetsInput {
 function keyState(connection: ConnectionConfig, name: string, env: NodeJS.ProcessEnv): KeyState {
   const variable = connection.apiKey === undefined ? undefined : envReferenceName(connection.apiKey);
   if (variable !== undefined) return env[variable]?.trim() ? "env-set" : "env-unset";
-  return readCredential(name) !== undefined ? "credentials" : "none";
+  return readCredential({ connection: name }, connection.endpoint) !== undefined ? "credentials" : "none";
 }
 
 function connectionRows(input: TargetsInput): ConnectionRow[] {
