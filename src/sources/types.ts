@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import type { TargetRow } from "../commands/targets";
 import type { OkfProvenance } from "../core/adapter/types";
 import type { StashEntryScope } from "../indexer/passes/metadata";
 import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
@@ -652,6 +653,12 @@ export interface InfoResponse {
     status: "disabled" | "pending" | "ready-js";
   };
   registries: Array<{ url: string; name?: string; provider?: string; enabled?: boolean }>;
+  /**
+   * The connections, harnesses and work that run on them (`akm health` adds
+   * reachability and versions; here nothing is contacted). Each connection's key
+   * is reported as held, never its value.
+   */
+  targets: TargetRow[];
   sourceProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
   indexStats: {
     entryCount: number;

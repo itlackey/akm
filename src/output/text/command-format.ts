@@ -17,6 +17,7 @@
 import { formatRegistryUrl } from "../../core/registry-url";
 import type { IndexResponse } from "../../indexer/indexer";
 import type { DetailLevel } from "../context";
+import { renderTargetsTable } from "./targets-table";
 
 /** Render the current `InfoResponse` shape. */
 export function formatInfoPlain(r: Record<string, unknown>): string {
@@ -67,6 +68,7 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
       lines.push(`  [${String(source.type ?? "?")}] ${String(label)}${disabled}`);
     }
   }
+  if (Array.isArray(r.targets)) lines.push(...renderTargetsTable(r.targets));
   const indexStats = r.indexStats as Record<string, unknown> | undefined;
   if (indexStats) {
     lines.push("indexStats:");

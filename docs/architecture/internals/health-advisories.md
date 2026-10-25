@@ -21,12 +21,7 @@ changes.
 | `state-db-integrity` | state.db failed `PRAGMA integrity_check` (which, unlike `quick_check`, also compares every index with its table), or more than half its pages are free (reclaimable by VACUUM). | Back up state.db, then run `sqlite3 -readonly state.db ".dump" \| sqlite3 state.new.db`, verify `state.new.db` passes `integrity_check`, and swap it in; the freelist warning clears on its own on the next `akm improve` retention purge, which VACUUMs state.db above the same 50% threshold. |
 | `task-log-backing` | task_history rows reference log files missing on disk. | Logs were pruned/moved out from under the DB; safe to ignore if intentional, else restore the log dir. |
 | `active-runs` | A task run has exceeded the stale threshold (>15 min). | Inspect with `akm task history`; a lane is likely wedged — kill/re-run it. |
-| `default-engine` | The configured general default agent, SDK, or LLM engine is missing or incomplete. | Correct `defaults.engine`. An SDK engine runs OpenCode embedded and needs no binary; its fallback LLM is checked only when configured. |
-| `model-map-files` | The installed or optional user `models.json` is missing, unreadable, or invalid. | Repair the installation for an installed-map failure; remove or correct the user overlay for a warning. |
-| `selected-model-aliases` | A known selected alias lacks a mapping for its selected engine. Unknown model strings remain exact pass-through identifiers. | Add the missing alias/engine entry or select an exact model ID. |
-| `default-llm-engine` | The independently configured LLM default is missing, incompatible, lacks a required credential, or (#914) its endpoint refuses the reachability probe. | Correct `defaults.llmEngine`, its connection, any symbolic credential binding, or the endpoint itself; an unreachable default is a hard `fail`. |
-| `configured-engines` | Checks every explicitly configured engine and aggregates its deterministic availability, including (#914) reachability for `kind: "llm"` engines. | Repair engines whose safe status is `warn`; no configured engines yields `unknown`. |
-| `active-improve-strategy` | An enabled process in the effective improve strategy cannot resolve its engine or required credential; evidence and the message name the resolved engine per process (#913), surfacing a strategy-level pin that shadows `defaults.llmEngine`. Derived from the same `resolveImprovePlan` credential check the real `improve` run uses (#957), so this reflects exactly what a run in this environment would skip. `warn` when some but not all enabled LLM-backed processes are unavailable; **`fail`** (#957) when EVERY enabled `capability: "llm"` process in the strategy is unavailable — the nightly run would be a total no-op, not a partial degradation. | Inspect the named unavailable process(es), then correct its process override, strategy triage engine, SDK fallback, or default LLM. A `fail` here means `akm improve --require-engines` would abort the same run outright; add that flag to the scheduled task once the credential is fixed to make future silent no-ops fail loudly instead. |
+| `targets` | One table of every configured connection (endpoint, whether its key is held — a `$VAR` set in this shell, a `credentials.json` entry, or none — and whether the endpoint answers) and harness (platform, whether its binary is on `PATH`, its `--version`), then the work that runs on them: improve, judges, agents, extract, enrich, index, embedding and curate rerank, each naming the connection or harness and the model it resolves to through the same resolver the calls use (`evidence.rows`, typed `connection`, `harness` or `process`). Each connection and harness also carries its last recorded call in the past 30 days. `warn` when a key variable is unset, an endpoint does not answer, a harness is not installed, or a work row cannot resolve because of the config; `unknown` when neither a connection nor a harness is configured; otherwise `pass`. Endpoint reachability is one bounded `GET /models`, `--probe`-gated: with `--no-probe` the endpoints are not contacted and the message says so. | Correct the named connection, key or harness; run `akm setup` when nothing is configured. A work row that runs somewhere other than the default lists what resolves elsewhere (`overrides`): that is a per-process pin, working as set. |
 | `task-fail-rate` | ≥5% of scheduled task runs failed in the window (exit 143/70 recurring), or a single task_id fails at/above the same threshold. (#943) For `command`-kind (agent/LLM dispatch) failures specifically, `evidence.agentFailureReasonCounts` always carries a `detail.reason` breakdown (`timeout`, `non_zero_exit`, `spawn_failed`, …), and the warn message names the dominant reason — e.g. `(timeout-dominant: 9/12 command-task failures)` — when one reason is at least half of the counted command-task failures. | Triage as a bug: `akm task doctor`, inspect failing lane logs. For a native shell/script task, exit-143 = killed/timeout, exit-70 = internal error. For a `command`-kind (agent/LLM) task, read `detail.reason` from `akm task history` instead of the exit code — `timeout` means the dispatch's own deadline (not an outer process kill) expired; `non_zero_exit`/`spawn_failed`/`aborted`/etc. name the other failure shapes. |
 | `data-dir-usage` | The data directory is more than 3× the live databases (`state.db` + `index.db` + `logs.db`), or one top-level subdirectory holds more than half of it; the message names that subdirectory with its size and share. | Look at the named subdirectory. `backups/tasks/` holds one snapshot per `akm migrate apply` run that rewrote a task file; everything under `backups/` is yours to prune. |
 | `stash-git-exposure` | `env/` or `secrets/` assets are git-tracked **and** a remote is set — `git push` can leak keys. | `git rm --cached` the files, add `env/`+`secrets/` to `.gitignore` (a rule alone does not untrack). |
@@ -40,9 +35,7 @@ changes.
 | `enrichment-lane-minting` | Enrichment lanes minted new assets above threshold (5% warn / higher = fail). | Adjudicated against the ratified minting rules; act only if the share keeps climbing post-shutdown. |
 | `improve-churn-ratio` | Accepted proposals rewrote the same few refs (ratio > 1.5) instead of covering the corpus. | Expected while coverage is low; watch the trend, do not retune on a single window. |
 | `collapse-churn-detector` | R5 detector fired collapse/churn alerts (or `unknown` = no cycle rows yet). | Inspect recent collapse/churn cycle rows and the detector's advisory output before acting. |
-| `thinking-control` | (#949) For every configured `kind: "llm"` engine with `enableThinking: false`, checks the window's recorded `llm_usage` for reasoning tokens. Passive: never issues its own completion. `unknown` when no engine sets `enableThinking: false`, or when a configured one made no calls in the window. | A `warn` names the engine that returned reasoning tokens — its endpoint, or a gateway in front of it, is not honoring the thinking-off control. Check the gateway/endpoint config; behind a gateway that drops `chat_template_kwargs` (Bifrost), set `reasoningEffort: "none"` on the engine, which such gateways pass through. |
 | `cli-version` | (#950) Compares the installed akm-cli version against the latest GitHub release (the same source `akm upgrade` trusts). `--probe`-gated: `unknown` "not probed" with `--no-probe`; offline/rate-limited also degrades to `unknown`, never a false `warn`. | Run `akm upgrade` when a newer release is reported. An `unknown` result carries no staleness claim either way — check manually if it matters. |
-| `engine-last-used` | (#950) For every engine bound to an enabled process in the active improve strategy, checks `llm_usage` for a call in the last 30 days (independent of `--since`). `unknown` when no engine is bound, or when no improve run has been recorded (started) in that window at all (a fresh install). | A `warn` names the idle engine and the process it is bound to. Configured, reachable, and credentialed is not the same as actually used — investigate why the bound process is not invoking it (disabled downstream, misrouted, or genuinely unused). |
 | `scheduler-binary` | (#953) Reads the scheduler's recorded akm invocation for the installed tasks (the same binding `task sync`/`task doctor` already read — no crontab/launchd/schtasks text parsing) and runs it with `--version`, compared against the running CLI's version. `--probe`-gated: `unknown` "not probed" with `--no-probe`. `unknown` when no scheduled task is installed or the recorded binary cannot be executed. | A `warn` names both versions — upgrading akm through a different installer than the one active at the last `task sync` left the schedule pointed at the old binary; run `akm task sync` to rebind it. |
 | `plugin-version` / `opencode-plugin-version` | (itlackey/akm#832,) `plugin-version` reports each installed Claude Code harness plugin's version and its declared `AKM_VERSION_RANGE` admission of the running CLI. `opencode-plugin-version` does the same for the OpenCode plugin's own bundled `akm-cli` (read from its `package.json`, never executed) — it runs in-process and shares the host's databases, so its lag matters the same way. `plugin-version`'s newest-tag lookup is `--probe`-gated: with `--no-probe` its row is `unknown` ("not probed") and only the local range check still runs. `opencode-plugin-version` reads local files only and is never gated. | A `warn` names the stale/out-of-range plugin and the update command (`claude plugin update <ref>` for the Claude plugin; update the OpenCode plugin for the bundled copy). |
 
@@ -50,54 +43,34 @@ changes.
 > are the before/after instrument for the 12-D1 minting shutdown — do not "fix" them by retuning.
 > When in doubt, prefer no action over panic-retuning (per the review-12 guard).
 
-## Engine and model advisories
+## Connections, harnesses and the work on them
 
-`selected-model-aliases` warns when a known selected alias is missing the selected engine mapping.
-It checks explicit string model selections on sorted
-configured engines against the merged installed/user model map. Unknown model
-identifiers are exact pass-through values and are not reported as missing. An
-invalid model map makes this check `unknown` with generic evidence rather than
-copying parser text or authored values.
+`targets` is one check with one table. A connection row names the endpoint,
+whether its key is held (never the key, nor the variable that holds it) and,
+with `--probe`, whether the endpoint answers; a harness row names its platform,
+whether the binary is found and what `--version` printed; a work row names
+where that kind of work runs and with which model. `akm info` prints the same
+rows without contacting anything: key held and binary found only.
 
-`configured-engines` covers every explicitly configured engine. It reuses the
-same availability result as the default-engine projections and reports sorted
-safe evidence containing only engine name and status. All available engines
-pass; any unavailable engine warns; no explicitly configured engines is
-`unknown`.
+The work rows are resolved by the resolvers the calls themselves use, so the
+table never disagrees with a call. An unreachable endpoint is a `warn` like
+every other finding here; it no longer escalates to a `fail` for the default
+connection.
 
-Agent checks inspect local binary availability; SDK checks inspect the
-package/binary and any configured fallback. LLM checks (a `kind: "llm"`
-runner, and an SDK runner's LLM fallback connection) additionally send a
-real, bounded (3 s timeout) reachability probe (#914) — one `GET` against
-the endpoint's `/models` route; any HTTP response counts, so a cold local
-server is never asked to load a model — to `default-llm-engine`'s and
-`configured-engines`' endpoints, one probe per distinct endpoint per
-invocation (no cross-run cache, so a stale "reachable" verdict never lingers).
-An unreachable endpoint is a hard `fail` for `default-llm-engine` (extraction
-and improve depend on it directly) and a `warn` for every other engine that
-resolves to it. Pass `--no-probe` to skip these probes entirely (offline or
-air-gapped hosts) — every affected check then reports its prior,
-credential-only verdict and notes that reachability was not probed.
+Reachability is a real, bounded (3 s) probe (#914) — one `GET` against the
+endpoint's `/models` route; any HTTP response counts, so a cold local server is
+never asked to load a model — made once per distinct endpoint per invocation
+(no cross-run cache, so a stale "reachable" verdict never lingers). Pass
+`--no-probe` to skip it (offline or air-gapped hosts): the rows then carry no
+`reachable` field and the message notes that reachability was not probed.
 
-Engine evidence names the endpoint and model of the probed connection so an
-operator can tell which connection was checked; it never includes credential
-values or provider output.
+The table's evidence names endpoints so an operator can tell which connection
+was checked; it never includes credential values or the names of the variables
+that hold them, and an endpoint's embedded credentials are masked.
 
-(#950) When a required `$VAR`-style credential is unavailable in the health
-process's own shell, `default-llm-engine` and `configured-engines` also check
-whether any `env/` asset defines a key by the same name. When one does, the
-`warn` message and `evidence.suppliedByEnvAsset` name the env asset's ref
-(e.g. `env/lab`) and point at `akm env run env/lab -- ...` — never the
-variable name itself, which stays out of both the message and evidence (see
-`tests/health-engine-probe.test.ts`). This is the common case where the
-operator's real workflow already supplies the credential under an `env run`
-wrapper; the check still `warn`s (the credential genuinely is unavailable in
-*this* invocation's shell), just with an actionable next step instead of a
-bare "unavailable".
-
-`akm health` makes at most two network calls, both best-effort and silent on
-failure and both gated behind `--probe`/`--no-probe`, the same flag as engine
-reachability: `plugin-version`'s `git ls-remote` and `cli-version`'s
+`akm health` makes at most two network calls besides the endpoint probe, both
+best-effort and silent on failure and both gated behind `--probe`/`--no-probe`,
+the same flag as endpoint reachability: `plugin-version`'s `git ls-remote` and `cli-version`'s
 GitHub-release lookup. See
 `src/commands/health/plugin-staleness.ts` and
 `src/commands/health/version-drift.ts` for the discipline each follows.

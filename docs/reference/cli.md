@@ -336,6 +336,7 @@ Returns a JSON object with:
 | `searchModes` | Active search modes (`fts`, optionally `semantic` and `hybrid`) |
 | `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
 | `registries` | Configured registries |
+| `targets` | The connections, harnesses and work that runs on them, as the rows `akm health` reports under its `targets` check, without contacting anything: each connection's endpoint and whether its key is held, each harness's platform and whether its binary is on `PATH`, and for each kind of work the connection or harness and model it resolves to |
 | `sourceProviders` | Configured sources (filesystem, git, website, npm) |
 | `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `links` (declared links per kind with `total` and `unresolved`; absent when the index holds none), `lastBuiltAt`, `hasEmbeddings`, `unreadable` (index.db exists but the filesystem refuses to read it — a permissions problem), `unavailable` (index.db is readable but the SQLite-level read didn't complete: locked by another akm process, a newer layout this akm can't understand, or a corrupt file) |
 
@@ -379,14 +380,13 @@ akm health --report --window-compare 7d --format html
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
+| `--no-probe` | Skip the `targets` reachability probes, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
-default agent engine, and summarizes recent `improve_*` events. Unless
+configured connections and harnesses (the `targets` table), and summarizes recent `improve_*` events. Unless
 `--no-probe` is given, it also sends a bounded (3s timeout) reachability probe
-to the `default-llm-engine` and every `configured-engines` LLM connection (and
-an SDK engine's LLM fallback), one probe per distinct endpoint, checks the
+to each connection's endpoint, one probe per distinct endpoint, checks the
 installed akm-cli version against the latest GitHub release (`cli-version`),
 runs the scheduler's recorded akm binary with `--version` to check it
 against the running CLI (`scheduler-binary`).
@@ -396,8 +396,8 @@ Primary result fields:
 | Field | Description |
 | --- | --- |
 | `status` | Overall health verdict: `pass`, `warn`, or `fail` |
-| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `active-runs`, `default-engine`, `model-map-files`, `default-llm-engine`, `configured-engines`, and `active-improve-strategy` |
-| `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), `thinking-control` (an `enableThinking: false` engine whose recorded usage still shows reasoning tokens), and `engine-last-used` (an engine bound to an enabled improve process with no recorded use in 30 days) |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `active-runs`, and `targets` |
+| `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), and `scheduler-binary` |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
 
@@ -414,27 +414,22 @@ It `fail`s only when a pending migration could not be applied — naming it and
 pointing at `akm migrate apply` — rather than the command crashing. Read this
 check's `status` instead of grepping akm's error text.
 
-`default-llm-engine` and `configured-engines` probe reachability (not just
-configuration) for a `kind: "llm"` engine — an unreachable endpoint is a hard
-`fail` for `default-llm-engine` and a `warn` for any other engine. `--no-probe`
-skips this. When a required credential is missing from the shell but an
-`env/` asset defines the same variable name, the warn names that asset's ref
-(never the variable name) and points at `akm env run <ref> -- ...`.
-`active-improve-strategy` names the resolved engine per process
-in its evidence and message, so a strategy-level `engine` pin that shadows
-`defaults.llmEngine` is visible without config archaeology.
+`targets` is one table: a row for each configured connection (endpoint, whether
+its key is held, whether the endpoint answers) and harness (platform, whether
+its binary is found, its `--version`), then a row for each kind of work
+(`improve`, `judges`, `agents`, `extract`, `enrich`, `index`, `embedding`,
+`curate-rerank`) naming the connection or harness and the model it resolves to.
+The rows are in `evidence.rows`, each typed `connection`, `harness` or `process`;
+the text format always prints them. It is a `warn` when a key variable is unset,
+an endpoint does not answer (skipped by `--no-probe`), a harness is not
+installed, or the config leaves a kind of work unresolvable, and `unknown` when
+nothing is configured. Each connection and harness row also carries `lastUsedAt`,
+its last recorded `llm_usage` call in the past 30 days (independent of `--since`).
 
 `cli-version` compares the installed akm-cli version against the latest
 GitHub release — the same source `akm upgrade` trusts — and `warn`s with the
 upgrade command when a newer release exists. `--no-probe`, offline, or a
 rate-limited request all degrade it to `unknown`, never a false `warn`.
-
-`engine-last-used` checks, for every engine bound to an enabled process in
-the active improve strategy, whether it has a recorded `llm_usage` call in
-the last 30 days (independent of `--since`). It `warn`s naming the idle
-engine and its bound process, and stays `unknown` — not a noisy `warn` —
-until at least one improve run has been recorded (started) in that window,
-so a fresh install is quiet.
 
 The `session-extraction` advisory is derived from the `extract_sessions_seen`
 ledger for the last 7 days — not `improve_runs`, which the hook-driven `akm

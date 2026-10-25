@@ -12,10 +12,10 @@
  * `--no-probe` would do nothing. The fix declares a positive `probe` arg
  * (default `true`); `--no-probe` is citty's automatic negation of it.
  *
- * This test exercises the CLI end-to-end (not just `runDefaultLlmEngineProbe`
+ * This test exercises the CLI end-to-end (not just `runTargetsCheck`
  * directly) specifically so a regression in the flag NAME/wiring — not just
  * the underlying probe logic already covered by
- * `tests/health-engine-probe.test.ts` — fails loudly.
+ * `tests/health-targets-check.test.ts` — fails loudly.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -62,7 +62,7 @@ async function withNoRealCrontab<T>(fn: () => Promise<T>): Promise<T> {
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
   writeSandboxConfig({
-    connections: { lab: { endpoint: "http://127.0.0.1:9/v1/chat/completions", models: { fast: "test-model" } } },
+    connections: { lab: { endpoint: "http://127.0.0.1:9/v1", models: { fast: "test-model" } } },
   });
 });
 
@@ -70,30 +70,36 @@ afterEach(() => {
   storage.cleanup();
 });
 
-function chatCompletionResponse(): Response {
-  return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }], usage: { total_tokens: 1 } }), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
+function modelsResponse(): Response {
+  return Response.json({ data: [{ id: "test-model" }] });
 }
+
+type TargetsCheck = {
+  name: string;
+  status: string;
+  message: string;
+  evidence: { rows: Array<Record<string, unknown>> };
+};
+const targetsOf = (stdout: string): TargetsCheck =>
+  (JSON.parse(stdout) as { hardChecks: TargetsCheck[] }).hardChecks.find((c) => c.name === "targets") as TargetsCheck;
 
 describe("akm health --no-probe (#914)", () => {
   test("without --no-probe, the reachability probe actually fires (a real fetch)", async () => {
-    let fetchCalls = 0;
+    const urls: string[] = [];
     const { code, stdout } = await withNoRealCrontab(() =>
       withMockedFetch(
         () => runCliCapture(["health", "--format", "json"]),
-        () => {
-          fetchCalls += 1;
-          return chatCompletionResponse();
+        (url) => {
+          urls.push(url);
+          return modelsResponse();
         },
       ),
     );
-    expect(fetchCalls).toBeGreaterThan(0);
-    const parsed = JSON.parse(stdout) as { hardChecks: Array<{ name: string; status: string; message: string }> };
-    const check = parsed.hardChecks.find((c) => c.name === "default-llm-engine");
-    expect(check?.status).toBe("pass");
-    expect(check?.message).toContain("reachable");
+    expect(urls).toContain("http://127.0.0.1:9/v1/models");
+    const check = targetsOf(stdout);
+    expect(check.status).toBe("pass");
+    expect(check.evidence.rows[0]).toMatchObject({ type: "connection", name: "lab", reachable: true });
+    expect(check.message).not.toContain("not probed");
     expect(code).toBe(0);
   });
 
@@ -103,14 +109,14 @@ describe("akm health --no-probe (#914)", () => {
       () => runCliCapture(["health", "--no-probe", "--format", "json"]),
       () => {
         fetchCalls += 1;
-        return chatCompletionResponse();
+        return modelsResponse();
       },
     );
     expect(fetchCalls).toBe(0);
-    const parsed = JSON.parse(stdout) as { hardChecks: Array<{ name: string; status: string; message: string }> };
-    const check = parsed.hardChecks.find((c) => c.name === "default-llm-engine");
-    expect(check?.status).toBe("pass");
-    expect(check?.message).toContain("Reachability was not probed");
+    const check = targetsOf(stdout);
+    expect(check.status).toBe("pass");
+    expect(check.message).toContain("Reachability was not probed");
+    expect(check.evidence.rows[0]).not.toHaveProperty("reachable");
     expect(code).toBe(0);
   });
 });

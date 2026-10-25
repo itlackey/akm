@@ -3,15 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `engine-last-used` support for `akm health` (#950).
+ * When each connection or harness last ran a recorded call, for the `targets`
+ * table of `akm health` (#950).
  *
- * An engine bound to an enabled improve process that has not actually been
- * invoked in weeks looks identical to a healthy one on every existing check —
- * `default-llm-engine`/`configured-engines` only probe availability/reachability,
- * never USE. This module answers "when did this engine last run, and for
- * whom" by folding `llm_usage` events over a fixed lookback window,
+ * A connection that is configured, reachable and has its key says nothing about
+ * whether anything uses it. This module answers "when did this one last run,
+ * and for whom" by folding `llm_usage` events over a fixed lookback window,
  * independent of the report's `--since` (mirrors `session-extraction`'s
  * independent `SESSION_EXTRACTION_LEDGER_WINDOW_DAYS` window in `checks.ts`).
+ * Usage events keep naming the connection or harness in `metadata.engine`.
  */
 
 import { daysToMs } from "../../core/common";
@@ -19,23 +19,23 @@ import { readEvents } from "../../core/events";
 import { LLM_USAGE_EVENT } from "../../llm/usage-persist";
 import { decodeLlmUsageRecord } from "../../llm/usage-telemetry";
 
-/** Rolling window `engine-last-used` reads over, independent of `--since`. */
+/** Rolling window the last-used lookup reads over, independent of `--since`. */
 export const ENGINE_LAST_USED_LOOKBACK_DAYS = 30;
 
-/** The most recent recorded `llm_usage` call for one engine. */
+/** The most recent recorded `llm_usage` call for one connection or harness. */
 export interface EngineLastUsed {
   lastUsedAt: string;
   process?: string;
 }
 
 /** ISO cutoff for the `ENGINE_LAST_USED_LOOKBACK_DAYS` window, ending at `now()`. */
-export function engineLastUsedSince(now: () => number): string {
+function engineLastUsedSince(now: () => number): string {
   return new Date(now() - daysToMs(ENGINE_LAST_USED_LOOKBACK_DAYS)).toISOString();
 }
 
 /**
  * Fold `llm_usage` events over the lookback window into the most recent call
- * per engine. Best-effort like every other health probe: an event with no
+ * per connection or harness. Best-effort like every other health probe: an event with no
  * `engine` field (pre-#576 rows, or a call outside any resolved engine) is
  * skipped rather than bucketed under a synthetic key.
  */
