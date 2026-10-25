@@ -21,10 +21,10 @@ import {
   closeOpencodeSdk,
   hostFor,
 } from "../src/integrations/harnesses/opencode/embedded/host";
-import { akmOpencodeDatabasePath } from "../src/integrations/harnesses/opencode/embedded/host-spec";
 import { runOpencodeSdk } from "../src/integrations/harnesses/opencode/embedded/run";
 import { runtimeConfigContent } from "../src/integrations/harnesses/opencode/embedded/runtime-config";
 import { createSdkHost } from "../src/integrations/harnesses/opencode/embedded/sdk-host";
+import { akmOpencodeDatabasePath } from "../src/integrations/harnesses/opencode/roots";
 import type { ChatCompletionConfig } from "../src/llm/client";
 import { type FakeModelServer, startFakeModel } from "./_helpers/fake-model-server";
 import { withEnv, writeSandboxConfig } from "./_helpers/sandbox";

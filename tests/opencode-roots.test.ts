@@ -4,7 +4,16 @@
 
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import { opencodeCacheDir, opencodeConfigDir, opencodeDataDir } from "../src/integrations/harnesses/opencode/roots";
+import { getDataDir } from "../src/core/paths";
+import {
+  akmOpencodeDatabasePath,
+  databaseIn,
+  opencodeCacheDir,
+  opencodeConfigDir,
+  opencodeConfigDirOverride,
+  opencodeDatabasePath,
+  opencodeDataDir,
+} from "../src/integrations/harnesses/opencode/roots";
 
 describe("OpenCode's roots", () => {
   test("follow the XDG base directories when they are set", () => {
@@ -23,5 +32,21 @@ describe("OpenCode's roots", () => {
 
   test("an empty XDG variable counts as unset", () => {
     expect(opencodeDataDir({ XDG_DATA_HOME: "  ", HOME: "/h" })).toBe(path.join("/h", ".local", "share", "opencode"));
+  });
+
+  test("OPENCODE_CONFIG_DIR moves the config directory, and an empty one counts as unset", () => {
+    const env = { XDG_CONFIG_HOME: "/x/config", HOME: "/h" };
+    expect(opencodeConfigDirOverride({ ...env, OPENCODE_CONFIG_DIR: " /elsewhere " })).toBe("/elsewhere");
+    expect(opencodeConfigDir({ ...env, OPENCODE_CONFIG_DIR: "/elsewhere" })).toBe("/elsewhere");
+    expect(opencodeConfigDirOverride({ ...env, OPENCODE_CONFIG_DIR: "  " })).toBeUndefined();
+    expect(opencodeConfigDir({ ...env, OPENCODE_CONFIG_DIR: "  " })).toBe(path.join("/x/config", "opencode"));
+  });
+
+  test("the user's database and akm's are each one opencode.db, in the data directory they belong to", () => {
+    expect(databaseIn("/somewhere")).toBe(path.join("/somewhere", "opencode.db"));
+    expect(opencodeDatabasePath({ XDG_DATA_HOME: "/x/data", HOME: "/h" })).toBe(
+      path.join("/x/data", "opencode", "opencode.db"),
+    );
+    expect(akmOpencodeDatabasePath()).toBe(path.join(getDataDir(), "opencode.db"));
   });
 });

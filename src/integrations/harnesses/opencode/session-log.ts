@@ -3,15 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import path from "node:path";
 import { toErrorMessage } from "../../../core/common";
-import { getDataDir } from "../../../core/paths";
 import { warnOnce } from "../../../core/warn";
 import { type Database, openDatabase } from "../../../storage/database";
 import { openSqliteReadSnapshot } from "../../../storage/sqlite-read-snapshot";
 import { AbstractSessionLogProvider } from "../../session-logs/provider-base";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../session-logs/types";
-import { opencodeDataDir } from "./roots";
+import { akmOpencodeDatabasePath, databaseIn, opencodeDatabasePath } from "./roots";
 import { listV1Sessions, readV1Session, V1_TABLES } from "./session-log-v1";
 import { hasV2Tables, listV2Sessions, readV2Session } from "./session-log-v2";
 
@@ -28,9 +26,6 @@ import { hasV2Tables, listV2Sessions, readV2Session } from "./session-log-v2";
  *   - Neither: an unsupported layout, reported, never presented as empty.
  */
 
-/** Filename of OpenCode's SQLite session store, in OpenCode's and in akm's data dir. */
-const OPENCODE_DB_FILENAME = "opencode.db";
-
 type Layout = "v2" | "v1" | "unsupported";
 
 function layoutOf(db: Database): Layout {
@@ -42,21 +37,21 @@ function layoutOf(db: Database): Layout {
 
 export class OpenCodeProvider extends AbstractSessionLogProvider implements SessionLogHarness {
   readonly name = "opencode";
-  readonly #baseDir = opencodeDataDir();
+  readonly #userDatabase = opencodeDatabasePath();
 
   protected availabilityRoot(): string {
-    return path.join(this.#baseDir, OPENCODE_DB_FILENAME);
+    return this.#userDatabase;
   }
 
   /** The user's OpenCode history, or akm's own. */
   override isAvailable(): boolean {
-    return super.isAvailable() || fs.existsSync(path.join(getDataDir(), OPENCODE_DB_FILENAME));
+    return super.isAvailable() || fs.existsSync(akmOpencodeDatabasePath());
   }
 
   /** The stores to read: the one under `location`, else the user's and akm's. */
   #stores(location?: string): string[] {
-    if (location) return [path.join(location, OPENCODE_DB_FILENAME)];
-    return [path.join(this.#baseDir, OPENCODE_DB_FILENAME), path.join(getDataDir(), OPENCODE_DB_FILENAME)];
+    if (location) return [databaseIn(location)];
+    return [this.#userDatabase, akmOpencodeDatabasePath()];
   }
 
   async listSessions(

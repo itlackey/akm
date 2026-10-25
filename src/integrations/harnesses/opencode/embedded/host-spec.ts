@@ -15,11 +15,10 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import type { Plugin } from "@opencode/plugin";
 import { loadConfig } from "../../../../core/config/config";
 import { getDataDir } from "../../../../core/paths";
-import { opencodeDataDir } from "../roots";
+import { akmOpencodeDatabasePath, opencodeConfigDirOverride, opencodeDatabasePath } from "../roots";
 import { akmPlugin, type SessionRegistry } from "./plugin";
 import { runtimeConfigContent } from "./runtime-config";
 
@@ -47,19 +46,13 @@ export interface HostSpec {
   readonly configDirectory?: string;
 }
 
-/** Where akm keeps its OpenCode sessions: `<akm data dir>/opencode.db`. */
-export function akmOpencodeDatabasePath(): string {
-  const directory = getDataDir();
-  fs.mkdirSync(directory, { recursive: true });
-  return path.join(directory, "opencode.db");
-}
-
 /** The spec of a new host of `kind`; `sessions` is the registry its plugin reads, `setEnvironment` how it sets a session's environment. */
 export function specFor(
   kind: HostKind,
   sessions: SessionRegistry,
   setEnvironment: (sessionID: string, variables: Record<string, string>) => Promise<void>,
 ): HostSpec {
+  fs.mkdirSync(getDataDir(), { recursive: true });
   const database = akmOpencodeDatabasePath();
   const plugin = akmPlugin(sessions, setEnvironment);
   if (kind === "runtime") {
@@ -72,8 +65,8 @@ export function specFor(
       fetchModels: false,
     };
   }
-  const userDatabase = path.join(opencodeDataDir(), "opencode.db");
-  const configDirectory = process.env.OPENCODE_CONFIG_DIR?.trim();
+  const userDatabase = opencodeDatabasePath();
+  const configDirectory = opencodeConfigDirOverride();
   return {
     kind,
     database,

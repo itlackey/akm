@@ -10,6 +10,7 @@
 
 import os from "node:os";
 import path from "node:path";
+import { getDataDir } from "../../../core/paths";
 
 function xdgRoot(name: string, fallback: readonly string[], env: NodeJS.ProcessEnv): string {
   const set = env[name]?.trim();
@@ -28,7 +29,27 @@ export function opencodeCacheDir(env: NodeJS.ProcessEnv = process.env): string {
   return xdgRoot("XDG_CACHE_HOME", [".cache"], env);
 }
 
-/** `$XDG_CONFIG_HOME/opencode`: `opencode.json`, agents and plugins. */
+/** `$OPENCODE_CONFIG_DIR`, when it moves the user's config directory. */
+export function opencodeConfigDirOverride(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return env.OPENCODE_CONFIG_DIR?.trim() || undefined;
+}
+
+/** `$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`: `opencode.json`, agents and plugins. */
 export function opencodeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
-  return xdgRoot("XDG_CONFIG_HOME", [".config"], env);
+  return opencodeConfigDirOverride(env) ?? xdgRoot("XDG_CONFIG_HOME", [".config"], env);
+}
+
+/** OpenCode's SQLite session store, in OpenCode's data directory and in akm's. */
+export function databaseIn(directory: string): string {
+  return path.join(directory, "opencode.db");
+}
+
+/** The user's OpenCode database. */
+export function opencodeDatabasePath(env: NodeJS.ProcessEnv = process.env): string {
+  return databaseIn(opencodeDataDir(env));
+}
+
+/** Where akm keeps its OpenCode sessions: `<akm data dir>/opencode.db`. */
+export function akmOpencodeDatabasePath(): string {
+  return databaseIn(getDataDir());
 }

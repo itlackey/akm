@@ -16,9 +16,9 @@ import {
   _setOpencodeHostFactoryForTests,
   closeOpencodeSdk,
 } from "../src/integrations/harnesses/opencode/embedded/host";
-import { akmOpencodeDatabasePath } from "../src/integrations/harnesses/opencode/embedded/host-spec";
 import { runOpencodeHarness } from "../src/integrations/harnesses/opencode/embedded/run";
 import { createSdkHost } from "../src/integrations/harnesses/opencode/embedded/sdk-host";
+import { akmOpencodeDatabasePath } from "../src/integrations/harnesses/opencode/roots";
 import { openDatabase } from "../src/storage/database";
 import { type FakeModelServer, startFakeModel } from "./_helpers/fake-model-server";
 import { makeSandboxDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
