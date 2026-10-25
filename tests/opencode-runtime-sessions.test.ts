@@ -208,10 +208,23 @@ describe("the settings the plugin applies to a session's model requests", () => 
     expect(body.top_p).toBe(0.9);
   });
 
+  test("send an output cap when the connection or the call writes one, by the name it wrote it", async () => {
+    const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
+    await run("a", {}, { ...connection, request: { max_tokens: 777 } });
+    await run("b", {}, { ...connection, request: { max_completion_tokens: 888 } });
+    await run("c", {}, { ...connection, inference: { maxTokens: 999 } });
+    expect(calls.map((call) => [call.requestBody.max_tokens, call.requestBody.max_completion_tokens])).toEqual([
+      [777, undefined],
+      [undefined, 888],
+      [999, undefined],
+    ]);
+  });
+
   test("change nothing for a call that sets none", async () => {
     const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
     await run("p");
-    expect(calls[0]?.requestBody).toEqual({ model: "glm-5", stream: true, max_completion_tokens: 32000 });
+    // OpenCode's own output cap (32,000 tokens unless the model's limit says) is not one anyone asked for.
+    expect(calls[0]?.requestBody).toEqual({ model: "glm-5", stream: true });
     expect(calls[0]?.requestHeaders.authorization).toBeUndefined();
   });
 

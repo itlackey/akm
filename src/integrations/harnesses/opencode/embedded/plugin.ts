@@ -76,11 +76,12 @@ async function withSettings(request: Request, { requestFields, apiKey, endpoint 
   }
   let body = text;
   if (isRecord(parsed)) {
-    const merged = mergeRequestFields(parsed, fields);
-    // OpenCode states the output limit as `max_completion_tokens`; the chat transport sends `max_tokens`
-    // alone, so one the call writes replaces it rather than riding beside it.
-    if (Object.hasOwn(fields, "max_tokens")) delete merged.max_completion_tokens;
-    body = JSON.stringify(merged);
+    // OpenCode sizes every request's output cap from the model's limit (32,000 tokens when the limit does not say)
+    // and sends it as `max_tokens` or `max_completion_tokens`. That is its own accounting, not a cap anyone
+    // asked for: akm's runtime sends the cap the connection or the call writes, and none otherwise, as the chat
+    // transport does. (A request with an endpoint is a runtime session's; the user's own OpenCode keeps its caps.)
+    const { max_tokens: _own, max_completion_tokens: _ownCompletion, ...kept } = parsed;
+    body = JSON.stringify(mergeRequestFields(endpoint ? kept : parsed, fields));
     headers.delete("content-length");
   }
   return new Request(endpoint ? openAiOperationUrl(endpoint, "chat/completions") : request.url, {

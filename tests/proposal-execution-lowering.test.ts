@@ -69,7 +69,10 @@ describe("proposal new on a connection runs akm's own runtime", () => {
     expect(result.engine).toBe("direct");
     expect(host.calls).toHaveLength(1);
     const call = host.calls[0];
-    expect(call?.model).toEqual({ providerID: "akm-direct", id: "provider/exact-proposal-092" });
+    expect(call?.model).toEqual({
+      providerID: expect.stringMatching(/^akm-[0-9a-f]{16}$/),
+      id: "provider/exact-proposal-092",
+    });
     expect(call?.requestBody).toMatchObject({ temperature: 0.17, max_tokens: 222 });
     expect(call?.prompt).toContain(
       buildProposePrompt({ type: "skill", name: "lowered", task: "AUTHORING-CONTENT-MUST-NOT-ENTER-NOTICES" }),

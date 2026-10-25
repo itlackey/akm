@@ -12,7 +12,7 @@
  * tests/opencode-sdk-runner.test.ts.
  */
 
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { effectiveRequestFields, OWNED_REQUEST_FIELDS } from "../src/core/llm-inference";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { chatCompletion } from "../src/llm/client";
@@ -25,6 +25,11 @@ beforeEach(() => {
   _setWarnSinkForTests((level, args) => {
     if (level === "warn") warnings.push(args.map(String).join(" "));
   });
+});
+
+afterEach(() => {
+  _setWarnSinkForTests(undefined);
+  _resetWarnOnceForTests();
 });
 
 const written = {

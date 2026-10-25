@@ -281,6 +281,14 @@ describe("what the endpoint receives", () => {
     expect(sent?.params.top_k).toBe(40);
   });
 
+  test("no output cap is sent unless one was asked for", async () => {
+    const before = model.requests.length;
+    expect((await run("MODE:answer uncapped")).ok).toBe(true);
+    const sent = lastAnswer(before);
+    expect(sent?.params).not.toHaveProperty("max_tokens");
+    expect(sent?.params).not.toHaveProperty("max_completion_tokens");
+  });
+
   test("a call's maxTokens is the request's only output limit", async () => {
     const before = model.requests.length;
     await run("MODE:answer capped", {}, { ...connection, inference: { maxTokens: 777 } });

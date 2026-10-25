@@ -10,7 +10,7 @@
  * The tests read what reaches the warning sink, not only the final result.
  */
 
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { parseAndValidateConfigText } from "../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { chatCompletion } from "../src/llm/client";
@@ -28,6 +28,11 @@ beforeEach(() => {
   _setWarnSinkForTests((level, args) => {
     if (level === "warn") warnings.push(args.map(String).join(" "));
   });
+});
+
+afterEach(() => {
+  _setWarnSinkForTests(undefined);
+  _resetWarnOnceForTests();
 });
 
 describe("an endpoint that embeds a username and password", () => {
