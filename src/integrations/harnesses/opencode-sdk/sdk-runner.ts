@@ -250,6 +250,9 @@ function agentHost(content: Record<string, unknown>): Promise<Host> {
   const text = JSON.stringify(content);
   return hostFor(`agent:${text}`, {
     database: { path: akmOpencodeDatabasePath() },
+    // The connection's provider is declared in `content`; nothing is looked up in the model catalog,
+    // and a host without network egress must not wait on it.
+    models: { fetch: false },
     ...(Object.keys(content).length > 0 ? { config: { content: text } } : {}),
   } as CreateOptions);
 }

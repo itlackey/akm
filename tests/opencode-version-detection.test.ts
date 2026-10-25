@@ -127,7 +127,7 @@ describe("the OpenCode 1 CLI harness", () => {
     fakeBinaries({ "oc-old": "1.18.34", "not-oc": "true (GNU coreutils) 9.7", "oc-new": "opencode v2.0.26" });
     expect(opencodeBuilder.build(profile("oc-old"), { prompt: "p" }).argv).toEqual(["oc-old", "run"]);
     expect(opencodeBuilder.build(profile("not-oc"), { prompt: "p" }).argv).toEqual(["not-oc", "run"]);
-    expect(() => opencodeBuilder.build(profile("oc-new"), { prompt: "p" })).toThrow(/opencode-sdk/);
+    expect(() => opencodeBuilder.build(profile("oc-new"), { prompt: "p" })).toThrow(/embedded in akm/);
   });
 
   test("a harness with no bin runs opencode; one with a bin keeps it", () => {
