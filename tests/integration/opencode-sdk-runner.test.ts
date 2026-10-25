@@ -29,7 +29,7 @@ import { createSdkHost } from "../../src/integrations/harnesses/opencode/embedde
 import { akmOpencodeDatabasePath } from "../../src/integrations/harnesses/opencode/roots";
 import type { ChatCompletionConfig } from "../../src/llm/client";
 import { type FakeModelServer, startFakeModel } from "../_helpers/fake-model-server";
-import { withEnv, writeSandboxConfig } from "../_helpers/sandbox";
+import { withEnv, withMockedFetch, writeSandboxConfig } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
 
 const profile = runtimeProfile({
@@ -372,6 +372,64 @@ describe("the runtime's host", () => {
       id: string;
     }>;
     expect(models.map((m) => `${m.providerID}/${m.id}`)).toEqual([`${runnerModel(connection).providerID}/fake-model`]);
+  });
+
+  // `project: false`, `claude: false` and `models.fetch: false` (../../src/integrations/harnesses/opencode/embedded/sdk-host.ts)
+  // keep a run off the developer's project files, Claude skills and the network; each leaves a trace when it is on.
+  test("loads no project config or Claude skills and fetches no model catalog", async () => {
+    let context: Parameters<Plugin.Plugin["setup"]>[0] | undefined;
+    overrideSeam(_setOpencodeHostFactoryForTests, (spec) =>
+      createSdkHost({
+        ...spec,
+        plugin: {
+          id: "probe",
+          setup: async (ctx) => {
+            context = ctx;
+            await spec.plugin.setup(ctx);
+          },
+        },
+      }),
+    );
+    const skill = path.join(process.env.HOME ?? "", ".claude", "skills", "leaked-skill");
+    const projectConfig = path.join(work, "opencode.json");
+    fs.mkdirSync(skill, { recursive: true });
+    fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: leaked-skill\ndescription: leaked\n---\nbody\n");
+    fs.writeFileSync(
+      projectConfig,
+      JSON.stringify({
+        provider: {
+          leaked: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: "http://127.0.0.1:9/v1", apiKey: "k" },
+            models: { "leaked-model": {} },
+          },
+        },
+      }),
+    );
+    const realFetch = globalThis.fetch;
+    const requested: string[] = [];
+    try {
+      await withMockedFetch(
+        async () => {
+          expect((await run("MODE:answer isolated")).ok).toBe(true);
+        },
+        (url, init) => {
+          requested.push(url);
+          return url.startsWith("http://127.0.0.1") ? realFetch(url, init) : new Response("blocked", { status: 503 });
+        },
+      );
+      const listed = await context?.model.list({});
+      const models = ((listed as { data?: unknown[] } | undefined)?.data ?? listed) as Array<{
+        providerID: string;
+        id: string;
+      }>;
+      expect(models.map((m) => m.providerID)).toEqual([runnerModel(connection).providerID]);
+      expect(((await context?.skill.list({}))?.data ?? []).map((s) => s.id)).not.toContain("leaked-skill");
+      expect(requested.filter((url) => url.includes("models.opencode.ai"))).toEqual([]);
+    } finally {
+      fs.rmSync(skill, { recursive: true, force: true });
+      fs.rmSync(projectConfig, { force: true });
+    }
   });
 
   test("rejects a permission request with a message, and the run carries on", async () => {

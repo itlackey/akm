@@ -13,9 +13,11 @@
  * a flag; stdin is read verbatim. akm closes it after the write, which the CLI
  * needs: with stdin open it waits for more input.
  *
- * `OPENCODE_DISABLE_FREE_MODELS` is set on every run. With no usable provider,
- * OpenCode 2 would otherwise send the prompt and the working directory's files to
- * its hosted free model.
+ * Model work sets `OPENCODE_DISABLE_FREE_MODELS` (OpenCode 2.1 and later; the
+ * variable first appears in the 2.1.2 CLI). With no usable provider, OpenCode 2
+ * would otherwise send akm's data to its hosted free model. The variable deletes
+ * every zero-cost model of the `opencode` and `opencode-go` providers, so on agent
+ * work it would override a model the user chose.
  *
  * OpenCode 2 only: `--standalone` keeps the run to one process that ends with it
  * (the default attaches to a background service that outlives the CLI, is shared
@@ -48,7 +50,8 @@ export const MODEL_WORK_AGENT = "akm-model-work";
 /**
  * The agent's definition, passed inline so it merges over the user's config and is never written anywhere. Measured
  * on OpenCode 2.1.2: it leaves `glob`, `grep`, `read` and `skill`. `execute` must be denied, or code could fetch and
- * call OpenCode's worktree and session tools.
+ * call OpenCode's worktree and session tools. An entry named for a plugin's tool denies it, so the akm plugin's two
+ * tools that write (`akm_feedback`, `akm_remember`) are denied and its `akm_search`, `akm_show` and `akm_curate` stay.
  */
 const MODEL_WORK_CONFIG = JSON.stringify({
   agent: {
@@ -63,6 +66,8 @@ const MODEL_WORK_CONFIG = JSON.stringify({
         execute: "deny",
         websearch: "deny",
         question: "deny",
+        akm_feedback: "deny",
+        akm_remember: "deny",
       },
     },
   },
@@ -104,7 +109,6 @@ export const opencodeBuilder: HarnessBuilder = {
     }
     return {
       argv: [bin, ...(req.model ? withoutModelFlag(args) : args), ...oc2Flags, ...agent, ...model],
-      env: NO_FREE_MODELS,
       stdin: req.prompt,
     };
   },

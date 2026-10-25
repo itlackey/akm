@@ -88,7 +88,8 @@ export function parseOpencodeMajor(versionOutput: string): number | undefined {
 }
 
 /**
- * The binary an OpenCode harness runs: its own `bin` when it sets one, else the
+ * The binary the OpenCode harness runs by default (a harness whose config names a
+ * `bin` runs that one) and plugin upgrade refreshes with: `explicitBin`, else the
  * most recent OpenCode on PATH (`opencode2` when present, else `opencode`).
  */
 export function resolveOpencodeBin(explicitBin?: string, which?: Which): string {

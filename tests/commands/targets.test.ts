@@ -130,10 +130,15 @@ describe("harness rows", () => {
       name: "default",
       default: true,
       platform: "claude",
+      bin: "claude",
       installed: true,
     });
     expect(harness(all, "codex")).toMatchObject({ platform: "codex", installed: false, default: false });
-    expect(harness(all, "claude-work")).toMatchObject({ platform: "claude", installed: true });
+    expect(harness(all, "claude-work")).toMatchObject({
+      platform: "claude",
+      bin: "/opt/claude-work/bin/claude",
+      installed: true,
+    });
   });
 
   test("a harness set to modelWork: false says so on its row and in the table, and model work has nowhere to run", () => {

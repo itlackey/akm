@@ -21,7 +21,7 @@ const PROMPT = "do work";
 // has its own cases further down, through a fake `opencode` on PATH.
 beforeEach(() => fakeOpencodeMajor(1));
 
-/** Set on every opencode run: with no usable provider OpenCode 2 would otherwise use its hosted free model. */
+/** Set on opencode model work only: on agent work it would override the user's chosen free model. */
 const NO_FREE_MODELS = { OPENCODE_DISABLE_FREE_MODELS: "1" };
 
 interface Shell {
@@ -103,9 +103,9 @@ const SHELLS: Record<string, Shell> = {
   },
   // OpenCode 1's command (pinned above); OpenCode 2's flags are under "opencode by major".
   opencode: {
-    headless: { argv: ["opencode", "run"], stdin: PROMPT, env: NO_FREE_MODELS },
+    headless: { argv: ["opencode", "run"], stdin: PROMPT },
     interactive: { argv: ["opencode"] },
-    model: { argv: ["opencode", "run", "--model", "m-1"], stdin: PROMPT, env: NO_FREE_MODELS },
+    model: { argv: ["opencode", "run", "--model", "m-1"], stdin: PROMPT },
     passthrough: ["OPENCODE_API_KEY", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME"],
     modelFlag: true,
   },
@@ -114,7 +114,9 @@ const SHELLS: Record<string, Shell> = {
 function build(id: string, request: AgentDispatchRequest, args?: readonly string[]): BuiltCommand {
   const harness = getHarness(id);
   if (!harness) throw new Error(`no harness "${id}"`);
-  return harness.build({ bin: harness.profile.bin, args: args ?? harness.profile.args }, request);
+  // opencode's profile bin follows PATH (`opencode2` when it is there); the shell is handed the plain name.
+  const bin = id === "opencode" ? "opencode" : harness.profile.bin;
+  return harness.build({ bin, args: args ?? harness.profile.args }, request);
 }
 
 describe("every registered harness has a shell here", () => {
@@ -301,13 +303,11 @@ describe("opencode by major", () => {
     await withOpencodeOnPath(2, async () => {
       expect(build("opencode", { prompt: PROMPT })).toEqual({
         argv: ["opencode", "run", ...STANDALONE],
-        env: NO_FREE_MODELS,
         stdin: PROMPT,
       });
       const named = build("opencode", { prompt: PROMPT, agent: "reviewer", model: "p/m" }, ["run", "--model", "old"]);
       expect(named).toEqual({
         argv: ["opencode", "run", ...STANDALONE, "--agent", "reviewer", "--model", "p/m"],
-        env: NO_FREE_MODELS,
         stdin: PROMPT,
       });
     });
@@ -342,6 +342,8 @@ describe("opencode by major", () => {
               execute: "deny",
               websearch: "deny",
               question: "deny",
+              akm_feedback: "deny",
+              akm_remember: "deny",
             },
           },
         },

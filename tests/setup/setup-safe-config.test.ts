@@ -25,6 +25,7 @@ import { getConfigPath } from "../../src/core/paths";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { rebaseSetupChanges, runSetupFromConfig, runSetupWithDefaults } from "../../src/setup/setup";
 import { parseSetupFlags } from "../../src/setup/setup-flags";
+import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import {
   type Cleanup,
   sandboxXdgCacheHome,
@@ -38,6 +39,9 @@ import {
 import { overrideSeam } from "../_helpers/seams";
 
 let cleanup: Cleanup | undefined;
+
+// Setup asks the PATH `opencode` which major it is; no suite runs a real one.
+beforeEach(() => fakeOpencodeMajor(1));
 
 beforeEach(() => {
   // Chain isolated XDG dirs so config (write), cache (backups), data & state

@@ -12,6 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { type ProcessRow, targetRows } from "../../src/commands/targets";
 import type { AkmConfig } from "../../src/core/config/config";
 import { describeRuns } from "../../src/setup/summary";
+import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 
 const cfg = (partial: Partial<AkmConfig> = {}): AkmConfig => ({ semanticSearchMode: "off", ...partial });
 const MODELS = { fast: "small", balanced: "mid", reasoning: "big" };
@@ -46,6 +47,17 @@ describe("describeRuns", () => {
     const gemini = describeRuns(cfg({ harnesses: { gemini: {} } }));
     expect(gemini.modelCalls).toContain(
       'Model work on "gemini" cannot be restricted: it can edit files and run commands.',
+    );
+  });
+
+  test("an OpenCode harness is read-only by the major of its configured bin, not of the opencode on PATH", () => {
+    // Every binary but the harness's own is OpenCode 1, as the one on PATH is.
+    fakeOpencodeMajor((bin) => (bin === "/opt/oc2/opencode" ? "opencode v2.0.26" : "1.18.34"));
+    expect(describeRuns(cfg({ harnesses: { opencode: { bin: "/opt/oc2/opencode" } } })).modelCalls).toContain(
+      ", read-only",
+    );
+    expect(describeRuns(cfg({ harnesses: { opencode: {} } })).modelCalls).toContain(
+      'Model work on "opencode" cannot be restricted',
     );
   });
 

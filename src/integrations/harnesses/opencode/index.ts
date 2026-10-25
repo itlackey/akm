@@ -26,7 +26,7 @@ import type { SessionLogHarness } from "../../session-logs/types";
 import type { AkmHarness } from "../harness";
 import { opencodeBuilder } from "./agent-builder";
 import { OpenCodeProvider } from "./session-log";
-import { isOpencode2 } from "./version";
+import { isOpencode2, resolveOpencodeBin } from "./version";
 
 export { opencodeBuilder } from "./agent-builder";
 export { OpenCodeProvider } from "./session-log";
@@ -55,7 +55,10 @@ export class OpencodeHarness implements AkmHarness {
   // session-log provider, so offering it as a stash source is functional.
   readonly setupDetectionDir = ".config/opencode";
   readonly build = opencodeBuilder.build;
-  readonly profile = { bin: "opencode", args: ["run"], envPassthrough: OPENCODE_ENV_PASSTHROUGH };
+  // The most recent OpenCode on PATH, the binary plugin upgrade refreshes with, so a host with both majors runs one.
+  get profile() {
+    return { bin: resolveOpencodeBin(), args: ["run"], envPassthrough: OPENCODE_ENV_PASSTHROUGH };
+  }
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Session-id env marker for run attribution.
   readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;
@@ -66,5 +69,5 @@ export class OpencodeHarness implements AkmHarness {
   // (./agent-builder.ts), OpenCode 1's cannot be restricted and runs it unrestricted, with a warning.
   // Lowering asks for the confined run either way; setup asks whether the installed OpenCode can give it.
   readonly confinable = true;
-  readonly confinableInstalled = () => isOpencode2(this.profile.bin);
+  readonly confinableInstalled = (bin: string) => isOpencode2(bin);
 }

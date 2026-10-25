@@ -54,6 +54,8 @@ export interface HarnessRow {
   readonly name: string;
   readonly default: boolean;
   readonly platform: string;
+  /** The program it runs. */
+  readonly bin: string;
   /** Whether its binary is on PATH. */
   readonly installed: boolean;
   /** Present, and `false`, when the harness is set not to take akm's own model calls by default. */
@@ -146,12 +148,14 @@ function harnessRows(input: TargetsInput): HarnessRow[] {
   const which = input.which ?? defaultWhich;
   return Object.entries(config.harnesses ?? {}).map(([name, harness]) => {
     const version = input.versions?.get(name);
+    const bin = harnessBin(config, name, harness);
     return {
       type: "harness",
       name,
       default: name === defaultName,
       platform: harness.platform ?? name,
-      installed: Boolean(which(harnessBin(config, name, harness))),
+      bin,
+      installed: Boolean(which(bin)),
       ...(harness.modelWork === false ? { modelWork: false as const } : {}),
       ...(version ? { version } : {}),
     };

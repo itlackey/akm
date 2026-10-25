@@ -8,8 +8,8 @@
  * - **akm's read tools** (`akm_search`, `akm_show`, `akm_curate`): they run in
  *   akm's process, so an agent reads the library without a shell.
  *   A call records its usage event under the source of the run it is in (the
- *   session's `AKM_EVENT_SOURCE`), so model work's own reads never count as user
- *   demand.
+ *   session's `AKM_EVENT_SOURCE`), so a stamped run's reads (a task's, a
+ *   workflow's) never count as user demand.
  * - **The models of the runs it serves**: a run's connection is declared as a
  *   provider of its own when the run asks (`./runner-models.ts`), so the host
  *   never reads config.
