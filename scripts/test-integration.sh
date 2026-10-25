@@ -17,8 +17,8 @@
 #
 # Per-process isolation here is STRICTLY STRONGER than the previous
 # single-process run (files no longer share process.env or module state with
-# every sibling), and cross-file isolation is already required by
-# scripts/lint-tests-isolation.ts.
+# every sibling), and cross-file isolation is already enforced by
+# the test preload (tests/_preload.ts).
 #
 # Usage:  scripts/test-integration.sh            # auto shards (min(nproc, 8))
 #         TEST_SHARDS=4 scripts/test-integration.sh

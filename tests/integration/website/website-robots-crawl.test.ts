@@ -549,7 +549,7 @@ describe("crawlWebsite robots.txt compliance", () => {
       // the delay in full instead of noticing upfront that doing so would
       // cross the deadline and breaking. This uses bun's own per-test
       // `timeout` rather than a manual `Date.now()` delta assertion, which
-      // `scripts/lint-tests-isolation.ts` bans as flake-prone.
+      // is flake-prone.
       const cachePaths = await ensureWebsiteMirror(websiteEntry(url), {
         allowPrivateHosts: true,
         wallClockCapMs: 400,

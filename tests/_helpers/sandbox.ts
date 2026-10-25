@@ -294,9 +294,7 @@ export function sandboxHome(chain?: Cleanup): { dir: string; cleanup: Cleanup } 
  * hit a symlink mismatch, e.g. `/tmp` -> `/private/tmp` on macOS). `cleanup`
  * restores the spy and removes the temp directory — this is the file that
  * owns the `node:fs` removal call paired with a real `os.homedir()` read, so
- * call sites of this helper don't have to (see
- * `scripts/lint-tests-isolation.ts`'s `real-home-delete` rule, which flags a
- * test file that combines the two directly).
+ * call sites of this helper don't have to.
  */
 export function mockHomedir(): { dir: string; cleanup: Cleanup } {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "akm-mock-home-")));

@@ -21,7 +21,7 @@
  * parts (markdown parsing, embeddings) that add nothing to what's under test
  * here.
  *
- * Per scripts/lint-tests-isolation.ts Rule 3, the grace-window test seeds an
+ * The grace-window test seeds an
  * OLD `missing_since` value directly instead of sleeping — no wall-clock
  * dependency.
  */

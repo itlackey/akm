@@ -5,7 +5,7 @@ Thanks for your interest in contributing! This guide will help you get started.
 ## Prerequisites
 
 - [Bun](https://bun.sh/) >= 1.0
-- [Node.js](https://nodejs.org/) >= 22 and npm for npm package acceptance and global-install workflows
+- [Node.js](https://nodejs.org/) >= 24 and npm for npm package acceptance and global-install workflows
 
 ## Setting Up the Dev Environment
 
@@ -45,8 +45,13 @@ package-acceptance commands.
 ### Running Tests
 
 ```bash
-bun test
+bun run test:unit
+bun run test:integration
+bun test tests/<file>.test.ts   # one file, while iterating
 ```
+
+The [testing workflow](../docs/architecture/testing/testing-workflow.md) says
+what each target holds and where a new test goes.
 
 ### Linting
 
@@ -127,7 +132,8 @@ files at runtime from the release-notes directory.
 
 1. Fork the repository and create a feature branch from `main`.
 2. Make your changes, keeping commits focused and well-described.
-3. Ensure all tests pass (`bun test`) and linting is clean (`bun run lint`).
+3. Ensure both test targets pass (`bun run test:unit` and
+   `bun run test:integration`) and linting is clean (`bun run lint`).
 4. Open a pull request against `main` with a clear description of the change.
 
 ## Code Style
