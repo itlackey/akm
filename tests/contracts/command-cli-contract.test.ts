@@ -6,7 +6,6 @@ import { describe, expect, test } from "bun:test";
 import { main } from "../../src/cli";
 import { commandCommand } from "../../src/commands/command/command-cli";
 import { configCommand } from "../../src/commands/config-cli";
-import { modelsCommand } from "../../src/commands/models-cli";
 import { indexCommand } from "../../src/commands/sources/stash-cli";
 import { taskCommand } from "../../src/commands/tasks/tasks-cli";
 import { workflowCommand } from "../../src/commands/workflow-cli";
@@ -133,20 +132,5 @@ describe("canonical config CLI surface", () => {
     const get = (configCommand as unknown as DynamicCommand).subCommands?.get;
     expect(get?.args?.key).toMatchObject({ type: "positional", required: true });
     expect(get?.args?.["show-source"]).toMatchObject({ type: "boolean", default: false });
-  });
-});
-
-// #946: `akm models list` (new verb) — contract extended in the same commit
-// that registers it, per this file's own header comment. Read-only, no
-// arguments beyond the global `format`/`detail`/`shape` flags every
-// defineJsonCommand leaf already carries.
-describe("canonical models CLI surface", () => {
-  test("registers models list alongside copy-defaults", () => {
-    const top = main.subCommands as unknown as Record<string, DynamicCommand>;
-    expect(top.models).toBe(modelsCommand as unknown as DynamicCommand);
-
-    const list = (modelsCommand as unknown as DynamicCommand).subCommands?.list;
-    expect(list?.args?.format).toMatchObject({ type: "string" });
-    expect((modelsCommand as unknown as DynamicCommand).subCommands?.["copy-defaults"]).toBeDefined();
   });
 });

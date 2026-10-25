@@ -138,8 +138,7 @@ console.log(JSON.stringify({ before: before ?? null, after: process.exitCode }))
       JSON.stringify({
         configVersion: "0.9.0",
         semanticSearchMode: "off",
-        engines: { test: { kind: "agent", platform: "aider", bin } },
-        defaults: { engine: "test" },
+        harnesses: { test: { platform: "aider", bin } },
       }),
     );
 

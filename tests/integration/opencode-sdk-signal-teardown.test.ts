@@ -77,14 +77,12 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
         ].join("\n"),
       );
       writeSandboxConfig({
-        engines: {
-          local: { kind: "llm", endpoint: `http://127.0.0.1:${model.port}/v1/chat/completions`, model: "fake-model" },
-          fake: { kind: "agent", platform: "opencode-sdk", llmEngine: "local" },
+        connections: {
+          local: { endpoint: `http://127.0.0.1:${model.port}/v1/chat/completions`, models: { fast: "fake-model" } },
         },
-        defaults: { engine: "fake" },
       });
 
-      const cli = spawn(process.execPath, [entry, "agent", "--engine", "fake", "--prompt", "hi"], {
+      const cli = spawn(process.execPath, [entry, "agent", "--engine", "local", "--prompt", "hi"], {
         cwd: REPO_ROOT,
         stdio: ["ignore", "pipe", "pipe"],
       });

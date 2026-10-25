@@ -58,8 +58,7 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "local",
-      engines: { "test-agent": { kind: "agent", platform: "opencode-sdk" } },
-      defaults: { engine: "test-agent" },
+      connections: { "test-agent": { endpoint: "http://127.0.0.1:1/v1", models: { fast: "test-model" } } },
       bundles: {
         local: {
           path: storage.stashDir,

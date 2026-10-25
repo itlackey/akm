@@ -334,8 +334,7 @@ describe("--format jsonl", () => {
     const config = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { test: { kind: "agent", platform: "claude", bin: "/bin/echo" } },
-      defaults: { engine: "test" },
+      harnesses: { test: { platform: "claude", bin: "/bin/echo" } },
     };
     const runtime = makeCliRuntime();
     await runCli(stashDir, ["index", "--full", "--format=json", "-q"], config, runtime);
@@ -373,8 +372,7 @@ describe("--format jsonl", () => {
           components: { main: { root: ".", adapter: "okf", writable: false } },
         },
       },
-      engines: { test: { kind: "agent", platform: "opencode", bin: "/bin/echo" } },
-      defaults: { engine: "test" },
+      harnesses: { test: { platform: "opencode", bin: "/bin/echo" } },
     };
     const runtime = makeCliRuntime();
     await runCli(stashDir, ["index", "--full", "--format=json", "-q"], config, runtime);

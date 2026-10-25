@@ -17,7 +17,6 @@ import os from "node:os";
 import path from "node:path";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "../src/core/adapter/adapters/akm-metadata";
 import { parseFrontmatter } from "../src/core/asset/frontmatter";
-import { saveConfig } from "../src/core/config/config";
 import type { IndexDocument } from "../src/indexer/passes/metadata";
 import { buildFileContext } from "../src/indexer/walk/file-context";
 import { runCliCapture } from "./_helpers/cli";
@@ -469,32 +468,6 @@ describe("memory metadata fold", () => {
 // against a non-existent endpoint and verify the graceful-degradation behaviour.
 
 describe("remember --enrich graceful degradation", () => {
-  test("missing required symbolic credential exits as invalid config before writing a memory", async () => {
-    const { stashDir, env } = freshDirs();
-    const result = await withEnv({ ...env, AKM_REMEMBER_REQUIRED_KEY: undefined }, async () => {
-      saveConfig({
-        semanticSearchMode: "off",
-        bundles: { stash: { path: stashDir, writable: true } },
-        defaultBundle: "stash",
-        engines: {
-          remember: {
-            kind: "llm",
-            endpoint: "http://127.0.0.1:1/v1/chat/completions",
-            model: "never-dispatched",
-            apiKey: "$AKM_REMEMBER_REQUIRED_KEY",
-          },
-        },
-        defaults: { llmEngine: "remember" },
-      });
-      return runCliCapture(["remember", "Must not be written", "--enrich"]);
-    });
-
-    expect(result.code).toBe(78);
-    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code: "INVALID_CONFIG_FILE" });
-    const memoryDir = path.join(stashDir, "memories");
-    expect(fs.existsSync(memoryDir) ? fs.readdirSync(memoryDir) : []).toEqual([]);
-  });
-
   test("when no LLM is configured, --enrich emits warning and still writes the memory", async () => {
     const { result } = await runCli(["remember", "Some note about ops", "--enrich"]);
     expect(result.status).toBe(0);

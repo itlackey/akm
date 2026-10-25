@@ -30,7 +30,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { AkmConfig, LlmConnectionConfig } from "../../src/core/config/config";
+import type { AkmConfig } from "../../src/core/config/config";
+import type { ChatCompletionConfig } from "../../src/llm/client";
 
 // ── Injected chat seam ───────────────────────────────────────────────────────
 // `chatResponder` returns a raw string (the model body) or throws. Reset per
@@ -67,7 +68,7 @@ const LLM_CONFIG = testLlmRunner(
     endpoint: "http://localhost:1/v1/chat/completions",
     model: "test-model",
     timeoutMs: 5_000,
-  } as LlmConnectionConfig,
+  } as ChatCompletionConfig,
   "test-memory-inference",
 );
 

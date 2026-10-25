@@ -23,7 +23,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { DISTILL_KNOWLEDGE_JSON_SCHEMA, DISTILL_LESSON_JSON_SCHEMA } from "../../../src/commands/improve/distill";
-import type { LlmConnectionConfig } from "../../../src/core/config/config";
+import type { ChatCompletionConfig } from "../../../src/llm/client";
 import { chatCompletion, isJsonSchemaKnownUnsupported } from "../../../src/llm/client";
 
 /** OpenAI's first complaint about an object that does not require all of its properties, or undefined. */
@@ -77,7 +77,7 @@ describe("distill's response schemas against a strict structured-output provider
     ["knowledge", DISTILL_KNOWLEDGE_JSON_SCHEMA],
   ])("the %s schema is accepted on the first request, with no fall-back to a schema-free retry", async (_kind, schema) => {
     const provider = startStrictProvider();
-    const config: LlmConnectionConfig = { endpoint: provider.url, model: "gpt-test" };
+    const config: ChatCompletionConfig = { endpoint: provider.url, model: "gpt-test" };
     try {
       await chatCompletion(config, messages, { responseSchema: schema });
       expect(provider.requests).toHaveLength(1);
@@ -90,7 +90,7 @@ describe("distill's response schemas against a strict structured-output provider
 
   test("the stub does refuse a schema that leaves a property out of `required`", async () => {
     const provider = startStrictProvider();
-    const config: LlmConnectionConfig = { endpoint: provider.url, model: "gpt-test" };
+    const config: ChatCompletionConfig = { endpoint: provider.url, model: "gpt-test" };
     const optionalTags = {
       type: "object",
       required: ["body"],

@@ -18,16 +18,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import { akmReflect, REFLECT_JSON_SCHEMA, runReflectIteration } from "../../../src/commands/improve/reflect";
 import { splitFrontmatter } from "../../../src/commands/improve/reflect-noise";
 import { validateProposal } from "../../../src/commands/proposal/validators/proposals";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../src/core/config/config";
-import { ConfigError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { parseAgentProposalPayload, REFLECT_TRUNCATION_MARKER } from "../../../src/integrations/agent/prompts";
@@ -59,14 +54,7 @@ let stubReturn = "";
 
 // ── Scaffolding ─────────────────────────────────────────────────────────────
 
-const tempDirs: string[] = [];
 let storage: IsolatedAkmStorage;
-
-function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 function makeStashDir(): string {
   return storage.stashDir;
@@ -133,9 +121,6 @@ beforeEach(() => {
 
 afterEach(() => {
   storage.cleanup();
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 // ── 1. Schema shape ─────────────────────────────────────────────────────────

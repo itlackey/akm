@@ -732,7 +732,7 @@ describe("previous-release corpus — a config as 0.9.15/0.9.16 wrote it", () =>
   beforeEach(() => resetConfigCache());
   afterEach(() => resetConfigCache());
 
-  test("bundles + first-class engine fields + a 0.9.16 {kind, ref, sourceId} scheduler entry load as written, the entry read as its ref", () => {
+  test("bundles + an `engines` block with first-class engine fields + a 0.9.16 {kind, ref, sourceId} scheduler entry load, the engine read as a connection and the entry as its ref", () => {
     const configPath = getConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(
@@ -758,7 +758,13 @@ describe("previous-release corpus — a config as 0.9.15/0.9.16 wrote it", () =>
 
     const config = loadConfig();
     expect(config.defaultBundle).toBe("stash");
-    expect(config.engines?.fast).toMatchObject({ temperature: 0.2, reasoningEffort: "low" });
+    expect("engines" in config).toBe(false);
+    expect(config.connections?.fast).toMatchObject({
+      endpoint: "https://example.test/v1/chat/completions",
+      models: { fast: "test" },
+      temperature: 0.2,
+      reasoning_effort: "low",
+    });
     expect(config.scheduler?.enabled).toEqual(["stash//tasks/nightly"]);
   });
 });

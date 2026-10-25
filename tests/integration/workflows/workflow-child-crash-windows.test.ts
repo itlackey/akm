@@ -118,7 +118,7 @@ afterEach(() => storage.cleanup());
 const CHILD_LEAF_WF = [
   "---",
   "type: workflow",
-  "defaults: { engine: test-agent }",
+  "defaults: { connection: test-llm }",
   "steps:",
   "  - id: work",
   "---",

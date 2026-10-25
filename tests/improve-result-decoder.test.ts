@@ -44,7 +44,7 @@ describe("decodeImproveResult", () => {
     ],
     effectiveRefs: [{ ref: "skills/a", lane: "proactive", reason: "scope-type" }],
     processes: [
-      { process: "reflect", enabled: true, engine: "default", model: "base", engineKind: "llm", notices: [] },
+      { process: "reflect", enabled: true, engine: "default", model: "base", engineKind: "connection", notices: [] },
       { process: "distill", enabled: false, notices: [] },
       { process: "consolidate", enabled: false, notices: [] },
       { process: "memoryInference", enabled: false, notices: [] },
@@ -282,7 +282,14 @@ describe("decodeImproveResult", () => {
       ...plan,
       processes: [
         ...plan.processes,
-        { process: "graphExtraction", enabled: true, engine: "default", model: "base", engineKind: "llm", notices: [] },
+        {
+          process: "graphExtraction",
+          enabled: true,
+          engine: "default",
+          model: "base",
+          engineKind: "connection",
+          notices: [],
+        },
       ],
       stages: [...plan.stages, { name: "graph-extraction", wouldRun: true, reason: "enabled" }],
     };

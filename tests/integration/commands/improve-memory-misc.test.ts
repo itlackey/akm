@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import { saveConfig } from "../../../src/core/config/config";
-import { ConfigError } from "../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../src/core/improve-types";
 import { openStateDatabase } from "../../../src/core/state-db";

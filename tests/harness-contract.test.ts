@@ -14,7 +14,12 @@ import { checkHarnessDocsDrift } from "../scripts/gen-config-schema";
 import { validateConfigShape } from "../src/core/config/config-schema";
 import { getCommandBuilder } from "../src/integrations/agent/builders";
 import { getBuiltinAgentProfile } from "../src/integrations/agent/profiles";
-import { type AkmHarness, HARNESS_REGISTRY, VALID_HARNESS_IDS } from "../src/integrations/harnesses";
+import {
+  type AkmHarness,
+  HARNESS_REGISTRY,
+  INTERNAL_RUNTIME_ID,
+  VALID_HARNESS_IDS,
+} from "../src/integrations/harnesses";
 
 const HARNESS_DIR = path.resolve(import.meta.dir, "..", "src", "integrations", "harnesses");
 
@@ -43,10 +48,10 @@ describe.each(
     }
   });
 
-  test("the config schema accepts it as an agent engine platform", () => {
+  test("the config schema accepts it as a harness platform, except akm's own runtime", () => {
     expect(VALID_HARNESS_IDS as readonly string[]).toContain(id);
-    expect(validateConfigShape({ configVersion: "0.9.0", engines: { e: { kind: "agent", platform: id } } }).ok).toBe(
-      true,
+    expect(validateConfigShape({ configVersion: "0.9.0", harnesses: { e: { platform: id } } }).ok).toBe(
+      id !== INTERNAL_RUNTIME_ID,
     );
   });
 

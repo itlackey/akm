@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, jest, setSystemTime, test } from "bun:test";
-import type { LlmConnectionConfig } from "../../../src/core/config/config";
 import { parseEmbeddedJsonResponse, parseJsonResponse } from "../../../src/core/parse";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
+import type { ChatCompletionConfig } from "../../../src/llm/client";
 import {
   _resetEndpointSupportTrackersForTests,
   chatCompletion,
@@ -122,7 +122,7 @@ describe("chatCompletion structured-output attempt-then-fallback", () => {
       }
       return Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "test-model" };
     try {
       expect(isJsonSchemaKnownUnsupported(config)).toBe(false);
       const result = await chatCompletion(config, messages, { responseSchema });
@@ -146,7 +146,7 @@ describe("chatCompletion structured-output attempt-then-fallback", () => {
       }
       return Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "test-model" };
     try {
       await chatCompletion(config, messages, { responseSchema });
       requestBodies.length = 0;
@@ -165,7 +165,7 @@ describe("chatCompletion structured-output attempt-then-fallback", () => {
       requestBodies.push(body);
       return Response.json({ error: "rate limited" }, { status: 429 });
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "test-model" };
     try {
       await expect(chatCompletion(config, messages, { responseSchema })).rejects.toThrow(LlmCallError);
       expect(requestBodies).toHaveLength(1);
@@ -201,7 +201,7 @@ describe("chatCompletion 5xx that names the response format (#1150)", () => {
       }
       return ok();
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "test-model" };
     try {
       expect(await chatCompletion(config, messages, { responseSchema })).toBe('{"result":"ok"}');
       expect(requestBodies).toHaveLength(2);
@@ -224,7 +224,7 @@ describe("chatCompletion 5xx that names the response format (#1150)", () => {
       requestBodies.push(body);
       return Response.json({ error: "bad gateway" }, { status: 502 });
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "test-model" };
     try {
       await expect(
         chatCompletion(config, messages, { responseSchema, sleep: async () => {} } as Parameters<
@@ -285,7 +285,7 @@ describe("chatCompletion against an OpenAI reasoning model (temperature and max_
       requestBodies.push(body);
       return strict(body) ?? ok();
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "gpt-test" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "gpt-test" };
     try {
       expect(await chatCompletion(config, messages, { maxTokens: 64, temperature: 0 })).toBe("ok");
       expect(requestBodies).toHaveLength(3);
@@ -351,7 +351,7 @@ describe("chatCompletion against an API that rejects the thinking-control fields
       requestBodies.push(body);
       return rejectsThinking(body) ?? ok();
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "gpt-test" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "gpt-test" };
     try {
       expect(await chatCompletion(config, messages, { enableThinking: false })).toBe('{"result":"ok"}');
       expect(requestBodies).toHaveLength(2);
@@ -407,7 +407,7 @@ describe("chatCompletion against an API that rejects the thinking-control fields
       }
       return ok();
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "gpt-test" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "gpt-test" };
     try {
       expect(await chatCompletion(config, messages, { enableThinking: false, responseSchema })).toBe('{"result":"ok"}');
       expect(requestBodies.map((body) => [body.response_format !== undefined, "chat_template_kwargs" in body])).toEqual(
@@ -430,7 +430,7 @@ describe("chatCompletion against an API that rejects the thinking-control fields
       requestBodies.push(body);
       return Response.json({ error: { message: "Incorrect API key provided." } }, { status: 401 });
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "gpt-test" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "gpt-test" };
     try {
       await expect(chatCompletion(config, messages, { enableThinking: false })).rejects.toThrow(LlmCallError);
       expect(requestBodies).toHaveLength(1);
@@ -582,7 +582,7 @@ describe("chatCompletion thinking controls", () => {
     );
     try {
       await chatCompletion({ endpoint: url, model: "test-model", enableThinking: false }, messages);
-      expect(warnings).toEqual([expect.stringContaining("returned 17 reasoning tokens despite enableThinking: false")]);
+      expect(warnings).toEqual([expect.stringContaining("returned 17 reasoning tokens despite thinking being off")]);
     } finally {
       server.stop(true);
     }
@@ -668,7 +668,7 @@ describe("chatCompletion error redaction", () => {
     const leakBody = '{"error":{"message":"Invalid API key sk-proj-LEAKYKEYABCDEF12345"}}';
     const { url, server } = createErrorServer(401, leakBody);
     try {
-      const config: LlmConnectionConfig = {
+      const config: ChatCompletionConfig = {
         endpoint: url,
         model: "test-model",
         apiKey: "sk-proj-LEAKYKEYABCDEF12345",
@@ -693,7 +693,7 @@ describe("chatCompletion error redaction", () => {
     const huge = "A".repeat(5000);
     const { url, server } = createErrorServer(503, huge);
     try {
-      const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+      const config: ChatCompletionConfig = { endpoint: url, model: "test-model" };
       let caught: Error | undefined;
       try {
         await chatCompletion(config, [{ role: "user", content: "hi" }]);
@@ -713,7 +713,7 @@ describe("chatCompletion error redaction", () => {
     const body = "Got header Authorization: Bearer abcXYZsupersecret999";
     const { url, server } = createErrorServer(403, body);
     try {
-      const config: LlmConnectionConfig = { endpoint: url, model: "test-model", apiKey: "abcXYZsupersecret999" };
+      const config: ChatCompletionConfig = { endpoint: url, model: "test-model", apiKey: "abcXYZsupersecret999" };
       let caught: Error | undefined;
       try {
         await chatCompletion(config, [{ role: "user", content: "hi" }]);
@@ -746,7 +746,7 @@ describe("chatCompletion error redaction", () => {
       });
     }) as unknown as typeof fetch;
     try {
-      const config: LlmConnectionConfig = {
+      const config: ChatCompletionConfig = {
         endpoint: "http://localhost:0/v1/chat/completions",
         model: "test-model",
         timeoutMs: 250,
@@ -777,7 +777,7 @@ describe("chatCompletion error redaction", () => {
       });
     }) as unknown as typeof fetch;
     try {
-      const config: LlmConnectionConfig = {
+      const config: ChatCompletionConfig = {
         endpoint: "http://localhost:0/v1/chat/completions",
         model: "test-model",
         timeoutMs: 250,
@@ -897,7 +897,7 @@ const LM_STUDIO_HTML =
   '<body><div id="app">Loading…</div></body></html>';
 
 describe("chatCompletion HTML response categorization", () => {
-  async function callExpectingError(config: LlmConnectionConfig): Promise<LlmCallError> {
+  async function callExpectingError(config: ChatCompletionConfig): Promise<LlmCallError> {
     let caught: unknown;
     try {
       await chatCompletion(config, [{ role: "user", content: "hi" }]);
@@ -1001,7 +1001,7 @@ type RetryTestOptions = Parameters<typeof chatCompletion>[2] & { sleep?: (ms: nu
 const fastSleep = async () => {};
 
 describe("chatCompletion single bounded retry", () => {
-  const baseConfig: LlmConnectionConfig = {
+  const baseConfig: ChatCompletionConfig = {
     endpoint: "http://localhost:0/v1/chat/completions",
     model: "test-model",
     timeoutMs: 5000,

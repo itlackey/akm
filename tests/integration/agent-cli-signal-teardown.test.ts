@@ -100,8 +100,7 @@ for (const { platform, signal, ignoresTerm } of CASES) {
         { mode: 0o755 },
       );
       writeSandboxConfig({
-        engines: { fake: { kind: "agent", platform, bin } },
-        defaults: { engine: "fake" },
+        harnesses: { fake: { platform, bin } },
       });
 
       const cli = spawn(

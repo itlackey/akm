@@ -61,7 +61,7 @@ describe("renderReflectPromptPreview (#952)", () => {
     );
 
     expect(preview.ref).toBe("lessons/test-lesson");
-    expect(preview.engine).toBe("test-improve-llm");
+    expect(preview.engine).toBe("default");
 
     // #952 — feedback is framed as a signal, not a fact, and the actual
     // feedback signal is present so the field can see it echoed in.

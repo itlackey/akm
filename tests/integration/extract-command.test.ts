@@ -24,7 +24,7 @@ import { isValidDescription } from "../../src/commands/proposal/validators/propo
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
-import { ConfigError, TransientError, UsageError } from "../../src/core/errors";
+import { TransientError, UsageError } from "../../src/core/errors";
 import { appendEvent, readEvents } from "../../src/core/events";
 import { createLockPayload } from "../../src/core/file-lock";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
@@ -2275,7 +2275,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(receivedEndpoint).toBe("http://192.168.0.205:1234/v1/chat/completions");
   });
 
-  test("falls back to defaults.llmEngine when the process has no engine override", async () => {
+  test("falls back to the default connection when the process names no target", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_default", Date.now() - 60_000);
     let receivedModel = "";

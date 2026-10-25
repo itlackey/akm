@@ -317,7 +317,7 @@ describe("error class hints", () => {
     expect(new ConfigError("missing stash", "STASH_DIR_NOT_FOUND").hint()).toContain("akm setup");
     expect(new ConfigError("not a dir", "STASH_DIR_NOT_A_DIRECTORY").hint()).toContain("directory");
     expect(new ConfigError("unreadable", "STASH_DIR_UNREADABLE").hint()).toContain("permission");
-    expect(new ConfigError("no llm", "LLM_NOT_CONFIGURED").hint()).toContain("defaults.llmEngine");
+    expect(new ConfigError("no llm", "LLM_NOT_CONFIGURED").hint()).toContain("add a connection");
   });
 
   test("ConfigError without a code-mapped hint returns undefined", () => {
@@ -707,7 +707,6 @@ describe("S11: sectioned root help", () => {
         "metrics",
         "ui",
         "config",
-        "models",
         "registry",
         "info",
         "log",

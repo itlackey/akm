@@ -24,7 +24,6 @@ import {
 } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { type AkmConfig, saveConfig } from "../../src/core/config/config";
-import { ConfigError } from "../../src/core/errors";
 import { readEvents } from "../../src/core/events";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";

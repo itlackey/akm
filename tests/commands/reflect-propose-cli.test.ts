@@ -264,17 +264,18 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
     expect(result.reason).toBe("timeout");
   });
 
-  test("missing engine config → the opencode-sdk fallback engine runs", async () => {
+  test("nothing configured → refused as not configured, pointing at setup, with no engine call", async () => {
     const stash = makeStashDir();
     const host = installFakeOpencodeHost({ reply: () => VALID_LESSON_PAYLOAD });
-    const result = await akmReflect({
+    const failure = await akmReflect({
       ref: "lessons/rg-over-grep",
       stashDir: stash,
       assetContent: LESSON_SOURCE,
       // No config file exists under the sandboxed XDG_CONFIG_HOME.
-    });
-    expect(result.engine).toBe("opencode-sdk");
-    expect(host.calls).toHaveLength(1);
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "LLM_NOT_CONFIGURED" });
+    expect((failure as { hint(): string }).hint()).toContain("akm setup");
+    expect(host.calls).toHaveLength(0);
   });
 });
 
@@ -309,18 +310,19 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
     expect(result.reason).toBe("parse_error");
   });
 
-  test("missing config: no agent block → the opencode-sdk fallback engine runs", async () => {
+  test("nothing configured → refused as not configured, pointing at setup, with no engine call", async () => {
     const stash = makeStashDir();
     const host = installFakeOpencodeHost({ reply: () => VALID_SKILL_PAYLOAD });
-    const result = await akmPropose({
+    const failure = await akmPropose({
       type: "skill",
       name: "hello",
       task: "Say hi",
       stashDir: stash,
-      // Do not pass agentConfig: the sandbox has no defaults.engine.
-    });
-    expect(result.engine).toBe("opencode-sdk");
-    expect(host.calls).toHaveLength(1);
+      // Do not pass agentConfig: the sandbox has no harness or connection.
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "AGENT_NOT_CONFIGURED" });
+    expect((failure as { hint(): string }).hint()).toContain("akm setup");
+    expect(host.calls).toHaveLength(0);
   });
 
   test("missing --task surfaces UsageError (matches CLI contract for empty positional)", async () => {
