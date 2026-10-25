@@ -103,6 +103,13 @@ async function drive(ref: string, options: { maxSteps?: number } = {}) {
   return { runId: started.run.id, result };
 }
 
+/** Every property name anywhere in a parsed JSON value: the plan's own fields, not the strings it holds. */
+function propertyNames(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(propertyNames);
+  if (typeof value !== "object" || value === null) return [];
+  return Object.entries(value).flatMap(([name, child]) => [name, ...propertyNames(child)]);
+}
+
 function realpath(file: string): string {
   return fs.realpathSync(file);
 }
@@ -131,7 +138,31 @@ describe("a frozen plan carries no location", () => {
     // A command target freezes an empty cwdIdentity: not a location, but akm 0.10.0 and earlier refuse it at dispatch.
     expect(ask.root.frozenTarget.cwdIdentity).toEqual({});
     expect(ask.root.frozenTarget.request.runtime.workspace).toBeUndefined();
-    expect(row?.plan_json).not.toMatch(/requestedRoot|realCwd|workspace|secretNames/);
+    for (const location of ["requestedRoot", "realCwd", "workspace", "secretNames"]) {
+      expect(propertyNames(plan)).not.toContain(location);
+    }
+  });
+
+  test("a value that merely contains a location's name is not a location: an executable under /workspace/ is frozen as written", async () => {
+    const team = bundle("team");
+    const tool = "/workspace/review-tools/bin/bun.exe";
+    write(
+      team,
+      "workflows/frozen.md",
+      workflowSource([execStep("run", [tool, "-e", "0", "--workspace=/workspace/x"])]),
+    );
+    configureBundles({ team });
+
+    const started = await startWorkflowRun("team//workflows/frozen", {});
+    const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
+    const plan = JSON.parse(row?.plan_json ?? "{}");
+
+    expect(row?.plan_json).toContain(tool);
+    // A search of the serialized text for a location's name would find this value; the plan's own fields are what count.
+    expect(row?.plan_json).toMatch(/workspace/);
+    for (const location of ["requestedRoot", "realCwd", "workspace", "secretNames"]) {
+      expect(propertyNames(plan)).not.toContain(location);
+    }
   });
 });
 

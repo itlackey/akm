@@ -42,7 +42,10 @@ function bundle(files: Record<string, string>): { root: string; backup: string; 
   roots.push(root);
   fs.mkdirSync(path.join(root, "tasks"), { recursive: true });
   for (const [name, body] of Object.entries(files)) {
-    fs.writeFileSync(path.join(root, "tasks", name), body, { mode: 0o640 });
+    const file = path.join(root, "tasks", name);
+    fs.writeFileSync(file, body);
+    // The mode a test asserts is set outright: a file's creation mode is masked by the umask of whoever runs the test.
+    fs.chmodSync(file, 0o640);
   }
   return { root, backup: path.join(root, "backup"), file: (name) => path.join(root, "tasks", name) };
 }
@@ -56,6 +59,47 @@ function plan(root: string) {
 function outcomes(root: string): Record<string, [string, string]> {
   return Object.fromEntries(plan(root).files.map((file) => [path.basename(file.filePath), [file.status, file.reason]]));
 }
+
+describe("task files: the mode a file had", () => {
+  /** Run `fn` with the process umask set to `mask`, restoring it after. */
+  function withUmask<T>(mask: number, fn: () => T): T {
+    const previous = process.umask(mask);
+    try {
+      return fn();
+    } finally {
+      process.umask(previous);
+    }
+  }
+
+  test("is kept by the rewrite, whatever the umask of the process that migrates it", () => {
+    const b = bundle({ "a.yml": V2, "b.yml": V3 });
+    fs.chmodSync(b.file("b.yml"), 0o664);
+    const preview = plan(b.root);
+
+    withUmask(0o077, () => applyTaskFilesPlan(preview, { backupRoot: b.backup }));
+
+    expect(fs.statSync(b.file("a.yml")).mode & 0o777).toBe(0o640);
+    expect(fs.statSync(b.file("b.yml")).mode & 0o777).toBe(0o664);
+  });
+
+  test("is the one a file had when it was created under a restrictive umask: the rewrite does not widen or change it", () => {
+    const b = withUmask(0o077, () => {
+      const made = bundle({});
+      fs.writeFileSync(path.join(made.root, "tasks", "private.yml"), V2);
+      return made;
+    });
+    const before = fs.statSync(b.file("private.yml")).mode & 0o777;
+    expect(before).toBe(0o600);
+
+    applyTaskFilesPlan(plan(b.root), { backupRoot: b.backup });
+
+    expect(
+      parseTaskSourceV4({ yaml: fs.readFileSync(b.file("private.yml"), "utf8"), filePath: b.file("private.yml") })
+        .version,
+    ).toBe(4);
+    expect(fs.statSync(b.file("private.yml")).mode & 0o777).toBe(before);
+  });
+});
 
 describe("task files: every version through one planner", () => {
   test("v2, v3 and v4-with-retired-enabled files all become v4 under one backup; a plain v4 file is untouched", () => {
