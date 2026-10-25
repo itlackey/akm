@@ -10,6 +10,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { getConfigDir } from "../src/core/paths";
+import { _setWarnSinkForTests } from "../src/core/warn";
 import { runtimeProfile } from "../src/integrations/agent/profiles";
 import { closeOpencodeSdk, hostFor } from "../src/integrations/harnesses/opencode/embedded/host";
 import { runOpencodeSdk } from "../src/integrations/harnesses/opencode/embedded/run";
@@ -17,6 +18,7 @@ import { runnerModel } from "../src/integrations/harnesses/opencode/embedded/run
 import type { ChatCompletionConfig } from "../src/llm/client";
 import { type FakeChildSession, installFakeOpencodeHost } from "./_helpers/fake-opencode-host";
 import { withEnv } from "./_helpers/sandbox";
+import { overrideSeam } from "./_helpers/seams";
 
 const profile = runtimeProfile({
   kind: "connection",
@@ -329,5 +331,143 @@ describe("a run that is cut short", () => {
     } finally {
       globalThis.setTimeout = realSetTimeout;
     }
+  });
+});
+
+/** A promise a test settles itself, to hold a call of the fake host as long as it likes. */
+function deferred(): { promise: Promise<void>; release: () => void } {
+  let release = () => {};
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe("the deadline and the abort signal govern every step of a run", () => {
+  test("a setup call that outlasts the deadline is a timeout, and the turn is never started after it", async () => {
+    const hold = deferred();
+    const { calls } = installFakeOpencodeHost({ reply: () => "ok", hold: { create: hold.promise } });
+    const started = Date.now();
+    const result = await run("p", { timeoutMs: 5 });
+    const waited = Date.now() - started;
+    hold.release();
+    await sleep(50);
+
+    expect(result.reason).toBe("timeout");
+    expect(result.error).toBe(`akm's runtime on connection "lab" timed out during startup after 5ms`);
+    expect(waited).toBeLessThan(40);
+    // The session was created after the run was given up on: nothing was prompted, and nothing is left registered.
+    expect(calls).toHaveLength(0);
+    expect((await hostFor("runtime")).sessions.size).toBe(0);
+  });
+
+  for (const step of ["create", "environment", "instructions"] as const) {
+    test(`a ${step} call that never settles ends at the deadline, not never`, async () => {
+      const interrupted: string[] = [];
+      installFakeOpencodeHost({
+        reply: () => "ok",
+        hold: { [step]: new Promise<void>(() => {}) },
+        onInterrupt: (id) => void interrupted.push(id),
+      });
+      const result = await run("p", { timeoutMs: 30, dispatch: { prompt: "p", systemPrompt: "persona" } });
+
+      expect(result.reason).toBe("timeout");
+      // Once the session exists the run says so and interrupts it; before, it was still starting.
+      if (step === "create") {
+        expect(result.sessionId).toBeUndefined();
+        expect(result.error).toContain("during startup");
+      } else {
+        expect(interrupted).toEqual([result.sessionId as string]);
+      }
+      expect((await hostFor("runtime")).sessions.size).toBe(0);
+    });
+  }
+
+  test("a caller that aborts while a setup call hangs gets its answer at once, and the late session is released", async () => {
+    const hold = deferred();
+    const { calls } = installFakeOpencodeHost({ reply: () => "ok", hold: { create: hold.promise } });
+    const controller = new AbortController();
+    const running = run("p", { signal: controller.signal, timeoutMs: null });
+    await sleep(20);
+    controller.abort();
+    const result = await running;
+    hold.release();
+    await sleep(50);
+
+    expect(result.reason).toBe("aborted");
+    expect(result.error).toContain("during startup");
+    expect(calls).toHaveLength(0);
+    expect((await hostFor("runtime")).sessions.size).toBe(0);
+  });
+
+  test("a deadline that has already passed when the host is ready starts nothing", async () => {
+    const { calls, lifecycle } = installFakeOpencodeHost({ reply: () => "ok" });
+    const result = await run("p", { timeoutMs: 0 });
+    expect(result.reason).toBe("timeout");
+    expect(calls).toHaveLength(0);
+    expect(lifecycle.created).toBe(1);
+  });
+});
+
+describe("closing the embedded hosts is bounded", () => {
+  /** The grace periods are seconds; shorten them for a test. */
+  async function withShortGrace<T>(work: () => Promise<T>): Promise<T> {
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((callback: () => void, ms?: number) =>
+      realSetTimeout(callback, ms !== undefined && ms >= 1_000 ? 40 : ms)) as typeof setTimeout;
+    try {
+      return await work();
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+  }
+
+  test("a start that never settles times the run out, and closing gives up on it instead of waiting for it", async () => {
+    const warnings: string[] = [];
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    installFakeOpencodeHost({ reply: () => "ok", ready: new Promise<void>(() => {}) });
+    const result = await run("p", { timeoutMs: 5 });
+    expect(result.error).toBe(`akm's runtime on connection "lab" timed out during startup after 5ms`);
+
+    const started = Date.now();
+    await withShortGrace(() => closeOpencodeSdk());
+
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(warnings.some((w) => w.includes("did not stop starting"))).toBe(true);
+  });
+
+  test("a start that is asked to stop does, and closing does not wait out the grace period", async () => {
+    installFakeOpencodeHost({ reply: () => "ok", ready: new Promise<void>(() => {}), startupHonorsAbort: true });
+    await run("p", { timeoutMs: 5 });
+    const started = Date.now();
+    await closeOpencodeSdk();
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  test("a host that finishes starting after it was given up on is closed, not left running", async () => {
+    const ready = deferred();
+    const { lifecycle } = installFakeOpencodeHost({ reply: () => "ok", ready: ready.promise });
+    await run("p", { timeoutMs: 5 });
+    await withShortGrace(() => closeOpencodeSdk());
+    ready.release();
+    await sleep(50);
+    expect(lifecycle).toEqual({ created: 1, closed: 1 });
+  });
+
+  test("a host whose close never finishes is named and left, and closing returns", async () => {
+    const warnings: string[] = [];
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    installFakeOpencodeHost({ reply: () => "ok", closeDelayMs: Number.POSITIVE_INFINITY });
+    await run("p");
+    const started = Date.now();
+    await withShortGrace(() => closeOpencodeSdk());
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(warnings.some((w) => w.includes("did not close"))).toBe(true);
   });
 });

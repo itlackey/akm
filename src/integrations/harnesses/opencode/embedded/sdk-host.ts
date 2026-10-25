@@ -59,8 +59,8 @@ function akmRoots() {
   };
 }
 
-/** Start the embedded OpenCode `spec` describes. */
-export async function createSdkHost(spec: HostSpec): Promise<EmbeddedHost> {
+/** Start the embedded OpenCode `spec` describes; aborting `signal` while it starts stops the start and releases what it had begun. */
+export async function createSdkHost(spec: HostSpec, signal?: AbortSignal): Promise<EmbeddedHost> {
   const { sdk, plugin, restart, global, credential, database, effect } = await load();
   const { Effect, Exit, Layer, References, Scope, Stream } = effect;
   const run = <A>(work: import("effect").Effect.Effect<A, unknown>, signal?: AbortSignal): Promise<A> =>
@@ -99,6 +99,7 @@ export async function createSdkHost(spec: HostSpec): Promise<EmbeddedHost> {
       },
       { overrides },
     ).pipe(Effect.provideService(Scope.Scope, scope)),
+    signal,
   ).catch(async (error: unknown) => {
     await close();
     throw error;
@@ -109,9 +110,11 @@ export async function createSdkHost(spec: HostSpec): Promise<EmbeddedHost> {
   const sessions = client.sessions;
   return {
     sessions: {
-      create: (input) => run(sessions.create(input as never)) as Promise<{ id: string }>,
-      environment: (input) => run(sessions.environment(input as never)),
-      instructions: { entry: { put: (input) => run(sessions.instructions.entry.put(input as never)) } },
+      create: (input, options) => run(sessions.create(input as never), options?.signal) as Promise<{ id: string }>,
+      environment: (input, options) => run(sessions.environment(input as never), options?.signal),
+      instructions: {
+        entry: { put: (input, options) => run(sessions.instructions.entry.put(input as never), options?.signal) },
+      },
       prompt: (input, options) => run(sessions.prompt(input as never), options?.signal) as Promise<{ id: string }>,
       wait: (input, options) => run(sessions.wait(input as never), options?.signal),
       interrupt: async (input) => {

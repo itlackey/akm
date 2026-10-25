@@ -18,7 +18,8 @@
  * the runner depends on the narrow {@link EmbeddedHost} below.
  */
 
-import { isRecord } from "../../../../core/common";
+import { isRecord, toErrorMessage } from "../../../../core/common";
+import { warn } from "../../../../core/warn";
 import { type HostKind, type HostSpec, specFor } from "./host-spec";
 import type { SessionRegistry } from "./plugin";
 import { RunnerModels } from "./runner-models";
@@ -27,6 +28,11 @@ import { createSdkHost } from "./sdk-host";
 /** The text every session on a host is answered with when it asks for something only a person could give. */
 const NOBODY_TO_ASK =
   "This is an unattended run: nobody can answer questions or approve requests. Continue without it.";
+
+/** What a call on a host may be cancelled by. */
+export interface CallOptions {
+  readonly signal?: AbortSignal;
+}
 
 export interface SessionCreate {
   readonly title: string;
@@ -49,9 +55,11 @@ export interface MessagePage {
 /** The part of an embedded OpenCode that akm uses. */
 export interface EmbeddedHost {
   readonly sessions: {
-    create(input: SessionCreate): Promise<{ readonly id: string }>;
-    environment(input: { sessionID: string; variables: Record<string, string> }): Promise<void>;
-    instructions: { entry: { put(input: { sessionID: string; key: string; value: string }): Promise<void> } };
+    create(input: SessionCreate, options?: CallOptions): Promise<{ readonly id: string }>;
+    environment(input: { sessionID: string; variables: Record<string, string> }, options?: CallOptions): Promise<void>;
+    instructions: {
+      entry: { put(input: { sessionID: string; key: string; value: string }, options?: CallOptions): Promise<void> };
+    };
     prompt(input: { sessionID: string; text: string }, options?: { signal?: AbortSignal }): Promise<{ id: string }>;
     wait(input: { sessionID: string }, options?: { signal?: AbortSignal }): Promise<void>;
     interrupt(input: { sessionID: string }): Promise<void>;
@@ -78,12 +86,22 @@ export interface HostHandle {
   readonly models: RunnerModels;
 }
 
-const hosts = new Map<HostKind, Promise<HostHandle>>();
-let createHost: (spec: HostSpec) => Promise<EmbeddedHost> = createSdkHost;
+/** A host being started or started, and the means to stop it starting. */
+interface Entry {
+  readonly handle: Promise<HostHandle>;
+  /** Aborted by {@link closeOpencodeSdk} so a start still in flight stops instead of being waited for. */
+  readonly startup: AbortController;
+}
+
+/** How long closing may wait for a host to stop starting, and for a host to close, before moving on. */
+const CLOSE_GRACE_MS = 5_000;
+
+const hosts = new Map<HostKind, Entry>();
+let createHost: (spec: HostSpec, signal?: AbortSignal) => Promise<EmbeddedHost> = createSdkHost;
 
 /** Test seam: replace the host factory; undefined restores it. Hosts already open are closed. */
 export function _setOpencodeHostFactoryForTests(
-  factory: ((spec: HostSpec) => Promise<EmbeddedHost>) | undefined,
+  factory: ((spec: HostSpec, signal?: AbortSignal) => Promise<EmbeddedHost>) | undefined,
 ): void {
   createHost = factory ?? createSdkHost;
   void closeOpencodeSdk();
@@ -111,7 +129,7 @@ async function answerRequests(host: EmbeddedHost, signal: AbortSignal): Promise<
   }
 }
 
-async function start(kind: HostKind): Promise<HostHandle> {
+async function start(kind: HostKind, startup: AbortSignal): Promise<HostHandle> {
   const sessions: SessionRegistry = new Map();
   const models = new RunnerModels();
   let started: EmbeddedHost | undefined;
@@ -119,7 +137,13 @@ async function start(kind: HostKind): Promise<HostHandle> {
     specFor(kind, sessions, models, async (sessionID, variables) => {
       await started?.sessions.environment({ sessionID, variables });
     }),
+    startup,
   );
+  // Closed while it was still starting, by a start that did not stop when it was asked to: nobody is left to use it.
+  if (startup.aborted) {
+    await host.close().catch(() => {});
+    throw new Error(`the embedded OpenCode (${kind}) was closed while it started`);
+  }
   started = host;
   const stop = new AbortController();
   void answerRequests(host, stop.signal);
@@ -138,28 +162,66 @@ async function start(kind: HostKind): Promise<HostHandle> {
 
 /** The host of `kind`, started on first use. */
 export function hostFor(kind: HostKind): Promise<HostHandle> {
-  let handle = hosts.get(kind);
-  if (!handle) {
-    handle = start(kind);
-    const started = handle;
-    started.catch(() => {
+  let entry = hosts.get(kind);
+  if (!entry) {
+    const startup = new AbortController();
+    const started: Entry = { handle: start(kind, startup.signal), startup };
+    started.handle.catch(() => {
       if (hosts.get(kind) === started) hosts.delete(kind);
     });
     hosts.set(kind, started);
+    entry = started;
   }
-  return handle;
+  return entry.handle;
 }
 
 /** Closes in progress, started by whoever: `closeOpencodeSdk` waits for all of them, not only its own. */
 let closing: Promise<void> = Promise.resolve();
 
-/** Close every embedded OpenCode this process started. */
+const GAVE_UP = Symbol("gave up");
+
+/** `work`, or {@link GAVE_UP} once `ms` have passed. */
+function within<T>(work: Promise<T>, ms: number): Promise<T | typeof GAVE_UP> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<typeof GAVE_UP>((resolve) => {
+    timer = setTimeout(() => resolve(GAVE_UP), ms);
+  });
+  return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Stop one host: ask a start still in flight to stop, wait for it for at most {@link CLOSE_GRACE_MS}
+ * (a start that never settles is left to close the host itself if it ever does, see {@link start}), then
+ * close the host for at most as long. What did not finish in time is named, never waited for.
+ */
+async function closeEntry(kind: string, { handle, startup }: Entry): Promise<void> {
+  startup.abort();
+  const started = await within(
+    handle.catch(() => undefined),
+    CLOSE_GRACE_MS,
+  );
+  if (started === GAVE_UP) {
+    warn(`The embedded OpenCode (${kind}) did not stop starting within ${CLOSE_GRACE_MS / 1000}s; it is left behind.`);
+    return;
+  }
+  if (started === undefined) return;
+  const closed = await within(
+    started.host.close().then(
+      () => undefined,
+      (error: unknown) => warn(`The embedded OpenCode (${kind}) failed to close: ${toErrorMessage(error)}`),
+    ),
+    CLOSE_GRACE_MS,
+  );
+  if (closed === GAVE_UP) {
+    warn(`The embedded OpenCode (${kind}) did not close within ${CLOSE_GRACE_MS / 1000}s; it is left behind.`);
+  }
+}
+
+/** Close every embedded OpenCode this process started, each within a bounded time. */
 export function closeOpencodeSdk(): Promise<void> {
-  const open = [...hosts.values()];
+  const open = [...hosts.entries()];
   hosts.clear();
-  const closed = Promise.all(
-    open.map(async (handle) => (await handle.catch(() => undefined))?.host.close().catch(() => {})),
-  ).then(() => {});
+  const closed = Promise.all(open.map(([kind, entry]) => closeEntry(kind, entry))).then(() => {});
   closing = Promise.all([closing, closed]).then(() => {});
   return closing;
 }

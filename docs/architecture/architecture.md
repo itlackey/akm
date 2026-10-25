@@ -623,6 +623,13 @@ Agent programs are reachable by two execution paths, both behind
   reads back with SQLite alone.
 - Nobody can answer an akm run: questions are cancelled and permission requests
   rejected, each with a message, and the model carries on.
+- One deadline and one abort signal govern a run from the start of its host to
+  the end of its turn (`runSession`, `src/integrations/harnesses/opencode/embedded/run.ts`):
+  every step is raced against them, a step that finishes after either has fired
+  starts nothing more, and a session such a step created is released. Closing the
+  hosts (`closeOpencodeSdk`) asks a start in flight to stop and waits at most 5 s
+  for it, then at most 5 s for each host to close, naming in a warning what did
+  not finish.
 
 New tasks are task source v4 `.yml` assets. Normal execution rejects v2 and v3
 and directs operators to the explicit preview/apply migrator. Task source v4

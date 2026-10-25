@@ -63,7 +63,15 @@ export interface FakeOpencodeOptions {
   readonly reply: (call: FakeOpencodeCall) => string | FakeOpencodeReply | Promise<string | FakeOpencodeReply>;
   /** Hold every host's creation until this settles (an in-flight start). */
   readonly ready?: Promise<void>;
-  /** How long closing a host takes. */
+  /** A held start that stops when it is asked to, as the real one does: it fails once its signal aborts. */
+  readonly startupHonorsAbort?: boolean;
+  /** Hold a setup call of every session until this settles (never, for a call that hangs). */
+  readonly hold?: {
+    readonly create?: Promise<void>;
+    readonly environment?: Promise<void>;
+    readonly instructions?: Promise<void>;
+  };
+  /** How long closing a host takes; `Infinity` never finishes. */
   readonly closeDelayMs?: number;
   /** Called with every session the fake interrupts. */
   readonly onInterrupt?: (sessionID: string) => void | Promise<void>;
@@ -161,8 +169,17 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
   const executes: Record<string, Map<string, ToolExecute>> = {};
   const children: Record<string, FakeOpencodeHosts["spawnChild"]> = {};
   const lifecycle = { created: 0, closed: 0 };
-  overrideSeam(_setOpencodeHostFactoryForTests, async (spec) => {
-    await options.ready;
+  overrideSeam(_setOpencodeHostFactoryForTests, async (spec, signal) => {
+    if (options.startupHonorsAbort && signal) {
+      await Promise.race([
+        options.ready,
+        new Promise<never>((_, reject) =>
+          signal.addEventListener("abort", () => reject(new Error("start aborted")), { once: true }),
+        ),
+      ]);
+    } else {
+      await options.ready;
+    }
     lifecycle.created += 1;
     specs.push(spec);
     const plugin = await loadPlugin(spec, providers);
@@ -215,17 +232,20 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
     const host: EmbeddedHost = {
       sessions: {
         create: async (input) => {
+          await options.hold?.create;
           const id = `ses_${++n}`;
           sessions.set(id, { create: input as unknown as Record<string, unknown>, messages: [] });
           return { id };
         },
         environment: async ({ sessionID, variables }) => {
+          await options.hold?.environment;
           const session = sessions.get(sessionID);
           if (session) session.environment = variables;
         },
         instructions: {
           entry: {
             put: async ({ sessionID, value }) => {
+              await options.hold?.instructions;
               const session = sessions.get(sessionID);
               if (session) session.system = value;
             },
@@ -307,6 +327,7 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
         },
       },
       close: async () => {
+        if (options.closeDelayMs === Number.POSITIVE_INFINITY) await new Promise(() => {});
         if (options.closeDelayMs) await new Promise((resolve) => setTimeout(resolve, options.closeDelayMs));
         lifecycle.closed += 1;
       },

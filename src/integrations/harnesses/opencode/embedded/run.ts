@@ -117,7 +117,19 @@ interface Target {
   readonly settings: SessionSettings;
 }
 
-/** The one place a run is made: create the session, set it up, drive its turn, and report. */
+/** Why a run was stopped before its turn finished: its deadline passed, or its caller gave up. */
+class RunStopped extends Error {
+  constructor(readonly reason: "timeout" | "aborted") {
+    super(`run stopped: ${reason}`);
+  }
+}
+
+/**
+ * The one place a run is made: start (or reach) the host, declare the connection, create the session, set it up,
+ * drive its turn, and report. One deadline and one abort signal govern all of it: every step is raced against
+ * them, a step that finishes after they have fired starts nothing more, and a session such a step created is
+ * released. A run that stops after its session exists interrupts the turn, for at most {@link INTERRUPT_GRACE_MS}.
+ */
 async function runSession(target: Target, profile: AgentProfile, opts: RunAgentOptions): Promise<AgentRunResult> {
   const prompt = opts.dispatch?.prompt;
   if (prompt === undefined) throw new TypeError("An embedded session is run with a prompt.");
@@ -136,63 +148,99 @@ async function runSession(target: Target, profile: AgentProfile, opts: RunAgentO
   const run = new AbortController();
   const forwardAbort = (): void => run.abort();
   opts.signal?.addEventListener("abort", forwardAbort, { once: true });
-  let handle: Awaited<ReturnType<typeof hostFor>> | undefined;
-  let sessionId: string | undefined;
+  /** How far the run has got: what a stop has to clean up. */
+  const reached: { handle?: Awaited<ReturnType<typeof hostFor>>; sessionId?: string } = {};
+  /** Throws once the run's deadline has passed or its caller has given up, so no step starts after either. */
+  const live = (): void => {
+    if (run.signal.aborted) throw new RunStopped("aborted");
+    if (deadline !== null && Date.now() >= deadline) throw new RunStopped("timeout");
+  };
+  const release = (): void => {
+    if (reached.handle && reached.sessionId) forgetSession(reached.handle.sessions, reached.sessionId);
+  };
+
+  const lifecycle = async (): Promise<AgentRunResult> => {
+    try {
+      const handle = await hostFor(target.kind);
+      live();
+      reached.handle = handle;
+      const { host, sessions } = handle;
+      if (target.runner) await handle.models.declare(target.runner);
+      live();
+      const model = target.runner ? { providerID: target.runner.providerID, id: target.runner.modelID } : target.model;
+
+      const created = await host.sessions.create(
+        {
+          title: "akm",
+          metadata: { akm: modelWork ? "model-work" : "agent" },
+          location: { directory: opts.cwd ?? process.cwd() },
+          ...(model ? { model } : {}),
+          ...(!modelWork && dispatch?.agent ? { agent: dispatch.agent } : {}),
+          ...(modelWork ? { permissions: MODEL_WORK_PERMISSIONS } : {}),
+        },
+        { signal: run.signal },
+      );
+      reached.sessionId = created.id;
+      live();
+      const eventSource = opts.env?.AKM_EVENT_SOURCE;
+      // OpenCode gives a session's commands this environment in place of the process's, so it is the one a CLI harness's child gets.
+      const env = buildChildEnv(profile, opts);
+      sessions.set(created.id, { ...target.settings, ...(eventSource ? { eventSource } : {}), env });
+      await host.sessions.environment({ sessionID: created.id, variables: env }, { signal: run.signal });
+      live();
+      if (dispatch?.systemPrompt) {
+        await host.sessions.instructions.entry.put(
+          { sessionID: created.id, key: "akm.system", value: dispatch.systemPrompt },
+          { signal: run.signal },
+        );
+        live();
+      }
+
+      const { text, usage, failure } = turnResult(await runTurn(host, created.id, prompt, run.signal));
+      return {
+        ok: !failure,
+        stdout: text,
+        stderr: failure?.message ?? "",
+        durationMs: Date.now() - start,
+        exitCode: failure ? (failure.reason === "aborted" ? null : 1) : 0,
+        ...(failure ? { reason: failure.reason, error: failure.message } : {}),
+        sessionId: created.id,
+        ...(usage ? { usage } : {}),
+      };
+    } finally {
+      // Also reached by a step that finishes after the run was given up on: its session is forgotten then too.
+      release();
+    }
+  };
+
+  /** The run was stopped: interrupt its turn if it had a session, and say where it was. */
+  const stopped = async (reason: "timeout" | "aborted"): Promise<AgentRunResult> => {
+    run.abort();
+    const { handle, sessionId } = reached;
+    if (handle && sessionId) await interrupt(handle.host, sessionId, timers);
+    const during = sessionId === undefined ? " during startup" : "";
+    return reason === "aborted"
+      ? failed(start, "aborted", `${name} aborted by caller signal${during}`, sessionId)
+      : failed(start, "timeout", `${name} timed out${during} after ${timeoutMs}ms`, sessionId);
+  };
+
   try {
-    const started = await bounded(hostFor(target.kind), deadline, run.signal, timers);
-    if (started === ABORTED) return failed(start, "aborted", `${name} aborted by caller signal during startup`);
-    if (started === TIMED_OUT) return failed(start, "timeout", `${name} timed out during startup after ${timeoutMs}ms`);
-    handle = started;
-    const { host, sessions } = handle;
-    if (target.runner) await handle.models.declare(target.runner);
-    const model = target.runner ? { providerID: target.runner.providerID, id: target.runner.modelID } : target.model;
-
-    const session = await host.sessions.create({
-      title: "akm",
-      metadata: { akm: modelWork ? "model-work" : "agent" },
-      location: { directory: opts.cwd ?? process.cwd() },
-      ...(model ? { model } : {}),
-      ...(!modelWork && dispatch?.agent ? { agent: dispatch.agent } : {}),
-      ...(modelWork ? { permissions: MODEL_WORK_PERMISSIONS } : {}),
-    });
-    sessionId = session.id;
-    const eventSource = opts.env?.AKM_EVENT_SOURCE;
-    // OpenCode gives a session's commands this environment in place of the process's, so it is the one a CLI harness's child gets.
-    const env = buildChildEnv(profile, opts);
-    sessions.set(session.id, { ...target.settings, ...(eventSource ? { eventSource } : {}), env });
-    await host.sessions.environment({ sessionID: session.id, variables: env });
-    if (dispatch?.systemPrompt) {
-      await host.sessions.instructions.entry.put({
-        sessionID: session.id,
-        key: "akm.system",
-        value: dispatch.systemPrompt,
-      });
-    }
-
-    const turn = await bounded(runTurn(host, session.id, prompt, run.signal), deadline, run.signal, timers);
-    if (turn === ABORTED || turn === TIMED_OUT) {
-      await interrupt(host, session.id, timers);
-      return turn === ABORTED
-        ? failed(start, "aborted", `${name} aborted by caller signal`, sessionId)
-        : failed(start, "timeout", `${name} timed out after ${timeoutMs}ms`, sessionId);
-    }
-    const { text, usage, failure } = turnResult(turn);
-    return {
-      ok: !failure,
-      stdout: text,
-      stderr: failure?.message ?? "",
-      durationMs: Date.now() - start,
-      exitCode: failure ? (failure.reason === "aborted" ? null : 1) : 0,
-      ...(failure ? { reason: failure.reason, error: failure.message } : {}),
-      sessionId,
-      ...(usage ? { usage } : {}),
-    };
+    const outcome = await bounded(lifecycle(), deadline, run.signal, timers);
+    if (outcome === TIMED_OUT) return await stopped("timeout");
+    if (outcome === ABORTED) return await stopped("aborted");
+    return outcome;
   } catch (error) {
-    return failed(start, sessionId ? "non_zero_exit" : "spawn_failed", toErrorMessage(error), sessionId);
+    if (error instanceof RunStopped) return await stopped(error.reason);
+    return failed(
+      start,
+      reached.sessionId ? "non_zero_exit" : "spawn_failed",
+      toErrorMessage(error),
+      reached.sessionId,
+    );
   } finally {
     opts.signal?.removeEventListener("abort", forwardAbort);
     run.abort();
-    if (sessionId && handle) forgetSession(handle.sessions, sessionId);
+    release();
   }
 }
 

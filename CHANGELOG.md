@@ -120,6 +120,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     about the timeout when the endpoint is down; OpenCode alone retries a
     failing endpoint with backoff for over a minute and has no setting to
     shorten it, so a unit with no `timeout` waits that long.
+  - One deadline and one abort signal cover the whole run: starting the host,
+    declaring the connection, creating and setting up the session, and the turn.
+    A step that finishes after either has fired starts nothing more. Closing the
+    hosts (what a command does before it exits) asks a start still in flight to
+    stop and waits at most 5 s for it, and at most 5 s for a host to close; what
+    did not finish is named in a warning, not waited for.
   - Questions are cancelled and permission requests rejected, each with a
     message, and the model carries on.
 - `platform: "opencode"` is your OpenCode, whichever major is installed: the
