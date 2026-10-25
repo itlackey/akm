@@ -72,7 +72,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `extraParams` (translated as the direct chat path translates them), and the
     key read when the call is dispatched are laid over that session's requests.
   - The run's environment (workflow and task `env:`, `AKM_EVENT_SOURCE`) reaches
-    the commands the agent runs. It did not before.
+    the commands the agent runs, on top of akm's own environment (`PATH`, `HOME`
+    and the rest).
   - An agent has akm's read tools (`akm_search`, `akm_show`, `akm_curate`) in
     process, with no shell. A subagent it starts runs with the run's key,
     request fields and environment.
@@ -115,7 +116,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `XDG_CONFIG_HOME` on every platform, as OpenCode's own do (the data path was
   wrong on macOS and ignored `XDG_DATA_HOME`); `akm health` follows
   `XDG_CACHE_HOME` for OpenCode's plugin cache too.
-- `effect` 4.0.1 is a dependency, at the version `@opencode/sdk` depends on.
+- `effect` 4.0.1, `@opencode/core` 2.1.4 and `@opencode/util` 2.1.4 are
+  dependencies, each at the version `@opencode/sdk` depends on.
 - `akm health` and `akm improve --require-engines` no longer check for an
   OpenCode binary or client package.
 - A workflow run frozen by an earlier release (plan irVersion 7 or lower) whose
