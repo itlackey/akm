@@ -32,6 +32,7 @@ import path from "node:path";
 import { asNonEmptyString, asRecord, parseJsonc, toErrorMessage } from "../../../core/common";
 import { warnOnce } from "../../../core/warn";
 import { type HarnessConfigImporter, type HarnessLLMConfig, homeDir } from "../shared";
+import { opencodeConfigDir } from "./roots";
 
 type Json = Record<string, unknown>;
 
@@ -46,15 +47,10 @@ interface ProviderEntry {
 const asObject = asRecord;
 const str = asNonEmptyString;
 
-function configDir(): string {
-  const xdg = process.env.XDG_CONFIG_HOME;
-  return path.join(xdg && xdg.length > 0 ? xdg : path.join(homeDir(), ".config"), "opencode");
-}
-
 /** Config files in increasing precedence: global, explicit env overrides, then the project. */
 function candidateFiles(): string[] {
-  const dirs = [configDir(), process.env.OPENCODE_CONFIG_DIR].filter((d): d is string => !!d);
-  const files = [path.join(configDir(), "config.json"), path.join(homeDir(), ".opencode", "config.json")];
+  const dirs = [opencodeConfigDir(), process.env.OPENCODE_CONFIG_DIR].filter((d): d is string => !!d);
+  const files = [path.join(opencodeConfigDir(), "config.json"), path.join(homeDir(), ".opencode", "config.json")];
   for (const dir of dirs) files.push(path.join(dir, "opencode.json"), path.join(dir, "opencode.jsonc"));
   if (process.env.OPENCODE_CONFIG) files.push(process.env.OPENCODE_CONFIG);
   const cwd = process.cwd();
@@ -123,7 +119,7 @@ function envVarOf(apiKey: string | undefined): string | undefined {
 export const openCodeImporter: HarnessConfigImporter = {
   harnessName: "OpenCode",
   detect() {
-    return fs.existsSync(configDir()) || fs.existsSync(path.join(homeDir(), ".opencode"));
+    return fs.existsSync(opencodeConfigDir()) || fs.existsSync(path.join(homeDir(), ".opencode"));
   },
   importConfig() {
     let model: unknown;

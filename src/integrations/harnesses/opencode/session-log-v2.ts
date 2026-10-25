@@ -3,21 +3,26 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * OpenCode 2 session messages into the session-log contract. The messages come
- * from the embedded OpenCode (`../opencode-sdk/sdk-runner.ts`
- * `readOpencodeSession`), oldest first, in `@opencode/sdk`'s
- * `SessionMessageInfo` shapes.
+ * OpenCode 2 session store: the `session_v2` and `session_message` tables, read
+ * with SQLite only. Nothing here starts OpenCode (which would migrate the file
+ * and resume its suspended sessions); it reads the rows as they are.
  *
- * Mapping follows the Codex reader: user and assistant text become events of
+ * A message row is `(id, type, data)`; OpenCode decodes it as `{ ...data, id, type }`,
+ * which is rebuilt here. Only top-level sessions are read, and akm's own
+ * model-work sessions (`metadata.akm = "model-work"`) are left out.
+ *
+ * Mapping to events follows the Codex reader: user and assistant text become events of
  * that role, a tool call becomes `[tool:<name>] <input>` and its outcome a
  * `tool` event `[tool_result] <output>`, so the inline-ref scanner sees shell
  * commands. Reasoning, compaction, synthetic/system and bookkeeping messages
  * are skipped.
  */
 
-import { asRecord } from "../../../core/common";
+import { asRecord, tryParseJson } from "../../../core/common";
+import type { Database } from "../../../storage/database";
 import { extractInlineRefMentions } from "../../session-logs/inline-refs";
 import type { InlineRefMention, SessionEvent } from "../../session-logs/types";
+import { type OpenCodeSessionMeta, type OpenCodeSessionRead, toMeta } from "./session-log-v1";
 
 type Json = Record<string, unknown>;
 const asObject = asRecord;
@@ -110,4 +115,62 @@ export function opencodeMessageEvents(
   }
 
   return { events, inlineRefs };
+}
+
+/** The columns of each table akm reads; a file lacking one is a schema akm does not support. */
+const V2_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  session_v2: ["id", "parent_id", "title", "directory", "metadata", "time_created", "time_updated"],
+  session_message: ["id", "session_id", "type", "seq", "data"],
+};
+
+/** Whether `db` has the OpenCode 2 session tables with the columns akm reads. */
+export function hasV2Tables(db: Database): boolean {
+  return Object.entries(V2_COLUMNS).every(([table, columns]) => {
+    const present = new Set(
+      db
+        .prepare<{ name: string }>(`PRAGMA table_info(${table})`)
+        .all()
+        .map((c) => c.name),
+    );
+    return columns.every((column) => present.has(column));
+  });
+}
+
+/** Top-level sessions that are not akm's model work. */
+const AKM_USER_SESSIONS =
+  "parent_id IS NULL AND (json_extract(metadata, '$.akm') IS NULL OR json_extract(metadata, '$.akm') != 'model-work')";
+
+type V2SessionRow = {
+  id: string;
+  title: string | null;
+  directory: string | null;
+  time_created: number | null;
+  time_updated: number | null;
+};
+
+/** Every top-level OpenCode 2 session updated at or after `sinceMs`, newest first. Throws on an incompatible schema. */
+export function listV2Sessions(db: Database, sinceMs: number): OpenCodeSessionMeta[] {
+  return db
+    .prepare<V2SessionRow>(
+      `SELECT id, title, directory, time_created, time_updated FROM session_v2 WHERE ${AKM_USER_SESSIONS} AND time_updated >= ? ORDER BY time_updated DESC`,
+    )
+    .all(sinceMs)
+    .map((row) => toMeta(row, row.id));
+}
+
+/** One session's events, from its messages in order. Throws when the session is not in the file. */
+export function readV2Session(db: Database, harness: string, sessionId: string, filePath: string): OpenCodeSessionRead {
+  const row = db
+    .prepare<Omit<V2SessionRow, "id">>(
+      "SELECT title, directory, time_created, time_updated FROM session_v2 WHERE id = ?",
+    )
+    .get(sessionId);
+  if (!row) throw new Error(`session ${sessionId} is not in the file`);
+  const messages = db
+    .prepare<{ id: string; type: string; data: string }>(
+      "SELECT id, type, data FROM session_message WHERE session_id = ? ORDER BY seq ASC",
+    )
+    .all(sessionId)
+    .map((message) => ({ ...asRecord(tryParseJson(message.data)), id: message.id, type: message.type }));
+  return { meta: toMeta(row, sessionId), ...opencodeMessageEvents(messages, harness, sessionId, filePath) };
 }
