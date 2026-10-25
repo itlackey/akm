@@ -60,8 +60,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - The runtime is driven by your connections and nothing of your OpenCode: one
     provider per connection (`akm-<name>`, at its endpoint, listing the models in
     its alias map), no project or Claude config, no model catalog fetch, and
-    OpenCode's own free-model provider switched off. A model a connection does
-    not list fails the run, naming it.
+    OpenCode's own free-model provider switched off. An exact model name the
+    connection does not list works as it does on chat: the run uses one of the
+    connection's models and the endpoint receives the name as written.
   - One embedded OpenCode per process, started on first use, shared by every
     run and closed when akm exits. The model, environment and persona are set on
     the run's session, and the connection's request fields, the call's

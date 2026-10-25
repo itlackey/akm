@@ -18,6 +18,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { toErrorMessage } from "../../../../core/common";
+import { loadConfig } from "../../../../core/config/config";
 import { effectiveRequestFields } from "../../../../core/llm-inference";
 import { getCacheDir } from "../../../../core/paths";
 import { warnOnce } from "../../../../core/warn";
@@ -28,7 +29,7 @@ import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../
 import { type EmbeddedHost, hostFor } from "./host";
 import type { HostKind } from "./host-spec";
 import { forgetSession, type SessionSettings } from "./plugin";
-import { runtimeProviderId } from "./runtime-config";
+import { declaredModels, runtimeProviderId } from "./runtime-config";
 import { runTurn, turnResult } from "./turn";
 
 /** Model work reads but changes nothing: OpenCode's tools that edit files, run commands or start subagents are denied. */
@@ -213,12 +214,22 @@ export function runOpencodeSdk(
   opts: RunAgentOptions,
   connection: ChatCompletionConfig,
 ): Promise<AgentRunResult> {
+  // Chat sends any model name; OpenCode offers only the models a provider declares. An exact name outside the
+  // connection's alias map runs on one of its declared models and replaces that name in the session's requests.
+  const declared = declaredModels(loadConfig().connections, profile.name);
+  const undeclared = declared.length > 0 && !declared.includes(connection.model);
   return runSession(
     {
       kind: "runtime",
-      model: { providerID: runtimeProviderId(profile.name), id: connection.model },
+      model: {
+        providerID: runtimeProviderId(profile.name),
+        id: undeclared ? (declared[0] ?? connection.model) : connection.model,
+      },
       settings: {
-        requestFields: effectiveRequestFields(connection.request, connection.inference),
+        requestFields: {
+          ...effectiveRequestFields(connection.request, connection.inference),
+          ...(undeclared ? { model: connection.model } : {}),
+        },
         ...(connection.apiKey ? { apiKey: connection.apiKey } : {}),
       },
     },

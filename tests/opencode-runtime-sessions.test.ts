@@ -99,6 +99,20 @@ describe("a session on the runtime", () => {
     expect(calls[0]?.permissions).toBeUndefined();
   });
 
+  test("an exact model name outside the alias map runs on a declared model and is sent as written", async () => {
+    const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
+    await run("p", {}, { ...connection, model: "glm-exact" });
+    expect(calls[0]?.model).toEqual({ providerID: "akm-lab", id: "glm-5" });
+    expect(calls[0]?.requestBody.model).toBe("glm-exact");
+  });
+
+  test("a model the alias map lists is the session's model and the request's", async () => {
+    const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
+    await run("p", {}, { ...connection, model: "glm-5.1" });
+    expect(calls[0]?.model).toEqual({ providerID: "akm-lab", id: "glm-5.1" });
+    expect(calls[0]?.requestBody.model).toBe("glm-5.1");
+  });
+
   test("carries the run's environment, and the persona as its instructions", async () => {
     const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
     await run("p", {

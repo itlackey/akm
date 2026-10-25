@@ -123,10 +123,11 @@ describe("a run on akm's internal runtime", () => {
     expect(result.reason).toBe("parse_error");
   });
 
-  test("a model the connection does not list fails the run, naming it", async () => {
-    const result = await run("MODE:answer go", {}, { ...connection, model: "not-listed" });
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("akm-lab/not-listed");
+  test("an exact model name the connection does not list is sent to the endpoint as written", async () => {
+    const before = model.requests.length;
+    const result = await run("MODE:answer exact name", {}, { ...connection, model: "not-listed" });
+    expect(result.ok).toBe(true);
+    expect(lastAnswer(before)?.params.model).toBe("not-listed");
   });
 
   test("a connection that is not configured fails the run, naming it", async () => {

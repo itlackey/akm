@@ -48,17 +48,31 @@ function limitOf(contextLength: number | undefined, maxTokens: unknown): Record<
     : {};
 }
 
-function providerFor(connection: ConnectionConfig): Record<string, unknown> | undefined {
+/** The models a connection's provider declares: the names its alias map lists, each with its `limit` if known. */
+function modelsOf(connection: ConnectionConfig | undefined): Record<string, unknown> {
   const models: Record<string, unknown> = {};
-  for (const entry of Object.values(connection.models ?? {})) {
+  for (const entry of Object.values(connection?.models ?? {})) {
     const target = modelTarget(entry);
     if (!target) continue;
     // One model can sit under several aliases; a limit an earlier alias gave it is kept.
     models[target.name] = {
       ...(models[target.name] as object | undefined),
-      ...limitOf(connection.contextLength, target.maxTokens ?? connection.max_tokens),
+      ...limitOf(connection?.contextLength, target.maxTokens ?? connection?.max_tokens),
     };
   }
+  return models;
+}
+
+/** The model names the connection called `name` declares on its provider, in the order its alias map lists them. */
+export function declaredModels(
+  connections: Readonly<Record<string, ConnectionConfig>> | undefined,
+  name: string,
+): string[] {
+  return Object.keys(modelsOf(connections?.[name]));
+}
+
+function providerFor(connection: ConnectionConfig): Record<string, unknown> | undefined {
+  const models = modelsOf(connection);
   if (Object.keys(models).length === 0) return undefined;
   return { npm: "@ai-sdk/openai-compatible", options: { baseURL: openAiBaseUrl(connection.endpoint) }, models };
 }
