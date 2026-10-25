@@ -2168,37 +2168,6 @@ work with.
 
 See [configuration.md](configuration.md) for details.
 
-### models
-
-Manage the installed and operator-owned model intent map. Bare `akm models`
-is a usage error; use `list` to inspect the effective table or `copy-defaults`
-when you want an editable full map.
-
-```sh
-akm models list
-akm models copy-defaults
-akm models copy-defaults --overwrite
-```
-
-`list` shows the fully resolved alias table — one row per (alias, column)
-pair with its `model`, optional `inference`, `source` (`default`: unchanged
-from the installed file; `user`: touched by the user overlay), and `via`
-(`literal`: a model string; `engine`: borrowed from a configured
-`engines.<name>` connection, in which case the row also names that `engine`).
-Read-only; it never writes `models.json`.
-
-`copy-defaults` validates the packaged version-1 `models.json`, then stages and
-syncs it beside the normal AKM configuration target. Creation uses an atomic
-no-replace publish and fails safely on filesystems that cannot provide it.
-`--overwrite` performs an atomic pathname replacement after a best-effort
-regular-file identity recheck; it never dereferences a symlink, but portable
-filesystems do not offer a conditional rename that locks the previously
-observed inode. Symlinks and other non-regular targets observed during checks
-are refused. See
-[Model-map files](configuration.md#model-map-files) for schema, overlay, and
-resolution semantics — including the `engine` field (0.9.15) that lets a
-column borrow its model from a configured engine instead of a literal string.
-
 ### help
 
 Print the sectioned command overview, detailed help for any command, or a

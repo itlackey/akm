@@ -93,12 +93,6 @@ echo ""
 echo "--- Basic CLI ---"
 assert_exit_zero "akm --help exits 0" akm --help
 assert_output_contains "akm --help shows usage" "usage\|Usage\|akm" akm --help
-assert_exit_zero "installed models.json copies through the runtime" akm models copy-defaults
-if [ -f "$CONFIG_DIR/akm/models.json" ] && grep -q '"fast"' "$CONFIG_DIR/akm/models.json" && grep -q '"reasoning"' "$CONFIG_DIR/akm/models.json"; then
-	pass "copied models.json contains installed intent aliases"
-else
-	fail "copied models.json is missing installed intent aliases"
-fi
 
 # ── 2. Init ──────────────────────────────────────────────────────────────────
 

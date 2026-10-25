@@ -98,9 +98,6 @@ validate_workflow_syntax() {
 run_step "Workflow Syntax" validate_workflow_syntax
 run_step "Build Package" bun run build
 run_step \
-	"Verify packaged model-map asset" \
-	node -e 'const fs=require("node:fs"),os=require("node:os"),path=require("node:path"),{spawnSync}=require("node:child_process"); const root=fs.mkdtempSync(path.join(os.tmpdir(),"akm-model-map-release-")); try { const asset="dist/assets/models.json"; if(!fs.existsSync(asset)) throw new Error(`Missing ${asset}`); const result=spawnSync(process.execPath,["dist/cli-node.mjs","models","copy-defaults"],{encoding:"utf8",env:{...process.env,AKM_CONFIG_DIR:root}}); if(result.status!==0) throw new Error(result.stderr||`Node model-map copy exited ${result.status}`); const copied=path.join(root,"models.json"); if(!fs.existsSync(copied)) throw new Error(`Node launcher did not create ${copied}`); if(fs.readFileSync(copied,"utf8")!==fs.readFileSync(asset,"utf8")) throw new Error("Node runtime copied bytes differ from packaged dist/assets/models.json"); } finally { fs.rmSync(root,{recursive:true,force:true}); }'
-run_step \
 	"Verify npm bin target" \
 	node -e 'const fs = require("node:fs"); const pkg = require("./package.json"); const bins = [["akm", "dist/akm", "cli.js", "cli-node.mjs"], ["akm-migrate", "dist/akm-migrate", "scripts/akm-migrate.js"]]; for (const [name, expected, bunEntry, nodeEntry] of bins) { const actual = pkg.bin?.[name]; if (actual !== expected) { console.error(`npm bin ${name} must point at ${expected}, got ${actual ?? "<undefined>"}`); process.exit(1); } if (!fs.existsSync(actual)) { console.error(`Missing npm bin target: ${actual}`); process.exit(1); } if (!fs.existsSync(`dist/${bunEntry}`)) { console.error(`Missing bundled entry: dist/${bunEntry}`); process.exit(1); } const entry = fs.readFileSync(actual, "utf8"); if (!entry.startsWith("#!/usr/bin/env node")) { console.error(`npm bin ${name} must expose Node to npm platform shims`); process.exit(1); } if (!entry.includes(`new URL("./${bunEntry}", import.meta.url)`)) { console.error(`npm bin ${name} must select its Bun entry`); process.exit(1); } if (nodeEntry && !entry.includes(`await import("./${nodeEntry}")`)) { console.error(`npm bin ${name} must retain its Node fallback`); process.exit(1); } if (!nodeEntry && entry.includes("migrate-storage-node.mjs")) { console.error(`npm bin ${name} must not retain the removed Node fallback`); process.exit(1); } } if (!fs.existsSync("dist/cli-node.mjs")) { console.error("Missing Node wrapper: dist/cli-node.mjs"); process.exit(1); } if (pkg.bin?.["akm-migrate-storage"] !== undefined) { console.error("Removed akm-migrate-storage bin is still declared"); process.exit(1); } for (const removed of ["dist/akm-migrate-storage", "dist/migrate-storage-node.mjs", "dist/scripts/migrate-storage.js"]) { if (fs.existsSync(removed)) { console.error(`Removed migration artifact still exists: ${removed}`); process.exit(1); } } if (pkg.engines?.node !== ">=24") { console.error(`package engines.node must be >=24, got ${pkg.engines?.node ?? "<undefined>"}`); process.exit(1); } if (fs.existsSync("dist/tests")) { console.error("Publish build should not emit dist/tests"); process.exit(1); }'
 	run_step \
@@ -120,7 +117,6 @@ run_step \
 run_step \
 	"Verify npm candidate release surface" \
 	tar -tzf "$PACKAGE_CANDIDATE" \
-	package/dist/assets/models.json \
 	package/schemas/akm-task.json \
 	package/docs/reference/tasks.md \
 	package/docs/migration/v0.9.1-to-v0.9.2.md \

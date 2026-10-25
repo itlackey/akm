@@ -37,7 +37,6 @@ import { type ChildProcess, spawn as nodeSpawn, spawnSync as nodeSpawnSync } fro
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { BOUNDARY_MARKERS, NATIVE_CRASH_MARKER } from "../../scripts/node-runtime-markers";
 import { runCliCapture } from "../_helpers/cli";
 import { withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -137,14 +136,10 @@ function setupStorage(): void {
   cleanup = storage.cleanup;
 }
 
-function configureEngine(name: string, engine: Record<string, unknown>, defaults: Record<string, string>): void {
-  const setEngine = nodeRun(["config", "set", `engines.${name}`, JSON.stringify(engine)], nodeEnv);
-  assertNoBoundaryLeak(setEngine, `config set engine ${name}`);
-  expect(setEngine.status).toBe(0);
-
-  const setDefaults = nodeRun(["config", "set", "defaults", JSON.stringify(defaults)], nodeEnv);
-  assertNoBoundaryLeak(setDefaults, `config set defaults for ${name}`);
-  expect(setDefaults.status).toBe(0);
+function configureConnection(name: string, connection: Record<string, unknown>): void {
+  const set = nodeRun(["config", "set", `connections.${name}`, JSON.stringify(connection)], nodeEnv);
+  assertNoBoundaryLeak(set, `config set connection ${name}`);
+  expect(set.status).toBe(0);
 }
 
 // ── Guard ────────────────────────────────────────────────────────────────────
@@ -176,105 +171,6 @@ describe("version parity", () => {
     expect(nodeResult.status).toBe(0);
     expect(nodeResult.stdout.trim()).toContain(pkgVersion);
     expect(nodeResult.stdout.trim()).toBe(bunResult.stdout.trim());
-  });
-});
-
-// ── packaged models.json ─────────────────────────────────────────────────────
-
-describe("model-map package asset parity", () => {
-  afterEach(() => cleanup());
-
-  test.skipIf(!ENABLED)("Node launcher discovers installed defaults and copies them through the CLI", () => {
-    setupStorage();
-    const result = nodeRun(["models", "copy-defaults"], nodeEnv);
-    assertNoBoundaryLeak(result, "models-copy-defaults");
-    expect(result.status).toBe(0);
-    const copied = path.join(nodeEnv.XDG_CONFIG_HOME!, "akm", "models.json");
-    const document = JSON.parse(fs.readFileSync(copied, "utf8")) as {
-      version?: number;
-      aliases?: Record<string, unknown>;
-    };
-    expect(document.version).toBe(1);
-    expect(Object.keys(document.aliases ?? {}).sort()).toEqual(["balanced", "fast", "reasoning"]);
-  });
-
-  test.skipIf(!ENABLED)("Node health reports a missing or malformed copied-install asset", () => {
-    setupStorage();
-    for (const scenario of ["missing", "malformed"] as const) {
-      const installRoot = fs.mkdtempSync(path.join(REPO_ROOT, ".akm-node-model-map-install-"));
-      try {
-        const copiedDist = path.join(installRoot, "dist");
-        fs.cpSync(path.join(REPO_ROOT, "dist"), copiedDist, { recursive: true });
-        fs.copyFileSync(path.join(REPO_ROOT, "package.json"), path.join(installRoot, "package.json"));
-        fs.copyFileSync(path.join(REPO_ROOT, "CHANGELOG.md"), path.join(installRoot, "CHANGELOG.md"));
-        const copiedAsset = path.join(copiedDist, "assets", "models.json");
-        const moduleUrl = pathToFileURL(path.join(copiedDist, "integrations", "agent", "model-map.js")).href;
-        const pathProbeOutput = path.join(installRoot, "model-map-paths.json");
-        const pathProbe = nodeSpawnSync(
-          NODE_BIN,
-          [
-            "--input-type=module",
-            "--eval",
-            `const fs = await import("node:fs"); const { installedModelMapPaths } = await import(${JSON.stringify(moduleUrl)}); fs.writeFileSync(${JSON.stringify(pathProbeOutput)}, JSON.stringify(installedModelMapPaths()));`,
-          ],
-          { encoding: "utf8" },
-        );
-        expect(pathProbe.status, String(pathProbe.stderr)).toBe(0);
-        expect(JSON.parse(fs.readFileSync(pathProbeOutput, "utf8"))).toEqual([copiedAsset]);
-        if (scenario === "missing") fs.rmSync(copiedAsset);
-        else fs.writeFileSync(copiedAsset, "MALFORMEDINSTALLEDMODELSECRET802");
-        const healthOutput = path.join(nodeEnv.XDG_CACHE_HOME!, `copied-install-${scenario}-health.json`);
-
-        const result = nodeRunAt(
-          path.join(copiedDist, "cli-node.mjs"),
-          ["health", "--format", "json", "--output", healthOutput],
-          nodeEnv,
-        );
-        assertNoBoundaryLeak(result, `copied-install-${scenario}-models`);
-        expect(result.status).toBe(1);
-        const rendered = fs.readFileSync(healthOutput, "utf8");
-        expect(result.stdout + result.stderr + rendered).not.toContain("MALFORMEDINSTALLEDMODELSECRET802");
-        const output = parseJson(rendered) as
-          | { hardChecks?: Array<{ name?: string; status?: string; message?: string }> }
-          | undefined;
-        expect(output?.hardChecks?.find((check) => check.name === "model-map-files")).toMatchObject({
-          status: "fail",
-        });
-      } finally {
-        fs.rmSync(installRoot, { recursive: true, force: true });
-      }
-    }
-  });
-
-  test.skipIf(!ENABLED)("actual Node health never echoes invalid user JSON or version values", () => {
-    for (const [name, text, sentinel] of [
-      ["syntax", "NODEJSONPARSESECRETSENTINEL802", "NODEJSONPARSESECRETSENTINEL802"],
-      [
-        "version",
-        JSON.stringify({ version: "NODEVERSIONSECRETSENTINEL802", aliases: {} }),
-        "NODEVERSIONSECRETSENTINEL802",
-      ],
-    ] as const) {
-      setupStorage();
-      try {
-        const userMap = path.join(nodeEnv.XDG_CONFIG_HOME!, "akm", "models.json");
-        fs.mkdirSync(path.dirname(userMap), { recursive: true });
-        fs.writeFileSync(userMap, text, { mode: 0o600 });
-        const healthOutput = path.join(nodeEnv.XDG_CACHE_HOME!, `node-model-map-${name}-health.json`);
-        const result = nodeRun(["health", "--format", "json", "--output", healthOutput], nodeEnv);
-        assertNoBoundaryLeak(result, `node-model-map-${name}`);
-        const rendered = fs.readFileSync(healthOutput, "utf8");
-        expect(result.stdout + result.stderr + rendered).not.toContain(sentinel);
-        const output = parseJson(rendered) as
-          | { hardChecks?: Array<{ name?: string; status?: string; message?: string }> }
-          | undefined;
-        expect(output?.hardChecks?.find((check) => check.name === "model-map-files")).toMatchObject({
-          status: "warn",
-        });
-      } finally {
-        cleanup();
-      }
-    }
   });
 });
 
@@ -986,20 +882,12 @@ describe("workflow smoke parity", () => {
 /** The exact ESM-boundary symptom the bare-`require` fix removes. */
 const REQUIRE_NOT_DEFINED = "require is not defined";
 
-/** Configure a default LLM engine pointing at a closed local port (fast ECONNREFUSED). */
+/** Configure a default connection pointing at a closed local port (fast ECONNREFUSED). */
 function configureDeadLlm(): void {
-  configureEngine(
-    "smoke-llm",
-    {
-      kind: "llm",
-      endpoint: "http://127.0.0.1:1/v1/chat/completions",
-      model: "smoke-model",
-    },
-    { engine: "smoke-llm", llmEngine: "smoke-llm" },
-  );
-  const setJudge = nodeRun(["config", "set", "workflow.judgeEngine", "smoke-llm"], nodeEnv);
-  assertNoBoundaryLeak(setJudge, "config set workflow.judgeEngine");
-  expect(setJudge.status).toBe(0);
+  configureConnection("smoke-llm", {
+    endpoint: "http://127.0.0.1:1/v1/chat/completions",
+    models: { fast: "smoke-model" },
+  });
 }
 
 /**

@@ -90,14 +90,12 @@ test.skipIf(!ENABLED)(
       cacheHome,
       stateHome,
       stashDir,
-      path.join(standaloneDir, "assets"),
+      standaloneDir,
     ]) {
       fs.mkdirSync(dir, { recursive: true });
     }
     fs.copyFileSync(candidateBinary, binary);
     fs.chmodSync(binary, 0o755);
-    const adjacentSentinel = "MUTABLE-ADJACENT-STANDALONE-MODEL-MAP-802";
-    fs.writeFileSync(path.join(standaloneDir, "assets", "models.json"), adjacentSentinel);
     fs.writeFileSync(
       path.join(fakeBin, "crontab"),
       [
@@ -138,22 +136,6 @@ test.skipIf(!ENABLED)(
       const version = run([binary, "--version"], env);
       expectSuccess(version, "standalone candidate --version");
       expect(version.stdout).toContain(candidateVersion as string);
-
-      const copiedModels = run([binary, "models", "copy-defaults"], env);
-      expectSuccess(copiedModels, "standalone models copy-defaults");
-      expect(copiedModels.stdout + copiedModels.stderr).not.toContain(adjacentSentinel);
-      const copiedModelText = fs.readFileSync(path.join(configHome, "akm", "models.json"), "utf8");
-      const authoritativeModelText = fs.readFileSync(
-        path.resolve(import.meta.dir, "../../src/assets/models.json"),
-        "utf8",
-      );
-      expect(copiedModelText).toBe(authoritativeModelText);
-      const modelDocument = JSON.parse(copiedModelText) as {
-        version?: number;
-        aliases?: Record<string, unknown>;
-      };
-      expect(modelDocument.version).toBe(1);
-      expect(Object.keys(modelDocument.aliases ?? {}).sort()).toEqual(["balanced", "fast", "reasoning"]);
 
       const doctor = run([binary, "task", "doctor"], env);
       expectSuccess(doctor, "standalone tasks doctor");
