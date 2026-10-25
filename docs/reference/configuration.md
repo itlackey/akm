@@ -260,11 +260,16 @@ the major version `opencode --version` reports:
   no other `args` (the CLI's flags have no meaning there): any it cannot carry
   are named once. Its sessions are stored in akm's own database,
   `<akm data dir>/opencode.db`.
-- Enabling this harness on OpenCode 2 opens your OpenCode database through
-  OpenCode's own database layer, as any OpenCode build opening it does: the
-  migrations bundled with the OpenCode that akm embeds run on it, it is put in
-  WAL mode and its file mode is set to 0600. akm stores no session in it. akm's
-  reads of your OpenCode history are separate and read-only.
+- akm never migrates your OpenCode database. It reads the database's migration
+  ledger first, read-only, and only when the ledger has every migration the
+  OpenCode akm embeds carries (your OpenCode is the same release or newer) does
+  OpenCode's own credential service read your logins from it. Opening it then
+  migrates nothing: a WAL checkpoint, which any SQLite program opening the file
+  does, can rewrite its bytes but not its content, and a refreshed OAuth token
+  is written back there, as your own OpenCode does. An older database is left
+  untouched: akm warns once and the run goes on without your stored logins
+  until you upgrade OpenCode. akm stores no session in it, and its reads of
+  your OpenCode history are separate and read-only.
 - OpenCode 1 runs as `opencode run`, with the prompt on stdin. It keeps its logins
   in `auth.json`; akm never opens anything of OpenCode 1's.
 

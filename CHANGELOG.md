@@ -136,9 +136,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   directory (`OPENCODE_CONFIG_DIR` too), providers, plugins and default model
   (akm passes a model only when it names one), and your logins, which akm's
   embedded OpenCode reads from your OpenCode 2 database through OpenCode's own
-  credential service; a refreshed token is written back there, and akm never
-  creates that file or stores a session in it. An interactive `akm agent` still
-  hands the terminal to the CLI.
+  credential service when that database has every migration the embedded
+  OpenCode carries; a refreshed token is written back there. akm never creates
+  or migrates that file or stores a session in it: an older one is left
+  untouched, with one warning, and the run goes on without its logins. An
+  interactive `akm agent` still hands the terminal to the CLI.
   - Model work on the opencode harness is confined where OpenCode 2 is
     installed (its tools that edit, run commands or start subagents are denied;
     akm's read tools are added), in one fixed working directory. On OpenCode 1

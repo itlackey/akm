@@ -20,7 +20,9 @@
  * - **The user's logins** (the opencode host): OpenCode 2 keeps credentials in its
  *   database. The host keeps its sessions in akm's database and has its credential
  *   service read the user's, so their logins work and a refreshed token is written
- *   back where their own OpenCode finds it.
+ *   back where their own OpenCode finds it. OpenCode's database layer applies every
+ *   migration a file it opens has not had, and akm changes no file it does not own,
+ *   so a user's database that has not had them all is left alone, with a warning.
  * - **akm's own roots** (an isolated host): OpenCode keeps its logs, repositories
  *   and binaries under akm's data and cache directories, and loads no config
  *   directory of the user's.
@@ -28,20 +30,48 @@
 
 import path from "node:path";
 import { getCacheDir, getDataDir, getStateDir } from "../../../../core/paths";
+import { warnOnce } from "../../../../core/warn";
+import { openDatabase } from "../../../../storage/database";
 import type { EmbeddedHost } from "./host";
 import type { HostSpec } from "./host-spec";
 
 async function load() {
-  const [sdk, plugin, restart, global, credential, database, effect] = await Promise.all([
+  const [sdk, plugin, restart, global, credential, database, migration, effect] = await Promise.all([
     import("@opencode/sdk/effect"),
     import("@opencode/core/plugin/promise"),
     import("@opencode/core/session/execution/restart"),
     import("@opencode/util/global"),
     import("@opencode/core/credential"),
     import("@opencode/core/database/database"),
+    import("@opencode/core/database/migration.gen"),
     import("effect"),
   ]);
-  return { sdk, plugin, restart, global, credential, database, effect };
+  return { sdk, plugin, restart, global, credential, database, migration, effect };
+}
+
+/** Whether the user's database at `file` has had every migration id in `known`, read with SQLite read-only; warns once when not. */
+function upToDate(file: string, known: readonly string[]): boolean {
+  const db = openDatabase(file, { readonly: true, create: false });
+  let had = 0;
+  try {
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'migration'").get()) {
+      const ids = new Set(
+        db
+          .prepare<{ id: string }>("SELECT id FROM migration")
+          .all()
+          .map((row) => row.id),
+      );
+      had = known.filter((id) => ids.has(id)).length;
+    }
+  } finally {
+    db.close();
+  }
+  if (had === known.length) return true;
+  warnOnce(
+    `opencode-logins-behind:${file}`,
+    `Your OpenCode database is older than akm's embedded OpenCode (ledger ${had} vs ${known.length}); upgrade OpenCode to use its logins from akm.`,
+  );
+  return false;
 }
 
 /** The directories OpenCode keeps its own files under on the runtime host. */
@@ -61,7 +91,7 @@ function akmRoots() {
 
 /** Start the embedded OpenCode `spec` describes; aborting `signal` while it starts stops the start and releases what it had begun. */
 export async function createSdkHost(spec: HostSpec, signal?: AbortSignal): Promise<EmbeddedHost> {
-  const { sdk, plugin, restart, global, credential, database, effect } = await load();
+  const { sdk, plugin, restart, global, credential, database, migration, effect } = await load();
   const { Effect, Exit, Layer, References, Scope, Stream } = effect;
   const run = <A>(work: import("effect").Effect.Effect<A, unknown>, signal?: AbortSignal): Promise<A> =>
     Effect.runPromise(
@@ -76,11 +106,14 @@ export async function createSdkHost(spec: HostSpec, signal?: AbortSignal): Promi
         (layer) => Layer.provide(layer, database.Database.layer({ path: userDatabase })) as never,
       ),
     );
+  const userDatabase = spec.credentialsFrom;
+  const known = migration.migrations.map(({ id }) => id);
+  const logins = userDatabase && upToDate(userDatabase, known) ? [readLogins(userDatabase)] : [];
   const inertSweep = Layer.succeed(restart.SessionRestart.Service, { resumeSuspendedSessions: Effect.void });
   const overrides = [
     restart.SessionRestart.node.replace(inertSweep),
     ...(spec.isolated ? [global.Global.node.replace(global.Global.layerWith(akmRoots()))] : []),
-    ...(spec.credentialsFrom ? [readLogins(spec.credentialsFrom)] : []),
+    ...logins,
   ];
   const scope = await Effect.runPromise(Scope.make());
   const close = () => Effect.runPromise(Scope.close(scope, Exit.void));

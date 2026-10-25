@@ -6,12 +6,14 @@
 // database, against a fake model served on 127.0.0.1. The opencode harness on
 // OpenCode 2: no OpenCode binary and no external network. The user's config,
 // default model and logins reach the run; their database is read, never written
-// with akm's sessions; and model work is confined.
+// with akm's sessions, and left as it was; and model work is confined.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { OpenCode } from "@opencode/sdk";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { harnessProfile } from "../../src/integrations/agent/profiles";
 import {
   _setOpencodeHostFactoryForTests,
@@ -79,6 +81,48 @@ function userConfig(options: Record<string, unknown> = {}, select = true): strin
   return dir;
 }
 
+/** The user's OpenCode database after they logged in with the pinned OpenCode: a key stored for the fake provider. */
+async function theirDatabase(name: string): Promise<{ data: string; userDb: string }> {
+  const data = path.join(sandbox.dir, name);
+  const userDb = path.join(data, "opencode", "opencode.db");
+  fs.mkdirSync(path.dirname(userDb), { recursive: true });
+  const theirs = await OpenCode.create({
+    database: { path: userDb },
+    models: { fetch: false },
+    config: { directory: userConfig(), project: false, claude: false },
+  } as never);
+  await theirs.credential.create({
+    integrationID: "userfake",
+    label: "default",
+    value: { type: "key", key: "sk-their-login" },
+  } as never);
+  await theirs.close();
+  return { data, userDb };
+}
+
+/** Edit the user's database as another OpenCode release would have left it. */
+function edit(file: string, change: (db: ReturnType<typeof openDatabase>) => void): void {
+  const db = openDatabase(file);
+  try {
+    change(db);
+  } finally {
+    db.close();
+  }
+}
+
+/** The file's bytes, mode and migration ledger. */
+function fileState(file: string): { sha256: string; mode: number; ledger: string[] } {
+  const sha256 = createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  const mode = fs.statSync(file).mode & 0o777;
+  const db = openDatabase(file, { readonly: true, create: false });
+  try {
+    const ledger = db.prepare<{ id: string }>("SELECT id FROM migration ORDER BY id").all();
+    return { sha256, mode, ledger: ledger.map((row) => row.id) };
+  } finally {
+    db.close();
+  }
+}
+
 const run = (config: string, prompt: string, dispatch: Record<string, unknown> = {}, env?: Record<string, string>) =>
   withEnv({ OPENCODE_CONFIG_DIR: config }, () =>
     runOpencodeHarness(profile, {
@@ -131,27 +175,60 @@ describe("a run on the user's OpenCode 2", () => {
     expect(sessionsIn(akmOpencodeDatabasePath())).toBeGreaterThan(0);
   });
 
-  test("signs in with the logins in their database", async () => {
-    const data = path.join(sandbox.dir, "xdg-data-logins");
-    const userDb = path.join(data, "opencode", "opencode.db");
-    fs.mkdirSync(path.dirname(userDb), { recursive: true });
-    // Their OpenCode stored a key for the provider when they logged in.
-    const theirs = await OpenCode.create({
-      database: { path: userDb },
-      models: { fetch: false },
-      config: { directory: userConfig(), project: false, claude: false },
-    } as never);
-    await theirs.credential.create({
-      integrationID: "userfake",
-      label: "default",
-      value: { type: "key", key: "sk-their-login" },
-    } as never);
-    await theirs.close();
+  test("signs in with the logins in their database, and leaves it as it was", async () => {
+    const { data, userDb } = await theirDatabase("xdg-data-logins");
+    const state = fileState(userDb);
 
     const before = model.requests.length;
     const result = await withEnv({ XDG_DATA_HOME: data }, () => run(userConfig(), "MODE:answer signed in"));
     expect(result.ok).toBe(true);
     expect(model.requests.slice(before).find((r) => r.mode === "answer")?.authorization).toBe("Bearer sk-their-login");
+    await closeOpencodeSdk();
+    expect(fileState(userDb)).toEqual(state);
+  });
+
+  test("signs in with the logins of a database a newer OpenCode wrote, and leaves it as it was", async () => {
+    const { data, userDb } = await theirDatabase("xdg-data-newer");
+    edit(userDb, (db) =>
+      db.run("INSERT INTO migration (id, time_completed) VALUES (?, ?)", "29991231000000_from_a_newer_opencode", 1),
+    );
+    const state = fileState(userDb);
+
+    const before = model.requests.length;
+    const result = await withEnv({ XDG_DATA_HOME: data }, () => run(userConfig(), "MODE:answer newer database"));
+    expect(result.ok).toBe(true);
+    expect(model.requests.slice(before).find((r) => r.mode === "answer")?.authorization).toBe("Bearer sk-their-login");
+    await closeOpencodeSdk();
+    expect(fileState(userDb)).toEqual(state);
+  });
+
+  test("leaves a database older than its own OpenCode untouched and runs without its logins, saying so once", async () => {
+    const { data, userDb } = await theirDatabase("xdg-data-older");
+    // As OpenCode 2.0.26 leaves it: without the embedded OpenCode's newest migration.
+    edit(userDb, (db) => {
+      db.run("DELETE FROM migration WHERE id = ?", "20261010180456_project_time_archived");
+      db.exec("ALTER TABLE project DROP COLUMN time_archived");
+    });
+    const state = fileState(userDb);
+
+    const warnings: string[] = [];
+    _resetWarnOnceForTests();
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      const before = model.requests.length;
+      const result = await withEnv({ XDG_DATA_HOME: data }, () => run(userConfig(), "MODE:answer older database"));
+      expect(result.ok).toBe(true);
+      expect(model.requests.slice(before).find((r) => r.mode === "answer")?.authorization).toBeUndefined();
+      await closeOpencodeSdk();
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(fileState(userDb)).toEqual(state);
+    expect(warnings.filter((w) => w.startsWith("Your OpenCode database is older"))).toEqual([
+      `Your OpenCode database is older than akm's embedded OpenCode (ledger ${state.ledger.length} vs ${state.ledger.length + 1}); upgrade OpenCode to use its logins from akm.`,
+    ]);
   });
 
   test("passes the run's environment to the commands it runs, and nothing the harness's allowlist leaves out", async () => {
