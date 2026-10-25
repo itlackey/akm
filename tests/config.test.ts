@@ -19,7 +19,7 @@ import {
   saveConfig,
   updateConfig,
 } from "../src/core/config/config";
-import { backupExistingConfig } from "../src/core/config/config-io";
+import { backupExistingConfig, copyToConfigBackups } from "../src/core/config/config-io";
 import { EmbeddingConnectionConfigSchema } from "../src/core/config/config-schema";
 import { ConfigError } from "../src/core/errors";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
@@ -353,6 +353,24 @@ describe("saveConfig", () => {
     expect(first?.timestamped).not.toBe(second?.timestamped);
     expect(fs.readFileSync(first?.timestamped as string, "utf8")).toContain('"version":1');
     expect(fs.readFileSync(second?.timestamped as string, "utf8")).toContain('"version":2');
+  });
+
+  test("any file copied to the config backups is named by its caller and de-collides the same way", () => {
+    const source = path.join(getConfigDir(), "credentials.json");
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    fs.writeFileSync(source, "{}\n");
+    const instant = new Date("2026-07-11T12:34:56.789Z");
+    const name = (stamp: string) => `credentials.json.${stamp}`;
+
+    const first = copyToConfigBackups(source, name, instant);
+    const second = copyToConfigBackups(source, name, instant);
+
+    expect([first, second].map((copy) => path.basename(copy))).toEqual([
+      "credentials.json.2026-07-11T12-34-56-789Z",
+      "credentials.json.2026-07-11T12-34-56-789Z-1",
+    ]);
+    expect(path.dirname(first)).toBe(path.join(getCacheDir(), "config-backups"));
+    expect(fs.statSync(second).mode & 0o777).toBe(0o600);
   });
 
   test("config backups are written owner-only (0600) — they can carry secrets (08-F4)", () => {

@@ -111,6 +111,27 @@ export interface ConfigBackupResult {
 export function backupExistingConfig(configPath: string, now = new Date()): ConfigBackupResult | undefined {
   if (!fs.existsSync(configPath)) return undefined;
 
+  const timestamped = copyToConfigBackups(configPath, (stamp) => `config-${stamp}.json`, now);
+  const backupDir = path.dirname(timestamped);
+  const latest = path.join(backupDir, "config.latest.json");
+  fs.copyFileSync(configPath, latest);
+  // 08-F4: a config backup carries the same sensitive fields as the live config
+  // (endpoints, tokens). `copyFileSync` inherits the source's (often 0644) mode,
+  // so tighten the backups to owner-only — mirrors the env-cli 0600 write floor.
+  chmodIfSupported(latest, 0o600);
+
+  pruneOldBackups(backupDir);
+
+  return { timestamped, latest };
+}
+
+/**
+ * Copy `source` into `<cacheDir>/config-backups/` as `name(stamp)`, where `stamp` is the
+ * timestamp of `now` and gets a `-1`, `-2`, ... when that name is taken, and return where it
+ * went. The directory is owner-only (0700) and so is the copy (0600). The one place a backup is
+ * named, for the config file and the credential store alike.
+ */
+export function copyToConfigBackups(source: string, name: (stamp: string) => string, now = new Date()): string {
   const backupDir = path.join(getCacheDir(), "config-backups");
   // 08-F4: lock the backup dir owner-only up front (0700) — matching the
   // env.ts/secret.ts convention — so no other local user can traverse in during
@@ -119,29 +140,17 @@ export function backupExistingConfig(configPath: string, now = new Date()): Conf
   chmodIfSupported(backupDir, 0o700);
 
   const timestamp = now.toISOString().replace(/[.:]/g, "-");
-  let sequence = 0;
-  let timestamped: string;
-  while (true) {
-    timestamped = path.join(backupDir, `config-${timestamp}${sequence === 0 ? "" : `-${sequence}`}.json`);
+  for (let sequence = 0; ; sequence += 1) {
+    const target = path.join(backupDir, name(sequence === 0 ? timestamp : `${timestamp}-${sequence}`));
     try {
-      fs.copyFileSync(configPath, timestamped, fs.constants.COPYFILE_EXCL);
-      break;
+      fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      sequence++;
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
+      throw error;
     }
+    chmodIfSupported(target, 0o600);
+    return target;
   }
-  const latest = path.join(backupDir, "config.latest.json");
-  fs.copyFileSync(configPath, latest);
-  // 08-F4: a config backup carries the same sensitive fields as the live config
-  // (endpoints, tokens). `copyFileSync` inherits the source's (often 0644) mode,
-  // so tighten the backups to owner-only — mirrors the env-cli 0600 write floor.
-  chmodIfSupported(timestamped, 0o600);
-  chmodIfSupported(latest, 0o600);
-
-  pruneOldBackups(backupDir);
-
-  return { timestamped, latest };
 }
 
 /** chmod, skipped on a filesystem without POSIX modes (CIFS), where the mount sets them. */

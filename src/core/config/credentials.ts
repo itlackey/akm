@@ -25,10 +25,11 @@ import path from "node:path";
 import { isRecord, writeFileAtomic } from "../common";
 import { sameEndpoint } from "../endpoint-url";
 import { ConfigError } from "../errors";
-import { getCacheDir, getConfigDir } from "../paths";
+import { getConfigDir } from "../paths";
 import { collectSensitiveValues, redactUrlCredentials } from "../redaction";
 import { warnOnce } from "../warn";
 import { isInheritedConnection } from "./config";
+import { copyToConfigBackups } from "./config-io";
 import type { AkmConfig } from "./config-types";
 import { envReferenceName, isEnvReference } from "./schema/primitives";
 
@@ -221,24 +222,6 @@ export function slotStanding(
   return isStoredCredential(held) && held.key === key && sameEndpoint(held.endpoint, endpoint) ? "same" : "different";
 }
 
-/** Copy the store to `<cache>/config-backups/credentials.json.<timestamp>` (0600), for a rewrite that removes entries. */
-function backupStore(now = new Date()): string {
-  const backupDir = path.join(getCacheDir(), "config-backups");
-  fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
-  const stamp = now.toISOString().replace(/[.:]/g, "-");
-  for (let sequence = 0; ; sequence += 1) {
-    const target = path.join(backupDir, `credentials.json.${stamp}${sequence === 0 ? "" : `-${sequence}`}`);
-    try {
-      fs.copyFileSync(storePath(), target, fs.constants.COPYFILE_EXCL);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
-      throw error;
-    }
-    fs.chmodSync(target, 0o600);
-    return target;
-  }
-}
-
 /**
  * File every key the store holds in the older flat `{ "<name>": "<key>" }` form under
  * the endpoint of the block it belongs to, as `endpointOf` says: a name that is a
@@ -322,7 +305,7 @@ export function fileFlatCredentials(
     );
   }
   if (!apply || filed.length === 0) return { filed, notes };
-  const backupPath = backupStore();
+  const backupPath = copyToConfigBackups(storePath(), (stamp) => `credentials.json.${stamp}`);
   writeStore(entries);
   return { filed, notes, backupPath };
 }
