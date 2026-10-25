@@ -633,11 +633,14 @@ Agent programs are reachable by two execution paths, both behind
   `disposeDispatchResources()`: the **runtime** host, which is akm's own agent
   runtime driven by the connection a run was dispatched with (a provider
   declared from that connection's endpoint, model and context window as the run
-  froze them, never from the live config; no OpenCode configuration of the
-  user's; its files under akm's data, cache and state directories), and the **opencode**
+  froze them, never from the live config; no user or project OpenCode
+  configuration, though OpenCode still reads `~/.agents` and its system config;
+  its files under akm's data, cache and state directories), and the **opencode**
   host, which is the user's OpenCode for the `opencode` harness (their
   configuration, providers and default model, with their logins read from their
-  OpenCode 2 database; OpenCode 1 is driven through its CLI and nothing of it is opened). A host serves any number of sessions; what differs per
+  OpenCode 2 database only when opening it would migrate nothing; OpenCode 1 is
+  driven through its CLI, and akm reads its history read-only). A host serves any
+  number of sessions; what differs per
   call (model, environment, request fields, persona) is set on the session.
 - Both hosts load akm's plugin: `akm_search`, `akm_show` and `akm_curate` run in
   akm's process, and the connection's key and request fields are laid over the

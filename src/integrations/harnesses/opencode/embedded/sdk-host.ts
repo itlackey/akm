@@ -24,8 +24,8 @@
  *   migration a file it opens has not had, and akm changes no file it does not own,
  *   so a user's database that has not had them all is left alone, with a warning.
  * - **akm's own roots** (an isolated host): OpenCode keeps its logs, repositories
- *   and binaries under akm's data and cache directories, and loads no config
- *   directory of the user's.
+ *   and binaries under akm's data and cache directories, and loads no user or
+ *   project config, though it still reads `~/.agents` and its system config.
  */
 
 import path from "node:path";

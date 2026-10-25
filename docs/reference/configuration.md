@@ -271,7 +271,8 @@ the major version `opencode --version` reports:
   until you upgrade OpenCode. akm stores no session in it, and its reads of
   your OpenCode history are separate and read-only.
 - OpenCode 1 runs as `opencode run`, with the prompt on stdin. It keeps its logins
-  in `auth.json`; akm never opens anything of OpenCode 1's.
+  in `auth.json`, which akm does not import. akm reads OpenCode 1's session
+  history read-only from its `opencode.db`, the same file OpenCode 2 uses.
 
 Nobody can answer an akm run. On the embedded OpenCode (this harness and akm's
 own runtime) akm cancels every question and rejects every permission request,
@@ -283,12 +284,14 @@ Agent work runs on akm's own runtime when no harness is configured: OpenCode
 embedded in akm's process, driven by the default connection. It needs nothing
 installed beyond akm.
 
-- It uses your connections and nothing of your OpenCode. It loads none of your
-  OpenCode configuration, plugins, MCP servers or agents, and OpenCode's free
-  models are off. The connection a run is dispatched with (its endpoint, model
-  and context window, as they were when the run was planned) is declared as a
-  provider of its own when the run starts, so a connection edited or removed
-  afterwards cannot redirect a run that was already planned.
+- It uses your connections. It loads no user or project OpenCode configuration
+  (so none of your plugins, MCP servers or agents), though OpenCode still reads
+  `~/.agents` and its system config (`/etc/opencode`, or macOS managed
+  preferences), and OpenCode's free models are off. The connection a run is
+  dispatched with (its endpoint, model and context window, as they were when the
+  run was planned) is declared as a provider of its own when the run starts, so
+  a connection edited or removed afterwards cannot redirect a run that was
+  already planned.
 - It has OpenCode's tools, editing files and running commands included, and
   akm's `akm_search`, `akm_show` and `akm_curate`.
 - Its own files live under `opencode/` in akm's data, cache and state

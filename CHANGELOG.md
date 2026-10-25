@@ -88,14 +88,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   OpenCode 2 embedded in akm's process (`@opencode/sdk`, #1244), with no
   `opencode` binary, no `opencode serve` and no port. It has no entry in config,
   and `opencode-sdk` is not a harness platform.
-  - The runtime is driven by your connections: one provider per connection
-    (`akm-<name>`, at its endpoint, listing the models in its alias map), no user
-    or project OpenCode config, no model catalog fetch, and OpenCode's own
+  - The runtime is driven by the connection a run was dispatched with, as the
+    run froze it: it is declared as a provider of its own (`akm-<hash>` of its
+    endpoint, model, context window and output cap) carrying the one model the
+    run names, so the endpoint receives the model name as written, as on chat,
+    and a connection edited or removed later cannot redirect the run. No user or
+    project OpenCode config, no model catalog fetch, and OpenCode's own
     free-model provider switched off. It still loads what OpenCode reads from
     outside its config directories: `~/.agents`, and OpenCode's system config
-    (`/etc/opencode`, or macOS managed preferences). An exact model name the
-    connection does not list works as it does on chat: the run uses one of the
-    connection's models and the endpoint receives the name as written.
+    (`/etc/opencode`, or macOS managed preferences).
   - One embedded OpenCode per process, started on first use, shared by every
     run and closed when akm exits. The model, environment and persona are set on
     the run's session, and the connection's request fields, the call's
@@ -120,8 +121,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     it), and the interrupt a timeout or an abort sends is awaited, for up to 5
     s, before the run is reported. A unit `timeout` therefore ends a turn in
     about the timeout when the endpoint is down; OpenCode alone retries a
-    failing endpoint with backoff for over a minute and has no setting to
-    shorten it, so a unit with no `timeout` waits that long.
+    failing endpoint with backoff for over a minute and has no config setting
+    to shorten it (a plugin's `retry` hook could; akm's does not use it), so a
+    unit with no `timeout` waits that long.
   - One deadline and one abort signal cover the whole run: starting the host,
     declaring the connection, creating and setting up the session, and the turn.
     A step that finishes after either has fired starts nothing more. Closing the

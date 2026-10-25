@@ -8,7 +8,8 @@
  * test's fake host reads one).
  *
  * - The `runtime` host is akm's own agent runtime. It runs the connections its
- *   runs bring (`./runner-models.ts`) and nothing of the user's OpenCode.
+ *   runs bring (`./runner-models.ts`) and no user or project OpenCode config,
+ *   though OpenCode still reads `~/.agents` and its system config.
  * - The `opencode` host is the user's OpenCode: their config directory,
  *   providers and default model, with their logins read from their own database
  *   (when it exists: akm never creates it, and `./sdk-host.ts` reads it only when
