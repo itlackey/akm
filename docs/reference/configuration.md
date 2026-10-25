@@ -25,42 +25,32 @@ migrate` / `akm upgrade`; ordinary runtime code reads only the current shape.
 ```jsonc
 {
   "configVersion": "0.9.0",
-  "$schema": "https://itlackey.github.io/akm/schemas/akm-config.json",
-  "engines": {
-    "fast": {
-      "kind": "llm",
-      "endpoint": "http://localhost:11434/v1/chat/completions",
-      "model": "qwen3",
-      "apiKey": "${LOCAL_LLM_API_KEY}"
-    },
-    "reviewer": {
-      "kind": "agent",
-      "platform": "opencode",
-      "model": "anthropic/claude-sonnet-4-6"
+  "connections": {
+    "default": {
+      "endpoint": "http://localhost:11434/v1",
+      "models": { "fast": "qwen3-8b", "balanced": "qwen3-32b", "reasoning": "qwen3-32b" }
     }
   },
-  "defaults": {
-    "engine": "reviewer",
-    "llmEngine": "fast",
-    "improveStrategy": "default"
-  },
-  "workflow": {
-    "maxConcurrency": 8,
-    "judgeEngine": "reviewer"
-  },
+  "harnesses": { "claude": {} },
+  "embedding": { "model": "nomic-embed-text" },
+  "workflow": { "maxConcurrency": 8 },
   "improve": {
+    "strategy": "nightly",
+    "processes": {
+      "memoryInference": { "model": "qwen3-8b", "llm": { "temperature": 0.1 } }
+    },
     "strategies": {
       "nightly": {
-        "engine": "fast",
-        "processes": {
-          "reflect": {},
-          "memoryInference": { "model": "qwen3-small", "llm": { "temperature": 0.1 } }
-        }
+        "processes": { "reflect": { "limit": 10 } }
       }
     }
   }
 }
 ```
+
+A config with no connection and no harness is valid: everything that needs no
+model works. [Connections](#connections), [Harnesses](#harnesses) and [Where
+each process runs](#where-each-process-runs) say how models are added.
 
 ## Scheduler activation
 
@@ -82,20 +72,112 @@ can activate schedules. Prefer `akm task enable <ref>` and `akm task disable
 affected bundle. An unscoped `akm task sync` reconciles enabled refs across all
 enabled configured bundles.
 
-## Engines
+## Connections
 
-`engines` is the only public execution map. An engine name is lowercase
-kebab-case, at most 63 characters, and cannot start with `akm-`.
+A connection is an OpenAI-compatible endpoint akm sends model requests to, and
+the models it serves. `connections` maps a name to one. A name is lowercase
+kebab-case, at most 63 characters, and cannot start with `akm-`. The
+connection named `default` is the default connection; a lone connection is the
+default whatever it is called. `akm setup` names the first one `default`.
 
-| Kind | Required fields | Use |
-| --- | --- | --- |
-| `llm` | `endpoint`, `model` | OpenAI-compatible chat completions |
-| `agent` | `platform` | A registered dispatch-capable harness |
+```jsonc
+{
+  "connections": {
+    "default": {
+      "endpoint": "http://localhost:11434/v1",
+      "models": {
+        "fast": "qwen3-8b",
+        "balanced": "qwen3-32b",
+        "reasoning": { "model": "glm-5", "reasoning_effort": "high" }
+      },
+      "top_p": 0.9
+    }
+  }
+}
+```
 
-The registered harnesses (generated from the harness registry; do not edit):
+akm reads these keys of a connection:
+
+| Key | Meaning |
+| --- | --- |
+| `endpoint` | Required. The OpenAI-compatible base URL (`http://localhost:11434/v1`) or the chat-completions URL itself, starting with `http://` or `https://`. Requests go to `<base>/chat/completions` and the model list is read from `<base>/models`. A username or password in the URL is warned about; put the key in `apiKey` or `credentials.json`. |
+| `apiKey` | A `$VAR` or `${VAR}` reference to an environment variable. Absent, the key is the one stored under the connection's name in `credentials.json`. See [Credentials](#credentials). |
+| `models` | Alias to model. See [Aliases](#aliases). |
+| `contextLength` | The model's context window in tokens. `akm improve` sizes its prompts from it (consolidate's chunks, reflect's asset content); unset, it assumes 4096. |
+| `timeoutMs` | How long one call may take, in milliseconds; `null` runs unbounded. Unset, a call stops after 600 000 (ten minutes). The ceiling is 2 147 483 647. |
+| `concurrency` | How many requests a workflow `map` step may have in flight on this connection. Unset, 1 on a loopback endpoint (a local model server runs one inference at a time) and 4 on a remote one. akm never sends it. |
+
+Every other key, on the connection or in a model entry, is a request field in
+the endpoint's own spelling and is sent with each request as written (`top_p`,
+`reasoning_effort`, `chat_template_kwargs`, ...). A connection's fields apply to
+all its models and a model entry's override them; an object field on both sides
+(`chat_template_kwargs`) merges key by key. `model`, `messages` and
+`response_format` are akm's: a field of those names is overwritten.
+
+A transient failure (an HTTP 5xx, a dropped connection) is retried once, within
+what is left of the call's timeout. A 4xx is not.
+
+### Settings a call asks for
+
+A command, agent, workflow step or task can run against any endpoint, so it asks
+for these in akm's words, and akm writes them as the endpoint's fields over the
+connection's own:
+
+| Setting | Request field |
+| --- | --- |
+| `temperature` | `temperature` |
+| `maxTokens` | `max_tokens` |
+| `reasoningEffort` (an asset's `effort` is the same setting) | `reasoning_effort` |
+| `enableThinking` | `chat_template_kwargs.enable_thinking` and `enable_thinking` |
+
+They are written `akm.inference` (and top-level `temperature` and `effort`) in
+an asset's frontmatter, `llm:` on a workflow step (`max_tokens`,
+`enable_thinking`, `reasoning_effort`), `inference` in a task, and `llm` on an
+improve process, the quality gate or an index pass. Nearest wins: the asset,
+then the process, then the model entry, then the connection. A connection and
+akm's own runtime take all of them. A harness takes none: set them in the
+program's own configuration, and akm reports each as an `untranslated-field`
+notice while the call goes on.
+
+`enableThinking: false` turns thinking off and `reasoningEffort` takes a value
+such as `"none"`, `"low"` or `"high"`. akm sends **both** thinking fields,
+because which one an endpoint honors is a fact about it and any gateway in front
+of it. llama.cpp direct honors both (`reasoning_effort` from build b10644); vLLM
+honors `chat_template_kwargs`; Bifrost drops `chat_template_kwargs` and passes
+`reasoning_effort` through, so also set `reasoningEffort: "none"` behind it. A
+strict hosted API that rejects the two fields (OpenAI answers 400 `Unknown
+parameter: 'chat_template_kwargs'`) gets one retry without both, and akm stops
+sending them to that endpoint and model for the rest of the process. A response
+with reasoning tokens despite `enableThinking: false` triggers a runtime
+warning.
+
+Improve's `consolidate` and `reflect` always ask for thinking off, for a
+machine-readable payload, and the quality-gate and triage judges do too unless
+the judge's connection turns thinking on (`enable_thinking: true` as a request
+field, or `llm.enableThinking: true`).
+
+When a call asks for JSON that matches a schema, a connection receives the
+schema as `response_format` (`json_schema`, strict). If the endpoint rejects it
+with a 4xx other than 429, or with a 5xx that names the response format, akm
+retries once without `response_format` and stops sending it to that endpoint and
+model for the rest of the process. A harness receives the schema as one
+instruction at the end of its prompt (`Respond with ONLY a JSON value matching
+this JSON Schema (no prose, no code fences):` followed by the schema).
+
+## Harnesses
+
+A harness is an agent program you already have. `harnesses` maps a name to an
+entry; an entry named for a platform enables it, so `{ "claude": {} }` enables
+Claude Code. A second install of the same program sets `platform`: `{
+"claude-work": { "platform": "claude", "bin": "/opt/claude-work/bin/claude" }
+}`. The harness named `default` is the default harness; a lone harness is the
+default whatever it is called. With several and none named `default`, there is no
+default harness. `akm setup` names the default one `default`.
+
+The platforms (generated from the harness registry; do not edit):
 
 <!-- harness-table:start (generated by scripts/gen-config-schema.ts) -->
-| `platform` | Harness | Binary | Session logs | Model work | Native `agent` |
+| `platform` | Harness | Binary | Session logs | Read-only model work | Native `agent` |
 | --- | --- | --- | --- | --- | --- |
 | `opencode` | OpenCode | `opencode` | yes | yes | yes |
 | `claude` | Claude Code | `claude` | yes | yes | yes |
@@ -108,213 +190,242 @@ The registered harnesses (generated from the harness registry; do not edit):
 | `openhands` | OpenHands | `openhands` | no | no | no |
 <!-- harness-table:end -->
 
-LLM endpoints must be complete `http://` or `https://` chat-completions URLs
-ending in `/chat/completions`, without userinfo, query, or fragment. API keys
-are symbolic only: `$VAR` or `${VAR}`. AKM resolves them only at dispatch.
+An entry sets any of:
 
-An LLM engine may set `enableThinking: false` to turn thinking off and
-`reasoningEffort` to a value such as `"none"`, `"low"`, or `"high"`. AKM sends
-**both** wire forms — `chat_template_kwargs.enable_thinking` and top-level
-`enable_thinking` — whenever `enableThinking` resolves, from engine config
-or a calling process (improve's `consolidate`/`reflect` always request
-`enableThinking: false` for a machine-readable payload, and the reflect and
-distill quality-gate judges do too unless the judge's engine sets
-`enableThinking: true`); `reasoningEffort` is always sent as top-level
-`reasoning_effort` when set. Backend support: llama.cpp direct honors both forms
-(`reasoning_effort` from build ≥ b10644); vLLM honors
-`chat_template_kwargs`; Bifrost drops `chat_template_kwargs` and passes
-`reasoning_effort` through, so also set `reasoningEffort: "none"` behind it. A
-strict hosted API that rejects the two fields (OpenAI answers 400 `Unknown
-parameter: 'chat_template_kwargs'`) gets one retry without both, and AKM stops
-sending them to that endpoint and model for the rest of the process, as it
-does for `response_format` below. Both fields are AKM-owned, not
-settable via `extraParams`. A response with reasoning tokens despite
-`enableThinking: false` triggers a runtime warning.
+| Key | Meaning |
+| --- | --- |
+| `platform` | One of the platforms above. Absent, the entry's name must be one. |
+| `bin` | The program to run. Default: the platform's binary above, looked up on `PATH`. |
+| `args` | Arguments placed before the ones akm adds. |
+| `workspace` | The directory agent work runs in. Default: the directory akm was started in. |
+| `agent` | The harness's native agent to run when a request names none (`claude` and `opencode` only). A request's own agent wins, an agent asset's persona is kept, and model work runs no native agent. |
+| `timeoutMs` | How long a run may take, in milliseconds; `null` runs unbounded. Unset, agent work runs until it finishes and model work stops after 600 000. |
+| `models` | Alias to model name for this harness, over the map akm ships for its platform. See [Aliases](#aliases). |
 
-When a call asks for JSON that matches a schema, an LLM engine sends the schema
-as `response_format` (`json_schema`, strict) unless the engine sets
-`supportsJsonSchema: false`. If the endpoint rejects it with a 4xx other than
-429, AKM retries once without `response_format` and stops sending it to that
-endpoint and model for the rest of the process. An agent engine receives the
-schema as one instruction at the end of its prompt (`Respond with ONLY a JSON
-value matching this JSON Schema (no prose, no code fences):` followed by the
-schema).
-
-An agent engine may set `bin`, `args`, `workspace`, `model`, `agent`, and `timeoutMs`;
-it takes no inference of its own (see
-[Inference on an agent engine](#inference-on-an-agent-engine)). `agent` names the
-engine's default native agent (`opencode`, `opencode-sdk` and `claude` only): it
-runs when a request names no agent, e.g. `{"kind":"agent","platform":"opencode-sdk","model":"openai/gpt-5.6-terra","agent":"akm-workflow"}`.
-A request's own agent wins, an agent asset's persona is kept, and model work runs
-no native agent. `opencode-sdk` runs no command line, so `agent` is how an SDK engine names one. Only `platform: "opencode-sdk"` may set `llmEngine`; it names
-the LLM engine used as that SDK engine's fallback connection. With no
-`llmEngine`, an SDK engine has no fallback connection and OpenCode resolves
-provider, model and auth from its own configuration. `defaults.llmEngine` is
-not a substitute.
-
-**OpenCode.** `platform: "opencode-sdk"` runs OpenCode 2 embedded in akm's own
-process (`@opencode/sdk`): no `opencode` binary, no server and no port. It needs
-nothing installed beyond akm. It ignores `bin` and `args`, with a warning.
-- An agent or workflow run loads your default OpenCode config (providers,
-  plugins, MCP servers, agents), with akm's model on top when akm names one.
-- Model work loads none of your plugins, MCP servers or agents (see
-  [Engines for unattended model work](#engines-for-unattended-model-work)).
-- Credentials stay where OpenCode keeps them; akm copies none.
-- Every session is stored in akm's own OpenCode database,
-  `<akm data dir>/opencode.db`.
-
-`platform: "opencode"` is the legacy OpenCode 1 CLI (`opencode run`), kept for
-existing setups and treated like any other agent CLI. akm sends the prompt on
-stdin and refuses a binary that reports OpenCode 2 or later: run OpenCode 2
-through `opencode-sdk`. It cannot run model work.
-
-**Questions and permission requests.** Nobody can answer an akm run. On the
-embedded OpenCode, akm cancels every question and rejects every permission
-request, each with a message saying so, and the model carries on without it.
-akm changes no OpenCode permission default: what gets asked is your OpenCode
-config's setting.
-
-On an engine without `timeoutMs`, model work (an improve process, a quality or
-triage judge, or an index pass) stops after 600 seconds, whatever the engine's
-kind; other work on an agent engine runs until it finishes. An improve stage's
-reply that the stage cannot read gets one corrective retry. Reflect holds its
-reply to its own contract the same way on every engine kind: a reply that is not
-the JSON object of reflect's schema gets one repair turn, and one still invalid
-fails with `parse_error`.
-
-Asset frontmatter cannot set `workspace`, `environment`, or opaque `runtime`
-values; those belong to local engine configuration or workflow environment
+Asset frontmatter cannot set `workspace`, `environment` or opaque `runtime`
+values; those belong to this configuration or to a workflow's environment
 bindings.
 
-### Inference on an agent engine
+akm runs the program without a person at the terminal, gives it the prompt and
+takes its standard output as the reply. `akm agent` with no `--prompt` starts the
+program interactively instead.
 
-An agent engine sets no inference of its own. Inference (`temperature`,
-`reasoningEffort`, `enableThinking`, `maxTokens`, `contextLength`) from an asset,
-a workflow's `llm:`, an improve process's `llm` overlay or a `models.json` alias
-reaches an LLM engine and an `opencode-sdk` engine. On any other agent engine it
-is reported as an `untranslated-field` notice and dispatch continues; set it in
-that harness's own config.
+**Model work on a harness.** Model work (see [Where each process
+runs](#where-each-process-runs)) on a harness program runs in a scratch
+directory that akm creates for the call and removes after it. The table's
+"Read-only model work" column says whether akm can also run it read-only on that
+platform:
 
-On `opencode-sdk`, the model akm runs carries it:
-- **A model akm supplies** (the engine's `llmEngine` fallback, declared under
-  `akm-custom`) carries the fallback's inference and the request's. `maxTokens`
-  and `contextLength` become `limit.output` and `limit.context`, and only
-  together: OpenCode refuses half a `limit`.
-- **A model from your OpenCode config** (`provider/model`) gets the inference
-  laid over it, best effort: OpenCode applies some fields there and ignores
-  others, and akm warns once naming them. Give the engine an `llmEngine`, or set
-  the fields in your OpenCode config, to apply them reliably.
+- Claude Code runs with `--restricted`, so none of your settings files can widen
+  the tools; with `Read` and `Bash` only for `akm search`, `akm show` and `akm
+  curate`; with no MCP servers; and with no transcript saved.
+- Codex runs with `--sandbox read-only`.
+- OpenCode 2 runs with its tools that edit files, run commands or start
+  subagents denied, plus akm's own `akm_search`, `akm_show` and `akm_curate`, in
+  a fixed directory under akm's cache directory.
+- On those three, `args` do not apply to model work, except a `--model` they
+  name.
+- Every other platform, and OpenCode 1, cannot be restricted: the run is
+  unrestricted, in the scratch directory, and akm reports that.
 
-Reasoning effort has one word in a request, `reasoningEffort`. `effort`, as a
-`models.json` alias or an asset's `effort:` frontmatter spells it, is read as
-`reasoningEffort` wherever layers are merged, so an LLM engine sends it as
-`reasoning_effort`.
+What model work changes reaches the library only as a proposal, through the
+review queue.
 
-### Engines for unattended model work
+**OpenCode.** The `opencode` platform runs your own OpenCode, choosing how from
+the major version `opencode --version` reports:
+- OpenCode 2 runs embedded in akm's process (no server, no port), with your
+  OpenCode configuration (providers, plugins, MCP servers, agents), your logins
+  read from your OpenCode database, and your default model unless akm names one.
+  A model name is OpenCode's `provider/model`. Its sessions are stored in akm's
+  own database, `<akm data dir>/opencode.db`.
+- OpenCode 1 runs as `opencode run`, with the prompt on stdin.
 
-Unattended model work is the work akm hands a model with no one watching:
-- the improve processes (reflect, distill, consolidate, memory inference,
-  extract, and validation's repair);
-- the quality and triage judges;
-- index passes;
-- `akm remember --enrich`.
+Nobody can answer an akm run. On the embedded OpenCode (this harness and akm's
+own runtime) akm cancels every question and rejects every permission request,
+each with a message saying so, and the model carries on without it.
 
-It runs on any engine kind under one tool policy. The model may read, edit
-files only inside a scratch working directory that akm creates for the
-dispatch and removes after it, and run `akm search` and `akm show`. The
-stash stays read-only to it: what model work changes reaches the stash only
-as a proposal, through the review queue.
+### Without a harness
 
-Each engine enforces as much of the policy as it can, and grants nothing it
-cannot enforce:
+Agent work runs on akm's own runtime when no harness is configured: OpenCode
+embedded in akm's process, driven by the default connection. It needs nothing
+installed beyond akm.
 
-| Engine | What the model gets |
-|---|---|
-| LLM | No tools. |
-| `claude` | Read and Edit inside the working directory, and Bash for `akm search` and `akm show` only. akm runs it with `--restricted`, so your user, project and local settings cannot widen that. |
-| `opencode-sdk` | OpenCode's tools except those that change things (edit, write, shell, execute and subagents), plus akm's own `akm_search`, `akm_show` and `akm_curate`, which run inside akm. Nothing is written. The session loads none of your OpenCode plugins, MCP servers or agents; its model is akm's when akm names one, else the one your OpenCode config selects. |
-| Every other `agent` harness | Cannot run model work: akm refuses the request before it starts. |
+- It uses your connections and nothing of your OpenCode. It loads none of your
+  OpenCode configuration, plugins, MCP servers or agents, and OpenCode's free
+  models are off. Each connection is a provider named `akm-<connection>`, whose
+  models are the connection's.
+- It has OpenCode's tools, editing files and running commands included, and
+  akm's `akm_search`, `akm_show` and `akm_curate`.
+- Its own files live under `opencode/` in akm's data, cache and state
+  directories, and its sessions in `<akm data dir>/opencode.db`. Nothing is
+  written under `~/.local/share/opencode`.
 
-**The one rule.** Every key model work reads its engine from must name an
-LLM engine or a `claude` or `opencode-sdk` agent engine. Those
-keys are:
-- `defaults.llmEngine`;
-- `index.defaults.engine` and `index.<pass>.engine`;
-- `improve.strategies.<name>.engine`;
-- `improve.strategies.<name>.processes.<process>.engine`;
-- an enabled `processes.triage.judgment.engine`;
-- `processes.<process>.qualityGate.engine`.
+## Credentials
 
-A config that breaks the rule fails to load, with an error that names the
-key, the engine and its platform. Other engine keys, `defaults.engine` and
-`workflow.judgeEngine`, may name any configured engine.
+akm reads an API key from one of two places, and nowhere else:
 
-**Further details:**
-- A model-work dispatch builds its own command, so the engine's `args` do not
-  apply to it, except a `--model` they name, and neither does its `workspace`.
-- An improve process's `llm` overlay reaches an `opencode-sdk` engine (see
-  [Inference on an agent engine](#inference-on-an-agent-engine)); on any other
-  agent engine it is reported as `untranslated-field` notices, not errors.
+- **A `$VAR` reference.** `"apiKey": "$LOCAL_LLM_KEY"` (or `"${LOCAL_LLM_KEY}"`)
+  names an environment variable, read when the call is made. An unset or empty
+  variable is warned about once and the request goes without a key.
+- **`credentials.json`.** With no `apiKey`, the key is the entry stored under the
+  block's name in `credentials.json`, next to `config.json`: a flat `{ "<name>":
+  "<key>" }` map, written with mode 0600. The name is the connection's name, or
+  `embedding` or `curateRerank` for those blocks. An `embedding` that runs on the
+  default connection uses that connection's key.
 
-`defaults.engine` names an LLM or agent engine. `defaults.llmEngine` names the
-default engine for unattended model work, so it follows
-[the one rule](#engines-for-unattended-model-work). There is no first-engine
-fallback: an unset `defaults.engine`
-never resolves to some arbitrary entry in `engines`. It resolves instead to the
-OpenCode embedded in akm: the engine you configured under the name
-`opencode-sdk`, else a config-free one. The fallback needs nothing installed
-and is announced once per run. Naming an engine that is not configured is always an error
-and is never rescued by that fallback.
+`akm setup` asks for a key at a masked prompt and stores it in
+`credentials.json`; `--api-key-env NAME` sets `apiKey: "$NAME"` instead. A key
+is never written to `config.json` or passed on a command line. A literal
+`apiKey` in the file, or a `${secrets/...}` reference, is warned about once and
+ignored (never sent), and `akm config set` refuses to write one. `akm migrate
+apply` moves such a key into `credentials.json`. The key is sent as
+`Authorization: Bearer <key>` and redacted from everything akm prints and logs.
 
-`defaults.llmEngine` is not an `opencode-sdk` engine's fallback connection. An
-SDK engine gets an LLM fallback only from its own `llmEngine`, so the
-synthesized engine, which sets none, runs on OpenCode's own provider, model and
-auth.
+The bundle's `secrets/` store, `akm secret` and `akm env` are for the secrets
+your own agents and tasks need, and have nothing to do with these keys.
 
-Index passes select engines through `index.defaults.engine` or
-`index.<pass>.engine`, which follow
-[the one rule](#engines-for-unattended-model-work). Per-pass `model`, `timeoutMs`, and `llm` fields are
-invocation overrides; `enabled: false` disables that pass. Connection fields
-such as `endpoint`, `provider`, `apiKey`, and `apiKeyFile` belong only on
-named engines.
+## Aliases
 
-`workflow.maxConcurrency` is the native workflow engine ceiling. An explicit
-value is clamped to `1..64`. When absent, AKM derives the cap once from the CPU
-count (`min(16, max(1, cores - 2))`) and freezes it into the run plan, so resume
-does not change policy on a different host or after config edits.
+A model alias names "a model of this kind", so the same bundle means the same
+thing on every machine. `fast`, `balanced` and `reasoning` are the standard
+ones; add any other you like. A connection's `models` and a harness's `models`
+say which of their models answers each:
+
+```jsonc
+{
+  "connections": {
+    "default": {
+      "endpoint": "http://localhost:11434/v1",
+      "models": { "fast": "qwen3-8b", "balanced": "qwen3-32b", "reasoning": "qwen3-32b" }
+    }
+  },
+  "harnesses": { "claude": { "models": { "fast": "claude-haiku-4-5-20251001" } } }
+}
+```
+
+A model is asked for by `model:` in an asset's frontmatter, `--model` on a
+command, or `model` on an improve process, and it is an alias or an exact model
+name:
+- An alias is looked up in the selected connection's `models` (or harness's).
+- A name that is not an alias is used as written.
+- An alias the connection does not map answers with its first model. A
+  connection with no `models` at all cannot answer an alias; the error names
+  `akm models set`.
+- A harness passes no model for an alias it has none for, and the program uses
+  its own default; when the harness maps other aliases, akm says so once. Claude
+  Code ships a map (`fast` Haiku 4.5, `balanced` Sonnet 4.6, `reasoning` Opus
+  4.7), which a `models` entry overrides. No other harness ships one.
+
+A kind of work that names no model asks for a default alias: improve's
+processes, the index passes, extraction and `akm remember --enrich` ask for
+`fast`; the quality and triage judges and a workflow gate ask for `balanced`;
+agent work asks for `balanced`.
+
+`akm models` lists a connection's aliases beside the models its endpoint lists,
+and `akm models set <alias> <model>` changes one; see the [CLI
+reference](cli.md#models). A harness's `models` is edited with `akm config set`.
+
+## Where each process runs
+
+akm's work is of two kinds, and each has a default place to run.
+
+- **Model work** asks a model for an answer with nobody watching: the improve
+  processes (reflect, distill, consolidate, memory inference, extract, and
+  validation's repair), the quality and triage judges, the judge of a workflow
+  `### gate`, the index passes, and `akm remember --enrich`. It runs on the
+  default connection, as a direct request to the endpoint. With no connection it
+  runs on the default harness.
+- **Agent work** runs an agent: `akm agent`, `akm command run`, `akm proposal
+  new`, agent tasks and workflow agent steps. It runs on the default harness.
+  With no harness it runs on akm's own runtime, over the default connection.
+
+With neither a connection nor a harness, model features and agent work are off:
+each command that needs one says so and points at `akm setup`, and everything
+that needs no model keeps working.
+
+Anywhere a connection or harness can be named (config, a flag, an asset's
+`connection:` or `harness:`) and none is, the default is used. A name that is not
+configured is warned about once and the default is used.
+
+These settings, all optional, choose another place for one piece of work:
+
+| Key | Chooses where |
+| --- | --- |
+| `improve.connection`, `improve.harness` | All of `akm improve`'s model work |
+| `improve.processes.<process>` | One improve process: `reflect`, `distill`, `consolidate`, `memoryInference`, `extract`, `validation`, or `triage` (its judgment) |
+| `improve.qualityGate` | The judge of the reflect and distill quality gates |
+| `index.connection`, `index.<pass>` | The index passes (`index.memory`) |
+
+Each takes `connection` or `harness`, `model` (an alias or a name), `llm` (the
+[settings a call asks for](#settings-a-call-asks-for)) and `timeoutMs`. A pass
+under `index` takes `connection`, not `harness`, and `enabled: false` turns it
+off:
+
+```jsonc
+{
+  "improve": {
+    "connection": "default",
+    "processes": {
+      "reflect": { "connection": "cloud", "model": "reasoning" },
+      "memoryInference": { "model": "qwen3-8b", "llm": { "temperature": 0.1 } }
+    },
+    "qualityGate": { "connection": "judge", "llm": { "enableThinking": true } }
+  },
+  "index": { "connection": "default", "memory": { "enabled": false } }
+}
+```
+
+The nearest setting wins, farthest to nearest: the shipped alias of the kind of
+work, `improve.connection` and `improve.harness`, the process's entry in
+`improve.processes`, and `--connection`, `--harness` and `--model` on the run,
+which reach every call in it, the judges included. The quality-gate judge is the
+exception: a process's own entry is the writer's, so `improve.qualityGate`
+replaces it, and a `reasoning` model chosen for reflect is not the one that
+judges it. An index pass reads `index.*`, then `index.<pass>`. A strategy adds no
+layer: it says which processes run, never where.
+
+`akm health` and `akm info` print this as a table, resolved by the same code the
+calls use: for each kind of work, the connection or harness and the model.
+
+## Workflows
+
+`workflow.maxConcurrency` is the ceiling on units a workflow run executes at
+once. An explicit value is clamped to `1..64`. When absent, akm derives it once
+from the CPU count (`min(16, max(1, cores - 2))`) and freezes it into the run
+plan, so resuming on a different host or after a config edit does not change the
+policy.
 
 `workflow.defaultMapConcurrency` is the width a `map` step freezes when it
-declares no `concurrency:` of its own. Unset means **4** — map steps are
-parallel by default as of 0.9.1. An explicit value is clamped to `1..64`; set
-it to `1` to restore the pre-0.9.1 serial-by-default fan-out for every workflow
-on this machine. It is only a default: an authored `map.concurrency` always
-wins, and it never raises a step past `workflow.maxConcurrency`, the selected
-engine's `concurrency`, or the host CPU cap. An LLM engine that declares no
-`engines.<name>.concurrency` gets **1** on a loopback endpoint (a local model
-server holds one loaded model) and **4** on a remote one.
+declares no `concurrency:` of its own. Unset means 4. An explicit value is
+clamped to `1..64`; set it to `1` for serial fan-out. It is only a default: an
+authored `map.concurrency` always wins, and a step never runs wider than
+`workflow.maxConcurrency`, the selected connection's `concurrency`, or the host
+CPU cap.
 
-`workflow.judgeEngine` names the LLM or agent engine used to verify every
-non-empty workflow `### gate` rubric. It is required when a workflow declares
-completion criteria and is frozen into each new run, so later config edits do
-not change an in-flight run's verifier. Missing, failed, or malformed verifier
-results reject the gate; criteria are never silently bypassed.
+The judge of a `### gate` rubric is model work, so a workflow with completion
+criteria needs a connection or a harness before a new run can be frozen. The
+choice is frozen into each run, so later config edits do not change an
+in-flight run's verifier. A missing, failed or malformed verdict rejects the
+gate; criteria are never silently bypassed.
 
 ## Strategies
 
 Improve presets live under `improve.strategies`; invoke one with
 `akm improve --strategy <name>`. The selection order is `--strategy`,
-`defaults.improveStrategy`, then built-in `default`. A strategy and each process
-can select `engine`, `model`, `timeoutMs`, and LLM request overrides:
+`improve.strategy`, then built-in `default`. A strategy says which processes run
+and how each is tuned (`enabled`, limits, gates), never where: where each process
+runs is [Where each process runs](#where-each-process-runs), whichever strategy
+is selected.
 
 ```jsonc
 {
   "improve": {
+    "strategy": "nightly",
     "strategies": {
       "nightly": {
-        "engine": "fast",
         "processes": {
-          "reflect": { "llm": { "temperature": 0.2 } },
-          "memoryInference": { "model": "qwen3-small" }
+          "reflect": { "limit": 10 },
+          "memoryInference": { "enabled": false }
         }
       }
     }
@@ -322,32 +433,24 @@ can select `engine`, `model`, `timeoutMs`, and LLM request overrides:
 }
 ```
 
-An improve process's engine follows
-[the one rule](#engines-for-unattended-model-work); an explicit invalid or
-incompatible engine never falls back to another engine. The built-in strategies
-are `default` and `consolidate`. `consolidate` is a patch that
-is deep-merged onto `default`, and a user-defined strategy of the same name is
-merged on top of that; so every strategy, built-in or user-defined, inherits
-omitted fields from `default`. `quick`, `reflect-distill`, `thorough`,
-`catchup` were removed in 0.10 (#1130): measured, none beat `default` (`thorough`
-and `catchup` added only a judged triage drain, and `catchup` was identical to
-`consolidate`). `proactive-maintenance` was removed too (#1129): its lane now
-lives in `default`. A `improve.strategies.<name>` block with one of those names is
-now an ordinary user-defined strategy that inherits `default`, so it no longer
-carries the old built-in's settings; `--strategy` or `defaults.improveStrategy`
-naming one with no such block fails with an error that names `default`. To keep
-the old judged drain, set `processes.triage` (`enabled`, `applyMode: "promote"`,
-`judgment: true`) in your own strategy. The built-in strategies other than
-`default` and `consolidate` are Experimental (see [STABILITY.md](../../STABILITY.md)).
+The built-in strategies are `default` and `consolidate`. `consolidate` is a
+patch that is deep-merged onto `default`, and a user-defined strategy of the
+same name is merged on top of that; so every strategy, built-in or user-defined,
+inherits omitted fields from `default`. A name that is neither built-in nor
+defined under `improve.strategies` is refused: `improve.strategy` when the config
+loads, `--strategy` when the command runs. A block named `quick`, `thorough`,
+`catchup`, `reflect-distill` or `proactive-maintenance` is an ordinary
+user-defined strategy that inherits `default`, and `--strategy` naming one with
+no such block fails with an error that names `default`. For a judged triage
+drain, set `processes.triage` (`enabled`, `applyMode: "promote"`,
+`judgment: true`) in your own strategy.
 
-`processes.triage.judgment` explicitly controls the optional judgment tier.
-Use `true` to enable it, `false` to disable it, or an object with `enabled`,
-`engine`, `model`, `timeoutMs`, and/or `llm` overrides. Existing object values
-such as `{}` and `{ "engine": "reviewer" }` remain enabled by default. Unknown
-object keys are rejected so misspellings cannot silently change execution;
-the retired `mode` and `profile` keys continue to report their engine migration
-guidance. When enabled, engine selection is judgment → triage → strategy →
-`defaults.llmEngine`, and resolution fails closed if none is available.
+`processes.triage.judgment` controls the optional judgment tier: `true` enables
+it, `false` disables it, and an object holds `enabled` (default `true`). The
+judgment is a model call; it runs where `improve.processes.triage` says
+(`connection` or `harness`, `model`, `llm`, `timeoutMs`), over `improve.connection`
+and `improve.harness`, and over the defaults. Enabling it with no connection or
+harness configured fails before the run starts, naming `akm setup`.
 
 The `default` strategy runs triage in `promote` mode with judgment off and
 `maxAcceptsPerRun: 200` (#1143), so the proposal backlog drains through the
@@ -368,14 +471,10 @@ gpt-5.6-terra it was very cautious (precision 1.0, recall 0.17).
 ```jsonc
 {
   "improve": {
+    "processes": { "triage": { "harness": "claude" } },
     "strategies": {
       "nightly": {
-        "processes": {
-          "triage": {
-            "enabled": true,
-            "judgment": { "enabled": true, "engine": "reviewer" }
-          }
-        }
+        "processes": { "triage": { "enabled": true, "judgment": true } }
       }
     }
   }
@@ -388,38 +487,29 @@ each process's LLM-as-judge quality gate. Each is on unless it sets
 judge passes is staged for the triage drain to accept; a distill lesson it
 passes is deferred for a person (reason `distill-review`), which the drain and
 its judgment tier leave alone. With the distill gate off nothing is judged, and
-the drain decides. The judge is the
-process's own engine when that is an LLM engine, or the `defaults.llmEngine`
-engine when an agent generates. `engine`, `model`, `timeoutMs` and `llm` give the gate a judge of its own,
-resolved over the process's settings the way `triage.judgment` resolves over
-triage's. The judge may be any engine that follows
-[the one rule](#engines-for-unattended-model-work). A gate whose settings
-resolve to no engine fails before anything is generated; it never falls back
-to another engine. The judge runs at
-temperature 0 with thinking off unless its engine sets `enableThinking: true`.
+the drain decides. The judge is a model call that
+runs where `improve.qualityGate` says (`connection` or `harness`, `model`, `llm`,
+`timeoutMs`), for both gates, over `improve.connection` and `improve.harness`
+and the defaults: with no `qualityGate`, the default connection answers with its
+`balanced` model. The process's own entry in `improve.processes` is the writer's
+and does not reach the judge. The judge may be a connection or a harness; one
+that cannot be restricted to read-only runs unrestricted, with a notice. It runs
+at temperature 0 with thinking off unless its connection turns thinking on.
 Thinking is slow: on a 27B llama.cpp server, a thinking judgment took a median
 of 30–67 s and up to about 3 minutes, against about 5 s without.
 Behind a gateway that drops `chat_template_kwargs` (Bifrost), point a thinking
-judge's engine at the server directly.
+judge's connection at the server directly.
 
 ```jsonc
 {
-  "engines": {
+  "connections": {
     "judge": {
-      "kind": "llm",
-      "endpoint": "http://127.0.0.1:8080/v1/chat/completions",
-      "model": "qwen3-27b",
-      "enableThinking": true
+      "endpoint": "http://127.0.0.1:8080/v1",
+      "models": { "balanced": "qwen3-27b" }
     }
   },
   "improve": {
-    "strategies": {
-      "nightly": {
-        "processes": {
-          "reflect": { "qualityGate": { "engine": "judge" } }
-        }
-      }
-    }
+    "qualityGate": { "connection": "judge", "llm": { "enableThinking": true } }
   }
 }
 ```
@@ -523,11 +613,15 @@ unless a remote `embedding` config is provided.
 
 `embedding` configures the connection used for semantic search and
 `akm improve`'s memory-inference/consolidate passes when they call an
-embedding model: `provider`, `endpoint`, `model`, `apiKey` (symbolic
-reference, same rules as engine `apiKey`), `dimension`, `localModel`,
+embedding model: `provider`, `endpoint`, `model`, `apiKey` (a `$VAR` reference,
+or the `embedding` entry of `credentials.json`; see
+[Credentials](#credentials)), `dimension`, `localModel`,
 `maxInputTokens`, `maxTokens`, `batchSize`, `contextLength`, `timeoutMs`,
 `queryTimeoutMs`, `queryTemplate`, `documentTemplate`, `concurrency`, and
-`ollamaOptions.num_ctx`.
+`ollamaOptions.num_ctx`. An `embedding` with a `model` and no `endpoint` names a
+model the default connection serves, at its endpoint and with its key; with no
+default connection there is nothing to serve it, and the built-in local embedder
+runs, with a warning.
 
 Retrieval models expect a prompt around queries and documents. akm picks it by
 model name (`src/llm/embedders/profile.ts`): Qwen3-Embedding gets
@@ -654,8 +748,8 @@ taking about the same wall time as a single one against a healthy endpoint.
 ### Curate rerank (#951)
 
 An optional cross-encoder rerank pass over the top fused search candidates
-`akm curate` fetches, via a standalone `/rerank`-style HTTP endpoint (NOT one
-of the `engines.*` `"llm"`/`"agent"` kinds). Each candidate is sent as its
+`akm curate` fetches, via a standalone `/rerank`-style HTTP endpoint (not a
+connection or a harness). Each candidate is sent as its
 name, description and the start of its indexed content (2,000 characters in
 all). Disabled by default; a misconfigured endpoint, network failure, timeout,
 or malformed response keeps the fused order.
@@ -665,7 +759,7 @@ or malformed response keeps the fused order.
 | `search.curateRerank.enabled` | Turn the rerank pass on (default `false`) |
 | `search.curateRerank.endpoint` | Full URL of the reranker's rerank endpoint |
 | `search.curateRerank.model` | Model name sent to the endpoint (optional) |
-| `search.curateRerank.apiKey` | `$VAR`/`${secrets/<name>}` credential reference (optional) |
+| `search.curateRerank.apiKey` | `$VAR` reference (optional); absent, the `curateRerank` entry of `credentials.json` |
 | `search.curateRerank.timeoutMs` | Request timeout (default `10000`) |
 | `search.curateRerank.topN` | How many of the top fused candidates to rerank (default `30`, max `50`) |
 
@@ -779,10 +873,10 @@ section, an absent key, and an explicit `false` all read identically as off.
 
 ```sh
 akm config list
-akm config get engines.fast
-akm config set engines.fast '{"kind":"llm","endpoint":"http://localhost:11434/v1/chat/completions","model":"qwen3"}'
-akm config set engines.fast.apiKey '$LOCAL_LLM_API_KEY'
-akm config unset engines.old
+akm config get connections.default
+akm config set connections.fast '{"endpoint":"http://localhost:11434/v1","models":{"fast":"qwen3-8b"}}'
+akm config set connections.fast.apiKey '$LOCAL_LLM_API_KEY'
+akm config unset connections.old
 ```
 
 Object values passed to `config set` deep-merge with their current value.
@@ -798,20 +892,19 @@ that sets it, or `"default"` when neither does. It is opt-in — plain
 
 ### Sharing configuration across installs
 
-Five hosts running the same fleet often carry an identical `engines` map and
-`improve.strategies` block, differing only in credential delivery (`apiKey`
-vs `apiKeyFile`), bundle paths, and cron offsets. Hand-syncing that block
-across hosts drifts silently. `extends` fixes this: put the shared block in
+Five hosts running the same fleet often carry an identical `connections` map and
+`improve.strategies` block, differing only in credential delivery, bundle paths,
+and cron offsets. Hand-syncing that block across hosts drifts silently. `extends` fixes this: put the shared block in
 one file, and have each host's local config extend it.
 
 ```jsonc
 // bundles/fleet/config/shared.json — versioned with the bundle, shared by every host
 {
   "configVersion": "0.9.0",
-  "engines": {
-    "fast": { "kind": "llm", "endpoint": "https://api.example.test/v1/chat/completions", "model": "qwen3" }
+  "connections": {
+    "fast": { "endpoint": "https://api.example.test/v1", "models": { "fast": "qwen3", "balanced": "qwen3" } }
   },
-  "improve": { "strategies": { "nightly": { "engine": "fast" } } }
+  "improve": { "connection": "fast", "strategies": { "nightly": { "processes": { "reflect": { "limit": 10 } } } } }
 }
 ```
 
@@ -825,7 +918,7 @@ one file, and have each host's local config extend it.
     "stash": { "path": "~/akm-stash", "writable": true }
   },
   "defaultBundle": "stash",
-  "engines": { "fast": { "apiKeyFile": "/run/secrets/fast-api-key" } }
+  "connections": { "fast": { "apiKey": "$FAST_API_KEY" } }
 }
 ```
 
@@ -847,9 +940,10 @@ one file, and have each host's local config extend it.
 Shared layers carry portable policy, not host authority. `bundles`, source and
 write defaults, registries, embedding connections, scheduler activation,
 `experimental`, and setup state are ignored when inherited.
-Engine definitions may be shared, but credentials and executable authority
-(`apiKey`, `apiKeyFile`, `bin`, `args`, and `workspace`) must be supplied by
-the local file. Improve publication (`strategies.*.sync`) and reranker network
+Connection and harness definitions may be shared, but credentials and
+executable authority (`apiKey`, `bin`, `args`, and `workspace`) are ignored
+when inherited and must be supplied by the local file; a key in the host's
+`credentials.json` needs no entry at all. Improve publication (`strategies.*.sync`) and reranker network
 configuration are local as well. Bundle-relative chains stay physically inside
 the bundle root for every hop; lexical `..` paths and symlink escapes are both
 rejected before a referenced file is read.
@@ -893,9 +987,6 @@ akm config diff fleet//config/shared.json
 | Variable | Purpose |
 | --- | --- |
 | `AKM_CONFIG_DIR` | Override the user config directory (or set `XDG_CONFIG_HOME`) |
-| `AKM_ENGINE_<NAME>_API_KEY` | Fallback credential for LLM engine `<name>` |
-| `AKM_LLM_API_KEY` | Fallback only for the selected `defaults.llmEngine` |
-| `AKM_EMBED_API_KEY` | Embedding credential |
 | `AKM_BUNDLE_DIR` | Override the bundle directory |
 | `AKM_DATA_DIR` | Override the data directory — `index.db`, durable `state.db`, and `akm.lock` (or set `XDG_DATA_HOME`) |
 | `AKM_CACHE_DIR` | Override the cache directory — regenerable caches (or set `XDG_CACHE_HOME`) |
@@ -904,87 +995,48 @@ akm config diff fleet//config/shared.json
 | `AKM_VERBOSE` | Truthy value enables the same diagnostics as `--verbose` |
 | `AKM_DEBUG` | `1` prints a stack trace on unexpected internal errors |
 
-For an engine named `fast`, its fallback variable is
-`AKM_ENGINE_FAST_API_KEY`. An explicit `apiKey` symbolic reference is
-authoritative and does not fall through to another variable.
-
-`engines.<name>.apiKeyFile` is a file-backed alternative to `apiKey`, for a
-host that refuses to put secrets in the process environment (a container
-runtime's mounted secret, for example). It is a plain filesystem path — `~`
-expands to the home directory — read at dispatch time and trimmed of one
-trailing newline; the raw path is safe to keep in `config.json` since it is
-not itself a secret. Setting both `apiKey` and `apiKeyFile` on the same
-engine is rejected. A missing, unreadable, or empty file fails the call
-closed, naming the engine and path but never the file's content.
-
-`engines.<name>.apiKey` also accepts `${secrets/<name>}`, an akm ref into
-AKM's own secret store (`akm secret set secrets/<name> --from-file <file>`;
-`${team//secrets/<name>}` names a secret in another bundle), for a
-launch context where the credential's environment variable is deliberately
-not sourced into the process — a scheduled task's crontab preamble, or a
-container entrypoint that keeps the user's env out on purpose — and a
-file-backed credential is not an option. Like `apiKeyFile`, only the
-reference is kept in `config.json`; the store lookup happens at dispatch
-time, and an unresolved reference fails the call closed, naming the
-reference but never the value. `akm improve`, workflow LLM steps, and `akm
-health`'s engine probes all resolve `${ref}` the same way direct LLM and
-embedding calls have since 0.9.13 (#917); resolution order for a single
-`apiKey` field is: an env reference (`$VAR`/`${VAR}`) first, then
-`apiKeyFile`, then `${ref}` — though in practice a config sets only one of the
-three per engine. The secret is read trimmed of surrounding whitespace. The ref must name a `secrets/` asset;
-a `${...}` naming any other kind of asset is rejected when the config loads.
-
-`secret://<name>` was the previous spelling of the `${ref}` form and is
-retired. A config that still holds it loads as if it said `${secrets/<name>}`
-(or `${<name>}` when `<name>` is already a full ref), with one warning naming
-the key; `akm migrate apply` rewrites `config.json` to the new form.
-
-`embedding.apiKey` accepts the same three forms and resolves `${ref}` the
-same way, on every path that sends an embedding request: `akm index`
-(including the reindex `akm bundle update` runs and the targeted re-embed a
-write command like `akm remember` triggers), `akm improve`'s
-consolidate pass (memory dedup and similarity clustering). All of them build the
-provider request through the same `RemoteEmbedder`/`resolveSecret` boundary,
-so a `${ref}` reference resolves identically regardless of which command
-triggered the request (#953).
-
 Use `AKM_SQLITE_JOURNAL_MODE=DELETE` or `TRUNCATE` when WAL is unavailable,
 such as on some NFS/SMB mounts. With the default `WAL` setting, AKM detects a
 network filesystem for the data directory and falls back to `DELETE`.
 
 ## Retired Configuration
 
-`profiles`, `llm`, `agent`, `features`, and `stashes` are rejected in 0.9.
-Recreate the configuration using `engines`, `defaults.engine`,
-`defaults.llmEngine`, and `improve.strategies`; AKM deliberately does not infer
-or rename ambiguous profile identities. `defaults.llm`, `defaults.agent`,
-`defaults.improve`, `index.stalenessDetection`, the engine settings that used to
-sit under `index.<pass>` (`endpoint`, `provider`, `apiKey`, `baseUrl`,
-`temperature`, `maxTokens`, `capabilities`) and the `feedbackDistillation`
-process (use `processes.distill.enabled`) load like any other unknown key: named
-once by the unknown-key warning, ignored, and dropped by `akm migrate apply`.
+A key akm no longer reads is named once, ignored, and dropped by `akm migrate
+apply`. That covers `profiles`, `llm`, `agent`, `features`, `stashes`,
+`defaults.llm`, `defaults.agent`, `defaults.improve`, the settings that sat
+under `index.<pass>` (`endpoint`, `provider`, `apiKey`, `baseUrl`,
+`temperature`, `maxTokens`, `capabilities`), `index.graph.*`, every strategy's
+`processes.graphExtraction.*`, a strategy's `processes.feedbackDistillation`
+(use `processes.distill.enabled`), `processes.consolidate.incrementalSince`
+and `neighborsPerChanged`, and `embedding.chunkSize`. The strategy name
+`graph-refresh` is always refused, even when `improve.strategies["graph-refresh"]`
+holds an override; `akm migrate apply` drops the override.
 
-`embedding.chunkSize` was never read by anything under `src/` (#954), so a
-config that still sets it is simply ignored — it still loads, unvalidated
-and without warning.
+### The `engines` form
 
-`index.graph.*` and every strategy's `processes.graphExtraction.*` are retired
-in 0.9.17-alpha.9: the LLM entity graph they configured is gone —
-`akm show`'s links come from declared links instead (see `## Strategies`
-above). A config that still sets them loads; each key is named once as
-unknown, and `akm migrate apply` removes it. The built-in `graph-refresh`
-strategy is retired too, but not the same way as an ordinary unknown name:
-naming it via `--strategy` or a task always fails with a message pointing at
-the retirement, even when `improve.strategies["graph-refresh"]` still has a
-leftover override from customizing the built-in (the message names it;
-`akm migrate apply` drops it — a leftover override is never resolved as a new
-custom strategy, which would silently run a full, unplanned improve pass).
-`defaults.improveStrategy: "graph-refresh"` still loads config successfully;
-the refusal happens lazily, when the strategy is actually resolved.
+A config that holds `engines` or `defaults` loads: akm reads it in memory as
+`connections` and `harnesses`, with one warning that names `akm migrate apply`.
+`akm migrate apply` makes the same conversion permanent, under a backup, and
+prints a note for everything it cannot carry. Credentials, `models.json` and
+asset keys move as the table says.
 
-`improve.strategies.<name>.processes.consolidate.incrementalSince` and
-`.neighborsPerChanged` are retired in 0.9.17-alpha.9: the consolidate pair
-pass is now the candidate generator, narrowing per initiator through the
-improve ledger rather than a global time window. A config that still sets
-either key loads; each is named once as unknown, and `akm migrate apply`
-removes it.
+| In the file | What `akm migrate apply` does |
+| --- | --- |
+| `engines.<name>` with `kind: "llm"` | `connections.<name>`. `endpoint`, `contextLength`, `timeoutMs`, `concurrency` and an `apiKey` that is a `$VAR` are kept. `model` becomes `models`, with `fast`, `balanced` and `reasoning` all naming it. `temperature`, `maxTokens`, `enableThinking`, `reasoningEffort` and `extraParams` become request fields (`temperature`, `max_tokens`, `enable_thinking` with `chat_template_kwargs.enable_thinking`, `reasoning_effort`, and the extras as written). `kind`, `provider` and `supportsJsonSchema` are dropped, with a note. |
+| `engines.<name>` with `kind: "agent"` and `platform: "opencode-sdk"` | Removed: akm's own runtime has no entry. Its `llmEngine` connection becomes `default`. |
+| `engines.<name>` with `kind: "agent"`, any other platform | `harnesses.<name>`, keeping `platform`, `bin`, `args`, `workspace`, `agent` and `timeoutMs`. `model` becomes `models`, naming it for all three aliases. |
+| `defaults.llmEngine`, else `defaults.engine` when it names an LLM engine | That connection is renamed `default`, and every reference to the old name follows. |
+| `defaults.engine` naming an agent engine, when there are several | That harness is renamed `default`. |
+| `defaults.improveStrategy` | `improve.strategy`. |
+| `models.json` | Folded into the `models` of the connections and harnesses it names; what it cannot place is listed in the notes. The file moves to `config-backups/` in the cache directory. |
+| `apiKeyFile`, a literal `apiKey`, a `${secrets/...}` `apiKey` | The key moves to `credentials.json`, under the connection's name; a note names where it was, never its value. A key that cannot be read stays on the connection as it was, with a note. |
+| `AKM_ENGINE_<NAME>_API_KEY` or `AKM_LLM_API_KEY` set in the environment | `apiKey: "$AKM_ENGINE_<NAME>_API_KEY"` (or `$AKM_LLM_API_KEY`) on that connection. |
+| `improve.strategies.<name>.engine`, `model`, `llm`, `timeoutMs` | Dropped, with a note: a strategy says which processes run, not where. |
+| `engine`, `model`, `llm`, `timeoutMs` on a strategy's process, its `qualityGate` or its `triage.judgment` | Moved to `improve.processes.<process>` or `improve.qualityGate`, with `engine` becoming `connection` or `harness` by what it named. When that place already says, the first one is kept, with a note. |
+| `index.defaults.*`, `index.<pass>.engine` | `index.*`, and `connection`. A harness cannot run an index pass: that setting is dropped, with a note. |
+| `workflow.judgeEngine` | Dropped, with a note. |
+| `engine:` in an asset's frontmatter, a workflow step or a task source | `connection:` or `harness:`, by what the configured target is; a name it cannot place becomes `harness:`, with a note. A bundle akm may not change is skipped. |
+
+An `engine:` key on an asset that has not been migrated is read the same way: as
+a connection by that name, else a harness, with a one-time notice.
+
