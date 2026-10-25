@@ -56,7 +56,8 @@ export function runnerModel(connection: ChatCompletionConfig): RunnerModel {
  * names it. OpenCode loads a `file://` package as it is and installs any other
  * from the npm registry on first use, so it is given a copy that is already here:
  * the one installed with akm, or, in a compiled akm binary, the copy the build
- * embeds beside the main module (`scripts/ai-sdk-openai-compatible.ts`).
+ * embeds beside the main module (`scripts/ai-sdk-openai-compatible.ts`). Neither
+ * is a failure: OpenCode would be left to download the package.
  */
 const OPENAI_COMPATIBLE_PACKAGE = (() => {
   for (const specifier of ["@ai-sdk/openai-compatible", "./ai-sdk-openai-compatible.js"]) {
@@ -67,7 +68,9 @@ const OPENAI_COMPATIBLE_PACKAGE = (() => {
       // Not installed, not embedded: the next place.
     }
   }
-  return "aisdk:@ai-sdk/openai-compatible";
+  throw new Error(
+    "Cannot find @ai-sdk/openai-compatible, which akm's runtime reaches an endpoint with: it is neither installed with akm (node_modules/@ai-sdk/openai-compatible) nor embedded beside the main module (ai-sdk-openai-compatible.js).",
+  );
 })();
 
 /** OpenCode's own assumptions for a model that states no limit. */
