@@ -5,7 +5,7 @@
 /**
  * Native executor — executes one frozen step subgraph (`WorkflowPlanStep.root`)
  * locally: fan-out through the scheduler, structured output through
- * `runStructured`, per-unit journaling through the serialized writer queue,
+ * `structuredLoop`, per-unit journaling through the serialized writer queue,
  * and `workflow_unit_*` events. It never writes step rows; advancing the spine
  * is `run-workflow.ts`'s job.
  *

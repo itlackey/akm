@@ -45,7 +45,7 @@ function endpoint(models: string[], opts: { status?: number } = {}) {
 describe("stepHarnesses", () => {
   const input = (over: Partial<Parameters<typeof stepHarnesses>[0]> = {}) => ({
     current: cfg(),
-    installed: installed("claude", "codex"),
+    installed: installed("claude", "gemini"),
     flags: {},
     interactive: true,
     ...over,
@@ -58,48 +58,48 @@ describe("stepHarnesses", () => {
     const result = await stepHarnesses(input());
 
     const [asked] = prompts.of("multiselect");
-    expect(asked?.options.map((o) => o.value)).toEqual(["claude", "codex"]);
-    expect(asked?.initialValues).toEqual(["claude", "codex"]);
+    expect(asked?.options.map((o) => o.value)).toEqual(["claude", "gemini"]);
+    expect(asked?.initialValues).toEqual(["claude", "gemini"]);
     expect(asked?.options[0]?.hint).toContain("model calls run read-only");
     expect(asked?.options[1]?.hint).toContain("cannot be restricted to read-only");
     expect(result).toEqual({ answer: { platforms: ["claude"], default: "claude" }, modelCallsOnHarness: true });
   });
 
   test("interactive: the model-calls question names the harness and says what the note says, and No means a connection", async () => {
-    prompts.answers.multiselect.push(["codex"]);
+    prompts.answers.multiselect.push(["gemini"]);
     prompts.answers.confirm.push(false);
 
     const result = await stepHarnesses(input());
 
     const [question] = prompts.of("confirm");
-    expect(question?.message).toContain("Use codex for akm's own model calls too");
+    expect(question?.message).toContain("Use gemini for akm's own model calls too");
     expect(question?.message).toContain("cannot be restricted to read-only");
     expect(question?.initialValue).toBe(true);
     expect(result.modelCallsOnHarness).toBe(false);
   });
 
   test("interactive: with several selected, asks which one is the default", async () => {
-    prompts.answers.multiselect.push(["claude", "codex"]);
-    prompts.answers.select.push("codex");
+    prompts.answers.multiselect.push(["claude", "gemini"]);
+    prompts.answers.select.push("gemini");
     prompts.answers.confirm.push(true);
 
     const result = await stepHarnesses(input());
 
     expect(prompts.of("select")[0]?.initialValue).toBe("claude");
-    expect(result.answer).toEqual({ platforms: ["claude", "codex"], default: "codex" });
-    expect(prompts.of("confirm")[0]?.message).toContain("Use codex");
+    expect(result.answer).toEqual({ platforms: ["claude", "gemini"], default: "gemini" });
+    expect(prompts.of("confirm")[0]?.message).toContain("Use gemini");
   });
 
   test("a rerun is prefilled from the config: its harnesses selected and its default preselected", async () => {
-    prompts.answers.multiselect.push(["codex", "claude"]);
-    prompts.answers.select.push("codex");
+    prompts.answers.multiselect.push(["gemini", "claude"]);
+    prompts.answers.select.push("gemini");
     prompts.answers.confirm.push(true);
-    const current = cfg({ harnesses: { default: { platform: "codex" }, claude: {} } });
+    const current = cfg({ harnesses: { default: { platform: "gemini" }, claude: {} } });
 
     await stepHarnesses(input({ current }));
 
-    expect(prompts.of("multiselect")[0]?.initialValues).toEqual(["codex", "claude"]);
-    expect(prompts.of("select")[0]?.initialValue).toBe("codex");
+    expect(prompts.of("multiselect")[0]?.initialValues).toEqual(["gemini", "claude"]);
+    expect(prompts.of("select")[0]?.initialValue).toBe("gemini");
   });
 
   test("a harness that is configured but no longer on PATH is still listed, so it can be kept or dropped", async () => {
@@ -133,12 +133,12 @@ describe("stepHarnesses", () => {
   test("--yes: every detected harness, the first the default, used for model calls only when it can run read-only", async () => {
     const readOnly = await stepHarnesses(input({ interactive: false }));
     expect(readOnly).toEqual({
-      answer: { platforms: ["claude", "codex"], default: "claude" },
+      answer: { platforms: ["claude", "gemini"], default: "claude" },
       modelCallsOnHarness: true,
     });
 
-    const notReadOnly = await stepHarnesses(input({ interactive: false, installed: installed("codex", "claude") }));
-    expect(notReadOnly.answer?.default).toBe("codex");
+    const notReadOnly = await stepHarnesses(input({ interactive: false, installed: installed("gemini", "claude") }));
+    expect(notReadOnly.answer?.default).toBe("gemini");
     expect(notReadOnly.modelCallsOnHarness).toBe(false);
     expect(prompts.asked).toHaveLength(0);
   });

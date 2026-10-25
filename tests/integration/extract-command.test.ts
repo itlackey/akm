@@ -227,7 +227,7 @@ describe("akmExtract — explicit command is not gated by the improve-stage togg
   // has `processes.extract.enabled: false`. The toggle gates extract as a STAGE
   // of `akm improve` (the active-profile path), NOT the dedicated command —
   // previously dropping extract from the daily improve profile silently disabled
-  // the standalone command (and its LLM calls via the shared feature gate).
+  // the standalone command (and its LLM calls).
   test("standalone extract runs even when default.processes.extract.enabled is false", async () => {
     const stash = makeStashDir();
     let chatCalls = 0;
@@ -244,7 +244,7 @@ describe("akmExtract — explicit command is not gated by the improve-stage togg
     expect(result.ok).toBe(true);
     // The session is actually processed (not short-circuited as "disabled")...
     expect(result.sessionsProcessed).toBe(1);
-    // ...the extract LLM call fires (feature gate no longer blocks it)...
+    // ...the extract LLM call fires...
     expect(chatCalls).toBeGreaterThan(0);
     // ...and there is no "disabled" warning.
     expect(result.warnings.join(" ")).not.toMatch(/disabled/);

@@ -42,7 +42,7 @@
  * branching multiplies work by schema size, never exponentially.
  *
  * Returns a flat list of human-readable error strings (empty = valid), each
- * prefixed with a JSON-pointer-ish path — the shape `runStructured`'s
+ * prefixed with a JSON-pointer-ish path — the shape the structured loop's
  * corrective-feedback builder wants.
  *
  * {@link checkJsonSchemaDefinition} is the companion DEFINITION checker: it

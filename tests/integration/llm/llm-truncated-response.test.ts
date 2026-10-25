@@ -11,8 +11,8 @@
  * when a response IS truncated mid-JSON, `chatCompletion` resolves
  * successfully (a 200 with valid envelope JSON is not a transport error) and
  * returns only the raw content string — `finishReason` is computed for
- * telemetry (`emitLlmUsage`) but never reaches the caller. `runStructured`
- * (src/core/structured.ts), which every structured-output call site sits on,
+ * telemetry (`emitLlmUsage`) but never reaches the caller. `structuredLoop`
+ * (src/llm/structured.ts), which every structured-output call site sits on,
  * then fails to parse the truncated JSON and reports the same generic
  * `parse_error` it would for garbled or empty model output — there is no
  * channel for "the model was still writing when the token cap cut it off" to

@@ -279,7 +279,7 @@ describe("runMemoryInferencePass — index pass gate and engine selection", () =
       writtenPaths: [],
     });
     expect(invocations).toBe(0);
-    // Parent is not mutated when the feature gate blocks.
+    // Parent is not mutated when the pass is disabled.
     const fm = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
     expect(fm.data.inferenceProcessed).toBeUndefined();
   });
