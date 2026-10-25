@@ -82,7 +82,7 @@ describe("akm config set --silent", () => {
     expect(status).toBe(2);
     const envelope = JSON.parse(stderr) as { code?: string };
     expect(envelope.code).toBe("INVALID_FLAG_VALUE");
-    expect(stderr).toContain("akm setup");
+    expect(stderr).toContain("credentials.json");
   });
 
   test("config unset --silent also suppresses stdout", async () => {
