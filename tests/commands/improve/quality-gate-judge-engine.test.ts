@@ -212,7 +212,9 @@ describe("the judge thinks only when its own connection enables thinking", () =>
       });
       expect(result.pass).toBe(true);
       const sent = fs.readFileSync(promptPath, "utf8");
-      expect(sent).toContain("Tools: The asset is `knowledge/x`: read it with akm_show");
+      // Claude Code has no akm_show tool: it runs the CLI.
+      expect(sent).toContain("Tools: The asset is `knowledge/x`: read it with `akm show knowledge/x`");
+      expect(sent).not.toContain("akm_show");
     } finally {
       fs.rmSync(sandbox, { recursive: true, force: true });
     }
@@ -225,6 +227,15 @@ describe("the judge thinks only when its own connection enables thinking", () =>
     expect(plain).toContain("Return ONLY valid JSON");
     expect(plain).not.toContain("Tools:");
     expect(buildReflectJudgePrompt("candidate", "source", [])).not.toContain("Tools:");
+  });
+
+  test("only OpenCode's judge is told to read with the akm_show tool", () => {
+    expect(buildReflectJudgePrompt("candidate", "source", [], { ref: "knowledge/x", tool: "akm_show" })).toContain(
+      "The asset is `knowledge/x`: read it with akm_show,",
+    );
+    expect(buildReflectJudgePrompt("candidate", "source", [], { tool: "akm show" })).toContain(
+      "Read an asset with `akm show <ref>` or an asset",
+    );
   });
 
   test("otherwise the judge keeps thinking off, as before", async () => {

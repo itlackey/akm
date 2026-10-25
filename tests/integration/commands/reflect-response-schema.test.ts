@@ -313,7 +313,7 @@ describe("runReflectIteration — the reply is a patch, and a body or a malforme
           ? JSON.stringify(reply)
           : `AKM_REFLECT_CONFIDENCE: 0.9\nAKM_REFLECT_FRONTMATTER_PATCH: ${JSON.stringify(reply.frontmatterPatch)}`,
     });
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the reply to be refused");
     return result.error;
   }
 
@@ -357,8 +357,8 @@ describe("runReflectIteration — the reply is a patch, and a body or a malforme
         }),
     });
 
-    expect(result.ok).toBe(true);
-    expect(JSON.parse(result.stdout)).toEqual({
+    if (!result.ok) throw new Error(`expected a payload, got ${result.reason}: ${result.error}`);
+    expect(result.payload).toEqual({
       ref: "lessons/test",
       confidence: 0.4,
       patch: { description: "Ok.", title: "A title" },

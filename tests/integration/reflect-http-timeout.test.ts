@@ -59,7 +59,8 @@ test("reflect forwards a 1ms normalized timeout to the direct HTTP transport", a
     outputMode: "json_schema",
   });
 
-  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected the 1ms timeout to fail the iteration");
+  expect(result.reason).toBe("timeout");
   expect(result.error).toContain("timed out after 1ms");
 });
 
@@ -79,6 +80,6 @@ test("reflect explicit null disables the direct HTTP timer", async () => {
     outputMode: "json_schema",
   });
 
-  expect(result.ok).toBe(true);
-  expect(JSON.parse(result.stdout).ref).toBe("lessons/delayed-reflect");
+  if (!result.ok) throw new Error(`expected a payload, got ${result.reason}: ${result.error}`);
+  expect(result.payload.ref).toBe("lessons/delayed-reflect");
 });

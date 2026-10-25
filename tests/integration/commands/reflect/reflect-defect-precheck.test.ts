@@ -135,6 +135,7 @@ function config(gate: boolean, bin: string): AkmConfig {
     connections: { judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "judge-model" } } },
     improve: {
       strategy: "default",
+      processes: { reflect: { harness: "fake-agent" } },
       strategies: {
         default: {
           processes: { reflect: { qualityGate: { enabled: true } } },
@@ -157,7 +158,6 @@ async function reflect(
     stashDir: storage.stashDir,
     config: config(gate, bin),
     // Reflect runs on the harness; the judge, with no harness named, on the default connection.
-    engine: "fake-agent",
     assetContent: SOURCE,
     ...(defectFilter ? { defectFilter } : {}),
     chat: async () => {

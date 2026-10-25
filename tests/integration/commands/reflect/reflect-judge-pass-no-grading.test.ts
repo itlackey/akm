@@ -54,6 +54,7 @@ function config(bin: string): AkmConfig {
     connections: { judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "judge-model" } } },
     improve: {
       strategy: "default",
+      processes: { reflect: { harness: "fake-agent" } },
       strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
     },
   } as AkmConfig;
@@ -83,7 +84,6 @@ describe("reflect after a judge pass", () => {
       stashDir: storage.stashDir,
       config: config(writeFakeHarness(binDir.dir, "fake-agent", [reflectReply(PATCH)])),
       // Reflect runs on the harness; the judge, with no harness named, on the default connection.
-      engine: "fake-agent",
       assetContent: OLD,
       chat: async (_connection: unknown, messages: ChatMessage[]) => {
         prompts.push(messages.at(-1)?.content ?? "");

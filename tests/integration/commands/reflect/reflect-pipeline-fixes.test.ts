@@ -363,6 +363,7 @@ describe("Reflect quality gate — source context", () => {
       },
       improve: {
         strategy: "default",
+        processes: { reflect: { harness: "fake-agent" } },
         strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
       },
     } as AkmConfig;
@@ -380,7 +381,6 @@ describe("Reflect quality gate — source context", () => {
         ref: "knowledge/judge-rotation",
         stashDir: stash,
         config,
-        engine: "fake-agent",
         assetContent: sourceContent,
         chat: async (connection) => {
           observed.push(connection.apiKey);
@@ -408,6 +408,7 @@ describe("Reflect quality gate — source context", () => {
       },
       improve: {
         strategy: "default",
+        processes: { reflect: { harness: "fake-agent" } },
         strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
       },
     } as AkmConfig;
@@ -417,7 +418,6 @@ describe("Reflect quality gate — source context", () => {
       ref: "knowledge/quality-source",
       stashDir: stash,
       config,
-      engine: "fake-agent",
       assetContent: sourceContent,
       chat: async (_connection, messages) => {
         judgePrompt = messages[1]?.content ?? "";
@@ -458,13 +458,16 @@ describe("Reflect quality gate — source context", () => {
       akmReflect({
         ref,
         stashDir: stash,
-        engine: "fake-agent",
         config: {
           ...quietQualityGateConfig(bin),
           connections: {
             judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test-model" } },
           },
-          improve: { strategy: "default", strategies: { default: { processes } } },
+          improve: {
+            strategy: "default",
+            processes: { reflect: { harness: "fake-agent" } },
+            strategies: { default: { processes } },
+          },
         } as AkmConfig,
         assetContent: sourceContent,
         chat: async () => {
@@ -490,6 +493,7 @@ describe("Reflect quality gate — source context", () => {
       },
       improve: {
         strategy: "default",
+        processes: { reflect: { harness: "fake-agent" } },
         qualityGate: { connection: "judge" },
         strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
       },
@@ -500,7 +504,6 @@ describe("Reflect quality gate — source context", () => {
       ref: "knowledge/separate-judge",
       stashDir: stash,
       config,
-      engine: "fake-agent",
       assetContent: sourceContent,
       chat: async (connection) => {
         models.push(connection.model);
@@ -568,7 +571,6 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
     return akmReflect({
       ref,
       stashDir: makeStashDir(),
-      engine: "fake-agent",
       config: {
         ...quietQualityGateConfig(agent([reflectReply(PATCH)])),
         connections: {
@@ -576,6 +578,7 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
         },
         improve: {
           strategy: "default",
+          processes: { reflect: { harness: "fake-agent" } },
           strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
         },
       } as AkmConfig,
@@ -717,7 +720,6 @@ describe("Reflect routing — a judged patch is staged for the drain", () => {
     return akmReflect({
       ref,
       stashDir: makeStashDir(),
-      engine: "fake-agent",
       config: {
         ...quietQualityGateConfig(agent([reflectReply(patch)])),
         connections: {
@@ -725,6 +727,7 @@ describe("Reflect routing — a judged patch is staged for the drain", () => {
         },
         improve: {
           strategy: "default",
+          processes: { reflect: { harness: "fake-agent" } },
           strategies: { default: { processes: { reflect: { qualityGate: { enabled: judge !== undefined } } } } },
         },
       } as AkmConfig,

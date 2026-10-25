@@ -36,8 +36,7 @@ import type { Parsed } from "../../core/structured";
 import { warnOnce } from "../../core/warn";
 import { type Notice, noticeSet } from "../../execution/notices";
 import { lookup } from "../../indexer/indexer";
-import type { AgentFailureReason, AgentRunResult } from "../../integrations/agent";
-import { buildExecution, currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
+import type { AgentFailureReason } from "../../integrations/agent";
 import {
   buildReflectOutputRepairPrompt,
   buildReflectPrompt,
@@ -46,9 +45,10 @@ import {
   type ReflectPromptInput,
 } from "../../integrations/agent/prompts";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported, LlmCallError } from "../../llm/client";
+import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported } from "../../llm/client";
 import { structuredLoop } from "../../llm/structured";
-import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
+import type { StructuredOutcome } from "../../llm/structured-call";
+import { enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import type { EligibilitySource } from "../proposal/proposal-types";
 import type { CreateProposalInput, ProposalsContext } from "../proposal/repository";
 import { isValidDescription } from "../proposal/validators/proposal-quality-validators";
@@ -81,8 +81,6 @@ export interface AkmReflectOptions {
   ref?: string;
   /** Task hint passed through to the prompt. */
   task?: string;
-  /** Connection (or harness) override, by name. */
-  engine?: string;
   timeoutMs?: number;
   /** Shared improve deadline for dispatch and judging. */
   signal?: AbortSignal;
@@ -378,23 +376,24 @@ export interface RunReflectIterationOptions {
   environment?: Record<string, string>;
 }
 
-interface ReflectTelemetry {
+export interface ReflectTelemetry {
   outputMode: ReflectOutputMode;
   repairAttempts: number;
 }
 
-function parsedRecord(result: AgentRunResult): Record<string, unknown> | undefined {
-  return result.parsed && typeof result.parsed === "object" && !Array.isArray(result.parsed)
-    ? (result.parsed as Record<string, unknown>)
-    : undefined;
+/** What a failed reflect comes to, whichever step failed: the fields of the failure envelope that step settles. */
+interface ReflectFailureFields {
+  reason: AgentFailureReason;
+  error: string;
+  exitCode: number | null;
+  stdout?: string;
+  stderr?: string;
 }
 
-function reflectTelemetry(result: AgentRunResult): ReflectTelemetry | undefined {
-  const parsed = parsedRecord(result);
-  if (!parsed || (parsed.outputMode !== "json_schema" && parsed.outputMode !== "framed_markdown")) return undefined;
-  if (typeof parsed.repairAttempts !== "number") return undefined;
-  return { outputMode: parsed.outputMode, repairAttempts: parsed.repairAttempts };
-}
+/** One reflect iteration: the parsed payload, or why there is none. Its telemetry rides beside either. */
+export type ReflectIteration =
+  | { ok: true; payload: ReflectPayload; durationMs: number; telemetry: ReflectTelemetry }
+  | ({ ok: false; durationMs: number; telemetry: ReflectTelemetry } & ReflectFailureFields);
 
 function parseReflectConfidence(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
@@ -406,7 +405,7 @@ function parseReflectConfidence(value: unknown): number {
 const REFLECT_PATCH_FIELDS = ["description", "when_to_use", "title"] as const;
 
 /** A parsed reflect reply: the asset it names, its confidence, and the fields it changes. */
-interface ReflectPayload {
+export interface ReflectPayload {
   ref: string;
   confidence: number;
   patch: ReflectPatch;
@@ -480,15 +479,50 @@ function parseFramedReflectOutput(raw: string, targetRef: string | undefined): R
   };
 }
 
+/** A dispatch or deadline that ended the iteration, carried out of the structured loop. */
+class ReflectFailed extends Error {
+  constructor(readonly failure: ReflectFailureFields) {
+    super(failure.error);
+  }
+}
+
+/** A failure only a message describes, as a process that printed it and exited would have: what a connection reports. */
+function messageFailure(error: string, reason: AgentFailureReason, stdout = "", exitCode = 1): ReflectFailureFields {
+  return { reason, error, exitCode, stdout, stderr: error };
+}
+
+/** How a failed dispatch is reported: an agent as it ran (exit code, streams, reason), a connection by its message. */
+function dispatchFailure(
+  outcome: Extract<StructuredOutcome, { ok: false }>,
+  runner: RunnerSpec,
+  signal: AbortSignal | undefined,
+): ReflectFailureFields {
+  const result = runner.kind === "connection" ? undefined : outcome.result;
+  if (result) {
+    const reason = result.reason ?? "non_zero_exit";
+    return {
+      reason,
+      error: result.error ?? `agent failure (${reason})`,
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
+  }
+  return messageFailure(
+    outcome.error,
+    signal?.aborted ? "aborted" : outcome.reason === "timeout" ? "timeout" : "non_zero_exit",
+  );
+}
+
 /**
- * One reflect call on any engine, as an agent-shaped result (errors captured,
- * never thrown except configuration). Every engine kind is sent the same request,
- * with the reply's schema as the output schema, and its reply is held to the same
- * contract: an unparseable reply gets one repair turn within the original
- * deadline, then fails. A failed agent or SDK dispatch is reported as it ran,
- * with its exit code and stderr; an LLM call has only its message.
+ * One reflect call on any engine (errors captured, never thrown except
+ * configuration). Every engine kind is sent the same request, with the reply's
+ * schema as the output schema, and its reply is held to the same contract: an
+ * unparseable reply gets one repair turn within the original deadline, then
+ * fails. A failed agent dispatch is reported as it ran, with its exit code and
+ * stderr; an LLM call has only its message.
  */
-export async function runReflectIteration(opts: RunReflectIterationOptions): Promise<AgentRunResult> {
+export async function runReflectIteration(opts: RunReflectIterationOptions): Promise<ReflectIteration> {
   const start = Date.now();
   let repairAttempts = 0;
   const configuredTimeout = Object.hasOwn(opts, "timeoutMs") ? (opts.timeoutMs ?? null) : opts.runner.timeoutMs;
@@ -507,21 +541,12 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
       return { ok: false, errors: [errMessage(err)] };
     }
   };
-  const failure = (err: unknown, reason: AgentFailureReason, stdout = "", exitCode = 1): AgentRunResult => {
-    const msg = errMessage(err);
-    return {
-      ok: false,
-      stdout,
-      stderr: msg,
-      durationMs: Date.now() - start,
-      exitCode,
-      reason,
-      error: msg,
-      parsed: { outputMode: opts.outputMode, repairAttempts },
-    };
-  };
-  // The result of the dispatch that failed, kept for an agent or SDK engine.
-  let dispatched: AgentRunResult | undefined;
+  const failed = (failure: ReflectFailureFields): ReflectIteration => ({
+    ok: false,
+    durationMs: Date.now() - start,
+    telemetry: { outputMode: opts.outputMode, repairAttempts },
+    ...failure,
+  });
   // Reflect parses and repairs its own reply (the repair turn below), so one dispatch, unvalidated.
   const call = async (callMessages: ChatMessage[], repairTimeoutMs?: number): Promise<string> => {
     const outcome = await callStageOnce({
@@ -544,25 +569,20 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
       ...(opts.environment ? { current: { environment: opts.environment } } : {}),
       ...(opts.onNotices ? { onNotices: opts.onNotices } : {}),
     });
-    if (!outcome.ok) {
-      if (opts.runner.kind !== "connection") dispatched = outcome.result;
-      throw outcome.reason === "timeout"
-        ? new LlmCallError(outcome.error ?? "timeout", "timeout")
-        : new Error(outcome.error ?? "dispatch failed");
-    }
+    if (!outcome.ok) throw new ReflectFailed(dispatchFailure(outcome, opts.runner, opts.signal));
     return outcome.raw;
   };
 
   try {
-    if (opts.signal?.aborted) throw new Error("Reflect request aborted");
+    if (opts.signal?.aborted) throw new ReflectFailed(messageFailure("Reflect request aborted", "aborted"));
     const loop = await structuredLoop<ReflectPayload>({
       dispatch: (correction) => {
         if (!correction) return call(messages);
         // The repair turn spends what is left of the original deadline, and does not start once the caller has aborted.
-        if (opts.signal?.aborted) throw new Error("Reflect request aborted");
+        if (opts.signal?.aborted) throw new ReflectFailed(messageFailure("Reflect request aborted", "aborted"));
         const remaining = deadline === undefined ? undefined : deadline - Date.now();
         if (remaining !== undefined && remaining <= 0) {
-          throw new LlmCallError("Reflect request timed out before output repair", "timeout");
+          throw new ReflectFailed(messageFailure("Reflect request timed out before output repair", "timeout"));
         }
         repairAttempts = 1;
         const repair = `${buildReflectOutputRepairPrompt(opts.outputMode, opts.targetRef !== undefined)}\n\nWhat was wrong with it: ${correction.text}`;
@@ -575,24 +595,20 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
       correct: (refusal) => refusal.errors.join("; "),
     });
     // A reply that broke the contract; its message is the parser's, on every engine kind.
-    if (!loop.ok) return failure(new Error(loop.errors.join("; ")), "parse_error", loop.raw, 0);
+    if (!loop.ok) return failed(messageFailure(loop.errors.join("; "), "parse_error", loop.raw, 0));
     return {
       ok: true,
-      stdout: JSON.stringify(loop.value),
-      stderr: "",
+      payload: loop.value,
       durationMs: Date.now() - start,
-      exitCode: 0,
-      parsed: { outputMode: opts.outputMode, repairAttempts },
+      telemetry: { outputMode: opts.outputMode, repairAttempts },
     };
   } catch (err) {
     if (err instanceof ConfigError) throw err;
-    if (dispatched) return { ...dispatched, parsed: { outputMode: opts.outputMode, repairAttempts } };
-    const reason: AgentFailureReason = opts.signal?.aborted
-      ? "aborted"
-      : err instanceof LlmCallError && err.code === "timeout"
-        ? "timeout"
-        : "non_zero_exit";
-    return failure(err, reason);
+    return failed(
+      err instanceof ReflectFailed
+        ? err.failure
+        : messageFailure(errMessage(err), opts.signal?.aborted ? "aborted" : "non_zero_exit"),
+    );
   }
 }
 
@@ -621,7 +637,6 @@ function reflectEmitters(options: AkmReflectOptions): Pick<ReflectRun, "emitInvo
         ...(options.ref ? { ref: options.itemRef ?? options.ref } : {}),
         metadata: {
           ...(options.task ? { task: options.task } : {}),
-          ...(options.engine ? { engine: options.engine } : {}),
           ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
         },
       },
@@ -643,29 +658,29 @@ function reflectEmitters(options: AkmReflectOptions): Pick<ReflectRun, "emitInvo
   return { emitInvoked, emitFailed };
 }
 
-/** A post-dispatch failure envelope (with the run's notices). */
-function reflectFailure(
-  run: ReflectRun,
-  result: AgentRunResult,
-  reason: AgentFailureReason,
-  error: string,
-  withOutput: boolean,
-): AkmReflectFailure {
+/** The failure envelope for `failure` (with the run's notices). */
+function reflectFailure(run: ReflectRun, failure: ReflectFailureFields): AkmReflectFailure {
   return {
     schemaVersion: 2,
     ok: false,
-    reason,
-    error,
+    reason: failure.reason,
+    error: failure.error,
     ...(run.options.ref ? { ref: run.options.ref } : {}),
     engine: run.engineName,
-    exitCode: result.exitCode,
-    ...(withOutput ? { stdout: result.stdout, ...(result.stderr ? { stderr: result.stderr } : {}) } : {}),
+    exitCode: failure.exitCode,
+    ...(failure.stdout ? { stdout: failure.stdout } : {}),
+    ...(failure.stderr ? { stderr: failure.stderr } : {}),
     ...run.notices.fields(),
   };
 }
 
-function exitCodeMeta(result: AgentRunResult): Record<string, unknown> {
-  return result.exitCode !== null ? { exitCode: result.exitCode } : {};
+/** A failure after a dispatch that succeeded: the exit code is its, there is no output to report. */
+function refusal(reason: AgentFailureReason, error: string): ReflectFailureFields {
+  return { reason, error, exitCode: 0 };
+}
+
+function exitCodeMeta(failure: Pick<ReflectFailureFields, "exitCode">): Record<string, unknown> {
+  return failure.exitCode !== null ? { exitCode: failure.exitCode } : {};
 }
 
 function unsupportedTypeFailure(
@@ -764,9 +779,9 @@ async function resolveReflectSource(
 }
 
 /**
- * The single connection or harness for this invocation: `--engine`, the improve
- * strategy's reflect process, or the default. Whatever its kind, reflect runs it
- * under the model-work tool policy.
+ * The single connection or harness for this invocation: reflect's place in
+ * improve's cascade. Whatever its kind, reflect runs it under the model-work
+ * tool policy.
  */
 function resolveReflectRunner(options: AkmReflectOptions): {
   config: AkmConfig;
@@ -777,38 +792,21 @@ function resolveReflectRunner(options: AkmReflectOptions): {
 } {
   const config = options.config ?? loadConfig();
   const activeStrategy = options.improveProfile ?? config.improve?.strategies?.[config.improve?.strategy ?? "default"];
-  const lower = (selection: Parameters<typeof resolveExecution>[0]) => {
-    const prepared = resolveExecution(selection);
-    return buildExecution(prepared.request, prepared.runner);
-  };
-  let lowered: { runner: RunnerSpec; notices: readonly Notice[] };
-  if (options.engine) {
-    lowered = lower({
-      content: "reflect engine selection",
-      config,
-      layers: [shippedAlias(SHIPPED_ALIAS.improve), currentLayer({ engine: options.engine })],
-      modelWork: true,
-    });
-  } else if (options.improveProfile) {
-    const resolved = resolveImproveExecution({ config, processName: "reflect", alias: SHIPPED_ALIAS.improve });
-    if (!resolved) {
-      throw new ConfigError(
-        "Reflect requires a connection or harness for the active improve strategy.",
-        "LLM_NOT_CONFIGURED",
-        "Run `akm setup`, or set improve.connection or improve.processes.reflect.connection.",
-      );
-    }
-    lowered = resolved;
-  } else {
-    lowered = lower({
-      content: "reflect engine selection",
-      config,
-      layers: [shippedAlias(SHIPPED_ALIAS.improve)],
-      modelWork: true,
-    });
+  const resolved = resolveImproveExecution({ config, processName: "reflect", alias: SHIPPED_ALIAS.improve });
+  if (!resolved) {
+    throw new ConfigError(
+      "Reflect requires a connection or harness for the active improve strategy.",
+      "LLM_NOT_CONFIGURED",
+      "Run `akm setup`, or set improve.connection or improve.processes.reflect.connection.",
+    );
   }
-  const runnerSpec = lowered.runner;
-  return { config, activeStrategy, runnerSpec, engineName: runnerSpec.name, notices: lowered.notices };
+  return {
+    config,
+    activeStrategy,
+    runnerSpec: resolved.runner,
+    engineName: resolved.runner.name,
+    notices: resolved.notices,
+  };
 }
 
 /**
@@ -893,7 +891,7 @@ async function dispatchReflect(args: {
   assetContent: string | undefined;
   sources: ReflectPromptSources;
   agentEnv: Record<string, string>;
-}): Promise<AgentRunResult> {
+}): Promise<ReflectIteration> {
   const { run, parsedRef, assetContent, sources, agentEnv } = args;
   const { options, runnerSpec } = run;
   const { prompt, outputMode } = buildReflectPromptText({ options, parsedRef, assetContent, sources, runnerSpec });
@@ -945,13 +943,14 @@ async function finalizeReflectProposal(args: {
   run: ReflectRun;
   payload: ReflectPayload;
   assetContent: string;
-  result: AgentRunResult;
+  /** How long the dispatch took, and what it reported of its own output. */
+  dispatch: Pick<Extract<ReflectIteration, { ok: true }>, "durationMs" | "telemetry">;
   judge: { enabled: boolean; skippedNoJudge: boolean; runner: RunnerSpec | undefined };
   feedback: string[];
 }): Promise<AkmReflectResult> {
-  const { run, payload, assetContent, result, judge, feedback } = args;
+  const { run, payload, assetContent, dispatch, judge, feedback } = args;
   const { options } = run;
-  const telemetry = reflectTelemetry(result) ?? {};
+  const { telemetry } = dispatch;
   const patched = applyReflectPatch(payload.patch, assetContent, payload.ref);
   // A patch that changes nothing leaves the asset as it is: an empty diff.
   const content = patched?.content ?? assetContent;
@@ -965,10 +964,7 @@ async function finalizeReflectProposal(args: {
         : "a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes)";
     return reflectFailure(
       run,
-      result,
-      "no_change",
-      `Reflect skipped: proposed content for ${payload.ref} is ${what}; no proposal created.`,
-      false,
+      refusal("no_change", `Reflect skipped: proposed content for ${payload.ref} is ${what}; no proposal created.`),
     );
   }
 
@@ -994,7 +990,7 @@ async function finalizeReflectProposal(args: {
       },
       options.eventsCtx,
     );
-    return reflectFailure(run, result, "quality_rejected", message, false);
+    return reflectFailure(run, refusal("quality_rejected", message));
   };
   // A defect no judge needs to weigh is refused before any judge call, whether or not the gate is on.
   const defect = findReflectDefect(assetContent, content, options.defectFilter);
@@ -1081,7 +1077,7 @@ async function finalizeReflectProposal(args: {
     proposal,
     ref: proposal.ref,
     engine: run.engineName,
-    durationMs: result.durationMs,
+    durationMs: dispatch.durationMs,
     ...run.notices.fields(),
   };
 }
@@ -1144,49 +1140,36 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
   const sources = gatherReflectPromptSources(options, stash, parsedRef, assetContent);
   const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
-  let result: AgentRunResult;
-  let payload: ReflectPayload;
+  let iteration: ReflectIteration;
   try {
-    result = await dispatchReflect({ run, parsedRef, assetContent, sources, agentEnv });
-    emitInvoked();
-    if (!result.ok) {
-      if (isEnoentFailure(result)) {
-        emitFailed("spawn_failed", "enoent", options.ref, {
-          ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
-        });
-        return {
-          ...baseFailureFields(result),
-          schemaVersion: 2,
-          ...(options.ref ? { ref: options.ref } : {}),
-          engine: engineName,
-          error: enoentHintMessage(runnerSpec.kind === "connection" ? engineName : runnerSpec.bin),
-          ...notices.fields(),
-        };
-      }
-      const envelope: AkmReflectFailure = {
-        ...baseFailureFields(result),
-        schemaVersion: 2,
-        ...(options.ref ? { ref: options.ref } : {}),
-        engine: engineName,
-      };
-      emitFailed(envelope.reason, envelope.reason === "parse_error" ? "parse_error" : "agent_crash", options.ref, {
-        ...(envelope.exitCode !== null ? { exitCode: envelope.exitCode } : {}),
-        ...(reflectTelemetry(result) ?? {}),
-      });
-      return { ...envelope, ...notices.fields() };
-    }
-    // The iteration parsed the reply and put its payload on stdout.
-    payload = JSON.parse(result.stdout) as ReflectPayload;
+    iteration = await dispatchReflect({ run, parsedRef, assetContent, sources, agentEnv });
   } catch (error) {
     if (!(error instanceof ConfigError)) emitInvoked();
     throw error;
   }
+  emitInvoked();
+  if (!iteration.ok) {
+    const enoent = isEnoentFailure(iteration);
+    emitFailed(
+      enoent ? "spawn_failed" : iteration.reason,
+      enoent ? "enoent" : iteration.reason === "parse_error" ? "parse_error" : "agent_crash",
+      options.ref,
+      { ...exitCodeMeta(iteration), ...iteration.telemetry },
+    );
+    return reflectFailure(
+      run,
+      enoent
+        ? { ...iteration, error: enoentHintMessage(runnerSpec.kind === "connection" ? engineName : runnerSpec.bin) }
+        : iteration,
+    );
+  }
+  const { payload } = iteration;
 
   const generated = Object.values(payload.patch).join("\n");
   const unsafeContent = generatedContentRejection(generated);
   if (unsafeContent) {
-    emitFailed("parse_error", "parse_error", options.ref, exitCodeMeta(result));
-    return reflectFailure(run, result, "parse_error", unsafeContent, false);
+    emitFailed("parse_error", "parse_error", options.ref, { exitCode: 0 });
+    return reflectFailure(run, refusal("parse_error", unsafeContent));
   }
   // An unscoped reply names its asset only now: read it as a targeted run read its own before dispatch.
   const target = options.ref
@@ -1197,7 +1180,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     run,
     payload,
     assetContent: target.assetContent ?? "",
-    result,
+    dispatch: iteration,
     judge: { enabled: judgeWanted && !skippedNoJudge, skippedNoJudge, runner: judgeRunner },
     feedback: sources.feedback,
   });

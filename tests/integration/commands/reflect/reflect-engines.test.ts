@@ -133,7 +133,6 @@ function reflect(transport: Transport, scenario: string, options: Parameters<typ
     stashDir: storage.stashDir,
     config,
     assetContent: SOURCE,
-    engine: "contract",
     ...options,
   });
 }
