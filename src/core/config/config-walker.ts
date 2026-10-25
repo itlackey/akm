@@ -303,7 +303,7 @@ export function configUnset(config: Record<string, unknown>, dotted: string): Re
 // ── apiKey rejection (#454) ─────────────────────────────────────────────────
 
 const LITERAL_API_KEY_RECIPE =
-  "use a $VAR reference (and set that variable), or run `akm setup` to store the key in credentials.json";
+  "use a $VAR reference (and set that variable), or put the key in credentials.json under the block's name";
 const LITERAL_API_KEY_HINT =
   "Storing API keys in config.json leaks them through backups, logs, and version control. " +
   "akm keeps keys in the environment or in credentials.json.";

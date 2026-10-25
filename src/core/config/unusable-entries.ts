@@ -29,26 +29,30 @@ function harnessProblem(name: string, entry: unknown): string | undefined {
   return parsed.success ? harnessNameProblem(name, parsed.data) : firstIssue(parsed.error);
 }
 
-function usableEntries(
-  entries: unknown,
-  kind: "connection" | "harness",
-  problem: (name: string, entry: unknown) => string | undefined,
-  sourcePath: string | undefined,
-): unknown {
-  if (!isRecord(entries)) return entries;
-  const kept: Dict = {};
-  for (const [name, entry] of Object.entries(entries)) {
-    const why = problem(name, entry);
-    if (why === undefined) {
-      kept[name] = entry;
-      continue;
+export interface UnusableEntry {
+  readonly kind: "connection" | "harness";
+  readonly name: string;
+  /** The first thing wrong with it. */
+  readonly why: string;
+}
+
+/** The connections and harnesses of `raw` that their own schemas reject, in file order. */
+export function findUnusableEntries(raw: Dict): UnusableEntry[] {
+  const unusable: UnusableEntry[] = [];
+  const check = (
+    entries: unknown,
+    kind: UnusableEntry["kind"],
+    problem: (name: string, entry: unknown) => string | undefined,
+  ): void => {
+    if (!isRecord(entries)) return;
+    for (const [name, entry] of Object.entries(entries)) {
+      const why = problem(name, entry);
+      if (why !== undefined) unusable.push({ kind, name, why });
     }
-    warnOnce(
-      `config:unusable:${kind}:${sourcePath ?? "inline"}:${name}`,
-      `Ignoring ${kind} "${name}"${sourcePath ? ` in ${sourcePath}` : ""}: ${why}.`,
-    );
-  }
-  return kept;
+  };
+  check(raw.connections, "connection", connectionProblem);
+  check(raw.harnesses, "harness", harnessProblem);
+  return unusable;
 }
 
 /**
@@ -59,10 +63,17 @@ function usableEntries(
  * it and the first thing wrong. The file keeps it, and a write does not remove it.
  */
 export function dropUnusableEntries(raw: Dict, sourcePath?: string): Dict {
+  const unusable = findUnusableEntries(raw);
+  if (unusable.length === 0) return raw;
   const out = { ...raw };
-  if (raw.connections !== undefined) {
-    out.connections = usableEntries(raw.connections, "connection", connectionProblem, sourcePath);
+  for (const { kind, name, why } of unusable) {
+    warnOnce(
+      `config:unusable:${kind}:${sourcePath ?? "inline"}:${name}`,
+      `Ignoring ${kind} "${name}"${sourcePath ? ` in ${sourcePath}` : ""}: ${why}.`,
+    );
+    const holder = kind === "connection" ? "connections" : "harnesses";
+    const { [name]: _dropped, ...kept } = out[holder] as Dict;
+    out[holder] = kept;
   }
-  if (raw.harnesses !== undefined) out.harnesses = usableEntries(raw.harnesses, "harness", harnessProblem, sourcePath);
   return out;
 }

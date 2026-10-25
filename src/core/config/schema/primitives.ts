@@ -75,7 +75,7 @@ export const envReferenceApiKey = z.string().transform((value) => {
   } else {
     warnOnce(
       "config:literal-api-key",
-      "A literal apiKey in config.json is ignored: akm does not read keys from config. Use a $VAR reference, or run `akm setup` to store the key in credentials.json.",
+      "A literal apiKey in config.json is ignored: akm does not read keys from config. Use a $VAR reference, or run `akm migrate apply` to move the key into credentials.json.",
     );
   }
   return value;

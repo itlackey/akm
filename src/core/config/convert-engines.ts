@@ -26,11 +26,22 @@ export interface ConvertEnginesOptions {
   readonly env?: NodeJS.ProcessEnv;
 }
 
+/** A key an engine kept in a file or the secret store, or as a literal, which a connection cannot carry: it belongs in `credentials.json`. */
+export interface EngineKey {
+  /** The engine that held it. */
+  readonly engine: string;
+  /** The connection it became, which names the `credentials.json` entry. */
+  readonly connection: string;
+  readonly field: "apiKey" | "apiKeyFile";
+}
+
 export interface ConvertEnginesResult {
   readonly config: Dict;
   readonly notes: string[];
   /** Whether `raw` held anything of the retired form. */
   readonly changed: boolean;
+  /** The keys `config` does not carry; their values are still in `raw`. */
+  readonly keys: readonly EngineKey[];
 }
 
 const LLM_ENGINE_KEYS = new Set([
@@ -104,6 +115,7 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
   const connections: Dict = {};
   const harnesses: Dict = {};
   const runtimes = new Map<string, string | undefined>(); // removed opencode-sdk engines → their llmEngine
+  const keyHolders: Array<{ engine: string; field: EngineKey["field"] }> = [];
   for (const [name, engine] of Object.entries(engines)) {
     if (!isRecord(engine)) continue;
     const unknown = Object.keys(engine).filter(
@@ -131,9 +143,7 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
     const apiKey = str(engine.apiKey);
     if (apiKey !== undefined && isEnvReference(apiKey)) connection.apiKey = apiKey;
     else if (apiKey !== undefined || engine.apiKeyFile !== undefined) {
-      notes.push(
-        `engines.${name}: its ${engine.apiKeyFile !== undefined ? "apiKeyFile" : "apiKey"} is not read from config any more; \`akm migrate apply\` moves it to credentials.json.`,
-      );
+      keyHolders.push({ engine: name, field: engine.apiKeyFile !== undefined ? "apiKeyFile" : "apiKey" });
     } else {
       const variable = implicitKeyVariable(name, defaults, options.env);
       if (variable !== undefined) connection.apiKey = `$${variable}`;
@@ -179,6 +189,11 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
   };
   const newName = (name: string, from: string | undefined): string =>
     name === from ? "default" : name === "default" && from ? "legacy-default" : name;
+  const keys = keyHolders.map(({ engine, field }) => ({
+    engine,
+    connection: newName(engine, defaultConnection),
+    field,
+  }));
   const named = {
     connections: renamed(connections, defaultConnection),
     harnesses: renamed(harnesses, defaultHarness),
@@ -371,5 +386,5 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
       if (Object.keys(mergedHarnesses).length > 0) config.harnesses = mergedHarnesses;
     }
   }
-  return { config: changed ? config : raw, notes, changed };
+  return { config: changed ? config : raw, notes, changed, keys };
 }

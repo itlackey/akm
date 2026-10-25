@@ -16,6 +16,7 @@ import { type ConfigFileNormalization, normalizeConfigFile, resetConfigCache } f
 import { ConfigError } from "../../src/core/errors";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
+import { resolveSecretFromStore } from "../../src/sources/snapshot-fetchers/secret-seam";
 import {
   type DeadResidueEntry,
   type DeadResidueRemoval,
@@ -143,8 +144,10 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const configFile = await migrationStep(
     failedSteps,
     "configFile",
-    () => normalizeConfigFile(configPath, { apply }),
-    apply ? () => normalizeConfigFile(configPath, { apply: false }) : undefined,
+    () => normalizeConfigFile(configPath, { apply, resolveFromStore: resolveSecretFromStore }),
+    apply
+      ? () => normalizeConfigFile(configPath, { apply: false, resolveFromStore: resolveSecretFromStore })
+      : undefined,
   );
   if (apply && configFile?.applied) resetConfigCache();
   const stateMigrations = await migrationStep(

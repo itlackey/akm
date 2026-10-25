@@ -42,8 +42,10 @@ import type {
 } from "./config-types";
 import { isOpaqueSchema, resolveSchemaAt } from "./config-walker";
 import { convertEngineConfig } from "./convert-engines";
+import { writeCredential } from "./credentials";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
-import { dropUnusableEntries } from "./unusable-entries";
+import { planKeyMoves } from "./migrate-keys";
+import { dropUnusableEntries, findUnusableEntries } from "./unusable-entries";
 
 export { stripJsonComments } from "./config-io";
 
@@ -204,11 +206,18 @@ function readModelsOverlay(): unknown {
  * through this pipeline, before it deletes the keys the schema does not know).
  */
 function readRetiredEngines(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
-  const { config, notes, changed } = convertEngineConfig(raw, { modelsOverlay: readModelsOverlay(), env: process.env });
+  const { config, notes, changed, keys } = convertEngineConfig(raw, {
+    modelsOverlay: readModelsOverlay(),
+    env: process.env,
+  });
   if (!changed) return raw;
+  const keyNotes = keys.map(
+    ({ engine, field }) =>
+      `engines.${engine}: its ${field} is not read from config any more; \`akm migrate apply\` moves it to credentials.json.`,
+  );
   warnOnce(
     `config:retired-engines:${sourcePath ?? "inline"}`,
-    `${sourcePath ?? "config.json"} uses the retired engines/defaults form; reading it as connections/harnesses. \`akm migrate apply\` rewrites config.json.${notes.map((note) => `\n  - ${note}`).join("")}`,
+    `${sourcePath ?? "config.json"} uses the retired engines/defaults form; reading it as connections/harnesses. \`akm migrate apply\` rewrites config.json.${[...notes, ...keyNotes].map((note) => `\n  - ${note}`).join("")}`,
   );
   return config;
 }
@@ -1056,24 +1065,51 @@ export interface ConfigFileNormalization {
   readonly changed: boolean;
   readonly applied: boolean;
   readonly backupPath?: string;
+  /** The `credentials.json` entries the config's keys move to (names only), when any do. */
+  readonly credentials?: readonly string[];
+  /** What the conversion could not carry, and each key and entry the step left alone or moved. */
+  readonly notes?: readonly string[];
+}
+
+/** What `akm migrate apply` needs from outside the config module to read a key the config holds as a secret reference. */
+export interface NormalizeConfigOptions {
+  readonly apply: boolean;
+  readonly resolveFromStore?: SecretStoreResolver;
+}
+
+/** A connection or harness the reader drops stays in the file exactly as written, with a note on what to fix. */
+function keepUnusableEntries(body: Record<string, unknown>, localRaw: Record<string, unknown>, notes: string[]): void {
+  for (const { kind, name, why } of findUnusableEntries(localRaw)) {
+    const holder = kind === "connection" ? "connections" : "harnesses";
+    const entries = isRecord(body[holder]) ? (body[holder] as Record<string, unknown>) : {};
+    body[holder] = { ...entries, [name]: (localRaw[holder] as Record<string, unknown>)[name] };
+    notes.push(`${holder}.${name}: kept as written, and ignored by akm because ${why}. Fix it, or remove it.`);
+  }
 }
 
 /**
  * The migrator's one config step. The reader already tolerates every shape
  * 0.9.15 and later wrote (`configVersion` read as current, 0.9.16
  * `{kind, ref, sourceId}` scheduler entries, unknown keys dropped); this
- * writes that current shape back to `config.json` — the same body `mutateConfig` writes — so the tolerance
- * becomes durable. Reports without writing unless `apply` is set.
+ * writes the current shape back to `config.json` so the tolerance becomes
+ * durable: the retired `engines` form converted to `connections` / `harnesses`,
+ * every key akm no longer reads from config filed in `credentials.json`
+ * ({@link planKeyMoves}), and a connection or harness the reader drops kept as
+ * written. Reports without writing unless `apply` is set.
  */
-export function normalizeConfigFile(configPath: string, options: { apply: boolean }): ConfigFileNormalization {
+export function normalizeConfigFile(configPath: string, options: NormalizeConfigOptions): ConfigFileNormalization {
   return withConfigLock(() => {
     const text = readConfigText(configPath);
     if (text === undefined) return { keys: [], changed: false, applied: false };
     const raw = parseConfigText(text, configPath);
-    // The retired-engines conversion (`readRetiredEngines`) runs inside this
-    // pipeline, so it has already happened by the time the unknown-key sweep
-    // below deletes what the schema does not know.
-    const localRaw = runConfigFilePipeline(text, configPath);
+    const document = readConfigFile(text, configPath);
+    // The conversion runs before the unknown-key sweep below deletes what the
+    // schema does not know (inventory surprise 8).
+    const converted = convertEngineConfig(document, { modelsOverlay: readModelsOverlay(), env: process.env });
+    const plan = planKeyMoves(document, converted, {
+      resolveSecretRef: (ref) => resolveSecret(ref, options.resolveFromStore),
+    });
+    const localRaw = plan.config;
     const current = buildEffectiveConfig(localRaw, configPath);
     const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });
     const body = configWriteBody(localRaw, current, next) as Record<string, unknown>;
@@ -1089,14 +1125,24 @@ export function normalizeConfigFile(configPath: string, options: { apply: boolea
       | Record<string, unknown>
       | undefined;
     if (strategies && Object.hasOwn(strategies, "graph-refresh")) delete strategies["graph-refresh"];
+    const notes = [...converted.notes, ...plan.notes];
+    keepUnusableEntries(body, localRaw, notes);
     const keys = [...new Set([...Object.keys(raw), ...Object.keys(body)])]
       .filter((key) => JSON.stringify(raw[key]) !== JSON.stringify(body[key]))
       .sort();
-    if (keys.length === 0 || !options.apply) return { keys, changed: keys.length > 0, applied: false };
+    const reported = {
+      keys,
+      ...(plan.moves.length > 0 ? { credentials: plan.moves.map((move) => move.name) } : {}),
+      ...(notes.length > 0 ? { notes } : {}),
+    };
+    if (keys.length === 0 || !options.apply) return { ...reported, changed: keys.length > 0, applied: false };
+    // The keys are filed before the file that holds them is rewritten; a store
+    // that cannot take them (malformed, unwritable) throws here and loses none.
+    for (const move of plan.moves) writeCredential(move.name, move.value);
     const backup = backupExistingConfig(configPath);
     writeConfigAtomic(configPath, body);
     cachedConfig = undefined;
-    return { keys, changed: true, applied: true, ...(backup ? { backupPath: backup.timestamped } : {}) };
+    return { ...reported, changed: true, applied: true, ...(backup ? { backupPath: backup.timestamped } : {}) };
   });
 }
 

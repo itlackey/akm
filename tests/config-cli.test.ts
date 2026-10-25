@@ -300,9 +300,9 @@ describe("config CLI helpers", () => {
 describe("apiKey rejection (#454)", () => {
   const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
 
-  test("a literal apiKey is refused on every block that has one, pointing at $VAR and akm setup", () => {
+  test("a literal apiKey is refused on every block that has one, pointing at $VAR and credentials.json", () => {
     for (const key of ["connections.fast.apiKey", "embedding.apiKey", "search.curateRerank.apiKey"]) {
-      expect(() => setConfigValue(base, key, "sk-test")).toThrow(/use a \$VAR reference.*akm setup/);
+      expect(() => setConfigValue(base, key, "sk-test")).toThrow(/use a \$VAR reference.*credentials\.json/);
     }
   });
 

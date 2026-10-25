@@ -109,13 +109,28 @@ describe("engines.<n> kind llm → connections.<n>", () => {
     expect(notes.join("\n")).toContain("supportsJsonSchema");
   });
 
-  test("a key akm no longer reads from a file, the secret store or the config is treated as absent, with a note naming akm migrate apply", () => {
-    for (const keyed of [{ apiKeyFile: "/run/key" }, { apiKey: secretRef }, { apiKey: "sk-literal" }]) {
-      const { config, notes } = convert({ engines: { lab: llm(keyed) } });
+  test("a key akm no longer reads from a file, the secret store or the config is not carried, and is named as the connection's to move", () => {
+    for (const [keyed, field] of [
+      [{ apiKeyFile: "/run/key" }, "apiKeyFile"],
+      [{ apiKey: secretRef }, "apiKey"],
+      [{ apiKey: "sk-literal" }, "apiKey"],
+    ] as const) {
+      const { config, keys } = convert({ engines: { lab: llm(keyed) } });
       expect((config.connections as Dict).lab).not.toHaveProperty("apiKey");
       expect((config.connections as Dict).lab).not.toHaveProperty("apiKeyFile");
-      expect(notes.some((note) => note.includes("engines.lab") && note.includes("akm migrate apply"))).toBe(true);
+      expect(keys).toEqual([{ engine: "lab", connection: "lab", field }]);
     }
+  });
+
+  test("a key held by the default engine belongs to the connection it is renamed to", () => {
+    const { keys } = convert({
+      engines: { lab: llm({ apiKeyFile: "/run/key" }), other: llm({ apiKey: "sk-other" }) },
+      defaults: { llmEngine: "lab" },
+    });
+    expect(keys).toEqual([
+      { engine: "lab", connection: "default", field: "apiKeyFile" },
+      { engine: "other", connection: "other", field: "apiKey" },
+    ]);
   });
 
   test("an AKM_ENGINE_<NAME>_API_KEY set at migrate time becomes the connection's $VAR key", () => {
@@ -641,6 +656,22 @@ describe("the loader reads the retired form in memory", () => {
     expect(retired).toHaveLength(1);
     expect(retired[0]).toContain("akm migrate apply");
     expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
+  });
+
+  test("the one warning names each key the file holds that akm no longer reads, never its value", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      engines: { lab: llm({ apiKeyFile: "/run/lab-key" }), other: llm({ apiKey: "sk-secret-literal" }) },
+      defaults: { llmEngine: "lab" },
+    });
+    const warnings = captureWarnings(() => {
+      loadUserConfig();
+    });
+    const text = warnings.join("\n");
+    expect(text).toContain("engines.lab: its apiKeyFile is not read from config any more");
+    expect(text).toContain("engines.other: its apiKey is not read from config any more");
+    expect(text).toContain("credentials.json");
+    expect(text).not.toContain("sk-secret-literal");
   });
 
   test("an engine's implicit key variables, set in the environment, keep working through the loader", () => {
