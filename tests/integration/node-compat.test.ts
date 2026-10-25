@@ -938,6 +938,7 @@ function writeDispatchWorkflow(name: string): void {
       "---",
       "type: workflow",
       "description: Node-compat dispatch smoke workflow.",
+      "defaults: { timeout: 5s }",
       "steps:",
       "  - id: only-step",
       "---",
