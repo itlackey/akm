@@ -45,11 +45,12 @@ import { convertEngineConfig } from "./convert-engines";
 import { writeCredential } from "./credentials";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
 import { planKeyMoves } from "./migrate-keys";
+import { modelsFileExists, readModelsFile, retireModelsFile } from "./models-file";
 import { dropUnusableEntries, findUnusableEntries } from "./unusable-entries";
 
 export { stripJsonComments } from "./config-io";
 
-import { getConfigDir, getConfigPath } from "../paths";
+import { getConfigPath } from "../paths";
 import { warn, warnOnce } from "../warn";
 
 // Re-export type surface from config-types.ts so call sites don't need to
@@ -190,15 +191,6 @@ function readConfigFile(text: string, sourcePath?: string): Record<string, unkno
   return readConfigVersion(lifted, sourcePath);
 }
 
-/** The user's `models.json` (retired), parsed; absent or unreadable is no overlay. */
-function readModelsOverlay(): unknown {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(getConfigDir(), "models.json"), "utf8"));
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * `engines` / `defaults` are retired in favour of `connections` / `harnesses`.
  * A config in the old form is read as the new one, in memory, with one warning;
@@ -207,7 +199,7 @@ function readModelsOverlay(): unknown {
  */
 function readRetiredEngines(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
   const { config, notes, changed, keys } = convertEngineConfig(raw, {
-    modelsOverlay: readModelsOverlay(),
+    modelsOverlay: readModelsFile(),
     env: process.env,
   });
   if (!changed) return raw;
@@ -1067,6 +1059,8 @@ export interface ConfigFileNormalization {
   readonly backupPath?: string;
   /** The `credentials.json` entries the config's keys move to (names only), when any do. */
   readonly credentials?: readonly string[];
+  /** Where the retired `models.json` was moved to, after its aliases were folded in. */
+  readonly modelsFileBackupPath?: string;
   /** What the conversion could not carry, and each key and entry the step left alone or moved. */
   readonly notes?: readonly string[];
 }
@@ -1105,7 +1099,7 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     const document = readConfigFile(text, configPath);
     // The conversion runs before the unknown-key sweep below deletes what the
     // schema does not know (inventory surprise 8).
-    const converted = convertEngineConfig(document, { modelsOverlay: readModelsOverlay(), env: process.env });
+    const converted = convertEngineConfig(document, { modelsOverlay: readModelsFile(), env: process.env });
     const plan = planKeyMoves(document, converted, {
       resolveSecretRef: (ref) => resolveSecret(ref, options.resolveFromStore),
     });
@@ -1127,6 +1121,10 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     if (strategies && Object.hasOwn(strategies, "graph-refresh")) delete strategies["graph-refresh"];
     const notes = [...converted.notes, ...plan.notes];
     keepUnusableEntries(body, localRaw, notes);
+    const hasModelsFile = modelsFileExists();
+    if (hasModelsFile) {
+      notes.push("models.json: its aliases are folded in above, then the file moves to the config-backups directory.");
+    }
     const keys = [...new Set([...Object.keys(raw), ...Object.keys(body)])]
       .filter((key) => JSON.stringify(raw[key]) !== JSON.stringify(body[key]))
       .sort();
@@ -1135,14 +1133,25 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       ...(plan.moves.length > 0 ? { credentials: plan.moves.map((move) => move.name) } : {}),
       ...(notes.length > 0 ? { notes } : {}),
     };
-    if (keys.length === 0 || !options.apply) return { ...reported, changed: keys.length > 0, applied: false };
-    // The keys are filed before the file that holds them is rewritten; a store
-    // that cannot take them (malformed, unwritable) throws here and loses none.
-    for (const move of plan.moves) writeCredential(move.name, move.value);
-    const backup = backupExistingConfig(configPath);
-    writeConfigAtomic(configPath, body);
-    cachedConfig = undefined;
-    return { ...reported, changed: true, applied: true, ...(backup ? { backupPath: backup.timestamped } : {}) };
+    const changed = keys.length > 0 || hasModelsFile;
+    if (!changed || !options.apply) return { ...reported, changed, applied: false };
+    let backup: ReturnType<typeof backupExistingConfig>;
+    if (keys.length > 0) {
+      // The keys are filed before the file that holds them is rewritten; a store
+      // that cannot take them (malformed, unwritable) throws here and loses none.
+      for (const move of plan.moves) writeCredential(move.name, move.value);
+      backup = backupExistingConfig(configPath);
+      writeConfigAtomic(configPath, body);
+      cachedConfig = undefined;
+    }
+    const modelsFileBackupPath = hasModelsFile ? retireModelsFile() : undefined;
+    return {
+      ...reported,
+      changed: true,
+      applied: true,
+      ...(backup ? { backupPath: backup.timestamped } : {}),
+      ...(modelsFileBackupPath ? { modelsFileBackupPath } : {}),
+    };
   });
 }
 

@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { normalizeConfigFile, resetConfigCache } from "../../src/core/config/config";
 import { readCredential, writeCredential } from "../../src/core/config/credentials";
-import { getConfigDir, getConfigPath } from "../../src/core/paths";
+import { getCacheDir, getConfigDir, getConfigPath } from "../../src/core/paths";
 import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 type Dict = Record<string, unknown>;
@@ -241,5 +241,53 @@ describe("the entries the reader drops", () => {
 
     expect((readConfig().connections as Dict).draft).toEqual(draft);
     expect(result.notes?.join("\n")).toContain("connections.draft: kept as written");
+  });
+});
+
+describe("the retired models.json", () => {
+  const MODELS = JSON.stringify({ version: 1, aliases: { fast: { lab: "qwen3-8b" }, balanced: { "*": "qwen3-32b" } } });
+  const modelsFile = (): string => path.join(getConfigDir(), "models.json");
+
+  test("is folded into the models of what it named, then moved to the config backups and removed", () => {
+    writeConfig({ engines: { lab: llm() }, defaults: { llmEngine: "lab" } });
+    fs.writeFileSync(modelsFile(), MODELS);
+
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    expect(((readConfig().connections as Record<string, Dict>).default as Dict).models).toMatchObject({
+      fast: "qwen3-8b",
+      balanced: "qwen3-32b",
+    });
+    expect(fs.existsSync(modelsFile())).toBe(false);
+    const moved = result.modelsFileBackupPath as string;
+    expect(path.dirname(moved)).toBe(path.join(getCacheDir(), "config-backups"));
+    expect(path.basename(moved)).toMatch(/^models\.json\./);
+    expect(fs.readFileSync(moved, "utf8")).toBe(MODELS);
+    expect(result.notes?.join("\n")).toContain("models.json");
+  });
+
+  test("is moved even when the config is already current, and the entries it cannot place are listed", () => {
+    writeConfig({ connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } } });
+    fs.writeFileSync(modelsFile(), MODELS);
+    const before = fs.readFileSync(getConfigPath(), "utf8");
+
+    const dry = normalizeConfigFile(getConfigPath(), { apply: false, resolveFromStore });
+    expect(dry).toMatchObject({ changed: true, applied: false });
+    expect(fs.existsSync(modelsFile())).toBe(true);
+
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+    expect(result).toMatchObject({ changed: true, applied: true });
+    expect(fs.existsSync(modelsFile())).toBe(false);
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
+    expect(result.backupPath).toBeUndefined();
+    expect(result.notes?.join("\n")).toContain("models.json fast.lab: names no configured connection or harness");
+  });
+
+  test("a config with no models.json and nothing to convert is current", () => {
+    writeConfig({ connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } } });
+    expect(normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore })).toMatchObject({
+      changed: false,
+      applied: false,
+    });
   });
 });
