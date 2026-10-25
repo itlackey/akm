@@ -82,6 +82,18 @@ export const envReferenceApiKey = z.string().transform((value) => {
   return value;
 });
 
+/**
+ * The retired `apiKeyFile` of an engine that `akm migrate apply` could not read yet: kept as written so a
+ * later run can move the key it names, never read, sent or printed by akm.
+ */
+export const retiredApiKeyFile = z.string().transform((value) => {
+  warnOnce(
+    "config:api-key-file",
+    "An apiKeyFile in config.json is ignored: akm reads a key from a $VAR or credentials.json. `akm migrate apply` moves the key the file holds once it can be read.",
+  );
+  return value;
+});
+
 /** A connection endpoint: a complete http(s) URL, the OpenAI-compatible base (`…/v1`) or the chat-completions URL itself. */
 export const connectionEndpoint = z.string().superRefine((value, ctx) => {
   let url: URL;

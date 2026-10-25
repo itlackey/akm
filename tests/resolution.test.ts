@@ -248,11 +248,14 @@ describe("the request", () => {
           timeoutMs: 1000,
           concurrency: 2,
           temperature: 0.1,
+          // A key file an earlier migration could not read yet: kept as written, never sent.
+          apiKeyFile: "/run/secrets/key",
         },
       },
     });
     const runner = connectionFor(config);
     expect(runner.request).toEqual({ temperature: 0.1 });
+    expect(JSON.stringify(runner)).not.toContain("/run/secrets/key");
     expect(runner).toMatchObject({
       apiKey: "$CLOUD_KEY",
       contextLength: 8192,

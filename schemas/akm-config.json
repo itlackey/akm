@@ -24,6 +24,9 @@
           "apiKey": {
             "type": "string"
           },
+          "apiKeyFile": {
+            "type": "string"
+          },
           "models": {
             "type": "object",
             "additionalProperties": {
@@ -1394,6 +1397,9 @@
               "apiKey": {
                 "type": "string"
               },
+              "apiKeyFile": {
+                "type": "string"
+              },
               "models": {
                 "type": "object",
                 "additionalProperties": {
@@ -2749,6 +2755,9 @@
           "type": "string"
         },
         "apiKey": {
+          "type": "string"
+        },
+        "apiKeyFile": {
           "type": "string"
         },
         "models": {

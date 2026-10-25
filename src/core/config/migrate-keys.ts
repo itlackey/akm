@@ -94,6 +94,8 @@ interface Candidate {
   readonly remove?: () => void;
   /** Put it back on the connection, when it is not filed: the conversion did not carry it. */
   readonly restore?: () => void;
+  /** Where it stays when it is not filed, for the note: on the connection as the key it was, or where the document holds it. */
+  readonly stays: string;
 }
 
 /** The keys of the converted document that are not `$VAR` references. */
@@ -122,21 +124,40 @@ function documentCandidates(config: Dict, options: KeyMoveOptions): Candidate[] 
     });
   }
   return blocks.flatMap(({ name, slot, from, block }) => {
+    const endpoint = typeof block.endpoint === "string" ? block.endpoint : undefined;
+    const found: Candidate[] = [];
     const apiKey = block.apiKey;
-    if (typeof apiKey !== "string" || isEnvReference(apiKey)) return [];
-    return [
-      {
+    if (typeof apiKey === "string" && !isEnvReference(apiKey)) {
+      found.push({
         name,
         slot,
-        endpoint: typeof block.endpoint === "string" ? block.endpoint : undefined,
+        endpoint,
         from,
         read: () => heldValue(apiKey, options),
         source: isSecretRefToken(apiKey) ? "the secret store reference" : "the literal key",
         remove: () => {
           delete block.apiKey;
         },
-      },
-    ];
+        stays: "in the file",
+      });
+    }
+    // A key file an earlier run could not read is still named here, so a later run can move its key.
+    const keyFile = block.apiKeyFile;
+    if (typeof keyFile === "string" && "connection" in slot) {
+      found.push({
+        name,
+        slot,
+        endpoint,
+        from: from.replace(/apiKey$/, "apiKeyFile"),
+        read: () => readKeyFile(keyFile),
+        source: `its key file ${keyFile}`,
+        remove: () => {
+          delete block.apiKeyFile;
+        },
+        stays: "in the file",
+      });
+    }
+    return found;
   });
 }
 
@@ -174,6 +195,11 @@ function engineCandidates(
           from: `engines.${engine}.${field}`,
           read: () => readKeyFile(held),
           source: `its key file ${held}`,
+          restore: () => {
+            const block = isRecord(config.connections) ? config.connections[connection] : undefined;
+            if (isRecord(block)) block.apiKeyFile = held;
+          },
+          stays: "on the connection as apiKeyFile",
         },
       ];
     }
@@ -189,6 +215,7 @@ function engineCandidates(
           const block = isRecord(config.connections) ? config.connections[connection] : undefined;
           if (isRecord(block)) block.apiKey = held;
         },
+        stays: "on the connection as apiKey",
       },
     ];
   });
@@ -207,12 +234,12 @@ export function planKeyMoves(
     ...engineCandidates(original, converted, config, options),
     ...documentCandidates(config, options),
   ]) {
-    const stays = candidate.restore ? " It stays on the connection as apiKey." : "";
+    const stays = ` It stays ${candidate.stays}.`;
     const value = candidate.read();
     if (value === undefined) {
       candidate.restore?.();
       notes.push(
-        `${candidate.from}: ${candidate.source} could not be read, so no key moves.${stays} Store it under "${candidate.name}" in credentials.json if it should have one.`,
+        `${candidate.from}: ${candidate.source} could not be read, so no key moves and this is still to do.${stays} A later \`akm migrate apply\` moves it once it can be read.`,
       );
       continue;
     }

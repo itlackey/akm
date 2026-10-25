@@ -172,7 +172,7 @@ describe("the keys an engines config holds that akm no longer reads", () => {
     expect(normalizeConfigFile(getConfigPath(), { apply: false, resolveFromStore })).toMatchObject({ changed: false });
   });
 
-  test("a key file that is missing cannot be carried: nothing is invented on the connection, and the note names the path", () => {
+  test("a key file that cannot be read yet stays on the connection as the apiKeyFile it was, and is still to do", () => {
     const missing = path.join(storage.stashDir, "missing.key");
     writeConfig({ engines: { lab: llm({ apiKeyFile: missing }) }, defaults: { llmEngine: "lab" } });
 
@@ -182,10 +182,38 @@ describe("the keys an engines config holds that akm no longer reads", () => {
     expect(fs.existsSync(credentialsPath())).toBe(false);
     const connection = (readConfig().connections as Record<string, Dict>).default as Dict;
     expect(connection).not.toHaveProperty("apiKey");
-    expect(connection).not.toHaveProperty("apiKeyFile");
+    expect(connection.apiKeyFile).toBe(missing);
     const notes = result.notes?.join("\n") ?? "";
-    expect(notes).toContain(`engines.lab.apiKeyFile: its key file ${missing} could not be read`);
-    expect(notes).toContain('under "default" in credentials.json');
+    expect(notes).toContain(
+      `engines.lab.apiKeyFile: its key file ${missing} could not be read, so no key moves and this is still to do.`,
+    );
+    expect(notes).toContain("It stays on the connection as apiKeyFile.");
+    // akm never reads the file or sends its path: the connection is read as one with no key.
+    resetConfigCache();
+    const loaded = loadConfig().connections?.default;
+    expect(loaded?.apiKeyFile).toBe(missing);
+  });
+
+  test("a later run moves the key once the file can be read, and removes the reference", () => {
+    const keyPath = path.join(storage.stashDir, "later.key");
+    writeConfig({ engines: { lab: llm({ apiKeyFile: keyPath }) }, defaults: { llmEngine: "lab" } });
+    normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+    expect(fs.existsSync(credentialsPath())).toBe(false);
+
+    // The mount comes back.
+    fs.writeFileSync(keyPath, "sk-from-the-late-file\n");
+    resetConfigCache();
+    const second = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    expect(second.applied).toBe(true);
+    expect(second.notes?.join("\n")).toContain(
+      'connections.default.apiKeyFile: its key moves to credentials.json for "default"',
+    );
+    expect(storedKeys()).toEqual({
+      connections: { default: { key: "sk-from-the-late-file", endpoint: "http://lab:8080/v1/chat/completions" } },
+    });
+    expect((readConfig().connections as Record<string, Dict>).default).not.toHaveProperty("apiKeyFile");
+    expect(normalizeConfigFile(getConfigPath(), { apply: false, resolveFromStore }).changed).toBe(false);
   });
 
   test("an engine's literal key that credentials.json holds a different key for stays on the connection, and is not replaced", () => {

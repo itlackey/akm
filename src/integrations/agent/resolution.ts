@@ -46,7 +46,15 @@ export interface ResolveTargetInput {
 }
 
 /** The keys of a connection that akm reads; every other key is a request field. */
-const CONNECTION_OWNED_KEYS = new Set(["endpoint", "apiKey", "models", "contextLength", "timeoutMs", "concurrency"]);
+const CONNECTION_OWNED_KEYS = new Set([
+  "endpoint",
+  "apiKey",
+  "apiKeyFile",
+  "models",
+  "contextLength",
+  "timeoutMs",
+  "concurrency",
+]);
 
 function present(layer: UnresolvedExecutionDefaults, key: keyof UnresolvedExecutionDefaults): boolean {
   return layer[key] !== undefined;
