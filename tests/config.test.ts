@@ -590,7 +590,7 @@ describe("connections", () => {
     });
     const dropped = warnings.filter((w) => w.includes('connection "cloud"'));
     expect(dropped).toHaveLength(1);
-    expect(dropped[0]).toContain("no endpoint");
+    expect(dropped[0]).toContain("endpoint");
   });
 
   test("setting a field on a connection the reader dropped adds to what the file has, never replaces it", () => {
@@ -615,6 +615,37 @@ describe("connections", () => {
     expect(written.harnesses.work).toEqual({ bin: "/opt/claude", args: ["--print"], platform: "claude" });
     resetConfigCache();
     expect(loadConfig().harnesses?.work).toMatchObject({ platform: "claude", bin: "/opt/claude", args: ["--print"] });
+  });
+
+  test.each([
+    ["an endpoint without a scheme", { connections: { typo: { endpoint: "localhost:11434/v1" }, lab: LAB } }, "typo"],
+    [
+      "a model that is not a name",
+      { connections: { typo: { endpoint: "http://x/v1", models: { fast: 3 } }, lab: LAB } },
+      "typo",
+    ],
+    [
+      "a harness entry that is not an object",
+      { connections: { lab: LAB }, harnesses: { claude: true, codex: {} } },
+      "claude",
+    ],
+    [
+      "harness args that are not a list",
+      { connections: { lab: LAB }, harnesses: { claude: { args: "--x" }, codex: {} } },
+      "claude",
+    ],
+  ])("%s is dropped with one warning naming it; the rest loads", (_name, config, dropped) => {
+    writeCurrentConfig(config);
+    let loaded!: ReturnType<typeof loadConfig>;
+    const warnings = captureWarnings(() => {
+      loaded = loadConfig();
+      resetConfigCache();
+      loadConfig();
+    });
+    expect(warnings.filter((w) => w.includes(`"${dropped}"`) && w.startsWith("Ignoring"))).toHaveLength(1);
+    expect(Object.keys(loaded.connections ?? {})).not.toContain(dropped);
+    expect(Object.keys(loaded.harnesses ?? {})).not.toContain(dropped);
+    expect(Object.keys(loaded.connections ?? {})).toContain("lab");
   });
 
   test("keeps request fields on the connection and on a model entry as written, without warning", () => {
@@ -867,7 +898,7 @@ describe("0.9 config shape parsing", () => {
     const unknownPlatform = captureWarnings(() => {
       expect(Object.keys(loadConfig().harnesses ?? {})).toEqual(["claude"]);
     });
-    expect(unknownPlatform.filter((w) => w.includes('harness "bad"') && w.includes('"invalid-platform"'))).toHaveLength(
+    expect(unknownPlatform.filter((w) => w.includes('harness "bad"') && w.includes("invalid-platform"))).toHaveLength(
       1,
     );
 
@@ -877,7 +908,9 @@ describe("0.9 config shape parsing", () => {
       expect(Object.keys(loaded.harnesses ?? {})).toEqual(["codex"]);
       expect(Object.keys(loaded.connections ?? {})).toEqual(["lab"]);
     });
-    expect(unnamed.filter((w) => w.includes('harness "cursor"') && w.includes("names no platform"))).toHaveLength(1);
+    expect(unnamed.filter((w) => w.includes('harness "cursor"') && w.includes("is not a platform name"))).toHaveLength(
+      1,
+    );
   });
 
   test("opencode-sdk is akm's own runtime, not a platform a harness can name: dropped, with a warning", () => {

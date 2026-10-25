@@ -2,30 +2,31 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { HARNESS_CONFIG_PLATFORMS } from "../../integrations/harnesses";
+import type { ZodError } from "zod";
 import { isRecord } from "../common";
 import { warnOnce } from "../warn";
+import { ConnectionSchema } from "./schema/connections";
+import { HarnessSchema, harnessNameProblem } from "./schema/harnesses";
 
 type Dict = Record<string, unknown>;
 
-/** Why a connection entry cannot be used, if it cannot. */
-function connectionProblem(entry: unknown): string | undefined {
-  if (!isRecord(entry) || typeof entry.endpoint !== "string" || entry.endpoint.trim() === "") {
-    return "it has no endpoint";
-  }
-  return undefined;
+/** The first thing a schema found wrong with an entry, as a sentence fragment. */
+function firstIssue(error: ZodError): string {
+  const issue = error.issues[0];
+  const where = issue?.path.join(".");
+  return `${where ? `${where}: ` : ""}${issue?.message ?? "it is not valid"}`;
 }
 
-/** Why a harness entry cannot be used, if it cannot. */
+/** Why a connection entry cannot be used, if it cannot: its own schema rejects it. */
+function connectionProblem(_name: string, entry: unknown): string | undefined {
+  const parsed = ConnectionSchema.safeParse(entry);
+  return parsed.success ? undefined : firstIssue(parsed.error);
+}
+
+/** Why a harness entry cannot be used, if it cannot: its own schema rejects it, or it names no platform and is not one. */
 function harnessProblem(name: string, entry: unknown): string | undefined {
-  const platforms = HARNESS_CONFIG_PLATFORMS as readonly string[];
-  const platform = isRecord(entry) ? entry.platform : undefined;
-  if (platform !== undefined) {
-    return typeof platform === "string" && platforms.includes(platform)
-      ? undefined
-      : `${JSON.stringify(platform)} is not a platform akm runs (${platforms.join(", ")})`;
-  }
-  return platforms.includes(name) ? undefined : `it names no platform and is not itself one (${platforms.join(", ")})`;
+  const parsed = HarnessSchema.safeParse(entry);
+  return parsed.success ? harnessNameProblem(name, parsed.data) : firstIssue(parsed.error);
 }
 
 function usableEntries(
@@ -51,15 +52,16 @@ function usableEntries(
 }
 
 /**
- * A connection with no endpoint and a harness akm cannot run are of no use, but
- * they are not a reason to refuse the rest of the config (or to disable the
- * entries beside them): each is dropped from what is read, with one warning
- * naming it. The file keeps it, and a write does not remove it.
+ * A connection or harness its own schema rejects (no endpoint, an endpoint that
+ * is not a URL, a model that is not a name, a harness akm cannot run) is of no
+ * use, but it is not a reason to refuse the rest of the config or to disable the
+ * entries beside it: each is dropped from what is read, with one warning naming
+ * it and the first thing wrong. The file keeps it, and a write does not remove it.
  */
 export function dropUnusableEntries(raw: Dict, sourcePath?: string): Dict {
   const out = { ...raw };
   if (raw.connections !== undefined) {
-    out.connections = usableEntries(raw.connections, "connection", (_, entry) => connectionProblem(entry), sourcePath);
+    out.connections = usableEntries(raw.connections, "connection", connectionProblem, sourcePath);
   }
   if (raw.harnesses !== undefined) out.harnesses = usableEntries(raw.harnesses, "harness", harnessProblem, sourcePath);
   return out;

@@ -13,7 +13,7 @@ import { HARNESS_CONFIG_PLATFORMS } from "../../../integrations/harnesses";
 import { timeoutMsField } from "./connections";
 import { engineName, nonEmptyString } from "./primitives";
 
-const HarnessSchema = z
+export const HarnessSchema = z
   .object({
     platform: z.enum(HARNESS_CONFIG_PLATFORMS).optional(),
     bin: nonEmptyString.optional(),
@@ -27,14 +27,16 @@ const HarnessSchema = z
   })
   .passthrough();
 
+/** Why a harness parsed from this entry cannot be run: it names no platform and its name is not one. */
+export function harnessNameProblem(name: string, harness: { platform?: string | undefined }): string | undefined {
+  if (harness.platform !== undefined || (HARNESS_CONFIG_PLATFORMS as readonly string[]).includes(name))
+    return undefined;
+  return `harness "${name}" is not a platform name; set platform to one of ${HARNESS_CONFIG_PLATFORMS.join(", ")}`;
+}
+
 export const HarnessesSchema = z.record(engineName, HarnessSchema).superRefine((harnesses, ctx) => {
   for (const [name, harness] of Object.entries(harnesses)) {
-    if (harness.platform === undefined && !(HARNESS_CONFIG_PLATFORMS as readonly string[]).includes(name)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [name, "platform"],
-        message: `harness "${name}" is not a platform name; set platform to one of ${HARNESS_CONFIG_PLATFORMS.join(", ")}`,
-      });
-    }
+    const message = harnessNameProblem(name, harness);
+    if (message !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [name, "platform"], message });
   }
 });
