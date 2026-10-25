@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import path from "node:path";
-import { setSecret } from "../../src/commands/env/secret";
 import type { EmbeddingConnectionConfig } from "../../src/core/config/config";
+import { writeCredential } from "../../src/core/config/credentials";
 import { setQuiet } from "../../src/core/warn";
 import {
   _setTransformersLoaderForTests,
@@ -135,7 +135,7 @@ describe("remote embed", () => {
     }
   });
 
-  test("resolves a secrets ref apiKey from the store at header-building time (#917)", async () => {
+  test("reads the key stored for the embedding at header-building time when config names none (#917)", async () => {
     const storage = withIsolatedAkmStorage();
     let capturedAuth = "";
     const server = Bun.serve({
@@ -154,13 +154,12 @@ describe("remote embed", () => {
       },
     });
     try {
-      setSecret(path.join(storage.stashDir, "secrets", "embed-key"), Buffer.from("store-secret-value"));
+      writeCredential("embedding", "store-secret-value");
       const config: EmbeddingConnectionConfig = {
         endpoint: `http://localhost:${server.port}`,
         model: "test-model",
-        apiKey: "${secrets/embed-key}",
       };
-      await embed("secret store apiKey header test", config);
+      await embed("stored credential header test", config);
       expect(capturedAuth).toBe("Bearer store-secret-value");
     } finally {
       server.stop(true);

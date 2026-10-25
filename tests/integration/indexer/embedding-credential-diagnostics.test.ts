@@ -4,8 +4,8 @@
 
 /**
  * #953 field gap: a keyless embedding request could not be reproduced in the
- * lab — every `RemoteEmbedder` path already resolves `${secrets/name}` through one
- * boundary. The actionable outcome is a self-diagnosing run: one
+ * lab — every `RemoteEmbedder` path already resolves its key through one
+ * boundary (`$VAR`, else `credentials.json`). The actionable outcome is a self-diagnosing run: one
  * default-level progress line, before the first provider request, naming
  * the endpoint, the model, and the credential SOURCE (never the value), so
  * the next field run can compare it against what the gateway actually saw.
@@ -17,6 +17,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../../src/core/config/config";
+import { writeCredential } from "../../../src/core/config/credentials";
 import { getConfigPath } from "../../../src/core/paths";
 import { resetVerbose, setVerbose } from "../../../src/core/warn";
 import { deriveEntryProvenance, deriveInstallations } from "../../../src/indexer/installations";
@@ -80,23 +81,24 @@ describe("generateEmbeddingsForDb: embedding-credential diagnostics (#953)", () 
       seedOneEntry(db);
       mockEmbedder();
 
+      writeCredential("embedding", "stored-embedding-secret");
+
       const messages: string[] = [];
-      const result = await generateEmbeddingsForDb(db, configWithApiKey("${secrets/lab-api-key}"), (e) =>
-        messages.push(e.message),
-      );
+      const result = await generateEmbeddingsForDb(db, configWithApiKey(undefined), (e) => messages.push(e.message));
       expect(result.success).toBe(true);
 
       const diagnosticIndex = messages.findIndex((m) => m.startsWith("[embed] endpoint "));
       expect(diagnosticIndex).toBeGreaterThanOrEqual(0);
       expect(messages[diagnosticIndex]).toBe(
-        "[embed] endpoint http://localhost:1/embeddings, model test-model; credential: ${secrets/lab-api-key} (store)",
+        "[embed] endpoint http://localhost:1/embeddings, model test-model; credential: credentials.json",
       );
       // Before the first provider request — i.e. before the "Generating
       // embeddings for N ..." line that precedes the actual embedBatch call.
       const generatingIndex = messages.findIndex((m) => m.startsWith("Generating embeddings for"));
       expect(generatingIndex).toBeGreaterThan(diagnosticIndex);
-      // Never the resolved value — only ever the reference shape.
+      // Never the resolved value — only ever where it came from.
       expect(messages[diagnosticIndex]).not.toContain("Bearer");
+      expect(messages[diagnosticIndex]).not.toContain("stored-embedding-secret");
     } finally {
       closeDatabase(db);
     }
@@ -140,7 +142,7 @@ describe("generateEmbeddingsForDb: embedding-credential diagnostics (#953)", () 
       setVerbose(true);
 
       const messages: string[] = [];
-      await generateEmbeddingsForDb(db, configWithApiKey("${secrets/lab-api-key}"), (e) => messages.push(e.message));
+      await generateEmbeddingsForDb(db, configWithApiKey("$LAB_API_KEY"), (e) => messages.push(e.message));
 
       const diagnostic = messages.find((m) => m.startsWith("[embed] endpoint "));
       expect(diagnostic).toContain(`; config: ${getConfigPath()}`);

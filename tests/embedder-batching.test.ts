@@ -15,8 +15,9 @@
  * tests/integration/embedder.test.ts.
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import type { EmbeddingConnectionConfig } from "../src/core/config/config";
+import { deleteCredential, writeCredential } from "../src/core/config/credentials";
 import { EmbeddingConnectionConfigSchema } from "../src/core/config/schema/embedding";
 import { _setWarnSinkForTests } from "../src/core/warn";
 import {
@@ -691,25 +692,23 @@ describe("RemoteEmbedder.embedBatch: stops dispatching after the first onBatch f
 });
 
 describe("describeEmbeddingCredential (#953)", () => {
-  test("undefined/empty apiKey reports 'none configured'", () => {
+  afterEach(() => deleteCredential("embedding"));
+
+  test("undefined/empty apiKey with nothing stored reports 'none configured'", () => {
     expect(describeEmbeddingCredential(undefined)).toBe("none configured");
     expect(describeEmbeddingCredential("")).toBe("none configured");
   });
 
-  test("a secrets ref reference names the reference and its source, never a resolved value", () => {
-    expect(describeEmbeddingCredential("${secrets/lab-api-key}")).toBe("${secrets/lab-api-key} (store)");
+  test("a stored key reports 'credentials.json', never the value", () => {
+    writeCredential("embedding", "sk-super-secret-value-do-not-log");
+    const description = describeEmbeddingCredential(undefined);
+    expect(description).toBe("credentials.json");
+    expect(description).not.toContain("sk-super-secret-value-do-not-log");
   });
 
   test("a $VAR-style reference names the reference and its source", () => {
     expect(describeEmbeddingCredential("$LAB_API_KEY")).toBe("$LAB_API_KEY (env)");
     const braced = "$" + "{LAB_API_KEY}";
     expect(describeEmbeddingCredential(braced)).toBe(`${braced} (env)`);
-  });
-
-  test("a literal key reports only 'literal apiKey' — the value itself is never included", () => {
-    const literal = "sk-super-secret-value-do-not-log";
-    const description = describeEmbeddingCredential(literal);
-    expect(description).toBe("literal apiKey");
-    expect(description).not.toContain(literal);
   });
 });

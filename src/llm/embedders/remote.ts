@@ -1062,14 +1062,14 @@ export function hasRemoteEndpoint(config: EmbeddingConnectionConfig): boolean {
 }
 
 /**
- * Describe WHERE an `embedding.apiKey` came from, never its value — the
- * actionable outcome of the #953 field gap: `resolveSecret` throws on an
- * unresolvable `${ref}` reference, so a keyless request can only mean
- * `embedding.apiKey` was absent from the config the run actually loaded (a
- * different config root, scope, or a config edited after the run started).
- * A default-level progress line naming the credential's SOURCE (this
- * helper), printed once before the first provider request, lets a field run
- * self-diagnose that without ever surfacing the secret itself.
+ * Describe WHERE the embedding key comes from, never its value: the `$VAR`
+ * reference in `embedding.apiKey`, the `embedding` key in `credentials.json`,
+ * or nothing. A keyless request can only mean neither was present in the
+ * config the run actually loaded (a different config root, scope, or a config
+ * edited after the run started). A default-level progress line naming the
+ * credential's SOURCE (this helper), printed once before the first provider
+ * request, lets a field run self-diagnose that without ever surfacing the
+ * secret itself (#953).
  */
 export function describeEmbeddingCredential(apiKey: string | undefined): string {
   if (apiKey) return `${apiKey} (env)`;
