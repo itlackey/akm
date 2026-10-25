@@ -5,5 +5,5 @@
 /** Default agent CLI timeout; null means agents run until they finish. */
 export const DEFAULT_AGENT_TIMEOUT_MS: number | null = null;
 
-/** Default hard timeout for a direct LLM call, and the bound on model work on every runner kind, when no engine/use override exists. */
+/** Default hard timeout for a call on a connection, and for model work on a harness, when neither the request nor the connection's or harness's `timeoutMs` sets one. */
 export const DEFAULT_LLM_TIMEOUT_MS = 600_000;
