@@ -301,15 +301,21 @@ type QualityJudgeChat = (
   options?: ChatCompletionOptions,
 ) => Promise<string>;
 
+/** Whether `improve.qualityGate` sets where the judge runs, or only how. */
+function gateNamesAJudge(gate: object): boolean {
+  return ["connection", "harness", "model", "timeoutMs", "llm"].some((key) => Object.hasOwn(gate, key));
+}
+
 /**
- * The judge a quality gate names for itself (#1011): `improve.qualityGate`'s
+ * The judge of a process's quality gate (#1011): `improve.qualityGate`'s
  * connection or harness, model, timeout and inference over the process's own
- * settings. `undefined` when the strategy turns the gate off or
- * `improve.qualityGate` sets none of them, so the caller keeps its own judge.
- * The judge may be a connection or a harness; a harness that cannot confine
- * the model-work tool policy runs unrestricted, with a notice. Throws when
- * they resolve to nothing at all, before anything is generated: the gate never
- * falls back to another judge.
+ * settings, asking for the `judge` alias when nothing names a model, so a judge
+ * never runs on the model that wrote. `undefined` when the strategy turns the
+ * gate off or no connection or harness is configured, so the caller keeps its
+ * own. The judge may be a connection or a harness; a harness that cannot
+ * confine the model-work tool policy runs unrestricted, with a notice. Throws
+ * when `improve.qualityGate` names a judge that resolves to nothing, before
+ * anything is generated: the gate never falls back to another judge.
  */
 export function resolveQualityGateJudge(
   config: AkmConfig,
@@ -319,21 +325,21 @@ export function resolveQualityGateJudge(
 ): RunnerSpec | undefined {
   if (profile?.processes?.[processName]?.qualityGate?.enabled === false) return undefined;
   const gate = config.improve?.qualityGate;
-  if (!gate || !["connection", "harness", "model", "timeoutMs", "llm"].some((key) => Object.hasOwn(gate, key))) {
-    return undefined;
-  }
   const resolved = resolveImproveExecution({
     config,
     processName: `${processName}-quality-judge`,
     alias: SHIPPED_ALIAS.judge,
     process: processName,
-    current: gate,
+    ...(gate ? { current: gate } : {}),
   });
   if (!resolved) {
-    throw new ConfigError(
-      "The quality gate's judge has no connection or harness. Set improve.qualityGate.connection.",
-      "INVALID_CONFIG_FILE",
-    );
+    if (gate && gateNamesAJudge(gate)) {
+      throw new ConfigError(
+        "The quality gate's judge has no connection or harness. Set improve.qualityGate.connection.",
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    return undefined;
   }
   onNotices?.(resolved.notices);
   return resolved.runner;

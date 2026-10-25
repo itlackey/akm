@@ -1211,22 +1211,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // Judge selection is frozen before dispatch so a missing judge credential fails first.
   const judgeWanted = activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? true;
   let judgeRunner: RunnerSpec | undefined;
-  if (judgeWanted) {
-    const gateJudge = resolveQualityGateJudge(config, activeStrategy, "reflect", notices.add);
-    if (gateJudge) {
-      judgeRunner = gateJudge;
-    } else if (runnerSpec.kind === "connection") {
-      judgeRunner = runnerSpec;
-    } else {
-      const resolved = resolveImproveExecution({
-        config,
-        processName: "reflect_proposal_quality-judge",
-        alias: SHIPPED_ALIAS.judge,
-      });
-      if (resolved) notices.add(resolved.notices);
-      judgeRunner = resolved?.runner;
-    }
-  }
+  if (judgeWanted) judgeRunner = resolveQualityGateJudge(config, activeStrategy, "reflect", notices.add);
   const skippedNoJudge = judgeWanted && !judgeRunner;
   if (skippedNoJudge) {
     warnOnce(

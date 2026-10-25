@@ -9,14 +9,19 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import { prepareCommandInvocation } from "../src/commands/command/command-execution";
 import { resolveStandaloneExtractPlan } from "../src/commands/improve/extract";
 import { resolveImprovePlan } from "../src/commands/improve/improve-strategies";
 import { resolveQualityGateJudge } from "../src/commands/improve/stage";
-import type { AkmConfig } from "../src/core/config/config";
+import { type AkmConfig, loadConfig, resetConfigCache } from "../src/core/config/config";
 import { SHIPPED_ALIAS } from "../src/core/config/model-aliases";
+import { getConfigPath } from "../src/core/paths";
 import { resolveIndexPassExecution } from "../src/llm/index-passes";
 import { asLlmRunner } from "./_helpers/llm-runner";
+
+const EXAMPLES = path.join(import.meta.dir, "fixtures", "config-examples");
 
 const LAB = {
   endpoint: "http://lab:8080/v1",
@@ -63,6 +68,21 @@ describe("the shipped alias per kind of call", () => {
 
     const gated = configOf({ improve: { qualityGate: { connection: "default" } } });
     expect(asLlmRunner(resolveQualityGateJudge(gated, undefined, "reflect")).model).toBe("m-balanced");
+  });
+
+  test("the reflect and distill quality gates judge on balanced whether or not improve.qualityGate is set", () => {
+    const config = configOf();
+    expect(asLlmRunner(resolveQualityGateJudge(config, undefined, "reflect")).model).toBe("m-balanced");
+    expect(asLlmRunner(resolveQualityGateJudge(config, undefined, "distill")).model).toBe("m-balanced");
+  });
+
+  test("on the 1-basic example, loaded from a file, a pass writes on fast and both gate judges run on balanced", () => {
+    fs.writeFileSync(getConfigPath(), fs.readFileSync(path.join(EXAMPLES, "1-basic.jsonc"), "utf8"));
+    resetConfigCache();
+    const config = loadConfig();
+    expect(asLlmRunner(resolveImprovePlan("default", config).processes.reflect.runner).model).toBe("qwen3-8b");
+    expect(asLlmRunner(resolveQualityGateJudge(config, undefined, "reflect")).model).toBe("qwen3-32b");
+    expect(asLlmRunner(resolveQualityGateJudge(config, undefined, "distill")).model).toBe("qwen3-32b");
   });
 
   test("extract and the index passes ask for fast", () => {

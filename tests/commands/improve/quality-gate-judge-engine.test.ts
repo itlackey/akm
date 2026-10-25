@@ -65,9 +65,16 @@ function gated(
 }
 
 describe("resolveQualityGateJudge (#1011)", () => {
-  test("a gate that names no judge leaves the caller's judge in place", () => {
-    expect(resolveQualityGateJudge(config(), undefined, "reflect")).toBeUndefined();
-    expect(resolveQualityGateJudge(gated({}), undefined, "reflect")).toBeUndefined();
+  test("a gate that names no judge still resolves one: the default connection, asking for the judge alias", () => {
+    for (const cfg of [config(), gated({})]) {
+      const runner = resolveQualityGateJudge(cfg, undefined, "reflect");
+      expect(runner?.name).toBe("default");
+      expect(asLlmRunner(runner).model).toBe("gen-model");
+    }
+  });
+
+  test("with no connection or harness configured there is no judge, and no error", () => {
+    expect(resolveQualityGateJudge({ semanticSearchMode: "off" } as AkmConfig, undefined, "reflect")).toBeUndefined();
   });
 
   test("improve.qualityGate.connection selects that connection for the judge", () => {
