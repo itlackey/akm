@@ -584,7 +584,7 @@ metadata placed before body content.
 
 ## Semantic search
 
-`semanticSearchMode` (top-level, `"off" | "auto"`, default `"off"`) gates
+`semanticSearchMode` (top-level, `"off" | "auto"`, default `"off"`, or `"auto"` when `embedding` is set) gates
 embedding-based search. `"auto"` lets AKM set up embeddings (which downloads
 a local model unless you point `embedding` at a remote provider) and falls
 back to keyword-only FTS if the embedding runtime is unavailable; `"off"`
@@ -602,7 +602,8 @@ or configure a remote `embedding.endpoint`. Setup does not mutate a global
 installation to add runtime packages.
 The default is `"off"` so a bare or headless install (`akm bundle create`, `--yes`,
 `--config`) never silently downloads the local embedding model on first
-index.
+index. A config that has an `embedding` block and sets no `semanticSearchMode`
+reads as `"auto"`: writing the block says semantic search is wanted.
 The interactive `akm setup` wizard pre-selects semantic search **on**
 regardless of this default, and warns that choosing it downloads the model
 unless a remote `embedding` config is provided.

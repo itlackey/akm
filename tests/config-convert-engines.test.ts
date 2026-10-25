@@ -941,6 +941,19 @@ describe("the example configs load unchanged and validate", () => {
     expect(unknownConfigKeyPaths({ configVersion: "0.9.0", ...raw })).toEqual([]);
   });
 
+  test.each([
+    ["1-basic", "off"],
+    ["2-harness", "auto"],
+    ["3-power", "auto"],
+  ] as const)("%s.jsonc, loaded as written, reads semantic search as %s", (name, mode) => {
+    // The examples carry no semanticSearchMode: an `embedding` block alone says semantic search is wanted.
+    fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
+    fs.copyFileSync(path.join(examples, `${name}.jsonc`), getConfigPath());
+    resetConfigCache();
+    expect(loadConfig().semanticSearchMode).toBe(mode);
+    resetConfigCache();
+  });
+
   test("3-power.jsonc, loaded from a file: triage judges on the anthropic connection's reasoning model, the quality gate on anthropic's balanced one", () => {
     const raw = JSON.parse(stripJsonComments(fs.readFileSync(path.join(examples, "3-power.jsonc"), "utf8"))) as Dict;
     const improve = raw.improve as Dict;

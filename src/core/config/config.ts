@@ -316,7 +316,12 @@ function readConfigVersion(raw: Record<string, unknown>, sourcePath?: string): R
  * keeps around, instead of only getting the final merged `AkmConfig` back.
  */
 function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePath?: string): AkmConfig {
-  const withExtends = dropUnusableEntries(resolveExtendsChain(liftedLocalRaw, sourcePath), sourcePath);
+  const chained = dropUnusableEntries(resolveExtendsChain(liftedLocalRaw, sourcePath), sourcePath);
+  // Writing an `embedding` block says semantic search is wanted: a config that names no mode reads as "auto".
+  const withExtends =
+    chained.embedding !== undefined && chained.semanticSearchMode === undefined
+      ? { ...chained, semanticSearchMode: "auto" }
+      : chained;
 
   const where = sourcePath ? ` at ${sourcePath}` : "";
   warnUnknownConfigKeys(liftedLocalRaw, sourcePath);

@@ -151,6 +151,24 @@ describe("loadConfig", () => {
     expect(loadConfig().semanticSearchMode).toBe("off");
   });
 
+  test("an embedding block with no semanticSearchMode reads as 'auto': writing it says semantic search is wanted", () => {
+    writeCurrentConfig({
+      connections: { default: { endpoint: "http://localhost:11434/v1", models: { fast: "qwen3-8b" } } },
+      embedding: { model: "nomic-embed-text" },
+    });
+    expect(loadConfig().semanticSearchMode).toBe("auto");
+  });
+
+  test("an embedding block does not override a semanticSearchMode the config sets", () => {
+    writeCurrentConfig({ semanticSearchMode: "off", embedding: { model: "nomic-embed-text" } });
+    expect(loadConfig().semanticSearchMode).toBe("off");
+  });
+
+  test("without an embedding block the mode stays 'off'", () => {
+    writeCurrentConfig({ connections: { default: { endpoint: "http://localhost:11434/v1", models: { fast: "m" } } } });
+    expect(loadConfig().semanticSearchMode).toBe("off");
+  });
+
   test("loads config without requiring AKM_BUNDLE_DIR", () => {
     delete process.env.AKM_BUNDLE_DIR;
     writeCurrentConfig({ semanticSearchMode: "off" });
