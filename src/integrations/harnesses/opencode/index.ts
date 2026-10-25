@@ -26,17 +26,22 @@ import type { SessionLogHarness } from "../../session-logs/types";
 import type { AkmHarness } from "../harness";
 import { opencodeBuilder } from "./agent-builder";
 import { OpenCodeProvider } from "./session-log";
-import { detectOpencodeMajor } from "./version";
+import { isOpencode2 } from "./version";
 
 export { opencodeBuilder } from "./agent-builder";
 export { OpenCodeProvider } from "./session-log";
 
 /**
  * The names an `opencode` process reads beyond the common baseline: its API key
- * (OpenCode Go and Zen read `OPENCODE_API_KEY`), the config file it is pointed
- * at, and the XDG base directories.
+ * (OpenCode Go and Zen read `OPENCODE_API_KEY`), the config file and directory it
+ * is pointed at, and the XDG base directories.
  */
-const OPENCODE_ENV_PASSTHROUGH = ["OPENCODE_API_KEY", "OPENCODE_CONFIG", ...XDG_BASE_DIR_ENV_PASSTHROUGH] as const;
+const OPENCODE_ENV_PASSTHROUGH = [
+  "OPENCODE_API_KEY",
+  "OPENCODE_CONFIG",
+  "OPENCODE_CONFIG_DIR",
+  ...XDG_BASE_DIR_ENV_PASSTHROUGH,
+] as const;
 
 /**
  * OpenCode.
@@ -57,8 +62,9 @@ export class OpencodeHarness implements AkmHarness {
   readonly sessionLogProvider = (): SessionLogHarness => new OpenCodeProvider();
   readonly systemPrompt = false;
   readonly nativeAgent = true;
-  // Model work is confined (read-only) on OpenCode 2 only; OpenCode 1 runs it unrestricted, with a warning.
+  // Model work is confined (read-only) on OpenCode 2 only: its CLI takes an agent defined inline for the run
+  // (./agent-builder.ts), OpenCode 1's cannot be restricted and runs it unrestricted, with a warning.
   // Lowering asks for the confined run either way; setup asks whether the installed OpenCode can give it.
   readonly confinable = true;
-  readonly confinableInstalled = () => (detectOpencodeMajor(this.profile.bin).reportedMajor ?? 0) >= 2;
+  readonly confinableInstalled = () => isOpencode2(this.profile.bin);
 }

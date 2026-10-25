@@ -8,11 +8,21 @@
  * work; the env names it passes through; and the authored args it tolerates. No
  * real binary runs: `build` only turns a request into a command.
  */
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { getHarness, HARNESS_REGISTRY } from "../../src/integrations/harnesses";
 import type { AgentDispatchRequest, BuiltCommand } from "../../src/integrations/harnesses/harness";
+import { fakeOpencodeMajor, withOpencodeOnPath } from "../_helpers/opencode-version";
+import { overrideSeam } from "../_helpers/seams";
 
 const PROMPT = "do work";
+
+// The opencode shell asks the binary's major which flags to pass. OpenCode 1 is pinned for the table below; OpenCode 2
+// has its own cases further down, through a fake `opencode` on PATH.
+beforeEach(() => fakeOpencodeMajor(1));
+
+/** Set on every opencode run: with no usable provider OpenCode 2 would otherwise use its hosted free model. */
+const NO_FREE_MODELS = { OPENCODE_DISABLE_FREE_MODELS: "1" };
 
 interface Shell {
   /** The command for `PROMPT`. */
@@ -91,12 +101,12 @@ const SHELLS: Record<string, Shell> = {
     model: { argv: ["openhands", "--headless", `--task=${PROMPT}`], env: { LLM_MODEL: "m-1" } },
     passthrough: ["LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL"],
   },
-  // The OpenCode 1 CLI transport; OpenCode 2 runs embedded and builds no command.
+  // OpenCode 1's command (pinned above); OpenCode 2's flags are under "opencode by major".
   opencode: {
-    headless: { argv: ["opencode", "run"], stdin: PROMPT },
+    headless: { argv: ["opencode", "run"], stdin: PROMPT, env: NO_FREE_MODELS },
     interactive: { argv: ["opencode"] },
-    model: { argv: ["opencode", "run", "--model", "m-1"], stdin: PROMPT },
-    passthrough: ["OPENCODE_API_KEY", "OPENCODE_CONFIG", "XDG_CONFIG_HOME", "XDG_DATA_HOME"],
+    model: { argv: ["opencode", "run", "--model", "m-1"], stdin: PROMPT, env: NO_FREE_MODELS },
+    passthrough: ["OPENCODE_API_KEY", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME"],
     modelFlag: true,
   },
 };
@@ -259,8 +269,97 @@ describe("model work", () => {
     ]);
   });
 
+  test("opencode on OpenCode 1: unrestricted, in the scratch directory dispatch makes, with one warning; the config's args left out, their model kept", () => {
+    _resetWarnOnceForTests();
+    const warnings: string[] = [];
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    const authored = ["run", "--agent", "build", "--attach", "http://elsewhere", "--model", "from-args"];
+    const built = build("opencode", { prompt: PROMPT, modelWork: true }, authored);
+    expect(built).toEqual({ argv: ["opencode", "run", "--model", "from-args"], env: NO_FREE_MODELS, stdin: PROMPT });
+    expect(build("opencode", { prompt: PROMPT, modelWork: true, model: "m-1" }, authored).argv).toEqual([
+      "opencode",
+      "run",
+      "--model",
+      "m-1",
+    ]);
+    expect(warnings.filter((line) => line.includes("OpenCode 1 cannot restrict"))).toHaveLength(1);
+  });
+
   test("a harness akm cannot confine says so: it is not confinable, so it runs the request as given", () => {
     expect(HARNESS_REGISTRY.filter((h) => h.confinable).map((h) => h.id)).toEqual(["opencode", "claude", "codex"]);
     expect(build("gemini", { prompt: PROMPT, modelWork: true }).argv).toEqual(["gemini", "-p", PROMPT]);
+  });
+});
+
+describe("opencode by major", () => {
+  // Through a fake `opencode` on PATH that reports the major, so the real version probe decides.
+  const STANDALONE = ["--standalone", "--title", "akm"];
+
+  test("OpenCode 2 runs one process, titled, with the prompt on stdin", async () => {
+    await withOpencodeOnPath(2, async () => {
+      expect(build("opencode", { prompt: PROMPT })).toEqual({
+        argv: ["opencode", "run", ...STANDALONE],
+        env: NO_FREE_MODELS,
+        stdin: PROMPT,
+      });
+      const named = build("opencode", { prompt: PROMPT, agent: "reviewer", model: "p/m" }, ["run", "--model", "old"]);
+      expect(named).toEqual({
+        argv: ["opencode", "run", ...STANDALONE, "--agent", "reviewer", "--model", "p/m"],
+        env: NO_FREE_MODELS,
+        stdin: PROMPT,
+      });
+    });
+  });
+
+  test("OpenCode 2 model work runs as the read-only agent defined inline, never the config's args or agent", async () => {
+    await withOpencodeOnPath(2, async () => {
+      const authored = ["run", "--agent", "build", "--attach", "http://elsewhere", "--model", "from-args"];
+      const built = build("opencode", { prompt: PROMPT, modelWork: true }, authored);
+      expect(built.argv).toEqual([
+        "opencode",
+        "run",
+        ...STANDALONE,
+        "--agent",
+        "akm-model-work",
+        "--model",
+        "from-args",
+      ]);
+      expect(built.stdin).toBe(PROMPT);
+      expect(built.env).toMatchObject(NO_FREE_MODELS);
+      // The agent is passed with the run and merges over the user's config; it is written nowhere.
+      expect(JSON.parse(built.env?.OPENCODE_CONFIG_CONTENT ?? "")).toEqual({
+        agent: {
+          "akm-model-work": {
+            mode: "primary",
+            permission: {
+              edit: "deny",
+              write: "deny",
+              bash: "deny",
+              task: "deny",
+              webfetch: "deny",
+              execute: "deny",
+              websearch: "deny",
+              question: "deny",
+            },
+          },
+        },
+      });
+      expect(build("opencode", { prompt: PROMPT, modelWork: true, model: "m-1" }, authored).argv).toEqual([
+        "opencode",
+        "run",
+        ...STANDALONE,
+        "--agent",
+        "akm-model-work",
+        "--model",
+        "m-1",
+      ]);
+    });
+  });
+
+  test("a binary whose version cannot be read gets OpenCode 1's command", () => {
+    fakeOpencodeMajor(() => undefined);
+    expect(build("opencode", { prompt: PROMPT }).argv).toEqual(["opencode", "run"]);
   });
 });

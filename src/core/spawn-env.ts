@@ -33,9 +33,7 @@ import path from "node:path";
  * `COMMON_PASSTHROUGH` (`integrations/agent/profiles.ts`) and the workflow
  * exec unit's `EXEC_DEFAULT_ENV_PASSTHROUGH` (`workflows/exec/exec-unit.ts`)
  * — so a baseline name cannot drift into one child-spawn path but not the
- * other. NOTE: profile `envPassthrough` is frozen into workflow engine
- * snapshots, so growing this list changes frozen-plan content — extend
- * deliberately.
+ * other. Every such child gets these names, so extend deliberately.
  */
 export const COMMON_SPAWN_ENV_PASSTHROUGH = [
   "HOME",
@@ -55,15 +53,11 @@ export const COMMON_SPAWN_ENV_PASSTHROUGH = [
  * `$HOME/.config/opencode` and misses the provider config its caller named.
  *
  * Deliberately NOT part of {@link COMMON_SPAWN_ENV_PASSTHROUGH}, which is every
- * harness's baseline, the workflow exec unit's default allowlist (a documented
- * list) and, through profile `envPassthrough`, frozen into workflow plans.
- * codex, gemini and pi keep their own dotdirs under `$HOME`, and handing the
- * names to a shell command would redirect the `git` and `gh` config it reads. A
- * harness that reads them asks for them by name, as the opencode profile does.
- *
- * A name added to a profile's list changes the plans frozen after it (their
- * bytes, so their `plan_hash`); a stored plan keeps the list it was frozen with
- * and still resumes, because nothing gates on that hash.
+ * harness's baseline and the workflow exec unit's default allowlist (a
+ * documented list). codex, gemini and pi keep their own dotdirs under `$HOME`,
+ * and handing the names to a shell command would redirect the `git` and `gh`
+ * config it reads. A harness that reads them asks for them by name, as the
+ * opencode profile does.
  */
 export const XDG_BASE_DIR_ENV_PASSTHROUGH = [
   "XDG_CONFIG_HOME",
@@ -75,10 +69,8 @@ export const XDG_BASE_DIR_ENV_PASSTHROUGH = [
 /**
  * The names Windows itself requires of ANY child, whatever the caller's
  * allowlist says. Applied at build time rather than added to
- * {@link COMMON_SPAWN_ENV_PASSTHROUGH} because profile `envPassthrough` is
- * frozen into workflow engine snapshots: growing the shared list would change
- * the bytes — and so the hashes — of every plan already on disk, to express
- * something that is not a policy choice at all.
+ * {@link COMMON_SPAWN_ENV_PASSTHROUGH} because they express what the operating
+ * system needs of a child, which is not a policy choice at all.
  *
  * `SystemRoot`, `SystemDrive` and `WINDIR` are what PROCESS CREATION reads;
  * without them the loader cannot find system DLLs and the spawn fails before

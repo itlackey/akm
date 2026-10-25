@@ -242,10 +242,11 @@ describe("runExecution redacts what the child could have seen", () => {
     expect(JSON.stringify(viaConnection)).toContain(values.binding);
   });
 
-  // The XDG directories are paths, like HOME and TMPDIR: an opencode child that echoes the config
-  // directory it read (in an error, say) must not have it scrubbed to [REDACTED].
-  test("not the XDG base directories an opencode child was given", async () => {
+  // The XDG directories and OPENCODE_CONFIG_DIR are paths, like HOME and TMPDIR: an opencode child that echoes the
+  // config directory it read (in an error, say) must not have it scrubbed to [REDACTED].
+  test("not the directories an opencode child was given", async () => {
     const directories = {
+      OPENCODE_CONFIG_DIR: "/sandbox/opencode-config",
       XDG_CONFIG_HOME: "/sandbox/xdg-config",
       XDG_DATA_HOME: "/sandbox/xdg-data",
       XDG_CACHE_HOME: "/sandbox/xdg-cache",

@@ -22,6 +22,7 @@ import { buildExecution, resolveExecution } from "../../src/integrations/agent/e
 import type { HarnessRunner } from "../../src/integrations/agent/runner";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
 import { HARNESS_REGISTRY } from "../../src/integrations/harnesses";
+import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 
 let root: string;
 
@@ -37,12 +38,14 @@ afterEach(() => {
 const RESTRICTION: Record<string, string> = {
   claude: '*" --restricted "*" --tools Read,Bash "*" --permission-mode dontAsk "*',
   codex: '*" --sandbox read-only "*',
+  opencode: '*" --agent akm-model-work "*',
 };
 
 /** Arguments a user could author on the harness that would widen what it may do. */
 const WIDENING_ARGS: Record<string, readonly string[]> = {
   claude: ["--add-dir", "/", "--allowedTools", "Edit", "--permission-mode", "bypassPermissions"],
   codex: ["--sandbox", "danger-full-access"],
+  opencode: ["run", "--agent", "build", "--attach", "http://elsewhere"],
 };
 
 interface Stub {
@@ -54,6 +57,8 @@ interface Stub {
 }
 
 function stubFor(platform: string): Stub {
+  // OpenCode's builder asks the binary its major; the stub answers 2, the one that can be confined.
+  if (platform === "opencode") fakeOpencodeMajor(2);
   const dir = path.join(root, platform);
   fs.mkdirSync(dir);
   const outside = path.join(dir, "outside.txt");
@@ -122,6 +127,6 @@ describe("model work on a CLI harness advertised as confinable", () => {
     const advertised = HARNESS_REGISTRY.filter((harness) => harness.confinable)
       .map((harness) => harness.id)
       .sort();
-    expect(advertised).toEqual([...stubbed, "opencode"].sort());
+    expect(advertised).toEqual([...stubbed].sort());
   });
 });

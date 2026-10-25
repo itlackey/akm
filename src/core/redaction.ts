@@ -18,6 +18,7 @@ const ENV_PASSTHROUGH_REDACTION_POLICY = {
   TMP: "path",
   AKM_EVENT_SOURCE: "identifier",
   OPENCODE_CONFIG: "path",
+  OPENCODE_CONFIG_DIR: "path",
   CLAUDE_CONFIG_DIR: "path",
   CODEX_HOME: "path",
   XDG_CONFIG_HOME: "path",

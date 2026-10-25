@@ -118,3 +118,8 @@ export function detectOpencodeMajor(bin: string, options: DetectOptions = {}): O
   detected.set(path, info);
   return info;
 }
+
+/** Whether `bin` is OpenCode 2 or later: its CLI takes the flags the builder passes. A binary whose version cannot be read counts as OpenCode 1. */
+export function isOpencode2(bin: string): boolean {
+  return (detectOpencodeMajor(bin).reportedMajor ?? 0) >= 2;
+}
