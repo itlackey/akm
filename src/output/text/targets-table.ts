@@ -44,7 +44,7 @@ function notes(row: Row): string {
   return parts.filter(Boolean).join("; ");
 }
 
-/** A column: its header, its cell, and whether it shows only when some row has the field (reachability not asked, no usage looked up). */
+/** A column: its header, its cell, and whether it shows only when some row has the field (reachability not asked, no version read). */
 interface Column {
   readonly header: string;
   readonly cell: (row: Row) => string;
@@ -57,7 +57,6 @@ const CONNECTION_COLUMNS: readonly Column[] = [
   { header: "ENDPOINT", cell: (row) => text(row.endpoint) },
   { header: "KEY", cell: (row) => text(row.key) },
   { header: "REACHABLE", cell: reachable, field: "reachable" },
-  { header: "LAST USED", cell: (row) => text(row.lastUsedAt), field: "lastUsedAt" },
 ];
 
 const HARNESS_COLUMNS: readonly Column[] = [
@@ -66,7 +65,6 @@ const HARNESS_COLUMNS: readonly Column[] = [
   { header: "PLATFORM", cell: (row) => text(row.platform) },
   { header: "INSTALLED", cell: (row) => yesNo(row.installed) },
   { header: "VERSION", cell: (row) => text(row.version), field: "version" },
-  { header: "LAST USED", cell: (row) => text(row.lastUsedAt), field: "lastUsedAt" },
 ];
 
 const WORK_COLUMNS: readonly Column[] = [

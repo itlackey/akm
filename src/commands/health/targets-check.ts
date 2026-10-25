@@ -15,7 +15,6 @@ import { defaultWhich, type WhichFn } from "../../integrations/agent/detect";
 import { resolveTarget } from "../../integrations/agent/resolution";
 import { type ChatCompletionConfig, probeEndpointOnce } from "../../llm/client";
 import { type TargetRow, targetRows } from "../targets";
-import type { EngineLastUsed } from "./engine-usage";
 import type { HealthCheckResult } from "./types";
 
 export interface ReachabilityResult {
@@ -31,8 +30,6 @@ export interface TargetsCheckDependencies {
   spawnSync?: typeof spawnSync;
   which?: WhichFn;
   env?: NodeJS.ProcessEnv;
-  /** The last recorded call of each connection or harness. */
-  lastUsed?: ReadonlyMap<string, EngineLastUsed>;
 }
 
 const VERSION_TIMEOUT_MS = 5_000;
@@ -114,7 +111,6 @@ export async function runTargetsCheck(deps: TargetsCheckDependencies = {}): Prom
     which,
     ...(reachability ? { reachability } : {}),
     versions: harnessVersions(config, which, deps.spawnSync ?? spawnSync),
-    ...(deps.lastUsed ? { lastUsed: new Map([...deps.lastUsed].map(([name, used]) => [name, used.lastUsedAt])) } : {}),
   });
   return targetsCheck(rows, reachability !== undefined);
 }

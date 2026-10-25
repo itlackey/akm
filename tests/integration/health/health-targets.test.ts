@@ -4,15 +4,12 @@
 
 /**
  * The `targets` table as `akm health` and `akm info` emit it: the same rows in
- * the JSON of both, the last recorded call of each connection read from the real
- * `llm_usage` events, and the text rendering. `akm info` contacts nothing.
+ * the JSON of both, and the text rendering. `akm info` contacts nothing.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { akmHealth } from "../../../src/commands/health";
-import { ENGINE_LAST_USED_LOOKBACK_DAYS } from "../../../src/commands/health/engine-usage";
 import { runTargetsCheck } from "../../../src/commands/health/targets-check";
-import { appendEvent } from "../../../src/core/events";
 import { probeLlmEndpoint } from "../../../src/llm/client";
 import { runCliCapture } from "../../_helpers/cli";
 import {
@@ -41,13 +38,6 @@ const targetRowsOf = async (since = "7d"): Promise<Row[]> => {
   return (result.hardChecks.find((check) => check.name === "targets")?.evidence?.rows as Row[]) ?? [];
 };
 
-/** An `llm_usage` event for `engine`, `daysAgo` days in the past. */
-function seedLlmUsage(engine: string, daysAgo: number): string {
-  const ts = Date.now() - daysAgo * 24 * 60 * 60_000;
-  appendEvent({ eventType: "llm_usage", metadata: { engine, process: "reflect", durationMs: 500 } }, { now: () => ts });
-  return new Date(ts).toISOString();
-}
-
 describe("the targets table in akm health", () => {
   test("its rows carry exactly the documented fields", async () => {
     const rows = await targetRowsOf();
@@ -57,7 +47,6 @@ describe("the targets table in akm health", () => {
       default: true,
       endpoint: "http://localhost:11434/v1",
       key: "none",
-      lastUsedAt: null,
     });
     expect(rows.slice(1).map((row) => Object.keys(row).sort())).toEqual(
       rows.slice(1).map(() => ["kind", "model", "process", "target", "type"]),
@@ -69,16 +58,6 @@ describe("the targets table in akm health", () => {
       target: "default",
       model: "small",
     });
-  });
-
-  test("a connection's last recorded call is read from llm_usage, inside the lookback window only", async () => {
-    const recent = seedLlmUsage("default", 2);
-    expect((await targetRowsOf())[0]).toMatchObject({ name: "default", lastUsedAt: recent });
-  });
-
-  test("a call older than the lookback window does not count", async () => {
-    seedLlmUsage("default", ENGINE_LAST_USED_LOOKBACK_DAYS + 5);
-    expect((await targetRowsOf())[0]).toMatchObject({ lastUsedAt: null });
   });
 
   test("the text format always shows the table, brief or not", async () => {
@@ -108,7 +87,7 @@ describe("the targets table in akm info", () => {
       endpoint: "http://localhost:11434/v1",
       key: "none",
     });
-    expect(rows).toEqual((await targetRowsOf()).map((row) => ("lastUsedAt" in row ? withoutLastUsed(row) : row)));
+    expect(rows).toEqual(await targetRowsOf());
   });
 
   test("the text format prints the three tables", async () => {
@@ -118,11 +97,6 @@ describe("the targets table in akm info", () => {
     expect(stdout).toContain("agents         connection default  mid");
   });
 });
-
-function withoutLastUsed(row: Row): Row {
-  const { lastUsedAt: _lastUsedAt, ...rest } = row;
-  return rest;
-}
 
 describe("the targets check over HTTP", () => {
   test("a loopback endpoint that answers is reachable; a closed port is not, and says why", async () => {

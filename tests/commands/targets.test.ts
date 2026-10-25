@@ -96,7 +96,7 @@ describe("connection rows", () => {
     expect(endpoint).not.toContain("abc");
   });
 
-  test("reachability, and the last recorded call, appear only when the caller supplies them", () => {
+  test("reachability appears only when the caller supplies it", () => {
     const config = cfg({
       connections: { a: { endpoint: "http://a/v1", models: MODELS }, b: { endpoint: "http://b/v1", models: MODELS } },
     });
@@ -105,12 +105,10 @@ describe("connection rows", () => {
         ["a", { reachable: true }],
         ["b", { reachable: false, error: "connection refused" }],
       ]),
-      lastUsed: new Map([["a", "2026-10-20T00:00:00.000Z"]]),
     });
-    expect(connection(all, "a")).toMatchObject({ reachable: true, lastUsedAt: "2026-10-20T00:00:00.000Z" });
-    expect(connection(all, "b")).toMatchObject({ reachable: false, error: "connection refused", lastUsedAt: null });
+    expect(connection(all, "a")).toMatchObject({ reachable: true });
+    expect(connection(all, "b")).toMatchObject({ reachable: false, error: "connection refused" });
     expect(connection(rows(config), "a")).not.toHaveProperty("reachable");
-    expect(connection(rows(config), "a")).not.toHaveProperty("lastUsedAt");
   });
 });
 

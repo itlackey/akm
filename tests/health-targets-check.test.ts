@@ -157,16 +157,6 @@ describe("runTargetsCheck", () => {
     expect(result.status).toBe("warn");
     expect(result.message).toContain('improve: Connection "default" lists no models');
   });
-
-  test("each connection's last recorded call rides along", async () => {
-    const result = await runTargetsCheck({
-      loadConfig: () => config,
-      lastUsed: new Map([["default", { lastUsedAt: "2026-10-20T00:00:00.000Z", process: "reflect" }]]),
-      which: onPath("claude"),
-    });
-    expect(rowsOf(result)[0]).toMatchObject({ lastUsedAt: "2026-10-20T00:00:00.000Z" });
-    expect(rowsOf(result)[1]).toMatchObject({ lastUsedAt: null });
-  });
 });
 
 describe("the health-check registry", () => {

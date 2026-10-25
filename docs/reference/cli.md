@@ -425,8 +425,7 @@ The rows are in `evidence.rows`, each typed `connection`, `harness` or `process`
 the text format always prints them. It is a `warn` when a key variable is unset,
 an endpoint does not answer (skipped by `--no-probe`), a harness is not
 installed, or the config leaves a kind of work unresolvable, and `unknown` when
-nothing is configured. Each connection and harness row also carries `lastUsedAt`,
-its last recorded `llm_usage` call in the past 30 days (independent of `--since`).
+nothing is configured.
 
 `cli-version` compares the installed akm-cli version against the latest
 GitHub release — the same source `akm upgrade` trusts — and `warn`s with the

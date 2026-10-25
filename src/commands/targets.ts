@@ -46,8 +46,6 @@ export interface ConnectionRow {
   /** Whether the endpoint answered; absent when it was not asked. */
   readonly reachable?: boolean;
   readonly error?: string;
-  /** The last recorded call, ISO; `null` when none in the window; absent when not looked up. */
-  readonly lastUsedAt?: string | null;
 }
 
 export interface HarnessRow {
@@ -59,7 +57,6 @@ export interface HarnessRow {
   readonly installed: boolean;
   /** What `--version` printed; absent when it was not asked or nothing came back. */
   readonly version?: string;
-  readonly lastUsedAt?: string | null;
 }
 
 /** The kind of work a process row is about. */
@@ -96,8 +93,6 @@ export interface TargetsInput {
   readonly reachability?: ReadonlyMap<string, { reachable: boolean; error?: string }>;
   /** Per harness name: its `--version` output. */
   readonly versions?: ReadonlyMap<string, string | undefined>;
-  /** Per connection or harness name: its last recorded call. */
-  readonly lastUsed?: ReadonlyMap<string, string>;
 }
 
 function keyState(connection: ConnectionConfig, name: string, env: NodeJS.ProcessEnv): KeyState {
@@ -118,7 +113,6 @@ function connectionRows(input: TargetsInput): ConnectionRow[] {
       endpoint: redactUrlCredentials(connection.endpoint),
       key: keyState(connection, name, input.env ?? process.env),
       ...(reach ? { reachable: reach.reachable, ...(reach.error ? { error: reach.error } : {}) } : {}),
-      ...(input.lastUsed ? { lastUsedAt: input.lastUsed.get(name) ?? null } : {}),
     };
   });
 }
@@ -147,7 +141,6 @@ function harnessRows(input: TargetsInput): HarnessRow[] {
       platform: harness.platform ?? name,
       installed: Boolean(which(harnessBin(config, name, harness))),
       ...(version ? { version } : {}),
-      ...(input.lastUsed ? { lastUsedAt: input.lastUsed.get(name) ?? null } : {}),
     };
   });
 }

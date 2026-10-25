@@ -36,7 +36,6 @@ import {
 import { collectConfigSkewAdvisory } from "./health/config-skew";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
 import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
-import { readLastEngineUsage } from "./health/engine-usage";
 import { emptyImproveMetrics, roundRate } from "./health/improve-metrics";
 import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usage";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
@@ -709,11 +708,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
   try {
     const { windowResults, deltas } = resolveWindowComparePhase(options, db, stateDbPath, now);
     // Network probes overlap the local database phases below; awaited where consumed.
-    // Each connection or harness's last recorded call (a fixed lookback, independent of `--since`) rides along in the table.
-    const targetsPromise = runTargetsCheck({
-      probeReachable: options.probe ? probeLlmEndpoint : undefined,
-      lastUsed: readLastEngineUsage(stateDbPath, now, readOnly),
-    });
+    const targetsPromise = runTargetsCheck({ probeReachable: options.probe ? probeLlmEndpoint : undefined });
     targetsPromise.catch(() => undefined);
     // #950: same best-effort, --probe-gated discipline as targetsPromise
     // above — started here, alongside it, and awaited later.
