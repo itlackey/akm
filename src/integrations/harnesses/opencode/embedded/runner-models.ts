@@ -49,8 +49,19 @@ export function runnerModel(connection: ChatCompletionConfig): RunnerModel {
   };
 }
 
-/** How OpenCode names the AI SDK package an OpenAI-compatible endpoint is reached with. */
-const OPENAI_COMPATIBLE_PACKAGE = "aisdk:@ai-sdk/openai-compatible";
+/**
+ * The AI SDK package an OpenAI-compatible endpoint is reached with, as OpenCode
+ * names it. OpenCode loads a `file://` package as it is and installs any other
+ * from the npm registry on first use, so it is given akm's own installed copy. A
+ * compiled akm binary has no installed copy to point at, and OpenCode installs it.
+ */
+const OPENAI_COMPATIBLE_PACKAGE = (() => {
+  try {
+    return `aisdk:${import.meta.resolve("@ai-sdk/openai-compatible")}`;
+  } catch {
+    return "aisdk:@ai-sdk/openai-compatible";
+  }
+})();
 
 /** OpenCode's own assumptions for a model that states no limit. */
 const DEFAULT_LIMIT = { context: 200_000, output: 32_000 };

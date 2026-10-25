@@ -15,7 +15,7 @@ import path from "node:path";
 import type { Plugin } from "@opencode/plugin";
 import { OpenCode } from "@opencode/sdk";
 import { resetConfigCache } from "../../src/core/config/config";
-import { getConfigDir, getDataDir } from "../../src/core/paths";
+import { getCacheDir, getConfigDir, getDataDir } from "../../src/core/paths";
 import { runtimeProfile } from "../../src/integrations/agent/profiles";
 import {
   _setOpencodeHostFactoryForTests,
@@ -493,5 +493,11 @@ describe("what akm replaces in the embedded OpenCode", () => {
     expect((await run("MODE:answer roots")).ok).toBe(true);
     expect(xdg.map(tree)).toEqual(before);
     expect(fs.existsSync(path.join(getDataDir(), "opencode", "repos"))).toBe(true);
+  });
+
+  // OpenCode installs an AI SDK package it is not given from the npm registry, into its cache, on first use.
+  test("a run reaches its endpoint with akm's own AI SDK package: OpenCode installs nothing", async () => {
+    expect((await run("MODE:answer package")).ok).toBe(true);
+    expect(fs.existsSync(path.join(getCacheDir(), "opencode", "npm"))).toBe(false);
   });
 });
