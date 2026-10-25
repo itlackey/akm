@@ -12,7 +12,7 @@
  *
  * This module holds the wizard orchestration; the individual wizard steps, the
  * pure config builder, prompt shims and semantic-asset preparation live in
- * sibling modules (`steps/*`, `engine-plan`, `prompt`, `semantic-assets`).
+ * sibling modules (`steps/*`, `setup-plan`, `prompt`, `semantic-assets`).
  */
 
 import fs from "node:fs";
@@ -42,10 +42,10 @@ import { warn, warnOnce } from "../core/warn";
 import { akmIndex } from "../indexer/indexer";
 import { readLockfile } from "../integrations/lockfile";
 import { type DetectedEnvironment, detectEnvironment, renderDetectionSummary } from "./detect";
-import type { EngineFlags } from "./engine-flags";
-import { applyEngineAnswers, type EngineAnswers } from "./engine-plan";
 import { bail, prompt } from "./prompt";
 import { prepareSemanticSearchAssets } from "./semantic-assets";
+import type { SetupFlags } from "./setup-flags";
+import { applySetupAnswers, type SetupAnswers } from "./setup-plan";
 import { canonicalSetupGitUrl } from "./source-identity";
 import { createSetupContext, runSetupSteps, type SetupContext, type SetupDraftConfig, type SetupStep } from "./steps";
 import { type ConnectionStepResult, stepConnection } from "./steps/connection";
@@ -368,7 +368,6 @@ interface SetupOutcome {
 
 const NOTHING_DETECTED: DetectedEnvironment = {
   harnesses: [],
-  providers: [],
   localServers: [],
   stashSuggestions: [],
   agentPlatforms: [],
@@ -381,30 +380,31 @@ const NOTHING_DETECTED: DetectedEnvironment = {
  * Each step wraps the existing `step*` functions, accumulating its result
  * into the shared `SetupContext`. The `nonInteractive` flag controls
  * inclusion in `akm init` (a non-interactive preset of `akm setup`): the
- * engine steps run there too, answering from flags and detected defaults.
+ * harness, connection and embedding steps run there too, answering from flags
+ * and detected defaults.
  */
 export function buildSetupSteps(options: {
   semanticSearchOutcome: SemanticSearchChoice;
   preferredStashDir?: string;
   detection?: DetectedEnvironment;
-  flags?: EngineFlags;
+  flags?: SetupFlags;
   /** Contact endpoints to list their models; false for an offline run. */
   probe?: boolean;
 }): {
   steps: SetupStep[];
-  /** Latest semantic-search choice and pending keys; populated by the engine steps. */
+  /** Latest semantic-search choice and pending keys; populated by the harness, connection and embedding steps. */
   outcome: SetupOutcome;
 } {
   const outcome: SetupOutcome = { semantic: options.semanticSearchOutcome, credentials: {} };
   const detection = options.detection ?? NOTHING_DETECTED;
   const flags = options.flags ?? {};
   const probe = options.probe !== false;
-  // What an earlier engine step decided that a later one builds on.
+  // What an earlier step decided that a later one builds on.
   let harness: HarnessStepResult = { modelCallsOnHarness: false };
-  let connection: ConnectionStepResult = { listed: [] };
+  let connection: ConnectionStepResult = { listed: [], addedDefault: false };
 
-  const applyAnswers = (ctx: SetupContext, answers: EngineAnswers): void => {
-    const change = applyEngineAnswers(ctx.config, answers);
+  const applyAnswers = (ctx: SetupContext, answers: SetupAnswers): void => {
+    const change = applySetupAnswers(ctx.config, answers);
     ctx.replace(change.patch);
     Object.assign(outcome.credentials, change.credentials);
   };
@@ -464,6 +464,7 @@ export function buildSetupSteps(options: {
           probe,
           connection: connection.answer,
           listed: connection.listed,
+          addedDefaultConnection: connection.addedDefault,
         });
         applyAnswers(ctx, { embedding: embeddings.answer });
         outcome.semantic = embeddings.semantic;
@@ -550,7 +551,7 @@ function resolveIsolatedSetupConfig(opts?: { dir?: string }): {
 export async function runSetupWizard(opts?: {
   dir?: string;
   noInit?: boolean;
-  flags?: EngineFlags;
+  flags?: SetupFlags;
   noProbe?: boolean;
 }): Promise<void> {
   assertSetupConfigPreflight();
@@ -690,7 +691,7 @@ export async function runSetupWizard(opts?: {
 async function applyNonInteractiveDefaults(
   base: SetupDraftConfig,
   stashDir: string,
-  opts: { noProbe?: boolean; flags?: EngineFlags },
+  opts: { noProbe?: boolean; flags?: SetupFlags },
 ): Promise<{ config: SetupDraftConfig; credentials: Record<string, string> }> {
   const detection = await detectEnvironment({
     existingStashDir: primaryBundlePath(base),
@@ -716,7 +717,7 @@ async function applyNonInteractiveDefaults(
 export async function runSetupWithDefaults(opts: {
   dir?: string;
   noInit?: boolean;
-  flags?: EngineFlags;
+  flags?: SetupFlags;
   noProbe?: boolean;
 }): Promise<SetupSummary> {
   assertSetupConfigPreflight();
@@ -758,17 +759,6 @@ export async function runSetupWithDefaults(opts: {
 }
 
 /**
- * Run ONLY environment detection and return the typed result. Performs no
- * config writes and shows no prompts.
- *
- * SAFETY: The returned object carries env var NAMES only — never any API key
- * value.
- */
-export async function runDetectOnly(): Promise<DetectedEnvironment> {
-  return detectEnvironment();
-}
-
-/**
  * Apply a JSON config blob non-interactively, merging it with the current config.
  * Validates required sub-fields and strips unknown/restricted keys.
  */
@@ -777,8 +767,8 @@ export async function runSetupFromConfig(opts: {
   dir?: string;
   noInit?: boolean;
   noProbe?: boolean;
-  /** Flags that answer the engine questions; they apply only with `applyDefaults`. */
-  flags?: EngineFlags;
+  /** Flags that answer the setup questions; they apply only with `applyDefaults`. */
+  flags?: SetupFlags;
   /**
    * When true (`--yes --from`), fill any keys still missing after the deep
    * merge with non-interactive defaults — without overwriting values the file

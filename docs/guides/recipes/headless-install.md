@@ -44,16 +44,18 @@ Node.js >= 24; a working Bun >= 1.0 is optional and preferred for execution
 after Node starts the package launcher.
 
 **Setup.** `akm setup --yes` takes the detected default for every question:
-each agent program found on `PATH` is enabled, and a local model server it
-finds becomes the connection. To point it at an endpoint instead, answer the
-question with a flag; the key is named by the environment variable that holds
+each agent program found on `PATH` is enabled and the first is the default. When
+that program can run read-only it takes akm's own model calls too; otherwise a
+local model server setup finds becomes the connection. To give akm an endpoint
+yourself, answer the question with a flag; the key is named by the environment variable that holds
 it and never appears on the command line:
 
 ```sh
 akm setup --yes --endpoint https://api.example.com/v1 --api-key-env EXAMPLE_API_KEY
 ```
 
-`--no-probe` keeps the run offline (the endpoint's model list is not fetched).
+`--no-probe` keeps the run offline (the endpoint's model list is not fetched), so a
+new connection has no model until `akm models set` names one.
 For the full set of flags, see `akm setup --help`; for the config they write,
 see [configuration.md](../../reference/configuration.md).
 

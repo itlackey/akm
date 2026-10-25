@@ -257,8 +257,7 @@ export interface ProcessRoutingRow {
  * {@link IMPROVE_PROCESS_NAMES} name, plus a `"triage.judgment"`
  * pseudo-row when the strategy configures a judgment engine. Pure — no I/O,
  * no re-resolution. Shared by `improve --dry-run`'s `plan.processes` (#947)
- * and `akm health`'s post-run reporting (#944); health's own
- * `active-improve-strategy` check keeps its existing `engines` shape.
+ * and `akm health`'s post-run reporting (#944).
  */
 export function projectResolvedProcessRouting(plan: ResolvedImprovePlan): ProcessRoutingRow[] {
   const unavailableByProcess = new Map(plan.engineUnavailable.map((item) => [item.process, item]));

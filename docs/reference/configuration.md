@@ -129,8 +129,7 @@ parameter: 'chat_template_kwargs'`) gets one retry without both, and AKM stops
 sending them to that endpoint and model for the rest of the process, as it
 does for `response_format` below. Both fields are AKM-owned, not
 settable via `extraParams`. A response with reasoning tokens despite
-`enableThinking: false` triggers a runtime warning and the `akm health`
-`thinking-control` advisory.
+`enableThinking: false` triggers a runtime warning.
 
 When a call asks for JSON that matches a schema, an LLM engine sends the schema
 as `response_format` (`json_schema`, strict) unless the engine sets

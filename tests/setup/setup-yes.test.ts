@@ -17,8 +17,8 @@ import { resetConfigCache } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { _setAgentDetectForTests } from "../../src/integrations/agent";
-import { type EngineFlags, parseEngineFlags, type RawEngineFlags } from "../../src/setup/engine-flags";
 import { runSetupFromConfig, runSetupWithDefaults, type SetupSummary } from "../../src/setup/setup";
+import { parseSetupFlags, type RawSetupFlags, type SetupFlags } from "../../src/setup/setup-flags";
 import {
   type IsolatedAkmStorage,
   withEnv,
@@ -53,7 +53,7 @@ afterEach(() => {
   storage.cleanup();
 });
 
-const flags = (raw: RawEngineFlags): EngineFlags => parseEngineFlags(raw);
+const flags = (raw: RawSetupFlags): SetupFlags => parseSetupFlags(raw);
 const written = (): Record<string, unknown> => JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
 const credentialsPath = () => path.join(path.dirname(getConfigPath()), "credentials.json");
 const claudeInstalled = () =>
@@ -77,7 +77,7 @@ function endpoint(base: string, models: string[]) {
 }
 
 const MODELS = ["qwen3-8b", "nomic-embed-text", "qwen3-32b"];
-const run = (raw: RawEngineFlags = {}, extra: { noProbe?: boolean } = {}) =>
+const run = (raw: RawSetupFlags = {}, extra: { noProbe?: boolean } = {}) =>
   runSetupWithDefaults({ noInit: true, flags: flags(raw), ...extra });
 
 describe("akm setup --endpoint --yes", () => {
@@ -98,7 +98,7 @@ describe("akm setup --endpoint --yes", () => {
       modelCalls: 'connection "default" (qwen3-8b)',
       agentWork: 'akm\'s own runtime over connection "default" (qwen3-8b)',
       // The endpoint lists an embedding model, which --yes turns on.
-      embeddings: "nomic-embed-text at http://localhost:11434/v1",
+      embeddings: 'nomic-embed-text on connection "default"',
     });
     expect(saved.embedding).toEqual({ model: "nomic-embed-text" });
     expect(saved.semanticSearchMode).toBe("auto");
@@ -161,6 +161,50 @@ describe("akm setup --endpoint --yes", () => {
     });
   });
 
+  test("a rerun over a config with its own embedding changes neither the block nor semantic search", async () => {
+    const server = endpoint("http://localhost:11434/v1", MODELS);
+    const embedding = { endpoint: "http://embed.example.test/v1", model: "my-own-embedder", dimension: 768 };
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      connections: { default: { endpoint: "http://localhost:11434/v1", models: { fast: "qwen3-8b" } } },
+      embedding,
+    });
+    resetConfigCache();
+
+    await server.serve(() => run({ endpoint: "http://localhost:11434/v1" }));
+
+    expect(written().embedding).toEqual(embedding);
+    expect(written().semanticSearchMode).toBe("off");
+  });
+
+  test("a rerun that finds no embedding block still leaves semantic search as the user set it", async () => {
+    const server = endpoint("http://localhost:11434/v1", MODELS);
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      connections: { default: { endpoint: "http://localhost:11434/v1", models: { fast: "qwen3-8b" } } },
+    });
+    resetConfigCache();
+
+    await server.serve(() => run({ endpoint: "http://localhost:11434/v1" }));
+
+    expect(written().semanticSearchMode).toBe("off");
+    expect("embedding" in written()).toBe(false);
+  });
+
+  test("--name adds a further connection without taking an embedding model only it lists", async () => {
+    const server = endpoint("https://cloud.example.test/v1", ["cloud-model", "cloud-embed"]);
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      connections: { default: { endpoint: "http://localhost:11434/v1", models: { fast: "local" } } },
+    });
+    resetConfigCache();
+
+    await server.serve(() => run({ endpoint: "https://cloud.example.test/v1", name: "cloud" }));
+
+    expect("embedding" in written()).toBe(false);
+    expect(written().semanticSearchMode).toBe("off");
+  });
+
   test("a second identical run writes the same config", async () => {
     const server = endpoint("http://localhost:11434/v1", MODELS);
 
@@ -169,6 +213,24 @@ describe("akm setup --endpoint --yes", () => {
     await server.serve(() => run({ endpoint: "http://localhost:11434/v1", embedding: "off" }));
 
     expect(written()).toEqual(first);
+  });
+
+  test("a connection that has no model yet is reported as that, with how to name one", async () => {
+    const summary = await run({ endpoint: "http://localhost:11434/v1" }, { noProbe: true });
+
+    for (const said of [summary.runs.modelCalls, summary.runs.agentWork]) {
+      expect(said).toContain('Connection "default" lists no models');
+      expect(said).toContain("akm models set");
+      expect(said).not.toContain("no connection or harness is configured");
+    }
+  });
+
+  test("the same is said when the endpoint would not list its models", async () => {
+    const summary = await withMockedFetch(
+      () => run({ endpoint: "https://api.example.test/v1" }),
+      () => new Response("denied", { status: 401 }),
+    );
+    expect(summary.runs.modelCalls).toContain("akm models set");
   });
 
   test("--no-probe contacts nothing: the connection is written with the models it already has", async () => {
@@ -220,7 +282,7 @@ describe("akm setup --yes defaults", () => {
     expect(server.keys).toEqual([]);
   });
 
-  test("with nothing detected and nothing flagged, no engine is configured and the run says so", async () => {
+  test("with nothing detected and nothing flagged, no connection or harness is configured and the run says so", async () => {
     const summary = await run();
 
     const saved = written();
@@ -270,7 +332,7 @@ describe("akm setup --harness", () => {
 });
 
 describe("akm setup --embedding", () => {
-  const withConnection = (extra: RawEngineFlags) => run({ endpoint: "http://localhost:11434/v1", ...extra });
+  const withConnection = (extra: RawSetupFlags) => run({ endpoint: "http://localhost:11434/v1", ...extra });
 
   test("a model on the connection is the bare model", async () => {
     await endpoint("http://localhost:11434/v1", MODELS).serve(() =>
@@ -310,7 +372,7 @@ describe("akm setup --embedding", () => {
   });
 });
 
-describe("akm setup --from <file> --yes with engine flags", () => {
+describe("akm setup --from <file> --yes with answer flags", () => {
   test("the file is merged, then the flags and defaults fill what it leaves", async () => {
     const server = endpoint("http://localhost:11434/v1", MODELS);
 

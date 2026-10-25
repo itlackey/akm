@@ -192,7 +192,9 @@ The wizard asks, in order:
    OpenCode, ...) akm may use; each is shown with whether akm can run it
    read-only for its own model calls. With several, you pick the default.
 2. **Model calls.** Whether the default agent program also takes akm's own
-   model calls (improve, judging, extraction). Answering no leads to a connection.
+   model calls (improve, judging, extraction). It is asked only when a harness is
+   enabled and there is no connection yet and no `--endpoint`, because a connection
+   always takes model calls; answering no leads to a connection.
 3. **Connection.** An OpenAI-compatible endpoint, its API key (typed at a masked
    prompt and stored in `credentials.json`, never in `config.json`), and one model
    per alias (`fast`, `balanced`, `reasoning`) picked from the models the
@@ -215,7 +217,7 @@ question left, so nothing is prompted.
 | `--embedding-endpoint <url>`, `--embedding-api-key-env <NAME>` | Another endpoint serving the embedding model |
 | `--from <file>` | A config file (JSON or YAML) to merge |
 | `--dir <path>`, `--no-init` | The bundle directory; skip scaffolding it |
-| `--no-probe` | Offline: the endpoint is not contacted and its models are not listed |
+| `--no-probe` | Offline: the endpoint is not contacted and its models are not listed; a connection added this way has no model until `akm models set` names one |
 
 The wizard also lets you review registries and add bundle sources. A scripted run
 prints its result with a `runs` object saying what runs where: `modelCalls`,
@@ -382,7 +384,7 @@ akm health --report --window-compare 7d --format html
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `targets` reachability probes, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
+| `--no-probe` | Skip the `targets` reachability probes and harness `--version` runs, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
@@ -418,12 +420,12 @@ check's `status` instead of grepping akm's error text.
 
 `targets` is one table: a row for each configured connection (endpoint, whether
 its key is held, whether the endpoint answers) and harness (platform, whether
-its binary is found, its `--version`), then a row for each kind of work
+its binary is found, and with a probe its `--version`), then a row for each kind of work
 (`improve`, `judges`, `agents`, `extract`, `enrich`, `index`, `embedding`,
 `curate-rerank`) naming the connection or harness and the model it resolves to.
 The rows are in `evidence.rows`, each typed `connection`, `harness` or `process`;
 the text format always prints them. It is a `warn` when a key variable is unset,
-an endpoint does not answer (skipped by `--no-probe`), a harness is not
+an endpoint does not answer (the probes, and the harness `--version` runs, are skipped by `--no-probe`), a harness is not
 installed, or the config leaves a kind of work unresolvable, and `unknown` when
 nothing is configured.
 

@@ -11,7 +11,7 @@
  *
  * We test the helper directly here, plus one happy-path CLI subprocess test
  * to confirm the full `--from <file>` round-trip wires through correctly and
- * that the engine flags need `--yes` with `--from` at the CLI layer.
+ * that the answer flags need `--yes` with `--from` at the CLI layer.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -198,7 +198,7 @@ describe("loadSetupConfigFromFile", () => {
 //
 // Migrated from per-test spawnSync("bun", ["src/cli.ts", ...]) to the shared
 // in-process harness (tests/_helpers/cli.ts). Both cases error before `setup`
-// reaches any interactive prompt or writes config — the engine-flags guard
+// reaches any interactive prompt or writes config — the answer-flags guard
 // and the loadSetupConfigFromFile "not found" check both
 // throw early — so they run safely in-process with no prompt hang.
 
@@ -217,7 +217,7 @@ async function runCli(argv: string[], env: Record<string, string | undefined> = 
 }
 
 describe("akm setup --from <file> CLI integration", () => {
-  test("--from takes the engine flags only with --yes", async () => {
+  test("--from takes the answer flags only with --yes", async () => {
     const configFile = path.join(workDir, "config.json");
     fs.writeFileSync(configFile, JSON.stringify({ output: { format: "text" } }), "utf8");
 

@@ -15,13 +15,13 @@ import { warn } from "../../core/warn";
 import { openAiBaseUrl } from "../../llm/client";
 import { isEmbeddingModel } from "../../llm/model-list";
 import type { LocalServerResult } from "../detect";
-import type { EngineFlags } from "../engine-flags";
-import type { ConnectionAnswer, KeyAnswer } from "../engine-plan";
-import { listModels, pickModel, promptApiKey, promptEndpoint, promptModelName } from "./connection-shared";
+import type { SetupFlags } from "../setup-flags";
+import type { ConnectionAnswer, KeyAnswer } from "../setup-plan";
+import { listModels, pickModel, promptApiKey, promptEndpoint, promptModelName, warnUser } from "./connection-shared";
 
 export interface ConnectionStepInput {
   current: AkmConfig;
-  flags: EngineFlags;
+  flags: SetupFlags;
   interactive: boolean;
   /** Contact the endpoint to list its models. */
   probe: boolean;
@@ -35,9 +35,11 @@ export interface ConnectionStepResult {
   answer?: ConnectionAnswer;
   /** Every model the endpoint listed; empty when it was not asked or could not say. */
   listed: readonly string[];
+  /** This step added a connection that is the default: the one named `default`, or the first and so the lone one. */
+  addedDefault: boolean;
 }
 
-const NOTHING: ConnectionStepResult = { listed: [] };
+const NOTHING: ConnectionStepResult = { listed: [], addedDefault: false };
 
 /** The key to list models with now: the one just supplied, else the connection's own when the endpoint is its own. */
 function listingKey(
@@ -95,6 +97,28 @@ async function pickAliases(
   return picks;
 }
 
+/** One warning for the picks setup keeps that the endpoint, which did list its models, does not serve. */
+function warnOfUnlistedPicks(
+  existing: ConnectionConfig | undefined,
+  picks: Readonly<Record<string, string>>,
+  listed: readonly string[],
+  endpoint: string,
+  interactive: boolean,
+): void {
+  if (listed.length === 0) return;
+  const kept = new Set<string>();
+  for (const [alias, pick] of Object.entries(picks)) {
+    const held = existing?.models?.[alias];
+    if (held !== undefined && entryModel(held) === pick && !listed.includes(pick)) kept.add(pick);
+  }
+  if (kept.size === 0) return;
+  const names = [...kept].map((model) => `"${model}"`).join(", ");
+  warnUser(
+    `Keeping ${names}: ${endpoint} does not list ${kept.size === 1 ? "it" : "them"}. Change a pick with \`akm models set\`.`,
+    interactive,
+  );
+}
+
 export async function stepConnection(input: ConnectionStepInput): Promise<ConnectionStepResult> {
   const { current, flags, interactive } = input;
   const name = flags.name ?? defaultConnection(current)?.name ?? "default";
@@ -141,5 +165,8 @@ export async function stepConnection(input: ConnectionStepInput): Promise<Connec
 
   const listed = input.probe ? await listModels(endpoint, listingKey(key, existing, name, endpoint), interactive) : [];
   const picks = await pickAliases(existing, listed, interactive);
-  return { answer: { name, endpoint, ...(key ? { key } : {}), picks }, listed };
+  warnOfUnlistedPicks(existing, picks, listed, endpoint, interactive);
+  const addedDefault =
+    existing === undefined && (name === "default" || Object.keys(current.connections ?? {}).length === 0);
+  return { answer: { name, endpoint, ...(key ? { key } : {}), picks }, listed, addedDefault };
 }

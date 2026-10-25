@@ -2,7 +2,7 @@
  * Tests for setup wizard interactive logic:
  * - onCancel: Escape on confirmation should stay, not exit
  * - stepAddSources: recommended GitHub repos multiselect, cancel returns to menu
- * (the harness, connection and embedding steps are in tests/setup/engine-steps.test.ts)
+ * (the harness, connection and embedding steps are in tests/setup/setup-steps.test.ts)
  */
 import { beforeEach, describe, expect, test } from "bun:test";
 import { _setClackForTests } from "../src/cli/clack";

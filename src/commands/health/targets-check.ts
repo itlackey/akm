@@ -6,8 +6,9 @@
  * The `targets` health check: the table of connections, harnesses and the work
  * that runs on them (`../targets.ts`), with what only health asks for added to
  * it. Whether a connection's endpoint answers is one bounded `GET /models`,
- * once per distinct endpoint; a harness's version is its own `--version`. With
- * `--no-probe` the endpoints are not contacted.
+ * once per distinct endpoint; a harness's version is its own `--version`, one
+ * process per harness. Both are probes: with `--no-probe` neither the endpoints
+ * are contacted nor any harness run.
  */
 import { spawnSync } from "node:child_process";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
@@ -109,8 +110,7 @@ export async function runTargetsCheck(deps: TargetsCheckDependencies = {}): Prom
     config,
     env: deps.env,
     which,
-    ...(reachability ? { reachability } : {}),
-    versions: harnessVersions(config, which, deps.spawnSync ?? spawnSync),
+    ...(reachability ? { reachability, versions: harnessVersions(config, which, deps.spawnSync ?? spawnSync) } : {}),
   });
   return targetsCheck(rows, reachability !== undefined);
 }

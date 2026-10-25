@@ -35,13 +35,16 @@ function runsOn(row: Row): string {
   return row.kind === "local" ? "built-in embedder" : `${text(row.kind)} ${text(row.target)}`;
 }
 
+/** `triage judgment → second (qwen3-8b)`: a part of the work that runs elsewhere, and where. */
+function override(entry: Row): string {
+  const where = entry.target === null || entry.target === undefined ? "off" : text(entry.target);
+  return `${text(entry.name)} → ${where}${entry.model ? ` (${text(entry.model)})` : ""}`;
+}
+
 /** What to look at in a work row: what resolves elsewhere, or what is wrong. */
 function notes(row: Row): string {
-  const parts = [
-    Array.isArray(row.overrides) && row.overrides.length > 0 ? `elsewhere: ${row.overrides.join(", ")}` : "",
-    row.problem ? text(row.problem) : "",
-  ];
-  return parts.filter(Boolean).join("; ");
+  const elsewhere = Array.isArray(row.overrides) ? (row.overrides as Row[]).map(override) : [];
+  return [...elsewhere, ...(row.problem ? [text(row.problem)] : [])].join("; ");
 }
 
 /** A column: its header, its cell, and whether it shows only when some row has the field (reachability not asked, no version read). */

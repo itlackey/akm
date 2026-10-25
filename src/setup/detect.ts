@@ -83,66 +83,6 @@ export function detectAgentPlatforms(): AgentPlatform[] {
   }));
 }
 
-// ── Provider Env-Var Scan ────────────────────────────────────────────────────
-
-/**
- * An inferred provider derived from an environment variable NAME.
- *
- * SAFETY INVARIANT: This type intentionally has no field for an API key
- * value. Only the env var NAME is ever recorded. Values are never read,
- * stored, logged, or emitted.
- */
-export interface InferredProviderEnv {
-  /** Provider identifier, e.g. "anthropic", "openai", "ollama". */
-  provider: string;
-  /**
-   * Env var NAME that was present (never its value), e.g. "ANTHROPIC_API_KEY".
-   */
-  envVar: string;
-  /** What the env var configures: an API key or an endpoint/base URL. */
-  kind: "apiKey" | "endpoint";
-}
-
-/**
- * Map of env var NAME → { provider, kind }. The key NAMES are the only thing
- * this module ever inspects from `process.env`; values are never touched.
- */
-const PROVIDER_ENV_VARS: Array<{ name: string; provider: string; kind: "apiKey" | "endpoint" }> = [
-  { name: "ANTHROPIC_API_KEY", provider: "anthropic", kind: "apiKey" },
-  { name: "OPENAI_API_KEY", provider: "openai", kind: "apiKey" },
-  { name: "GEMINI_API_KEY", provider: "gemini", kind: "apiKey" },
-  { name: "GOOGLE_API_KEY", provider: "gemini", kind: "apiKey" },
-  { name: "GROQ_API_KEY", provider: "groq", kind: "apiKey" },
-  { name: "OLLAMA_HOST", provider: "ollama", kind: "endpoint" },
-  { name: "OLLAMA_BASE_URL", provider: "ollama", kind: "endpoint" },
-  { name: "LM_STUDIO_BASE_URL", provider: "lmstudio", kind: "endpoint" },
-  { name: "LM_STUDIO_API_BASE", provider: "lmstudio", kind: "endpoint" },
-  { name: "LMSTUDIO_BASE_URL", provider: "lmstudio", kind: "endpoint" },
-  { name: "LMSTUDIO_API_BASE", provider: "lmstudio", kind: "endpoint" },
-];
-
-/**
- * Scan `process.env` for the presence of known provider configuration env var
- * NAMES and return inferred providers.
- *
- * Pure function — no network, no filesystem. It reads only whether each known
- * key is *defined and non-empty*; it never reads, returns, or logs the value.
- *
- * @param envSource  Env to inspect. Defaults to `process.env`. Tests inject a
- *                   fake env so a real API key is never required.
- * @returns Inferred providers, each carrying the env var NAME only.
- */
-export function scanProviderEnvVars(envSource: NodeJS.ProcessEnv = process.env): InferredProviderEnv[] {
-  const results: InferredProviderEnv[] = [];
-  for (const entry of PROVIDER_ENV_VARS) {
-    const value = envSource[entry.name];
-    const present = typeof value === "string" && value.trim().length > 0;
-    if (!present) continue;
-    results.push({ provider: entry.provider, envVar: entry.name, kind: entry.kind });
-  }
-  return results;
-}
-
 // ── Generic Local Endpoint Probe ─────────────────────────────────────────────
 
 export interface LocalServerResult {
@@ -303,8 +243,6 @@ export function detectInstalledHarnesses(whichFn: WhichFn = defaultWhich): Insta
 export interface DetectedEnvironment {
   /** Agent programs on PATH that can be enabled as harnesses, in registry order. */
   harnesses: InstalledHarness[];
-  /** Inferred providers from env var NAMES (never values). */
-  providers: InferredProviderEnv[];
   /** Local OpenAI-compatible servers that responded. */
   localServers: LocalServerResult[];
   /** Ranked stash directory suggestions. */
@@ -315,26 +253,20 @@ export interface DetectedEnvironment {
 
 /**
  * Run the full environment-detection pipeline once and return a single typed
- * result. Orchestrates env-var scan, harness detection, local-server probes,
- * and stash-dir suggestions.
- *
- * SAFETY: No API key VALUE is ever read, stored, logged, or returned — only
- * env var NAMES. Tolerant of every detector failing.
+ * result. Orchestrates harness detection, local-server probes, and stash-dir
+ * suggestions. Tolerant of every detector failing.
  *
  * @param opts.existingStashDir  Current config stashDir (no-op suggestion).
- * @param opts.envSource  Env to scan. Defaults to `process.env`.
  * @param opts.whichFn  Binary lookup. Tests inject a stub.
  * @param opts.probe  Contact the local servers. False for an offline run.
  */
 export async function detectEnvironment(opts?: {
   existingStashDir?: string;
-  envSource?: NodeJS.ProcessEnv;
   whichFn?: WhichFn;
   cwd?: string;
   home?: string;
   probe?: boolean;
 }): Promise<DetectedEnvironment> {
-  const envSource = opts?.envSource ?? process.env;
   const whichFn = opts?.whichFn ?? defaultWhich;
 
   const localServers = opts?.probe === false ? [] : await detectLocalServers().catch(() => [] as LocalServerResult[]);
@@ -348,7 +280,6 @@ export async function detectEnvironment(opts?: {
 
   return {
     harnesses: detectInstalledHarnesses(whichFn),
-    providers: scanProviderEnvVars(envSource),
     localServers,
     stashSuggestions: detectStashDir({
       existingStashDir: opts?.existingStashDir,
@@ -359,10 +290,7 @@ export async function detectEnvironment(opts?: {
   };
 }
 
-/**
- * Render a compact, human-readable "Detected environment" summary block.
- * Contains env var NAMES only — never any value.
- */
+/** Render a compact, human-readable "Detected environment" summary block. */
 export function renderDetectionSummary(env: DetectedEnvironment): string {
   const lines: string[] = ["Detected environment:"];
   lines.push(
@@ -374,13 +302,6 @@ export function renderDetectionSummary(env: DetectedEnvironment): string {
     lines.push(`  Local servers:  ${liveServers.map((s) => s.label).join(", ")}`);
   } else {
     lines.push("  Local servers:  none reachable");
-  }
-
-  if (env.providers.length > 0) {
-    // NAMES only — never values.
-    lines.push(`  Provider keys:  ${env.providers.map((p) => `${p.provider}:${p.envVar}`).join(", ")}`);
-  } else {
-    lines.push("  Provider keys:  none in environment");
   }
 
   const topStash = env.stashSuggestions[0];

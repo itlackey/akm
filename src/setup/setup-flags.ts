@@ -14,7 +14,7 @@ import { HARNESS_CONFIG_PLATFORMS } from "../integrations/harnesses";
 import { normalizeEndpoint } from "./endpoint";
 
 /** The flags as the command line gives them. */
-export interface RawEngineFlags {
+export interface RawSetupFlags {
   endpoint?: string;
   apiKeyEnv?: string;
   name?: string;
@@ -25,7 +25,7 @@ export interface RawEngineFlags {
 }
 
 /** The flags, checked. */
-export interface EngineFlags {
+export interface SetupFlags {
   /** The connection's endpoint, as its base URL. */
   endpoint?: string;
   /** The variable holding the connection's key. */
@@ -63,7 +63,7 @@ function envNameFlag(flag: string, value: string | undefined): string | undefine
   return value;
 }
 
-export function parseEngineFlags(raw: RawEngineFlags): EngineFlags {
+export function parseSetupFlags(raw: RawSetupFlags): SetupFlags {
   const endpoint = endpointFlag("endpoint", raw.endpoint);
   const embeddingEndpoint = endpointFlag("embedding-endpoint", raw.embeddingEndpoint);
   const apiKeyEnv = envNameFlag("api-key-env", raw.apiKeyEnv);
@@ -109,6 +109,6 @@ export function parseEngineFlags(raw: RawEngineFlags): EngineFlags {
 }
 
 /** Whether any flag answers a question. */
-export function hasEngineFlags(flags: EngineFlags): boolean {
+export function hasSetupFlags(flags: SetupFlags): boolean {
   return Object.keys(flags).length > 0;
 }

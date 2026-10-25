@@ -4,16 +4,16 @@
 
 import { describe, expect, test } from "bun:test";
 import { UsageError } from "../../src/core/errors";
-import { hasEngineFlags, parseEngineFlags } from "../../src/setup/engine-flags";
+import { hasSetupFlags, parseSetupFlags } from "../../src/setup/setup-flags";
 
-describe("parseEngineFlags", () => {
+describe("parseSetupFlags", () => {
   test("no flag answers no question", () => {
-    expect(parseEngineFlags({})).toEqual({});
-    expect(hasEngineFlags(parseEngineFlags({}))).toBe(false);
+    expect(parseSetupFlags({})).toEqual({});
+    expect(hasSetupFlags(parseSetupFlags({}))).toBe(false);
   });
 
   test("endpoints are stored as base URLs and the key is named by its variable", () => {
-    const flags = parseEngineFlags({
+    const flags = parseSetupFlags({
       endpoint: "http://localhost:11434",
       apiKeyEnv: "LAB_KEY",
       name: "lab",
@@ -29,21 +29,21 @@ describe("parseEngineFlags", () => {
       embeddingEndpoint: "https://emb.example.test/v1",
       embeddingApiKeyEnv: "EMB_KEY",
     });
-    expect(hasEngineFlags(flags)).toBe(true);
+    expect(hasSetupFlags(flags)).toBe(true);
   });
 
   test("--harness is a comma-separated list of platforms, first is the default", () => {
-    expect(parseEngineFlags({ harness: "claude, opencode" }).harness).toEqual(["claude", "opencode"]);
+    expect(parseSetupFlags({ harness: "claude, opencode" }).harness).toEqual(["claude", "opencode"]);
   });
 
   test("an unknown platform names the valid ones", () => {
-    expect(() => parseEngineFlags({ harness: "claude,cursor" })).toThrow(/unknown platform cursor.*claude/);
+    expect(() => parseSetupFlags({ harness: "claude,cursor" })).toThrow(/unknown platform cursor.*claude/);
   });
 
   test("a key value in place of a variable name is refused, and never echoed", () => {
     let message = "";
     try {
-      parseEngineFlags({ apiKeyEnv: "sk-live-abc123!" });
+      parseSetupFlags({ apiKeyEnv: "sk-live-abc123!" });
     } catch (err) {
       expect(err).toBeInstanceOf(UsageError);
       message = (err as Error).message;
@@ -53,12 +53,12 @@ describe("parseEngineFlags", () => {
   });
 
   test("a bad endpoint, name or embedding combination is a usage error", () => {
-    expect(() => parseEngineFlags({ endpoint: "nope" })).toThrow(/--endpoint/);
-    expect(() => parseEngineFlags({ name: "Bad Name" })).toThrow(/--name/);
-    expect(() => parseEngineFlags({ embeddingEndpoint: "https://e.test/v1" })).toThrow(/needs --embedding <model>/);
-    expect(() => parseEngineFlags({ embedding: "local", embeddingEndpoint: "https://e.test/v1" })).toThrow(
+    expect(() => parseSetupFlags({ endpoint: "nope" })).toThrow(/--endpoint/);
+    expect(() => parseSetupFlags({ name: "Bad Name" })).toThrow(/--name/);
+    expect(() => parseSetupFlags({ embeddingEndpoint: "https://e.test/v1" })).toThrow(/needs --embedding <model>/);
+    expect(() => parseSetupFlags({ embedding: "local", embeddingEndpoint: "https://e.test/v1" })).toThrow(
       /needs --embedding <model>/,
     );
-    expect(() => parseEngineFlags({ embeddingApiKeyEnv: "EMB_KEY" })).toThrow(/needs --embedding-endpoint/);
+    expect(() => parseSetupFlags({ embeddingApiKeyEnv: "EMB_KEY" })).toThrow(/needs --embedding-endpoint/);
   });
 });

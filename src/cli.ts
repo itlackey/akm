@@ -262,15 +262,15 @@ const setupCommand = defineCommand({
     "no-probe": {
       type: "boolean",
       description:
-        "Offline run: the endpoint is not contacted and its models are not listed. Aliases resolve to the connection's first model until `akm models set`.",
+        "Offline run: the endpoint is not contacted and its models are not listed. A connection added this way has no model until one is named with `akm models set`; the picks it already has are kept.",
     },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const noInit = !args.init;
       const noProbe = (args as { probe?: boolean }).probe === false;
-      const { hasEngineFlags, parseEngineFlags } = await import("./setup/engine-flags");
-      const flags = parseEngineFlags({
+      const { hasSetupFlags, parseSetupFlags } = await import("./setup/setup-flags");
+      const flags = parseSetupFlags({
         endpoint: args.endpoint,
         apiKeyEnv: args["api-key-env"],
         name: args.name,
@@ -280,8 +280,11 @@ const setupCommand = defineCommand({
         embeddingApiKeyEnv: args["embedding-api-key-env"],
       });
       if (args.from) {
-        if (hasEngineFlags(flags) && !args.yes) {
-          throw new UsageError("--from takes the engine flags only with --yes.", "INVALID_FLAG_VALUE");
+        if (hasSetupFlags(flags) && !args.yes) {
+          throw new UsageError(
+            "--from takes --endpoint, --harness and the other answer flags only with --yes.",
+            "INVALID_FLAG_VALUE",
+          );
         }
         // File-based bootstrap. `loadSetupConfigFromFile` expands a leading
         // `~`, resolves relative paths against cwd, picks the YAML or JSON
@@ -370,9 +373,9 @@ const healthCommand = defineCommand({
       type: "boolean",
       default: true,
       description:
-        "Probe configured connections and harnesses for reachability, check for a newer akm release, look up the newest Claude plugin tag, and check the scheduler's recorded akm binary version (on by default).",
+        "Probe configured connections for reachability and run each harness's `--version`, check for a newer akm release, look up the newest Claude plugin tag, and check the scheduler's recorded akm binary version (on by default).",
       negativeDescription:
-        "Skip the reachability probes, the update check, the Claude plugin tag lookup, and the scheduler-binary version check (for an offline or air-gapped host).",
+        "Skip the reachability probes, the harness `--version` runs, the update check, the Claude plugin tag lookup, and the scheduler-binary version check (for an offline or air-gapped host).",
     },
   },
   async run({ args }) {

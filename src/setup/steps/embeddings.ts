@@ -13,10 +13,10 @@ import { resolveApiKey } from "../../core/config/credentials";
 import { UsageError } from "../../core/errors";
 import { openAiBaseUrl } from "../../llm/client";
 import { isEmbeddingModel } from "../../llm/model-list";
-import type { EngineFlags } from "../engine-flags";
-import type { ConnectionAnswer, EmbeddingAnswer, KeyAnswer } from "../engine-plan";
 import { prompt } from "../prompt";
 import { describeSemanticSearchAssets, isRemoteEmbeddingConfig } from "../semantic-assets";
+import type { SetupFlags } from "../setup-flags";
+import type { ConnectionAnswer, EmbeddingAnswer, KeyAnswer } from "../setup-plan";
 import { listModels, pickModel, promptApiKey, promptEndpoint, promptModelName } from "./connection-shared";
 
 export interface SemanticSearchChoice {
@@ -26,12 +26,14 @@ export interface SemanticSearchChoice {
 
 export interface EmbeddingStepInput {
   current: AkmConfig;
-  flags: EngineFlags;
+  flags: SetupFlags;
   interactive: boolean;
   probe: boolean;
   /** What the connection step decided, and the models its endpoint listed. */
   connection?: ConnectionAnswer;
   listed: readonly string[];
+  /** This run added the connection that is now the default. */
+  addedDefaultConnection: boolean;
 }
 
 export interface EmbeddingStepResult {
@@ -136,8 +138,12 @@ export async function stepEmbeddings(input: EmbeddingStepInput): Promise<Embeddi
   }
 
   if (!interactive) {
+    // The default: a model the new default connection serves. A rerun, another connection, or an embedding
+    // block the config already has is the user's earlier choice and stays.
     const model = input.listed.find(isEmbeddingModel);
-    if (model === undefined) return { semantic: unchanged };
+    if (model === undefined || current.embedding !== undefined || !input.addedDefaultConnection) {
+      return { semantic: unchanged };
+    }
     return { answer: { kind: "connection", model }, semantic: { mode: "auto", prepareAssets: false } };
   }
 
