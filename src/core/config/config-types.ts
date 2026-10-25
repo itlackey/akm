@@ -37,8 +37,14 @@ export { VALID_HARNESS_IDS };
 /** Union of valid harness ids, derived from {@link VALID_HARNESS_IDS}. */
 export type HarnessId = (typeof VALID_HARNESS_IDS)[number];
 
-/** OpenAI-compatible embedding connection config. */
-export type EmbeddingConnectionConfig = z.infer<typeof import("./config-schema").EmbeddingConnectionConfigSchema>;
+/**
+ * OpenAI-compatible embedding connection config. `credentialName` is never
+ * configured: it is set on an embedding that runs on the default connection
+ * (see `effectiveEmbedding`) to the name that connection's key is filed under.
+ */
+export type EmbeddingConnectionConfig = z.infer<typeof import("./config-schema").EmbeddingConnectionConfigSchema> & {
+  readonly credentialName?: string;
+};
 
 /** A `connections.<name>` entry: an OpenAI-compatible endpoint and the models it serves. */
 export type ConnectionConfig = z.infer<typeof import("./config-schema").ConnectionSchema>;

@@ -966,7 +966,7 @@ export class RemoteEmbedder implements Embedder {
 
   private buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const resolvedKey = resolveApiKey(this.config.apiKey, "embedding");
+    const resolvedKey = resolveApiKey(this.config.apiKey, this.config.credentialName ?? "embedding");
     if (resolvedKey) {
       headers.Authorization = `Bearer ${resolvedKey}`;
     }
@@ -983,7 +983,7 @@ export class RemoteEmbedder implements Embedder {
    * far unredacted and uncapped, at readBodyWithByteCap's 10 MB default.
    */
   private safeErrorBody(body: string): string {
-    const resolvedKey = resolveApiKey(this.config.apiKey, "embedding");
+    const resolvedKey = resolveApiKey(this.config.apiKey, this.config.credentialName ?? "embedding");
     return redactSensitiveText(redactErrorBody(body), resolvedKey ? [resolvedKey] : []);
   }
 }
@@ -1063,15 +1063,16 @@ export function hasRemoteEndpoint(config: EmbeddingConnectionConfig): boolean {
 
 /**
  * Describe WHERE the embedding key comes from, never its value: the `$VAR`
- * reference in `embedding.apiKey`, the `embedding` key in `credentials.json`,
- * or nothing. A keyless request can only mean neither was present in the
+ * reference in `embedding.apiKey` (or its default connection's), the key in
+ * `credentials.json` filed under `embedding` (or under that connection's
+ * name), or nothing. A keyless request can only mean neither was present in the
  * config the run actually loaded (a different config root, scope, or a config
  * edited after the run started). A default-level progress line naming the
  * credential's SOURCE (this helper), printed once before the first provider
  * request, lets a field run self-diagnose that without ever surfacing the
  * secret itself (#953).
  */
-export function describeEmbeddingCredential(apiKey: string | undefined): string {
-  if (apiKey) return `${apiKey} (env)`;
-  return readCredential("embedding") ? "credentials.json" : "none configured";
+export function describeEmbeddingCredential(config: EmbeddingConnectionConfig): string {
+  if (config.apiKey) return `${config.apiKey} (env)`;
+  return readCredential(config.credentialName ?? "embedding") ? "credentials.json" : "none configured";
 }

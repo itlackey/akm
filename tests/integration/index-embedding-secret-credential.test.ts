@@ -118,6 +118,29 @@ describe("akm index embedding requests carry the stored credential (#953)", () =
     expectEveryRequestCarriedCredential(capture.authHeaders, "Bearer store-secret-value");
   });
 
+  test("an embedding with only a model runs on the default connection and sends the key stored under its name", async () => {
+    writeCredential("lab", "connection-store-secret-value");
+
+    const capture = createAuthCapturingEmbeddingServer();
+    server = capture.server;
+
+    writeMemory("entry-1.md", "First memory entry for the default-connection embedding test.");
+
+    writeSandboxConfig({
+      semanticSearchMode: "auto",
+      bundles: { stash: { path: storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      connections: { lab: { endpoint: capture.url, models: { fast: "chat-model" } } },
+      embedding: { model: "mock", dimension: 8 },
+    });
+    resetConfigCache();
+
+    const result = await akmIndex({ stashDir: storage.stashDir, full: true });
+
+    expect(result.verification.ok).toBe(true);
+    expectEveryRequestCarriedCredential(capture.authHeaders, "Bearer connection-store-secret-value");
+  });
+
   test("the real CLI child process (`bun src/cli.ts index --full`) sends Bearer <stored key> too", async () => {
     writeCredential("embedding", "cli-store-secret-value");
 

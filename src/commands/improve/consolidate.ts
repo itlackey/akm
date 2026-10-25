@@ -42,6 +42,7 @@ import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
+import { effectiveEmbedding } from "../../llm/embedders/connection";
 import type { Database } from "../../storage/database";
 import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
 import {
@@ -199,8 +200,9 @@ async function clusterMemoriesBySimilarity(
   signal?: AbortSignal,
 ): Promise<{ ordered: MemoryEntry[]; embedTelemetry: ClusterEmbedTelemetry }> {
   const telemetry: ClusterEmbedTelemetry = { embedMs: 0, cacheHits: 0, cacheMisses: 0 };
-  if (memories.length < 3 || !config.embedding) return { ordered: memories, embedTelemetry: telemetry };
-  const modelId = resolveEmbeddingModelId(config.embedding);
+  const embedding = effectiveEmbedding(config);
+  if (memories.length < 3 || !embedding) return { ordered: memories, embedTelemetry: telemetry };
+  const modelId = resolveEmbeddingModelId(embedding);
   const texts = memories.map((m) => [m.description, m.tags.join(" ")].filter(Boolean).join(". ") || m.name);
   const hashes = texts.map((t) => contentHash(t));
   let cached = new Map<string, number[]>();
@@ -221,7 +223,7 @@ async function clusterMemoriesBySimilarity(
     try {
       missVecs = await embedBatch(
         missIndices.map((i) => texts[i] as string),
-        config.embedding,
+        embedding,
         signal,
       );
     } catch {

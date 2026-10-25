@@ -16,6 +16,7 @@ import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
+import { effectiveEmbedding } from "../llm/embedders/connection";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 /**
  * Index consistency.
@@ -688,7 +689,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
         mode,
         sourcesCount: sourceDirs.length,
         semanticSearchMode: config.semanticSearchMode,
-        embeddingProvider: getEmbeddingProvider(config.embedding),
+        embeddingProvider: getEmbeddingProvider(effectiveEmbedding(config)),
       }),
     });
 
@@ -1541,7 +1542,7 @@ function verifyIndexState(
   embeddingResult: EmbeddingGenerationResult,
 ): IndexVerification {
   const embeddingCount = getEmbeddingCount(db);
-  const embeddingProvider = getEmbeddingProvider(config.embedding);
+  const embeddingProvider = getEmbeddingProvider(effectiveEmbedding(config));
   const verification = (
     ok: boolean,
     message: string,

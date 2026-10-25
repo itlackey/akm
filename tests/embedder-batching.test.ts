@@ -692,23 +692,31 @@ describe("RemoteEmbedder.embedBatch: stops dispatching after the first onBatch f
 });
 
 describe("describeEmbeddingCredential (#953)", () => {
-  afterEach(() => deleteCredential("embedding"));
+  afterEach(() => {
+    deleteCredential("embedding");
+    deleteCredential("default");
+  });
 
-  test("undefined/empty apiKey with nothing stored reports 'none configured'", () => {
-    expect(describeEmbeddingCredential(undefined)).toBe("none configured");
-    expect(describeEmbeddingCredential("")).toBe("none configured");
+  test("no apiKey with nothing stored reports 'none configured'", () => {
+    expect(describeEmbeddingCredential({})).toBe("none configured");
   });
 
   test("a stored key reports 'credentials.json', never the value", () => {
     writeCredential("embedding", "sk-super-secret-value-do-not-log");
-    const description = describeEmbeddingCredential(undefined);
+    const description = describeEmbeddingCredential({});
     expect(description).toBe("credentials.json");
     expect(description).not.toContain("sk-super-secret-value-do-not-log");
   });
 
+  test("an embedding on a connection reads the key stored under the connection's name", () => {
+    writeCredential("default", "connection-key");
+    expect(describeEmbeddingCredential({ credentialName: "default" })).toBe("credentials.json");
+    expect(describeEmbeddingCredential({})).toBe("none configured");
+  });
+
   test("a $VAR-style reference names the reference and its source", () => {
-    expect(describeEmbeddingCredential("$LAB_API_KEY")).toBe("$LAB_API_KEY (env)");
+    expect(describeEmbeddingCredential({ apiKey: "$LAB_API_KEY" })).toBe("$LAB_API_KEY (env)");
     const braced = "$" + "{LAB_API_KEY}";
-    expect(describeEmbeddingCredential(braced)).toBe(`${braced} (env)`);
+    expect(describeEmbeddingCredential({ apiKey: braced })).toBe(`${braced} (env)`);
   });
 });
