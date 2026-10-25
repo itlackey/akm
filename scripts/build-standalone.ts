@@ -8,8 +8,13 @@
  *
  *   bun scripts/build-standalone.ts --outfile <path> [--target <bun-target>] [--version <v>]
  *
- * Two differences from a plain `bun build --compile`, both for the embedded
+ * Three differences from a plain `bun build --compile`, all for the embedded
  * OpenCode (`@opencode/sdk`, #1244):
+ *   - `@ai-sdk/openai-compatible`, the package OpenCode reaches an
+ *     OpenAI-compatible endpoint with, is embedded as a second entry
+ *     (`scripts/ai-sdk-openai-compatible.ts`) and loaded by file URL at run
+ *     time. Without it OpenCode installs the package from the npm registry on
+ *     the binary's first run, which fails on a machine that cannot reach it.
  *   - `@opencode-ai/pty` resolves its `opencode-pty` helper executable by
  *     package path when it is imported, which fails inside a compiled binary
  *     and would stop OpenCode from starting. It is replaced with its "no
@@ -32,7 +37,7 @@ if (!values.outfile) {
 }
 
 const result = await Bun.build({
-  entrypoints: ["./scripts/akm-standalone.ts"],
+  entrypoints: ["./scripts/akm-standalone.ts", "./scripts/ai-sdk-openai-compatible.ts"],
   compile: { outfile: values.outfile, ...(values.target ? { target: values.target as never } : {}) },
   ...(values.version ? { define: { AKM_VERSION: JSON.stringify(values.version) } } : {}),
   plugins: [

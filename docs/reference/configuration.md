@@ -287,9 +287,9 @@ each with a message saying so, and the model carries on without it.
 Agent work runs on akm's own runtime when no harness is configured: OpenCode
 embedded in akm's process, driven by the default connection. It needs nothing
 installed beyond akm and downloads nothing: OpenCode reaches the endpoint with
-the `@ai-sdk/openai-compatible` package installed with akm. The standalone akm
-binary carries no copy of it, so there OpenCode downloads it from the npm
-registry into `<akm cache dir>/opencode/npm/` on the first run.
+the `@ai-sdk/openai-compatible` package installed with akm, and the standalone
+akm binary carries a copy inside it, so a first run needs no network access to
+npm.
 
 - It uses your connections. It loads no user or project OpenCode configuration
   (so none of your plugins, MCP servers or agents), though OpenCode still reads

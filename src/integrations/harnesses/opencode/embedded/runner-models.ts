@@ -15,6 +15,8 @@
  */
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode/plugin";
 import { openAiBaseUrl } from "../../../../core/endpoint-url";
 import { effectiveRequestFields } from "../../../../core/llm-inference";
@@ -52,15 +54,20 @@ export function runnerModel(connection: ChatCompletionConfig): RunnerModel {
 /**
  * The AI SDK package an OpenAI-compatible endpoint is reached with, as OpenCode
  * names it. OpenCode loads a `file://` package as it is and installs any other
- * from the npm registry on first use, so it is given akm's own installed copy. A
- * compiled akm binary has no installed copy to point at, and OpenCode installs it.
+ * from the npm registry on first use, so it is given a copy that is already here:
+ * the one installed with akm, or, in a compiled akm binary, the copy the build
+ * embeds beside the main module (`scripts/ai-sdk-openai-compatible.ts`).
  */
 const OPENAI_COMPATIBLE_PACKAGE = (() => {
-  try {
-    return `aisdk:${import.meta.resolve("@ai-sdk/openai-compatible")}`;
-  } catch {
-    return "aisdk:@ai-sdk/openai-compatible";
+  for (const specifier of ["@ai-sdk/openai-compatible", "./ai-sdk-openai-compatible.js"]) {
+    try {
+      const url = import.meta.resolve(specifier);
+      if (url.startsWith("file://") && fs.existsSync(fileURLToPath(url))) return `aisdk:${url}`;
+    } catch {
+      // Not installed, not embedded: the next place.
+    }
   }
+  return "aisdk:@ai-sdk/openai-compatible";
 })();
 
 /** OpenCode's own assumptions for a model that states no limit. */

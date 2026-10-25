@@ -282,7 +282,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   depends on.
 - Standalone binaries are built by `scripts/build-standalone.ts`, which stubs
   the embedded OpenCode's persistent-terminal helper and native file finder
-  (neither is used by akm runs).
+  (neither is used by akm runs) and embeds `@ai-sdk/openai-compatible`, the
+  package OpenCode reaches an OpenAI-compatible endpoint with, so the binary's
+  first model-backed run downloads nothing and works with the npm registry
+  unreachable.
 
 ### Removed
 
