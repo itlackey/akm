@@ -23,6 +23,7 @@ import {
 import { resolveApiKey } from "../core/config/credentials";
 import { entryModel, entryWithModel } from "../core/config/model-aliases";
 import { ConfigError, UsageError } from "../core/errors";
+import { redactUrlCredentials } from "../core/redaction";
 import { warn } from "../core/warn";
 import { listEndpointModels } from "../llm/model-list";
 
@@ -58,7 +59,7 @@ async function availableModels(name: string, connection: ConnectionConfig, probe
   const apiKey = resolveApiKey(connection.apiKey, { connection: name }, connection.endpoint);
   const listed = await listEndpointModels({ endpoint: connection.endpoint, ...(apiKey ? { apiKey } : {}) });
   if (listed.ok) return listed.models;
-  warn(`Could not list models from ${connection.endpoint} (${listed.error}).`);
+  warn(`Could not list models from ${redactUrlCredentials(connection.endpoint)} (${listed.error}).`);
   return [];
 }
 

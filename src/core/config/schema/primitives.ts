@@ -9,6 +9,7 @@
  */
 import { z } from "zod";
 import { validateExtraParams } from "../../extra-params";
+import { redactUrlCredentials } from "../../redaction";
 import { isSecretRefToken } from "../../ref-token";
 import { warnOnce } from "../../warn";
 import { ENGINE_NAME_PATTERN_SOURCE } from "../engine-semantics";
@@ -95,9 +96,11 @@ export const connectionEndpoint = z.string().superRefine((value, ctx) => {
     return;
   }
   if (url.username || url.password) {
+    // The warning names the endpoint without the credential it is about, and is keyed by that too.
+    const shown = redactUrlCredentials(value);
     warnOnce(
-      `connectionEndpoint:userinfo:${value}`,
-      `Config endpoint "${value}" embeds a username/password; move the credential out of the URL (apiKey: "$VAR", or credentials.json).`,
+      `connectionEndpoint:userinfo:${shown}`,
+      `Config endpoint "${shown}" embeds a username/password; move the credential out of the URL (apiKey: "$VAR", or credentials.json).`,
     );
   }
 });

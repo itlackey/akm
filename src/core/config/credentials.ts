@@ -135,9 +135,11 @@ export function readCredential(slot: CredentialSlot, endpoint: string): string |
   const held = storedCredential(slot);
   if (!held) return undefined;
   if (!sameEndpoint(held.endpoint, endpoint)) {
+    const shownHeld = redactUrlCredentials(held.endpoint);
+    const shownNow = redactUrlCredentials(endpoint);
     warnOnce(
-      `credentials:endpoint:${storePath()}:${describeSlot(slot)}:${held.endpoint}:${endpoint}`,
-      `The key stored for ${describeSlot(slot)} belongs to ${redactUrlCredentials(held.endpoint)}, not ${redactUrlCredentials(endpoint)}, so it is not sent there. Store a key for the new endpoint with \`akm setup\`.`,
+      `credentials:endpoint:${storePath()}:${describeSlot(slot)}:${shownHeld}:${shownNow}`,
+      `The key stored for ${describeSlot(slot)} belongs to ${shownHeld}, not ${shownNow}, so it is not sent there. Store a key for the new endpoint with \`akm setup\`.`,
     );
     return undefined;
   }

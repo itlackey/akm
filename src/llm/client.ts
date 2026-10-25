@@ -13,7 +13,7 @@ import { fetchWithTimeout, readBodyWithByteCap } from "../core/common";
 import { openAiBaseUrl, openAiOperationUrl } from "../core/endpoint-url";
 import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
 import { effectiveRequestFields, type LlmInference } from "../core/llm-inference";
-import { redactErrorBody, redactSensitiveText } from "../core/redaction";
+import { redactErrorBody, redactSensitiveText, redactUrlCredentials } from "../core/redaction";
 import { warn, warnVerbose } from "../core/warn";
 import {
   emitLlmUsage,
@@ -594,6 +594,8 @@ async function chatCompletionAttemptOnce(
   const fields = requestFields(config, options, includeThinking);
   const requestBody = JSON.stringify({ ...fields, model: config.model, messages, ...responseFormat });
   const endpointUrl = openAiOperationUrl(config.endpoint, "chat/completions");
+  // What a message says about the endpoint: never a username or password the URL carries.
+  const shownEndpoint = redactUrlCredentials(config.endpoint);
 
   // Wall-clock start for per-attempt usage telemetry (#576). Captured here so the
   // emitted duration covers the full request/response/parse cycle of a single
@@ -653,32 +655,24 @@ async function chatCompletionAttemptOnce(
       const safeBody = redactSensitiveText(redactErrorBody(rawBody), resolvedKey ? [resolvedKey] : []);
       const status = response.status;
       if (status === 429) {
-        throw new LlmCallError(
-          `LLM request rate limited (429) ${config.endpoint}: ${safeBody}`,
-          "rate_limited",
-          status,
-        );
+        throw new LlmCallError(`LLM request rate limited (429) ${shownEndpoint}: ${safeBody}`, "rate_limited", status);
       }
       if (status >= 500 && isHtmlResponse(rawBody)) {
         throw new LlmCallError(
-          `LLM provider returned HTML instead of JSON (${status}) ${config.endpoint}: ${redactSensitiveText(htmlExcerpt(rawBody), resolvedKey ? [resolvedKey] : [])}`,
+          `LLM provider returned HTML instead of JSON (${status}) ${shownEndpoint}: ${redactSensitiveText(htmlExcerpt(rawBody), resolvedKey ? [resolvedKey] : [])}`,
           "provider_html_error",
           status,
         );
       }
       if (status >= 500) {
         throw new LlmCallError(
-          `LLM provider error (${status}) ${config.endpoint}: ${safeBody}`,
+          `LLM provider error (${status}) ${shownEndpoint}: ${safeBody}`,
           "provider_error",
           status,
           RESPONSE_FORMAT_NAMED.test(rawBody),
         );
       }
-      throw new LlmCallError(
-        `LLM request failed (${status}) ${config.endpoint}: ${safeBody}`,
-        "provider_error",
-        status,
-      );
+      throw new LlmCallError(`LLM request failed (${status}) ${shownEndpoint}: ${safeBody}`, "provider_error", status);
     }
 
     // A 2xx response is still an error if the body is HTML where JSON was
@@ -699,7 +693,7 @@ async function chatCompletionAttemptOnce(
     }
     if (isHtmlResponse(rawOkBody)) {
       throw new LlmCallError(
-        `LLM provider returned HTML instead of JSON (${response.status}) ${config.endpoint}: ${redactSensitiveText(htmlExcerpt(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
+        `LLM provider returned HTML instead of JSON (${response.status}) ${shownEndpoint}: ${redactSensitiveText(htmlExcerpt(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
         "provider_html_error",
         response.status,
       );
@@ -709,7 +703,7 @@ async function chatCompletionAttemptOnce(
       json = JSON.parse(rawOkBody) as ChatCompletionResponse;
     } catch {
       throw new LlmCallError(
-        `LLM response was not valid JSON ${config.endpoint}: ${redactSensitiveText(redactErrorBody(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
+        `LLM response was not valid JSON ${shownEndpoint}: ${redactSensitiveText(redactErrorBody(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
         "parse_error",
         response.status,
       );
@@ -718,7 +712,7 @@ async function chatCompletionAttemptOnce(
     // that fails after the headers with a body holding only `error`.
     if (json.error !== undefined && json.error !== null && !json.choices?.length) {
       throw new LlmCallError(
-        `LLM provider error (${response.status}) ${config.endpoint}: ${redactSensitiveText(redactErrorBody(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
+        `LLM provider error (${response.status}) ${shownEndpoint}: ${redactSensitiveText(redactErrorBody(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
         "provider_error",
         response.status,
       );

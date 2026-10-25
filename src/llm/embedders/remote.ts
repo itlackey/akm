@@ -14,7 +14,7 @@ import { concurrentMap } from "../../core/concurrent";
 import type { EmbeddingConnectionConfig } from "../../core/config/config";
 import { apiKeyReference, type CredentialSlot, readCredential, resolveApiKey } from "../../core/config/credentials";
 import { defaultConcurrencyForEndpoint } from "../../core/loopback";
-import { redactErrorBody, redactSensitiveText } from "../../core/redaction";
+import { redactErrorBody, redactSensitiveText, redactUrlCredentials } from "../../core/redaction";
 import { warnVerbose } from "../../core/warn";
 import type { Embedder, EmbeddingVector } from "./types";
 
@@ -1033,7 +1033,7 @@ export function normalizeEmbeddingEndpoint(endpoint: string): string {
 function embeddingEndpointPathHint(endpoint: string): string {
   const normalizedEndpoint = normalizeEmbeddingEndpoint(endpoint);
   if (normalizedEndpoint !== endpoint) {
-    return ` Check that your endpoint includes the full embeddings path (for example "${normalizedEndpoint}", not just "${endpoint}").`;
+    return ` Check that your endpoint includes the full embeddings path (for example "${redactUrlCredentials(normalizedEndpoint)}", not just "${redactUrlCredentials(endpoint)}").`;
   }
   return "";
 }

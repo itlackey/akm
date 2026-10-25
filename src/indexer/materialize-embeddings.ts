@@ -20,6 +20,7 @@
 
 import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config/config";
 import { getConfigPath } from "../core/paths";
+import { redactUrlCredentials } from "../core/redaction";
 import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { embedBatch } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
@@ -159,7 +160,7 @@ export async function generateEmbeddingsForDb(
   // phase, naming the endpoint/model/credential SOURCE — never the credential
   // value.
   if (embedding && hasRemoteEndpoint(embedding)) {
-    const endpoint = normalizeEmbeddingEndpoint(embedding.endpoint ?? "");
+    const endpoint = redactUrlCredentials(normalizeEmbeddingEndpoint(embedding.endpoint ?? ""));
     const credential = describeEmbeddingCredential(embedding);
     const configFileSuffix = isVerbose() ? `; config: ${getConfigPath()}` : "";
     onProgress({

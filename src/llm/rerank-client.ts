@@ -28,7 +28,7 @@
 
 import { fetchWithTimeout, readBodyWithByteCap } from "../core/common";
 import { resolveApiKey } from "../core/config/credentials";
-import { redactErrorBody, redactSensitiveText } from "../core/redaction";
+import { redactErrorBody, redactSensitiveText, redactUrlCredentials } from "../core/redaction";
 
 /** Mirrors `CurateRerankConfigSchema` (`core/config/schema/search.ts`) — kept as a plain interface here to avoid this transport module depending on the Zod schema module. */
 export interface CurateRerankConfig {
@@ -106,7 +106,7 @@ export async function rerankDocuments(
     const rawBody = await readBodyWithByteCap(response).catch(() => "");
     const safeBody = redactSensitiveText(redactErrorBody(rawBody), resolvedKey ? [resolvedKey] : []);
     throw new RerankCallError(
-      `Rerank request failed (${response.status}) ${config.endpoint}: ${safeBody}`,
+      `Rerank request failed (${response.status}) ${redactUrlCredentials(config.endpoint)}: ${safeBody}`,
       "provider_error",
     );
   }
@@ -117,12 +117,15 @@ export async function rerankDocuments(
     json = JSON.parse(rawBody) as RerankResponseBody;
   } catch {
     throw new RerankCallError(
-      `Rerank response was not valid JSON ${config.endpoint}: ${redactSensitiveText(redactErrorBody(rawBody), resolvedKey ? [resolvedKey] : [])}`,
+      `Rerank response was not valid JSON ${redactUrlCredentials(config.endpoint)}: ${redactSensitiveText(redactErrorBody(rawBody), resolvedKey ? [resolvedKey] : [])}`,
       "parse_error",
     );
   }
   if (!Array.isArray(json.results)) {
-    throw new RerankCallError(`Rerank response from ${config.endpoint} has no "results" array.`, "parse_error");
+    throw new RerankCallError(
+      `Rerank response from ${redactUrlCredentials(config.endpoint)} has no "results" array.`,
+      "parse_error",
+    );
   }
 
   const scored = new Map<number, number>();

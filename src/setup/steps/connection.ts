@@ -120,7 +120,7 @@ function warnOfUnlistedPicks(
   if (kept.size === 0) return;
   const names = [...kept].map((model) => `"${model}"`).join(", ");
   warnUser(
-    `Keeping ${names}: ${endpoint} does not list ${kept.size === 1 ? "it" : "them"}. Change a pick with \`akm models set\`.`,
+    `Keeping ${names}: ${redactUrlCredentials(endpoint)} does not list ${kept.size === 1 ? "it" : "them"}. Change a pick with \`akm models set\`.`,
     interactive,
   );
 }

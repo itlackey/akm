@@ -8,6 +8,7 @@
  */
 
 import * as p from "../../cli/clack";
+import { redactUrlCredentials } from "../../core/redaction";
 import { warn } from "../../core/warn";
 import { listEndpointModels } from "../../llm/model-list";
 import { endpointProblem, normalizeEndpoint } from "../endpoint";
@@ -75,6 +76,6 @@ export async function listModels(
     return result.models;
   }
   spin?.stop("Could not list models.");
-  warnUser(`Could not list models from ${endpoint} (${result.error}).`, interactive);
+  warnUser(`Could not list models from ${redactUrlCredentials(endpoint)} (${result.error}).`, interactive);
   return [];
 }
