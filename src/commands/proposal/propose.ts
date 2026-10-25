@@ -37,7 +37,8 @@ import {
   validateProposalPayload,
 } from "../../integrations/agent/prompts";
 import { runExecution } from "../../integrations/agent/runner-dispatch";
-import { jsonParser, type StructuredLoopResult, structuredLoop } from "../../llm/structured";
+import { isRefused, jsonParser, type StructuredLoopResult, structuredLoop } from "../../llm/structured";
+import { outcomeOf } from "../../llm/structured-call";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type CreateProposalInput,
@@ -114,16 +115,14 @@ function noticeFields(notices: readonly Readonly<LoweringNotice>[]): { notices?:
 interface ProposalDispatchResult {
   /** The last dispatch. */
   result: AgentRunResult;
-  /** The proposal the engine returned, or why its last reply was not one; absent when a dispatch failed. */
-  reply?: StructuredLoopResult<AgentProposalPayload>;
+  /** The proposal the engine returned, or why its last reply was not one, or the dispatch's failure. */
+  reply: StructuredLoopResult<AgentProposalPayload>;
   /** Every dispatch's duration. */
   durationMs: number;
   engineName: string;
   engineBin?: string;
   notices: readonly Readonly<LoweringNotice>[];
 }
-
-const DISPATCH_FAILED = Symbol("proposal-dispatch-failed");
 
 /**
  * Resolve, lower, and dispatch the already-rendered proposal prompt with the
@@ -158,26 +157,20 @@ async function dispatchProposalPrompt(
   const engineName = prepared.request.target.name;
   onDispatchReady();
   options.onDispatchReady?.();
-  // The loop dispatches at least once, so a returned or DISPATCH_FAILED exchange has a result.
+  // The loop dispatches at least once, so there is a result.
   const results: AgentRunResult[] = [];
-  let reply: StructuredLoopResult<AgentProposalPayload> | undefined;
-  try {
-    reply = await structuredLoop({
-      dispatch: async (correction) => {
-        const execution = correction ? corrected(`${prompt}\n\n${correction.text}`) : lowered;
-        const result = await runExecution(execution);
-        results.push(result);
-        if (!result.ok) throw DISPATCH_FAILED;
-        return result.stdout;
-      },
-      parse: jsonParser(validateProposalPayload),
-    });
-  } catch (err) {
-    if (err !== DISPATCH_FAILED) throw err;
-  }
+  const reply = await structuredLoop({
+    dispatch: async (correction) => {
+      const execution = correction ? corrected(`${prompt}\n\n${correction.text}`) : lowered;
+      const result = await runExecution(execution);
+      results.push(result);
+      return outcomeOf(result);
+    },
+    parse: jsonParser(validateProposalPayload),
+  });
   return {
     result: results.at(-1) as AgentRunResult,
-    ...(reply ? { reply } : {}),
+    reply,
     durationMs: results.reduce((total, result) => total + result.durationMs, 0),
     engineName,
     ...(lowered.runner.kind === "harness" ? { engineBin: lowered.runner.bin } : {}),
@@ -264,8 +257,8 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     emitProposeInvoked(target.source, options),
   );
   const { result, reply, engineName, notices } = dispatch;
-  if (!reply) {
-    // B3: ENOENT / not-found gives an actionable hint.
+  if (!reply.ok && !isRefused(reply)) {
+    // The dispatch failed. B3: ENOENT / not-found gives an actionable hint.
     if (isEnoentFailure(result)) {
       return {
         ...failureEnvelope(result, options.type, options.name, engineName, notices),

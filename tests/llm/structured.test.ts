@@ -7,12 +7,12 @@
  *   • A refused reply is corrected once, and the correction names what was wrong.
  *   • A reply still refused after the last attempt is a typed failure, never a throw.
  *   • One attempt means a command is never run twice to fix its output.
- *   • A dispatch that fails is not retried by the loop.
+ *   • A dispatch that fails ends the loop with that failure, unchanged and uncorrected.
  *   • The JSON parser tolerates fenced and prose-wrapped replies.
  */
 import { describe, expect, test } from "bun:test";
 import type { Parsed } from "../../src/core/structured";
-import { type Correction, jsonParser, structuredLoop } from "../../src/llm/structured";
+import { type Correction, isRefused, jsonParser, structuredLoop } from "../../src/llm/structured";
 
 interface Finding {
   file: string;
@@ -33,13 +33,16 @@ function validateFinding(candidate: unknown): Parsed<Finding> {
 
 const parse = jsonParser(validateFinding);
 
+/** A dispatch that produced `raw`. */
+const reply = (raw: string) => ({ ok: true, raw }) as const;
+
 describe("structuredLoop", () => {
   test("a reply the parser accepts comes back at once, with no correction", async () => {
     const corrections: (Correction | undefined)[] = [];
     const result = await structuredLoop({
       dispatch: async (correction) => {
         corrections.push(correction);
-        return '{"file":"a.ts","summary":"ok"}';
+        return reply('{"file":"a.ts","summary":"ok"}');
       },
       parse,
     });
@@ -58,7 +61,7 @@ describe("structuredLoop", () => {
     const result = await structuredLoop({
       dispatch: async (correction) => {
         corrections.push(correction);
-        return replies.shift() ?? "";
+        return reply(replies.shift() ?? "");
       },
       parse,
     });
@@ -74,7 +77,7 @@ describe("structuredLoop", () => {
     const result = await structuredLoop({
       dispatch: async (correction) => {
         corrections.push(correction);
-        return replies.shift() ?? "";
+        return reply(replies.shift() ?? "");
       },
       parse,
     });
@@ -89,7 +92,7 @@ describe("structuredLoop", () => {
     const result = await structuredLoop({
       dispatch: async () => {
         calls += 1;
-        return '{"file": 42}';
+        return reply('{"file": 42}');
       },
       parse,
       attempts: 3,
@@ -103,7 +106,7 @@ describe("structuredLoop", () => {
     const result = await structuredLoop({
       dispatch: async () => {
         calls += 1;
-        return "nope";
+        return reply("nope");
       },
       parse,
       attempts: 1,
@@ -112,33 +115,41 @@ describe("structuredLoop", () => {
     expect(result).toMatchObject({ ok: false, reason: "parse_error", attempts: 1 });
   });
 
-  test("a dispatch that fails ends the loop with its error: the loop owns only the reply's shape", async () => {
-    await expect(
-      structuredLoop({
-        dispatch: async () => {
-          throw new Error("connection refused");
-        },
-        parse,
-      }),
-    ).rejects.toThrow("connection refused");
+  test("a dispatch that fails ends the loop with that failure, as the dispatch reported it", async () => {
+    const failure = { ok: false, reason: "timeout", error: "Request timed out after 50ms" } as const;
+    const first = await structuredLoop({ dispatch: async () => failure, parse });
+    expect(first).toEqual({ ...failure, attempts: 1 });
+    expect(isRefused(first)).toBe(false);
 
+    // A failure on the corrective dispatch is passed through the same way, not retried.
     let calls = 0;
-    await expect(
-      structuredLoop({
-        dispatch: async (correction) => {
-          calls += 1;
-          if (correction) throw new Error("connection dropped on the retry");
-          return "prose";
-        },
-        parse,
-      }),
-    ).rejects.toThrow("connection dropped on the retry");
+    const second = await structuredLoop<Finding>({
+      dispatch: async (correction) => {
+        calls += 1;
+        return correction ? failure : reply("prose");
+      },
+      parse,
+    });
+    expect(second).toEqual({ ...failure, attempts: 2 });
     expect(calls).toBe(2);
+  });
+
+  test("a caller's own failure shape passes through, so a workflow unit keeps its reasons", async () => {
+    const result = await structuredLoop<Finding, { failureReason: string; error: string }>({
+      dispatch: async () => ({ ok: false, failureReason: "dispatch_error", error: "boom" }),
+      parse,
+    });
+    expect(result).toEqual({ ok: false, failureReason: "dispatch_error", error: "boom", attempts: 1 });
+  });
+
+  test("a refused reply and a failed dispatch are told apart", async () => {
+    const refused = await structuredLoop({ dispatch: async () => reply("prose"), parse, attempts: 1 });
+    expect(isRefused(refused)).toBe(true);
   });
 
   test("the jsonParser tolerates fenced and prose-wrapped JSON", async () => {
     const result = await structuredLoop({
-      dispatch: async () => 'Here you go:\n```json\n{"file":"d.ts","summary":"fenced"}\n```\nHope that helps!',
+      dispatch: async () => reply('Here you go:\n```json\n{"file":"d.ts","summary":"fenced"}\n```\nHope that helps!'),
       parse,
     });
     expect(result.ok).toBe(true);
@@ -151,7 +162,7 @@ describe("structuredLoop", () => {
     await structuredLoop({
       dispatch: async (correction) => {
         corrections.push(correction);
-        return replies.shift() ?? "";
+        return reply(replies.shift() ?? "");
       },
       parse,
       correct: (refusal) => `CUSTOM:${refusal.reason}:${refusal.errors.join("|")}`,

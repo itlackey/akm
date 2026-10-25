@@ -24,7 +24,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { chatCompletion } from "../../../src/llm/client";
-import { jsonParser, structuredLoop } from "../../../src/llm/structured";
+import { isRefused, jsonParser, structuredLoop } from "../../../src/llm/structured";
 
 function createRequestServer(respond: () => Response): { url: string; server: ReturnType<typeof Bun.serve> } {
   const server = Bun.serve({ port: 0, fetch: () => respond() });
@@ -53,19 +53,19 @@ describe("truncated LLM responses collapse into a generic parse_error (#865)", (
   test("the structured loop reports the same parse_error for a truncated response as for garbage", async () => {
     const parse = jsonParser((candidate) => ({ ok: true, value: candidate }));
     const truncated = await structuredLoop({
-      dispatch: async () => '{"file":"a.ts","summary":"this got cut off mid-str',
+      dispatch: async () => ({ ok: true, raw: '{"file":"a.ts","summary":"this got cut off mid-str' }),
       parse,
       attempts: 1,
     });
     const garbage = await structuredLoop({
-      dispatch: async () => "the model said something unrelated, no JSON at all",
+      dispatch: async () => ({ ok: true, raw: "the model said something unrelated, no JSON at all" }),
       parse,
       attempts: 1,
     });
 
     expect(truncated.ok).toBe(false);
     expect(garbage.ok).toBe(false);
-    if (!truncated.ok && !garbage.ok) {
+    if (isRefused(truncated) && isRefused(garbage)) {
       // Both land on the exact same classification — a caller (or a user
       // reading the error) cannot tell "hit the token cap" from "bad output".
       expect(truncated.reason).toBe("parse_error");

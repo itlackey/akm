@@ -33,7 +33,7 @@ import { substituteRefTokens } from "../../core/ref-token";
 import { warn } from "../../core/warn";
 import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { jsonParser, structuredLoop } from "../../llm/structured";
+import { type Dispatched, isRefused, jsonParser, structuredLoop } from "../../llm/structured";
 import {
   type WorkflowRunUnitAttemptRowV4,
   type WorkflowRunUnitRow,
@@ -840,12 +840,11 @@ function parseExecJson(raw: string): unknown {
   }
 }
 
-/** Transport failures surface as this sentinel so the structured loop doesn't retry them. */
-class UnitTransportError extends Error {
-  constructor(readonly result: UnitDispatchResult) {
-    super(result.error ?? "unit dispatch failed");
-    this.name = "UnitTransportError";
-  }
+/** How a unit's dispatch failed, in the unit's own vocabulary (`retry.on` names these reasons). */
+interface UnitTransportFailure {
+  failureReason: string;
+  error: string;
+  text?: string;
 }
 
 async function dispatchUnit(
@@ -862,7 +861,7 @@ async function dispatchUnit(
   // UnitOutcome and gets journaled by finishUnitAttempt — the seam's
   // contract ("stored opportunistically on the unit row for resume").
   let sessionId: string | undefined;
-  const dispatchOnce = async (feedback?: string): Promise<string> => {
+  const dispatchOnce = async (feedback?: string): Promise<Dispatched<UnitTransportFailure>> => {
     const result = await dispatcher(request, feedback);
     for (const value of result.sensitiveValues ?? []) resolvedSecrets.add(value);
     if (result.usage) {
@@ -874,9 +873,24 @@ async function dispatchUnit(
     // Capture before the ok-check: a failed attempt can still have configured
     // a session (e.g. codex `session_configured` then a tool crash).
     if (result.sessionId !== undefined) sessionId = result.sessionId;
-    if (!result.ok) throw new UnitTransportError(result);
-    return result.text;
+    if (!result.ok) {
+      return {
+        ok: false,
+        failureReason: result.failureReason ?? "dispatch_error",
+        error: result.error ?? "unit dispatch failed",
+        text: result.text,
+      };
+    }
+    return { ok: true, raw: result.text };
   };
+  const transportFailed = (failure: UnitTransportFailure): UnitOutcome => ({
+    unitId: request.unitId,
+    ok: false,
+    failureReason: failure.failureReason,
+    error: failure.error,
+    text: failure.text,
+    ...captured(),
+  });
   const captured = (): Partial<UnitOutcome> => ({
     ...(sawUsage ? { tokens } : {}),
     ...(sessionId !== undefined ? { sessionId } : {}),
@@ -892,7 +906,7 @@ async function dispatchUnit(
           ? ({ ok: true, value: candidate } as const)
           : ({ ok: false, errors, reason: "validation_error" } as const);
       };
-      const structured = await structuredLoop<unknown>({
+      const structured = await structuredLoop<unknown, UnitTransportFailure>({
         dispatch: (correction) => dispatchOnce(correction?.text),
         // A command is not re-promptable. Its stdout must be EXACTLY one JSON
         // value: the default embedded-JSON scan (fences, think-blocks, "find the
@@ -920,6 +934,7 @@ async function dispatchUnit(
       if (structured.ok) {
         return { unitId: request.unitId, ok: true, result: structured.value, ...captured() };
       }
+      if (!isRefused(structured)) return transportFailed(structured);
       return {
         unitId: request.unitId,
         ok: false,
@@ -938,7 +953,9 @@ async function dispatchUnit(
       };
     }
 
-    const text = await dispatchOnce();
+    const dispatched = await dispatchOnce();
+    if (!dispatched.ok) return transportFailed(dispatched);
+    const text = dispatched.raw;
     // Normalize an EMPTY successful output to "no text". `finishUnitAttempt` journals
     // result_json = NULL for a falsy text, so durable-reuse rehydrates NO text
     // from the row (unitOutcomeFromRow). Preserving `text: ""` only in this live
@@ -948,16 +965,6 @@ async function dispatchUnit(
     // dispatch and engine resume identical.
     return { unitId: request.unitId, ok: true, ...(text ? { text } : {}), ...captured() };
   } catch (err) {
-    if (err instanceof UnitTransportError) {
-      return {
-        unitId: request.unitId,
-        ok: false,
-        failureReason: err.result.failureReason ?? "dispatch_error",
-        error: err.result.error ?? "unit dispatch failed",
-        text: err.result.text,
-        ...captured(),
-      };
-    }
     return {
       unitId: request.unitId,
       ok: false,

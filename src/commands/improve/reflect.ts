@@ -48,7 +48,7 @@ import {
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { getHarness } from "../../integrations/harnesses";
 import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported } from "../../llm/client";
-import { structuredLoop } from "../../llm/structured";
+import { isRefused, structuredLoop } from "../../llm/structured";
 import type { StructuredOutcome } from "../../llm/structured-call";
 import { enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import type { EligibilitySource } from "../proposal/proposal-types";
@@ -485,13 +485,6 @@ function parseFramedReflectOutput(raw: string, targetRef: string | undefined): R
   };
 }
 
-/** A dispatch or deadline that ended the iteration, carried out of the structured loop. */
-class ReflectFailed extends Error {
-  constructor(readonly failure: ReflectFailureFields) {
-    super(failure.error);
-  }
-}
-
 /** A failure only a message describes, as a process that printed it and exited would have: what a connection reports. */
 function messageFailure(error: string, reason: AgentFailureReason, stdout = "", exitCode = 1): ReflectFailureFields {
   return { reason, error, exitCode, stdout, stderr: error };
@@ -516,7 +509,11 @@ function dispatchFailure(
   }
   return messageFailure(
     outcome.error,
-    signal?.aborted ? "aborted" : outcome.reason === "timeout" ? "timeout" : "non_zero_exit",
+    signal?.aborted || outcome.reason === "aborted"
+      ? "aborted"
+      : outcome.reason === "timeout"
+        ? "timeout"
+        : "non_zero_exit",
   );
 }
 
@@ -554,8 +551,8 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
     ...failure,
   });
   // Reflect parses and repairs its own reply (the repair turn below), so one dispatch, unvalidated.
-  const call = async (callMessages: ChatMessage[], repairTimeoutMs?: number): Promise<string> => {
-    const outcome = await callStageOnce({
+  const call = (callMessages: ChatMessage[], repairTimeoutMs?: number): Promise<StructuredOutcome> =>
+    callStageOnce({
       runner: opts.runner,
       prompt: callMessages.at(-1)?.content ?? "",
       history: callMessages.slice(0, -1),
@@ -575,20 +572,17 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
       ...(opts.environment ? { current: { environment: opts.environment } } : {}),
       ...(opts.onNotices ? { onNotices: opts.onNotices } : {}),
     });
-    if (!outcome.ok) throw new ReflectFailed(dispatchFailure(outcome, opts.runner, opts.signal));
-    return outcome.raw;
-  };
 
   try {
-    if (opts.signal?.aborted) throw new ReflectFailed(messageFailure("Reflect request aborted", "aborted"));
+    if (opts.signal?.aborted) return failed(messageFailure("Reflect request aborted", "aborted"));
     const loop = await structuredLoop<ReflectPayload>({
-      dispatch: (correction) => {
+      dispatch: async (correction) => {
         if (!correction) return call(messages);
         // The repair turn spends what is left of the original deadline, and does not start once the caller has aborted.
-        if (opts.signal?.aborted) throw new ReflectFailed(messageFailure("Reflect request aborted", "aborted"));
+        if (opts.signal?.aborted) return { ok: false, reason: "aborted", error: "Reflect request aborted" };
         const remaining = deadline === undefined ? undefined : deadline - Date.now();
         if (remaining !== undefined && remaining <= 0) {
-          throw new ReflectFailed(messageFailure("Reflect request timed out before output repair", "timeout"));
+          return { ok: false, reason: "timeout", error: "Reflect request timed out before output repair" };
         }
         repairAttempts = 1;
         const repair = `${buildReflectOutputRepairPrompt(opts.outputMode, opts.targetRef !== undefined)}\n\nWhat was wrong with it: ${correction.text}`;
@@ -600,8 +594,11 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
       parse,
       correct: (refusal) => refusal.errors.join("; "),
     });
-    // A reply that broke the contract; its message is the parser's, on every engine kind.
-    if (!loop.ok) return failed(messageFailure(loop.errors.join("; "), "parse_error", loop.raw, 0));
+    if (!loop.ok) {
+      // A reply that broke the contract: its message is the parser's, on every engine kind.
+      if (isRefused(loop)) return failed(messageFailure(loop.errors.join("; "), "parse_error", loop.raw, 0));
+      return failed(dispatchFailure(loop, opts.runner, opts.signal));
+    }
     return {
       ok: true,
       payload: loop.value,
@@ -610,11 +607,7 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
     };
   } catch (err) {
     if (err instanceof ConfigError) throw err;
-    return failed(
-      err instanceof ReflectFailed
-        ? err.failure
-        : messageFailure(errMessage(err), opts.signal?.aborted ? "aborted" : "non_zero_exit"),
-    );
+    return failed(messageFailure(errMessage(err), opts.signal?.aborted ? "aborted" : "non_zero_exit"));
   }
 }
 

@@ -24,6 +24,7 @@ import type { RunnerSpec } from "../integrations/agent/runner";
 import { runExecution } from "../integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../integrations/agent/spawn";
 import type { ChatCompletionConfig, ChatMessage } from "./client";
+import type { Dispatched } from "./structured";
 
 /**
  * Per-call request shape. Mirrors the subset of direct-LLM options the
@@ -80,15 +81,7 @@ export interface CallStructuredOptions {
 }
 
 /** The reply text, or why there is none: the failed dispatch's own result is carried when it reached a transport. */
-export type StructuredOutcome =
-  | { ok: true; raw: string }
-  | {
-      ok: false;
-      reason: "timeout" | "aborted" | "error";
-      error: string;
-      /** The failed dispatch's own result (an agent's exit code and stderr, say). */
-      result?: AgentRunResult;
-    };
+export type StructuredOutcome = Dispatched;
 
 function own(value: object | undefined, key: PropertyKey): boolean {
   return value !== undefined && Object.hasOwn(value, key);
@@ -148,6 +141,13 @@ function failed(error: string, result?: AgentRunResult): Extract<StructuredOutco
   };
 }
 
+/** A dispatch's result as the reply it produced or the failure it reports. */
+export function outcomeOf(result: AgentRunResult): StructuredOutcome {
+  return result.ok
+    ? { ok: true, raw: result.stdout }
+    : failed(result.error ?? result.stderr ?? result.reason ?? "dispatch failed", result);
+}
+
 export async function callStructured(opts: CallStructuredOptions): Promise<StructuredOutcome> {
   const { runner, messages, request } = opts;
   try {
@@ -167,9 +167,7 @@ export async function callStructured(opts: CallStructuredOptions): Promise<Struc
       ...(request?.onRetryAttempt ? { onRetryAttempt: request.onRetryAttempt } : {}),
       ...(request?.signal ? { signal: request.signal } : {}),
     });
-    return result.ok
-      ? { ok: true, raw: result.stdout }
-      : failed(result.error ?? result.stderr ?? result.reason ?? "dispatch failed", result);
+    return outcomeOf(result);
   } catch (err) {
     if (err instanceof ConfigError) throw err;
     return failed(err instanceof Error ? err.message : String(err));

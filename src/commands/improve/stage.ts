@@ -15,13 +15,14 @@ import { ConfigError } from "../../core/errors";
 import type { EventsContext } from "../../core/events";
 import { effectiveRequestFields, thinkingSetting } from "../../core/llm-inference";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
+import type { Parsed } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { NoticeSink } from "../../execution/notices";
 import type { ConfiguredExecutionSettings, UnresolvedExecutionDefaults } from "../../execution/source";
 import type { RejectedProposalContext } from "../../integrations/agent/prompts";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../../llm/client";
-import { structuredLoop } from "../../llm/structured";
+import { isRefused, type StructuredLoopOptions, type StructuredLoopResult, structuredLoop } from "../../llm/structured";
 import { type CallStructuredRequest, callStructured, type StructuredOutcome } from "../../llm/structured-call";
 import { currentLlmStage, withLlmStage } from "../../llm/usage-telemetry";
 import { isProceduralRejection } from "../proposal/proposal-types";
@@ -73,11 +74,23 @@ export interface StageLlmCall {
   onNotices?: NoticeSink;
 }
 
-/** A dispatch that came back `{ ok: false }`, carried out of the structured loop. */
-class StageFailed extends Error {
-  constructor(readonly outcome: Extract<StructuredOutcome, { ok: false }>) {
-    super(outcome.error ?? outcome.reason);
-  }
+/**
+ * The stage's call under the structured loop: each dispatch is one
+ * {@link callStageOnce}, and the correction a refused reply earns is appended
+ * to the prompt. The loop's own result comes back, so a caller that must tell a
+ * refused reply (and read what the parser said) from a failed call can.
+ */
+export function callStageLoop<T>(
+  call: StageLlmCall,
+  parse: (raw: string) => Parsed<T>,
+  correct?: StructuredLoopOptions<T>["correct"],
+): Promise<StructuredLoopResult<T>> {
+  return structuredLoop<T>({
+    dispatch: (correction) =>
+      callStageOnce(correction ? { ...call, prompt: `${call.prompt}\n\n${correction.text}` } : call),
+    parse,
+    ...(correct ? { correct } : {}),
+  });
 }
 
 /**
@@ -89,28 +102,15 @@ class StageFailed extends Error {
 export async function callStage(call: StageLlmCall): Promise<StructuredOutcome> {
   if (!call.request?.responseSchema) return callStageOnce(call);
   const parse = call.parse ?? parseEmbeddedJsonResponse;
-  try {
-    const loop = await structuredLoop<string>({
-      dispatch: async (correction) => {
-        const outcome = await callStageOnce(
-          correction ? { ...call, prompt: `${call.prompt}\n\n${correction.text}` } : call,
-        );
-        if (!outcome.ok) throw new StageFailed(outcome);
-        return outcome.raw;
-      },
-      parse: (raw) =>
-        parse(raw) === undefined ? { ok: false, errors: ["no parseable JSON"] } : { ok: true, value: raw },
-    });
-    return { ok: true, raw: loop.raw };
-  } catch (error) {
-    if (error instanceof StageFailed) return error.outcome;
-    throw error;
-  }
+  const loop = await callStageLoop<string>(call, (raw) =>
+    parse(raw) === undefined ? { ok: false, errors: ["no parseable JSON"] } : { ok: true, value: raw },
+  );
+  return loop.ok || isRefused(loop) ? { ok: true, raw: loop.raw } : loop;
 }
 
 /**
- * One dispatch with no validation, for a caller that parses and repairs the
- * reply itself (reflect's repair turn, extract's own structured loop).
+ * One dispatch with no validation: the loop's dispatch ({@link callStageLoop}),
+ * and a caller's own (reflect's repair turn carries a conversation).
  */
 export async function callStageOnce(call: StageLlmCall): Promise<StructuredOutcome> {
   const messages: ChatMessage[] = [

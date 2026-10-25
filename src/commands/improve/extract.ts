@@ -49,7 +49,7 @@ import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
 import type { ChatCompletionConfig, ChatMessage } from "../../llm/client";
-import { structuredLoop } from "../../llm/structured";
+import { isRefused } from "../../llm/structured";
 import type { Database } from "../../storage/database";
 import {
   type ExtractedSessionRow,
@@ -81,7 +81,7 @@ import {
   sessionMeetsDurationGate,
   writeSessionAsset,
 } from "./session-asset";
-import { callStage, callStageOnce, mintProposal } from "./stage";
+import { callStage, callStageLoop, mintProposal } from "./stage";
 
 export type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
 
@@ -563,54 +563,43 @@ type SessionExtraction =
   | { kind: "unavailable" }
   | { kind: "malformed"; raw: string; attempts: number; failure: NonNullable<ExtractPayload["parseFailure"]> };
 
-const EXTRACT_LLM_UNAVAILABLE = Symbol("extract-llm-unavailable");
-
 /**
  * One session's extraction call, with one corrective retry; configuration
  * errors escape before any state is written.
  */
 async function extractFromSession(run: ExtractRun, prompt: string): Promise<SessionExtraction> {
-  const { llmRunner } = run;
-  try {
-    const result = await structuredLoop<ExtractPayload>({
-      dispatch: async (correction) => {
-        // This loop parses and repairs the reply itself, so each attempt is one unvalidated dispatch.
-        const outcome = await callStageOnce({
-          runner: llmRunner,
-          prompt: correction ? `${prompt}\n\n## Corrective output instruction\n\n${correction.text}` : prompt,
-          request: {
-            responseSchema: EXTRACT_JSON_SCHEMA,
-            ...(run.options.signal ? { signal: run.options.signal } : {}),
-            ...(run.options.chat ? { chat: run.options.chat } : {}),
-          },
-          onNotices: run.notices.add,
-        });
-        if (!outcome.ok) throw EXTRACT_LLM_UNAVAILABLE;
-        return outcome.raw;
+  // This loop parses and repairs the reply itself, so each attempt is one unvalidated dispatch.
+  const result = await callStageLoop<ExtractPayload>(
+    {
+      runner: run.llmRunner,
+      prompt,
+      request: {
+        responseSchema: EXTRACT_JSON_SCHEMA,
+        ...(run.options.signal ? { signal: run.options.signal } : {}),
+        ...(run.options.chat ? { chat: run.options.chat } : {}),
       },
-      parse: (raw) => {
-        const payload = parseExtractPayload(raw);
-        return payload.parseFailure
-          ? { ok: false, errors: [payload.parseFailure.message] }
-          : { ok: true, value: payload as ExtractPayload };
-      },
-      correct: () =>
-        "Your previous response did not contain a valid extraction payload. Respond with ONLY a JSON object matching the requested schema, with a candidates array and no prose or code fences.",
-    });
-    if (result.ok) return { kind: "success", payload: result.value, attempts: result.attempts };
-    return {
-      kind: "malformed",
-      raw: result.raw,
-      attempts: result.attempts,
-      failure: parseExtractPayload(result.raw).parseFailure ?? {
-        code: "invalid_payload",
-        message: result.errors.join("; "),
-      },
-    };
-  } catch (err) {
-    if (err === EXTRACT_LLM_UNAVAILABLE) return { kind: "unavailable" };
-    throw err;
-  }
+      onNotices: run.notices.add,
+    },
+    (raw) => {
+      const payload = parseExtractPayload(raw);
+      return payload.parseFailure
+        ? { ok: false, errors: [payload.parseFailure.message] }
+        : { ok: true, value: payload as ExtractPayload };
+    },
+    () =>
+      "## Corrective output instruction\n\nYour previous response did not contain a valid extraction payload. Respond with ONLY a JSON object matching the requested schema, with a candidates array and no prose or code fences.",
+  );
+  if (result.ok) return { kind: "success", payload: result.value, attempts: result.attempts };
+  if (!isRefused(result)) return { kind: "unavailable" };
+  return {
+    kind: "malformed",
+    raw: result.raw,
+    attempts: result.attempts,
+    failure: parseExtractPayload(result.raw).parseFailure ?? {
+      code: "invalid_payload",
+      message: result.errors.join("; "),
+    },
+  };
 }
 
 /**

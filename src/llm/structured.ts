@@ -10,12 +10,30 @@
  * whoever parses decides what a good reply is.
  *
  * Only a refused reply is corrected. A dispatch that fails, in transport or by
- * timeout, ends the loop with its error: the transports own their retries, and a
- * command is never run twice to fix its output (`attempts: 1`).
+ * timeout, ends the loop with that failure as the dispatch reported it: the
+ * transports own their retries, and a command is never run twice to fix its
+ * output (`attempts: 1`).
  */
 
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import type { Parsed } from "../core/structured";
+import type { AgentRunResult } from "../integrations/agent/spawn";
+
+/** Why a model call has no reply, whichever transport made it. */
+export interface StructuredFailure {
+  reason: "timeout" | "aborted" | "error";
+  error: string;
+  /** The failed dispatch's own result (an agent's exit code and stderr, say), when it reached a transport. */
+  result?: AgentRunResult;
+}
+
+/**
+ * One dispatch's end: the reply text, or a failure. A model call fails as a
+ * {@link StructuredFailure} (what `callStructured` returns); a caller whose
+ * dispatch fails otherwise (a workflow unit has its own failure reasons) names
+ * its own shape, and the loop passes it through.
+ */
+export type Dispatched<F extends object = StructuredFailure> = { ok: true; raw: string } | ({ ok: false } & F);
 
 /** The parser's refusal of a reply, as the next dispatch receives it. */
 export interface Correction {
@@ -27,9 +45,9 @@ export interface Correction {
 
 type Refusal = Extract<Parsed<unknown>, { ok: false }>;
 
-export interface StructuredLoopOptions<T> {
-  /** One dispatch: the first gets no correction, a later one the refusal of the reply before it. Throws when the dispatch fails. */
-  dispatch: (correction?: Correction) => Promise<string>;
+export interface StructuredLoopOptions<T, F extends object = StructuredFailure> {
+  /** One dispatch: the first gets no correction, a later one the refusal of the reply before it. */
+  dispatch: (correction?: Correction) => Promise<Dispatched<F>>;
   parse: (raw: string) => Parsed<T>;
   /** Attempts in all (default 2: one corrective retry). */
   attempts?: number;
@@ -37,7 +55,7 @@ export interface StructuredLoopOptions<T> {
   correct?: (refusal: Refusal) => string;
 }
 
-export type StructuredLoopResult<T> =
+export type StructuredLoopResult<T, F extends object = StructuredFailure> =
   | { ok: true; value: T; raw: string; attempts: number }
   | {
       ok: false;
@@ -46,7 +64,15 @@ export type StructuredLoopResult<T> =
       /** The last reply, which the parser refused. */
       raw: string;
       attempts: number;
-    };
+    }
+  | ({ ok: false; attempts: number } & F);
+
+/** The reply was refused by the parser, as against the dispatch failing. */
+export function isRefused<T, F extends object>(
+  result: StructuredLoopResult<T, F>,
+): result is Extract<StructuredLoopResult<T, F>, { errors: string[] }> {
+  return !result.ok && "errors" in result;
+}
 
 /** The default instruction for a refused reply. */
 export function correctionText(refusal: Refusal): string {
@@ -56,12 +82,16 @@ export function correctionText(refusal: Refusal): string {
   return `Your previous JSON response failed validation:\n- ${refusal.errors.join("\n- ")}\nRespond again with ONLY a corrected JSON value.`;
 }
 
-export async function structuredLoop<T>(options: StructuredLoopOptions<T>): Promise<StructuredLoopResult<T>> {
+export async function structuredLoop<T, F extends object = StructuredFailure>(
+  options: StructuredLoopOptions<T, F>,
+): Promise<StructuredLoopResult<T, F>> {
   const attempts = Math.max(1, options.attempts ?? 2);
   const correct = options.correct ?? correctionText;
   let correction: Correction | undefined;
   for (let attempt = 1; ; attempt += 1) {
-    const raw = await options.dispatch(correction);
+    const dispatched = await options.dispatch(correction);
+    if (!dispatched.ok) return { ...dispatched, attempts: attempt };
+    const raw = dispatched.raw;
     const parsed = options.parse(raw);
     if (parsed.ok) return { ok: true, value: parsed.value, raw, attempts: attempt };
     if (attempt >= attempts) {
