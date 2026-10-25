@@ -27,8 +27,8 @@ import type { RunnerSpec } from "../integrations/agent/runner";
  * Stored plans record this; 0.9.15 and 0.9.16 wrote 5 and early 0.10 wrote 6,
  * which still decode (the 0.9.15 floor, #1091). 7 stopped freezing locations:
  * the plan names the refs the engine dereferences, never a directory or file.
- * 8 freezes a connection or harness where 7 froze an engine: a v7 runner decodes
- * as the one it became, except one that cannot run now (`decodeFrozenRunnerSpec`).
+ * 8 freezes a connection or harness where 7 froze an engine: a plan of 7 or
+ * earlier that holds a command target cannot be decoded, and its run starts afresh.
  */
 export const WORKFLOW_PLAN_VERSION = 8 as const;
 

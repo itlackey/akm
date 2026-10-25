@@ -70,25 +70,18 @@ function cwdTarget(overrides: Record<string, unknown> = {}) {
     ref: null,
     contentHash: sha256(content),
     request: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       command: { template: content, content, source: null },
-      engine: { name: "cli", kind: "agent", platform: "claude" },
-      authorization: { status: "not-required" },
+      target: { name: "cli", kind: "harness", platform: "claude" },
+      modelWork: false,
       runtime: { workspace: "/workspace/project" },
-      notices: [],
     },
     runner: {
-      kind: "agent",
-      engine: "cli",
-      profile: {
-        name: "cli",
-        platform: "claude",
-        bin: "/bin/true",
-        args: [],
-        stdio: "captured",
-        envPassthrough: [],
-        parseOutput: "text",
-      },
+      kind: "harness",
+      name: "cli",
+      platform: "claude",
+      bin: "/bin/true",
+      args: [],
       timeoutMs: null,
     },
     cwdIdentity: structuredClone(CWD_IDENTITY),
@@ -210,60 +203,51 @@ describe("durable workflow v4 immutable executable schema", () => {
     expect(() => decodeWorkflowPlan(runtime)).not.toThrow();
   });
 
-  test("refuses a runner an earlier release froze to run OpenCode as an engine of its own: the run starts afresh", () => {
-    const content = "Use the frozen SDK request.";
-    const sdk = commandPlan({
-      target: {
-        kind: "command",
-        ref: null,
-        contentHash: sha256(content),
-        request: {
-          schemaVersion: 1,
-          command: { template: content, content, source: null },
-          engine: { name: "sdk", kind: "sdk", platform: "opencode-sdk" },
-          authorization: { status: "not-required" },
-          runtime: {},
-          notices: [],
-        },
-        runner: { kind: "sdk", engine: "sdk", profile: { name: "sdk", bin: "opencode" }, timeoutMs: null },
-      },
-    });
-    expect(() => decodeWorkflowPlan(sdk)).toThrow(/start the run afresh/);
-  });
-
-  test("keeps a direct LLM target free of a host executable requirement", () => {
-    const content = "Use the frozen LLM request.";
-    const llm = commandPlan({
-      target: {
-        kind: "command",
-        ref: null,
-        contentHash: sha256(content),
-        request: {
-          schemaVersion: 1,
-          command: { template: content, content, source: null },
-          engine: {
-            name: "fast",
-            kind: "llm",
-            platform: "openai-compatible",
+  test("refuses every command target an earlier release froze, whichever engine it ran: the run starts afresh", () => {
+    const content = "Use the frozen engine request.";
+    const earlier = (engine: Record<string, unknown>, runner: Record<string, unknown>) =>
+      commandPlan({
+        target: {
+          kind: "command",
+          ref: null,
+          contentHash: sha256(content),
+          request: {
+            schemaVersion: 1,
+            command: { template: content, content, source: null },
+            engine,
+            authorization: { status: "not-required" },
+            runtime: {},
+            notices: [],
           },
-          model: { input: "frozen-model", interpretation: "exact", resolved: "frozen-model" },
-          authorization: { status: "not-required" },
-          runtime: {},
-          notices: [],
+          runner,
         },
-        runner: {
+      });
+    const frozen = {
+      sdk: earlier(
+        { name: "sdk", kind: "sdk", platform: "opencode-sdk" },
+        { kind: "sdk", engine: "sdk", profile: { name: "sdk", bin: "opencode" }, timeoutMs: null },
+      ),
+      llm: earlier(
+        { name: "fast", kind: "llm", platform: "openai-compatible" },
+        {
           kind: "llm",
           engine: "fast",
-          connection: {
-            endpoint: "https://example.invalid/v1/chat/completions",
-            apiKeyEnv: null,
-            headers: {},
-            model: "frozen-model",
-          },
+          connection: { endpoint: "https://example.invalid/v1/chat/completions", model: "frozen-model" },
           timeoutMs: null,
         },
-      },
-    });
-    expect(() => decodeWorkflowPlan(llm)).not.toThrow();
+      ),
+      agent: earlier(
+        { name: "cli", kind: "agent", platform: "claude" },
+        {
+          kind: "agent",
+          engine: "cli",
+          profile: { name: "cli", platform: "claude", bin: "/bin/true", args: [] },
+          timeoutMs: null,
+        },
+      ),
+    };
+    for (const [kind, plan] of Object.entries(frozen)) {
+      expect(() => decodeWorkflowPlan(plan), kind).toThrow(/Invalid frozen workflow plan:.*schemaVersion: 1/);
+    }
   });
 });

@@ -16,7 +16,8 @@
  * would make an interrupted run publish a second child after an upgrade.
  * Dispatch finds the bundle and the env asset by ref and never reads them. It
  * rejects only a plan it cannot run: no steps, a unit with no frozen target, a
- * request that does not decode. `plan_hash` is an informational column. A plan
+ * request that does not decode — which is every command target an earlier
+ * irVersion froze, since each names an engine. `plan_hash` is an informational column. A plan
  * that cannot be decoded comes back from {@link readRunPlan} as a `problem`
  * sentence and the caller decides the remedy (the engine abandons such a run
  * instead of throwing) — except for a plan a NEWER akm froze (`plan_ir_version`

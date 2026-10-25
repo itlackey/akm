@@ -164,50 +164,14 @@ export function createResolvedExecutionRequest(input: ResolvedExecutionRequestIn
 }
 
 /**
- * A schemaVersion 1 request named an `engine`, carried an `authorization` result
- * and a model as `{ input, interpretation, resolved }`. Read it as the current
- * request: a `llm` engine was a connection, any other a harness (the runner
- * decoder refuses the one it can no longer run).
- */
-function readVersion1Request(input: Record<string, unknown>): Record<string, unknown> {
-  const engine = requireRecord(input.engine, "engine");
-  if (typeof engine.name !== "string" || typeof engine.kind !== "string") {
-    throw new TypeError("engine.name and engine.kind must be strings");
-  }
-  const authorization = requireRecord(input.authorization, "authorization");
-  const { model, ...rest } = input;
-  const out: Record<string, unknown> = {
-    ...rest,
-    target: {
-      name: engine.name,
-      kind: engine.kind === "llm" ? "connection" : "harness",
-      ...(typeof engine.platform === "string" ? { platform: engine.platform } : {}),
-    },
-    modelWork: authorization.status === "allowed",
-  };
-  if (model !== undefined) {
-    const previous = model === null ? null : requireRecord(model, "model");
-    out.model =
-      previous === null
-        ? null
-        : {
-            model: previous.resolved,
-            ...(previous.interpretation === "alias" ? { alias: previous.input } : {}),
-          };
-  }
-  return out;
-}
-
-/**
  * Rehydrate a frozen JSON request after workflow resume/replay. Tolerant of
- * unknown keys; reads schemaVersion 1 as well as the current one and refuses
- * only a request written by a newer schema.
+ * unknown keys; refuses a request of any other schema version: an earlier
+ * release's names an engine and cannot run now.
  */
 export function decodeResolvedExecutionRequest(value: unknown): ResolvedExecutionRequestV1 {
-  let input = requireRecord(value, "resolved execution request");
+  const input = requireRecord(value, "resolved execution request");
   const version = input.schemaVersion;
-  if (version === 1) input = readVersion1Request(input);
-  else if (version !== RESOLVED_EXECUTION_SCHEMA_VERSION) {
+  if (version !== RESOLVED_EXECUTION_SCHEMA_VERSION) {
     throw new TypeError(
       typeof version === "number" && version > RESOLVED_EXECUTION_SCHEMA_VERSION
         ? `resolved execution request schemaVersion ${version} was written by a newer akm; upgrade akm to run it`

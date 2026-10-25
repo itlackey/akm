@@ -190,40 +190,17 @@ describe("resolved execution request v1", () => {
     }
   });
 
-  test("reads a schemaVersion 1 request as the current one: its engine kind is the target kind, its authorization is modelWork, its model is the exact name and alias", () => {
+  test("refuses a schemaVersion 1 request, which names an engine and cannot run now", () => {
     const source = commandSource();
-    const v1 = (engine: Record<string, unknown>, authorization: Record<string, unknown>) => ({
-      schemaVersion: 1,
-      command: { template: source.content, content: source.content, source: null },
-      engine,
-      model: { input: "balanced", interpretation: "alias", resolved: "provider/exact-model" },
-      authorization,
-      runtime: { timeoutMs: 5 },
-      notices: [{ code: "ANY", severity: "info", adapter: "x", message: "dropped" }],
-    });
-
-    const llm = decodeResolvedExecutionRequest(
-      v1({ name: "lab", kind: "llm", platform: "openai-compatible" }, { status: "allowed" }),
-    );
-    expect(llm.target).toEqual({ name: "lab", kind: "connection", platform: "openai-compatible" });
-    expect(llm.modelWork).toBe(true);
-    expect(llm.model).toEqual({ model: "provider/exact-model", alias: "balanced" });
-    expect(llm).not.toHaveProperty("notices");
-    expect(llm).not.toHaveProperty("authorization");
-
-    const agent = decodeResolvedExecutionRequest(
-      v1({ name: "claude", kind: "agent", platform: "claude" }, { status: "not-required" }),
-    );
-    expect(agent.target).toEqual({ name: "claude", kind: "harness", platform: "claude" });
-    expect(agent.modelWork).toBe(false);
-
-    // A request read from schemaVersion 1 is written back as schemaVersion 2.
-    expect(JSON.parse(canonicalResolvedExecutionRequest(agent))).toMatchObject({ schemaVersion: 2 });
-    const exact = decodeResolvedExecutionRequest({
-      ...v1({ name: "lab", kind: "llm" }, { status: "not-required" }),
-      model: { input: "gpt-x", interpretation: "exact", resolved: "gpt-x" },
-    });
-    expect(exact.model).toEqual({ model: "gpt-x" });
+    expect(() =>
+      decodeResolvedExecutionRequest({
+        schemaVersion: 1,
+        command: { template: source.content, content: source.content, source: null },
+        engine: { name: "lab", kind: "llm" },
+        authorization: { status: "allowed" },
+        runtime: {},
+      }),
+    ).toThrow(/unsupported resolved execution schemaVersion: 1/);
   });
 
   test("supports explicit anonymous command content without pretending it came from a native file", () => {

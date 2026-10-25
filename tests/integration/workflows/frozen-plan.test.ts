@@ -245,72 +245,43 @@ describe("plan freezing at workflow start (migration 006)", () => {
     return { result, dispatches, runId: started.run.id };
   }
 
-  test("a run frozen as irVersion 7 on an llm or agent runner runs as the connection or harness it became", async () => {
-    const llm = await runAsFrozenByIrVersion7(
-      "v7-llm",
-      {
-        kind: "llm",
-        engine: "test-llm",
-        connection: { endpoint: "http://localhost:1/v1", model: "test-model" },
-        timeoutMs: null,
-      },
-      { name: "test-llm", kind: "llm", platform: "openai-compatible" },
-    );
-    expect(llm.result.run.status).toBe("completed");
-    expect(llm.dispatches).toBe(1);
-
-    const agent = await runAsFrozenByIrVersion7(
-      "v7-agent",
-      {
-        kind: "agent",
-        engine: "claude",
-        profile: { name: "claude", platform: "claude", bin: "claude" },
-        timeoutMs: null,
-      },
-      { name: "claude", kind: "agent", platform: "claude" },
-    );
-    expect(agent.result.run.status).toBe("completed");
-    expect(agent.dispatches).toBe(1);
-  });
-
-  test("a run frozen as irVersion 7 on OpenCode as an engine of its own, or on a key akm no longer reads, is abandoned: start afresh", async () => {
-    const refused: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
+  test("a run frozen as irVersion 7 on any engine is abandoned: start afresh, nothing dispatched", async () => {
+    const frozen: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
+      [
+        "v7-llm",
+        {
+          kind: "llm",
+          engine: "test-llm",
+          connection: { endpoint: "http://localhost:1/v1", model: "test-model" },
+          credential: { names: ["TEST_LLM_KEY"] },
+          timeoutMs: null,
+        },
+        { name: "test-llm", kind: "llm", platform: "openai-compatible" },
+      ],
+      [
+        "v7-agent",
+        {
+          kind: "agent",
+          engine: "claude",
+          profile: { name: "claude", platform: "claude", bin: "claude" },
+          timeoutMs: null,
+        },
+        { name: "claude", kind: "agent", platform: "claude" },
+      ],
       [
         "v7-sdk",
         { kind: "sdk", engine: "sdk", profile: { name: "sdk", bin: "opencode" }, timeoutMs: null },
         { name: "sdk", kind: "sdk", platform: "opencode-sdk" },
       ],
-      [
-        "v7-key-file",
-        {
-          kind: "llm",
-          engine: "test-llm",
-          connection: { endpoint: "http://localhost:1/v1", model: "test-model" },
-          apiKeyFile: "/run/key",
-          timeoutMs: null,
-        },
-        { name: "test-llm", kind: "llm" },
-      ],
-      [
-        "v7-engine-env",
-        {
-          kind: "llm",
-          engine: "test-llm",
-          connection: { endpoint: "http://localhost:1/v1", model: "test-model" },
-          credential: { names: ["AKM_ENGINE_TEST_LLM_API_KEY"] },
-          timeoutMs: null,
-        },
-        { name: "test-llm", kind: "llm" },
-      ],
     ];
-    for (const [name, runner, engine] of refused) {
+    for (const [name, runner, engine] of frozen) {
       const { result, dispatches, runId } = await runAsFrozenByIrVersion7(name, runner, engine);
       expect(dispatches).toBe(0);
       expect(result.run.status).toBe("failed");
       const message = result.warnings?.find((w) => w.includes("cannot decode"));
       expect(message).toContain(runId);
-      expect(message).toContain("start the run afresh");
       expect(message).toContain("The run was abandoned");
+      expect(message).toContain(`akm workflow run stash//workflows/${name}`);
     }
   });
 

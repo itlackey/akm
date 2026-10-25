@@ -29,69 +29,9 @@ describe("decodeFrozenRunnerSpec", () => {
     expect(() => decodeFrozenRunnerSpec({ kind: "teleport" })).toThrow(/connection or harness/);
   });
 
-  test("an earlier release's llm runner is the connection runner it became, its inference the request it was sent as", () => {
-    const runner = decodeFrozenRunnerSpec({
-      kind: "llm",
-      engine: "lab",
-      connection: {
-        endpoint: "https://lab.invalid/v1/chat/completions",
-        model: "qwen",
-        temperature: 0.2,
-        maxTokens: 512,
-        contextLength: 8192,
-        extraParams: { top_p: 0.9 },
-      },
-      credential: { names: ["LAB_KEY"] },
-      timeoutMs: 90_000,
-    });
-    expect(runner).toEqual({
-      kind: "connection",
-      name: "lab",
-      endpoint: "https://lab.invalid/v1/chat/completions",
-      model: "qwen",
-      request: { temperature: 0.2, max_tokens: 512, top_p: 0.9 },
-      apiKey: "$LAB_KEY",
-      contextLength: 8192,
-      timeoutMs: 90_000,
-    });
-  });
-
-  test("an earlier release's agent runner is the harness runner it became", () => {
-    const runner = decodeFrozenRunnerSpec({
-      kind: "agent",
-      engine: "work",
-      profile: {
-        name: "work",
-        platform: "claude",
-        bin: "/opt/claude",
-        args: ["--print"],
-        model: "m",
-        agent: "reviewer",
-      },
-      timeoutMs: null,
-    });
-    expect(runner).toEqual({
-      kind: "harness",
-      name: "work",
-      platform: "claude",
-      bin: "/opt/claude",
-      args: ["--print"],
-      agent: "reviewer",
-      model: "m",
-      timeoutMs: null,
-    });
-  });
-
-  test("a runner an earlier release froze that cannot run now is refused, so the run starts afresh", () => {
-    const llm = { kind: "llm", engine: "lab", connection: { endpoint: "https://lab.invalid/v1", model: "qwen" } };
-    const refused: Array<[string, Record<string, unknown>]> = [
-      ["OpenCode as an engine of its own", { kind: "sdk", engine: "sdk", profile: { name: "sdk", bin: "" } }],
-      ["a key file", { ...llm, apiKeyFile: "/run/key" }],
-      ["a secret-store reference", { ...llm, apiKeySecretRef: "secret://lab" }],
-      ["an AKM_ENGINE_* variable", { ...llm, credential: { names: ["AKM_ENGINE_LAB_API_KEY"] } }],
-    ];
-    for (const [why, runner] of refused) {
-      expect(() => decodeFrozenRunnerSpec(runner), why).toThrow(/cannot run now.*start the run afresh/);
+  test("an earlier release's llm, agent and sdk runners are refused, so the run starts afresh", () => {
+    for (const kind of ["llm", "agent", "sdk"]) {
+      expect(() => decodeFrozenRunnerSpec({ kind, engine: "lab" }), kind).toThrow(/connection or harness/);
     }
   });
 });
