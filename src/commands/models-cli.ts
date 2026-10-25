@@ -62,13 +62,15 @@ async function availableModels(name: string, connection: ConnectionConfig, probe
   return [];
 }
 
+/** Probing is the default, so only the opt-out is declared; citty parses `--no-probe` as `probe: false` (see `setup`'s flag in `cli.ts`). */
 const PROBE_ARG = {
-  probe: {
+  "no-probe": {
     type: "boolean",
-    default: true,
-    description: "Ask the endpoint which models it lists. Use --no-probe to skip it.",
+    description: "Do not ask the endpoint which models it lists.",
   },
 } as const;
+
+const probes = (args: object): boolean => (args as { probe?: boolean }).probe !== false;
 
 export const modelsCommand = defineGroupCommand({
   meta: {
@@ -84,7 +86,7 @@ export const modelsCommand = defineGroupCommand({
     const aliases = Object.fromEntries(
       Object.entries(connection.models ?? {}).map(([alias, entry]) => [alias, entryModel(entry)]),
     );
-    output("models", { connection: name, aliases, available: await availableModels(name, connection, args.probe) });
+    output("models", { connection: name, aliases, available: await availableModels(name, connection, probes(args)) });
   },
   subCommands: {
     set: defineJsonCommand({
@@ -109,7 +111,7 @@ export const modelsCommand = defineGroupCommand({
           );
         }
         const { name, connection } = targetConnection(loadConfig(), args.connection);
-        const available = await availableModels(name, connection, args.probe);
+        const available = await availableModels(name, connection, probes(args));
         if (available.length > 0 && !available.includes(model)) {
           warn(`"${model}" is not among the models ${name} lists; setting it anyway.`);
         }

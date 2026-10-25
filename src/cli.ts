@@ -256,18 +256,19 @@ const setupCommand = defineCommand({
       default: true,
       description: "Scaffold the bundle directory. Use --no-init to write configuration without scaffolding it.",
     },
-    // Same `--no-<name>` mechanism as `init`.
-    probe: {
+    // There is no `--probe`: probing is the default, so only the opt-out is declared. citty parses `--no-probe`
+    // as the negation of `probe` whether or not `probe` is declared, so the value is `args.probe === false`;
+    // declaring `no-probe` is what puts the flag in `--help` and keeps the unknown-flag check from refusing it.
+    "no-probe": {
       type: "boolean",
-      default: true,
       description:
-        "Contact the endpoint to list its models. Use --no-probe for an offline run: aliases resolve to the connection's first model until `akm models set`.",
+        "Offline run: the endpoint is not contacted and its models are not listed. Aliases resolve to the connection's first model until `akm models set`.",
     },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const noInit = !args.init;
-      const noProbe = !args.probe;
+      const noProbe = (args as { probe?: boolean }).probe === false;
       const { hasEngineFlags, parseEngineFlags } = await import("./setup/engine-flags");
       const flags = parseEngineFlags({
         endpoint: args.endpoint,
