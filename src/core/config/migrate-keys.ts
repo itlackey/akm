@@ -14,9 +14,10 @@
  *   - the same literal or secret-store `apiKey` on a connection, `embedding` or
  *     `search.curateRerank` that the file already says in the current form.
  *
- * A key that cannot be read, whose block names no endpoint to file it for, or
- * whose slot `credentials.json` already holds a different key or endpoint for,
- * is not moved. It stays in the file: on the block that held
+ * A key that cannot be read, whose block names no endpoint to file it for, whose
+ * engine wrote it for another endpoint than the connection now names (the file's
+ * current-form entries overlay the converted engine), or whose slot
+ * `credentials.json` already holds a different key or endpoint for, is not moved. It stays in the file: on the block that held
  * it, or, for an engine's `apiKey`, put back on the connection as `apiKey`
  * exactly as it was, so the rewrite never leaves it in the backups alone (akm
  * ignores a key held there, with a warning, until it is moved). An engine's
@@ -28,6 +29,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isRecord } from "../common";
+import { sameEndpoint } from "../endpoint-url";
 import { redactUrlCredentials } from "../redaction";
 import { isSecretRefToken } from "../ref-token";
 import type { ConvertEnginesResult } from "./convert-engines";
@@ -84,6 +86,8 @@ interface Candidate {
   readonly slot: CredentialSlot;
   /** The endpoint of the block the key belongs to; none, and the key cannot be filed. */
   readonly endpoint: string | undefined;
+  /** The endpoint the key was written for, when its source says one: an engine's own, read before anything the file says in the current form overlaid it. */
+  readonly owner?: string | undefined;
   readonly from: string;
   /** The value, or why there is none. */
   readonly read: () => string | undefined;
@@ -183,14 +187,17 @@ function engineCandidates(
 ): Candidate[] {
   const engines = isRecord(original.engines) ? original.engines : {};
   return converted.keys.flatMap(({ engine, connection, field }) => {
-    const held = isRecord(engines[engine]) ? (engines[engine] as Dict)[field] : undefined;
+    const source = isRecord(engines[engine]) ? (engines[engine] as Dict) : {};
+    const held = source[field];
     if (typeof held !== "string") return [];
+    const owner = typeof source.endpoint === "string" ? source.endpoint : undefined;
     if (field === "apiKeyFile") {
       return [
         {
           name: connection,
           slot: { connection },
           endpoint: documentEndpoint(config, { connection }),
+          owner,
           from: `engines.${engine}.${field}`,
           read: () => readKeyFile(held),
           source: `its key file ${held}`,
@@ -207,6 +214,7 @@ function engineCandidates(
         name: connection,
         slot: { connection },
         endpoint: documentEndpoint(config, { connection }),
+        owner,
         from: `engines.${engine}.${field}`,
         read: () => heldValue(held, options),
         source: isSecretRefToken(held) ? `the secret store reference ${held}` : "the literal key",
@@ -234,6 +242,14 @@ export function planKeyMoves(
     ...documentCandidates(config, options),
   ]) {
     const stays = ` It stays ${candidate.stays}.`;
+    const { owner } = candidate;
+    if (owner !== undefined && candidate.endpoint !== undefined && !sameEndpoint(owner, candidate.endpoint)) {
+      candidate.restore?.();
+      notes.push(
+        `${candidate.from}: this key was written for ${redactUrlCredentials(owner)}, and the file now gives "${candidate.name}" ${redactUrlCredentials(candidate.endpoint)}, so no key moves and it is not sent there.${stays} Store a key for the new endpoint with \`akm setup\`.`,
+      );
+      continue;
+    }
     const value = candidate.read();
     if (value === undefined) {
       candidate.restore?.();

@@ -170,8 +170,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `search.curateRerank`, are read and stored in `credentials.json` for the
     connection's new name (or the `embedding` or `curateRerank` service) and the
     endpoint the block names, then removed from the file. A key that cannot be
-    moved (its secret does not resolve, the block names no endpoint of its own, or
-    `credentials.json` already holds a different key or endpoint for that slot) stays on the
+    moved (its secret does not resolve, the block names no endpoint of its own, a
+    `connections` entry now gives it another endpoint than its engine wrote the key
+    for, or `credentials.json` already holds a different key or endpoint for that
+    slot) stays on the
     connection as `apiKey`, with a note. One note per key names it, never its
     value. `AKM_ENGINE_<NAME>_API_KEY` and `AKM_LLM_API_KEY`, when set, become
     `apiKey: "$VAR"`.

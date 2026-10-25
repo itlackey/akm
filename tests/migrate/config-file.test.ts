@@ -279,6 +279,67 @@ describe("the keys an engines config holds that akm no longer reads", () => {
   });
 });
 
+describe("an engine's key and the endpoint its engine wrote it for", () => {
+  const ORIGINAL = "https://original.invalid/v1";
+  const REPLACEMENT = "https://replacement.invalid/v1";
+  const overlaid = (engine: Dict, overlay: Dict = { endpoint: REPLACEMENT }): Dict => ({
+    engines: { lab: { kind: "llm", endpoint: ORIGINAL, model: "m", ...engine } },
+    defaults: { llmEngine: "lab" },
+    connections: { default: overlay },
+  });
+
+  const cases: Array<[string, "apiKey" | "apiKeyFile", () => string]> = [
+    ["a literal apiKey", "apiKey", () => "SYNTHETIC_ORIGINAL_SERVICE_KEY"],
+    ["an apiKeyFile", "apiKeyFile", () => keyFile("original.key", "SYNTHETIC_ORIGINAL_SERVICE_KEY\n")],
+    ["a secret-store apiKey", "apiKey", () => secretRef("shared")],
+  ];
+
+  for (const [label, field, value] of cases) {
+    test(`${label} is not bound to the endpoint a connections entry replaced it with: it stays on the connection`, () => {
+      const held = value();
+      writeConfig(overlaid({ [field]: held }));
+
+      const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+      expect(fs.existsSync(credentialsPath())).toBe(false);
+      expect(result.credentials).toBeUndefined();
+      const connection = (readConfig().connections as Record<string, Dict>).default as Dict;
+      expect(connection.endpoint).toBe(REPLACEMENT);
+      expect(connection[field]).toBe(held);
+      expect(result.notes?.join("\n")).toContain(`was written for ${ORIGINAL}`);
+      expect(result.notes?.join("\n")).toContain(REPLACEMENT);
+      expect(JSON.stringify(result.notes)).not.toContain("SYNTHETIC_ORIGINAL_SERVICE_KEY");
+      expect(readCredential({ connection: "default" }, REPLACEMENT)).toBeUndefined();
+      expect(readCredential({ connection: "default" }, ORIGINAL)).toBeUndefined();
+    });
+  }
+
+  test("is still filed when the connections entry names the same endpoint however it is spelled, or none", () => {
+    writeConfig(
+      overlaid({ apiKey: "SYNTHETIC_ORIGINAL_SERVICE_KEY" }, { endpoint: `${ORIGINAL}/`, models: { fast: "m" } }),
+    );
+    normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+    expect(readCredential({ connection: "default" }, ORIGINAL)).toBe("SYNTHETIC_ORIGINAL_SERVICE_KEY");
+
+    fs.rmSync(credentialsPath(), { force: true });
+    writeConfig(overlaid({ apiKey: "SYNTHETIC_ORIGINAL_SERVICE_KEY" }, { models: { fast: "m" } }));
+    normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+    expect(readCredential({ connection: "default" }, ORIGINAL)).toBe("SYNTHETIC_ORIGINAL_SERVICE_KEY");
+  });
+
+  test("is bound to the endpoint the connections entry gives when the engine named none", () => {
+    writeConfig({
+      engines: { lab: { kind: "llm", model: "m", apiKey: "SYNTHETIC_ORIGINAL_SERVICE_KEY" } },
+      defaults: { llmEngine: "lab" },
+      connections: { default: { endpoint: REPLACEMENT } },
+    });
+
+    normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    expect(readCredential({ connection: "default" }, REPLACEMENT)).toBe("SYNTHETIC_ORIGINAL_SERVICE_KEY");
+  });
+});
+
 describe("a key credentials.json holds in the older flat form", () => {
   const OLD = "https://old.invalid/v1";
   const CURRENT = "https://new.invalid/v1";
