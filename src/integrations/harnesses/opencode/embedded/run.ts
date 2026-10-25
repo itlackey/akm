@@ -27,7 +27,7 @@ import type { AgentProfile } from "../../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../../agent/spawn";
 import { type EmbeddedHost, hostFor } from "./host";
 import type { HostKind } from "./host-spec";
-import type { SessionSettings } from "./plugin";
+import { forgetSession, type SessionSettings } from "./plugin";
 import { runtimeProviderId } from "./runtime-config";
 import { runTurn, turnResult } from "./turn";
 
@@ -148,10 +148,13 @@ async function runSession(
     });
     sessionId = session.id;
     const eventSource = opts.env?.AKM_EVENT_SOURCE;
-    sessions.set(session.id, { ...target.settings, ...(eventSource ? { eventSource } : {}) });
-    if (opts.env && Object.keys(opts.env).length > 0) {
-      await host.sessions.environment({ sessionID: session.id, variables: opts.env });
-    }
+    const env = opts.env && Object.keys(opts.env).length > 0 ? opts.env : undefined;
+    sessions.set(session.id, {
+      ...target.settings,
+      ...(eventSource ? { eventSource } : {}),
+      ...(env ? { env } : {}),
+    });
+    if (env) await host.sessions.environment({ sessionID: session.id, variables: env });
     if (dispatch?.systemPrompt) {
       await host.sessions.instructions.entry.put({
         sessionID: session.id,
@@ -183,7 +186,7 @@ async function runSession(
   } finally {
     opts.signal?.removeEventListener("abort", forwardAbort);
     run.abort();
-    if (sessionId) handle?.sessions.delete(sessionId);
+    if (sessionId && handle) forgetSession(handle.sessions, sessionId);
   }
 }
 

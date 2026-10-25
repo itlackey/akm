@@ -16,7 +16,8 @@
  *   own spelling) and the key, which is read when the call is dispatched. The
  *   runner records them under the session's id and the `http.request` hook lays
  *   them over that session's model requests, so a call reaches the endpoint
- *   exactly as the direct-chat path would send it.
+ *   exactly as the direct-chat path would send it. A subagent the run starts has
+ *   its own session; it runs with its run's settings and environment.
  */
 
 import type { Plugin } from "@opencode/plugin";
@@ -32,10 +33,21 @@ export interface SessionSettings {
   readonly apiKey?: string;
   /** The run's `AKM_EVENT_SOURCE`, which akm's read tools record their usage events under. */
   readonly eventSource?: string;
+  /** The environment the run's commands get, which a subagent session the run starts is given too. */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
-/** The settings of the sessions a host is running, by session id. */
+/**
+ * The settings of the sessions a host is running, by session id: a run's session,
+ * and the subagent sessions it starts, which share the run's settings.
+ */
 export type SessionRegistry = Map<string, SessionSettings>;
+
+/** Forget a run's session and the subagent sessions that shared its settings. */
+export function forgetSession(sessions: SessionRegistry, sessionID: string): void {
+  const settings = sessions.get(sessionID);
+  for (const [id, other] of sessions) if (id === sessionID || other === settings) sessions.delete(id);
+}
 
 /** The request with the session's key and request fields applied; a request with no JSON object body keeps its body. */
 async function withSettings(request: Request, { requestFields, apiKey }: SessionSettings): Promise<Request> {
@@ -64,7 +76,14 @@ async function withSettings(request: Request, { requestFields, apiKey }: Session
   });
 }
 
-export function akmPlugin(sessions: SessionRegistry): Plugin.Plugin {
+/**
+ * `setEnvironment` sets a session's environment on the host the plugin is loaded
+ * into; a subagent session gets its run's.
+ */
+export function akmPlugin(
+  sessions: SessionRegistry,
+  setEnvironment: (sessionID: string, variables: Record<string, string>) => Promise<void>,
+): Plugin.Plugin {
   return {
     id: "akm",
     setup: async (ctx) => {
@@ -87,7 +106,17 @@ export function akmPlugin(sessions: SessionRegistry): Plugin.Plugin {
         }
       });
       await ctx.session.hook("http.request", async (event) => {
-        const settings = sessions.get(event.sessionID);
+        let settings = sessions.get(event.sessionID);
+        // A subagent session is not one akm created: its first request names the session that started it. It runs with
+        // that run's settings and environment, set before the request goes out, so before any command it runs.
+        const parentID = event.request.headers.get("x-opencode-parent-session-id");
+        if (!settings && parentID) {
+          settings = sessions.get(parentID);
+          if (settings) {
+            sessions.set(event.sessionID, settings);
+            if (settings.env) await setEnvironment(event.sessionID, { ...settings.env });
+          }
+        }
         if (settings) event.request = await withSettings(event.request, settings);
       });
     },

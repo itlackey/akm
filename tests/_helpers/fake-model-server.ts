@@ -10,6 +10,7 @@
  *   question  call the `question` tool, then reply "Q-DONE"
  *   shell     call `shell`, then reply with the tool result
  *   env       call `shell` to print $AKM_PROBE, then reply with the tool result
+ *   subagent  call `subagent`, whose prompt asks the child for MODE:env, then reply with its result
  *   write     call `write`, then reply with the tool result
  *   akm       call `akm_search`, then reply with the tool result
  *   length    first step cut at the output limit, then "PART-TWO"
@@ -107,6 +108,15 @@ export function startFakeModel(): FakeModelServer {
         reply = afterTool
           ? { content: `ENV:${result}` }
           : { tool: { name: "shell", args: { command: 'echo "PROBE=$AKM_PROBE"', description: "probe" } } };
+      else if (mode === "subagent")
+        reply = afterTool
+          ? { content: `SUB:${result}` }
+          : {
+              tool: {
+                name: "subagent",
+                args: { agent: "general", description: "probe the child", prompt: "MODE:env from the child" },
+              },
+            };
       else if (mode === "write")
         reply = afterTool
           ? { content: `WRITE:${result}` }

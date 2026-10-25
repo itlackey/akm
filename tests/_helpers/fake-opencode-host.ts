@@ -75,8 +75,19 @@ export interface FakeOpencodeHosts {
   readonly tools: Record<string, string[]>;
   /** Run a tool akm's plugin registered, as OpenCode would for a session on the host of `kind`. */
   runTool(kind: HostSpec["kind"], name: string, input: unknown, sessionID: string): Promise<{ content: string }>;
+  /** A subagent session OpenCode starts under `parentID` on the host of `kind`. */
+  spawnChild(kind: HostSpec["kind"], parentID: string): FakeChildSession;
   /** Hosts created and closed so far. */
   readonly lifecycle: { created: number; closed: number };
+}
+
+/** A subagent session on the fake host. */
+export interface FakeChildSession {
+  readonly sessionID: string;
+  /** The variables set on the child's environment. */
+  environment(): Readonly<Record<string, string>> | undefined;
+  /** The model request OpenCode would send for the child, which names its parent in a header: the child's first, if none was sent. */
+  request(): Promise<Pick<FakeOpencodeCall, "requestBody" | "requestHeaders">>;
 }
 
 interface HookEvent {
@@ -123,6 +134,7 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
   const specs: HostSpec[] = [];
   const tools: Record<string, string[]> = {};
   const executes: Record<string, Map<string, ToolExecute>> = {};
+  const children: Record<string, FakeOpencodeHosts["spawnChild"]> = {};
   const lifecycle = { created: 0, closed: 0 };
   overrideSeam(_setOpencodeHostFactoryForTests, async (spec) => {
     await options.ready;
@@ -144,10 +156,14 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
     let n = 0;
 
     /** The model request OpenCode would send for a session, after akm's hook ran over it. */
-    async function modelRequest(sessionID: string, model: { providerID: string; id: string } | undefined) {
+    async function modelRequest(
+      sessionID: string,
+      model: { providerID: string; id: string } | undefined,
+      headers: Record<string, string> = {},
+    ) {
       let request = new Request("http://model.invalid/v1/chat/completions", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...headers },
         body: JSON.stringify({ model: model?.id ?? "unset", stream: true, max_completion_tokens: 32000 }),
       });
       for (const hook of plugin.requestHooks) {
@@ -160,6 +176,16 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
         requestHeaders: Object.fromEntries(request.headers.entries()),
       };
     }
+
+    children[spec.kind] = (_kind, parentID) => {
+      const sessionID = `ses_${++n}`;
+      sessions.set(sessionID, { create: { parentID }, messages: [] });
+      return {
+        sessionID,
+        environment: () => sessions.get(sessionID)?.environment,
+        request: () => modelRequest(sessionID, undefined, { "x-opencode-parent-session-id": parentID }),
+      };
+    };
 
     const host: EmbeddedHost = {
       sessions: {
@@ -266,5 +292,10 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
     if (!execute) throw new Error(`no tool ${name} on the ${kind} host`);
     return execute(input, { sessionID });
   };
-  return { calls, specs, tools, runTool, lifecycle };
+  const spawnChild: FakeOpencodeHosts["spawnChild"] = (kind, parentID) => {
+    const spawn = children[kind];
+    if (!spawn) throw new Error(`no ${kind} host`);
+    return spawn(kind, parentID);
+  };
+  return { calls, specs, tools, runTool, spawnChild, lifecycle };
 }

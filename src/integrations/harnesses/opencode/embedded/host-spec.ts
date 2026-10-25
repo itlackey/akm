@@ -54,10 +54,14 @@ export function akmOpencodeDatabasePath(): string {
   return path.join(directory, "opencode.db");
 }
 
-/** The spec of a new host of `kind`; `sessions` is the registry its plugin reads. */
-export function specFor(kind: HostKind, sessions: SessionRegistry): HostSpec {
+/** The spec of a new host of `kind`; `sessions` is the registry its plugin reads, `setEnvironment` how it sets a session's environment. */
+export function specFor(
+  kind: HostKind,
+  sessions: SessionRegistry,
+  setEnvironment: (sessionID: string, variables: Record<string, string>) => Promise<void>,
+): HostSpec {
   const database = akmOpencodeDatabasePath();
-  const plugin = akmPlugin(sessions);
+  const plugin = akmPlugin(sessions, setEnvironment);
   if (kind === "runtime") {
     return {
       kind,

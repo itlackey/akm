@@ -110,10 +110,16 @@ describe("a read tool's usage event", () => {
 
 describe("a run on the embedded OpenCode", () => {
   /** A request to the opencode harness; its scripted agent calls each read tool in its own session. */
-  async function agentRun(options: { modelWork?: boolean; eventSource?: string }) {
+  async function agentRun(options: { modelWork?: boolean; eventSource?: string; inSubagent?: boolean }) {
     const host = installFakeOpencodeHost({
       reply: async (call) => {
-        for (const name of Object.keys(INPUTS)) await host.runTool("opencode", name, INPUTS[name], call.sessionID);
+        let sessionID = call.sessionID;
+        if (options.inSubagent) {
+          const child = host.spawnChild("opencode", call.sessionID);
+          await child.request();
+          sessionID = child.sessionID;
+        }
+        for (const name of Object.keys(INPUTS)) await host.runTool("opencode", name, INPUTS[name], sessionID);
         return "done";
       },
     });
@@ -138,6 +144,11 @@ describe("a run on the embedded OpenCode", () => {
 
   test("a scheduled task's agent records its reads as the task's", async () => {
     await agentRun({ eventSource: "task" });
+    expect(sources()).toEqual(new Set(["task"]));
+  });
+
+  test("a subagent the run starts records its reads as the run's", async () => {
+    await agentRun({ eventSource: "task", inSubagent: true });
     expect(sources()).toEqual(new Set(["task"]));
   });
 

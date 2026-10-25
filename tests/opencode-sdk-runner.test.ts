@@ -188,6 +188,25 @@ describe("what the endpoint receives", () => {
   });
 });
 
+describe("a subagent the run starts", () => {
+  test("is given the run's key, request fields and environment", async () => {
+    const before = model.requests.length;
+    const result = await run(
+      "MODE:subagent go",
+      { env: { AKM_PROBE: "from-akm" } },
+      { ...connection, request: { top_k: 7 } },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("PROBE=from-akm");
+    const child = model.requests.slice(before).filter((r) => r.mode === "env");
+    expect(child.length).toBeGreaterThan(0);
+    for (const request of child) {
+      expect(request.authorization).toBe("Bearer test-key");
+      expect(request.params.top_k).toBe(7);
+    }
+  });
+});
+
 describe("model work on the runtime's host", () => {
   test("gets OpenCode's read-only tools and akm's, and akm's tools run in-process", async () => {
     // akm search needs a bundle; this test's own, removed after so no other test sees it.

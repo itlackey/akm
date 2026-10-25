@@ -14,7 +14,7 @@ import type { AgentProfile } from "../src/integrations/agent/profiles";
 import { closeOpencodeSdk, hostFor } from "../src/integrations/harnesses/opencode/embedded/host";
 import { runOpencodeSdk } from "../src/integrations/harnesses/opencode/embedded/run";
 import type { ChatCompletionConfig } from "../src/llm/client";
-import { installFakeOpencodeHost } from "./_helpers/fake-opencode-host";
+import { type FakeChildSession, installFakeOpencodeHost } from "./_helpers/fake-opencode-host";
 import { writeSandboxConfig } from "./_helpers/sandbox";
 
 const profile: AgentProfile = {
@@ -169,6 +169,53 @@ describe("the settings the plugin applies to a session's model requests", () => 
     const result = await run("p", { timeoutMs: 20 }, { ...connection, request: { top_p: 0.9 } });
     expect(result.reason).toBe("timeout");
     expect((await hostFor("runtime")).sessions.size).toBe(0);
+  });
+});
+
+describe("a subagent session the run starts", () => {
+  const withSettings = {
+    ...connection,
+    apiKey: "sk-lab",
+    request: { top_k: 7 },
+    inference: { temperature: 0.2 },
+  };
+  const env = { AKM_EVENT_SOURCE: "task", API_TOKEN: "t" };
+
+  /** Run a prompt whose agent starts a subagent, and report what the subagent was given. */
+  async function runWithSubagent() {
+    let seen: { request: Awaited<ReturnType<FakeChildSession["request"]>>; environment: unknown } | undefined;
+    const host = installFakeOpencodeHost({
+      reply: async (call) => {
+        const child = host.spawnChild("runtime", call.sessionID);
+        seen = { request: await child.request(), environment: child.environment() };
+        return "done";
+      },
+    });
+    const result = await run("p", { env }, withSettings);
+    return { result, seen, sessionsAfter: (await hostFor("runtime")).sessions.size };
+  }
+
+  test("is given the run's key and request fields on its first request", async () => {
+    const { result, seen } = await runWithSubagent();
+    expect(result.ok).toBe(true);
+    expect(seen?.request.requestHeaders.authorization).toBe("Bearer sk-lab");
+    expect(seen?.request.requestBody).toMatchObject({ top_k: 7, temperature: 0.2 });
+  });
+
+  test("has the run's environment set before that request goes out, so before any command it runs", async () => {
+    expect((await runWithSubagent()).seen?.environment).toEqual(env);
+  });
+
+  test("is forgotten with the run", async () => {
+    expect((await runWithSubagent()).sessionsAfter).toBe(0);
+  });
+
+  test("a session that no run started is given nothing", async () => {
+    const host = installFakeOpencodeHost({ reply: () => "ok" });
+    await run("p", { env }, withSettings);
+    const stranger = host.spawnChild("runtime", "ses_not_a_run");
+    expect((await stranger.request()).requestHeaders.authorization).toBeUndefined();
+    expect(stranger.environment()).toBeUndefined();
   });
 });
 

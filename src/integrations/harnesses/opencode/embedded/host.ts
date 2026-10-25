@@ -110,7 +110,13 @@ async function answerRequests(host: EmbeddedHost, signal: AbortSignal): Promise<
 
 async function start(kind: HostKind): Promise<HostHandle> {
   const sessions: SessionRegistry = new Map();
-  const host = await createHost(specFor(kind, sessions));
+  let started: EmbeddedHost | undefined;
+  const host = await createHost(
+    specFor(kind, sessions, async (sessionID, variables) => {
+      await started?.sessions.environment({ sessionID, variables });
+    }),
+  );
+  started = host;
   const stop = new AbortController();
   void answerRequests(host, stop.signal);
   const close = host.close.bind(host);
