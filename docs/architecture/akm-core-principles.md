@@ -2,7 +2,8 @@
 
 How akm is built. These are the rules the code, the tests and the
 documentation in this repository follow. What akm does for a user is
-described in [Architecture](architecture.md).
+described in [Architecture](architecture.md), whose "Invariants" section
+lists the behaviors every command keeps.
 
 Each principle states the rule, why it exists, and what enforces it. A rule
 with nothing enforcing it is held by review, and says so.
@@ -25,6 +26,11 @@ conceivable" is not a reason. When something must change, remove the limit
 first, degrade with a warning second, abort last. Machinery that prevents
 data loss or corruption, such as backups, atomic writes, write-path
 validation and path containment, is exempt.
+
+The same rule applies to code that is not a guard: build what the current
+design needs and nothing for a future one (YAGNI). No speculative option,
+abstraction, extension point or "flexibility" goes in until a real caller
+needs it, and a mechanism nothing calls any more comes out.
 
 Why: every footgun this codebase has removed was a guard added because a
 hazard was conceivable; the limits made the tool refuse to do its job
@@ -53,26 +59,33 @@ chokepoint and the no-direct-harness-imports rule are held by review; the
 opencode-sdk path still bypasses the second one in the config schema, setup,
 health, the engine fallback and workflow teardown, which is open work.
 
-### 3. One current shape per format, migrated forward in one place
+### 3. One current shape per format, one converter
 
-Each stored format has exactly one shape in code: the current one. Readers
-never carry compatibility shims for old shapes. akm's own stores
-(`state.db`, `index.db`, the lock and cache files) are migrated to the
-current shape automatically when opened, in the migrations module, with a
-backup written before any destructive step. Files the user owns, such as
-task sources inside a bundle, are never rewritten without being asked: the
-command stops and names `akm migrate apply`, which rewrites them with a
-backup. Data written by a newer release is refused, and the error says to
-upgrade.
+Each stored format has one current shape in code and one converter from older
+shapes. A reader uses the converter and keeps no tolerance of its own. A user's
+file (`config.json`, a task source, bundle content) is rewritten only by
+`akm migrate apply`, with a backup, running that same converter; akm's own
+stores (`state.db`, `index.db`) migrate forward when opened, with a backup
+before any destructive step. Reads reach back to the 0.9.15 floor: above it a
+reader converts in memory, warns once and names `akm migrate apply`; below it,
+and for an older task source (the one named exception), the command stops and
+names the migrator. What happens to data from a newer release differs by
+format (a newer index layout or frozen plan is refused with "upgrade akm";
+`state.db` and `config.json` warn and continue, and `akm health` reports the
+config skew), so [Persisted-Data Compatibility](persisted-data-compat.md)
+states the rule per format. Readers that still carry their own conversion, such
+as the frozen-plan decoder, are listed there and move to the converter as they
+are touched.
 
-Why: tolerant readers scatter one format into many, and shims for shapes
-nobody can delete accumulate in the hot path. A single migration path is
-tested once, runs once, and leaves one shape behind.
+Why: tolerance scattered through readers is a shim nobody can delete. A
+converter that the readers and the migrator share is written once, tested once
+and leaves one shape behind.
 
 Enforced by: `tests/integration/upgrade-rehearsal/`, which installs the
-previous release, builds real state and runs the current build against it.
-[Persisted-Data Compatibility](persisted-data-compat.md) lists each stored
-format; a change to one adds its old shape to the rehearsal.
+previous release, builds real state and runs the current build against it, and
+`tests/integration/previous-release-corpus.test.ts`, which pins each older
+shape as refused or converted. The compat page lists each format with its test;
+a change to a format adds its old shape to the rehearsal.
 
 ### 4. Sane defaults, flexible overrides
 
@@ -198,3 +211,22 @@ Why: heavy machinery and tight coupling are the opposite of akm's goals.
 
 Enforced by: review. The seam is `HARNESS_REGISTRY` (principle 2), which the
 opencode-sdk path still bypasses.
+
+### 11. Simple is not sloppy
+
+Principle 1 removes machinery that is not justified; it does not lower the
+standard of what remains. Code is kept simple with SOLID structure, not
+instead of it: a module has one responsibility and one reason to change;
+behaviour is extended by adding a case in its one place (principle 2), not
+by editing every caller; a caller depends on the narrow interface it uses,
+not on the internals behind it; types say what a value is. Shrinking a diff
+by merging unrelated concerns, dropping the error handling the design calls
+for, or flattening clear structure into one long function is not
+simplification and is reverted in review.
+
+Why: the layers this codebase has removed were added without need, but the
+remedy for over-engineering is a small clean design, not a monolith. Both
+cost the next reader.
+
+Enforced by: review; `tests/contracts/module-boundaries.test.ts` for the
+module seams it pins.

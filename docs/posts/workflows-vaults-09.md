@@ -281,7 +281,7 @@ execution when the vault is loaded via `akm vault run`. `akm add` and
 `akm lint` both scan for these names. During install, `akm add` pauses and
 asks for confirmation when dangerous keys are found (non-interactive mode fails
 unless `--allow-dangerous-env-keys` is passed). The full list of 23 flagged key names is
-documented in the [CLI reference](../reference/cli.md#dangerous-env-key-audit).
+documented in the [CLI reference](../reference/cli.md#env-files-and-process-hijacking-keys).
 
 **When to use `--allow-dangerous-env-keys`.** Pass it to `akm bundle add` when
 you have reviewed a bundle manually and confirmed that a dangerous environment

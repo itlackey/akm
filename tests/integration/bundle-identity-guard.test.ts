@@ -84,6 +84,9 @@ describe("§11.5 bundle-rename startup guard", () => {
     expect(warnCalls[0]).toContain("bundle identity drift");
     expect(warnCalls[0]).toContain('"newname"');
     expect(warnCalls[0]).toContain('"oldname"');
+    // The remedy is the command that exists on this release, not a missing one.
+    expect(warnCalls[0]).toContain("`akm bundle rename <old> <new>`");
+    expect(warnCalls[0]).not.toContain("no rekey command");
   });
 
   test("stays silent for a genuinely new bundle while unrelated stale rows remain (#971)", () => {

@@ -9,6 +9,90 @@ current-truth reference.
 
 ---
 
+## Invariants
+
+These behaviors hold across every command. Each names the test that pins it;
+one that names none is held by review. The rules for how the code itself is
+written are in [Core Principles](akm-core-principles.md).
+
+- **Files are the truth.** Capabilities are files in bundles. `index.db` is
+  a derived view that `akm index` rebuilds; `state.db` holds akm's
+  bookkeeping (events, proposals, runs, salience), never capability
+  content; `logs.db` holds purgeable log lines. Every change akm makes to a
+  capability lands as a file: an accepted proposal becomes the asset, memory
+  inference writes derived children, retirement leaves an archive and a
+  tombstone, extraction writes session assets. Pinned by
+  `tests/integration/indexer/ensure-index-serve.test.ts`.
+- **One local retrieval layer.** Every source materializes to disk and is
+  indexed the same way; `show` resolves through the index and reads from
+  disk. Registry results are opt-in and arrive in `registryHits`, never
+  merged into `hits`. A source provider fetches and refreshes and implements
+  no search or show, so source resolution, registry install and provider
+  plumbing stay behind indexing and the path from `search` or `curate` to
+  `show` is a lookup in the local index. Pinned by the `SourceProvider`
+  interface in `src/sources/provider.ts` and
+  `tests/integration/output-baseline.test.ts`.
+- **Discovery chooses, show delivers.** `search` and `curate` return enough
+  to pick an asset and its `ref` at every detail level (a registry hit
+  carries `installRef` instead); `show` returns the payload; `--detail agent`
+  results also carry `path` and `editable`. Pinned by
+  `tests/output-shapes-unit.test.ts` and `tests/output-baseline.test.ts`.
+- **Every token earns its place.** Default output is lean: `--detail brief`
+  lists only what is needed to choose the next asset, and `normal`, `full`
+  and `agent` widen or reshape it. `show` returns what a consumer needs to
+  act on the asset (a script's run hints, a skill's instructions, a
+  command's template, an agent's prompt, knowledge content, a workflow's
+  steps and parameters, env key names, secret metadata) and never an env or
+  secret value. Pinned by `tests/output-shapes-unit.test.ts`.
+- **Refs are path identities.** `[bundle//]conceptId`, with `#fragment`
+  accepted by `show` only. A short ref resolves against `defaultBundle`,
+  then the remaining bundles in installation order. A rename is a new
+  identity. An agent passes the ref `search` returned to `show` and never
+  parses or builds one. Pinned by `tests/asset-ref.test.ts`,
+  `tests/resolve-ref.test.ts` and
+  `tests/contracts/ref-resolver-contract.test.ts`.
+- **Execution happens only through named surfaces.** Workflow runs, tasks,
+  agent and command dispatch, `env run` and `secret run`, the improve and
+  proposal processes, index passes, and fetcher modules in the working
+  bundle's `scripts/wiki-fetchers/` directory during website sync. `search`
+  and `show` execute nothing; a script runs only as a task or workflow
+  target. Held by review.
+- **Improvement is review-first.** Proposals are the unit of change: reflect,
+  distill, extract and consolidate only emit proposals. Three lanes act
+  without a person, and only with `experimental.improveAutonomy` on: memory
+  inference, memory cleanup, and a triage promote that runs the judgment
+  tier (a promote through the deterministic gates alone needs no opt-in). A
+  fix a person types with `akm feedback --replace` is applied at once, as a
+  normal accept that `akm proposal revert` undoes. Regardless of the opt-in,
+  session extraction writes session assets, and `improve` purges graced
+  archives, commits accepted proposals and auto-syncs a git-backed bundle.
+  Pinned by
+  `tests/improve-plan-autonomy-wiring.test.ts` and
+  `tests/config-experimental-improve-autonomy.test.ts`.
+- **Writes resolve one way.** An explicit `--bundle`, then
+  `defaultWriteTarget`, then the working bundle, then an error. A
+  destination that is not writable is an error, never a fallback. Env and
+  secret values are never printed. Pinned by
+  `tests/integration/write/write-source.test.ts`,
+  `tests/integration/env/env.test.ts` and
+  `tests/integration/secret/secret-indexing.test.ts`.
+- **Output is for automation first.** `--format json` and `--detail brief`
+  by default; failures are `{ok, error, code}` on stderr with a stable exit
+  code. Pinned by `tests/integration/output-baseline.test.ts` and
+  `tests/integration/cli-errors.test.ts`.
+- **A workflow run executes the plan frozen at creation.** The plan, the
+  resolved request, the runner selection and the fan-out widths are
+  journaled when the run starts; a resumed run reads the journal, never
+  config or credentials, so editing config changes the next run and not the
+  one in flight. Pinned by `tests/workflows/child-plan-immutability.test.ts`
+  and `tests/workflows/immutable-execution-v4-red.test.ts`.
+- **Host authority is local and never inferred.** Inherited config shares
+  portable policy only; a disabled bundle is inert; the default bundle is
+  explicit. Pinned by `tests/config.test.ts` and
+  `tests/source-source.test.ts`.
+
+---
+
 ## Asset Types
 
 The `akm` adapter's fourteen built-in asset types (`skill`, `command`,
@@ -221,9 +305,8 @@ in the index, and fails closed when no configured source owns the path.
 ## Writing to Sources
 
 Writes go through one helper: `src/core/write-source.ts`. This is the only
-place in the codebase that branches on `source.kind`, and that is **enforced**
-by `scripts/lint-write-source-chokepoint.ts` in the `lint` chain — it was
-prose-only until 0.9.0, and drifted.
+place in the codebase that branches on `source.kind`. Review holds that line
+(core principle 2); the lint script that once checked it was deleted.
 
 Command layers therefore never hold provider knowledge. Where a step is
 meaningful only for a publication-backed target, `write-source.ts` exposes a
@@ -463,8 +546,8 @@ Concretely:
   through `improve.strategies`; see `docs/reference/configuration.md` for
   canonical config paths.
 
-The seam is locked by `tests/architecture/llm-stateless-seam.test.ts`, which
-inspects the module shape of each `src/llm/*` entry — not the source text.
+Review holds the seam; the test that once inspected the module shape of each
+`src/llm/*` entry was deleted.
 
 ### External agents (`src/integrations/agent/`)
 

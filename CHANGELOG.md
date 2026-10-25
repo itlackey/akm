@@ -1352,7 +1352,7 @@ When upgrading from 0.9.27:
   with a message saying to set `"plugin": ["akm-opencode@next"]`, and lockstep stays on the `@latest` pin.
   Missing, older-than-`@latest` or unpinned `@next` fails closed like the stable lockstep. Claude Code and
   Codex are unchanged (no prerelease channel). The result gains `channel`. Works with `--check`, `--force`
-  and `-q`. See [`akm upgrade`](docs/reference/cli.md#prereleases-next).
+  and `-q`. See [`akm upgrade`](docs/reference/cli.md#prereleases---next).
 
 ## [0.9.28-alpha.4] - 2026-10-08
 
@@ -5423,7 +5423,8 @@ install's cron schedule, not their worth.
   instead. This is a Markdown-frontmatter-only key — a GitHub-shaped
   workflow's closed root key set has no extension surface for it, the same
   reason it cannot declare `params:` either. See
-  [Workflow Schema: Workflow outputs](docs/reference/workflow-schema.md#workflow-outputs).
+  [Moving from akm 0.9 to 0.10: Workflows](docs/migration/v0.9-to-v0.10.md#workflows),
+  which removed top-level `outputs:`.
 - **`akm workflow plan <ref>`** (Evolving) — compiles, resolves, and freezes
   a workflow exactly as starting a run would, then stops: zero durable
   writes, no published run, no event, no lease. Prints the canonical step

@@ -1,8 +1,0 @@
-Command: bun test --timeout=120000
-(skip) the distill contract against the akm in AKM_BIN (AKM_EVAL_REAL_AKM=1) > a lesson that fits the schema of this release is queued for review, and a reply that is no JSON is invalid
-
- 2919 pass
- 13 skip
- 0 fail
- 88850 expect() calls
-Ran 2932 tests across 101 files. [268.77s]
