@@ -2,27 +2,28 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// The opencode harness on OpenCode 2 against the real embedded OpenCode and a
-// loopback fake model: no binary, no network. The user's config, default model
-// and logins reach the run; their database is read, never written with akm's
-// sessions; and model work is confined.
+// Integration: runs the real embedded OpenCode, which opens its own SQLite
+// database, against a fake model served on 127.0.0.1. The opencode harness on
+// OpenCode 2: no OpenCode binary and no external network. The user's config,
+// default model and logins reach the run; their database is read, never written
+// with akm's sessions; and model work is confined.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { OpenCode } from "@opencode/sdk";
-import { harnessProfile } from "../src/integrations/agent/profiles";
+import { harnessProfile } from "../../src/integrations/agent/profiles";
 import {
   _setOpencodeHostFactoryForTests,
   closeOpencodeSdk,
-} from "../src/integrations/harnesses/opencode/embedded/host";
-import { runOpencodeHarness } from "../src/integrations/harnesses/opencode/embedded/run";
-import { createSdkHost } from "../src/integrations/harnesses/opencode/embedded/sdk-host";
-import { akmOpencodeDatabasePath } from "../src/integrations/harnesses/opencode/roots";
-import { openDatabase } from "../src/storage/database";
-import { type FakeModelServer, startFakeModel } from "./_helpers/fake-model-server";
-import { makeSandboxDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
-import { overrideSeam } from "./_helpers/seams";
+} from "../../src/integrations/harnesses/opencode/embedded/host";
+import { runOpencodeHarness } from "../../src/integrations/harnesses/opencode/embedded/run";
+import { createSdkHost } from "../../src/integrations/harnesses/opencode/embedded/sdk-host";
+import { akmOpencodeDatabasePath } from "../../src/integrations/harnesses/opencode/roots";
+import { openDatabase } from "../../src/storage/database";
+import { type FakeModelServer, startFakeModel } from "../_helpers/fake-model-server";
+import { makeSandboxDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
+import { overrideSeam } from "../_helpers/seams";
 
 const profile = harnessProfile({
   kind: "harness",

@@ -6,7 +6,7 @@
 // host (tests/_helpers/fake-opencode-host.ts): the host and its providers, the
 // session's model, environment and persona, the request settings the plugin
 // applies to that session's requests, and how a timeout or abort ends a turn.
-// tests/opencode-sdk-runner.test.ts runs the same runner on the real OpenCode.
+// tests/integration/opencode-sdk-runner.test.ts runs the same runner on the real OpenCode.
 
 import { describe, expect, test } from "bun:test";
 import { getConfigDir } from "../src/core/paths";

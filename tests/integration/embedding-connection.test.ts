@@ -2,21 +2,23 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+// Integration: serves a loopback HTTP endpoint (127.0.0.1) the embedder calls.
+
 /**
  * `embedding.model` without an `embedding.endpoint` is served by the default
  * connection: its endpoint and its key.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { AkmConfig } from "../src/core/config/config";
-import { writeCredential } from "../src/core/config/credentials";
-import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
-import { _setEmbedderForTests, embed, resolveEmbeddingModelId } from "../src/llm/embedder";
-import { effectiveEmbedding } from "../src/llm/embedders/connection";
-import { hasRemoteEndpoint } from "../src/llm/embedders/remote";
-import { prepareSemanticSearchAssets } from "../src/setup/semantic-assets";
-import { clearCredentials } from "./_helpers/credentials";
-import { withEnv } from "./_helpers/sandbox";
+import type { AkmConfig } from "../../src/core/config/config";
+import { writeCredential } from "../../src/core/config/credentials";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
+import { _setEmbedderForTests, embed, resolveEmbeddingModelId } from "../../src/llm/embedder";
+import { effectiveEmbedding } from "../../src/llm/embedders/connection";
+import { hasRemoteEndpoint } from "../../src/llm/embedders/remote";
+import { prepareSemanticSearchAssets } from "../../src/setup/semantic-assets";
+import { clearCredentials } from "../_helpers/credentials";
+import { withEnv } from "../_helpers/sandbox";
 
 const LAB = { endpoint: "http://lab:8080/v1/chat/completions", models: { fast: "qwen3-8b" } };
 

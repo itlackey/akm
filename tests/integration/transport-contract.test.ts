@@ -6,7 +6,9 @@
  * Cross-transport contract: every way akm reaches a model meets the same
  * contract, so any of them can stand in for any other. Each row runs the real
  * path, from resolveExecution through buildExecution to runExecution, against
- * local stubs only (no network). The transports are:
+ * local stubs only: no external network, but a loopback HTTP server and fake
+ * programs that are spawned, which is why this is an integration test. The
+ * transports are:
  *
  *   - connection chat: model work on a connection goes straight to its endpoint;
  *     a Bun.serve stub on 127.0.0.1 answers the real chatCompletion.

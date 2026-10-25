@@ -9,7 +9,7 @@
  * the response format. `effectiveRequestFields` is where both transports take the
  * user's fields from; the chat client's body is checked here, the embedded
  * runtime's in tests/opencode-runtime-sessions.test.ts and
- * tests/opencode-sdk-runner.test.ts.
+ * tests/integration/opencode-sdk-runner.test.ts.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

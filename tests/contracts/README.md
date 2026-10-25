@@ -25,5 +25,5 @@ section names are intentionally absent from this active suite.
 | `module-boundaries.test.ts` | Current module-boundary anchors |
 | `extension-points.test.ts` | Supported source and registry provider boundaries |
 | `improve-cli-surface.test.ts` | Current improvement CLI surface |
-| `transport-contract.test.ts` | One contract over a connection's chat, every CLI harness and the internal runtime |
 | `response-schemas-strict.test.ts` | Every response schema akm sends is valid for a strict structured-output provider |
+| `runtime-port-boundary.test.ts` | Only `integrations/agent/runtime.ts` names the agent runtime's implementation, and the implementation reads no config |

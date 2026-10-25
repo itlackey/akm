@@ -2,10 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// akm's internal runtime (#1244) against the real embedded OpenCode and a
-// loopback fake model: no binary, no network. What a run is created with and what
-// the endpoint receives are asserted; the fake host (tests/opencode-runtime-sessions.test.ts)
-// covers the rest.
+// Integration: runs the real embedded OpenCode, which opens its own SQLite
+// database and starts a shell tool, against a fake model served on 127.0.0.1.
+// akm's internal runtime (#1244): no OpenCode binary and no external network. What
+// a run is created with and what the endpoint receives are asserted; the fake host
+// (tests/opencode-runtime-sessions.test.ts, a unit test) covers the rest.
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -13,23 +14,23 @@ import os from "node:os";
 import path from "node:path";
 import type { Plugin } from "@opencode/plugin";
 import { OpenCode } from "@opencode/sdk";
-import { resetConfigCache } from "../src/core/config/config";
-import { getConfigDir, getDataDir } from "../src/core/paths";
-import { runtimeProfile } from "../src/integrations/agent/profiles";
+import { resetConfigCache } from "../../src/core/config/config";
+import { getConfigDir, getDataDir } from "../../src/core/paths";
+import { runtimeProfile } from "../../src/integrations/agent/profiles";
 import {
   _setOpencodeHostFactoryForTests,
   closeOpencodeSdk,
   hostFor,
-} from "../src/integrations/harnesses/opencode/embedded/host";
-import { runOpencodeSdk } from "../src/integrations/harnesses/opencode/embedded/run";
-import { runnerModel } from "../src/integrations/harnesses/opencode/embedded/runner-models";
-import { runtimeConfigContent } from "../src/integrations/harnesses/opencode/embedded/runtime-config";
-import { createSdkHost } from "../src/integrations/harnesses/opencode/embedded/sdk-host";
-import { akmOpencodeDatabasePath } from "../src/integrations/harnesses/opencode/roots";
-import type { ChatCompletionConfig } from "../src/llm/client";
-import { type FakeModelServer, startFakeModel } from "./_helpers/fake-model-server";
-import { withEnv, writeSandboxConfig } from "./_helpers/sandbox";
-import { overrideSeam } from "./_helpers/seams";
+} from "../../src/integrations/harnesses/opencode/embedded/host";
+import { runOpencodeSdk } from "../../src/integrations/harnesses/opencode/embedded/run";
+import { runnerModel } from "../../src/integrations/harnesses/opencode/embedded/runner-models";
+import { runtimeConfigContent } from "../../src/integrations/harnesses/opencode/embedded/runtime-config";
+import { createSdkHost } from "../../src/integrations/harnesses/opencode/embedded/sdk-host";
+import { akmOpencodeDatabasePath } from "../../src/integrations/harnesses/opencode/roots";
+import type { ChatCompletionConfig } from "../../src/llm/client";
+import { type FakeModelServer, startFakeModel } from "../_helpers/fake-model-server";
+import { withEnv, writeSandboxConfig } from "../_helpers/sandbox";
+import { overrideSeam } from "../_helpers/seams";
 
 const profile = runtimeProfile({
   kind: "connection",

@@ -2,6 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+// Integration: serves a loopback HTTP endpoint (127.0.0.1) a request is sent to.
+
 /**
  * A key left in `config.json` as a literal belongs to the user: an ordinary
  * write does not delete it, and akm never reads, sends or prints it.
@@ -11,17 +13,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { getConfigValue, listConfig, setConfigValue } from "../src/commands/config-cli";
-import { loadUserConfig, mutateConfig, resetConfigCache } from "../src/core/config/config";
-import { collectCredentialValues, writeCredential } from "../src/core/config/credentials";
-import { getConfigPath } from "../src/core/paths";
-import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
-import { buildExecution, resolveExecution } from "../src/integrations/agent/execution";
-import { runExecution } from "../src/integrations/agent/runner-dispatch";
-import type { ChatCompletionConfig } from "../src/llm/client";
-import { embed } from "../src/llm/embedder";
-import { effectiveEmbedding } from "../src/llm/embedders/connection";
-import { clearCredentials } from "./_helpers/credentials";
+import { getConfigValue, listConfig, setConfigValue } from "../../src/commands/config-cli";
+import { loadUserConfig, mutateConfig, resetConfigCache } from "../../src/core/config/config";
+import { collectCredentialValues, writeCredential } from "../../src/core/config/credentials";
+import { getConfigPath } from "../../src/core/paths";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
+import { buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
+import { runExecution } from "../../src/integrations/agent/runner-dispatch";
+import type { ChatCompletionConfig } from "../../src/llm/client";
+import { embed } from "../../src/llm/embedder";
+import { effectiveEmbedding } from "../../src/llm/embedders/connection";
+import { clearCredentials } from "../_helpers/credentials";
 
 const LITERAL = "sk-literal-left-in-the-file";
 
