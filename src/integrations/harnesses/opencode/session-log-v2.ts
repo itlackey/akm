@@ -9,7 +9,8 @@
  *
  * A message row is `(id, type, data)`; OpenCode decodes it as `{ ...data, id, type }`,
  * which is rebuilt here. Only top-level sessions are read, and akm's own
- * model-work sessions (`metadata.akm = "model-work"`) are left out.
+ * model-work sessions are left out: OpenCode 2 stores the agent a session ran as,
+ * and akm runs model work as one agent (`./agent-builder.ts`).
  *
  * Mapping to events follows the Codex reader: user and assistant text become events of
  * that role, a tool call becomes `[tool:<name>] <input>` and its outcome a
@@ -22,6 +23,7 @@ import { asRecord, tryParseJson } from "../../../core/common";
 import type { Database } from "../../../storage/database";
 import { extractInlineRefMentions } from "../../session-logs/inline-refs";
 import type { InlineRefMention, SessionEvent } from "../../session-logs/types";
+import { MODEL_WORK_AGENT } from "./agent-builder";
 import { type OpenCodeSessionMeta, type OpenCodeSessionRead, toMeta } from "./session-log-v1";
 
 type Json = Record<string, unknown>;
@@ -119,7 +121,7 @@ export function opencodeMessageEvents(
 
 /** The columns of each table akm reads; a file lacking one is a schema akm does not support. */
 const V2_COLUMNS: Readonly<Record<string, readonly string[]>> = {
-  session_v2: ["id", "parent_id", "title", "directory", "metadata", "time_created", "time_updated"],
+  session_v2: ["id", "parent_id", "title", "directory", "agent", "time_created", "time_updated"],
   session_message: ["id", "session_id", "type", "seq", "data"],
 };
 
@@ -137,8 +139,7 @@ export function hasV2Tables(db: Database): boolean {
 }
 
 /** Top-level sessions that are not akm's model work. */
-const AKM_USER_SESSIONS =
-  "parent_id IS NULL AND (json_extract(metadata, '$.akm') IS NULL OR json_extract(metadata, '$.akm') != 'model-work')";
+const AKM_USER_SESSIONS = `parent_id IS NULL AND (agent IS NULL OR agent != '${MODEL_WORK_AGENT}')`;
 
 type V2SessionRow = {
   id: string;

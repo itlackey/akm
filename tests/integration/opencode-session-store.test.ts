@@ -94,8 +94,8 @@ interface OpenCode2Fixture {
  * An OpenCode 2 database at `<base>/opencode.db`, written by the embedded
  * OpenCode: sessions that ran a shell command, were refused a write, were
  * compacted mid-turn, were cut at the output limit and ran a shell message of
- * their own, then a model-work session and a child of the first, which are not
- * history.
+ * their own and one that named an agent, then a model-work session and a child of
+ * the first, which are not history.
  */
 async function openCode2Store(base: string): Promise<OpenCode2Fixture> {
   const work = makeBase();
@@ -120,9 +120,11 @@ async function openCode2Store(base: string): Promise<OpenCode2Fixture> {
     const direct = await turn("direct shell", "MODE:answer hello");
     await host.sessions.shell({ sessionID: direct, command: "echo direct" } as never);
     await host.sessions.wait({ sessionID: direct } as never);
+    // OpenCode 2 stores the agent a session ran as. A session of another agent is history; akm's model work is not.
+    await turn("another agent", "MODE:answer hello", { agent: "build" });
     await host.sessions.create({
       title: "akm model work",
-      metadata: { akm: "model-work" },
+      agent: "akm-model-work",
       location: { directory: work },
     } as never);
     await host.sessions.create({ title: "a subagent", parentID: first, location: { directory: work } } as never);
@@ -162,6 +164,18 @@ describe("OpenCode 2 store (read with SQLite alone)", () => {
   test("lists top-level sessions without akm's model work, and reads one with its tool calls", async () => {
     const base = makeBase();
     const { first, ids } = await openCode2Store(base);
+    // The file holds the model-work session and one of another agent, so the listing below is not vacuous.
+    const store = openDatabase(path.join(base, "opencode.db"), { readonly: true, create: false });
+    const agents = store
+      .prepare<{ title: string; agent: string }>("SELECT title, agent FROM session_v2 WHERE agent IS NOT NULL")
+      .all();
+    store.close();
+    expect(agents).toEqual(
+      expect.arrayContaining([
+        { title: "akm model work", agent: "akm-model-work" },
+        { title: "another agent", agent: "build" },
+      ]),
+    );
     const provider = new OpenCodeProvider();
     const sessions = await provider.listSessions({ location: base });
     expect(sessions.map((s) => s.sessionId).sort()).toEqual([...ids].sort());
