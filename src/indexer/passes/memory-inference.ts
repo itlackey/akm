@@ -19,15 +19,10 @@
  * with `inferenceProcessed: true`. A subsequent `akm index` therefore skips
  * the parent without re-running the LLM.
  *
- * Disabling — two orthogonal gates:
- *   1. The selected strategy sets `processes.memoryInference.enabled = false`
- *      blocks the pass at the feature-flag layer (no network call may ever
- *      issue). Historically the v1 spec §14 gate, superseded by the 0.8.0
- *      profile shape.
- *   2. `index.memory.llm = false` (or no resolvable LLM profile) opts the
- *      pass out at the per-pass layer (#208).
- *   A pass runs iff both layers allow it. Existing inferred children are
- *   NEVER deleted — the user keeps what was already produced.
+ * Disabling — one gate: `index.memory.enabled = false` (or no resolvable
+ * connection or harness) leaves the pass with no runner, and no model call is
+ * made (#208). Existing inferred children are NEVER deleted — the user keeps
+ * what was already produced.
  *
  * Scope sync: on every run, an existing derived child (`<name>.derived.md`,
  * `inferred: true`, `derivedFrom` naming its parent) whose normalized scope
@@ -432,7 +427,6 @@ async function runMemoryInferencePassBody(
   provenance: WriteProvenanceJournal,
 ): Promise<MemoryInferenceResult> {
   const { config, sources, signal, db, reEnrich, onProgress, options = {} } = ctx;
-  const invocationOwnsRunner = Object.hasOwn(ctx, "llmRunner");
   const compressMemoryToDerivedMemory =
     options.compressMemoryToDerivedMemory ?? memoryInfer.compressMemoryToDerivedMemory;
   const result: MemoryInferenceResult = {
@@ -463,11 +457,8 @@ async function runMemoryInferencePassBody(
     return result;
   };
 
-  // Gate 1 — `index.memory.enabled`, on unless set to false. A caller that owns the runner has decided.
-  if (!invocationOwnsRunner && config.index?.memory?.enabled === false) return completeResult();
-
-  // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or
-  // `undefined` when the pass should not run.
+  // The one gate — per-pass opt-out (#208): no runner when `index.memory.enabled` is false or nothing is
+  // configured. A caller that owns the runner has decided to run.
   const execution = memoryExecutionForContext(ctx, config);
   notices.add(execution.notices);
   const llmRunner = execution.runner;
