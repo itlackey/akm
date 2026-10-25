@@ -46,6 +46,7 @@ import {
   type ReflectPromptInput,
 } from "../../integrations/agent/prompts";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import { getHarness } from "../../integrations/harnesses";
 import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported } from "../../llm/client";
 import { structuredLoop } from "../../llm/structured";
 import type { StructuredOutcome } from "../../llm/structured-call";
@@ -824,13 +825,25 @@ function resolveReflectRunner(options: AkmReflectOptions): {
   };
 }
 
+/** Whether a harness takes the prompt as an argument, which the OS limits; one that reads it from stdin does not. */
+function promptInArgv(runner: Extract<RunnerSpec, { kind: "harness" }>): boolean {
+  const harness = getHarness(runner.platform);
+  return harness?.build({ bin: runner.bin, args: runner.args }, { prompt: "x" }).stdin === undefined;
+}
+
 /**
- * The flat 12k content cap exists for CLI argv; the HTTP runner can spend half
- * its context window (after the rest of the prompt) on the asset, reserving
- * the other half for the reply. Never below the flat floor.
+ * The flat 12k content cap exists for CLI argv, so only a harness that takes the
+ * prompt there keeps it (`undefined`); one that reads stdin (claude, OpenCode)
+ * has none (`null`). The HTTP runner can spend half its context window (after
+ * the rest of the prompt) on the asset, reserving the other half for the reply.
+ * Never below the flat floor.
  */
-function computeReflectContentBudgetChars(promptInput: ReflectPromptInput, runnerSpec: RunnerSpec): number | undefined {
-  if (runnerSpec.kind !== "connection" || !promptInput.assetContent?.trim()) return undefined;
+function computeReflectContentBudgetChars(
+  promptInput: ReflectPromptInput,
+  runnerSpec: RunnerSpec,
+): number | null | undefined {
+  if (runnerSpec.kind === "harness") return promptInArgv(runnerSpec) ? undefined : null;
+  if (!promptInput.assetContent?.trim()) return undefined;
   const window = (runnerSpec.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS) * CHARS_PER_TOKEN;
   const overhead = buildReflectPrompt({ ...promptInput, contentBudgetChars: 0 }).prompt.length;
   return Math.max(REFLECT_CONTENT_CAP, Math.floor((window - overhead) / 2));

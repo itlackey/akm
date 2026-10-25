@@ -199,13 +199,12 @@ export interface ReflectPromptInput {
   outputMode?: ReflectOutputMode;
   /**
    * Override for the asset-content character cap (#952). Undefined keeps
-   * today's flat {@link REFLECT_CONTENT_CAP} (12 000 chars) — the safe
-   * default for agent/SDK runners whose prompt travels through CLI argv.
-   * Direct-LLM callers may pass a larger, context-aware budget since their
-   * prompt never touches argv; see the reflect dispatch site for how it's
-   * computed.
+   * the flat {@link REFLECT_CONTENT_CAP} (12 000 chars): the safe default for
+   * a harness whose prompt travels as a CLI argument, which the OS limits.
+   * A prompt that never touches argv may pass a larger, context-aware budget,
+   * or `null` for no cap; see the reflect dispatch site for how it is chosen.
    */
-  contentBudgetChars?: number;
+  contentBudgetChars?: number | null;
 }
 
 export type ReflectOutputMode = "json_schema" | "framed_markdown";
@@ -374,12 +373,13 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
 
   if (input.assetContent?.trim()) {
     // Cap defaults to REFLECT_CONTENT_CAP (12 000 chars) to stay well under OS
-    // ARG_MAX when the prompt is passed as a CLI argument to opencode/claude
-    // — large assets (wiki snapshots, long runbooks) would otherwise trigger
-    // E2BIG on posix_spawn. Direct-LLM callers never touch argv, so they may
-    // pass a larger, context-aware `contentBudgetChars` (#952); it is never
-    // allowed below the flat floor, which the caller enforces before calling in.
-    const contentCap = input.contentBudgetChars ?? REFLECT_CONTENT_CAP;
+    // ARG_MAX when the prompt is passed as a CLI argument — large assets (wiki
+    // snapshots, long runbooks) would otherwise trigger E2BIG on posix_spawn.
+    // A prompt on stdin or over HTTP never touches argv, so the caller passes a
+    // larger, context-aware `contentBudgetChars` (#952), or `null` for none; a
+    // number is never allowed below the flat floor, which the caller enforces.
+    const contentCap =
+      input.contentBudgetChars === null ? Number.POSITIVE_INFINITY : (input.contentBudgetChars ?? REFLECT_CONTENT_CAP);
     const body = input.assetContent.trimEnd();
     const truncated = body.length > contentCap;
     sections.push(

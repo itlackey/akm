@@ -21,6 +21,7 @@ import { listProposals } from "../../../../src/commands/proposal/repository";
 import { parseFrontmatter } from "../../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
+import { REFLECT_CONTENT_CAP, REFLECT_TRUNCATION_MARKER } from "../../../../src/integrations/agent/prompts";
 import {
   clearHarnessCalls,
   fakeHarness,
@@ -142,6 +143,35 @@ function completedEvent() {
   expect(events).toHaveLength(1);
   return events[0]?.metadata as Record<string, unknown>;
 }
+
+describe("the 12k content cap is for a prompt that travels as an argument", () => {
+  const TAIL = "FINAL-LINE-OF-THE-ASSET";
+  const LONG = `${SOURCE}\n${"The body goes on and on. ".repeat(1_000)}\n${TAIL}\n`;
+
+  test.each([
+    ["claude", false],
+    ["gemini", true],
+  ])("a %s harness sees the asset %s", async (platform, truncated) => {
+    const config = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      harnesses: { contract: { platform, bin: path.join(bins.dir, "valid") } },
+      improve: {
+        strategy: "default",
+        strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } },
+      },
+    } as unknown as AkmConfig;
+
+    const result = await akmReflect({ ref: REF, stashDir: storage.stashDir, config, assetContent: LONG });
+
+    if (!result.ok) throw new Error(`expected a proposal, got ${result.reason}: ${result.error}`);
+    const [call] = claudeCalls("valid");
+    const prompt = promptOf(call);
+    expect(LONG.length).toBeGreaterThan(REFLECT_CONTENT_CAP);
+    expect(prompt.includes(REFLECT_TRUNCATION_MARKER)).toBe(truncated);
+    expect(prompt.includes(TAIL)).toBe(!truncated);
+  });
+});
 
 describe("reflect runs the runner the improve plan froze", () => {
   test("it resolves nothing of its own: a config that configures nothing still dispatches, and the plan's runner answers", async () => {
