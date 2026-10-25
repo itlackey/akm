@@ -28,11 +28,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isRecord } from "../common";
-import { sameEndpoint } from "../endpoint-url";
 import { redactUrlCredentials } from "../redaction";
 import { isSecretRefToken } from "../ref-token";
 import type { ConvertEnginesResult } from "./convert-engines";
-import { type CredentialSlot, storedCredential } from "./credentials";
+import { type CredentialSlot, slotStanding } from "./credentials";
 import { isEnvReference } from "./schema/primitives";
 
 type Dict = Record<string, unknown>;
@@ -252,9 +251,14 @@ export function planKeyMoves(
       continue;
     }
     const slotKey = JSON.stringify(candidate.slot);
-    const stored = storedCredential(candidate.slot);
-    const existing = planned.get(slotKey) ?? (stored ? { value: stored.key, endpoint: stored.endpoint } : undefined);
-    if (existing !== undefined && (existing.value !== value || !sameEndpoint(existing.endpoint, endpoint))) {
+    const earlier = planned.get(slotKey);
+    const standing = slotStanding(
+      candidate.slot,
+      value,
+      endpoint,
+      earlier && { key: earlier.value, endpoint: earlier.endpoint },
+    );
+    if (standing === "different") {
       candidate.restore?.();
       notes.push(
         `${candidate.from}: credentials.json already holds a different key or endpoint for "${candidate.name}"; it is not replaced.${stays}`,

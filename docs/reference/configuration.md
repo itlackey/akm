@@ -327,7 +327,10 @@ akm reads an API key from one of two places, and nowhere else:
   only its `models`, and a key stored for the endpoint it ends up with is used).
   A key in the older flat `{ "<name>": "<key>" }` form names no endpoint and is
   not used; `akm migrate apply` files it under the endpoint your own config gives
-  that block.
+  that block, after copying `credentials.json` to `<cache dir>/config-backups/`.
+  A block that already has a stored key is never overwritten by it: the same key
+  for the same endpoint just drops the older entry, and any other leaves both in
+  the file, with a note.
 
 `akm setup` asks for a key at a masked prompt and stores it in
 `credentials.json` for the endpoint it was typed for; `--api-key-env NAME` sets

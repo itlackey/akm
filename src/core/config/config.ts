@@ -1173,6 +1173,8 @@ export interface ConfigFileNormalization {
   readonly backupPath?: string;
   /** The `credentials.json` entries the config's keys move to (names only), when any do. */
   readonly credentials?: readonly string[];
+  /** Where `credentials.json` was copied to before its older entries were filed, when any were. */
+  readonly credentialsBackupPath?: string;
   /** Where the retired `models.json` was moved to, after its aliases were folded in. */
   readonly modelsFileBackupPath?: string;
   /** What each engine of the retired `engines` form became, for the step that rewrites assets' `engine:` keys. */
@@ -1252,7 +1254,7 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       | undefined;
     if (strategies && Object.hasOwn(strategies, "graph-refresh")) delete strategies["graph-refresh"];
     // A key in the older flat form is filed only under an endpoint this file itself gives the block.
-    const flat = fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), false);
+    const flat = fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), false, plan.moves);
     const notes = [...converted.notes, ...plan.notes, ...flat.notes];
     keepUnusableEntries(body, localRaw, current, notes);
     const hasModelsFile = modelsFileExists();
@@ -1275,7 +1277,10 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     const changed = keys.length > 0 || hasModelsFile || flat.filed.length > 0;
     if (!changed || !options.apply) return { ...reported, changed, applied: false };
     let backup: ReturnType<typeof backupExistingConfig>;
-    if (flat.filed.length > 0) fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), true);
+    const credentialsBackupPath =
+      flat.filed.length > 0
+        ? fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), true, plan.moves).backupPath
+        : undefined;
     if (keys.length > 0) {
       // The keys are filed before the file that holds them is rewritten; a store
       // that cannot take them (malformed, unwritable) throws here and loses none.
@@ -1290,6 +1295,7 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       changed: true,
       applied: true,
       ...(backup ? { backupPath: backup.timestamped } : {}),
+      ...(credentialsBackupPath ? { credentialsBackupPath } : {}),
       ...(modelsFileBackupPath ? { modelsFileBackupPath } : {}),
     };
   });

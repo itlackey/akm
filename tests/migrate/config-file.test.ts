@@ -279,6 +279,56 @@ describe("the keys an engines config holds that akm no longer reads", () => {
   });
 });
 
+describe("a key credentials.json holds in the older flat form", () => {
+  const OLD = "https://old.invalid/v1";
+  const CURRENT = "https://new.invalid/v1";
+  const writeFlat = (value: Dict): void => fs.writeFileSync(credentialsPath(), JSON.stringify(value));
+
+  test("does not replace the key a later setup or rotation stored for the same connection", () => {
+    writeFlat({ default: "SYNTHETIC_OLD_KEY" });
+    // What setup does when the user rotates the key or moves the endpoint: the typed entry is written beside the old one.
+    writeCredential({ connection: "default" }, "SYNTHETIC_CURRENT_KEY", CURRENT);
+    writeConfig({ connections: { default: { endpoint: CURRENT, models: { fast: "m" } } } });
+    const before = storedKeys();
+
+    const dry = normalizeConfigFile(getConfigPath(), { apply: false, resolveFromStore });
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    expect(dry.notes?.join("\n")).toContain('connection "default" already holds a different key or endpoint');
+    expect(result.notes?.join("\n")).toContain('connection "default" already holds a different key or endpoint');
+    expect(result.credentials).toBeUndefined();
+    expect(result.credentialsBackupPath).toBeUndefined();
+    expect(storedKeys()).toEqual(before);
+    expect(readCredential({ connection: "default" }, CURRENT)).toBe("SYNTHETIC_CURRENT_KEY");
+    expect(JSON.stringify(result)).not.toContain("SYNTHETIC_");
+  });
+
+  test("is filed when the connection has no key yet, after the store is copied", () => {
+    writeFlat({ default: "SYNTHETIC_OLD_KEY" });
+    const original = fs.readFileSync(credentialsPath(), "utf8");
+    writeConfig({ connections: { default: { endpoint: OLD, models: { fast: "m" } } } });
+
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    expect(result.credentials).toEqual(["default"]);
+    expect(storedKeys()).toEqual({ connections: { default: { key: "SYNTHETIC_OLD_KEY", endpoint: OLD } } });
+    expect(fs.readFileSync(result.credentialsBackupPath as string, "utf8")).toBe(original);
+  });
+
+  test("meets the key the same run moves out of the config by the one policy: the config's key is filed and the older entry stays", () => {
+    writeFlat({ cloud: "SYNTHETIC_OLD_KEY" });
+    writeConfig({ connections: { cloud: { endpoint: OLD, models: { fast: "m" }, apiKey: "SYNTHETIC_CONFIG_KEY" } } });
+
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    expect(storedKeys()).toEqual({
+      cloud: "SYNTHETIC_OLD_KEY",
+      connections: { cloud: { key: "SYNTHETIC_CONFIG_KEY", endpoint: OLD } },
+    });
+    expect(result.notes?.join("\n")).toContain('connection "cloud" already holds a different key or endpoint');
+  });
+});
+
 describe("the entries the reader drops", () => {
   const draft = { models: { fast: "m" }, top_p: 0.9 };
   const cursor = { bin: "/opt/cursor", args: ["--x"] };

@@ -25,7 +25,7 @@ import path from "node:path";
 import { isRecord, writeFileAtomic } from "../common";
 import { sameEndpoint } from "../endpoint-url";
 import { ConfigError } from "../errors";
-import { getConfigDir } from "../paths";
+import { getCacheDir, getConfigDir } from "../paths";
 import { collectSensitiveValues, redactUrlCredentials } from "../redaction";
 import { warnOnce } from "../warn";
 import { isInheritedConnection } from "./config";
@@ -181,17 +181,69 @@ export function storedCredentials(): Array<{ slot: CredentialSlot; credential: S
   );
 }
 
+/** What `slot` holds against a key a migration would file there. */
+export type SlotStanding = "free" | "same" | "different";
+
+/**
+ * Every migration into a credential slot asks this one question. An empty slot is
+ * `free`; one holding exactly this key for this endpoint is `same` (filing it again
+ * changes nothing); anything else, a malformed entry included, is `different`, and
+ * is never replaced: the migration leaves both and says so. `ahead` is the entry the
+ * same migration has already planned for the slot, which stands in for the store's.
+ */
+export function slotStanding(
+  slot: CredentialSlot,
+  key: string,
+  endpoint: string,
+  ahead?: { readonly key: string; readonly endpoint: string },
+): SlotStanding {
+  let held: unknown = ahead;
+  if (held === undefined) {
+    const store = readStore();
+    // An unusable store is not a conflict: it refuses every write, which stops the migration with nothing lost.
+    if ("problem" in store) return "free";
+    const { group, name } = namespaceOf(slot);
+    held = groupOf(store.entries, group)[name];
+  }
+  if (held === undefined) return "free";
+  return isStoredCredential(held) && held.key === key && sameEndpoint(held.endpoint, endpoint) ? "same" : "different";
+}
+
+/** Copy the store to `<cache>/config-backups/credentials.json.<timestamp>` (0600), for a rewrite that removes entries. */
+function backupStore(now = new Date()): string {
+  const backupDir = path.join(getCacheDir(), "config-backups");
+  fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+  const stamp = now.toISOString().replace(/[.:]/g, "-");
+  for (let sequence = 0; ; sequence += 1) {
+    const target = path.join(backupDir, `credentials.json.${stamp}${sequence === 0 ? "" : `-${sequence}`}`);
+    try {
+      fs.copyFileSync(storePath(), target, fs.constants.COPYFILE_EXCL);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
+      throw error;
+    }
+    fs.chmodSync(target, 0o600);
+    return target;
+  }
+}
+
 /**
  * File every key the store holds in the older flat `{ "<name>": "<key>" }` form under
  * the endpoint of the block it belongs to, as `endpointOf` says: a name that is a
  * connection's, or `curateRerank`, or `embedding` (the service's, or a connection
- * called that: one of the two must have an endpoint, or it is not filed). An entry
- * that cannot be filed stays as it is, and a note says why. Writes only when `apply`.
+ * called that: one of the two must have an endpoint, or it is not filed). `pending` is
+ * what the same migration is about to file in the current form, which a flat key is
+ * measured against like the store's own entries ({@link slotStanding}): a slot that
+ * already holds the same key for the same endpoint just drops the older entry, and one
+ * that holds anything else keeps the older entry, with a note. An entry that cannot be
+ * filed stays as it is, and a note says why. Writes only when `apply`, after copying
+ * the store to the config-backups directory (`backupPath`).
  */
 export function fileFlatCredentials(
   endpointOf: (slot: CredentialSlot) => string | undefined,
   apply: boolean,
-): { readonly filed: readonly string[]; readonly notes: readonly string[] } {
+  pending: ReadonlyArray<{ readonly slot: CredentialSlot; readonly value: string; readonly endpoint: string }> = [],
+): { readonly filed: readonly string[]; readonly notes: readonly string[]; readonly backupPath?: string } {
   const store = readStore();
   if ("problem" in store) return { filed: [], notes: [`${store.problem}; its keys were not filed.`] };
   const entries = { ...store.entries };
@@ -218,16 +270,35 @@ export function fileFlatCredentials(
       );
       continue;
     }
-    const { group, name: slotName } = namespaceOf(home.slot);
-    entries[group] = { ...groupOf(entries, group), [slotName]: { key: value, endpoint: home.endpoint } };
+    const ahead = pending.find((move) => JSON.stringify(move.slot) === JSON.stringify(home.slot));
+    const standing = slotStanding(
+      home.slot,
+      value,
+      home.endpoint,
+      ahead && { key: ahead.value, endpoint: ahead.endpoint },
+    );
+    if (standing === "different") {
+      notes.push(
+        `credentials.json: ${describeSlot(home.slot)} already holds a different key or endpoint than the older entry "${name}"; neither is replaced. Remove the older entry when the stored one is the key you want.`,
+      );
+      continue;
+    }
+    if (standing === "free") {
+      const { group, name: slotName } = namespaceOf(home.slot);
+      entries[group] = { ...groupOf(entries, group), [slotName]: { key: value, endpoint: home.endpoint } };
+    }
     delete entries[name];
     filed.push(name);
     notes.push(
-      `credentials.json: the key "${name}" is filed for ${describeSlot(home.slot)} at ${redactUrlCredentials(home.endpoint)}.`,
+      standing === "free"
+        ? `credentials.json: the key "${name}" is filed for ${describeSlot(home.slot)} at ${redactUrlCredentials(home.endpoint)}.`
+        : `credentials.json: the key "${name}" is already stored for ${describeSlot(home.slot)} at ${redactUrlCredentials(home.endpoint)}; the older entry is removed.`,
     );
   }
-  if (apply && filed.length > 0) writeStore(entries);
-  return { filed, notes };
+  if (!apply || filed.length === 0) return { filed, notes };
+  const backupPath = backupStore();
+  writeStore(entries);
+  return { filed, notes, backupPath };
 }
 
 /**

@@ -204,6 +204,95 @@ describe("a key in the older flat form", () => {
     expect(readCredential(lab, LAB)).toBe("flat-key");
   });
 
+  test("is not allowed to replace a newer key stored for the same slot, and both stay", () => {
+    writeStoreFile({ lab: "stale-flat-key" });
+    writeCredential(lab, "current-key", LAB);
+    const before = readStoreFile();
+
+    const result = fileFlatCredentials(() => LAB, true);
+
+    expect(result.filed).toEqual([]);
+    expect(result.backupPath).toBeUndefined();
+    expect(result.notes.join("\n")).toContain('connection "lab" already holds a different key or endpoint');
+    expect(result.notes.join("\n")).not.toContain("flat-key");
+    expect(readStoreFile()).toEqual(before);
+    expect(readCredential(lab, LAB)).toBe("current-key");
+  });
+
+  test("the same key for another endpoint is a conflict too: only an exact match is deduplicated", () => {
+    writeStoreFile({ lab: "one-key" });
+    writeCredential(lab, "one-key", "https://elsewhere.example.test/v1");
+    const before = readStoreFile();
+
+    expect(fileFlatCredentials(() => LAB, true).filed).toEqual([]);
+    expect(readStoreFile()).toEqual(before);
+  });
+
+  test("a slot that holds exactly the same key and endpoint just drops the older entry", () => {
+    writeStoreFile({ lab: "same-key", other: "kept" });
+    writeCredential(lab, "same-key", LAB);
+
+    const result = fileFlatCredentials(
+      (slot) => ("connection" in slot && slot.connection === "lab" ? LAB : undefined),
+      true,
+    );
+
+    expect(result.filed).toEqual(["lab"]);
+    expect(readStoreFile()).toEqual({
+      other: "kept",
+      connections: { lab: { key: "same-key", endpoint: LAB } },
+    });
+  });
+
+  test("a key held in a shape akm does not read is a conflict, not free space", () => {
+    writeStoreFile({ lab: "flat-key", connections: { lab: { token: "x" } } });
+    const before = readStoreFile();
+
+    expect(fileFlatCredentials(() => LAB, true).filed).toEqual([]);
+    expect(readStoreFile()).toEqual(before);
+  });
+
+  test("is measured against the key the same migration is about to file", () => {
+    writeStoreFile({ lab: "flat-key" });
+    const pending = (value: string) => [{ slot: lab, value, endpoint: LAB }];
+
+    const conflict = fileFlatCredentials(() => LAB, true, pending("config-key"));
+    expect(conflict.filed).toEqual([]);
+    expect(readStoreFile()).toEqual({ lab: "flat-key" });
+
+    const same = fileFlatCredentials(() => LAB, true, pending("flat-key"));
+    expect(same.filed).toEqual(["lab"]);
+    expect(readStoreFile()).toEqual({});
+  });
+
+  test("the store is copied, mode 0600, before an older entry is removed from it", () => {
+    writeStoreFile({ lab: "flat-key", other: "kept" });
+    const original = fs.readFileSync(storePath(), "utf8");
+
+    const result = fileFlatCredentials(
+      (slot) => ("connection" in slot && slot.connection === "lab" ? LAB : undefined),
+      true,
+    );
+
+    expect(result.filed).toEqual(["lab"]);
+    const backup = result.backupPath as string;
+    expect(backup).toContain(path.join("config-backups", "credentials.json."));
+    expect(fs.readFileSync(backup, "utf8")).toBe(original);
+    expect(mode(backup)).toBe(0o600);
+    fs.rmSync(backup);
+  });
+
+  test("a dry run writes and copies nothing", () => {
+    writeStoreFile({ lab: "flat-key" });
+    const original = fs.readFileSync(storePath(), "utf8");
+
+    const result = fileFlatCredentials(() => LAB, false);
+
+    expect(result.filed).toEqual(["lab"]);
+    expect(result.backupPath).toBeUndefined();
+    expect(fs.readFileSync(storePath(), "utf8")).toBe(original);
+  });
+
   test("whose name could be a connection or the embedding service is not guessed", () => {
     writeStoreFile({ embedding: "flat-key" });
     const result = fileFlatCredentials(() => "https://both.example.test/v1", true);
