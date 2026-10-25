@@ -196,6 +196,52 @@ describe("the nearest layer that names a target decides", () => {
   });
 });
 
+describe("a harness selector is a name, else a platform", () => {
+  const claudeOnly = configOf({ harnesses: { default: { platform: "claude" }, codex: {} } });
+  const named = (config: AkmConfig, harness: string) => harnessFor(config, [{ harness }]);
+
+  test("the name wins: an entry called that, whatever platform it runs", () => {
+    const config = configOf({ harnesses: { claude: { platform: "codex" }, default: { platform: "claude" } } });
+    expect(named(config, "claude")).toMatchObject({ name: "claude", platform: "codex" });
+  });
+
+  test("with no entry of that name, the one entry that runs the platform: by its platform field or by its key", () => {
+    expect(named(claudeOnly, "claude")).toMatchObject({ name: "default", platform: "claude" });
+    expect(named(claudeOnly, "codex")).toMatchObject({ name: "codex", platform: "codex" });
+    expect(named(configOf({ harnesses: { work: { platform: "claude" } } }), "claude").name).toBe("work");
+  });
+
+  test("several on the platform: the one named default, never the first", () => {
+    const config = configOf({
+      harnesses: { work: { platform: "claude" }, default: { platform: "claude" }, home: { platform: "claude" } },
+    });
+    expect(named(config, "claude").name).toBe("default");
+  });
+
+  test("several on the platform and none named default is not configured, and the message names them", () => {
+    const config = configOf({
+      harnesses: { work: { platform: "claude" }, home: { platform: "claude" }, codex: {} },
+    });
+    const error = failureOf(() => resolveTarget({ config, layers: [{ harness: "claude" }] }));
+    expect(error.code).toBe("SELECTION_NOT_CONFIGURED");
+    expect(error.message).toContain('Harness "claude" is not configured.');
+    expect(error.message).toContain('"work", "home" all run the claude platform and none is named "default"');
+    expect(error.message).not.toContain("Configured harnesses");
+  });
+
+  test("a platform nothing runs is still not configured, with the configured list", () => {
+    const error = failureOf(() => resolveTarget({ config: claudeOnly, layers: [{ harness: "gemini" }] }));
+    expect(error.message).toContain("Configured harnesses: default, codex.");
+  });
+
+  test("a connection selector is still a name only", () => {
+    const config = configOf({ connections: { default: lab }, harnesses: { claude: {} } });
+    expect(failureOf(() => resolveTarget({ config, layers: [{ connection: "claude" }] })).code).toBe(
+      "SELECTION_NOT_CONFIGURED",
+    );
+  });
+});
+
 describe("the model", () => {
   const config = configOf({ connections: { default: { ...lab, models: { ...lab.models, coder: "qwen3-coder" } } } });
 

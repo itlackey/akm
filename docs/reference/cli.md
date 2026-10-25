@@ -2699,7 +2699,7 @@ akm agent [<agent-ref>] [--connection <name> | --harness <name>] [--prompt <text
 | Argument / Flag | Description |
 | --- | --- |
 | `<agent-ref>` | Optional agent asset ref (e.g. `agents/code-reviewer`). Resolves persona and model defaults. |
-| `--connection <name>` / `--harness <name>` | Connection or harness to run on, by name (mutually exclusive); default: the default harness, else akm's own runtime over the default connection |
+| `--connection <name>` / `--harness <name\|platform>` | Connection or harness to run on, by name, a harness also by platform (mutually exclusive); default: the default harness, else akm's own runtime over the default connection |
 | `--prompt <text>` / `--prompt-stdin` | The task. Without one the harness starts interactively. |
 | `--model <model>` | An alias (`fast`, `balanced`, `reasoning`) or an exact model name; overrides the model in the agent asset |
 | `--timeout-ms <ms>` | Override the run's timeout in milliseconds |
@@ -3117,7 +3117,7 @@ akm proposal extract --type claude --location /custom/path --session-id <id>
 | `--dry-run` | Show candidates without queuing proposals. |
 | `--force` | Re-process sessions even if they were already extracted and have no new events. Default: skip already-seen sessions. |
 | `--timeout-ms <ms>` | Per-session LLM timeout in ms. Default: the selected connection's or harness's own timeout. |
-| `--connection <name>` / `--harness <name>` | Connection or harness for this invocation, by name (mutually exclusive). |
+| `--connection <name>` / `--harness <name\|platform>` | Connection or harness for this invocation, by name, a harness also by platform (mutually exclusive). |
 | `--model <alias\|name>` | Model for this invocation: an alias or an exact name. |
 | `--strategy <name>` | Improve strategy supplying extract behavior; it never chooses where the model runs. |
 
@@ -3189,7 +3189,7 @@ akm proposal new skill code-review --bundle team --task "PR-style review skill" 
 | `--bundle` | Configured writable bundle to queue the proposal for. The prompt takes its convention facts from that bundle, the proposal records it as its target (so `akm proposal accept` writes there), and it is queued in that bundle's queue (`akm proposal list --queue <bundle>`). An unknown, disabled or read-only bundle is refused, as for `akm remember --bundle`. Default: the working bundle |
 | `--task` | Inline task text |
 | `--file` | Read task text from a UTF-8 file |
-| `--connection` / `--harness` | Override the default connection or harness, by name (mutually exclusive) |
+| `--connection` / `--harness` | Override the default connection or harness, by name, a harness also by platform (mutually exclusive) |
 | `--model` | Override the model: an alias or an exact name |
 | `--timeout-ms` | Override the selected connection's or harness's timeout for this call |
 

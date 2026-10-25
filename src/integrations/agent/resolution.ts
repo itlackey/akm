@@ -7,11 +7,12 @@
  * it, are chosen.
  *
  *   target  the nearest layer that names a connection or harness, which must be
- *           configured: a name that is not is an error, never a reason to use the
- *           default. None named means the default by name, chosen by the work:
- *           model work prefers the default connection and falls back to the
- *           default harness, agent work the reverse and falls back to akm's own
- *           runtime over the default connection.
+ *           configured (a harness by its name, else by its platform): a name that
+ *           is not is an error, never a reason to use the default. None named
+ *           means the default by name, chosen by the work: model work prefers the
+ *           default connection and falls back to the default harness, agent work
+ *           the reverse and falls back to akm's own runtime over the default
+ *           connection.
  *   model   the nearest layer's `model`: an alias is looked up in the connection's
  *           (or harness's) `models`, anything else is the exact name; none means
  *           the first model configured.
@@ -184,6 +185,30 @@ function defaultTarget(config: AkmConfig, modelWork: boolean): Target | undefine
   return modelWork ? (asConnection ?? asHarness) : (asHarness ?? asConnection);
 }
 
+/** The names of the configured harnesses that run `platform`: an entry's `platform`, else its key. */
+function harnessesOnPlatform(config: AkmConfig, platform: string): string[] {
+  return Object.entries(config.harnesses ?? {})
+    .filter(([name, harness]) => (harness.platform ?? name) === platform)
+    .map(([name]) => name);
+}
+
+/**
+ * The harness a `harness:` selector names: the one called that, else the one that runs that platform (a shared
+ * asset says `claude` whatever setup called the entry). Several on a platform: the one named `default`, else none,
+ * never the first.
+ */
+function harnessNamed(config: AkmConfig, selector: string): { name: string; harness: HarnessConfig } | undefined {
+  const harnesses = config.harnesses ?? {};
+  const onPlatform = harnessesOnPlatform(config, selector);
+  const name = Object.hasOwn(harnesses, selector)
+    ? selector
+    : onPlatform.length === 1
+      ? onPlatform[0]
+      : onPlatform.find((candidate) => candidate === "default");
+  const harness = name === undefined ? undefined : harnesses[name];
+  return name !== undefined && harness ? { name, harness } : undefined;
+}
+
 /** The error for a connection or harness that was named and is not configured: what was named, what is configured, and the nearest name. */
 export function selectionNotConfigured(config: AkmConfig, kind: "connection" | "harness", name: string): ConfigError {
   const label = kind === "connection" ? "Connection" : "Harness";
@@ -191,14 +216,17 @@ export function selectionNotConfigured(config: AkmConfig, kind: "connection" | "
   const configured = Object.keys((kind === "connection" ? config.connections : config.harnesses) ?? {});
   const near = closestMatch(name, configured, Math.max(1, Math.floor(name.length / 3)));
   const unusable = unusableEntryAt(`${kind === "connection" ? "connections" : "harnesses"}.${name}`);
+  const sharing = kind === "harness" ? harnessesOnPlatform(config, name) : [];
   return new ConfigError(
     [
       `${label} "${name}" is not configured.`,
       unusable
         ? `config.json has a ${kind} by that name that akm ignores, because ${unusable.why}.`
-        : configured.length > 0
-          ? `Configured ${plural}: ${configured.join(", ")}.`
-          : `No ${plural} are configured.`,
+        : sharing.length > 1
+          ? `${sharing.map((candidate) => `"${candidate}"`).join(", ")} all run the ${name} platform and none is named "default": name one of them.`
+          : configured.length > 0
+            ? `Configured ${plural}: ${configured.join(", ")}.`
+            : `No ${plural} are configured.`,
       near ? `Did you mean "${near}"?` : undefined,
     ]
       .filter((sentence) => sentence !== undefined)
@@ -212,9 +240,9 @@ function selectTarget(input: ResolveTargetInput): Target {
   const named = namedByLayers(input.config, input.layers, modelWork);
   if (named) {
     const connection = named.kind === "connection" ? input.config.connections?.[named.name] : undefined;
-    const harness = named.kind === "harness" ? input.config.harnesses?.[named.name] : undefined;
+    const harness = named.kind === "harness" ? harnessNamed(input.config, named.name) : undefined;
     if (connection) return { kind: "connection", name: named.name, connection };
-    if (harness) return { kind: "harness", name: named.name, harness };
+    if (harness) return { kind: "harness", ...harness };
     // A target that was asked for by name is never replaced by the default: that could send a private call to a remote
     // service, or a call that must not touch files to an agent that can. Defaults apply only when nothing was named.
     throw selectionNotConfigured(input.config, named.kind, named.name);

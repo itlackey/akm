@@ -142,6 +142,76 @@ describe("command CLI execution convergence", () => {
     expect(both.stderr).toContain("--connection and --harness are mutually exclusive");
   });
 
+  describe("a harness: selector in a bundle asset names a harness, else a platform", () => {
+    const configureHarnesses = (names: string[]) =>
+      writeSandboxConfig({
+        harnesses: Object.fromEntries(names.map((name) => [name, { platform: "claude", bin: "/bin/echo", args: [] }])),
+      });
+    const assetSays = async (harness: string) => {
+      fs.writeFileSync(
+        path.join(storage.stashDir, "commands", "review.md"),
+        [
+          "---",
+          "name: review",
+          "type: command",
+          "updated: 2026-08-19",
+          `harness: ${harness}`,
+          "---",
+          "Review: [$ARGUMENTS]",
+          "",
+        ].join("\n"),
+      );
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+      return runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json"]);
+    };
+
+    test("the only claude harness, which setup named default, runs an asset that says claude", async () => {
+      configureHarnesses(["default"]);
+
+      const result = await assetSays("claude");
+
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ engine: "default" });
+    });
+
+    test("two claude harnesses, one named default: the default runs it", async () => {
+      configureHarnesses(["work", "default"]);
+
+      const result = await assetSays("claude");
+
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ engine: "default" });
+    });
+
+    test("two claude harnesses, neither named default: exit 78 naming both, and nothing is picked", async () => {
+      configureHarnesses(["work", "home"]);
+
+      const result = await assetSays("claude");
+
+      expect(result.code).toBe(78);
+      const error = JSON.parse(result.stderr.trim());
+      expect(error.code).toBe("SELECTION_NOT_CONFIGURED");
+      expect(error.error).toContain('"work", "home" all run the claude platform');
+    });
+
+    test("--harness takes a platform the same way", async () => {
+      configureHarnesses(["default"]);
+
+      const result = await runCliCapture([
+        "command",
+        "run",
+        "commands/review",
+        "--dry-run",
+        "--format=json",
+        "--harness",
+        "claude",
+      ]);
+
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ engine: "default" });
+    });
+  });
+
   test("the retired --engine still names a connection by that name, else a harness, with one warning", async () => {
     writeSandboxConfig({
       connections: { lab: { endpoint: "https://lab.invalid/v1/chat/completions", models: { fast: "lab-model" } } },

@@ -20,7 +20,7 @@ import { getStringArg } from "./parse-args";
 
 export const SELECTION_ARGS = {
   connection: { type: "string", description: "Run on this connection, by name (default: the default connection)" },
-  harness: { type: "string", description: "Run on this harness, by name (default: the default harness)" },
+  harness: { type: "string", description: "Run on this harness, by name or platform (default: the default harness)" },
   model: { type: "string", description: "Model to run, by alias (fast, balanced, reasoning) or exact name" },
 } as const satisfies ArgsDef;
 

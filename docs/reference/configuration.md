@@ -425,6 +425,13 @@ nor a call that must not touch files to a harness that can, by a typo, a removed
 entry, or an entry akm ignored when it loaded the config (`akm health` lists
 what is configured).
 
+A harness is named by its name or by its platform, so a shared asset that says
+`harness: claude` runs wherever Claude Code is set up, whatever the entry is
+called. The name comes first. Failing that, the one harness that runs the
+platform (its `platform`, else its key) is chosen; when several do, the one
+named `default` is, and with none named `default` the call fails like any
+unconfigured name, naming them. akm never picks the first.
+
 These settings, all optional, choose another place for one piece of work:
 
 | Key | Chooses where |
