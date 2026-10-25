@@ -14,8 +14,9 @@ import { OpenCode } from "@opencode/sdk";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import {
   _setOpencodeHostFactoryForTests,
-  akmOpencodeDatabasePath,
+  closeOpencodeSdk,
 } from "../src/integrations/harnesses/opencode/embedded/host";
+import { akmOpencodeDatabasePath } from "../src/integrations/harnesses/opencode/embedded/host-spec";
 import { runOpencodeHarness } from "../src/integrations/harnesses/opencode/embedded/run";
 import { createSdkHost } from "../src/integrations/harnesses/opencode/embedded/sdk-host";
 import { openDatabase } from "../src/storage/database";
@@ -44,7 +45,10 @@ beforeAll(() => {
   fs.mkdirSync(work);
 });
 
-afterAll(() => {
+afterAll(async () => {
+  await closeOpencodeSdk();
+  // The suite's data directory is shared with the files that run after this one.
+  for (const suffix of ["", "-wal", "-shm"]) fs.rmSync(`${akmOpencodeDatabasePath()}${suffix}`, { force: true });
   model.stop();
   sandbox.cleanup();
 });

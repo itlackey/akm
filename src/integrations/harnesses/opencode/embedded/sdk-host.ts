@@ -28,7 +28,8 @@
 
 import path from "node:path";
 import { getCacheDir, getDataDir, getStateDir } from "../../../../core/paths";
-import type { EmbeddedHost, HostSpec } from "./host";
+import type { EmbeddedHost } from "./host";
+import type { HostSpec } from "./host-spec";
 
 async function load() {
   const [sdk, plugin, restart, global, credential, database, effect] = await Promise.all([
@@ -68,18 +69,19 @@ export async function createSdkHost(spec: HostSpec): Promise<EmbeddedHost> {
       signal ? { signal } : undefined,
     );
 
+  /** OpenCode's credential service, pointed at the user's database: it reads their logins and writes a refreshed token back, as a second OpenCode process would. */
+  const readLogins = (userDatabase: string) =>
+    credential.Credential.node.replace(
+      credential.Credential.node.mapLayer(
+        (layer) => Layer.provide(layer, database.Database.layer({ path: userDatabase })) as never,
+      ),
+    );
   const inertSweep = Layer.succeed(restart.SessionRestart.Service, { resumeSuspendedSessions: Effect.void });
   const overrides = [
     restart.SessionRestart.node.replace(inertSweep),
     ...(spec.isolated ? [global.Global.node.replace(global.Global.layerWith(akmRoots()))] : []),
     ...(spec.credentialsFrom ? [readLogins(spec.credentialsFrom)] : []),
   ];
-  /** OpenCode's credential service, pointed at the user's database: it reads their logins and writes a refreshed token back, as a second OpenCode process would. */
-  function readLogins(path: string) {
-    return credential.Credential.node.replace(
-      credential.Credential.node.mapLayer((layer) => Layer.provide(layer, database.Database.layer({ path })) as never),
-    );
-  }
   const scope = await Effect.runPromise(Scope.make());
   const close = () => Effect.runPromise(Scope.close(scope, Exit.void));
   const client = await run(
@@ -102,6 +104,8 @@ export async function createSdkHost(spec: HostSpec): Promise<EmbeddedHost> {
     throw error;
   });
 
+  // The SDK's generated input types wrap every field in an indexed-access type; `EmbeddedHost` is the contract
+  // akm codes against, so each input crosses this boundary as the narrow type it was written to.
   const sessions = client.sessions;
   return {
     sessions: {

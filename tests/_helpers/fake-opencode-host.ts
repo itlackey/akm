@@ -22,8 +22,8 @@
 import {
   _setOpencodeHostFactoryForTests,
   type EmbeddedHost,
-  type HostSpec,
 } from "../../src/integrations/harnesses/opencode/embedded/host";
+import type { HostSpec } from "../../src/integrations/harnesses/opencode/embedded/host-spec";
 import { overrideSeam } from "./seams";
 
 export interface FakeOpencodeCall {

@@ -643,12 +643,15 @@ describe("OpenCodeProvider.listSessions (opencode.db)", () => {
         return dbPath;
       }
     }
-    const provider = new TempOpenCodeProvider();
+    // akm's own OpenCode database also makes the provider available; this test has none.
+    withEnvSync({ AKM_DATA_DIR: makeTempDir("akm-opencode-availability-data-") }, () => {
+      const provider = new TempOpenCodeProvider();
 
-    fs.mkdirSync(base, { recursive: true });
-    expect(provider.isAvailable()).toBe(false);
-    fs.writeFileSync(dbPath, "");
-    expect(provider.isAvailable()).toBe(true);
+      fs.mkdirSync(base, { recursive: true });
+      expect(provider.isAvailable()).toBe(false);
+      fs.writeFileSync(dbPath, "");
+      expect(provider.isAvailable()).toBe(true);
+    });
   });
 
   test("lists sessions from the SQLite store, newest first", async () => {

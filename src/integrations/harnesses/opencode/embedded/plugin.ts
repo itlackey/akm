@@ -39,9 +39,10 @@ export type SessionRegistry = Map<string, SessionSettings>;
 
 /** The request with the session's key and request fields applied; a request with no JSON object body keeps its body. */
 async function withSettings(request: Request, { requestFields, apiKey }: SessionSettings): Promise<Request> {
+  const fields = requestFields ?? {};
+  if (!apiKey && Object.keys(fields).length === 0) return request;
   const headers = new Headers(request.headers);
   if (apiKey) headers.set("authorization", `Bearer ${apiKey}`);
-  const fields = requestFields ?? {};
   const body: unknown =
     Object.keys(fields).length > 0
       ? await request

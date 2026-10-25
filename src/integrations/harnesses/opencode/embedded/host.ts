@@ -17,18 +17,10 @@
  * the runner depends on the narrow {@link EmbeddedHost} below.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import type { Plugin } from "@opencode/plugin";
 import { isRecord } from "../../../../core/common";
-import { loadConfig } from "../../../../core/config/config";
-import { getDataDir } from "../../../../core/paths";
-import { opencodeDataDir } from "../roots";
-import { akmPlugin, type SessionRegistry } from "./plugin";
-import { runtimeConfigContent } from "./runtime-config";
+import { type HostKind, type HostSpec, specFor } from "./host-spec";
+import type { SessionRegistry } from "./plugin";
 import { createSdkHost } from "./sdk-host";
-
-export type HostKind = "runtime" | "opencode";
 
 /** The text every session on a host is answered with when it asks for something only a person could give. */
 const NOBODY_TO_ASK =
@@ -77,39 +69,10 @@ export interface EmbeddedHost {
   close(): Promise<void>;
 }
 
-/**
- * What akm asks of a new host: the real one is built from this by
- * `./sdk-host.ts`, a test's by a fake. The policy of each kind is decided here
- * ({@link specFor}); the SDK wiring that carries it out is `./sdk-host.ts`.
- */
-export interface HostSpec {
-  readonly kind: HostKind;
-  /** Where akm keeps its OpenCode sessions. */
-  readonly database: string;
-  /** OpenCode config content akm supplies on top of what OpenCode loads. */
-  readonly content?: Record<string, unknown>;
-  readonly plugin: Plugin.Plugin;
-  /** Cut off from the user's OpenCode: no project or Claude config, and its files under akm's own directories. */
-  readonly isolated: boolean;
-  /** Whether OpenCode may fetch the model catalog (models.dev); otherwise the bundled snapshot is used. */
-  readonly fetchModels: boolean;
-  /** The user's OpenCode database, whose logins the host reads (and refreshes) in place of its own. */
-  readonly credentialsFrom?: string;
-  /** The user's config directory, when `OPENCODE_CONFIG_DIR` moves it (the embedded OpenCode does not read that variable). */
-  readonly configDirectory?: string;
-}
-
 /** A started host, with the settings of the sessions it is running. */
 export interface HostHandle {
   readonly host: EmbeddedHost;
   readonly sessions: SessionRegistry;
-}
-
-/** Where akm keeps its OpenCode sessions: `<akm data dir>/opencode.db`. */
-export function akmOpencodeDatabasePath(): string {
-  const directory = getDataDir();
-  fs.mkdirSync(directory, { recursive: true });
-  return path.join(directory, "opencode.db");
 }
 
 const hosts = new Map<HostKind, Promise<HostHandle>>();
@@ -143,38 +106,6 @@ async function answerRequests(host: EmbeddedHost, signal: AbortSignal): Promise<
   } catch {
     // The host closed.
   }
-}
-
-/**
- * What each kind of host is. The runtime runs the user's connections and nothing
- * of the user's OpenCode. The opencode host is the user's OpenCode: their config
- * directory, providers and default model, with their logins read from their own
- * database (when it exists: akm never creates it) and akm's plugin added.
- */
-function specFor(kind: HostKind, sessions: SessionRegistry): HostSpec {
-  const database = akmOpencodeDatabasePath();
-  const plugin = akmPlugin(sessions);
-  if (kind === "runtime") {
-    return {
-      kind,
-      database,
-      plugin,
-      content: runtimeConfigContent(loadConfig().connections),
-      isolated: true,
-      fetchModels: false,
-    };
-  }
-  const userDatabase = path.join(opencodeDataDir(), "opencode.db");
-  const configDirectory = process.env.OPENCODE_CONFIG_DIR?.trim();
-  return {
-    kind,
-    database,
-    plugin,
-    isolated: false,
-    fetchModels: true,
-    ...(fs.existsSync(userDatabase) ? { credentialsFrom: userDatabase } : {}),
-    ...(configDirectory ? { configDirectory } : {}),
-  };
 }
 
 async function start(kind: HostKind): Promise<HostHandle> {

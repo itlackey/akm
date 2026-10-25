@@ -15,10 +15,10 @@ import { resetConfigCache } from "../src/core/config/config";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import {
   _setOpencodeHostFactoryForTests,
-  akmOpencodeDatabasePath,
   closeOpencodeSdk,
   hostFor,
 } from "../src/integrations/harnesses/opencode/embedded/host";
+import { akmOpencodeDatabasePath } from "../src/integrations/harnesses/opencode/embedded/host-spec";
 import { runOpencodeSdk } from "../src/integrations/harnesses/opencode/embedded/run";
 import { createSdkHost } from "../src/integrations/harnesses/opencode/embedded/sdk-host";
 import type { ChatCompletionConfig } from "../src/llm/client";
@@ -59,6 +59,8 @@ beforeEach(() => {
 
 afterAll(async () => {
   await closeOpencodeSdk();
+  // The suite's data directory is shared with the files that run after this one.
+  for (const suffix of ["", "-wal", "-shm"]) fs.rmSync(`${akmOpencodeDatabasePath()}${suffix}`, { force: true });
   model.stop();
 });
 
