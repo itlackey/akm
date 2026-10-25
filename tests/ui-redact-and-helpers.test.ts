@@ -7,8 +7,9 @@
 import { describe, expect, test } from "bun:test";
 import { type ChangeOrigin, classifyCommitOrigin } from "../src/commands/ui/git-read";
 import { browserOpener } from "../src/commands/ui/open-browser";
-import { isSecretEnvName, redactForUi, redactUrlCredentials, scrubUrlCredentials } from "../src/commands/ui/redact";
+import { isSecretEnvName, redactForUi, scrubUrlCredentials } from "../src/commands/ui/redact";
 import { isLoopbackBind } from "../src/commands/ui/server";
+import { redactUrlCredentials } from "../src/core/redaction";
 
 // biome-ignore lint/suspicious/noExplicitAny: redacted trees are asserted field by field below
 type Json = Record<string, any>;

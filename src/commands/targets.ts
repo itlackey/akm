@@ -25,6 +25,7 @@ import { IMPROVE_ENGINE_PROCESSES } from "../core/config/engine-semantics";
 import { SHIPPED_ALIAS } from "../core/config/model-aliases";
 import { envReferenceName } from "../core/config/schema/primitives";
 import { ConfigError } from "../core/errors";
+import { redactUrlCredentials } from "../core/redaction";
 import { defaultWhich, type WhichFn } from "../integrations/agent/detect";
 import { resolveTarget } from "../integrations/agent/resolution";
 import type { RunnerSpec } from "../integrations/agent/runner";
@@ -32,7 +33,6 @@ import { DEFAULT_LOCAL_MODEL } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
 import { resolveIndexPassExecution } from "../llm/index-passes";
 import { resolveImproveExecution } from "./improve/execution";
-import { redactUrlCredentials } from "./ui/redact";
 
 /** How a connection's key is held: a `$VAR` that is (not) set in this environment, a `credentials.json` entry, or no key. */
 export type KeyState = "env-set" | "env-unset" | "credentials" | "none";

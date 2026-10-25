@@ -13,40 +13,13 @@
  */
 
 import { isApiKeyReference } from "../../core/config/schema/primitives";
-
-const REDACTED = "[redacted]";
+import { REDACTED, redactUrlCredentials } from "../../core/redaction";
 
 /** Key names whose string values are credentials, or sit in a bag of them. */
 const SECRET_KEY = /(api[-_]?key|token|password|passwd|secret|credential|authorization|bearer|private[-_]?key)/i;
 
 /** A whole subtree of values (`env`, `secrets`) that is data, not settings. */
 const SECRET_BAG_KEY = /^(env|secrets?)$/i;
-
-/** Query parameters that carry a credential in a URL. */
-const SECRET_QUERY_PARAM = /^(api[-_]?key|key|token|access[-_]?token|auth|password|secret|sig|signature)$/i;
-
-/** `scheme://user:pass@host/?token=x` with the credentials masked. Anything that is not a URL is returned as is. */
-export function redactUrlCredentials(value: string): string {
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return value;
-  try {
-    const url = new URL(value);
-    let changed = false;
-    if (url.username || url.password) {
-      url.username = "";
-      url.password = "";
-      changed = true;
-    }
-    for (const key of [...url.searchParams.keys()]) {
-      if (SECRET_QUERY_PARAM.test(key)) {
-        url.searchParams.set(key, REDACTED);
-        changed = true;
-      }
-    }
-    return changed ? url.toString() : value;
-  } catch {
-    return value;
-  }
-}
 
 /** `text` with the credentials in every URL it contains masked (`llm default: https://host/?token=x`). */
 export function redactUrlsInText(text: string): string {

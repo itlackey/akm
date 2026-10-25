@@ -586,3 +586,32 @@ export function redactSensitiveValue<T>(value: T, sensitiveValues: Iterable<stri
   };
   return redact(value) as T;
 }
+
+/** What stands in for a masked value where configuration is shown. */
+export const REDACTED = "[redacted]";
+
+/** Query parameters that carry a credential in a URL. */
+const SECRET_QUERY_PARAM = /^(api[-_]?key|key|token|access[-_]?token|auth|password|secret|sig|signature)$/i;
+
+/** `scheme://user:pass@host/?token=x` with the credentials masked. Anything that is not a URL is returned as is. */
+export function redactUrlCredentials(value: string): string {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return value;
+  try {
+    const url = new URL(value);
+    let changed = false;
+    if (url.username || url.password) {
+      url.username = "";
+      url.password = "";
+      changed = true;
+    }
+    for (const key of [...url.searchParams.keys()]) {
+      if (SECRET_QUERY_PARAM.test(key)) {
+        url.searchParams.set(key, REDACTED);
+        changed = true;
+      }
+    }
+    return changed ? url.toString() : value;
+  } catch {
+    return value;
+  }
+}
