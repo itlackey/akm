@@ -33,6 +33,19 @@ spelling is in the CHANGELOG entry and the CLI reference.
 | `akm config path --all` | `akm info` |
 | `--run` / `--since` on `akm improve` | `akm improve report --run` / `--since` |
 
+**Connections and harnesses (0.10, #1244).** `engines` and `defaults` are
+replaced by `connections` and `harnesses`. A config in the old form still loads
+(converted in memory, with a warning that names `akm migrate apply`), and `akm
+migrate apply` converts it. These are unknown flags or commands (exit 2) from
+0.10, with no alias:
+
+| Gone | Use |
+| --- | --- |
+| `--engine <name>` on `agent`, `command run`, `improve`, `proposal new`, `proposal extract`, `task add` | `--connection <name>` or `--harness <name>`, and `--model <alias\|name>` |
+| `akm setup --config <json>` and `--probe` | `akm setup --endpoint <url> --yes` and the other answer flags; `--no-probe` for an offline run (probing is the default) |
+| `akm models list`, `akm models copy-defaults` | `akm models`, `akm models set <alias> <model>` |
+| `AKM_ENGINE_<NAME>_API_KEY`, `AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY` | `"apiKey": "$VAR"` on the connection, or `credentials.json` |
+
 **Version numbers (0.10 onward, #1089).** A 0.10 release is numbered
 `0.10.YYMMNN`: `YY` the UTC year, `MM` the month (`01` to `12`) and `NN` the
 release within that month (`01` to `99`), each two digits. Every release takes
@@ -84,7 +97,7 @@ enumeration of the whole `proposal` noun group.
 
 | Command | Tier | Notes |
 | --- | --- | --- |
-| `akm setup` | Stable | |
+| `akm setup` | Stable | The answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10; `--config` and `--probe` are gone (see the table above). |
 | `akm index` | Stable | |
 | `akm health` | Evolving | Exit codes are Evolving; report *content* and rendered `md`/`html` layout are Experimental — do not script against report layout. |
 | `akm metrics` | Experimental | New in 0.9.28. Report content, JSON shape and the `html` dashboard may change. |
@@ -272,7 +285,7 @@ enumeration of the whole `proposal` noun group.
   carries `ok: true`; a command that already computes its own `ok` keeps it.
 - **Install scripts** — `install.sh` and `install.ps1` URLs; the `--prefix`
   / `AKM_INSTALL_DIR` environment override.
-- **Runtime** — the npm package requires Node.js >= 22 as its bootstrap and
+- **Runtime** — the npm package requires Node.js >= 24 as its bootstrap and
   prefers a working Bun >= 1.0 for execution when both are available; old,
   unusable, or absent Bun installations fall back to Node.js. Standalone
   binaries are runtime-free.
@@ -314,7 +327,7 @@ CHANGELOG with a migration note.
   `list`/`remove`/`init`/`enable`/`disable`); task source v4 YAML (typed
   `inputs:`, optional `schedule:`) is the only accepted version — task v3 and
   task v2 sources are converted by `akm migrate apply`. Command tasks use
-  named engines and task history metadata is versioned. Schema additions in
+  a named connection or harness, and task history metadata is versioned. Schema additions in
   patch releases; removals only at minor. Bare `akm task` is a usage error
   naming the subcommands (`akm task doctor` reports scheduler diagnostics).
   `akm task explain <ref>` (new in 0.9.2) and `akm workflow plan <ref>` are
@@ -355,18 +368,13 @@ CHANGELOG with a migration note.
   `log.md` / `raw/` / `pages/` and its ingest flow); wiki pages are addressed
   as ordinary concepts inside their bundle. Adapter behavior and page
   conventions are still iterating.
-- **Agent dispatch** — `akm agent` and `akm command run`. Supported backends:
-  `claude`, `opencode-sdk` (the primary OpenCode interface), `codex`, and the
-  `opencode` CLI path, `copilot`, `pi`, `gemini`, `aider`, `amazonq`,
-  `openhands`. Every harness is Evolving: the harness implementation is being
-  reworked so harnesses are easy to add, remove and update (0.10). The set will
-  grow.
-  **Deprecated:** the `opencode` CLI dispatch path (an agent engine with
-  `platform: "opencode"`, which runs `opencode run` per call). It still works on
-  OpenCode 1 and 2 throughout 0.10; use an `opencode-sdk` engine instead, which
-  covers it, including a default agent (#1098). It may be removed in 0.11 or
-  later. The rest of the OpenCode integration (session-log import, config
-  import) is not deprecated.
+- **Agent dispatch** — `akm agent` and `akm command run`. Supported
+  harnesses: `claude`, `codex`, `opencode` (OpenCode 2 embedded in akm, OpenCode
+  1 through `opencode run`), `copilot`, `pi`, `gemini`, `aider`, `amazonq` and
+  `openhands`. Every harness is Evolving: a harness is a thin shell that turns a
+  request into a command, and the set is easy to add to, remove from and update.
+  The set will grow. With no harness configured, agent work runs on akm's own
+  runtime over a connection, which is Evolving too.
 - **Model aliases** — `akm models` and `akm models set`, and the intent-alias
   picks a connection holds.
 - **Proposal queue** — quality classifications (`accepted`, `pending`,
@@ -408,7 +416,7 @@ for scripted use.
 
   | Key | Status |
   | --- | --- |
-  | `params`, `steps`, `inputs`, `output` / `unit.output`, `defaults.engine`, `### gate` | Core: the feature set pinned by `core-feature-set.test.ts` |
+  | `params`, `steps`, `inputs`, `output` / `unit.output`, `defaults.connection` / `defaults.harness`, `### gate` | Core: the feature set pinned by `core-feature-set.test.ts` |
   | exec units (`unit.exec`), `budget`, `unit.retry`, `map`, `gate.max_loops` | Kept in the 0.10 trim |
   | child workflows (`unit.workflow`, `unit.with`) | Experimental: least settled |
 - **`akm metrics`** — new in 0.9.28. What it reports, its JSON shape and the
@@ -442,9 +450,9 @@ for scripted use.
   than `default` and `consolidate` and the proactive-maintenance lane. 0.10 measures each and keeps, folds or removes it
   (#1094). `quick`, `reflect-distill`, `thorough` and `catchup` were removed
   in 0.10 (#1130), as were `proactive-maintenance` and the high-salience lane (#1129); a user-defined strategy of the same name keeps working.
-- **Improve tuning config** — `improve.strategies.*.processes.*` (per-process
-  engines, limits, gates, and the CLS knobs) and
-  the `index.*` per-pass config. The 0.9.x series is explicitly still settling
+- **Improve tuning config** — `improve.strategies.*.processes.*` (limits,
+  gates, and the CLS knobs), `improve.processes.*` and `improve.qualityGate`
+  (where each process runs) and the `index.*` per-pass config. The 0.9.x series is explicitly still settling
   the design of the improve processes, so **keys in these two families may be
   added, renamed, or dropped in any 0.9.x or 0.10.x release**. The `akm
   improve` *command* surface is Evolving (above); its tuning config is not.
@@ -486,15 +494,15 @@ the pair pass stages a retirement when its claim checks pass and there is no
 continuity risk. `triage` with `applyMode: "promote"` can accept that staged
 retirement unattended; an unstaged retirement stays pending. Both retirement
 checks receive complete note bodies with lexical attention hints, so the selected
-engine must accommodate them. The pair judge supplies distinct-claim lists; AKM
+model must accommodate them. The pair judge supplies distinct-claim lists; AKM
 derives duplicate/subsumed/overlap outcomes and retirement direction from those
 lists. Historical queued retirement labels remain readable. Before unattended drain after an upgrade, review pending/staged
 retirements produced by older builds from notes over 12,000 body characters:
 upgrading does not revalidate their evidence (#1195).
 
 Because the gate is applied before the LLM preflight, a review-first workspace
-also needs fewer engines configured: a strategy whose only model-backed process
-is a gated lane resolves without an engine at all.
+also needs fewer connections or harnesses configured: a strategy whose only
+model-backed process is a gated lane resolves without one at all.
 
 **Three direct writes are deliberately NOT gated**, because they are additive or
 already independently controlled:
@@ -538,8 +546,6 @@ on them.
 | Variable | Purpose |
 | --- | --- |
 | `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` | Filesystem layout overrides |
-| `AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY`, `AKM_ENGINE_<NAME>_API_KEY` | Credential provision for `$VAR` config references |
-| `AKM_LLM_ENDPOINT`, `AKM_LLM_BASE_URL` | Setup provider inference |
 | `AKM_VERBOSE`, `AKM_DEBUG` | Diagnostics |
 | `AKM_REGISTRY_URL` | akm registry mirror override |
 | `AKM_NPM_REGISTRY` | npm mirror override — redirects BOTH the trusted-tarball host allowlist and package metadata lookups (`npm view`-equivalent resolution) to the given registry base, replacing `registry.npmjs.org` wholesale rather than merging with it |
@@ -578,9 +584,6 @@ around them.
   `akm` (no separate npm package). The task-source migrator (`task-to-v4.ts`,
   `task-source-v3-frozen.ts`) lives with it under `scripts/akm-migrate/migrate/`,
   out of `src/`.
-- **0.11 or later — the `opencode` CLI dispatch path may be removed.**
-  Deprecated in 0.10 (see Agent dispatch under Evolving); `opencode-sdk`
-  engines replace it.
 - **0.10 — `BundleAdapter.placeNew()` is removed.** Nothing called it; writes use AKM's fixed type→directory table.
   Writable bundles in a non-akm layout would need per-adapter placement back
   ([#1163](https://github.com/itlackey/akm/issues/1163)).
