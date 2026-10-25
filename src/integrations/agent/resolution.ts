@@ -185,7 +185,7 @@ function defaultTarget(config: AkmConfig, modelWork: boolean): Target | undefine
 }
 
 /** The error for a connection or harness that was named and is not configured: what was named, what is configured, and the nearest name. */
-function selectionNotConfigured(config: AkmConfig, kind: "connection" | "harness", name: string): ConfigError {
+export function selectionNotConfigured(config: AkmConfig, kind: "connection" | "harness", name: string): ConfigError {
   const label = kind === "connection" ? "Connection" : "Harness";
   const plural = kind === "connection" ? "connections" : "harnesses";
   const configured = Object.keys((kind === "connection" ? config.connections : config.harnesses) ?? {});

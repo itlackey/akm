@@ -154,13 +154,28 @@ describe("akm models", () => {
     expect(error.error).toContain("akm setup");
   });
 
-  test("a connection that is not configured is a usage error naming the ones that are", async () => {
+  test("a connection that is not configured fails as every named target does: exit 78, the ones that are configured, the closest name", async () => {
+    configure({ default: LOCAL, lab: { endpoint: "https://lab.example.test/v1" } });
+
+    const { code, stderr } = await runCliCapture(["models", "--connection", "defualt"]);
+
+    expect(code).toBe(78);
+    const error = JSON.parse(stderr.trim());
+    expect(error.code).toBe("SELECTION_NOT_CONFIGURED");
+    expect(error.error).toBe(
+      'Connection "defualt" is not configured. Configured connections: default, lab. Did you mean "default"?',
+    );
+  });
+
+  test("models set names the same error, and changes nothing", async () => {
     configure({ default: LOCAL });
+    const before = fs.readFileSync(getConfigPath(), "utf8");
 
-    const { code, stderr } = await runCliCapture(["models", "--connection", "nope"]);
+    const { code, stderr } = await runCliCapture(["models", "set", "fast", "glm-5", "--connection", "ghost"]);
 
-    expect(code).toBe(2);
-    expect(JSON.parse(stderr.trim()).error).toContain("(configured: default)");
+    expect(code).toBe(78);
+    expect(JSON.parse(stderr.trim()).code).toBe("SELECTION_NOT_CONFIGURED");
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
   });
 });
 

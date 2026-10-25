@@ -25,6 +25,7 @@ import { entryModel, entryWithModel } from "../core/config/model-aliases";
 import { ConfigError, UsageError } from "../core/errors";
 import { redactUrlCredentials } from "../core/redaction";
 import { warn } from "../core/warn";
+import { selectionNotConfigured } from "../integrations/agent/resolution";
 import { listEndpointModels } from "../llm/model-list";
 
 const CONNECTION_ARG = {
@@ -39,11 +40,7 @@ function targetConnection(config: AkmConfig, name: string | undefined): { name: 
   if (name !== undefined) {
     const connection = config.connections?.[name];
     if (connection) return { name, connection };
-    const configured = Object.keys(config.connections ?? {});
-    throw new UsageError(
-      `Connection "${name}" is not configured${configured.length > 0 ? ` (configured: ${configured.join(", ")})` : ""}. Run \`akm setup --endpoint <url> --name ${name}\` to add it.`,
-      "INVALID_FLAG_VALUE",
-    );
+    throw selectionNotConfigured(config, "connection", name);
   }
   const found = defaultConnection(config);
   if (found) return found;

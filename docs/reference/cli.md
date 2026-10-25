@@ -2244,7 +2244,8 @@ akm models set reasoning glm-5        # Make glm-5 answer "reasoning"
 `connections.<name>.models.<alias>`; an alias whose entry carries request fields
 keeps them and changes the model. A model the endpoint does not list is written
 with a warning. With no connection configured both commands say so and point at
-`akm setup`.
+`akm setup`. A `--connection` that is not configured fails as any named target
+does: exit 78, the configured connections listed and the closest name suggested.
 
 ### help
 
