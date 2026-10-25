@@ -608,8 +608,10 @@ a warning. `akm proposal extract --type opencode` and the
 improve extract stage read both with SQLite alone, read-only, and skip
 sessions that are subagents or akm's own model work. The embedded OpenCode also
 keeps its working files in `$DATA/opencode/` (logs, repositories, shell output,
-a config directory), `$CACHE/opencode/` (binaries, and `model-work/`, the fixed
-working directory of model work on the OpenCode 2 harness) and `$STATE/opencode/`.
+a config directory), `$CACHE/opencode/` (binaries; `npm/`, the
+`@ai-sdk/openai-compatible` package the runtime downloads on its first run; and
+`model-work/`, the fixed working directory of model work on the OpenCode 2
+harness) and `$STATE/opencode/`.
 
 ---
 
