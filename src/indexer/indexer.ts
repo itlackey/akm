@@ -184,8 +184,8 @@ interface IndexOptions {
    * Whether this run may materialize (clone/pull/fetch) cache-backed sources.
    * Default `true` — the sanctioned materialization callers (`akm index`,
    * source add/update/sync, improve's blocking preflight). A READ command's
-   * inline auto-index passes `false` so query time never touches the network
-   * (spec §14.3 / D11): absent source caches are skipped with a warning instead
+   * inline auto-index passes `false` so query time never touches the network:
+   * absent source caches are skipped with a warning instead
    * of cloned.
    */
   hydrateSources?: boolean;
@@ -1379,7 +1379,7 @@ function persistDirRecords(
         continue;
       }
 
-      // Diff-persist (F4a M-core-2, spec §14.2): upsert the current file set
+      // Diff-persist: upsert the current file set
       // FIRST (ON CONFLICT preserving `entries.id` so embeddings / utility /
       // usage stay attached to unchanged rows), tracking every upserted
       // durable `item_ref`, then prune only the departed rows below. Replaces the old
@@ -1801,7 +1801,7 @@ function readLookupEntry(db: Database, id: number, fallbackConceptId: string, so
 }
 
 /**
- * Look up a single asset by ref. Spec §6.2 — `akm show` queries this and
+ * Look up a single asset by ref. `akm show` queries this and
  * reads the file from disk. The index is the source of truth for which
  * file corresponds to which ref; the indexer walks `provider.path()` for
  * every configured source, so this query covers all source kinds.

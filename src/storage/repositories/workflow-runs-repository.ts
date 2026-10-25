@@ -383,12 +383,9 @@ export class WorkflowRunsRepository {
   // ── writes ─────────────────────────────────────────────────────────────────
 
   insertRun(input: InsertRunInput): void {
-    // R-R3 (P3a Review log; docs/plans/specs/p4-deletions-closeout.md §8):
-    // this column list is hand-duplicated by publishChildWorkflowRun's own
+    // This column list is hand-duplicated by publishChildWorkflowRun's own
     // INSERT below, which extends it with parent_run_id/parent_unit_id/
-    // invocation_key. A signature refactor to share one INSERT builder was
-    // considered and deliberately deferred — see
-    // docs/architecture/decisions/0009-child-run-publication-column-parity.md.
+    // invocation_key; one shared INSERT builder was deliberately not introduced.
     // Keep both column lists in sync by hand. `scope_key` and
     // `workflow_entry_id` are legacy columns: read tolerantly, never written
     // (#1239), so a fresh row carries NULL in both.
@@ -532,8 +529,7 @@ export class WorkflowRunsRepository {
    * Reads no source: the child plan was frozen into the parent's.
    *
    * This method's serialization guarantee holds only when it is the
-   * OUTERMOST transaction on the connection (spec Review log R10,
-   * docs/plans/specs/p3a-plan-v5-child-freeze.md). `withImmediateTransaction`
+   * OUTERMOST transaction on the connection. `withImmediateTransaction`
    * (src/core/state-db.ts) has a re-entrancy guard: if a transaction is
    * already open on the connection, it SILENTLY JOINS that transaction
    * instead of issuing its own `BEGIN IMMEDIATE`.
@@ -551,11 +547,10 @@ export class WorkflowRunsRepository {
    * same `(parentRunId, invocationKey)` serialize on SQLite's write lock: the
    * first to acquire it inserts and commits, and the second's own SELECT —
    * which can only run once it has acquired the lock in turn — finds and
-   * returns the first's row rather than inserting a duplicate or throwing
-   * (C-09). Calling this twice with the same key, including across a crash
+   * returns the first's row rather than inserting a duplicate or throwing.
+   * Calling this twice with the same key, including across a crash
    * between publish and parent-side recording, is therefore safe and returns
-   * the same child both times, with exactly one event and one step set
-   * (C-08).
+   * the same child both times, with exactly one event and one step set.
    */
   publishChildWorkflowRun(input: PublishChildWorkflowRunInput): WorkflowRunRow {
     return this.immediateTransaction((db) => {
@@ -564,10 +559,8 @@ export class WorkflowRunsRepository {
         .get(input.parentRunId, input.invocationKey) as WorkflowRunRow | undefined;
       if (existing) return existing;
 
-      // R-R3 (P3a Review log; docs/plans/specs/p4-deletions-closeout.md §8):
-      // the first 10 columns here must stay byte-identical to insertRun's own
-      // column list above (hand-duplicated, not shared, by deliberate choice
-      // — see docs/architecture/decisions/0009-child-run-publication-column-parity.md).
+      // The first 10 columns here must stay byte-identical to insertRun's own
+      // column list above (hand-duplicated, not shared, by deliberate choice).
       // Keep both column lists in sync by hand.
       db.prepare(
         `INSERT INTO workflow_runs (

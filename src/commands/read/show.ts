@@ -5,8 +5,6 @@
 /**
  * `akm show` — entry point.
  *
- * Spec §6.2:
- *
  *   show(ref) → indexer.lookup(ref) → readFile(entry.filePath)
  *
  * The richer presentation logic (matchers, renderers, edit-hints,
@@ -86,7 +84,7 @@ import { buildWorkflowAction } from "../../workflows/renderer";
 /**
  * Unified show: queries the local FTS5 index, then reads that row's file path.
  * A physical owner can arbitrate collisions during lookup, but show never
- * renders an asset without an indexed row. Spec §6.2; no provider or disk
+ * renders an asset without an indexed row; no provider or disk
  * fallback.
  *
  * When `detail` is `"brief"` or `"summary"`, the response omits
@@ -647,7 +645,7 @@ function findUnrecognizedScriptSource(
 /**
  * Minimal `show`: ref → indexer lookup → file contents. Used by callers that
  * just need the raw file (e.g. clone, write-source) and don't want the full
- * renderer graph. Spec §6.2's literal flow.
+ * renderer graph.
  */
 export async function showByRef(ref: string): Promise<{ filePath: string; body: string }> {
   const parsed = parseBundleRef(ref);

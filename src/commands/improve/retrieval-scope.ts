@@ -57,7 +57,7 @@ export function loadRetrievalScope(
         if (conceptId.endsWith(".derived")) used.add(conceptId.slice(0, -".derived".length));
       }
       if (!stashDir) return;
-      // Blocker 1 (second review round): a pair-pass ledger row must NOT mark
+      // A pair-pass ledger row must NOT mark
       // an asset "processed" — unlike every other stage, the pair pass judges
       // material against its NEIGHBOURS, not on its own merits, so its own
       // attempt is not usage evidence the proactive lane

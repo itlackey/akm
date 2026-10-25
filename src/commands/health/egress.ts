@@ -21,7 +21,7 @@ import type { HealthCheckResult } from "./types";
  */
 export interface EgressConfigView {
   registries?: Array<{ url?: string; name?: string; enabled?: boolean }>;
-  // 0.9.0 (spec §10.1): remote source URLs come from the `bundles` map's git /
+  // Remote source URLs come from the `bundles` map's git /
   // website descriptors, not the retired `sources[]`.
   bundles?: Record<string, { path?: string; git?: string; website?: { url?: string }; npm?: string } | undefined>;
   connections?: Record<string, { endpoint?: string } | undefined>;

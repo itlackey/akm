@@ -1057,17 +1057,16 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
     `,
   },
 
-  // ── Migration 023 — child workflow run parentage (P3a) ────────────────────
+  // ── Migration 023 — child workflow run parentage ──────────────────────────
   //
   // Adds the columns and partial unique index `publishChildWorkflowRun`
   // (src/storage/repositories/workflow-runs-repository.ts) needs to record a
   // durable child workflow run under the parent unit that spawned it, and to
-  // make that publication idempotent per invocation
-  // (docs/plans/specs/p3a-plan-v5-child-freeze.md §5.1).
+  // make that publication idempotent per invocation.
   //
   // Disambiguation: this migration's `workflow_runs.parent_unit_id` is the
   // PARENT RUN's unit that spawned this CHILD RUN — a cross-run composition
-  // edge, new in P3a. It is NOT the same concept as the pre-existing
+  // edge. It is NOT the same concept as the pre-existing
   // `workflow_run_units.parent_unit_id` (migration 004, consolidated above
   // into migration 020's `workflow_run_units` table, migrations.ts:934),
   // which records MAP FAN-OUT TEMPLATE PARENTAGE — one expanded unit's row
@@ -1097,12 +1096,11 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
     `,
   },
 
-  // ── Migration 024 — workflow run outputs (P3b) ─────────────────────────────
+  // ── Migration 024 — workflow run outputs ───────────────────────────────────
   //
   // Adds workflow_runs.outputs_json — the resolved map of a plan's declared
   // outputs:, persisted once at run completion in the SAME transaction as the
-  // final step's completion (docs/plans/specs/p3b-child-executor.md §4.3,
-  // B-N13). NULL for every run whose plan declares no outputs: (the
+  // final step's completion. NULL for every run whose plan declares no outputs: (the
   // overwhelming majority, including every run before this migration) and for
   // every run that fails or blocks before completing — never `{}`.
   // `WorkflowRunsRepository.setRunOutputs` is the only writer;
@@ -1114,28 +1112,25 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
     `,
   },
 
-  // ── Migration 025 — task_history D8 result-vocabulary backfill ─────────────
+  // ── Migration 025 — task_history result-vocabulary backfill ────────────────
   //
-  // The D8 re-code (docs/architecture/decisions/0005-task-result-vocabulary-
-  // and-legacy-read-mapping.md) renamed the written `target_kind` vocabulary
-  // and marked every new row with `targetVocab: 2` in `metadata_json`, but
-  // left every row written before it in the OLD vocabulary forever, pushing
-  // the "which generation is this row" decision onto three separate read
-  // sites (src/tasks/run/task-history.ts, src/commands/health/
-  // improve-metrics.ts, src/commands/health/windows.ts). That is exactly the
-  // shape `docs/plans/specs/p4-deletions-closeout.md` row B-51 ratified
-  // keeping "forever" — SUPERSEDED here: `task_history` is DB-owned data, the
-  // remap is deterministic and total, so it belongs in a one-time migration,
-  // not three permanently-recurring read-side shims.
+  // The written `target_kind` vocabulary was renamed and every new row is
+  // marked `targetVocab: 2` in `metadata_json`, but every row written before
+  // that stayed in the OLD vocabulary, which would push the "which generation
+  // is this row" decision onto three separate read sites
+  // (src/tasks/run/task-history.ts, src/commands/health/
+  // improve-metrics.ts, src/commands/health/windows.ts). `task_history` is
+  // DB-owned data and the remap is deterministic and total, so it is a
+  // one-time migration, not three permanently-recurring read-side shims.
   //
   // The remap, applied only to rows with no `targetVocab` marker yet (a
   // NULL/absent `$.targetVocab` in the JSON column — already-marked or
   // malformed metadata_json is left untouched; malformed rows are a
   // pre-existing, unrelated skip-and-warn concern at read time):
   //   - target_kind 'prompt'  -> 'command' (the prepared command/agent-LLM
-  //     arm; D8 renamed its written label, this backfills the old one)
+  //     arm; its written label was renamed, this backfills the old one)
   //   - target_kind 'command' -> 'shell'   (the legacy native shell/script
-  //     arm's shared old label; D8 split it into 'shell'/'script', and only
+  //     arm's shared old label; it was split into 'shell'/'script', and only
   //     'shell' is reconstructable — the old vocabulary never distinguished
   //     script from shell, matching the read mapping this migration retires)
   // Only 'prompt' and legacy 'command' rows actually change meaning between

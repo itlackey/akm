@@ -3,12 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The ONE core {@link ValidateContext} implementation — akm 0.9.0 chunk-2/lint
- * follow-up ("make `validate()` genuinely load-bearing").
+ * The ONE core {@link ValidateContext} implementation.
  *
  * `BundleAdapter.validate()` (`./bundle-adapter.ts`) is a REQUIRED interface
- * method whose contract is explicit and normative (`./bundle-adapter.ts:96-100`
- * / the format-neutral spec §12.1): the adapter MUST NOT write and MUST NOT
+ * method whose contract is explicit: the adapter MUST NOT write and MUST NOT
  * read the live filesystem — `ctx` serves the run's on-disk SNAPSHOT WITH the
  * caller's pending {@link FileChange}s overlaid, plus a read-only `resolveRef`
  * for link/xref existence. That overlay is meant to be built ONCE, centrally —

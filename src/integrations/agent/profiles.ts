@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Built-in profile registry for external agent CLIs (v1 spec §12.1).
+ * Built-in profile registry for external agent CLIs.
  *
  * A `AgentProfile` is the minimum metadata required to shell-out to a
  * coding-agent CLI. A harness lowers canonical harness metadata into this

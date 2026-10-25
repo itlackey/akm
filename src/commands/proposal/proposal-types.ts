@@ -230,11 +230,11 @@ export interface RetiredArchiveRecord {
 }
 
 /**
- * A retire accept's durable intent (should-fix 5), recorded on the still-
+ * A retire accept's durable intent, recorded on the still-
  * "pending" proposal BEFORE any file is moved: the exact bytes to preserve
  * as `backupContent`. A crashed accept resumes from this record instead of
- * re-deriving it from whatever the archive happens to contain. No `twinPath`
- * (4d, third review round, dropped as redundant): the twin, if any, is a
+ * re-deriving it from whatever the archive happens to contain. No `twinPath`:
+ * the twin, if any, is a
  * pure function of `assetPath` and the ref's type (`derivedTwinPath`), and
  * whether it was already archived by an earlier, crashed attempt is exactly
  * what the tombstone scan (`alreadyArchivedOriginalPaths`) independently
@@ -307,7 +307,7 @@ export interface Proposal {
    */
   promotionSourceHash?: string;
   /**
-   * A pending retire proposal's recorded accept intent (should-fix 5), set
+   * A pending retire proposal's recorded accept intent, set
    * right before the first file move and cleared once accept finishes.
    * Still present means a prior accept attempt crashed after recording it
    * but before finishing — the next accept resumes from it idempotently

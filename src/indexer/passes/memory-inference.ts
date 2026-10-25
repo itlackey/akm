@@ -865,8 +865,8 @@ function markParentProcessed(parent: MemoryRecord): void {
   // Frontmatter-only rewrite of an existing asset: not a new asset write,
   // so writeAssetToSource isn't a fit here (it would round-trip the body
   // through the asset-spec rendering layer instead of preserving the
-  // user's original markdown bytes verbatim). The narrow exception is
-  // documented in v1 spec §10 step 5 and CLAUDE.md write-source rules.
+  // user's original markdown bytes verbatim). This is the narrow exception
+  // to routing asset writes through writeAssetToSource.
   let raw: string;
   try {
     raw = fs.readFileSync(parent.filePath, "utf8");

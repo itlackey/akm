@@ -161,8 +161,7 @@ export interface SearchLocalInput {
   filters?: StashEntryScope;
   /**
    * When true, entries with `quality === "proposed"` are kept in the result
-   * set. By default (false) they are excluded before candidate selection per v1
-   * spec §4.2.
+   * set. By default (false) they are excluded before candidate selection.
    */
   includeProposed?: boolean;
   beliefFilter?: BeliefFilterMode;
@@ -587,7 +586,7 @@ export function applyEntryFilters<T extends { id: number; entry: IndexDocument; 
   const scopeFiltered = filters
     ? sourceFiltered.filter((item) => entryMatchesScope(item.entry.scope, filters))
     : sourceFiltered;
-  // Proposed-quality filter (v1 spec §4.2): exclude `quality: "proposed"`
+  // Proposed-quality filter: exclude `quality: "proposed"`
   // entries unless the caller opts in.
   const qualityFiltered = opts.includeProposed
     ? scopeFiltered
@@ -790,7 +789,7 @@ export async function buildDbHit(input: {
     score: input.score,
     ...(input.whyMatched ? { whyMatched: input.whyMatched } : {}),
     ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
-    // Surface optional quality (v1 spec §4.2). Omitted when entry has
+    // Surface optional quality. Omitted when entry has
     // no `quality` field so payloads stay compact for the common case.
     ...(input.entry.quality ? { quality: input.entry.quality } : {}),
     ...(input.entry.beliefState ? { beliefState: input.entry.beliefState } : {}),

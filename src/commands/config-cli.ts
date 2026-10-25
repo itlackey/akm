@@ -47,7 +47,7 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
 }
 
 export function listConfig(config: AkmConfig): Record<string, unknown> {
-  // 0.9.0 (spec §10.1): sources live in `bundles` (spread from config); the
+  // Sources live in `bundles` (spread from config); the
   // retired top-level `sources[]` array is no longer surfaced.
   return redactConfigValue({ ...DEFAULT_CONFIG, ...config }) as Record<string, unknown>;
 }

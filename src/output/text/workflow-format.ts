@@ -40,7 +40,7 @@ const CHILD_STATUS_GLYPHS: Readonly<Record<string, string>> = {
 };
 
 /**
- * Render one `children:` tree node (P3b, spec §4.5) plus its own children,
+ * Render one `children:` tree node plus its own children,
  * recursively, indenting two spaces per level. Order is SPAWN order (the
  * envelope's own array order) — the tree is structural, never severity-sorted.
  */
@@ -125,10 +125,9 @@ export function formatWorkflowStatusPlain(result: Record<string, unknown>): stri
     }
   }
 
-  // The parent-child status tree (P3b, spec §4.5): renders ONLY when
+  // The parent-child status tree: renders ONLY when
   // `children` is a non-empty array, immediately after `steps:` and before
-  // `units:`. Absent for a childless run — byte-identical to pre-P3b text
-  // (row B-33, PRESERVE).
+  // `units:`. Absent for a childless run, whose text is unchanged.
   const children = Array.isArray(result.children) ? (result.children as Array<Record<string, unknown>>) : undefined;
   if (children && children.length > 0) {
     lines.push("children:");
@@ -273,11 +272,11 @@ function formatInputBindingsList(bindings: readonly Record<string, unknown>[]): 
 }
 
 /**
- * One `akm workflow plan` step line (P3b, spec §4.6), plus its child-workflow
+ * One `akm workflow plan` step line, plus its child-workflow
  * expansion's own steps, recursively, indented one level per composition
  * boundary. A child step also carries the child's `planHash` on the step
  * line itself, and (when present) a `with:` line for the step's own
- * `inputBindings[]` — §4.6's worked example.
+ * `inputBindings[]`.
  */
 function renderPlanStepLines(step: Record<string, unknown>, ordinal: number, lines: string[], prefix = "  "): void {
   const stepId = typeof step.stepId === "string" ? step.stepId : "unknown";
@@ -307,9 +306,9 @@ function renderPlanStepLines(step: Record<string, unknown>, ordinal: number, lin
 }
 
 /**
- * `akm workflow plan <ref>` text mode (P3b, spec §4.6): a human summary of
+ * `akm workflow plan <ref>` text mode: a human summary of
  * the same compile+freeze data `--format json` returns — never a resolved
- * env/secret value (B-52, B-53).
+ * env/secret value.
  */
 export function formatWorkflowPlanPlain(result: Record<string, unknown>): string | null {
   if (typeof result.ref !== "string") return null;

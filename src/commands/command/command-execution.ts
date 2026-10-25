@@ -109,15 +109,14 @@ export interface DispatchPreparedCommandOptions {
   readonly signal?: RunExecutionOptions["signal"];
   readonly chat?: RunExecutionOptions["chat"];
   /**
-   * F-1 (spec docs/plans/specs/p1b-model-extraction.md §5.2 point 3, R-07
-   * fix): task-runner provenance. When present, it (a) becomes the FALLBACK
+   * Task-runner provenance. When present, it (a) becomes the FALLBACK
    * for `resolveUsageEventSource` — an ambient `AKM_EVENT_SOURCE` still wins
    * — used for the usage events recorded against any consumed command/persona
    * ref, and (b) stamps `AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE ??
    * eventSource` into the child env handed to the dispatched harness (the
    * `env` bag `runAgent`/`runSdk` receive), matching the native arm. Absent
    * (every non-task caller: `akm command run`, `akm agent`, …) this function
-   * is byte-identical to before P1b.
+   * is unaffected.
    */
   readonly eventSource?: UsageEventSource;
 }
@@ -404,10 +403,8 @@ export async function dispatchPreparedCommandInvocation(
   const consumedRefs = new Set<string>();
   if (request.command.source) consumedRefs.add(request.command.source.ref);
   if (request.persona) consumedRefs.add(request.persona.source.ref);
-  // F-1 (spec §5.2 point 3): options.eventSource is only a FALLBACK — an
-  // ambient AKM_EVENT_SOURCE still wins (D5 clause d). Absent, this is
-  // byte-identical to the pre-P1b bare resolveUsageEventSource() call (P-07's
-  // own default is "user").
+  // options.eventSource is only a FALLBACK — an ambient AKM_EVENT_SOURCE still
+  // wins. Absent, the default is "user".
   const eventSource = resolveUsageEventSource(process.env, options.eventSource ?? "user");
   for (const ref of consumedRefs) recordIndexedShowUsage(ref, eventSource);
   return resultEnvelope(result, selectedEngine, [], built.notices);

@@ -240,7 +240,7 @@ export async function ensureIndex(stashDir: string, options: EnsureIndexOptions 
     // Blocking callers (improve's planning preflight) are a sanctioned
     // materialization point and hydrate cache-backed sources as usual. The
     // background READ path (`show` auto-index) must never clone/pull/fetch at
-    // query time (spec §14.3 / D11): it builds from already-materialized
+    // query time: it builds from already-materialized
     // content, and absent source caches are skipped with a warning.
     ...(blocking ? {} : { hydrateSources: false }),
   });

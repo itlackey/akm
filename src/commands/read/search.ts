@@ -5,7 +5,7 @@
 /**
  * `akm search` — entry point.
  *
- * Spec §6.1: search consults the local FTS5 index. There is one query path
+ * Search consults the local FTS5 index. There is one query path
  * because there is one data store. Provider fan-out is gone.
  *
  * The orchestration here is thin: build the FTS query, optionally interleave
@@ -86,7 +86,7 @@ export async function akmSearch(input: {
   filters?: StashEntryScope;
   /**
    * When true, hits with `quality === "proposed"` are kept in the result
-   * set (v1 spec §4.2). Default behavior excludes them. The flag has no
+   * set. Default behavior excludes them. The flag has no
    * effect on registry hits.
    */
   includeProposed?: boolean;
@@ -431,8 +431,8 @@ function logSearchEvent(
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Validate a named `--from` against the bundle-derived source list (0.9.0
- * spec §10.1: a named source is a `bundles` key, matched via its derived
+ * Validate a named `--from` against the bundle-derived source list (a named
+ * source is a `bundles` key, matched via its derived
  * source entry's `name`, or an exact path). Throws INVALID_SOURCE_VALUE with
  * the known names before any stash access can fail differently.
  */

@@ -7,16 +7,10 @@
  * shell-command builders (`shellCommand`, `resolveLeadingBareAkmCommand`,
  * `quoteShellArgument`).
  *
- * Moved from src/tasks/runner.ts (spec docs/plans/specs/p1b-model-extraction.md
- * §5.1, §9, runner.ts:294-455).
+ * The child env's `AKM_EVENT_SOURCE` stamp reads `provenance.eventSource`
+ * (`"task"` under the default provenance context, run/provenance.ts).
  *
- * F-1 (spec §5.2 point 1): the child env's `AKM_EVENT_SOURCE` stamp now reads
- * `provenance.eventSource` instead of the hardcoded literal `"task"` — with
- * the default provenance context (run/provenance.ts) this is byte-equivalent
- * to before (P-06 stays green unchanged).
- *
- * F-2 (D8, spec §5.3): the result's `target` is now `{kind:"shell", cmd}` or
- * `{kind:"script", cmd}` — formerly one shared `{kind:"command", cmd}`.
+ * The result's `target` is `{kind:"shell", cmd}` or `{kind:"script", cmd}`.
  */
 
 import path from "node:path";

@@ -7,7 +7,6 @@
  * {@link freezeTaskInputBindings} classifies an authored `with:` against a
  * child workflow's `params:` contract. A reference's resolved value is
  * validated before each attempt (`exec/step-work.ts`).
- * See docs/architecture/decisions/0008-task-binding-normalization.md.
  */
 
 import { isRecord } from "../../core/common";

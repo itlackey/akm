@@ -277,9 +277,9 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (hit.installRef) lines.push(`  installRef: ${String(hit.installRef)}`);
     if (hit.run) lines.push(`  run: ${String(hit.run)}`);
     if (Array.isArray(hit.tags) && hit.tags.length > 0) lines.push(`  tags: ${hit.tags.join(", ")}`);
-    // Optional v1 spec §4.2 quality marker (e.g. "curated" / "proposed").
+    // Optional quality marker (e.g. "curated" / "proposed").
     if (typeof hit.quality === "string" && hit.quality) lines.push(`  quality: ${hit.quality}`);
-    // Surface optional hit-level warnings (v1 spec §4.2).
+    // Surface optional hit-level warnings.
     if (Array.isArray(hit.warnings) && hit.warnings.length > 0) {
       lines.push(`  warnings: ${(hit.warnings as string[]).join("; ")}`);
     }

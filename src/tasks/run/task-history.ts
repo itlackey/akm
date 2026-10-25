@@ -6,24 +6,16 @@
  * The task_history read/write boundary: `appendHistory` (write) and
  * `readTaskHistory` / `taskHistoryRowToResult` (read).
  *
- * Moved from src/tasks/runner.ts (spec docs/plans/specs/p1b-model-extraction.md
- * §5.1, §9, runner.ts:1071-1158). `appendHistory` was module-private at head;
- * it is exported here because every dispatch arm (run-native-task.ts,
- * run-workflow-task.ts, run-command-task.ts), attempt-lifecycle.ts, and
- * run-task.ts's disabled-task path all call it (spec §5.1's module split
- * moves what was one file's internal call graph across several files).
+ * `appendHistory` is exported because every dispatch arm (run-native-task.ts,
+ * run-workflow-task.ts, run-command-task.ts) and attempt-lifecycle.ts call it.
  *
- * D8 result-vocabulary re-code (why, and the WRITE side's exact shape): see
- * docs/architecture/decisions/0005-task-result-vocabulary-and-legacy-read-mapping.md.
- * The READ side used to carry a permanent legacy-vocabulary mapping here
- * (row B-51 of docs/plans/specs/p4-deletions-closeout.md called deleting it
- * "review-blocking") — SUPERSEDED: `task_history` is DB-owned data, so the
- * remap is now a one-time schema migration
- * (`025-task-history-vocabulary-backfill` in src/core/state/migrations.ts)
- * instead of a read-side shim run forever. Every row this function sees now
- * carries the current vocabulary's `target_kind` strings; the P0-pinned null
- * fallbacks still apply (workflow `ref` falls back to `""`, the command
- * arm's `engine` falls back to `null`).
+ * The READ side carries no legacy-vocabulary mapping: `task_history` is
+ * DB-owned data, so the remap to the current vocabulary is a one-time schema
+ * migration (`025-task-history-vocabulary-backfill` in
+ * src/core/state/migrations.ts) rather than a read-side shim run forever.
+ * Every row this function sees carries the current vocabulary's `target_kind`
+ * strings; the null fallbacks still apply (workflow `ref` falls back to `""`,
+ * the command arm's `engine` falls back to `null`).
  *
  * A DAG leaf with respect to the rest of src/tasks/run/**: this module
  * imports TaskRunResult/TaskRunStatus's TYPE from ./task-result but no VALUE

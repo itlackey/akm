@@ -7,7 +7,6 @@
  * decisions, used by the engine on both a fresh run and a resume, so the same
  * frozen plan produces byte-identical unit graphs. Pure except the
  * gate-evaluation journaling; never dispatches and never writes step rows.
- * See docs/architecture/decisions/0002-unit-reuse-and-input-hash-scope.md.
  */
 
 import { createHash } from "node:crypto";
@@ -279,8 +278,7 @@ export function computeStepWorkList(plan: WorkflowPlanStep, input: WorkListInput
   const scope: ExpressionScope = { params: input.params, stepOutputs: input.stepOutputs };
 
   // Instructions are ALWAYS the step's body prose, byte-exact — never
-  // templated, never scanned for reference syntax (workflow-format-
-  // unification, spec §2.3). Only `map.over` / `inputs[]`
+  // templated, never scanned for reference syntax. Only `map.over` / `inputs[]`
   // carry the closed reference grammar.
 
   // Resolve the step's declared `inputs:` ONCE (shared by every unit in this
@@ -363,9 +361,9 @@ export function computeStepWorkList(plan: WorkflowPlanStep, input: WorkListInput
     frozenExec && resolvedInputs.length > 0
       ? (canonicalJson(Object.fromEntries(resolvedInputs.map((entry) => [entry.reference, entry.value]))) ?? "{}")
       : undefined;
-  // P2b Lane A2: the resolved effective task-composition inputs,
+  // The resolved effective task-composition inputs,
   // serialized ONCE here (mirrors execParamsJson/execInputsJson above) —
-  // Lane B's delivery (buildUnitPrompt's "## Task inputs" block,
+  // the delivery (buildUnitPrompt's "## Task inputs" block,
   // buildExecContextEnv's AKM_TASK_INPUTS) reads both back per unit.
   const taskInputsJson = hasTaskInputs ? (canonicalJson(taskInputsResolution.values) ?? "{}") : undefined;
 
@@ -438,7 +436,7 @@ function buildStepWorkUnit(ctx: StepWorkUnitContext, unitId: string, item: unkno
         params: input.params,
         ...(isFanOut ? { item, itemIndex: index } : {}),
         ...(resolvedInputs.length > 0 ? { inputs: resolvedInputs } : {}),
-        // P2b Lane B: the composed task's resolved
+        // The composed task's resolved
         // `inputBindings`, when non-empty — see StepWorkUnitContext.taskInputs.
         ...(taskInputs && Object.keys(taskInputs).length > 0 ? { taskInputs } : {}),
         ...(input.gateFeedback ? { gateFeedback: input.gateFeedback } : {}),
@@ -509,7 +507,6 @@ function buildExecContextEnv(args: {
  * to do (names, never secret values). Informational — resume reuses a
  * completed row by unit id. `gateFeedback`/`taskInputs` are included only when
  * present so the loop-1, binding-free preimage keeps its `hashVersion` 7 shape.
- * See docs/architecture/decisions/0002-unit-reuse-and-input-hash-scope.md.
  */
 function computeUnitInputHash(ctx: StepWorkUnitContext, item: unknown): string {
   return createHash("sha256")
@@ -549,7 +546,7 @@ export interface BuildUnitPromptInput {
   /** Resolved artifacts named by the step's `inputs:`, in declaration order. */
   inputs?: Array<{ reference: string; value: unknown }>;
   /**
-   * P2b Lane B: the composed task's effective
+   * The composed task's effective
    * `inputBindings`, resolved. Renders as the `## Task inputs` fenced JSON
    * block, appended after `inputs` and before `gateFeedback`. Absent (or
    * empty) renders nothing — byte-identical to today's prompt shape.
@@ -1192,8 +1189,7 @@ export type FinalizeStepResult =
    */
   | { kind: "judge-failed"; summary: string }
   /**
-   * A composed child workflow is `blocked` (P3b, spec docs/plans/specs/
-   * p3b-child-executor.md §3.4). The step was completed `blocked` (run
+   * A composed child workflow is `blocked`. The step was completed `blocked` (run
    * derives `blocked`) via {@link blockStepForChildWorkflow} — a gate is a
    * gate for a child workflow too, so this is never fed into the bounded
    * gate loop, exactly like `judge-failed`.

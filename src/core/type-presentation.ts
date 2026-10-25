@@ -3,33 +3,29 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Chunk 1.5 (WI-1.5.1, D1.5-4) — the §2.3 "compile-time safety mitigation"
- * table for AKM's own presentation metadata. EXTENDED by chunk-2 WI-C
- * (`docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §2) to carry the per-`type`
- * renderer NAME + action builder, so this table becomes the `TYPE_PRESENTATION`
- * data table §2 mandates ("Renderer/action = data table keyed on the open
- * `type`, pointing at a named-function core module").
+ * The `TYPE_PRESENTATION` table of AKM's own presentation metadata: the per-`type`
+ * renderer NAME + action builder, a data table keyed on the open
+ * `type`, pointing at a named-function core module.
  *
- * The open type token (chunk 1.5) trades the deleted closed asset-type
+ * The open type token trades the deleted closed asset-type
  * union's exhaustiveness checking for a runtime lookup. `TYPE_PRESENTATION`
  * restores that exhaustiveness for AKM's OWN known types (the compiler
  * demands an entry whenever {@link KnownType} gains a member), while
  * {@link presentationFor} stays open over `string` so foreign/adapter types
  * still resolve to a sane generic fallback instead of `undefined`/a throw.
  *
- * ── renderer/action provenance (WI-C, §2) ──
+ * ── renderer/action provenance ──
  *
  * The `renderer` NAMES and `action` builders below are the SINGLE SOURCE OF
- * TRUTH for search-hit rendering — chunk-3 folded the old mutable renderer/
- * action registry singleton into this static table (reached via
- * {@link presentationFor}). They cover all built-in types — INCLUDING
+ * TRUTH for search-hit rendering (reached via {@link presentationFor}).
+ * They cover all built-in types — INCLUDING
  * the 15th type `instruction` (a read-like-knowledge markdown doc added for the
  * format-family adapters) and the 6 "static-only" mappings
- * (script/skill/command/agent/knowledge/memory) — §6 "6 renderer mappings".
+ * (script/skill/command/agent/knowledge/memory).
  * The workflow action is the one function-valued builder; its
  * `buildWorkflowAction` body (`output/renderers.ts` — a cycle-sensitive module)
  * is reproduced inline here rather than imported, to keep this leaf import-free
- * (only `recognition-util`, D1-5's pure sink); `tests/core/adapter/
+ * (only `recognition-util`, a pure sink); `tests/core/adapter/
  * akm-presentation.test.ts` pins the renderer/action values against drift.
  */
 
@@ -150,7 +146,7 @@ export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
     action: (ref) => `akm show ${ref} -> read the stash fact and apply it as durable context`,
   },
   // `instruction` (CLAUDE.md / AGENTS.md) is a read-like-knowledge markdown
-  // doc (spec §6/§7 instruction row, maintainer resolution 2026-07): it REUSES
+  // doc: it REUSES
   // the `knowledge-md` renderer and mirrors knowledge's read action, so an
   // instruction hit renders exactly like knowledge instead of the generic
   // fallback (the parity guard in akm-presentation.test.ts pins this).

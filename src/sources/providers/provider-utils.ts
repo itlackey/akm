@@ -23,7 +23,7 @@ export function sanitizeString(value: unknown, maxLength = 255): string {
 
 /**
  * True when ANY built-in adapter's install-time `looksLikeRoot` probe claims
- * `root` — the spec §1.2 ordered probe reduced to "is this the root of a bundle
+ * `root` — the ordered probe reduced to "is this the root of a bundle
  * of some format family?". A probe that throws (unreadable dir, race) does not
  * claim the root.
  */

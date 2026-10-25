@@ -72,13 +72,13 @@ export interface SourceSearchHit {
    */
   estimatedTokens?: number;
   /**
-   * Non-fatal hit-level warnings surfaced by the indexer or a registry provider
-   * (v1 spec §4.2). Optional; absent when there is nothing to surface. Adding
+   * Non-fatal hit-level warnings surfaced by the indexer or a registry provider.
+   * Optional; absent when there is nothing to surface. Adding
    * a value here MUST NOT change ranking — warnings are informational only.
    */
   warnings?: string[];
   /**
-   * Optional asset quality marker (v1 spec §4.2). One of `generated`,
+   * Optional asset quality marker. One of `generated`,
    * `curated`, `proposed`, or any other string the source emits. Surfaced
    * verbatim from the underlying entry. Absent when the entry has no
    * `quality` field.
@@ -117,8 +117,8 @@ export interface RegistrySearchResultHit {
   /** Name of the registry that provided this hit (provenance tracking) */
   registryName?: string;
   /**
-   * Non-fatal hit-level warnings surfaced by the registry provider (v1 spec
-   * §4.2). Optional; absent when there is nothing to surface. Adding a value
+   * Non-fatal hit-level warnings surfaced by the registry provider.
+   * Optional; absent when there is nothing to surface. Adding a value
    * here MUST NOT change ranking — warnings are informational only.
    */
   warnings?: string[];
@@ -612,7 +612,7 @@ export interface UpgradeResponse {
 export interface InfoResponse {
   schemaVersion: number;
   version: string;
-  /** Primary bundle directory (spec §10.1), same resolution `akm sources list` uses (R-057). */
+  /** Primary bundle directory, same resolution `akm sources list` uses. */
   bundleDir: string;
   /** Name of the primary bundle from config, or `null` when none is configured (R-057). */
   defaultBundle: string | null;

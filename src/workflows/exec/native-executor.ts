@@ -10,7 +10,7 @@
  * is `run-workflow.ts`'s job.
  *
  *  - Data flow: instructions are the step's prose byte-exact; data reaches a
- *    unit as attached context (docs/architecture/decisions/0001-…).
+ *    unit as attached context.
  *  - An empty successful free-text output is journaled as absent, so a live
  *    run and a resume promote the same artifact.
  *  - A declared step `output` schema is validated before the step completes;

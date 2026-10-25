@@ -15,7 +15,7 @@
  * single deterministic, order-independent pass (`BUILT_IN_OUTPUT_SHAPES`).
  * Dropping a module from the assembly array is a COMPILE error, not a silent
  * runtime gap. The central `shapeForCommand` dispatcher looks up the registry
- * and throws for unknown commands (v1 spec §9 — exhaustive registry, no silent
+ * and throws for unknown commands (exhaustive registry, no silent
  * fallback).
  */
 
@@ -136,7 +136,7 @@ export function shapeForCommand(
   if (handler) {
     return withResultsAlias(command, handler(result, detail, shape));
   }
-  // v1 spec §9 (output-shape registry exhaustive): no silent JSON.stringify
+  // Output-shape registry is exhaustive: no silent JSON.stringify
   // fallback. A missing case here is a registration bug — fail loudly so
   // the caller (or its tests) sees the missing command name.
   throw new Error(`output shape not registered for command: ${command}`);

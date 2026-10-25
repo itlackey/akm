@@ -8,8 +8,7 @@
  * declared `inputs:` name that collides with one, without creating an import
  * cycle back through the CLI layer.
  *
- * Code-review finding (docs/plans/specs/p2b-input-bindings.md, P2b review
- * round 2): `schedulerInputFlagTail` (`../tasks/scheduler-binding.ts`) and
+ * `schedulerInputFlagTail` (`../tasks/scheduler-binding.ts`) and
  * `akm task run <id> --<name> <value>` both let an authored/declared input
  * NAME collide with a flag `akm task run` already binds to itself
  * (`--bundle`, `--scheduled`, …). `parseTaskInputFlags`

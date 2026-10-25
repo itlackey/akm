@@ -9,7 +9,6 @@
  * `completeWorkflowStep`; one O_EXCL lock file per run keeps a second driver
  * off (a dead holder's lock is reclaimed); gate loops are bounded; and the
  * SDK dispatch registry is drained on every exit so the process can exit.
- * See docs/architecture/decisions/0011-engine-run-loop-invariants.md.
  */
 
 import { createHash } from "node:crypto";

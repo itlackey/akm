@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The prepare seam's document vocabulary (spec
- * docs/plans/specs/p4-deletions-closeout.md §3.2.3).
+ * The prepare seam's document vocabulary.
  *
  * `src` no longer accepts task v3 source — the v3 grammar (`parseTaskV3Yaml`,
  * `parseTaskV3Document`, `classifyTaskV3Uses`, and the GitHub Action locator
@@ -19,11 +18,8 @@
  * supporting modules still take as their input shape —
  * `PreparableTaskDocument` (`src/tasks/prepare/prepared-execution.ts`) is a
  * name for `TaskV3SourceDocument` that is not version-bound. The type
- * family's NAME stays (spec §0, R-R1: the rename to something version-
- * neutral is deferred to a follow-up commit after the sweep, so the
- * deletion diff this phase exists to prove is not buried under an
- * unrelated rename storm). Only task source v4 ever reaches this shape now
- * — `src/tasks/source/project-v4.ts`'s `projectTaskSourceV4()` is the only
+ * family keeps its `TaskV3*` name; only task source v4 reaches this shape
+ * now — `src/tasks/source/project-v4.ts`'s `projectTaskSourceV4()` is the only
  * producer.
  *
  * The workflow-side trigger classifier that used to live here
@@ -34,11 +30,8 @@ import type { ParsedBuiltinCommandAction } from "../commands/command/builtin-act
 import type { ExecutionJsonObject } from "../execution/json";
 import { TASK_V3_MAX_SCHEDULES } from "./source/bounded-document";
 
-// D2-N4 (spec docs/plans/specs/p2a-task-source-v4.md §3.1, §9): re-exported
-// at its EXISTING name so no importer changes. The one name a surviving
-// `src` consumer still imports (task-source-v4.ts) — every other
-// bounded-document re-export this file used to carry was dropped in P4
-// §3.2.3.
+// Re-exported at its existing name so no importer changes: the one name a
+// surviving `src` consumer still imports (task-source-v4.ts).
 export { TASK_V3_MAX_SCHEDULES };
 
 export const TASK_EXTENSION = ".yml";

@@ -373,7 +373,7 @@ export function forgetImproveLedgerDecision(db: Database, stashDir: string, prop
 }
 
 /**
- * Should-fix 6 (second review round): a read-only or dry-run open never
+ * A read-only or dry-run open never
  * migrates, so it can land on a state.db from before migration 029 added
  * `content_hash` — reading it there threw "no such column", which
  * `loadRetrievalScope`'s own catch then reported as "usage history

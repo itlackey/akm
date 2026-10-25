@@ -6,18 +6,13 @@
  * The common command (agent/LLM) dispatch arm: `runPreparedCommandTask`,
  * `renderPromptLog`.
  *
- * Moved from src/tasks/runner.ts (spec docs/plans/specs/p1b-model-extraction.md
- * §5.1, §9, runner.ts:677-778).
+ * `runPreparedCommandTask` passes the resolved provenance into
+ * `dispatchPreparedCommandInvocation` via the `eventSource` option, so a
+ * command task run stamps `AKM_EVENT_SOURCE` and its nested usage is not
+ * recorded as user demand. The dispatched harness's child env carries the stamp
+ * too, matching the native arm.
  *
- * F-1 (R-07 fix, spec §5.2 point 3): `runPreparedCommandTask` now passes the
- * resolved provenance into `dispatchPreparedCommandInvocation` via a new
- * `eventSource` option — the fix for R-07 (a command task run
- * previously never stamped `AKM_EVENT_SOURCE` anywhere, so its nested usage
- * was recorded as user demand). The dispatched harness's child env now carries
- * the stamp too, matching the native arm.
- *
- * F-2 (D8, spec §5.3): the result's `target` is now `{kind:"command", engine}`
- * — formerly `{kind:"prompt", engine}`.
+ * The result's `target` is `{kind:"command", engine}`.
  */
 
 import type { CommandDispatchResult, DispatchPreparedCommandOptions } from "../../commands/command/command-execution";
@@ -45,8 +40,8 @@ export async function runPreparedCommandTask(input: {
   const { task, logPath, startedAt, now, provenance } = input;
   const dispatchOptions: DispatchPreparedCommandOptions = {
     ...(input.runAgentImpl ? { runAgent: input.runAgentImpl } : {}),
-    // F-1 (R-07 fix, spec §5.2 point 3): threads the resolved event source
-    // into the dispatched harness's child env and the recorded usage events.
+    // Threads the resolved event source into the dispatched harness's child env
+    // and the recorded usage events.
     eventSource: provenance.eventSource,
   };
   // Unset anywhere (task `timeout:`, command asset, connection or harness) → the

@@ -171,13 +171,11 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
   // `workflow run`, `task run`, and `task explain` each own one deliberately
   // dynamic namespace: long options become exact-name parameter/input flags
   // and are checked against the frozen plan / task source's own contract
-  // before this gate would otherwise reject them (spec
-  // docs/plans/specs/p2a-task-source-v4.md §5.1 — task run's
+  // before this gate would otherwise reject them (task run's
   // UNKNOWN_FLAG/INPUT_BINDING_INVALID must be raised from INSIDE the command
   // body, where runWithJsonErrors renders the JSON envelope, not from this
-  // generic pre-dispatch gate; docs/plans/specs/p2b-input-bindings.md §4.5,
-  // B-55 — `task explain` reuses the identical `parseTaskInputFlags`
-  // scanner, so it needs the identical exemption).
+  // generic pre-dispatch gate; `task explain` reuses the identical
+  // `parseTaskInputFlags` scanner, so it needs the identical exemption).
   const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain"]);
   const dynamicWorkflowParams = dynamicNamedFlagCommands.has(known.path.join(" "));
   const tolerant = UNKNOWN_FLAG_TOLERANT_COMMANDS.has(known.path.join(" "));

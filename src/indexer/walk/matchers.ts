@@ -251,7 +251,7 @@ function classifyBySmartMd(ctx: FileContext): MatchFact | null {
   const fm = ctx.frontmatter();
 
   // Recognition is frontmatter `type: workflow` or residence under `workflows/`
-  // (workflow-format-unification, spec §2.5) — no content sniffing. The
+  // — no content sniffing. The
   // directory rule is `classifyByDirectory`/`classifyByParentDirHint`'s job;
   // this only catches a workflow living OUTSIDE `workflows/` that still
   // declares its type explicitly.

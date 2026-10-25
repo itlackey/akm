@@ -3,10 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Per-`type` validate checks for the `akm` adapter — akm 0.9.0 chunk-2, WI-C,
- * implementing spec §6 (the per-`type` validation column) as a
- * behavior-preserving port of `src/commands/lint/*`'s type linters. The `akm`
- * adapter's `validate` = shared base checks (WI-A `shared.ts`) + these per-type
+ * Per-`type` validate checks for the `akm` adapter: a behavior-preserving
+ * port of `src/commands/lint/*`'s type linters. The `akm`
+ * adapter's `validate` = shared base checks (`shared.ts`) + these per-type
  * extra checks, keyed on the winning `type`, reproducing today's
  * `getLinterForType(subdir).lint(ctx)` dispatch. The FROZEN lint golden
  * (`tests/fixtures/goldens/lint/all-types.json`, `perType`) is the conformance
@@ -31,7 +30,7 @@
  * `ValidateContext` (the run snapshot + pending overlay) — the live linters'
  * `fs.existsSync` sibling/SKILL.md probes become `ctx.readFile` lookups.
  *
- * ── env/secret dangerous-key narrowness (PRESERVED, spec §6) ──
+ * ── env/secret dangerous-key narrowness (PRESERVED) ──
  *
  * Today's scan (`collectEnvFiles`) only visits `.env`-SUFFIXED files under
  * `env/` and `secrets/`, so `secrets/<bare-name>` is NOT scanned. This port
@@ -290,9 +289,9 @@ export function factDiagnostics(relPath: string, data: Record<string, unknown>):
 }
 
 /**
- * Task validation has one semantic owner: the version-routed task source
- * parser (spec docs/plans/specs/p2a-task-source-v4.md §3.6) — `version: 3`
- * through the strict task-v3 grammar, `version: 4` through task source v4.
+ * Task validation has one semantic owner: the task source parser, which reads
+ * task source v4 and refuses an older `version` with
+ * `TASK_SCHEMA_VERSION_UNSUPPORTED`.
  * Keeping raw YAML at this boundary preserves duplicate-key, alias/tag,
  * source-location, descriptor, resource-bound, and migration-hint behavior.
  *

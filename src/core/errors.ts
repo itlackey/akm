@@ -98,14 +98,11 @@ export type UsageErrorCode =
   // "successfully" and exit 0 — a `--fail-on-flaged`
   // in CI meant the gate never fired.
   | "UNKNOWN_FLAG"
-  // P1a (docs/plans/specs/p1a-with-rejection-classifier.md §2.1, D7): a
-  // workflow step authors with: on a target that cannot bind it. The
-  // authored mapping used to be silently dropped at freeze; now it is
-  // rejected instead (the fail-closed correction). P2b
-  // (docs/plans/specs/p2b-input-bindings.md §1.7 A-N5) narrows this to a
-  // tasks/<ref> target that declares no inputs: at all, and grows it to
-  // commands/<ref> and scripts/<ref> targets, which are never binding
-  // surfaces. Thrown from src/workflows/freeze/targets/task.ts's
+  // A workflow step authors with: on a target that cannot bind it: a
+  // tasks/<ref> target that declares no inputs: at all, or a commands/<ref> or
+  // scripts/<ref> target, which are never binding surfaces. The authored mapping
+  // is rejected rather than silently dropped at freeze (fail-closed). Thrown from
+  // src/workflows/freeze/targets/task.ts's
   // taskDispatch and src/workflows/freeze/freeze.ts's resolveStep.
   | "COMPOSITION_INVALID"
   // P1a: the sourceError funnel in src/tasks/source-v3.ts, re-coded from
@@ -123,16 +120,9 @@ export type UsageErrorCode =
   // P1a: declared only in this phase — wired in P2b when with: bindings are
   // validated against a target's declared inputs.
   | "INPUT_BINDING_INVALID"
-  // P1b (docs/plans/specs/p1b-model-extraction.md, diagnostic-codes ratchet
-  // remedy): originated in the now-deleted src/tasks/source/parse-v3-adapter.ts's
-  // taskDefinitionFromV3, which rejected a validly-parsed task-v3 `uses:`
-  // kind (builtin-command) that had no representation in P1b's closed
-  // TaskDefinitionTarget vocabulary. Distinct from INVALID_FLAG_VALUE: the
-  // input is not malformed, it is a recognized construct the target model
-  // does not model. The code and its hint survive that adapter's P4 deletion
-  // (spec docs/plans/specs/p4-deletions-closeout.md §3.2.7); §5.2 gives it a
-  // live consumer in `prepare/script-capture.ts`'s interpreter rejections
-  // (a later commit in this same phase — not yet wired as of this file).
+  // A recognized construct the target model does not model — distinct from
+  // INVALID_FLAG_VALUE, where the input is malformed. Thrown by
+  // `prepare/script-capture.ts`'s interpreter rejections.
   | "TASK_TARGET_UNSUPPORTED";
 
 /**
@@ -243,7 +233,7 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
     "Registry URLs must be credential-free http(s) URLs. Fix the entry with `akm registry list` / `akm registry add`, or the AKM_REGISTRY_URL / AKM_NPM_REGISTRY variable that supplied it.",
 };
 
-// Code-review finding: COMPOSITION_INVALID covers several unrelated causes
+// COMPOSITION_INVALID covers several unrelated causes
 // (a rejected with:, a multi-job source, a composition cycle/depth/size
 // violation, an invalid child-output reference). USAGE_HINTS below carries
 // only the with:-rejection text — accurate for every with:-rejection throw
@@ -274,15 +264,11 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
     "Refs use the form [bundle//]conceptId, e.g. `akm show knowledge/guide.md` or `akm show skills/deploy`.",
   UNKNOWN_COMMAND: "Run `akm --help` to see available commands.",
   UNKNOWN_FLAG: "Run the command with `--help` to see its accepted flags.",
-  // P2b (docs/plans/specs/p2b-input-bindings.md §1.7 A-N5, §7 F-A3): the
-  // "arrives in a later 0.9.x release" promise is gone now that task-call
-  // inputs are implemented. Names the two real rejection causes instead:
-  // (1) a task target that declares no inputs: at all, (2) commands/<ref> /
-  // scripts/<ref>, which are never binding surfaces. F-A3 authorizes this
-  // edit and the matching pinned-string update in
-  // tests/core/errors-usage-hints.test.ts in the same commit.
+  // Names the two real rejection causes: (1) a task target that declares no
+  // inputs: at all, (2) commands/<ref> / scripts/<ref>, which are never binding
+  // surfaces.
   //
-  // Code-review finding: this default is reached ONLY by with:-rejection
+  // This default is reached ONLY by with:-rejection
   // throw sites (the ones above, plus task.ts's noDeclaredInputsError and
   // freeze.ts's resolveStep) — every other
   // COMPOSITION_INVALID throw site (multi-job source, composition
@@ -295,10 +281,7 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   TASK_SOURCE_INVALID: "Fix the task source at the reported path and line, then re-run.",
   TARGET_REF_INVALID:
     "Targets are canonical asset refs: `commands/review`, `scripts/build.sh`, `tasks/nightly`, `workflows/release`.",
-  // P4 (docs/plans/specs/p4-deletions-closeout.md §4.1, row B-53, R-R5): the
-  // original hint named `akm workflow validate`, a verb that was never
-  // implemented. Points at the two verbs that actually inspect a workflow
-  // source without executing it.
+  // Points at the two verbs that inspect a workflow source without executing it.
   WORKFLOW_SOURCE_INVALID:
     "Run `akm lint` to see the failing source location, or `akm workflow plan <ref>` to compile it without writing.",
   INPUT_BINDING_INVALID: "Check the step's with: keys against the target's declared inputs.",

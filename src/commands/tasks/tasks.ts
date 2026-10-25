@@ -315,24 +315,18 @@ export async function akmTasksRun(
   const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
   const resolvedId = taskIdForAdapter(parsed.id, adapterId);
   const scheduled = options.scheduled === true;
-  // D5 "Construction" (spec docs/plans/specs/p1b-model-extraction.md §1.2/
-  // §5.2): built ONCE at this invocation boundary. eventSource is "task"
-  // whether or not --scheduled was passed (§1.6 D5-N1) — scheduled stays a
+  // Built ONCE at this invocation boundary. eventSource is "task"
+  // whether or not --scheduled was passed — scheduled stays a
   // separate field carrying its own pre-existing meaning (activation policy,
   // scheduler env), never selecting the event source.
   const provenance = createExecutionProvenanceContext(scheduled);
-  // F-3 (spec §5.4): RunTaskOptions.stashDir renamed to bundleDir — VALUE-
-  // preserving, no CLI flag change.
-  //
-  // P2a Lane C (spec docs/plans/specs/p2a-task-source-v4.md §5.1): the raw,
-  // exact-name input flags `tasks-cli.ts`'s Stage 1 captures ride through
-  // unchanged to `runTask` -> `loadPreparedTask`'s Stage 2 materializer,
+  // The raw, exact-name input flags `tasks-cli.ts`'s Stage 1 captures ride
+  // through unchanged to `runTask` -> `loadPreparedTask`'s Stage 2 materializer,
   // which owns declaring `inputFlags` on `RunTaskOptions` and attaching the
   // materialized literals to the constructed `TaskInvocation`. This is only
-  // the pass-through surface: a valid flag set stays byte-identical to the
-  // same run without flags (§0), and P2a delivers nothing to the target.
+  // the pass-through surface.
   //
-  // No `as` cast (test-review finding, spec §6 F-5): `RunTaskOptions` (this
+  // No `as` cast: `RunTaskOptions` (this
   // literal's inferred type is checked directly against it, below) declares
   // every one of these fields, so the compiler — not a suppressed excess-
   // property check — enforces this seam. A future rename or removal on
@@ -348,11 +342,9 @@ export async function akmTasksRun(
   // The runner owns the prepare-before-reserve boundary. Invalid source,
   // projectability, and resolver failures therefore create no history row.
   const result = await runTask(resolvedId, runOptions);
-  // C-7 (spec §5.6): after D8's result-vocabulary re-code, "command" means
-  // the agent/LLM arm — the native shell/script arm now reports "shell" /
-  // "script". Rewired in the SAME commit as the vocabulary re-code so a
-  // shell/script task's process exit 78 still passes through as CLI exit 78
-  // (documented behavior, src/assets/hints/cli-hints-short.md:95).
+  // "command" means the agent/LLM arm — the native shell/script arm reports
+  // "shell" / "script" — so a shell/script task's process exit 78 still passes
+  // through as CLI exit 78 (documented behavior, src/assets/hints/cli-hints-short.md).
   const exitCode =
     result.status === "failed" &&
     (result.target.kind === "shell" || result.target.kind === "script") &&
@@ -999,8 +991,7 @@ function taskProjectionAssetResolver(
 }
 
 /**
- * Exported for `src/commands/tasks/explain.ts` (P2b Lane B, spec
- * docs/plans/specs/p2b-input-bindings.md §4.5, B-N4): `akm task explain`
+ * Exported for `src/commands/tasks/explain.ts`: `akm task explain`
  * resolves its `--bundle` axis identically to every other read-only task
  * verb here (`akm task history`, `akm task run`) — the SAME resolver, not a
  * second one.
@@ -1083,8 +1074,7 @@ interface RenderInput {
 
 /**
  * Infer a JSON-Schema-subset `type` keyword from one `--params` value's
- * runtime shape (spec docs/plans/specs/p4-deletions-closeout.md §3.2.6, row
- * B-20). `null` is not one of the five runtime types the spec enumerates
+ * runtime shape. `null` is not one of the five runtime types
  * (string/number/boolean/object/array) but is a value JSON.parse can still
  * produce for a param; `src/core/json-schema.ts`'s subset validator accepts
  * `"null"` as a `type`, so it is handled rather than mis-typed.

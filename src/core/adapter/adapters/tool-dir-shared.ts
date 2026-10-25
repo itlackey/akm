@@ -6,24 +6,24 @@
  * Shared recognition / placement / validation for the two AGENT TOOL-DIRECTORY
  * adapters — `claude` (`.claude`) and `opencode` (`.opencode`) — akm 0.9.0
  * format-family work item (#46). Both translate a foreign tool layout into the
- * open AKM `type` vocabulary (spec §6/§7): a root instruction file
+ * open AKM `type` vocabulary: a root instruction file
  * (CLAUDE.md / AGENTS.md) → `instruction`, `commands/*.md` → `command`,
  * `agents/*.md` → `agent`, `skills/<name>/SKILL.md` → `skill` (item = the dir).
  * They differ only in two parameters carried on {@link ToolDirLayout}:
  *   - the instruction basename + its concept id,
  *   - the adapter id + component id.
  *
- * The SKILL.md codec is shared with the `agent-skills` adapter as functions
- * (spec §8): a skill's conceptId is its DIRECTORY, and its `name` is the
- * frontmatter `name` (== the dir name per the Agent Skills §4.5 hard rule).
+ * The SKILL.md codec is shared with the `agent-skills` adapter as functions:
+ * a skill's conceptId is its DIRECTORY, and its `name` is the
+ * frontmatter `name` (== the dir name per the Agent Skills hard rule).
  *
- * ── D-R6 (reserved files) ──
+ * ── reserved files ──
  *
  * `index.md` / `log.md` are OKF structural files at EVERY depth — never a
  * concept. `classify` excludes them up front so a stray `commands/index.md`
  * never becomes a `command` (mirrors okf/akm/llm-wiki `RESERVED_FILES`).
  *
- * ── validate leniency (spec §6 skill row) ──
+ * ── validate leniency ──
  *
  * The tool-dir adapters TOLERATE the tools' native frontmatter (argument-hint,
  * allowed-tools, tools, model, mode, temperature, agent, …) — the strict
@@ -190,7 +190,7 @@ function nameOrSignalDiagnostics(
   body: string,
 ): Diagnostic[] {
   if (nonEmptyString(data.name) !== undefined || nonEmptyString(data.description) !== undefined) return [];
-  // command-shaped body/frontmatter signals (spec §6 command row): $ARGUMENTS / $1 / an `agent` frontmatter key.
+  // command-shaped body/frontmatter signals: $ARGUMENTS / $1 / an `agent` frontmatter key.
   if (
     type === "command" &&
     (/\$ARGUMENTS\b/.test(body) || /\$\d/.test(body) || nonEmptyString(data.agent) !== undefined)

@@ -4,8 +4,7 @@
 
 /**
  * Plain-text rendering of the combined migration plan: the config file's moved
- * keys and notes, the task-file section (spec
- * docs/plans/specs/p4-deletions-closeout.md §3.2.5, rows B-31/B-32) and the
+ * keys and notes, the task-file section and the
  * assets' `engine:` keys.
  */
 

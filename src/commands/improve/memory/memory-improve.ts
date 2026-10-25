@@ -665,7 +665,7 @@ export function archiveCleanupCandidate(
     },
     "Archived derived memory for recoverable cleanup.\n",
   );
-  // 4c (third review round): write the tombstone BEFORE moving the file — a
+  // Write the tombstone BEFORE moving the file — a
   // crash in between used to leave a file already at archivedPath with no
   // cleanup.md to explain it (unrecoverable: revert refuses on a missing
   // tombstone, and nothing else knows this archive dir exists). Reordered,

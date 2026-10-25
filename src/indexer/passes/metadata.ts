@@ -4,8 +4,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-// akm 0.9.0 Chunk 5 (type-merge): the durable indexed-entry shape is the merged
-// `IndexDocument` (spec §3 = the pre-merge entry shape + provenance). Its body
+// The durable indexed-entry shape is the merged
+// `IndexDocument` (the entry shape + provenance). Its body
 // — and the sub-shapes it references — live in `core/adapter/types.ts` so
 // `IndexDocument` can reference them without a `metadata.ts ↔ types.ts` cycle;
 // they are imported (and re-exported below) here. `SCOPE_KEYS` (a value) stays.
@@ -34,7 +34,7 @@ export interface StashFile {
   warnings?: string[];
 }
 
-// ── Quality semantics (v1 spec §4.2) ────────────────────────────────────────
+// ── Quality semantics ───────────────────────────────────────────────────────
 
 /**
  * Well-known quality values. `generated`, `curated`, and `enriched` are included in
@@ -73,7 +73,7 @@ export function _resetUnknownQualityWarnings(): void {
 
 /**
  * Returns true if an entry's quality marks it as "proposed". Proposed
- * entries are excluded from default search per v1 spec §4.2.
+ * entries are excluded from default search.
  */
 export function isProposedQuality(quality: string | undefined): boolean {
   return quality === "proposed";
@@ -475,7 +475,7 @@ function isWikiRole(value: unknown): value is NonNullable<IndexDocument["wikiRol
 /**
  * Parse one `verified:` family value into the `IndexDocument.provenance` shape.
  * Accepts OKF v0.2's list form and its documented single-mapping shorthand
- * ("consumers MUST treat a bare mapping as a one-element list", SPEC §5.2).
+ * ("consumers MUST treat a bare mapping as a one-element list", per OKF v0.2).
  * Tolerant: an entry without a usable `by` is dropped individually.
  */
 function parseVerifiedFamily(value: unknown): { by: string; at?: string }[] {
@@ -839,7 +839,7 @@ function hasSessionMemoryMarker(fmData: Record<string, unknown>, body: string): 
  * like a top-level `key:` mapping entry. Ordinary prose bracketed by two
  * thematic-break `---` lines fails this test, so a decorative opening
  * callout is treated as the paragraph it is instead of being discarded
- * (review finding on SPEC-8 — the block finder alone accepts ANY content up
+ * (the block finder alone accepts ANY content up
  * to an arbitrarily distant closing `---`).
  */
 function isFrontmatterShaped(lines: string[], block: { open: number; close: number }): boolean {

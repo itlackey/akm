@@ -952,9 +952,9 @@ export interface ConfigMutationResult {
 }
 
 /**
- * #945 review finding: `mutateConfig` used to write the entire extends-merged
- * *effective* config (`next`) back to the local file on every `config
- * set`/`unset`, duplicating every inherited `connections`/`improve.strategies`
+ * `mutateConfig` must not write the entire extends-merged *effective* config
+ * (`next`) back to the local file on every `config set`/`unset`: that would
+ * duplicate every inherited `connections`/`improve.strategies`
  * field into the local file on the very first ordinary write after adopting
  * `extends` — defeating the feature (shared config, ≤20-line local files)
  * and silently freezing the local copy against future upstream changes.

@@ -331,9 +331,9 @@ function localRefMissingRelPath(refType: string, refName: string, allRoots: stri
 
 /**
  * 0.9.0 grammar recognition: fully-qualified `bundle//conceptId` body-refs
- * (`BUNDLE_REF_RE`, the anchored prose form — spec §11.1 / ref-grammar decision
- * D-R3). The conceptId is reverse-translated to its legacy `type`/`name` via the
- * D-R2 static table (`typeNameFromConceptId`) so the SAME on-disk existence
+ * (`BUNDLE_REF_RE`, the anchored prose form). The conceptId is
+ * reverse-translated to its legacy `type`/`name` via the static table
+ * (`typeNameFromConceptId`) so the SAME on-disk existence
  * check applies; a conceptId whose leading segment names no known stash-subdir
  * is not a local asset ref and is skipped (foreign-adapter / cross-bundle prose).
  */

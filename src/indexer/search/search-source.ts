@@ -135,7 +135,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     });
   };
 
-  // 0.9.0 shape (spec §10.1 / D-R5): resolve from `bundles` + `defaultBundle`.
+  // Resolve from `bundles` + `defaultBundle`.
   // `bundlesToSourceEntries` returns the configured default first, then map
   // insertion order. Each entry is validated before insertion so a component
   // root can never escape its provider's materialized content root.
@@ -195,9 +195,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
  *
  * Single source of truth: each provider owns its own path. We instantiate the
  * registered {@link import("../../sources/provider").SourceProvider} for the entry
- * and call `provider.path()`. This replaces the old per-kind switch ladder
- * (filesystem path / git cache / website cache) that lived here in 0.6.0 —
- * see spec §10 step 4 and §7 "Removed from 0.6.0".
+ * and call `provider.path()`.
  *
  * The git case still does one extra step: the provider returns the cloned
  * repo dir, but the indexer walks the `content/` subdirectory inside it.
@@ -328,8 +326,8 @@ function isSuspiciousStashRoot(dir: string): boolean {
  * source is fetched only when it has never been materialized on this host.
  * `akm bundle update` is what refreshes one.
  *
- * `materialize` (default `true`) is the query-time safety valve (spec §14.3 /
- * D11): the sanctioned materialization callers (`akm index`, source
+ * `materialize` (default `true`) is the query-time safety valve: the sanctioned
+ * materialization callers (`akm index`, source
  * add/update/sync, improve's blocking preflight) pass it truthy and clone/pull/
  * fetch as needed. A READ command's inline auto-index passes `materialize:
  * false` — network is FORBIDDEN at query time, so instead of `sync()` we only

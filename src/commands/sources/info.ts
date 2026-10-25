@@ -100,7 +100,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     ...(r.enabled !== undefined ? { enabled: r.enabled } : {}),
   }));
 
-  // Stash providers — the unified `bundles` source list (spec §10.1), which
+  // Stash providers — the unified `bundles` source list, which
   // already includes the primary (`defaultBundle`) stash first.
   const configuredSources = getSources(config);
   const sourceProviders = configuredSources.map((s) => ({

@@ -860,7 +860,7 @@ function toChildRunNode(repo: WorkflowRunsRepository, rootRunId: string, row: Wo
       ? {
           resume: {
             command: `akm workflow resume ${row.id}`,
-            // biome-ignore lint/suspicious/noThenProperty: mirrors spec §4.5's real WorkflowChildRunNode.resume.then field name
+            // biome-ignore lint/suspicious/noThenProperty: mirrors the real WorkflowChildRunNode.resume.then field name
             then: `akm workflow resume ${rootRunId} && akm workflow run ${rootRunId}`,
           },
         }

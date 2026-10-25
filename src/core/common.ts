@@ -315,7 +315,7 @@ function readStashDirFromConfig(): string | undefined {
     const parsed = JSON.parse(stripJsonComments(text));
     if (typeof parsed !== "object" || parsed === null) return undefined;
     const raw = parsed as Record<string, unknown>;
-    // 0.9.0 config-shape cutover (spec §10.1): the primary stash is the
+    // The primary stash is the
     // `defaultBundle`'s filesystem `path`. Read it directly (no config module
     // import) so the primary-stash location survives the stashDir → bundles
     // migration without a runtime rewire.

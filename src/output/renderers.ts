@@ -285,7 +285,7 @@ const knowledgeMdRenderer: AssetRenderer = {
 // ── 4c. lesson-md ────────────────────────────────────────────────────────────
 
 /**
- * Renderer for the `lesson` asset type (v1 spec §13).
+ * Renderer for the `lesson` asset type.
  *
  * Lessons are markdown files with required `description` and `when_to_use`
  * frontmatter. The renderer projects both fields explicitly so consumers can

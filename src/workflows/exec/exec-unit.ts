@@ -8,7 +8,6 @@
  * bounded (timeout, output bytes, context size), with an allowlisted
  * environment ({@link childEnv}). The
  * caller redacts the outcome before anything is journaled.
- * See docs/architecture/decisions/0003-child-env-allowlist-and-provenance.md.
  */
 
 import fs from "node:fs";

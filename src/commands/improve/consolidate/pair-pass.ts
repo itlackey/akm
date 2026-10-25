@@ -799,7 +799,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   // durable half).
   const retiredKey = stripBundle(retired.asset.ref);
   const successorKey = stripBundle(successor.asset.ref);
-  // Must-fix 1 (third review round): a retire-worthy verdict the same-run
+  // A retire-worthy verdict the same-run
   // chain guard drops is not a settled "no action" — a LATER run, once the
   // conflicting retirement has been reviewed, may well mint it. Counted as
   // failed so its initiator gets no row (real data: night 1 alone judged 177
@@ -894,7 +894,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     ctx.warnings.push(
       `Pair pass: could not mint a retire proposal for ${retired.asset.ref}: ${error instanceof Error ? error.message : String(error)}`,
     );
-    // Must-fix 1: a mint failure is transient (a lock, a disk error, a
+    // A mint failure is transient (a lock, a disk error, a
     // validation hiccup) — treated the same as a same-run drop, so no row is
     // written and the pair is retried next run instead of abandoned.
     return { failed: true };
@@ -983,7 +983,7 @@ export async function runConsolidatePairPass(
 
   const rejectedPairKeys = loadRejectedPairKeys(stashDir, opts.proposalsCtx);
 
-  // Blocker 2: admit WHOLE initiators under MAX_PAIRS_PER_RUN, never
+  // Admit WHOLE initiators under MAX_PAIRS_PER_RUN, never
   // individual pairs — the old flat "top 300 candidates by cosine" cap let a
   // pending-blocked pair spend a budget slot doing nothing, and left
   // whichever initiators landed past slot 300 partially judged forever (no
@@ -1039,7 +1039,7 @@ export async function runConsolidatePairPass(
   };
 
   let failedJudgments = 0;
-  // Should-fix 3: an initiator with any failed (or never-sent) judge call
+  // An initiator with any failed (or never-sent) judge call
   // gets no ledger row — a failure attempted nothing conclusive, so writing
   // one would mean the pair is never retried.
   const failedInitiators = new Set<string>();
@@ -1051,7 +1051,7 @@ export async function runConsolidatePairPass(
       { signal: opts.signal },
     );
     results.forEach((r, idx) => {
-      // Must-fix 3: `concurrentMap` leaves an entry `undefined` for a call an
+      // `concurrentMap` leaves an entry `undefined` for a call an
       // aborted run never sent at all — `r?.failed === true` reads that as
       // `undefined === true` (false), so an unsent call counted as a clean
       // "no action" verdict. Explicit `undefined` check closes that gap.
@@ -1066,7 +1066,7 @@ export async function runConsolidatePairPass(
   // candidates were admitted (whole-initiator admission above makes this a
   // simple membership check: judgeable either has every one of an
   // initiator's candidates, or none of them) and none of them failed
-  // (should-fix 3) — including an initiator with zero candidates, which
+  // — including an initiator with zero candidates, which
   // trivially satisfies both. One left out by the cap or a pending-proposal
   // collision gets no row at all, so the next run reconsiders it rather
   // than treating it as settled.
@@ -1095,7 +1095,7 @@ export async function runConsolidatePairPass(
     initiators: initiators.length,
     initiatorsBacklog,
     pairsConsidered: candidates.length,
-    // Must-fix 3: parsed verdicts only — judgeable.length counted pairs that
+    // Parsed verdicts only — judgeable.length counted pairs that
     // were admitted, not pairs a verdict actually came back for.
     pairsJudged: judgeable.length - failedJudgments,
     labelCounts: ctx.labelCounts,
