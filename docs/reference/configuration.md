@@ -412,8 +412,9 @@ These settings, all optional, choose another place for one piece of work:
 
 Each takes `connection` or `harness`, `model` (an alias or a name), `llm` (the
 [settings a call asks for](#settings-a-call-asks-for)) and `timeoutMs`. A pass
-under `index` takes `connection`, not `harness`, and `enabled: false` turns it
-off:
+under `index` takes `connection`, not `harness` (one that names nothing runs
+where model work does: the default connection, else the default harness), and
+`enabled: false` turns it off:
 
 ```jsonc
 {
@@ -1088,7 +1089,7 @@ asset keys move as the table says.
 | `AKM_ENGINE_<NAME>_API_KEY` or `AKM_LLM_API_KEY` set in the environment | `apiKey: "$AKM_ENGINE_<NAME>_API_KEY"` (or `$AKM_LLM_API_KEY`) on that connection. |
 | `improve.strategies.<name>.engine`, `model`, `llm`, `timeoutMs` | Dropped, with a note: a strategy says which processes run, not where. |
 | `engine`, `model`, `llm`, `timeoutMs` on a strategy's process, its `qualityGate` or its `triage.judgment` | Moved to `improve.processes.<process>` or `improve.qualityGate`, with `engine` becoming `connection` or `harness` by what it named. When that place already says, the first one is kept, with a note. |
-| `index.defaults.*`, `index.<pass>.engine` | `index.*`, and `connection`. A harness cannot run an index pass: that setting is dropped, with a note. |
+| `index.defaults.*`, `index.<pass>.engine` | `index.*`, and `connection`. An index pass cannot name a harness, so an engine that named one is dropped, with a note; a pass that names nothing runs where model work does: on the default connection, else the default harness. |
 | `workflow.judgeEngine` | Dropped, with a note. |
 | `engine:` in an asset's frontmatter, a workflow step or a task source | `connection:` or `harness:`, by what the configured target is; a name it cannot place becomes `harness:`, with a note. A bundle akm may not change is skipped. |
 

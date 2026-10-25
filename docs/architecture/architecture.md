@@ -82,9 +82,11 @@ written are in [Core Principles](akm-core-principles.md).
   `tests/integration/cli-errors.test.ts`.
 - **A workflow run executes the plan frozen at creation.** The plan, the
   resolved request, the runner selection and the fan-out widths are
-  journaled when the run starts; a resumed run reads the journal, never
-  config or credentials, so editing config changes the next run and not the
-  one in flight. Pinned by `tests/workflows/child-plan-immutability.test.ts`
+  journaled when the run starts; a resumed run reads the journal and never
+  config, so editing config changes the next run and not the one in flight.
+  The journaled runner is symbolic (a `$VAR` reference, or a connection's name
+  for its stored key), so a credential is not frozen: dispatch materializes the
+  current key, for the frozen endpoint only. Pinned by `tests/workflows/child-plan-immutability.test.ts`
   and `tests/workflows/immutable-execution-v4-red.test.ts`.
 - **Host authority is local and never inferred.** Inherited config shares
   portable policy only; a disabled bundle is inert; the default bundle is
@@ -532,12 +534,16 @@ dispatch continues.
 
 Credentials stay symbolic (a `$VAR` reference, or the connection's name for its
 `credentials.json` entry) in everything `resolveExecution` returns, so a request
-and runner can be journaled. `runExecution()` reads the current value at each
-dispatch (`src/core/config/credentials.ts`) and scrubs it, with every other
-secret-looking value the child could see, from the result. Workflow resume calls
-`buildExecutionFromWire()` on the journaled `{ request, runner }` and never reads
-config or credentials, so a config edit after the freeze cannot change a
-resumed unit. The prompt-free interactive `akm agent` launch resolves its
+and runner can be journaled. `runExecution()` materializes the current value at
+each dispatch (`src/core/config/credentials.ts`: the variable's value, else the
+key stored for that connection and the endpoint it was frozen with) and scrubs it,
+with every other secret-looking value the child could see, from the result. Two
+things are therefore different at resume: workflow resume calls
+`buildExecutionFromWire()` on the journaled `{ request, runner }` and reads no
+config, so a config edit after the freeze cannot change a resumed unit's
+endpoint, model or settings; but the key is read again at dispatch (a stored key is used only for a
+connection this host's own config defines), so a rotated key reaches the resumed
+unit, and only at the endpoint it was frozen with. The prompt-free interactive `akm agent` launch resolves its
 harness directly and starts it with the terminal inherited; a connection has
 nothing to start.
 
@@ -560,9 +566,9 @@ or arbitrary remote action execution.
 Every helper under `src/llm/` is a **bounded, single-shot, stateless** call.
 Concretely:
 
-- Each public export is either a pure function (`chatCompletion`,
-  `splitMemoryIntoAtomicFacts`, `resolveIndexPassExecution`,
-  `resolveIndexPassRunner`, `parseJsonResponse`, …) or a factory that returns
+- Each public export is either a stateless function (`chatCompletion` performs
+  one HTTP request and keeps nothing between calls; `splitMemoryIntoAtomicFacts`,
+  `resolveIndexPassExecution`, `parseJsonResponse`, …) or a factory that returns
   a one-shot client tied to the symbolic runner/config the caller passes in.
 - No module under `src/llm/` keeps session, conversation, or response state at
   module scope. The only module-level singleton is the local embedder
@@ -571,10 +577,11 @@ Concretely:
   `resetLocalEmbedder()` so tests can construct a fresh pipeline.
 - `callStructured()` is the common bounded structured-LLM seam: it adapts an
   already-resolved symbolic runner into an inline resolved request, lowers it,
-  and dispatches without re-reading aliases or credentials. Index callers use
-  `resolveIndexPassExecution()` to freeze the typed `{ runner, notices }`
-  selection once per invocation. `resolveIndexPassRunner()` is its readiness
-  projection, not a second dispatch seam. Which improve processes run is chosen
+  and dispatches it through `runExecution`, which materializes the connection's
+  key at dispatch like every other dispatch and re-runs no alias resolution.
+  Index callers use `resolveIndexPassExecution()` to freeze the typed
+  `{ runner, notices }` selection once per invocation; there is no separate
+  readiness projection. Which improve processes run is chosen
   by `improve.strategies`, and where each runs by `improve.processes`; see
   `docs/reference/configuration.md` for canonical config paths.
 
