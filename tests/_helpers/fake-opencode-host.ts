@@ -29,6 +29,7 @@ import { overrideSeam } from "./seams";
 export interface FakeOpencodeCall {
   /** The kind of host the session ran on. */
   readonly kind: HostSpec["kind"];
+  readonly sessionID: string;
   /** The OpenCode config content the host was created with. */
   readonly config?: Record<string, unknown>;
   readonly prompt: string;
@@ -72,6 +73,8 @@ export interface FakeOpencodeHosts {
   readonly specs: HostSpec[];
   /** The tools akm's plugin registered, by host kind. */
   readonly tools: Record<string, string[]>;
+  /** Run a tool akm's plugin registered, as OpenCode would for a session on the host of `kind`. */
+  runTool(kind: HostSpec["kind"], name: string, input: unknown, sessionID: string): Promise<{ content: string }>;
   /** Hosts created and closed so far. */
   readonly lifecycle: { created: number; closed: number };
 }
@@ -84,16 +87,26 @@ interface HookEvent {
   request: Request;
 }
 
+type ToolExecute = (input: unknown, context: { sessionID: string }) => Promise<{ content: string }>;
+
 /** Run the plugin's setup against a context that keeps what it registers. */
-async function loadPlugin(
-  spec: HostSpec,
-): Promise<{ tools: string[]; requestHooks: Array<(e: HookEvent) => Promise<void>> }> {
+async function loadPlugin(spec: HostSpec): Promise<{
+  tools: string[];
+  executes: Map<string, ToolExecute>;
+  requestHooks: Array<(e: HookEvent) => Promise<void>>;
+}> {
   const tools: string[] = [];
+  const executes = new Map<string, ToolExecute>();
   const requestHooks: Array<(e: HookEvent) => Promise<void>> = [];
   const context = {
     tool: {
-      transform: async (edit: (editor: { add: (tool: { name: string }) => void }) => void) =>
-        edit({ add: (tool) => void tools.push(tool.name) }),
+      transform: async (edit: (editor: { add: (tool: { name: string; execute: ToolExecute }) => void }) => void) =>
+        edit({
+          add: (tool) => {
+            tools.push(tool.name);
+            executes.set(tool.name, tool.execute);
+          },
+        }),
     },
     session: {
       hook: async (name: string, callback: (e: HookEvent) => Promise<void>) => {
@@ -102,13 +115,14 @@ async function loadPlugin(
     },
   };
   await spec.plugin.setup(context as never);
-  return { tools, requestHooks };
+  return { tools, executes, requestHooks };
 }
 
 export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpencodeHosts {
   const calls: FakeOpencodeCall[] = [];
   const specs: HostSpec[] = [];
   const tools: Record<string, string[]> = {};
+  const executes: Record<string, Map<string, ToolExecute>> = {};
   const lifecycle = { created: 0, closed: 0 };
   overrideSeam(_setOpencodeHostFactoryForTests, async (spec) => {
     await options.ready;
@@ -116,6 +130,7 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
     specs.push(spec);
     const plugin = await loadPlugin(spec);
     tools[spec.kind] = plugin.tools;
+    executes[spec.kind] = plugin.executes;
     const sessions = new Map<
       string,
       {
@@ -173,6 +188,7 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
           const model = session.create.model as { providerID: string; id: string } | undefined;
           const call: FakeOpencodeCall = {
             kind: spec.kind,
+            sessionID,
             ...(spec.content ? { config: spec.content } : {}),
             prompt: text,
             ...(session.system !== undefined ? { system: session.system } : {}),
@@ -245,5 +261,10 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
     };
     return host;
   });
-  return { calls, specs, tools, lifecycle };
+  const runTool: FakeOpencodeHosts["runTool"] = async (kind, name, input, sessionID) => {
+    const execute = executes[kind]?.get(name);
+    if (!execute) throw new Error(`no tool ${name} on the ${kind} host`);
+    return execute(input, { sessionID });
+  };
+  return { calls, specs, tools, runTool, lifecycle };
 }

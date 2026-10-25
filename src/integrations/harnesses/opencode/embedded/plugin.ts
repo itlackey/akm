@@ -7,6 +7,9 @@
  *
  * - **akm's read tools** (`akm_search`, `akm_show`, `akm_curate`): they run in
  *   akm's process, so an agent on either host reads the library without a shell.
+ *   A call records its usage event under the source of the run it is in (the
+ *   session's `AKM_EVENT_SOURCE`), so model work's own reads never count as user
+ *   demand.
  * - **Per-session request settings**: what a call resolves to differs from
  *   session to session on one shared host: the request fields (the connection's
  *   and model entry's, and the portable settings of the call, in the endpoint's
@@ -27,6 +30,8 @@ export interface SessionSettings {
   readonly requestFields?: Readonly<Record<string, unknown>>;
   /** The endpoint's key, sent as a bearer token with the session's model requests. */
   readonly apiKey?: string;
+  /** The run's `AKM_EVENT_SOURCE`, which akm's read tools record their usage events under. */
+  readonly eventSource?: string;
 }
 
 /** The settings of the sessions a host is running, by session id. */
@@ -69,9 +74,10 @@ export function akmPlugin(sessions: SessionRegistry): Plugin.Plugin {
             description: tool.description,
             input: tool.inputSchema,
             options: { codemode: false },
-            execute: async (input: unknown) => {
+            execute: async (input: unknown, context: { sessionID: string }) => {
               try {
-                return { content: await tool.run(isRecord(input) ? input : {}) };
+                const eventSource = sessions.get(context.sessionID)?.eventSource;
+                return { content: await tool.run(isRecord(input) ? input : {}, { eventSource }) };
               } catch (error) {
                 return { content: `${tool.name} failed: ${toErrorMessage(error)}` };
               }

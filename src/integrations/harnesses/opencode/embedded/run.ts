@@ -146,7 +146,8 @@ async function runSession(
       ...(modelWork ? { permissions: MODEL_WORK_PERMISSIONS } : {}),
     });
     sessionId = session.id;
-    sessions.set(session.id, target.settings);
+    const eventSource = opts.env?.AKM_EVENT_SOURCE;
+    sessions.set(session.id, { ...target.settings, ...(eventSource ? { eventSource } : {}) });
     if (opts.env && Object.keys(opts.env).length > 0) {
       await host.sessions.environment({ sessionID: session.id, variables: opts.env });
     }

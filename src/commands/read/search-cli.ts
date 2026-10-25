@@ -20,7 +20,7 @@ import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared"
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
 import { UsageError } from "../../core/errors";
-import { resolveUsageEventSource } from "../../indexer/usage/usage-events";
+import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { getOutputMode, type OutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/html-render";
 import type { FragmentContextMode, ShowDetailLevel } from "../../sources/types";
@@ -164,7 +164,16 @@ export const curateCommand = defineJsonCommand({
  * reading the process-level singleton.
  */
 export async function runCurate(
-  args: { query?: string; type?: string; limit?: string; from?: string; filters?: string[]; belief?: string },
+  args: {
+    query?: string;
+    type?: string;
+    limit?: string;
+    from?: string;
+    filters?: string[];
+    belief?: string;
+    /** In-process callers (an agent's tool) name the run's source; the CLI reads `AKM_EVENT_SOURCE`. */
+    eventSource?: UsageEventSource;
+  },
   outputMode: Pick<OutputMode, "detail" | "shape">,
 ): Promise<CurateResponse> {
   if (!args.query || !String(args.query).trim()) {
@@ -182,7 +191,7 @@ export async function runCurate(
     source: parseSearchSource(args.from ?? "local"),
     filters: parseScopeFilterFlags(args.filters ?? [], "--filter"),
     belief: parseBeliefFilterMode(args.belief ?? "current"),
-    eventSource: resolveUsageEventSource(),
+    eventSource: args.eventSource ?? resolveUsageEventSource(),
     attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
   });
 }

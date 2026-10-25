@@ -281,8 +281,13 @@ export async function runExecution(
   for (const key of OPERATIONAL_OPTIONS) {
     if (operational[key] !== undefined) (opts as Record<string, unknown>)[key] = operational[key];
   }
-  if (options.eventSource !== undefined) {
-    opts.env = { ...execution.options.env, AKM_EVENT_SOURCE: options.eventSource };
+  // Model work is akm's own traffic: its reads and its agents' commands are the improve pipeline's, never the
+  // user's demand. A caller's source (a task, say) wins, as does one the unit's own `env:` binds.
+  const eventSource =
+    options.eventSource ??
+    (execution.request.modelWork && execution.options.env?.AKM_EVENT_SOURCE === undefined ? "improve" : undefined);
+  if (eventSource !== undefined) {
+    opts.env = { ...execution.options.env, AKM_EVENT_SOURCE: eventSource };
   }
   const chat = options.chat ?? chatCompletion;
   const llm: LlmCall | undefined =

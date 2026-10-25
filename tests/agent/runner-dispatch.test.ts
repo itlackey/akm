@@ -72,6 +72,39 @@ const refuse = (kind: string) => async (): Promise<AgentRunResult> => {
   throw new Error(`the ${kind} transport must not be called`);
 };
 
+describe("the event source a dispatch is stamped with", () => {
+  /** The AKM_EVENT_SOURCE the harness was run with. */
+  async function stamped(execution: BuiltExecution, options: RunExecutionOptions = {}): Promise<string | undefined> {
+    let seen: string | undefined;
+    await runExecution(execution, {
+      ...options,
+      runAgent: async (_profile, _prompt, opts) => {
+        seen = opts.env?.AKM_EVENT_SOURCE;
+        return okResult("ok");
+      },
+    });
+    return seen;
+  }
+
+  test("model work is the improve pipeline's when its caller names no source", async () => {
+    expect(await stamped(built(claudeHarness, "p", undefined, true))).toBe("improve");
+  });
+
+  test("a source the caller names wins", async () => {
+    expect(await stamped(built(claudeHarness, "p", undefined, true), { eventSource: "task" })).toBe("task");
+  });
+
+  test("a source the unit's own environment binds wins", async () => {
+    const execution = built(claudeHarness, "p", { environment: { AKM_EVENT_SOURCE: "audit" } }, true);
+    expect(await stamped(execution)).toBe("audit");
+  });
+
+  test("other work is stamped only when its caller names a source", async () => {
+    expect(await stamped(built(claudeHarness, "p"))).toBeUndefined();
+    expect(await stamped(built(claudeHarness, "p"), { eventSource: "task" })).toBe("task");
+  });
+});
+
 describe("runExecution routes each runner kind to its transport", () => {
   test("a harness runner goes to runAgent with its profile and prompt", async () => {
     const calls: Array<{ profile: AgentProfile; prompt: string }> = [];

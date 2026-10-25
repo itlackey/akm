@@ -14,16 +14,27 @@ import { runCurate } from "../../commands/read/search-cli";
 import { akmShowUnified } from "../../commands/read/show";
 import { loadConfig } from "../../core/config/config";
 import { withQuiet } from "../../core/warn";
+import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { resolveOutputMode } from "../../output/context";
 import { stdoutText } from "../../output/stdout";
+
+/** What a harness knows about the call: the provenance of the run it is in. */
+export interface AkmReadToolContext {
+  /** The run's `AKM_EVENT_SOURCE`; absent for a run nobody stamped, which counts as the user's. */
+  readonly eventSource?: string;
+}
 
 export interface AkmReadTool {
   readonly name: "akm_search" | "akm_show" | "akm_curate";
   readonly description: string;
   /** JSON Schema of the tool input. */
   readonly inputSchema: Record<string, unknown>;
-  readonly run: (input: Record<string, unknown>) => Promise<string>;
+  readonly run: (input: Record<string, unknown>, context?: AkmReadToolContext) => Promise<string>;
 }
+
+/** The usage-event source a tool call records: the run's own, validated; the default only for a run with none. */
+const sourceOf = (context: AkmReadToolContext | undefined): UsageEventSource | undefined =>
+  context?.eventSource === undefined ? undefined : resolveUsageEventSource({ AKM_EVENT_SOURCE: context.eventSource });
 
 const str = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
@@ -58,13 +69,14 @@ export const AKM_READ_TOOLS: readonly AkmReadTool[] = [
       },
       required: ["query"],
     },
-    run: (input) =>
+    run: (input, context) =>
       asCli("curate", (mode) =>
         runCurate(
           {
             query: required(input, "query"),
             type: str(input.type),
             limit: positiveInt(input.limit) === undefined ? undefined : String(input.limit),
+            eventSource: sourceOf(context),
           },
           mode,
         ),
@@ -82,15 +94,21 @@ export const AKM_READ_TOOLS: readonly AkmReadTool[] = [
       },
       required: ["query"],
     },
-    run: (input) =>
+    run: (input, context) =>
       asCli("search", () =>
-        akmSearch({ query: required(input, "query"), type: str(input.type), limit: positiveInt(input.limit) }),
+        akmSearch({
+          query: required(input, "query"),
+          type: str(input.type),
+          limit: positiveInt(input.limit),
+          eventSource: sourceOf(context),
+        }),
       ),
   },
   {
     name: "akm_show",
     description: "Read one akm asset by its ref, as returned by akm_curate or akm_search.",
     inputSchema: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] },
-    run: (input) => asCli("show", () => akmShowUnified({ ref: required(input, "ref") })),
+    run: (input, context) =>
+      asCli("show", () => akmShowUnified({ ref: required(input, "ref"), eventSource: sourceOf(context) })),
   },
 ];
