@@ -2934,7 +2934,9 @@ is called `default`), there is nothing to degrade to: the run stops at planning
 with exit 78, naming what is missing, before it takes a lock, writes the index
 or opens a log, and `--dry-run` stops the same way. No flag asks for that. (The
 0.9 `--require-engines` is still accepted and does nothing, with one warning, so
-a task installed for 0.9 keeps running; `akm health` checks whether each
+a task installed for 0.9 keeps running. It used to refuse the run unless every
+enabled process had a usable target; that check is gone, and `akm health`
+(`akm health && akm improve`, which stops on exit 4) is what checks whether each
 connection answers and each harness is installed.)
 
 `--timeout-ms` is a run-wide wall-clock budget: when it expires, the run

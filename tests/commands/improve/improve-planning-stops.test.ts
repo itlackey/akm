@@ -13,6 +13,7 @@
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { runConnectionsAndHarnessesCheck } from "../../../src/commands/health/connections-and-harnesses-check";
 import type { akmImprove } from "../../../src/commands/improve/improve";
 import { _setAkmImproveForTests } from "../../../src/commands/improve/improve-cli";
 import { _resetWarnOnceForTests } from "../../../src/core/warn";
@@ -137,6 +138,67 @@ describe("akm improve with something to run on", () => {
 
     expect(result.code).toBe(0);
     expect(result.stderr).toContain("--require-engines is retired and has no effect");
+  });
+
+  test("--require-engines no longer asks that every process have somewhere to run: the runnable one runs and the other is reported", async () => {
+    const stash = makeStashDir();
+    disposers.push(stash);
+    _resetWarnOnceForTests();
+    const { env } = freshEnv(stash.dir);
+    // Two connections and none called default: only the process pinned to one has a place to run.
+    const models = { fast: "m", balanced: "m", reasoning: "m" };
+    const config = {
+      ...NOTHING,
+      connections: {
+        cloud: { endpoint: "http://127.0.0.1:1/v1", models },
+        lab: { endpoint: "http://127.0.0.1:2/v1", models },
+      },
+      improve: { processes: { reflect: { connection: "cloud" } } },
+    } as never;
+
+    const result = await withEnv(env, async () => {
+      writeSandboxConfig(config);
+      return runCliCapture(["improve", "--dry-run", "--require-engines"]);
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain("--require-engines is retired and has no effect");
+    const run = JSON.parse(result.stdout) as {
+      skippedProcesses?: Array<{ process: string; configKey: string; reason: string }>;
+      plan: { processes: Array<{ process: string; enabled: boolean; engine?: string; unavailable?: unknown }> };
+    };
+    const process = (name: string) => run.plan.processes.find((entry) => entry.process === name);
+    expect(process("reflect")).toMatchObject({ enabled: true, engine: "cloud" });
+    expect(process("distill")).toMatchObject({ enabled: false, unavailable: { configKey: expect.any(String) } });
+    expect(run.skippedProcesses?.map((item) => item.process)).toContain("distill");
+    expect(run.skippedProcesses?.map((item) => item.process)).not.toContain("reflect");
+    expect(run.skippedProcesses?.[0]?.reason).toContain("not configured");
+  });
+
+  test("--require-engines no longer checks that a harness program is installed: the run plans it, and `akm health` is what names it", async () => {
+    const stash = makeStashDir();
+    disposers.push(stash);
+    const { env } = freshEnv(stash.dir);
+    const config = {
+      ...ONE_CONNECTION,
+      harnesses: { claude: { bin: "akm-test-claude-not-installed" } },
+      improve: { processes: { distill: { harness: "claude" } } },
+    } as never;
+
+    const result = await withEnv(env, async () => {
+      writeSandboxConfig(config);
+      return runCliCapture(["improve", "--dry-run", "--require-engines"]);
+    });
+    const health = await withEnv(env, async () => {
+      writeSandboxConfig(config);
+      return runConnectionsAndHarnessesCheck({ which: () => undefined });
+    });
+
+    expect(result.code).toBe(0);
+    const run = JSON.parse(result.stdout) as { plan: { processes: Array<{ process: string; engine?: string }> } };
+    expect(run.plan.processes.find((entry) => entry.process === "distill")).toMatchObject({ engine: "claude" });
+    expect(health.status).toBe("warn");
+    expect(health.message).toContain('harness "claude" (claude) was not found on PATH');
   });
 
   test("a process pinned to a connection that is not configured stops planning, naming it, and is not given the default", async () => {

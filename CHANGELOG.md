@@ -239,8 +239,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   does nothing: `akm improve` stops at planning (exit 78) before any lock, index
   write or log when no process that calls a model has a connection or harness to
   run on (or there are several and none is called `default`), with no flag asking
-  for it. `akm health` checks that each connection answers and each harness is
-  installed.
+  for it. That is weaker than what the flag did, and a scheduled caller that
+  relied on it loses that: no check before the run that every enabled process
+  has a usable target and a working completion. A run with some processes that
+  can run and some that cannot runs the former and lists the rest in
+  `skippedProcesses`, and a configured but unusable target (a harness program
+  that is not installed, a connection that does not answer) is found when the
+  process dispatches. Run `akm health` first instead (`akm health && akm
+  improve`; it exits 4 on a warning): its `connections-and-harnesses` check names
+  each connection that does not answer, each harness program that is not
+  installed and a missing default.
 - A workflow run frozen by an earlier release (plan irVersion 7 or lower) whose
   plan holds a command target is no longer resumed: it is abandoned (status
   `failed`) with a message naming `akm workflow run <ref>` to start afresh.
