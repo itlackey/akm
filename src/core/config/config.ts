@@ -203,7 +203,7 @@ function readModelsOverlay(): unknown {
  * through this pipeline, before it deletes the keys the schema does not know).
  */
 function readRetiredEngines(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
-  const { config, notes, changed } = convertEngineConfig(raw, { modelsOverlay: readModelsOverlay() });
+  const { config, notes, changed } = convertEngineConfig(raw, { modelsOverlay: readModelsOverlay(), env: process.env });
   if (!changed) return raw;
   warnOnce(
     `config:retired-engines:${sourcePath ?? "inline"}`,

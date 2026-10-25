@@ -13,6 +13,7 @@ import { getHarness } from "../../integrations/harnesses";
  */
 import { isRecord } from "../common";
 import { inferenceWireFields, type LlmInference } from "../llm-inference";
+import { deepMergeConfig } from "./deep-merge";
 import { modelForEveryAlias } from "./model-aliases";
 import { isEnvReference } from "./schema/primitives";
 
@@ -21,7 +22,7 @@ type Dict = Record<string, unknown>;
 export interface ConvertEnginesOptions {
   /** The parsed user `models.json`: alias to engine column to model. */
   readonly modelsOverlay?: unknown;
-  /** Where an engine's implicit `AKM_ENGINE_<NAME>_API_KEY` is looked for; a variable that is set becomes the connection's `$VAR` key. */
+  /** Where an engine's implicit key variable (`AKM_ENGINE_<NAME>_API_KEY`, `AKM_LLM_API_KEY`) is looked for; one that is set becomes the connection's `$VAR` key. */
   readonly env?: NodeJS.ProcessEnv;
 }
 
@@ -67,6 +68,18 @@ const EXECUTION_KEYS = ["connection", "harness", "model", "llm", "timeoutMs"] as
 const str = (value: unknown): string | undefined => (typeof value === "string" && value ? value : undefined);
 const allAliases = (model: string | undefined): Dict | undefined =>
   model === undefined ? undefined : modelForEveryAlias(model);
+
+/**
+ * The environment variable an engine's key used to be read from without being
+ * named in config, when it is set: `AKM_ENGINE_<NAME>_API_KEY` for any engine,
+ * and `AKM_LLM_API_KEY` for the engine `defaults.llmEngine` named.
+ */
+function implicitKeyVariable(name: string, defaults: Dict, env: NodeJS.ProcessEnv | undefined): string | undefined {
+  const own = `AKM_ENGINE_${name.toUpperCase().replaceAll("-", "_")}_API_KEY`;
+  if (env?.[own]?.trim()) return own;
+  if (name === str(defaults.llmEngine) && env?.AKM_LLM_API_KEY?.trim()) return "AKM_LLM_API_KEY";
+  return undefined;
+}
 
 /** `holder[key]` as an object, made on `holder` when it is not one yet. */
 function objectAt(holder: Dict, key: string): Dict {
@@ -122,8 +135,8 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
         `engines.${name}: its ${engine.apiKeyFile !== undefined ? "apiKeyFile" : "apiKey"} is not read from config any more; \`akm migrate apply\` moves it to credentials.json.`,
       );
     } else {
-      const variable = `AKM_ENGINE_${name.toUpperCase().replaceAll("-", "_")}_API_KEY`;
-      if (options.env?.[variable]?.trim()) connection.apiKey = `$${variable}`;
+      const variable = implicitKeyVariable(name, defaults, options.env);
+      if (variable !== undefined) connection.apiKey = `$${variable}`;
     }
     const models = allAliases(str(engine.model));
     if (models) connection.models = models;
@@ -170,11 +183,25 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
     connections: renamed(connections, defaultConnection),
     harnesses: renamed(harnesses, defaultHarness),
   };
+  const defaultHarnessName =
+    "default" in named.harnesses
+      ? "default"
+      : Object.keys(named.harnesses).length === 1
+        ? Object.keys(named.harnesses)[0]
+        : undefined;
+  if (defaultHarnessName !== undefined && (defaultEngine === undefined || runtimes.has(defaultEngine))) {
+    notes.push(
+      `Agent work ran on akm's own runtime${defaultEngine === undefined ? "" : ` (engines.${defaultEngine})`}; with the harness "${defaultHarnessName}" configured it now runs there. Remove that harness to keep agent work on akm's runtime.`,
+    );
+  }
   /** The connection or harness an old engine name now is. */
   const target = (engine: string): { connection: string } | { harness: string } | undefined => {
-    const runtime = runtimes.get(engine);
-    if (runtime !== undefined)
-      return runtime in connections ? { connection: newName(runtime, defaultConnection) } : undefined;
+    if (runtimes.has(engine)) {
+      const runtime = runtimes.get(engine);
+      return runtime !== undefined && runtime in connections
+        ? { connection: newName(runtime, defaultConnection) }
+        : undefined;
+    }
     if (engine in harnesses) return { harness: newName(engine, defaultHarness) };
     if (engine in connections) return { connection: newName(engine, defaultConnection) };
     return { connection: engine };
@@ -323,20 +350,25 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
   }
 
   // ── assemble, keeping the file's key order ─────────────────────────────────
+  for (const [name, harness] of Object.entries(named.harnesses)) {
+    if ((harness as Dict).platform === name) delete (harness as Dict).platform;
+  }
+  // What the file writes under `connections` / `harnesses` itself is read with the converted entries, whichever
+  // comes first in the file: the written entry wins field by field, so a write beside `engines` is enough.
+  const written = (value: unknown): Dict => (isRecord(value) ? (value as Dict) : {});
+  const mergedConnections = deepMergeConfig(named.connections, written(out.connections)) as Dict;
+  const mergedHarnesses = deepMergeConfig(named.harnesses, written(out.harnesses)) as Dict;
   const config: Dict = {};
+  let placed = false;
   for (const [key, value] of Object.entries(out)) {
     if (key === "defaults") continue;
-    if (key !== "engines") {
+    if (key !== "engines" && key !== "connections" && key !== "harnesses") {
       config[key] = value;
-      continue;
+    } else if (!placed) {
+      placed = true;
+      if (Object.keys(mergedConnections).length > 0) config.connections = mergedConnections;
+      if (Object.keys(mergedHarnesses).length > 0) config.harnesses = mergedHarnesses;
     }
-    const merged = { ...(isRecord(out.connections) ? out.connections : {}), ...named.connections };
-    const mergedHarnesses = { ...(isRecord(out.harnesses) ? out.harnesses : {}), ...named.harnesses };
-    for (const [name, harness] of Object.entries(named.harnesses)) {
-      if ((harness as Dict).platform === name) delete (harness as Dict).platform;
-    }
-    if (Object.keys(merged).length > 0) config.connections = merged;
-    if (Object.keys(mergedHarnesses).length > 0) config.harnesses = mergedHarnesses;
   }
   return { config: changed ? config : raw, notes, changed };
 }

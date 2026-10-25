@@ -16,6 +16,7 @@ import { resolveQualityGateJudge } from "../src/commands/improve/stage";
 import { stripJsonComments } from "../src/core/common";
 import {
   type AkmConfig,
+  type ConnectionConfig,
   loadUserConfig,
   mutateConfig,
   normalizeConfigFile,
@@ -26,6 +27,7 @@ import { AkmConfigSchema } from "../src/core/config/config-schema";
 import { convertEngineConfig } from "../src/core/config/convert-engines";
 import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+import { withEnvSync } from "./_helpers/sandbox";
 
 type Dict = Record<string, unknown>;
 
@@ -125,6 +127,26 @@ describe("engines.<n> kind llm → connections.<n>", () => {
     expect(((explicit.config.connections as Dict)["my-lab"] as Dict).apiKey).toBe("$OTHER");
   });
 
+  test("AKM_LLM_API_KEY, the key of the engine defaults.llmEngine named, becomes that connection's $VAR key", () => {
+    const engines = { lab: llm(), other: llm() };
+    const defaults = { llmEngine: "lab" };
+    const env = { AKM_LLM_API_KEY: "secret" } as NodeJS.ProcessEnv;
+    const { config } = convert({ engines, defaults }, { env });
+    expect((config.connections as Dict).default).toMatchObject({ apiKey: "$AKM_LLM_API_KEY" });
+    // Only the default LLM engine read it; a more specific variable and an explicit key come first.
+    expect(((config.connections as Dict).other as Dict).apiKey).toBeUndefined();
+    const specific = convert(
+      { engines, defaults },
+      { env: { ...env, AKM_ENGINE_LAB_API_KEY: "specific" } as NodeJS.ProcessEnv },
+    );
+    expect((specific.config.connections as Dict).default).toMatchObject({ apiKey: "$AKM_ENGINE_LAB_API_KEY" });
+    const explicit = convert({ engines: { lab: llm({ apiKey: "$OTHER" }) }, defaults }, { env });
+    expect(((explicit.config.connections as Dict).default as Dict).apiKey).toBe("$OTHER");
+    expect(((convert({ engines, defaults }, { env: {} }).config.connections as Dict).default as Dict).apiKey).toBe(
+      undefined,
+    );
+  });
+
   test("a key the old schema did not know is dropped, not sent to the endpoint as a request field", () => {
     const { config, notes } = convert({ engines: { lab: llm({ temprature: 0.1 }) } });
     expect((config.connections as Dict).lab).not.toHaveProperty("temprature");
@@ -175,6 +197,33 @@ describe("engines.<n> kind agent → harnesses.<n>", () => {
     });
     expect(config).not.toHaveProperty("harnesses");
     expect(notes.some((note) => note.includes("engines.sdk") && note.includes("opencode-sdk"))).toBe(true);
+  });
+});
+
+describe("agent work that moves from akm's runtime to a harness", () => {
+  test("a note says so when defaults.engine named the runtime and one harness is configured", () => {
+    const engines = {
+      sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "lab" },
+      lab: llm(),
+      claude: { kind: "agent", platform: "claude" },
+    };
+    const named = convert({ engines, defaults: { engine: "sdk", llmEngine: "lab" } });
+    expect(named.notes.some((note) => note.includes("engines.sdk") && note.includes('harness "claude"'))).toBe(true);
+    // The same when nothing named a default engine: agent work then ran on the runtime too.
+    const unset = convert({ engines, defaults: { llmEngine: "lab" } });
+    expect(unset.notes.some((note) => note.includes("akm's own runtime") && note.includes('harness "claude"'))).toBe(
+      true,
+    );
+  });
+
+  test("no note when the harness was already the default agent, or there is no harness", () => {
+    const harnessDefault = convert({
+      engines: { lab: llm(), claude: { kind: "agent", platform: "claude" } },
+      defaults: { engine: "claude", llmEngine: "lab" },
+    });
+    expect(harnessDefault.notes.filter((note) => note.includes("akm's own runtime"))).toEqual([]);
+    const none = convert({ engines: { lab: llm() }, defaults: { llmEngine: "lab" } });
+    expect(none.notes.filter((note) => note.includes("akm's own runtime"))).toEqual([]);
   });
 });
 
@@ -440,6 +489,15 @@ describe("what a strategy no longer decides, and per-process names", () => {
     expect(text).not.toContain("reflect.model");
   });
 
+  test("a per-process engine that was the runtime with no connection behind it is dropped with a note", () => {
+    const { config, notes } = convert({
+      engines: { lab: llm(), sdk: { kind: "agent", platform: "opencode-sdk" } },
+      improve: { strategies: { nightly: { processes: { reflect: { engine: "sdk", model: "fast" } } } } },
+    });
+    expect((config.improve as Dict).processes).toEqual({ reflect: { model: "fast" } });
+    expect(notes.some((note) => note.includes("reflect.engine") && note.includes('"sdk"'))).toBe(true);
+  });
+
   test("a harness and a connection named by different strategies for one process are one choice, not two", () => {
     const { config } = convert({
       engines: { lab: llm(), claude: { kind: "agent", platform: "claude" } },
@@ -466,12 +524,41 @@ describe("what is already current is left alone", () => {
     expect(result.notes).toEqual([]);
   });
 
+  test("whatever order the file lists them in, written connections and harnesses are read with the converted ones", () => {
+    const engines = { lab: llm(), claude: { kind: "agent", platform: "claude" } };
+    const written = {
+      connections: { other: { endpoint: "http://other/v1", models: { fast: "o" } } },
+      harnesses: { codex: {} },
+    };
+    for (const document of [
+      { engines, ...written },
+      { ...written, engines },
+      { connections: written.connections, engines, harnesses: written.harnesses },
+    ]) {
+      const { config } = convert(document);
+      expect(Object.keys(config.connections as Dict).sort()).toEqual(["lab", "other"]);
+      expect(Object.keys(config.harnesses as Dict).sort()).toEqual(["claude", "codex"]);
+    }
+  });
+
+  test("a written entry wins field by field, so a partial write beside engines edits the converted entry", () => {
+    const { config } = convert({
+      connections: { lab: { models: { fast: "edited" } } },
+      engines: { lab: llm({ apiKey: "$LAB_KEY" }) },
+    });
+    expect((config.connections as Dict).lab).toEqual({
+      endpoint: "http://lab:8080/v1/chat/completions",
+      apiKey: "$LAB_KEY",
+      models: { fast: "edited", balanced: "qwen3-32b", reasoning: "qwen3-32b" },
+    });
+  });
+
   test("connections already written win over a converted engine of the same name", () => {
     const { config } = convert({
       engines: { lab: llm({ model: "old" }) },
       connections: { lab: { endpoint: "http://new/v1", models: { fast: "new" } } },
     });
-    expect((config.connections as Dict).lab).toEqual({ endpoint: "http://new/v1", models: { fast: "new" } });
+    expect((config.connections as Dict).lab).toMatchObject({ endpoint: "http://new/v1", models: { fast: "new" } });
   });
 
   test("the converter does not modify its input", () => {
@@ -536,6 +623,52 @@ describe("the loader reads the retired form in memory", () => {
     expect(retired).toHaveLength(1);
     expect(retired[0]).toContain("akm migrate apply");
     expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
+  });
+
+  test("an engine's implicit key variables, set in the environment, keep working through the loader", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      engines: { lab: llm(), other: llm() },
+      defaults: { llmEngine: "lab" },
+    });
+    const loaded = withEnvSync({ AKM_LLM_API_KEY: "a", AKM_ENGINE_OTHER_API_KEY: "b" }, () => {
+      resetConfigCache();
+      return loadUserConfig();
+    });
+    expect(loaded.connections?.default?.apiKey).toBe("$AKM_LLM_API_KEY");
+    expect(loaded.connections?.other?.apiKey).toBe("$AKM_ENGINE_OTHER_API_KEY");
+    resetConfigCache();
+    expect(loadUserConfig().connections?.default?.apiKey).toBeUndefined();
+  });
+
+  test("a connection written beside engines is read with the converted ones", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      engines: { lab: llm() },
+      defaults: { llmEngine: "lab" },
+    });
+    mutateConfig((current) => ({
+      ...current,
+      connections: {
+        ...current.connections,
+        extra: { endpoint: "http://extra/v1", models: { fast: "x" } },
+        // A leaf of a converted entry: only that leaf is written.
+        default: { ...(current.connections?.default as ConnectionConfig), timeoutMs: 5000 },
+      },
+    }));
+    const after = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as Dict;
+    expect(after.engines).toBeDefined();
+    expect(after.connections).toEqual({
+      extra: { endpoint: "http://extra/v1", models: { fast: "x" } },
+      default: { timeoutMs: 5000 },
+    });
+    resetConfigCache();
+    const loaded = loadUserConfig();
+    expect(Object.keys(loaded.connections ?? {}).sort()).toEqual(["default", "extra"]);
+    expect(loaded.connections?.default).toMatchObject({
+      endpoint: "http://lab:8080/v1/chat/completions",
+      timeoutMs: 5000,
+    });
   });
 
   test("reads the user models.json as the overlay", () => {
