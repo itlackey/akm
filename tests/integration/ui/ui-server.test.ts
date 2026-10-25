@@ -397,11 +397,35 @@ describe("endpoints", () => {
     const sources = Object.fromEntries(config.entries.map((e: { path: string; source: string }) => [e.path, e.source]));
     expect(sources.semanticSearchMode).toBe("file");
     expect(sources["connections.default.models.fast"]).toBe("file");
-    expect(config.engines).toHaveLength(1);
-    expect(config.engines[0]).toMatchObject({ name: "default", kind: "connection", models: { fast: "chat-model" } });
-    expect(config.engines[0].endpoint).toContain("token=%5Bredacted%5D");
-    expect(config.engines[0].apiKey).toBeUndefined();
+    expect(config.engines).toBeUndefined();
+    expect(config.connections).toHaveLength(1);
+    expect(config.connections[0]).toMatchObject({ name: "default", models: { fast: "chat-model" } });
+    expect(config.connections[0].kind).toBeUndefined();
+    expect(config.connections[0].endpoint).toContain("token=%5Bredacted%5D");
+    expect(config.connections[0].apiKey).toBeUndefined();
+    expect(config.harnesses).toEqual([]);
     expect(config.config.someToken).toBe("[redacted]");
+  });
+
+  test("GET /api/config: harnesses are listed by name with their own keys", async () => {
+    await seed();
+    const config = loadConfig();
+    writeSandboxConfig({
+      ...config,
+      harnesses: {
+        default: { platform: "claude" },
+        codex: {},
+        "claude-work": { platform: "claude", bin: "/opt/claude-work/bin/claude" },
+      },
+    });
+    resetConfigCache();
+    const s = await start();
+    const { harnesses } = await data(s, "/api/config");
+    expect(harnesses).toEqual([
+      { name: "default", platform: "claude" },
+      { name: "codex" },
+      { name: "claude-work", platform: "claude", bin: "/opt/claude-work/bin/claude" },
+    ]);
   });
 
   test("GET /api/proposals and /api/proposals/:id", async () => {

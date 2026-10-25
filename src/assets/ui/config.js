@@ -34,20 +34,32 @@ function node(key, value, path, sources, depth) {
   return html`<li class="leaf"><span class="mono key">${key}</span><span class="leaf-value">${leafValue(value)}</span>${sourceBadge(source)}</li>`;
 }
 
-function enginesTable(engines) {
-  if (engines.length === 0) return emptyState("No engines are configured.");
-  const modelIds = (e) =>
-    Object.values(e.models ?? {})
-      .map((entry) => (typeof entry === "string" ? entry : entry.model))
+/** What a table shows of an entry beyond its named columns, as compact JSON. */
+function otherFields(entry, shown) {
+  const rest = Object.fromEntries(Object.entries(entry).filter(([key]) => !shown.includes(key)));
+  return Object.keys(rest).length > 0 ? JSON.stringify(rest) : "";
+}
+
+function connectionsTable(connections) {
+  if (connections.length === 0) return emptyState("No connections are configured.");
+  const aliases = (c) =>
+    Object.entries(c.models ?? {})
+      .map(([alias, entry]) => `${alias}: ${typeof entry === "string" ? entry : entry.model}`)
       .join(", ");
-  const rest = (e) => {
-    const { name, kind, endpoint, models, ...others } = e;
-    return Object.keys(others).length > 0 ? JSON.stringify(others) : "";
-  };
   return tableWrap(
-    html`<table><thead><tr><th>Name</th><th>Kind</th><th>Endpoint</th><th>Model</th><th>Other</th></tr></thead><tbody>${engines.map(
-      (e) =>
-        html`<tr><td class="mono">${e.name}</td><td>${e.kind}</td><td class="mono wrap">${e.endpoint ?? ""}</td><td class="mono">${modelIds(e)}</td><td class="mono small wrap">${rest(e)}</td></tr>`,
+    html`<table><thead><tr><th>Name</th><th>Endpoint</th><th>Models</th><th>Other</th></tr></thead><tbody>${connections.map(
+      (c) =>
+        html`<tr><td class="mono">${c.name}</td><td class="mono wrap">${c.endpoint ?? ""}</td><td class="mono wrap">${aliases(c)}</td><td class="mono small wrap">${otherFields(c, ["name", "endpoint", "models"])}</td></tr>`,
+    )}</tbody></table>`,
+  );
+}
+
+function harnessesTable(harnesses) {
+  if (harnesses.length === 0) return emptyState("No harnesses are configured.");
+  return tableWrap(
+    html`<table><thead><tr><th>Name</th><th>Platform</th><th>Other</th></tr></thead><tbody>${harnesses.map(
+      (h) =>
+        html`<tr><td class="mono">${h.name}</td><td class="mono">${h.platform ?? h.name}</td><td class="mono small wrap">${otherFields(h, ["name", "platform"])}</td></tr>`,
     )}</tbody></table>`,
   );
 }
@@ -62,7 +74,8 @@ export async function render() {
     ])}${data.exists ? "" : html`<p class="muted">There is no config file, so everything below is a default.</p>`}</section>
     <section><h2>Effective config</h2><p class="legend-line">Source: ${sourceBadge("default")} built-in ${sourceBadge("file")} this install's config.json ${sourceBadge("extends:ref")} a config it extends</p>
       ${keys.length === 0 ? emptyState("The effective config is empty.") : html`<ul class="tree root">${keys.map((k) => node(k, data.config[k], k, sources, 0))}</ul>`}</section>
-    <section><h2>Engines</h2>${enginesTable(data.engines)}</section>
+    <section><h2>Connections</h2>${connectionsTable(data.connections)}</section>
+    <section><h2>Harnesses</h2>${harnessesTable(data.harnesses)}</section>
     <section><h2>Environment</h2><p class="muted">AKM_* variables set for the server. They override paths and credentials.</p>${
       data.env.length === 0
         ? emptyState("No AKM_* environment variables are set.")
