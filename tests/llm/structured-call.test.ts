@@ -22,7 +22,6 @@
 
 import { describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
-import type { SpawnedSubprocess } from "../../src/core/subprocess";
 import type { LoweringNotice } from "../../src/execution/resolved-request";
 import type { ConnectionRunner, HarnessRunner } from "../../src/integrations/agent/runner";
 import type { ChatMessage } from "../../src/llm/client";
@@ -33,7 +32,8 @@ import {
   type LlmErrorClass,
   resolveStructuredCurrent,
 } from "../../src/llm/structured-call";
-import { mutateScopedEnv, withEnv } from "../_helpers/sandbox";
+import { harnessCalls, writeFakeHarness } from "../_helpers/engine-stubs";
+import { makeSandboxDir, mutateScopedEnv, withEnv } from "../_helpers/sandbox";
 
 const MESSAGES: ChatMessage[] = [
   { role: "system", content: "sys" },
@@ -470,89 +470,58 @@ describe("callStructured contract", () => {
     expect({ value, chatRan }).toEqual({ value: "answer", chatRan: true });
 
     // A harness that cannot confine the policy runs the call unrestricted, with one notice.
-    const stdout = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode("from gemini"));
-        controller.close();
-      },
-    });
-    let spawned = 0;
-    let notices: readonly { code: string }[] = [];
-    const ran = await callStructured<string>({
-      feature: "memory_inference",
-      akmConfig: GATED,
-      runner: harness("gemini", "gemini-stub"),
-      messages: [{ role: "user", content: "judge this" }],
-      request: {
-        runOptions: {
-          spawn: (): SpawnedSubprocess => {
-            spawned += 1;
-            return {
-              exitCode: 0,
-              exited: Promise.resolve(0),
-              stdout,
-              stderr: new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
-              stdin: null,
-              kill: () => {},
-            };
-          },
+    const bins = makeSandboxDir("akm-structured-bin");
+    try {
+      const bin = writeFakeHarness(bins.dir, "gemini-stub", ["from gemini"]);
+      let notices: readonly { code: string }[] = [];
+      const ran = await callStructured<string>({
+        feature: "memory_inference",
+        akmConfig: GATED,
+        runner: harness("gemini", bin),
+        messages: [{ role: "user", content: "judge this" }],
+        onNotices: (value) => {
+          notices = value;
         },
-      },
-      onNotices: (value) => {
-        notices = value;
-      },
-      parse: (raw) => raw ?? "",
-      onError: () => "ERR",
-      fallback: "FB",
-    });
-    expect(spawned).toBe(1);
-    expect(ran).toContain("from gemini");
-    expect(notices.map((notice) => notice.code)).toContain("model-work-unrestricted");
+        parse: (raw) => raw ?? "",
+        onError: () => "ERR",
+        fallback: "FB",
+      });
+      expect(harnessCalls(bin)).toHaveLength(1);
+      expect(ran).toContain("from gemini");
+      expect(notices.map((notice) => notice.code)).toContain("model-work-unrestricted");
+    } finally {
+      bins.cleanup();
+    }
   });
 
-  test("(13b) an agent dispatch gets the caller's environment and spawn seam, and its failure keeps the dispatch's own result", async () => {
-    // Never run: the spawn seam stands in for it.
-    const claude = harness("claude", "/nonexistent/structured-claude");
-    const text = (value: string) =>
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode(value));
-          controller.close();
-        },
-      });
-    const spawned: Array<Record<string, string> | undefined> = [];
-    const spawn = (_cmd: string[], opts: { env?: Record<string, string> }): SpawnedSubprocess => {
-      spawned.push(opts.env);
-      return {
+  test("(13b) an agent dispatch gets the caller's environment, and its failure keeps the dispatch's own result", async () => {
+    const bins = makeSandboxDir("akm-structured-bin");
+    try {
+      const bin = writeFakeHarness(bins.dir, "structured-claude", [""], { exitCode: 7, stderr: "boom" });
+
+      const thrown = await callStructured<string>({
+        feature: "memory_inference",
+        runner: harness("claude", bin),
+        current: { environment: { AKM_EVENT_SOURCE: "improve" } },
+        messages: [{ role: "user", content: "judge this" }],
+        parse: (raw) => raw ?? "",
+        onError: () => "ERR",
+        fallback: "FB",
+      }).catch((error: unknown) => error);
+
+      const calls = harnessCalls(bin);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.env).toMatchObject({ AKM_EVENT_SOURCE: "improve" });
+      // The error carries the dispatch's own result: the exit code and stderr a caller reports.
+      expect(dispatchFailureResult(thrown)).toMatchObject({
+        ok: false,
+        reason: "non_zero_exit",
         exitCode: 7,
-        exited: Promise.resolve(7),
-        stdout: text(""),
-        stderr: text("boom"),
-        stdin: null,
-        kill: () => {},
-      };
-    };
-
-    const thrown = await callStructured<string>({
-      feature: "memory_inference",
-      runner: claude,
-      current: { environment: { AKM_EVENT_SOURCE: "improve" } },
-      messages: [{ role: "user", content: "judge this" }],
-      request: { runOptions: { spawn } },
-      parse: (raw) => raw ?? "",
-      onError: () => "ERR",
-      fallback: "FB",
-    }).catch((error: unknown) => error);
-
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0]).toMatchObject({ AKM_EVENT_SOURCE: "improve" });
-    // The error carries the dispatch's own result: the exit code and stderr a caller reports.
-    expect(dispatchFailureResult(thrown)).toMatchObject({
-      ok: false,
-      reason: "non_zero_exit",
-      exitCode: 7,
-      stderr: "boom",
-    });
+        stderr: "boom",
+      });
+    } finally {
+      bins.cleanup();
+    }
   });
 
   test("(14) a provider failure is credential-redacted before ungated propagation", async () => {

@@ -1061,10 +1061,7 @@ describe("runTask — prompt target", () => {
         bundleDir,
         logDir,
         scheduled: true,
-        // Operational overrides must not be able to replace frozen request
-        // data, including the scheduler context below.
-        agentOptions: { env: { AKM_STATE_DIR: "/caller-override" } },
-        runAgentImpl: async (_profile, _prompt, options) => {
+        runAgentImpl: async (_profile, options) => {
           childEnv = options.env;
           return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
         },
@@ -1097,7 +1094,7 @@ describe("runTask — prompt target", () => {
       const result = await runTask(id, {
         bundleDir,
         logDir,
-        runAgentImpl: async (_profile, _prompt, options) => {
+        runAgentImpl: async (_profile, options) => {
           timeouts[id] = options.timeoutMs;
           return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
         },
@@ -1111,7 +1108,7 @@ describe("runTask — prompt target", () => {
     writeTask("prompt", promptTask("say hello", { harness: "opencode" }));
 
     const fakeRunAgent: FakeRunAgent = async (...args) => {
-      const prompt = args[1] as string;
+      const prompt = (args[1] as { dispatch?: { prompt?: string } }).dispatch?.prompt;
       return {
         ok: true,
         exitCode: 0,

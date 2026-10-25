@@ -120,7 +120,7 @@ async function runSession(
   const start = Date.now();
   const timeoutMs = opts.timeoutMs !== undefined ? opts.timeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
   const deadline = timeoutMs === null ? null : start + timeoutMs;
-  const timers = { set: opts.setTimeoutFn ?? setTimeout, clear: opts.clearTimeoutFn ?? clearTimeout };
+  const timers = { set: setTimeout, clear: clearTimeout };
   const name = `opencode-sdk agent "${profile.name}"`;
   if (opts.signal?.aborted) return failed(start, "aborted", `${name} not started: caller signal already aborted`);
 

@@ -1006,7 +1006,7 @@ describe("drainProposals — judgment tier (agent mode)", () => {
     const deferred = seed(stash, "lessons/big", "consolidate", BIG_LESSON);
 
     let capturedDispatch: Record<string, unknown> | undefined;
-    const runAgentFn: NonNullable<JudgmentSeams["runAgentFn"]> = mock(async (_profile, _prompt, options) => {
+    const runAgentFn: NonNullable<JudgmentSeams["runAgentFn"]> = mock(async (_profile, options) => {
       capturedDispatch = options.dispatch;
       return agentResult(JSON.stringify({ decision: "accept", reason: "merge is correct" }));
     });
@@ -1019,12 +1019,12 @@ describe("drainProposals — judgment tier (agent mode)", () => {
     expect(runAgentFn).toHaveBeenCalledTimes(1);
     expect(runAgentFn).toHaveBeenCalledWith(
       expect.objectContaining({ model: "provider/exact-agent-judge" }),
-      buildJudgmentPrompt(deferred, "needs-judgment", { liveAsset: undefined, siblings: [] }),
       expect.objectContaining({
         stdio: "captured",
         timeoutMs: 1_234,
         dispatch: expect.objectContaining({
           model: "provider/exact-agent-judge",
+          prompt: buildJudgmentPrompt(deferred, "needs-judgment", { liveAsset: undefined, siblings: [] }),
         }),
       }),
     );

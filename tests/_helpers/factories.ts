@@ -25,14 +25,15 @@ import type { AgentProfile } from "../../src/integrations/agent/profiles";
  * covered by `tests/commands/improve/quality-gate-fail-closed.test.ts`.
  *
  * The fixture includes a harness because reflect resolves through the same
- * strict boundary in tests and production.
+ * strict boundary in tests and production. `bin` is the program it runs: a fake
+ * harness binary (`writeFakeHarness`) for a test that reaches the dispatch.
  */
-export function quietQualityGateConfig(): AkmConfig {
+export function quietQualityGateConfig(bin = "fake-agent"): AkmConfig {
   return {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
     harnesses: {
-      "fake-agent": { platform: "gemini", bin: "fake-agent" },
+      "fake-agent": { platform: "gemini", bin },
     },
     improve: {
       strategy: "default",

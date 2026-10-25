@@ -130,18 +130,18 @@ describe("proposal new on a connection runs akm's own runtime", () => {
     expect(JSON.stringify(result)).not.toContain(replacement);
   });
 
-  // The caller's envSource is the one environment for the dispatch and the secrets kept out of the queue.
+  // The process environment is the one environment for the dispatch and the secrets kept out of the queue.
   test.each([
     ["is accepted, and the proposal is queued", false],
     ["is accepted, and a reply echoing it is refused", true],
-  ])("a key set only in the caller's envSource %s", async (_case, echo) => {
+  ])("a key set only in the environment %s", async (_case, echo) => {
     const stashDir = proposalStash();
     const secret = "proposal-envsource-only-092";
     const body = echo ? `The provider echoed ${secret}.` : "Use the caller's environment.";
     const host = installFakeOpencodeHost({
       reply: () => proposalReply("skills/envsource-bound", "Proposal bound to the caller's environment", body),
     });
-    const result = await withEnv({ PROPOSAL_ENVSOURCE_KEY: undefined }, () =>
+    const result = await withEnv({ PROPOSAL_ENVSOURCE_KEY: secret }, () =>
       akmPropose({
         type: "skill",
         name: "envsource-bound",
@@ -149,7 +149,6 @@ describe("proposal new on a connection runs akm's own runtime", () => {
         engine: "direct",
         stashDir,
         agentConfig: directConfig(stashDir, "$PROPOSAL_ENVSOURCE_KEY"),
-        runAgentOptions: { envSource: { PROPOSAL_ENVSOURCE_KEY: secret } },
       }),
     );
 
@@ -167,7 +166,7 @@ describe("proposal new on a connection runs akm's own runtime", () => {
   });
 });
 
-// codex's --output-schema takes only OpenAI-style strict schemas: every property required, no other allowed.
+// A provider's strict json_schema response format takes only OpenAI-style strict schemas: every property required, no other allowed.
 test("the proposal schema is strict", () => {
   const schema = PROPOSAL_JSON_SCHEMA as {
     required: string[];

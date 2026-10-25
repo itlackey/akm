@@ -73,7 +73,6 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
         historyReserved: attempt.historyReserved,
         provenance,
         runAgentImpl: options.runAgentImpl,
-        agentOptions: options.agentOptions,
       });
     }
     options.beforeNativeDispatch?.(task);

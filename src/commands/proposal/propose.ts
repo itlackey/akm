@@ -29,7 +29,7 @@ import { type RunStructuredResult, runStructured } from "../../core/structured";
 import { resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveEntryProvenance } from "../../indexer/installations";
-import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
+import type { AgentFailureReason, AgentRunResult } from "../../integrations/agent";
 import { buildExecution, currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
 import {
   type AgentProposalPayload,
@@ -56,7 +56,6 @@ export interface AkmProposeOptions {
   /** Configured bundle to queue the proposal for (`--bundle`); default: the working bundle. */
   bundle?: string;
   stashDir?: string;
-  runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn" | "envSource">;
   agentConfig?: AkmConfig;
   ctx?: ProposalsContext;
   /** Test seam invoked after credential acquisition and before provider dispatch. */
@@ -155,7 +154,6 @@ async function dispatchProposalPrompt(
   // runtime failures occur after it, preserving the command-attempt observability contract.
   const { prepared, lowered } = lower(prompt);
   const engineName = prepared.request.target.name;
-  const envSource = options.runAgentOptions?.envSource;
   onDispatchReady();
   options.onDispatchReady?.();
   // runStructured dispatches at least once, so a returned or DISPATCH_FAILED exchange has a result.
@@ -165,7 +163,7 @@ async function dispatchProposalPrompt(
     reply = await runStructured({
       dispatch: async (feedback) => {
         const execution = feedback ? lower(`${prompt}\n\n${feedback}`).lowered : lowered;
-        const result = await runExecution(execution, { runOptions: options.runAgentOptions ?? {} });
+        const result = await runExecution(execution);
         results.push(result);
         if (!result.ok) throw DISPATCH_FAILED;
         return result.stdout;
@@ -182,7 +180,7 @@ async function dispatchProposalPrompt(
     engineName,
     ...(lowered.runner.kind === "harness" ? { engineBin: lowered.runner.bin } : {}),
     notices: lowered.notices,
-    sensitiveValues: collectDispatchSensitiveValues(lowered.runner, {}, envSource),
+    sensitiveValues: collectDispatchSensitiveValues(lowered.runner),
   };
 }
 

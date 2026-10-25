@@ -201,9 +201,15 @@ describe("a run that is cut short", () => {
 
   test("does not wait for an interrupt OpenCode never confirms", async () => {
     installFakeOpencodeHost({ reply: () => new Promise(() => {}), onInterrupt: () => new Promise(() => {}) });
-    const shortened = ((callback: () => void, ms?: number) =>
-      setTimeout(callback, ms !== undefined && ms > 1_000 ? 20 : ms)) as typeof setTimeout;
-    const result = await run("p", { timeoutMs: 20, setTimeoutFn: shortened });
-    expect(result.reason).toBe("timeout");
+    // The interrupt's grace period is five seconds; shorten it for this test.
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((callback: () => void, ms?: number) =>
+      realSetTimeout(callback, ms !== undefined && ms > 1_000 ? 20 : ms)) as typeof setTimeout;
+    try {
+      const result = await run("p", { timeoutMs: 20 });
+      expect(result.reason).toBe("timeout");
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
   });
 });

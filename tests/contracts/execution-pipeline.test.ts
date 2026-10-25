@@ -14,60 +14,61 @@ import path from "node:path";
 import { renderMarkdownExecutionSource } from "../../src/core/adapter/execution-source";
 import type { AkmConfig } from "../../src/core/config/config";
 import { effectiveRequestFields } from "../../src/core/llm-inference";
-import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { canonicalResolvedExecutionRequest, createResolvedPersona } from "../../src/execution/resolved-request";
 import {
+  type BuiltExecution,
   buildExecution,
   buildExecutionFromWire,
   currentLayer,
   type ResolveExecutionInput,
   resolveExecution,
 } from "../../src/integrations/agent/execution";
-import { runExecution } from "../../src/integrations/agent/runner-dispatch";
+import { type RunExecutionOptions, runExecution } from "../../src/integrations/agent/runner-dispatch";
 import { getHarness, HARNESS_CONFIG_PLATFORMS } from "../../src/integrations/harnesses";
 import type { ChatCompletionConfig } from "../../src/llm/client";
+import { harnessCalls, writeFakeHarness } from "../_helpers/engine-stubs";
 import { fakeOpencodeMajor } from "../_helpers/opencode-version";
-import { withEnv } from "../_helpers/sandbox";
+import { makeSandboxDir, withEnv } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
 
 beforeEach(() => fakeOpencodeMajor(1));
 
-function exitedWith(stdout: string, stdin?: WritableStream<Uint8Array>): SpawnedSubprocess {
-  const stream = (text: string) =>
-    new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(text));
-        controller.close();
-      },
-    });
-  return { exitCode: 0, exited: Promise.resolve(0), stdout: stream(stdout), stderr: stream(""), stdin, kill() {} };
+/** What the program a harness runner names was started with. */
+interface Spawned {
+  argv: string[];
+  env: Record<string, string>;
+  stdin: string;
+  cwd: string;
+}
+
+/**
+ * Run a built execution against a fake program standing in for its harness's binary, found on PATH under the
+ * name the runner gives it, and return what it was started with: its argv (program name first), env, stdin
+ * and working directory.
+ */
+async function spawnedBy(built: BuiltExecution, options: RunExecutionOptions = {}): Promise<Spawned> {
+  if (built.runner.kind !== "harness") throw new Error("a harness runner is needed");
+  const bin = built.runner.bin;
+  const sandbox = makeSandboxDir("akm-pipeline-bin");
+  try {
+    writeFakeHarness(sandbox.dir, bin, ["done"]);
+    const result = await withEnv({ PATH: `${sandbox.dir}${path.delimiter}${process.env.PATH ?? ""}` }, () =>
+      runExecution(built, options),
+    );
+    expect(result.ok).toBe(true);
+    const [call] = harnessCalls(path.join(sandbox.dir, bin));
+    if (!call) throw new Error("the program was not run");
+    return { argv: [bin, ...call.argv], env: call.env, stdin: call.stdin, cwd: call.cwd };
+  } finally {
+    sandbox.cleanup();
+  }
 }
 
 /** Resolve, build and run one execution, returning the argv, env and stdin the child would get. */
-async function spawnedFor(
-  input: ResolveExecutionInput,
-): Promise<{ argv: string[]; env: Record<string, string>; stdin: string }> {
+async function spawnedFor(input: ResolveExecutionInput): Promise<Spawned> {
   const resolved = resolveExecution(input);
-  let argv: string[] = [];
-  let env: Record<string, string> = {};
-  let stdin = "";
-  const decoder = new TextDecoder();
-  const spawn: SpawnFn = (cmd, options) => {
-    argv = cmd;
-    env = options.env ?? {};
-    return exitedWith(
-      "done",
-      new WritableStream<Uint8Array>({
-        write(chunk) {
-          stdin += decoder.decode(chunk, { stream: true });
-        },
-      }),
-    );
-  };
-  const result = await runExecution(buildExecution(resolved.request, resolved.runner), { runOptions: { spawn } });
-  expect(result.ok).toBe(true);
-  return { argv, env, stdin };
+  return spawnedBy(buildExecution(resolved.request, resolved.runner));
 }
 
 function config(partial: Record<string, unknown>): AkmConfig {
@@ -418,24 +419,7 @@ describe("resume from the journaled wire form", () => {
     // The operator repoints the harness after the freeze.
     (live.harnesses as Record<string, unknown>).oc = { platform: "claude", models: { fast: "provider/new" } };
 
-    const resumed = buildExecutionFromWire(wire);
-    let argv: string[] = [];
-    let stdin = "";
-    await runExecution(resumed, {
-      runOptions: {
-        spawn: (cmd) => {
-          argv = cmd;
-          return exitedWith(
-            "ok",
-            new WritableStream<Uint8Array>({
-              write(chunk) {
-                stdin += new TextDecoder().decode(chunk);
-              },
-            }),
-          );
-        },
-      },
-    });
+    const { argv, stdin } = await spawnedBy(buildExecutionFromWire(wire));
     expect(argv).toEqual(["opencode-frozen", "run", "--model", "provider/frozen"]);
     expect(stdin).toBe("Resume me.");
   });
@@ -458,29 +442,17 @@ describe("resume from the journaled wire form", () => {
 });
 
 describe("dispatch options", () => {
-  test("only operational run options apply; eventSource stamps AKM_EVENT_SOURCE", async () => {
+  test("the request's environment reaches the child, and eventSource stamps AKM_EVENT_SOURCE", async () => {
     const resolved = resolveExecution({
       content: "x",
       config: config({ harnesses: { pi: {} } }),
       layers: [currentLayer({ environment: { KEEP: "request-value" }, timeout: 1000 })],
     });
-    let env: Record<string, string> = {};
-    let cwd: string | undefined;
-    await runExecution(buildExecution(resolved.request, resolved.runner), {
-      eventSource: "task",
-      runOptions: {
-        env: { KEEP: "caller-override" },
-        cwd: "/ignored",
-        spawn: (_cmd, options) => {
-          env = options.env ?? {};
-          cwd = options.cwd;
-          return exitedWith("ok");
-        },
-      },
-    });
+    const { env, cwd } = await spawnedBy(buildExecution(resolved.request, resolved.runner), { eventSource: "task" });
     expect(env.KEEP).toBe("request-value");
     expect(env.AKM_EVENT_SOURCE).toBe("task");
-    expect(cwd).toBeUndefined();
+    // Nothing names a working directory, so the child keeps this process's.
+    expect(fs.realpathSync(cwd)).toBe(fs.realpathSync(process.cwd()));
   });
 });
 
@@ -592,7 +564,7 @@ describe("the model-work tool policy", () => {
     const resolved = resolveExecution({ content: "x", config: modelWork, modelWork: true });
     const built = buildExecution(resolved.request, resolved.runner);
     const seen: string[] = [];
-    const runAgent = async (_profile: unknown, _prompt: string, opts: { cwd?: string }) => {
+    const runAgent = async (_profile: unknown, opts: { cwd?: string }) => {
       seen.push(opts.cwd ?? "");
       if (seen.length === 2) throw new Error("dispatch exploded");
       return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };

@@ -49,7 +49,6 @@
 import type { SpawnFn } from "../../core/subprocess";
 import type { InputFlag } from "../../execution/input-contract";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import type { RunAgentOptions } from "../../integrations/agent";
 import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
 import type { runWorkflowSteps } from "../../workflows/exec/run-workflow";
 import type { ExecutionProvenanceContext, TaskInvocation } from "../model/invocation";
@@ -108,8 +107,6 @@ export interface RunTaskOptions {
   now?: () => Date;
   /** Override log dir (tests). */
   logDir?: string;
-  /** Extra args/env to pass through the common command dispatcher (tests). */
-  agentOptions?: Partial<RunAgentOptions>;
   /** Override the command-target spawn (tests). Defaults to the runtime spawn. */
   spawnFn?: SpawnFn;
   /**

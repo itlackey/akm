@@ -47,8 +47,8 @@ function request({ layers = [], modelWork = false, persona }: RequestOptions = {
 
 const spawned: Array<{ argv: string; cwd?: string; stdin?: string }> = [];
 const cliSeam: RunExecutionOptions = {
-  runAgent: async (profile, prompt, opts: RunAgentOptions): Promise<AgentRunResult> => {
-    spawned.push({ argv: profile.bin, ...(opts.cwd ? { cwd: opts.cwd } : {}), stdin: prompt });
+  runAgent: async (profile, opts: RunAgentOptions): Promise<AgentRunResult> => {
+    spawned.push({ argv: profile.bin, ...(opts.cwd ? { cwd: opts.cwd } : {}), stdin: opts.dispatch?.prompt });
     return { ok: true, exitCode: 0, stdout: "from the CLI", stderr: "", durationMs: 1 };
   },
 };
@@ -173,7 +173,7 @@ describe("model work on the embedded OpenCode", () => {
     fakeOpencodeMajor(1);
     const seen: string[] = [];
     await runExecution(request({ modelWork: true }), {
-      runAgent: async (_profile, _prompt, opts) => {
+      runAgent: async (_profile, opts) => {
         seen.push(opts.cwd ?? "");
         return { ok: true, exitCode: 0, stdout: "an answer", stderr: "", durationMs: 1 };
       },

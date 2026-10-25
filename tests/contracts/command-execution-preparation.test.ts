@@ -102,8 +102,12 @@ const OK = { ok: true, exitCode: 0, stdout: "", stderr: "", durationMs: 0 } as c
 async function captureAgent(prepared: Awaited<ReturnType<typeof prepareCommandInvocation>>) {
   let capture: { profile?: AgentProfile; prompt?: string; options?: RunAgentOptions } = {};
   const result = await dispatchPreparedCommandInvocation(prepared, {
-    runAgent: async (profile, prompt, options) => {
-      capture = { profile, prompt, options };
+    runAgent: async (profile, options) => {
+      capture = {
+        profile,
+        ...(options.dispatch?.prompt !== undefined ? { prompt: options.dispatch.prompt } : {}),
+        options,
+      };
       return OK;
     },
   });

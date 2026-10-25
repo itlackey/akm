@@ -152,11 +152,7 @@ export async function dispatchWorkflowExecution(
   try {
     const eventSource = forwardedDispatchEventSource(request);
     result = await runExecution(lowered, {
-      runOptions: {
-        stdio: "captured",
-        ...(request.signal ? { signal: request.signal } : {}),
-      },
-
+      ...(request.signal ? { signal: request.signal } : {}),
       ...(eventSource !== undefined ? { eventSource } : {}),
     });
   } catch (err) {

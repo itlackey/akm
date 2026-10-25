@@ -37,8 +37,8 @@ describe("akmAgentDispatch engine capability", () => {
           cwd: "/fixture/workspace",
         },
         {
-          runAgent: async (profile, prompt, options) => {
-            calls.push({ profile: profile.name, prompt, options });
+          runAgent: async (profile, options) => {
+            calls.push({ profile: profile.name, options });
             return {
               ok: false,
               exitCode: 1,
@@ -56,7 +56,6 @@ describe("akmAgentDispatch engine capability", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
       profile: "native",
-      prompt: "",
       options: {
         stdio: "interactive",
         timeoutMs: 0,
@@ -64,7 +63,7 @@ describe("akmAgentDispatch engine capability", () => {
       },
     });
     const nativeOptions = (calls[0] as { options: Record<string, unknown> }).options;
-    for (const field of ["env", "args", "stdin", "dispatch", "builderRegistry", "signal"]) {
+    for (const field of ["env", "dispatch", "signal"]) {
       expect(Object.hasOwn(nativeOptions, field)).toBe(false);
     }
     for (const field of [execution.result.stdout, execution.result.stderr, execution.result.error]) {

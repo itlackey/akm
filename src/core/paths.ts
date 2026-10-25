@@ -396,6 +396,24 @@ export function getStashLocksDir(stashDir: string): string {
   return stashScopedDir(path.join(getStateDir(), "locks"), stashDir);
 }
 
+/**
+ * The directories this akm resolved, as the `AKM_*` variables that name them, so a
+ * child that runs `akm` (an exec unit, an agent CLI) uses the same installation even
+ * when the parent found them through `XDG_*_HOME`. `AKM_BUNDLE_DIR` is passed only
+ * when the parent set one.
+ */
+export function akmLocations(): Record<string, string> {
+  const locations: Record<string, string> = {
+    AKM_CONFIG_DIR: getConfigDir(),
+    AKM_DATA_DIR: getDataDir(),
+    AKM_CACHE_DIR: getCacheDir(),
+    AKM_STATE_DIR: getStateDir(),
+  };
+  const bundleDir = process.env.AKM_BUNDLE_DIR?.trim();
+  if (bundleDir) locations.AKM_BUNDLE_DIR = bundleDir;
+  return locations;
+}
+
 // ── Scheduled-task runtime directory (logs; run history lives in state.db) ───
 
 export function getTaskLogDir(): string {

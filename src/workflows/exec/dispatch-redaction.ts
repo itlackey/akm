@@ -29,7 +29,7 @@ export interface DispatchSecretSources {
  */
 export function collectWorkflowDispatchSensitiveValues(dispatch: DispatchSecretSources): string[] {
   const values = new Set<string>(dispatch.sensitiveValues ?? []);
-  for (const value of dispatch.runner ? collectDispatchSensitiveValues(dispatch.runner, {}) : []) values.add(value);
+  for (const value of dispatch.runner ? collectDispatchSensitiveValues(dispatch.runner) : []) values.add(value);
   return collectSensitiveValues(values);
 }
 

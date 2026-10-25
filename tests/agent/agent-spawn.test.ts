@@ -1,29 +1,63 @@
 /**
- * Tests for the agent CLI spawn wrapper (`runAgent`).
+ * Tests for the agent CLI spawn wrapper (`runAgent`), against small real
+ * programs that stand in for the agent CLIs: one prints what reached it (argv,
+ * stdin, env, working directory), one sleeps until it is killed, one fails.
  *
- * Acceptance coverage:
- *   • Captured stdio collects stdout/stderr.
- *   • Hard timeout maps to `reason: "timeout"`.
- *   • Non-zero exit maps to `reason: "non_zero_exit"`.
- *   • Synchronous spawn failure maps to `reason: "spawn_failed"`.
- *   • Malformed JSON output (when `parseOutput: "json"`) maps to
- *     `reason: "parse_error"`.
- *   • Successful run returns `ok: true`, captured `stdout`, parsed JSON.
- *
- * The wrapper takes a `spawn` injection point so we never touch real
- * binaries here. Where we do touch a real subprocess (one fast `bun -e`
- * timeout test) we keep the timeout small and deterministic.
+ * What it owns: the command its harness builds from the dispatch, the child's
+ * env, and the failure vocabulary (`timeout`, `aborted`, `spawn_failed`,
+ * `non_zero_exit`) that a workflow's `retry.on` is written against.
  */
-import { describe, expect, test } from "bun:test";
-import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
+import { ConfigError } from "../../src/core/errors";
+import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../src/core/paths";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import { getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { runAgent } from "../../src/integrations/agent/spawn";
+import { makeSandboxDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
 
-function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
+/** What the `probe` program saw. */
+interface Probed {
+  argv: string[];
+  stdin: string;
+  env: Record<string, string>;
+  cwd: string;
+}
+
+const PROGRAMS: Record<string, string> = {
+  // Prints what reached it, as JSON.
+  probe: `#!${process.execPath}\nconst fs = require("node:fs");\nconsole.log(JSON.stringify({ argv: process.argv.slice(2), stdin: fs.readFileSync(0, "utf8"), env: process.env, cwd: process.cwd() }));\n`,
+  // Notes that it ran beside itself, then prints a line on each stream.
+  ran: `#!/bin/sh\ntouch "$0.ran"\necho out\necho err >&2\n`,
+  fail: `#!/bin/sh\necho boom >&2\nexit 7\n`,
+  // Records its pid beside itself, then outlives any timeout a test sets.
+  hang: `#!/bin/sh\necho $$ > "$0.pid"\nexec sleep 30\n`,
+};
+
+let bins: SandboxedDir;
+
+beforeAll(() => {
+  bins = makeSandboxDir("akm-agent-spawn-bin");
+  for (const [name, script] of Object.entries(PROGRAMS)) {
+    fs.writeFileSync(path.join(bins.dir, name), script, { mode: 0o755 });
+  }
+});
+
+afterAll(() => {
+  bins.cleanup();
+});
+
+function program(name: string): string {
+  return path.join(bins.dir, name);
+}
+
+/** A gemini-shaped profile (its prompt rides on `-p`) running `name`. */
+function profileFor(name: string, overrides: Partial<AgentProfile> = {}): AgentProfile {
   return {
     name: "test-agent",
-    bin: "test-agent",
+    platform: "gemini",
+    bin: program(name),
     args: [],
     stdio: "captured",
     envPassthrough: ["PATH"],
@@ -31,494 +65,229 @@ function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
   };
 }
 
-function asReadableStream(text: string): ReadableStream<Uint8Array> {
-  const bytes = new TextEncoder().encode(text);
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(bytes);
-      controller.close();
-    },
-  });
+function probed(stdout: string): Probed {
+  return JSON.parse(stdout) as Probed;
 }
 
-function erroringReadableStream(text: string, error: Error): ReadableStream<Uint8Array> {
-  const bytes = new TextEncoder().encode(text);
-  let sent = false;
-  return new ReadableStream({
-    pull(controller) {
-      if (sent) {
-        controller.error(error);
-        return;
-      }
-      sent = true;
-      controller.enqueue(bytes);
-    },
-  });
-}
-
-interface FakeSubprocessConfig {
-  exitCode: number;
-  stdout?: string;
-  stderr?: string;
-  /** When set, `proc.exited` only resolves once `kill()` is called. */
-  hangsUntilKilled?: boolean;
-  /** When set, throw synchronously from the spawn fn. */
-  throwSync?: Error;
-  /** When set, reject `proc.exited`. */
-  rejectExit?: Error;
-}
-
-function fakeSpawnFn(config: FakeSubprocessConfig): { spawn: SpawnFn; kills: number } {
-  const state = { kills: 0 };
-  const spawn: SpawnFn = () => {
-    if (config.throwSync) throw config.throwSync;
-    let resolveExit: (code: number) => void = () => {};
-    const exited = new Promise<number>((resolve, reject) => {
-      resolveExit = resolve;
-      if (config.rejectExit) {
-        reject(config.rejectExit);
-      } else if (!config.hangsUntilKilled) {
-        resolve(config.exitCode);
-      }
-    });
-    const proc: SpawnedSubprocess = {
-      exitCode: config.hangsUntilKilled ? null : config.exitCode,
-      exited,
-      stdout: asReadableStream(config.stdout ?? ""),
-      stderr: asReadableStream(config.stderr ?? ""),
-      stdin: null,
-      kill() {
-        state.kills += 1;
-        // Simulate process exit on signal.
-        resolveExit(143);
-      },
-    };
-    return proc;
-  };
-  return { spawn, kills: 0 } as { spawn: SpawnFn; kills: number };
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 describe("runAgent — captured stdio", () => {
   test("returns ok:true with stdout/stderr on exit 0", async () => {
-    const { spawn } = fakeSpawnFn({ exitCode: 0, stdout: "hello\n", stderr: "" });
-    const result = await runAgent(makeProfile(), "go", { spawn });
+    const result = await runAgent(profileFor("ran"), { dispatch: { prompt: "go" } });
     expect(result.ok).toBe(true);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("hello\n");
+    expect(result.stdout).toBe("out\n");
+    expect(result.stderr).toBe("err\n");
     expect(result.reason).toBeUndefined();
     expect(typeof result.durationMs).toBe("number");
   });
 
   test("non-zero exit yields structured `non_zero_exit`", async () => {
-    const { spawn } = fakeSpawnFn({ exitCode: 7, stderr: "boom" });
-    const result = await runAgent(makeProfile(), "go", { spawn });
+    const result = await runAgent(profileFor("fail"), { dispatch: { prompt: "go" } });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("non_zero_exit");
     expect(result.exitCode).toBe(7);
-    expect(result.stderr).toBe("boom");
+    expect(result.stderr).toBe("boom\n");
     expect(result.error).toContain("exited with code 7");
   });
 
-  test("synchronous spawn failure yields `spawn_failed`", async () => {
-    const { spawn } = fakeSpawnFn({ exitCode: 0, throwSync: new Error("ENOENT: command not found") });
-    const result = await runAgent(makeProfile(), "go", { spawn });
+  test("a program that cannot start yields `spawn_failed`", async () => {
+    const result = await runAgent(profileFor("missing"), { dispatch: { prompt: "go" } });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("spawn_failed");
-    expect(result.error).toContain("ENOENT");
     expect(result.exitCode).toBeNull();
   });
 
-  test("rejected proc.exited yields `spawn_failed`", async () => {
-    const { spawn } = fakeSpawnFn({ exitCode: 0, rejectExit: new Error("kernel ate it") });
-    const result = await runAgent(makeProfile(), "go", { spawn });
-    expect(result.ok).toBe(false);
-    expect(result.reason).toBe("spawn_failed");
+  test("a platform with no harness is a configuration error, before anything runs", async () => {
+    fs.rmSync(`${program("ran")}.ran`, { force: true });
+    await expect(runAgent(profileFor("ran", { platform: "nope" }), { dispatch: { prompt: "go" } })).rejects.toThrow(
+      ConfigError,
+    );
+    expect(fs.existsSync(`${program("ran")}.ran`)).toBe(false);
   });
 });
 
-/** Manual-drive fake timers: records every scheduled `{cb, ms}`, never fires. */
-function makeFakeTimers() {
-  const timers: Array<{ cb: () => void; ms: number }> = [];
-  const fakeSet = ((cb: () => void, ms?: number) => {
-    timers.push({ cb, ms: ms ?? 0 });
-    return { unref() {} } as unknown as ReturnType<typeof setTimeout>;
-  }) as unknown as typeof setTimeout;
-  const fakeClear = (() => {}) as unknown as typeof clearTimeout;
-  return { timers, fakeSet, fakeClear };
-}
-
-describe("runAgent — timeout", () => {
-  test("does not schedule a default kill timer", async () => {
-    const { timers, fakeSet, fakeClear } = makeFakeTimers();
-
-    const { spawn } = fakeSpawnFn({ exitCode: 0 });
-    const result = await runAgent(makeProfile(), "go", {
-      spawn,
-      setTimeoutFn: fakeSet,
-      clearTimeoutFn: fakeClear,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(timers.some(({ ms }) => ms === 60_000)).toBe(false);
-  });
-
-  test("kills the subprocess and reports `timeout`", async () => {
-    // Drive the timer manually so the assertion is deterministic.
-    const { timers, fakeSet, fakeClear } = makeFakeTimers();
-
-    const { spawn } = fakeSpawnFn({ exitCode: 0, hangsUntilKilled: true });
-    const promise = runAgent(makeProfile(), "go", {
-      spawn,
-      setTimeoutFn: fakeSet,
-      clearTimeoutFn: fakeClear,
-      timeoutMs: 100,
-    });
-    // Kick the deadline.
-    const deadline = timers.find((t) => t.ms === 100);
-    expect(deadline).toBeDefined();
-    deadline?.cb();
-    const result = await promise;
+describe("runAgent — timeout and cancellation", () => {
+  test("a child past its deadline is killed and reported as `timeout`", async () => {
+    const result = await runAgent(profileFor("hang"), { dispatch: { prompt: "go" }, timeoutMs: 300 });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("timeout");
-    expect(result.error).toContain("100ms");
+    expect(result.error).toContain("300ms");
+    const pid = Number(fs.readFileSync(`${program("hang")}.pid`, "utf8").trim());
+    await Bun.sleep(100);
+    expect(processAlive(pid)).toBe(false);
   });
 
-  test("real timeout against `bun -e` sleeping past the deadline (deterministic & fast)", async () => {
-    const profile = makeProfile({ bin: "bun", args: ["-e", "await new Promise(r => setTimeout(r, 5000))"] });
-    const result = await runAgent(profile, undefined, { timeoutMs: 250 });
-    // The observable result proves the deadline fired: had the 250ms timeout
-    // NOT aborted the child, runAgent would have waited the full 5s sleep and
-    // returned ok:true (or a non-timeout reason). Asserting reason === "timeout"
-    // is the deterministic signal — a wall-clock `elapsed < 2000` upper bound
-    // only adds scheduler-dependent flake risk under a loaded CI box.
-    expect(result.ok).toBe(false);
-    expect(result.reason).toBe("timeout");
-  });
-});
-
-describe("runAgent — stdout capture", () => {
-  test("stdout read failure yields `spawn_failed`", async () => {
-    const spawn: SpawnFn = () => ({
-      exitCode: 0,
-      exited: Promise.resolve(0),
-      stdout: erroringReadableStream('{"partial":', new Error("pipe broke")),
-      stderr: asReadableStream(""),
-      stdin: null,
-      kill() {},
-    });
-    const result = await runAgent(makeProfile(), "go", { spawn });
-    expect(result.ok).toBe(false);
-    expect(result.reason).toBe("spawn_failed");
-    expect(result.stdout).toBe('{"partial":');
-    expect(result.error).toContain("stdout read failed");
-    expect(result.error).toContain("pipe broke");
-  });
-});
-
-// ── #284 GAP-HIGH 11: timeoutMs precedence ────────────────────────────────
-
-describe("runAgent — timeoutMs authority", () => {
-  test("the invocation timeout controls the spawned process deadline", async () => {
-    const { timers, fakeSet, fakeClear } = makeFakeTimers();
-
-    const { spawn } = fakeSpawnFn({ exitCode: 0, hangsUntilKilled: true });
-    const promise = runAgent(makeProfile(), "go", {
-      spawn,
-      setTimeoutFn: fakeSet,
-      clearTimeoutFn: fakeClear,
-      timeoutMs: 250,
-    });
-    expect(timers.map((t) => t.ms)).toContain(250); // override won
-    timers.find((t) => t.ms === 250)?.cb();
-    const result = await promise;
-    expect(result.reason).toBe("timeout");
-  });
-});
-
-describe("runAgent — argument and env construction", () => {
-  test("appends prompt after profile.args and options.args", async () => {
-    let capturedCmd: string[] | undefined;
-    const spawn: SpawnFn = (cmd) => {
-      capturedCmd = cmd;
-      return {
-        exitCode: 0,
-        exited: Promise.resolve(0),
-        stdout: asReadableStream(""),
-        stderr: asReadableStream(""),
-        stdin: null,
-        kill() {},
-      };
-    };
-    await runAgent(makeProfile({ args: ["--profile-arg"] }), "the-prompt", { spawn, args: ["--call-arg"] });
-    expect(capturedCmd).toEqual(["test-agent", "--profile-arg", "--call-arg", "the-prompt"]);
-  });
-
-  test("env is filtered by envPassthrough plus profile/options env", async () => {
-    let capturedEnv: Record<string, string> | undefined;
-    const spawn: SpawnFn = (_cmd, opts) => {
-      capturedEnv = opts.env;
-      return {
-        exitCode: 0,
-        exited: Promise.resolve(0),
-        stdout: asReadableStream(""),
-        stderr: asReadableStream(""),
-        stdin: null,
-        kill() {},
-      };
-    };
-    await runAgent(makeProfile({ envPassthrough: ["KEEP_ME"] }), undefined, {
-      spawn,
-      env: { CALL_VAR: "2" },
-      envSource: { KEEP_ME: "yes", DROP_ME: "no" } as NodeJS.ProcessEnv,
-    });
-    expect(capturedEnv).toEqual({ KEEP_ME: "yes", CALL_VAR: "2" });
-  });
-
-  // Regression: usage-event provenance (AKM_EVENT_SOURCE) must survive the
-  // agent boundary. When a parent akm command already stamped it (e.g. the task
-  // runner sets AKM_EVENT_SOURCE=task), a nested agent — such as the one
-  // `akm wiki ingest` spawns — must inherit it so the agent's own akm reads log
-  // as machine traffic, not user demand. Missing it from the built-in
-  // envPassthrough whitelist silently inflated every lane's read-back (GRR).
-  test("built-in profiles pass AKM_EVENT_SOURCE through to the spawned agent", async () => {
-    const opencode = getBuiltinAgentProfile("opencode");
-    if (!opencode) throw new Error("opencode built-in profile missing");
-    expect(opencode.envPassthrough).toContain("AKM_EVENT_SOURCE");
-
-    let capturedEnv: Record<string, string> | undefined;
-    const spawn: SpawnFn = (_cmd, opts) => {
-      capturedEnv = opts.env;
-      return {
-        exitCode: 0,
-        exited: Promise.resolve(0),
-        stdout: asReadableStream(""),
-        stderr: asReadableStream(""),
-        stdin: null,
-        kill() {},
-      };
-    };
-    await runAgent(opencode, undefined, {
-      spawn,
-      envSource: { PATH: "/usr/bin", AKM_EVENT_SOURCE: "task" } as NodeJS.ProcessEnv,
-    });
-    expect(capturedEnv?.AKM_EVENT_SOURCE).toBe("task");
-  });
-
-  // opencode finds its provider config, auth, package cache and state through the XDG base-directory
-  // variables, so an akm that runs under a custom XDG_CONFIG_HOME must hand it to the child, or the
-  // child reads $HOME's defaults instead (the 2026-10-02 "Unexpected server error").
-  describe("the XDG base-directory variables", () => {
-    async function spawnedEnv(
-      profile: AgentProfile,
-      envSource: Record<string, string>,
-      options: Parameters<typeof runAgent>[2] = {},
-    ): Promise<Record<string, string> | undefined> {
-      let capturedEnv: Record<string, string> | undefined;
-      const spawn: SpawnFn = (_cmd, opts) => {
-        capturedEnv = opts.env;
-        return {
-          exitCode: 0,
-          exited: Promise.resolve(0),
-          stdout: asReadableStream(""),
-          stderr: asReadableStream(""),
-          stdin: null,
-          kill() {},
-        };
-      };
-      await runAgent(profile, undefined, { ...options, spawn, envSource: envSource as NodeJS.ProcessEnv });
-      return capturedEnv;
-    }
-
-    const ambient = {
-      PATH: "/usr/bin",
-      XDG_CONFIG_HOME: "/sandbox/config",
-      XDG_DATA_HOME: "/sandbox/data",
-      XDG_CACHE_HOME: "/sandbox/cache",
-      XDG_STATE_HOME: "/sandbox/state",
-      AMBIENT_CLOUD_TOKEN: "must-not-leak",
-    };
-
-    test("reach an opencode child with the values akm was given", async () => {
-      const opencode = getBuiltinAgentProfile("opencode") as AgentProfile;
-
-      const env = await spawnedEnv(opencode, ambient);
-
-      expect(env).toMatchObject({
-        XDG_CONFIG_HOME: "/sandbox/config",
-        XDG_DATA_HOME: "/sandbox/data",
-        XDG_CACHE_HOME: "/sandbox/cache",
-        XDG_STATE_HOME: "/sandbox/state",
-      });
-      expect(env).not.toHaveProperty("AMBIENT_CLOUD_TOKEN");
-    });
-  });
-});
-
-describe("runAgent — cooperative abort (RunAgentOptions.signal, P0.5)", () => {
-  test("pre-aborted signal returns reason 'aborted' without spawning", async () => {
-    let spawnCalled = false;
-    const spawn: SpawnFn = () => {
-      spawnCalled = true;
-      throw new Error("must not spawn");
-    };
+  test("a pre-aborted signal reports `aborted` without starting the program", async () => {
+    fs.rmSync(`${program("ran")}.ran`, { force: true });
     const controller = new AbortController();
     controller.abort();
-    const result = await runAgent(makeProfile(), "task", { spawn, signal: controller.signal });
+    const result = await runAgent(profileFor("ran"), { dispatch: { prompt: "go" }, signal: controller.signal });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("aborted");
-    expect(spawnCalled).toBe(false);
+    expect(fs.existsSync(`${program("ran")}.ran`)).toBe(false);
   });
 
-  test("aborting mid-run kills the child and maps to reason 'aborted'", async () => {
-    // Fake timers so the 5s SIGKILL follow-up never leaves a live timer.
-    const { fakeSet, fakeClear } = makeFakeTimers();
-
-    const { spawn } = fakeSpawnFn({ exitCode: 0, hangsUntilKilled: true });
+  test("aborting mid-run kills the child and reports `aborted`, not `timeout`", async () => {
     const controller = new AbortController();
-    const promise = runAgent(makeProfile(), "go", {
-      spawn,
-      setTimeoutFn: fakeSet,
-      clearTimeoutFn: fakeClear,
+    const running = runAgent(profileFor("hang"), {
+      dispatch: { prompt: "go" },
       timeoutMs: null,
       signal: controller.signal,
     });
-    // Let runAgent register the abort listener, then abort.
-    await new Promise((r) => setTimeout(r, 5));
+    await Bun.sleep(300);
     controller.abort();
-    const result = await promise;
+    const result = await running;
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("aborted");
     expect(result.error).toContain("aborted by caller signal");
   });
 
-  test("timeout path unrefs the SIGKILL grace timer", async () => {
-    type TimerHandle = {
-      cb: () => void;
-      unrefCalled: boolean;
-      unref?: () => void;
-    };
-    const timers: TimerHandle[] = [];
-    const setTimeoutFn = ((cb: () => void): TimerHandle => {
-      const handle: TimerHandle = {
-        cb,
-        unrefCalled: false,
-        unref() {
-          handle.unrefCalled = true;
-        },
-      };
-      timers.push(handle);
-      return handle;
-    }) as unknown as typeof setTimeout;
-    const clearTimeoutFn = (() => {}) as unknown as typeof clearTimeout;
-
-    const { spawn } = fakeSpawnFn({ exitCode: 0, hangsUntilKilled: true });
-    const promise = runAgent(makeProfile(), "go", {
-      spawn,
-      timeoutMs: 10,
-      setTimeoutFn,
-      clearTimeoutFn,
-    });
-
-    // One timer at capture: the kill deadline. The two stream-drain deadlines
-    // are armed when the child exits or its budget expires, not up front, so a
-    // command whose leader exits early cannot wait out its whole budget.
-    expect(timers.length).toBe(1);
-    // That first timer is the main timeout. Fire it so the timeout branch schedules the SIGKILL grace timer.
-    timers[0]?.cb();
-    expect(timers.length).toBe(2);
-    expect(timers[1]?.unrefCalled).toBe(true);
-
-    const result = await promise;
-    expect(result.ok).toBe(false);
-    expect(result.reason).toBe("timeout");
-  });
-
-  test("abort path unrefs the SIGKILL grace timer", async () => {
-    type TimerHandle = {
-      cb: () => void;
-      unrefCalled: boolean;
-      unref?: () => void;
-    };
-    const timers: TimerHandle[] = [];
-    const setTimeoutFn = ((cb: () => void): TimerHandle => {
-      const handle: TimerHandle = {
-        cb,
-        unrefCalled: false,
-        unref() {
-          handle.unrefCalled = true;
-        },
-      };
-      timers.push(handle);
-      return handle;
-    }) as unknown as typeof setTimeout;
-    const clearTimeoutFn = (() => {}) as unknown as typeof clearTimeout;
-
-    const { spawn } = fakeSpawnFn({ exitCode: 0, hangsUntilKilled: true });
+  test("a clean exit is not misreported when the signal aborts afterwards", async () => {
     const controller = new AbortController();
-    const promise = runAgent(makeProfile(), "go", {
-      spawn,
-      timeoutMs: null,
-      setTimeoutFn,
-      clearTimeoutFn,
-      signal: controller.signal,
-    });
-
-    // Counted as a DELTA: with no wall budget the drain deadlines are armed by
-    // the child's exit, so what is already scheduled here is not this test's
-    // subject — the ONE timer the abort adds is.
-    const before = timers.length;
+    const result = await runAgent(profileFor("ran"), { dispatch: { prompt: "go" }, signal: controller.signal });
     controller.abort();
-    expect(timers.length).toBe(before + 1);
-    expect(timers[before]?.unrefCalled).toBe(true);
-
-    const result = await promise;
-    expect(result.ok).toBe(false);
-    expect(result.reason).toBe("aborted");
-  });
-
-  test("a clean fast exit is not misreported when the signal aborts afterwards", async () => {
-    const { spawn } = fakeSpawnFn({ exitCode: 0, stdout: "done" });
-    const controller = new AbortController();
-    const result = await runAgent(makeProfile(), "go", { spawn, signal: controller.signal });
-    controller.abort(); // after completion — listener already removed
     expect(result.ok).toBe(true);
     expect(result.reason).toBeUndefined();
   });
 });
 
-describe("runAgent — cwd authority", () => {
-  function captureSpawnOpts() {
-    const captured: { cwd?: string }[] = [];
-    const spawn: SpawnFn = (_argv, opts) => {
-      captured.push({ cwd: (opts as { cwd?: string } | undefined)?.cwd });
-      return {
-        exitCode: null,
-        exited: Promise.resolve(0),
-        stdout: asReadableStream(""),
-        stderr: asReadableStream(""),
-        pid: 1234,
-        kill() {},
-      } as unknown as SpawnedSubprocess;
-    };
-    return { spawn, captured };
-  }
+describe("runAgent — the command", () => {
+  test("is built by the harness from the dispatch: its flags, and a prompt on stdin where the harness takes it there", async () => {
+    const gemini = probed(
+      (await runAgent(profileFor("probe", { args: ["--profile-arg"] }), { dispatch: { prompt: "the prompt" } })).stdout,
+    );
+    expect(gemini.argv).toEqual(["--profile-arg", "-p", "the prompt"]);
 
-  test("does not invent a cwd when options.cwd is absent", async () => {
-    const { spawn, captured } = captureSpawnOpts();
-    await runAgent(makeProfile({ name: "claude", bin: "claude" }), undefined, {
-      spawn,
-      dispatch: { prompt: "go" },
+    const claude = probed(
+      (await runAgent(profileFor("probe", { platform: "claude" }), { dispatch: { prompt: "the prompt" } })).stdout,
+    );
+    expect(claude.argv).toEqual(["-p"]);
+    expect(claude.stdin).toBe("the prompt");
+  });
+
+  test("a harness that carries its model in the environment gets it there", async () => {
+    const result = await runAgent(profileFor("probe", { platform: "openhands" }), {
+      dispatch: { prompt: "task", model: "provider/exact" },
     });
-    expect(captured[0]?.cwd).toBeUndefined();
+    expect(probed(result.stdout).env.LLM_MODEL).toBe("provider/exact");
+  });
+
+  test("no dispatch is the program started for a person: no prompt, no stdin", async () => {
+    const result = await runAgent(profileFor("probe", { platform: "claude" }));
+    const seen = probed(result.stdout);
+    expect(seen.argv).toEqual([]);
+    expect(seen.stdin).toBe("");
+  });
+});
+
+describe("runAgent — the child's environment", () => {
+  test("is the names the profile passes through, the directories akm resolved, and the call's env: nothing else", async () => {
+    const env = await withEnv({ KEEP_ME: "yes", DROP_ME: "no", AKM_BUNDLE_DIR: "/sandbox/bundle" }, async () => {
+      const result = await runAgent(profileFor("probe", { envPassthrough: ["PATH", "KEEP_ME"] }), {
+        dispatch: { prompt: "go" },
+        env: { CALL_VAR: "2" },
+      });
+      return probed(result.stdout).env;
+    });
+    expect(env.KEEP_ME).toBe("yes");
+    expect(env.CALL_VAR).toBe("2");
+    expect(env).not.toHaveProperty("DROP_ME");
+    expect(env).toMatchObject({
+      AKM_CONFIG_DIR: getConfigDir(),
+      AKM_DATA_DIR: getDataDir(),
+      AKM_CACHE_DIR: getCacheDir(),
+      AKM_STATE_DIR: getStateDir(),
+      AKM_BUNDLE_DIR: "/sandbox/bundle",
+    });
+  });
+
+  test("the call's env wins over what is passed through and over the resolved directories", async () => {
+    const env = await withEnv({ KEEP_ME: "ambient" }, async () => {
+      const result = await runAgent(profileFor("probe", { envPassthrough: ["PATH", "KEEP_ME"] }), {
+        dispatch: { prompt: "go" },
+        env: { KEEP_ME: "call", AKM_CONFIG_DIR: "/call/config" },
+      });
+      return probed(result.stdout).env;
+    });
+    expect(env.KEEP_ME).toBe("call");
+    expect(env.AKM_CONFIG_DIR).toBe("/call/config");
+  });
+
+  // Usage-event provenance (AKM_EVENT_SOURCE) must survive the agent boundary: a nested agent
+  // inherits the source its parent stamped, so its own akm reads log as machine traffic, not
+  // user demand.
+  test("built-in profiles pass AKM_EVENT_SOURCE through to the spawned agent", async () => {
+    const opencode = getBuiltinAgentProfile("opencode");
+    if (!opencode) throw new Error("opencode built-in profile missing");
+    expect(opencode.envPassthrough).toContain("AKM_EVENT_SOURCE");
+
+    const env = await withEnv({ AKM_EVENT_SOURCE: "task" }, async () => {
+      const result = await runAgent(
+        { ...opencode, bin: program("probe"), stdio: "captured" },
+        {
+          dispatch: { prompt: "go" },
+        },
+      );
+      return probed(result.stdout).env;
+    });
+    expect(env.AKM_EVENT_SOURCE).toBe("task");
+  });
+
+  // opencode finds its provider config, auth, package cache and state through the XDG base-directory
+  // variables, so an akm that runs under a custom XDG_CONFIG_HOME must hand it to the child, or the
+  // child reads $HOME's defaults instead.
+  test("the XDG base-directory variables reach an opencode child with the values akm was given", async () => {
+    const opencode = getBuiltinAgentProfile("opencode");
+    if (!opencode) throw new Error("opencode built-in profile missing");
+    const env = await withEnv(
+      {
+        XDG_CONFIG_HOME: "/sandbox/config",
+        XDG_DATA_HOME: "/sandbox/data",
+        XDG_CACHE_HOME: "/sandbox/cache",
+        XDG_STATE_HOME: "/sandbox/state",
+        AMBIENT_CLOUD_TOKEN: "must-not-leak",
+      },
+      async () => {
+        const result = await runAgent(
+          { ...opencode, bin: program("probe"), stdio: "captured" },
+          {
+            dispatch: { prompt: "go" },
+          },
+        );
+        return probed(result.stdout).env;
+      },
+    );
+    expect(env).toMatchObject({
+      XDG_CONFIG_HOME: "/sandbox/config",
+      XDG_DATA_HOME: "/sandbox/data",
+      XDG_CACHE_HOME: "/sandbox/cache",
+      XDG_STATE_HOME: "/sandbox/state",
+    });
+    expect(env).not.toHaveProperty("AMBIENT_CLOUD_TOKEN");
+  });
+});
+
+describe("runAgent — cwd authority", () => {
+  test("does not invent a cwd when options.cwd is absent", async () => {
+    const result = await runAgent(profileFor("probe"), { dispatch: { prompt: "go" } });
+    expect(fs.realpathSync(probed(result.stdout).cwd)).toBe(fs.realpathSync(process.cwd()));
   });
 
   test("options.cwd is the sole cwd authority", async () => {
-    const { spawn, captured } = captureSpawnOpts();
-    await runAgent(makeProfile({ name: "claude", bin: "claude" }), undefined, {
-      spawn,
-      cwd: "/tmp/options-wins",
-      dispatch: { prompt: "go" },
-    });
-    expect(captured[0]?.cwd).toBe("/tmp/options-wins");
+    const work = makeSandboxDir("akm-agent-spawn-cwd");
+    try {
+      const result = await runAgent(profileFor("probe"), { dispatch: { prompt: "go" }, cwd: work.dir });
+      expect(fs.realpathSync(probed(result.stdout).cwd)).toBe(fs.realpathSync(work.dir));
+    } finally {
+      work.cleanup();
+    }
   });
 });

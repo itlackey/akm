@@ -206,7 +206,7 @@ describe("command/prompt arm threads an explicit provenance.eventSource end to e
 
     let observedChildEnv: Record<string, string> | undefined;
     const fakeRunAgent: FakeRunAgent = async (...args) => {
-      const options = args[2] as { env?: Record<string, string> } | undefined;
+      const options = args[1] as { env?: Record<string, string> } | undefined;
       observedChildEnv = options?.env;
       return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
     };
@@ -242,7 +242,7 @@ describe("command/prompt arm threads an explicit provenance.eventSource end to e
 
     let observedChildEnv: Record<string, string> | undefined;
     const fakeRunAgent: FakeRunAgent = async (...args) => {
-      const options = args[2] as { env?: Record<string, string> } | undefined;
+      const options = args[1] as { env?: Record<string, string> } | undefined;
       observedChildEnv = options?.env;
       return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
     };

@@ -3,27 +3,22 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Agent CLI spawn wrapper (v1 spec §12.2).
+ * Agent CLI spawn wrapper.
  *
  * Single helper that owns:
  *   • Process spawn (Bun's subprocess API).
  *   • Captured vs interactive stdio.
  *   • Hard timeout (per-call override or profile default).
- *   • Structured failure reasons — `timeout`, `spawn_failed`,
- *     `non_zero_exit`, `parse_error`.
+ *   • Structured failure reasons — `timeout`, `aborted`, `spawn_failed`,
+ *     `non_zero_exit`.
  *
- * NEVER imports an LLM SDK. Agents are reachable only via shell-out;
- * this is a pre-emptive guarantee against the #222 invariant.
+ * The command comes from the harness (`harness.build`); this module never
+ * touches a model. Agents are reachable only via shell-out.
  */
 import { ConfigError } from "../../core/errors";
+import { akmLocations } from "../../core/paths";
 import { collectAllowlistedEnv } from "../../core/spawn-env";
-import {
-  runManagedSubprocess,
-  type SpawnedSubprocess,
-  type SpawnFn,
-  type StreamReadResult,
-  streamCaptureFailure,
-} from "../../core/subprocess";
+import { runManagedSubprocess, type StreamReadResult, streamCaptureFailure } from "../../core/subprocess";
 import { getHarness } from "../harnesses";
 import type { AgentDispatchRequest } from "../harnesses/harness";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
@@ -79,22 +74,18 @@ export type AgentFailureReason =
   | "aborted";
 
 /**
- * Per-call options for {@link runAgent}. All fields are optional. Caller
- * may override `stdio` and `timeoutMs`.
+ * Per-call options for {@link runAgent}. All fields are optional: a call with no
+ * `dispatch` has nothing to run, and is the program started for a person to use.
  */
 export interface RunAgentOptions {
   /** Override `profile.stdio`. Captured = pipe stdout/stderr; interactive = inherit. */
   stdio?: AgentStdioMode;
   /** Override the profile/global timeout (ms). null = no timeout (runs until the process exits). */
   timeoutMs?: number | null;
-  /** Extra env vars merged on top of the profile-derived env. */
+  /** Extra env vars for the child, over what the profile passes through. */
   env?: Record<string, string>;
   /** Working directory for the child. */
   cwd?: string;
-  /** Extra args appended after the builder-constructed argv. */
-  args?: readonly string[];
-  /** Optional stdin payload (only honoured in `captured` mode). */
-  stdin?: string;
   /**
    * Cooperative cancellation. When the signal aborts, the child process
    * group gets SIGTERM (then SIGKILL after 5 s) and the run resolves with
@@ -102,31 +93,7 @@ export interface RunAgentOptions {
    * budget ceiling instead of waiting out the timeout.
    */
   signal?: AbortSignal;
-  /** Process env source. Defaults to `process.env`. Tests inject a fake. */
-  envSource?: NodeJS.ProcessEnv;
-  /** Spawn function. Defaults to the runtime spawn. Tests inject a fake. */
-  spawn?: SpawnFn;
-  /**
-   * `setTimeout` shim. Defaults to the global. Tests pass a synchronous
-   * timer driver so timeout assertions are deterministic.
-   */
-  setTimeoutFn?: typeof setTimeout;
-  /** `clearTimeout` shim. Defaults to the global. */
-  clearTimeoutFn?: typeof clearTimeout;
-  /**
-   * Observability seam (redesign addendum R2, `workflow watch`): invoked at
-   * spawn start and spawn exit with ids/status only — pid, profile name,
-   * exit code, failure reason. NEVER prompt or output content (07 P1-B
-   * rule). Best-effort: a throwing callback is swallowed so observability
-   * can never break a dispatch. No events fire when the child was never
-   * spawned (pre-spawn abort, synchronous spawn failure).
-   */
-  onEvent?: (evt: { type: string; data?: Record<string, unknown> }) => void;
-  /**
-   * Abstract dispatch parameters. When present, the platform-specific
-   * AgentCommandBuilder constructs the argv from these fields (system prompt,
-   * model). When absent, the prompt is passed positionally.
-   */
+  /** The request the harness builds its command from, prompt included. */
   dispatch?: AgentDispatchRequest;
 }
 
@@ -163,18 +130,13 @@ export interface AgentRunResult {
 }
 
 /**
- * Build the child env. Starts empty and copies through:
- *   • Every name in `profile.envPassthrough` (via the shared
- *     {@link collectAllowlistedEnv}, which also supplements PATH for
- *     scheduler contexts where the inherited PATH is stripped).
- *   • Every entry in `options.env` (highest precedence).
+ * The child's env, lowest precedence first: the directories this akm resolved, so
+ * a child that runs `akm` uses the same installation; what the profile passes
+ * through from this process (the allowlist also supplements PATH for scheduler
+ * contexts where the inherited PATH is stripped); then the call's `env`.
  */
 function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<string, string> {
-  const env = collectAllowlistedEnv(profile.envPassthrough, options.envSource ?? process.env);
-  if (options.env) {
-    for (const [k, v] of Object.entries(options.env)) env[k] = v;
-  }
-  return env;
+  return { ...akmLocations(), ...collectAllowlistedEnv(profile.envPassthrough), ...options.env };
 }
 
 /**
@@ -182,7 +144,7 @@ function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<
  * ({@link streamCaptureFailure} in `core/subprocess.ts`). The classification
  * lives in the primitive so the agent path and the workflow `exec` path cannot
  * drift apart on what "the capture did not complete" means; only the sentence
- * naming the profile is local. Message text is unchanged from the inlined copy.
+ * naming the profile is local.
  */
 function streamFailureMessage(
   profileName: string,
@@ -193,193 +155,75 @@ function streamFailureMessage(
   return failures === undefined ? undefined : `agent CLI "${profileName}" output capture failed: ${failures}`;
 }
 
+function failed(reason: AgentFailureReason, error: string, rest: Partial<AgentRunResult> = {}): AgentRunResult {
+  return { ok: false, exitCode: null, stdout: "", stderr: "", durationMs: 0, reason, error, ...rest };
+}
+
 /**
- * Spawn the agent CLI described by `profile` with `prompt` (forwarded as
- * the last positional arg by default) and return a structured result.
- *
- * The `prompt` argument is appended to `profile.args` (and `options.args`)
- * unless it is `undefined`. Pass `prompt = ""` to forward an explicit
- * empty positional, or pass extra args via `options.args`.
+ * Spawn the agent CLI `profile` names, with the command its harness builds from
+ * `options.dispatch`, and return a structured result.
  *
  * Failure modes (see {@link AgentFailureReason}):
  *
- *   • `spawn_failed`  — the spawn call threw synchronously.
+ *   • `spawn_failed`  — the spawn call threw, or its output could not be captured.
  *   • `timeout`       — exceeded the resolved timeout.
+ *   • `aborted`       — the caller's signal fired.
  *   • `non_zero_exit` — child exited with a non-zero code.
  *
  * `ok === true` requires exit code 0.
  */
-export async function runAgent(
-  profile: AgentProfile,
-  prompt: string | undefined,
-  options: RunAgentOptions = {},
-): Promise<AgentRunResult> {
+export async function runAgent(profile: AgentProfile, options: RunAgentOptions = {}): Promise<AgentRunResult> {
   const stdioMode = options.stdio ?? profile.stdio;
   // null = explicitly disabled (no kill timer). undefined = runtime default.
   const timeoutMs: number | null = options.timeoutMs !== undefined ? options.timeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
-  const setTimeoutImpl = options.setTimeoutFn ?? setTimeout;
-  const clearTimeoutImpl = options.clearTimeoutFn ?? clearTimeout;
 
-  // Observability seam — ids/status only, best-effort (see RunAgentOptions.onEvent).
-  const emitSpawnEvent = (type: string, data: Record<string, unknown>): void => {
-    if (!options.onEvent) return;
-    try {
-      options.onEvent({ type, data });
-    } catch {
-      // Observability must never break the dispatch.
-    }
-  };
-
-  // Build argv via the platform-specific builder when dispatch params are
-  // provided; otherwise use the direct positional-prompt form.
-  let builtArgv: readonly string[];
-  let builtEnv: Record<string, string> | undefined;
-  let builtStdin: string | undefined;
-  if (options.dispatch !== undefined) {
-    const platform = profile.platform ?? profile.name;
-    const harness = getHarness(platform);
-    if (!harness) {
-      throw new ConfigError(
-        `Agent platform "${platform}" has no registered command builder.`,
-        "INVALID_CONFIG_FILE",
-        "Select a canonical agent platform in harnesses.<name>.platform.",
-      );
-    }
-    const built = harness.build(profile, options.dispatch);
-    builtArgv = built.argv;
-    builtEnv = built.env;
-    builtStdin = built.stdin;
-  } else {
-    const positionalArgs: string[] = [...profile.args, ...(options.args ?? [])];
-    if (prompt !== undefined) positionalArgs.push(prompt);
-    builtArgv = [profile.bin, ...positionalArgs];
+  const platform = profile.platform ?? profile.name;
+  const harness = getHarness(platform);
+  if (!harness) {
+    throw new ConfigError(
+      `Agent platform "${platform}" has no registered command builder.`,
+      "INVALID_CONFIG_FILE",
+      "Select a canonical agent platform in harnesses.<name>.platform.",
+    );
   }
-  // Extra args (e.g. forwarded CLI positionals) are appended after the builder output.
-  const finalArgv: string[] = [...builtArgv, ...(options.dispatch ? (options.args ?? []) : [])];
-
-  const env = { ...buildChildEnv(profile, options), ...(builtEnv ?? {}) };
-  const start = Date.now();
+  const built = harness.build(profile, options.dispatch ?? {});
 
   // Cooperative cancel: refuse to spawn at all when the caller's signal is
   // already aborted (e.g. the run's budget was exhausted before this unit).
   if (options.signal?.aborted) {
-    return {
-      ok: false,
-      exitCode: null,
-      stdout: "",
-      stderr: "",
-      durationMs: 0,
-      reason: "aborted",
-      error: `agent CLI "${profile.name}" not started: caller signal already aborted`,
-    };
+    return failed("aborted", `agent CLI "${profile.name}" not started: caller signal already aborted`);
   }
 
   // Spawn/timeout/abort/capture are owned by the managed-subprocess primitive
   // (src/core/subprocess.ts): process-GROUP spawn (detached in captured mode),
   // the SIGTERM→SIGKILL kill ladder on timeout/abort, bounded output capture,
-  // and the optional stdin payload. runAgent keeps its agent-specific surface —
-  // the onEvent observability seam, the failure taxonomy, and JSON parsing.
-  //
-  // `onSpawn` fires spawn_start once the child is live (never for a pre-spawn
-  // abort or a synchronous spawn failure), and captures the proc so spawn_exit
-  // can carry the same pid.
-  let spawnedProc: SpawnedSubprocess | undefined;
-  const result = await runManagedSubprocess(finalArgv, {
+  // and the optional stdin payload. runAgent keeps its agent-specific surface:
+  // the failure taxonomy.
+  const start = Date.now();
+  const result = await runManagedSubprocess([...built.argv], {
     capture: stdioMode === "captured",
-    env,
+    env: { ...buildChildEnv(profile, options), ...built.env },
     ...(options.cwd ? { cwd: options.cwd } : {}),
-    ...((options.stdin ?? builtStdin) !== undefined ? { stdin: options.stdin ?? builtStdin } : {}),
+    ...(built.stdin !== undefined ? { stdin: built.stdin } : {}),
     timeoutMs,
     ...(options.signal ? { signal: options.signal } : {}),
-    ...(options.spawn ? { spawnFn: options.spawn } : {}),
-    setTimeoutFn: setTimeoutImpl,
-    clearTimeoutFn: clearTimeoutImpl,
-    onSpawn: (proc) => {
-      spawnedProc = proc;
-      emitSpawnEvent("spawn_start", {
-        profile: profile.name,
-        ...(typeof proc.pid === "number" ? { pid: proc.pid } : {}),
-      });
-    },
   });
-
-  const pidField = spawnedProc && typeof spawnedProc.pid === "number" ? { pid: spawnedProc.pid } : {};
   const durationMs = Date.now() - start;
 
-  // Spawn/exit failure. A synchronous spawn throw never reached a live child
-  // (no spawn_start fired, so no spawn_exit either); a rejected proc.exited did
-  // (spawn_start already fired, so it emits a spawn_exit with status spawn_failed).
-  if (result.spawnError) {
-    if (spawnedProc) {
-      emitSpawnEvent("spawn_exit", { profile: profile.name, ...pidField, exitCode: null, status: "spawn_failed" });
-    }
-    return {
-      ok: false,
-      exitCode: null,
-      stdout: "",
-      stderr: "",
-      durationMs,
-      reason: "spawn_failed",
-      error: result.spawnError.message,
-    };
+  if (result.spawnError) return failed("spawn_failed", result.spawnError.message, { durationMs });
+
+  const { exitCode, stdout, stderr } = result;
+  const output = { exitCode, stdout, stderr, durationMs };
+  if (result.aborted) {
+    return failed("aborted", `agent CLI "${profile.name}" aborted by caller signal`, output);
   }
-
-  const { exitCode, timedOut, aborted, stdout, stderr } = result;
-  emitSpawnEvent("spawn_exit", {
-    profile: profile.name,
-    ...pidField,
-    exitCode,
-    status: aborted ? "aborted" : timedOut ? "timeout" : exitCode !== 0 ? "non_zero_exit" : "ok",
-  });
-
-  if (aborted) {
-    return {
-      ok: false,
-      exitCode,
-      stdout,
-      stderr,
-      durationMs,
-      reason: "aborted",
-      error: `agent CLI "${profile.name}" aborted by caller signal`,
-    };
+  if (result.timedOut) {
+    return failed("timeout", `agent CLI "${profile.name}" timed out after ${timeoutMs ?? 0}ms`, output);
   }
-
-  if (timedOut) {
-    return {
-      ok: false,
-      exitCode,
-      stdout,
-      stderr,
-      durationMs,
-      reason: "timeout",
-      error: `agent CLI "${profile.name}" timed out after ${timeoutMs ?? 0}ms`,
-    };
-  }
-
   const captureFailure = streamFailureMessage(profile.name, result.stdoutRead, result.stderrRead);
-  if (captureFailure) {
-    return {
-      ok: false,
-      exitCode,
-      stdout,
-      stderr,
-      durationMs,
-      reason: "spawn_failed",
-      error: captureFailure,
-    };
-  }
-
+  if (captureFailure) return failed("spawn_failed", captureFailure, output);
   if (exitCode !== 0) {
-    return {
-      ok: false,
-      exitCode,
-      stdout,
-      stderr,
-      durationMs,
-      reason: "non_zero_exit",
-      error: `agent CLI "${profile.name}" exited with code ${exitCode}`,
-    };
+    return failed("non_zero_exit", `agent CLI "${profile.name}" exited with code ${exitCode}`, output);
   }
-
-  return { ok: true, exitCode, stdout, stderr, durationMs };
+  return { ok: true, ...output };
 }

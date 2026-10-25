@@ -24,7 +24,6 @@ import type { CommandDispatchResult, DispatchPreparedCommandOptions } from "../.
 import { dispatchPreparedCommandInvocation } from "../../commands/command/command-execution";
 import type { TaskLogLineInput } from "../../core/logs-db";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import type { RunAgentOptions } from "../../integrations/agent";
 import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskV3Command } from "../prepare/prepared-execution";
@@ -40,14 +39,12 @@ export async function runPreparedCommandTask(input: {
   startedAt: Date;
   now: () => Date;
   runAgentImpl?: RunExecutionOptions["runAgent"];
-  agentOptions?: Partial<RunAgentOptions>;
   historyReserved: boolean;
   provenance: ExecutionProvenanceContext;
 }): Promise<TaskRunResult> {
-  const { task, logPath, startedAt, now, agentOptions, provenance } = input;
+  const { task, logPath, startedAt, now, provenance } = input;
   const dispatchOptions: DispatchPreparedCommandOptions = {
     ...(input.runAgentImpl ? { runAgent: input.runAgentImpl } : {}),
-    ...(agentOptions ? { runOptions: agentOptions } : {}),
     // F-1 (R-07 fix, spec §5.2 point 3): threads the resolved event source
     // into the dispatched engine's child env and the recorded usage events.
     eventSource: provenance.eventSource,

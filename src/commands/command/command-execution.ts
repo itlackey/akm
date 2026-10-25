@@ -105,7 +105,7 @@ export interface CommandDryRunResult {
 export interface DispatchPreparedCommandOptions {
   readonly runAgent?: RunExecutionOptions["runAgent"];
   readonly runSdk?: RunExecutionOptions["runSdk"];
-  readonly runOptions?: RunExecutionOptions["runOptions"];
+  readonly signal?: RunExecutionOptions["signal"];
   readonly chat?: RunExecutionOptions["chat"];
   /**
    * F-1 (spec docs/plans/specs/p1b-model-extraction.md §5.2 point 3, R-07

@@ -3,8 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { redactUnitOutcome } from "../../src/workflows/exec/dispatch-redaction";
+import type { ConnectionRunner, HarnessRunner } from "../../src/integrations/agent/runner";
+import { collectWorkflowDispatchSensitiveValues, redactUnitOutcome } from "../../src/workflows/exec/dispatch-redaction";
 import type { UnitOutcome } from "../../src/workflows/exec/step-work";
+import { withEnv } from "../_helpers/sandbox";
 
 describe("redactUnitOutcome number leaves", () => {
   test("redacts a numeric secret in the parsed result and no other number", () => {
@@ -21,5 +23,36 @@ describe("redactUnitOutcome number leaves", () => {
     ]);
     expect(outcome.tokens).toBe(1200);
     expect(outcome.result).toEqual({ n: "[REDACTED]" });
+  });
+});
+
+describe("collectWorkflowDispatchSensitiveValues", () => {
+  const harness: HarnessRunner = {
+    kind: "harness",
+    name: "claude",
+    platform: "claude",
+    bin: "claude",
+    args: [],
+    timeoutMs: null,
+  };
+  const connection: ConnectionRunner = {
+    kind: "connection",
+    name: "lab",
+    endpoint: "http://127.0.0.1:1/v1",
+    model: "m",
+    request: {},
+    apiKey: "$DISPATCH_REDACTION_KEY",
+    timeoutMs: null,
+  };
+
+  test("a harness's unsafe passthrough value and a connection's key are read from this process's environment", async () => {
+    await withEnv({ ANTHROPIC_API_KEY: "passthrough-secret", DISPATCH_REDACTION_KEY: "connection-secret" }, () => {
+      expect(collectWorkflowDispatchSensitiveValues({ runner: harness })).toContain("passthrough-secret");
+      expect(collectWorkflowDispatchSensitiveValues({ runner: connection })).toContain("connection-secret");
+    });
+  });
+
+  test("the values the unit's environment bindings substituted are included", () => {
+    expect(collectWorkflowDispatchSensitiveValues({ sensitiveValues: ["bound-secret"] })).toEqual(["bound-secret"]);
   });
 });

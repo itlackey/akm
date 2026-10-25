@@ -78,7 +78,7 @@ describe("the event source a dispatch is stamped with", () => {
     let seen: string | undefined;
     await runExecution(execution, {
       ...options,
-      runAgent: async (_profile, _prompt, opts) => {
+      runAgent: async (_profile, opts) => {
         seen = opts.env?.AKM_EVENT_SOURCE;
         return okResult("ok");
       },
@@ -107,10 +107,10 @@ describe("the event source a dispatch is stamped with", () => {
 
 describe("runExecution routes each runner kind to its transport", () => {
   test("a harness runner goes to runAgent with its profile and prompt", async () => {
-    const calls: Array<{ profile: AgentProfile; prompt: string }> = [];
+    const calls: Array<{ profile: AgentProfile; prompt?: string }> = [];
     const result = await runExecution(built(opencodeHarness, "hello"), {
-      runAgent: async (profile, prompt) => {
-        calls.push({ profile, prompt });
+      runAgent: async (profile, opts) => {
+        calls.push({ profile, ...(opts.dispatch?.prompt !== undefined ? { prompt: opts.dispatch.prompt } : {}) });
         return okResult("from-agent");
       },
       runSdk: refuse("sdk"),
@@ -185,25 +185,23 @@ describe("runExecution routes each runner kind to its transport", () => {
 
 describe("collectDispatchSensitiveValues", () => {
   test("an agent unit's bound env is configuration; the credential and an unsafe passthrough value still count", () => {
-    const harnessValues = collectDispatchSensitiveValues(
-      claudeHarness,
-      { env: { HOOK_URL: "https://hooks.example.test/inbox/7", CHANNEL_ID: "1234567890" } },
-      { PATH: "/safe/bin", ANTHROPIC_API_KEY: "UNSAFE-PASSTHROUGH" },
-    );
+    const harnessValues = collectDispatchSensitiveValues(claudeHarness, {
+      PATH: "/safe/bin",
+      ANTHROPIC_API_KEY: "UNSAFE-PASSTHROUGH",
+    });
     expect(harnessValues).toContain("UNSAFE-PASSTHROUGH");
     expect(harnessValues).not.toContain("https://hooks.example.test/inbox/7");
     expect(harnessValues).not.toContain("1234567890");
 
     const connectionValues = collectDispatchSensitiveValues(
       { ...lab, apiKey: "$LAB_KEY" },
-      { env: { HOOK_URL: "https://hooks.example.test/inbox/7" } },
       { LAB_KEY: "ENGINE-CREDENTIAL" },
     );
     expect(connectionValues).toEqual(["ENGINE-CREDENTIAL"]);
   });
 
   test("a connection's stored key counts too, and reading it for redaction does not warn", () => {
-    expect(collectDispatchSensitiveValues({ ...lab, apiKey: "$ABSENT_KEY" }, {}, {})).toEqual([]);
+    expect(collectDispatchSensitiveValues({ ...lab, apiKey: "$ABSENT_KEY" }, {})).toEqual([]);
   });
 });
 
@@ -218,20 +216,15 @@ describe("runExecution redacts what the child could have seen", () => {
       safeEventSource: "improve",
     };
     const echoed = Object.values(values).join(" | ");
-    const result = await runExecution(
-      built(claudeHarness, "p", {
-        environment: { BOUND_VALUE: values.binding, AKM_EVENT_SOURCE: values.safeEventSource },
-      }),
-      {
-        runOptions: {
-          envSource: {
-            PATH: values.safePath,
-            ANTHROPIC_API_KEY: values.passthrough,
-            CLAUDE_CONFIG: values.safeClaudeConfig,
-          },
-        },
-        runAgent: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed }),
-      },
+    const result = await withEnv(
+      { ANTHROPIC_API_KEY: values.passthrough, CLAUDE_CONFIG_DIR: values.safeClaudeConfig },
+      () =>
+        runExecution(
+          built(claudeHarness, "p", {
+            environment: { BOUND_VALUE: values.binding, AKM_EVENT_SOURCE: values.safeEventSource },
+          }),
+          { runAgent: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed }) },
+        ),
     );
 
     expect(JSON.stringify(result)).not.toContain(values.passthrough);
@@ -240,12 +233,10 @@ describe("runExecution redacts what the child could have seen", () => {
     }
     expect(result.stdout.match(/\[REDACTED\]/g)).toHaveLength(1);
 
-    const viaConnection = await runExecution(
-      built({ ...lab, apiKey: "$LAB_KEY" }, "p", { environment: { BOUND_VALUE: values.binding } }),
-      {
-        runOptions: { envSource: { LAB_KEY: values.credential } },
+    const viaConnection = await withEnv({ LAB_KEY: values.credential }, () =>
+      runExecution(built({ ...lab, apiKey: "$LAB_KEY" }, "p", { environment: { BOUND_VALUE: values.binding } }), {
         runSdk: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed }),
-      },
+      }),
     );
     expect(JSON.stringify(viaConnection)).not.toContain(values.credential);
     expect(JSON.stringify(viaConnection)).toContain(values.binding);
@@ -261,10 +252,11 @@ describe("runExecution redacts what the child could have seen", () => {
       XDG_STATE_HOME: "/sandbox/xdg-state",
     };
     const echoed = Object.values(directories).join(" | ");
-    const result = await runExecution(built(opencodeHarness), {
-      runOptions: { envSource: { PATH: "/safe/bin", ...directories } },
-      runAgent: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed }),
-    });
+    const result = await withEnv(directories, () =>
+      runExecution(built(opencodeHarness), {
+        runAgent: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed }),
+      }),
+    );
 
     expect(result.stdout).toBe(echoed);
     expect(result.stderr).toBe(echoed);
@@ -298,10 +290,9 @@ describe("runExecution redacts what the child could have seen", () => {
     for (const [platform, name, value, secret] of cases) {
       const runner: HarnessRunner = { ...opencodeHarness, platform, bin: platform, args: [] };
       const echoed = `${value} | ${secret}`;
-      const result = await runExecution(built(runner), {
-        runOptions: { envSource: { [name]: value } },
-        runAgent: async () => ({ ...okResult(echoed) }),
-      });
+      const result = await withEnv({ [name]: value }, () =>
+        runExecution(built(runner), { runAgent: async () => ({ ...okResult(echoed) }) }),
+      );
       expect(JSON.stringify(result), `${platform} ${name}`).not.toContain(value);
       expect(JSON.stringify(result), `${platform} ${name}`).not.toContain(secret);
       expect(result.stdout).toBe("[REDACTED] | [REDACTED]");

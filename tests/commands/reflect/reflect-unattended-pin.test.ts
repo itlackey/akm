@@ -19,12 +19,18 @@ import path from "node:path";
 
 import { akmReflect } from "../../../src/commands/improve/reflect";
 import type { AkmConfig } from "../../../src/core/config/config";
-import type { SpawnedSubprocess, SpawnFn } from "../../../src/core/subprocess";
 import type { ChatCompletionConfig } from "../../../src/llm/client";
+import { harnessCalls, writeFakeHarness } from "../../_helpers/engine-stubs";
 import { reflectReply } from "../../_helpers/factories";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  makeSandboxDir,
+  type SandboxedDir,
+  withIsolatedAkmStorage,
+} from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
+let binDir: SandboxedDir;
 
 function makeStashDir(): string {
   const stash = storage.stashDir;
@@ -32,43 +38,10 @@ function makeStashDir(): string {
   return stash;
 }
 
-function asReadableStream(text: string): ReadableStream<Uint8Array> {
-  const bytes = new TextEncoder().encode(text);
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(bytes);
-      controller.close();
-    },
-  });
-}
-
-/** What a spawned harness was given: its command, env and working directory, and what was written to its stdin. */
-interface Spawned {
-  cmd: string[];
-  env: Record<string, string>;
-  cwd?: string;
-  stdin: string;
-}
-
-function spySpawn(onSpawn: (spawned: Spawned) => void, stdout = ""): SpawnFn {
-  return (cmd, options) => {
-    const spawned: Spawned = { cmd, env: options.env ?? {}, ...(options.cwd ? { cwd: options.cwd } : {}), stdin: "" };
-    onSpawn(spawned);
-    const decoder = new TextDecoder();
-    const proc: SpawnedSubprocess = {
-      exitCode: 0,
-      exited: Promise.resolve(0),
-      stdout: asReadableStream(stdout),
-      stderr: asReadableStream(""),
-      stdin: new WritableStream<Uint8Array>({
-        write(chunk) {
-          spawned.stdin += decoder.decode(chunk, { stream: true });
-        },
-      }),
-      kill: () => undefined,
-    };
-    return proc;
-  };
+/** A fake harness binary that answers with `replies`, and a config whose reflect process runs `platform` on it. */
+function fakeAgent(platform = "claude", replies: readonly string[] = [""]): { bin: string; config: AkmConfig } {
+  const bin = writeFakeHarness(binDir.dir, `fake-agent-${platform}`, replies);
+  return { bin, config: agentModeConfig({ harnesses: { "fake-agent": { platform, bin } } } as Partial<AkmConfig>) };
 }
 
 /** Config whose reflect process resolves a TOOL-CAPABLE (harness) runner. */
@@ -87,18 +60,18 @@ function agentModeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  binDir = makeSandboxDir("akm-unattended-pin-bin");
 });
 
 afterEach(() => {
+  binDir.cleanup();
   storage.cleanup();
 });
 
 describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
   test("eventSource=improve runs a harness process under the model-work tool policy", async () => {
     const stash = makeStashDir();
-    const config = agentModeConfig();
-    let seen: Spawned | undefined;
-    const payload = reflectReply({ description: "Alpha, the first memory" });
+    const { bin, config } = fakeAgent("claude", [reflectReply({ description: "Alpha, the first memory" })]);
 
     const result = await akmReflect({
       ref: "memories/alpha",
@@ -106,15 +79,15 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
       eventSource: "improve",
       config,
       improveProfile: config.improve?.strategies?.default,
-      runAgentOptions: { spawn: spySpawn((spawned) => (seen = spawned), payload) },
     });
 
     expect(result.ok).toBe(true);
+    const [seen] = harnessCalls(bin);
     // claude runs confined to the model-work tools, in its own scratch directory, not the stash.
-    expect(seen?.cmd.slice(1, 3)).toEqual(["--restricted", "--strict-mcp-config"]);
-    expect(seen?.cmd).toContain("--permission-mode");
-    expect(seen?.cmd).toContain("Read,Bash(akm search *),Bash(akm show *),Bash(akm curate *)");
-    expect(seen?.cmd).toContain("--no-session-persistence");
+    expect(seen?.argv.slice(0, 2)).toEqual(["--restricted", "--strict-mcp-config"]);
+    expect(seen?.argv).toContain("--permission-mode");
+    expect(seen?.argv).toContain("Read,Bash(akm search *),Bash(akm show *),Bash(akm curate *)");
+    expect(seen?.argv).toContain("--no-session-persistence");
     expect(path.basename(seen?.cwd ?? "")).toStartWith("akm-model-work-");
     // The proposal comes back as the JSON reply of the output schema, which the prompt ends with.
     expect(seen?.stdin).toContain("Respond with ONLY a JSON value matching this JSON Schema");
@@ -122,11 +95,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
 
   test("eventSource=improve runs a harness that cannot confine the policy unrestricted, in the scratch directory", async () => {
     const stash = makeStashDir();
-    const config = agentModeConfig({
-      harnesses: { "fake-agent": { platform: "pi", bin: "fake-agent" } },
-    } as Partial<AkmConfig>);
-    let seen: Spawned | undefined;
-    const payload = reflectReply({ description: "Alpha, the first memory" });
+    const { bin, config } = fakeAgent("pi", [reflectReply({ description: "Alpha, the first memory" })]);
 
     const result = await akmReflect({
       ref: "memories/alpha",
@@ -134,11 +103,11 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
       eventSource: "improve",
       config,
       improveProfile: config.improve?.strategies?.default,
-      runAgentOptions: { spawn: spySpawn((spawned) => (seen = spawned), payload) },
     });
 
     expect(result.ok).toBe(true);
-    expect(seen?.cmd[0]).toBe("fake-agent");
+    const [seen] = harnessCalls(bin);
+    expect(seen?.argv).toContain("-p");
     expect(path.basename(seen?.cwd ?? "")).toStartWith("akm-model-work-");
   });
 
@@ -176,7 +145,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
 
   test("eventSource=improve with no connection or harness to resolve fails CLOSED instead of dispatching an agent", async () => {
     const stash = makeStashDir();
-    let spawned = false;
+    const bin = path.join(binDir.dir, "never-run");
 
     const config = agentModeConfig({ connections: undefined, harnesses: undefined });
     const strategy = config.improve?.strategies?.default;
@@ -188,23 +157,17 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
         eventSource: "improve",
         config,
         improveProfile: strategy,
-        runAgentOptions: { spawn: spySpawn(() => (spawned = true)) },
       }),
     ).rejects.toThrow("Reflect requires a connection or harness for the active improve strategy.");
-    expect(spawned).toBe(false);
+    expect(harnessCalls(bin)).toEqual([]);
   });
 
   test("interactive reflect (no eventSource) dispatches the configured harness", async () => {
     const stash = makeStashDir();
-    let spawned = false;
+    const { bin, config } = fakeAgent("gemini");
 
-    await akmReflect({
-      ref: "memories/alpha",
-      stashDir: stash,
-      config: agentModeConfig({ connections: undefined }),
-      runAgentOptions: { spawn: spySpawn(() => (spawned = true)) },
-    });
+    await akmReflect({ ref: "memories/alpha", stashDir: stash, config: { ...config, connections: undefined } });
 
-    expect(spawned).toBe(true);
+    expect(harnessCalls(bin)).toHaveLength(1);
   });
 });

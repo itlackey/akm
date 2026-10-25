@@ -36,7 +36,7 @@ export interface RunExecutionOptions {
   /** Direct-LLM retry telemetry. */
   readonly onRetryAttempt?: () => void;
   /** Agent spawn; defaults to {@link runAgent}. */
-  readonly runAgent?: (profile: AgentProfile, prompt: string, opts: RunAgentOptions) => Promise<AgentRunResult>;
+  readonly runAgent?: (profile: AgentProfile, opts: RunAgentOptions) => Promise<AgentRunResult>;
   /** Internal runtime dispatch; defaults to {@link runOpencodeSdk}. */
   readonly runSdk?: (
     profile: AgentProfile,
@@ -44,32 +44,19 @@ export interface RunExecutionOptions {
     opts: RunAgentOptions,
     connection: ChatCompletionConfig,
   ) => Promise<AgentRunResult>;
-  /**
-   * Operational overrides: stdio, signal, envSource, spawn, timers and onEvent. The request's timeout, cwd and env are not replaced.
-   */
-  readonly runOptions?: Partial<RunAgentOptions>;
+  /** Cancels the dispatch: a child gets SIGTERM then SIGKILL, a chat or runtime session is interrupted. */
+  readonly signal?: AbortSignal;
   /** Stamped into the child env as `AKM_EVENT_SOURCE` (usage-event provenance). */
   readonly eventSource?: string;
 }
 
-const OPERATIONAL_OPTIONS = [
-  "stdio",
-  "signal",
-  "envSource",
-  "spawn",
-  "setTimeoutFn",
-  "clearTimeoutFn",
-  "onEvent",
-] as const;
-
 /**
  * Every value that can reach one dispatch and must never be echoed back: credentials and unsafe passthrough env.
- * `opts.env` is configuration; a caller's secret values are redacted through its own sensitive set.
+ * A request's own `env` is configuration; a caller's secret values are redacted through its own sensitive set.
  */
 export function collectDispatchSensitiveValues(
   runner: RunnerSpec,
-  opts: RunAgentOptions,
-  envSource: NodeJS.ProcessEnv = opts.envSource ?? process.env,
+  envSource: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const values: (string | undefined)[] = [];
   if (runner.kind === "connection") {
@@ -191,8 +178,7 @@ async function dispatchRunner(
   seams: RunExecutionOptions,
   llm?: LlmCall,
 ): Promise<AgentRunResult> {
-  const envSource = opts.envSource ?? process.env;
-  const secrets = collectDispatchSensitiveValues(runner, opts, envSource);
+  const secrets = collectDispatchSensitiveValues(runner);
   let result: AgentRunResult;
   if (runner.kind === "harness") {
     const harnessRunProfile = profile ?? harnessProfile(runner);
@@ -202,10 +188,10 @@ async function dispatchRunner(
       seams.runAgent === undefined && opts.stdio !== "interactive"
         ? getHarness(runner.platform)?.runInProcess?.(harnessRunProfile, prompt, opts)
         : undefined;
-    const spawn = (spawnOpts: RunAgentOptions) => (seams.runAgent ?? runAgent)(harnessRunProfile, prompt, spawnOpts);
+    const spawn = (spawnOpts: RunAgentOptions) => (seams.runAgent ?? runAgent)(harnessRunProfile, spawnOpts);
     result = await (inProcess ?? (confined ? inScratchDirectory(opts, spawn) : spawn(opts)));
   } else {
-    const connection = materializeConnection(runner, inference, envSource);
+    const connection = materializeConnection(runner, inference);
     if (connection.apiKey) secrets.push(connection.apiKey);
     result = llm
       ? await llm(connection, opts)
@@ -255,10 +241,7 @@ export async function runExecution(
 ): Promise<AgentRunResult> {
   const confined = isConfinedAgentWork(execution);
   const opts: RunAgentOptions = { ...execution.options };
-  const operational = options.runOptions ?? {};
-  for (const key of OPERATIONAL_OPTIONS) {
-    if (operational[key] !== undefined) (opts as Record<string, unknown>)[key] = operational[key];
-  }
+  if (options.signal) opts.signal = options.signal;
   // Model work is akm's own traffic: its reads and its agents' commands are the improve pipeline's, never the
   // user's demand. A caller's source (a task, say) wins, as does one the unit's own `env:` binds.
   const eventSource =

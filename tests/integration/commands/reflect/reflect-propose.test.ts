@@ -2,9 +2,9 @@
  * Mock-CLI tests for `akm reflect` and `akm propose` (#226).
  *
  * These exercise the proposal-producer pipeline end-to-end without spawning
- * a real agent CLI. We inject a fake {@link SpawnFn} (the same seam locked
- * by `tests/architecture/agent-spawn-seam.test.ts`) so failure-reason
- * branches are deterministic.
+ * a real agent CLI. A fake harness binary stands in for it (see
+ * `tests/_helpers/engine-stubs.ts`), so failure-reason branches are
+ * deterministic.
  *
  * Coverage:
  *   • Happy path → proposal materialised in the queue.
@@ -20,13 +20,13 @@ import { akmReflect, REFLECT_JSON_SCHEMA } from "../../../../src/commands/improv
 import { akmPropose } from "../../../../src/commands/proposal/propose";
 import { listProposals } from "../../../../src/commands/proposal/repository";
 import { appendEvent, readEvents } from "../../../../src/core/events";
-import type { SpawnedSubprocess, SpawnFn } from "../../../../src/core/subprocess";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import {
   CONVERSATION_FALLBACK_BEGIN,
   CONVERSATION_FALLBACK_END,
 } from "../../../../src/integrations/agent/conversation-fallback";
 import { durableItemRef } from "../../../_helpers/durable-ref";
+import { type FakeHarnessOptions, harnessCalls, promptOf, writeFakeHarness } from "../../../_helpers/engine-stubs";
 import { quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
 import {
   type Cleanup,
@@ -57,64 +57,12 @@ function makeStashDir(): string {
   return stash;
 }
 
-function asReadableStream(text: string): ReadableStream<Uint8Array> {
-  const bytes = new TextEncoder().encode(text);
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(bytes);
-      controller.close();
-    },
-  });
-}
+let agents = 0;
 
-function fakeSpawn(stdout: string, stderr: string, exitCode: number): SpawnFn {
-  return () => {
-    const proc: SpawnedSubprocess = {
-      exitCode,
-      exited: Promise.resolve(exitCode),
-      stdout: asReadableStream(stdout),
-      stderr: asReadableStream(stderr),
-      stdin: null,
-      kill: () => undefined,
-    };
-    return proc;
-  };
-}
-
-function fakeSpawnWithCapture(
-  stdout: string,
-  stderr: string,
-  exitCode: number,
-  capture: (cmd: string[]) => void,
-): SpawnFn {
-  return (cmd) => {
-    capture(cmd);
-    return fakeSpawn(stdout, stderr, exitCode)(cmd, {});
-  };
-}
-
-function spawnFailedSpawn(): SpawnFn {
-  return () => {
-    throw new Error("spawn ENOENT fake-agent");
-  };
-}
-
-function hangingSpawn(): SpawnFn {
-  return () => {
-    let resolveExit: ((code: number) => void) | undefined;
-    const exited = new Promise<number>((r) => {
-      resolveExit = r;
-    });
-    const proc: SpawnedSubprocess = {
-      exitCode: null,
-      exited,
-      stdout: asReadableStream(""),
-      stderr: asReadableStream(""),
-      stdin: null,
-      kill: () => resolveExit?.(143),
-    };
-    return proc;
-  };
+/** A fake agent binary that answers `replies` in turn; its path, for `quietQualityGateConfig(bin)`. */
+function agent(replies: readonly string[], options?: FakeHarnessOptions): string {
+  agents += 1;
+  return writeFakeHarness(makeTempDir("akm-reflect-propose-bin-"), `fake-agent-${agents}`, replies, options);
 }
 
 /** What an engine of any kind replies to a reflect run on `lessons/rg-over-grep`. */
@@ -155,23 +103,19 @@ afterEach(() => {
 describe("akm reflect", () => {
   test("self-refine preserves direct conversation roles through the agent fallback lowerer", async () => {
     const stash = makeStashDir();
-    const prompts: string[] = [];
-    const spawn: SpawnFn = (cmd) => {
-      prompts.push(cmd.at(-1) ?? "");
-      return fakeSpawn(VALID_LESSON_PAYLOAD, "", 0)(cmd, {});
-    };
+    const bin = agent([VALID_LESSON_PAYLOAD]);
 
     const result = await akmReflect({
       ref: "lessons/rg-over-grep",
       stashDir: stash,
-      config: quietQualityGateConfig(),
+      config: quietQualityGateConfig(bin),
       maxRefineIters: 2,
       assetContent:
         "---\ndescription: Prefer ripgrep for repository search tasks\nwhen_to_use: When locating text across a source repository\n---\n\nPrefer grep.\n",
-      runAgentOptions: { spawn },
     });
 
     expect(result.ok).toBe(true);
+    const prompts = harnessCalls(bin).map(promptOf);
     expect(prompts).toHaveLength(2);
     const second = prompts[1] ?? "";
     expect(second).toContain(CONVERSATION_FALLBACK_BEGIN);
@@ -182,7 +126,7 @@ describe("akm reflect", () => {
     );
     const conversation = JSON.parse(json) as Array<{ role: string; content: string }>;
     expect(conversation.map(({ role }) => role)).toEqual(["user", "assistant"]);
-    expect(conversation[1]?.content).toBe(VALID_LESSON_PAYLOAD);
+    expect(conversation[1]?.content.trimEnd()).toBe(VALID_LESSON_PAYLOAD);
     expect(second.slice(second.indexOf(CONVERSATION_FALLBACK_END))).toContain(
       "Your previous proposal is shown above. Review it critically",
     );
@@ -205,20 +149,16 @@ describe("akm reflect", () => {
       "utf8",
     );
     await akmIndex({ stashDir: other, full: true });
-    let prompt = "";
+    const bin = agent([VALID_LESSON_PAYLOAD]);
 
     const result = await akmReflect({
       ref: "lessons/rg-over-grep",
       stashDir: selected,
-      config: quietQualityGateConfig(),
-      runAgentOptions: {
-        spawn: fakeSpawnWithCapture(VALID_LESSON_PAYLOAD, "", 0, (cmd) => {
-          prompt = cmd.at(-1) ?? "";
-        }),
-      },
+      config: quietQualityGateConfig(bin),
     });
 
     expect(result.ok).toBe(true);
+    const prompt = promptOf(harnessCalls(bin)[0]);
     expect(prompt).toContain("SELECTED SOURCE BODY");
     expect(prompt).not.toContain("OTHER SOURCE BODY");
   });
@@ -231,22 +171,18 @@ describe("akm reflect", () => {
       ref: itemRef,
       metadata: { signal: "negative", note: "qualified feedback" },
     });
-    let prompt = "";
+    const bin = agent(["not json"]);
 
     const result = await akmReflect({
       ref: "lessons/rg-over-grep",
       itemRef,
       assetContent: LESSON_SOURCE,
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: {
-        spawn: fakeSpawnWithCapture("not json", "", 0, (cmd) => {
-          prompt ||= cmd.at(-1) ?? "";
-        }),
-      },
+      config: quietQualityGateConfig(bin),
     });
 
     expect(result.ok).toBe(false);
+    const prompt = promptOf(harnessCalls(bin)[0]);
     expect(prompt).toContain("[negative] qualified feedback");
   });
 
@@ -258,8 +194,7 @@ describe("akm reflect", () => {
       akmReflect({
         ref: "lessons/rg-over-grep",
         stashDir: stash,
-        config: quietQualityGateConfig(),
-        runAgentOptions: { spawn: fakeSpawn(echoed, "", 0) },
+        config: quietQualityGateConfig(agent([echoed])),
       }),
     );
 
@@ -275,9 +210,8 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lessons/rg-over-grep",
       stashDir: stash,
-      config: quietQualityGateConfig(),
+      config: quietQualityGateConfig(agent([VALID_LESSON_PAYLOAD])),
       assetContent: LESSON_SOURCE,
-      runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
@@ -300,9 +234,8 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lessons/rg-over-grep",
       stashDir: stash,
-      config: quietQualityGateConfig(),
+      config: quietQualityGateConfig(agent([VALID_LESSON_PAYLOAD])),
       assetContent: LESSON_SOURCE,
-      runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
       eligibilitySource: "proactive",
     });
     expect(result.ok).toBe(true);
@@ -324,9 +257,8 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lessons/rg-over-grep",
       stashDir: stash,
-      config: quietQualityGateConfig(),
+      config: quietQualityGateConfig(agent([VALID_LESSON_PAYLOAD])),
       assetContent: LESSON_SOURCE,
-      runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
     });
     expect(result.ok).toBe(true);
     // Durable contract: the persisted proposal record carries no lane when none
@@ -346,8 +278,7 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lessons/bad",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn("", "boom", 7) },
+      config: quietQualityGateConfig(agent([""], { stderr: "boom", exitCode: 7 })),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -364,8 +295,7 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lessons/any",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: spawnFailedSpawn() },
+      config: quietQualityGateConfig(path.join(makeTempDir("akm-reflect-propose-bin-"), "no-such-agent")),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -378,8 +308,7 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lessons/any",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn("not a json object", "", 0) },
+      config: quietQualityGateConfig(agent(["not a json object"])),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -392,14 +321,11 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lessons/any",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: {
-        spawn: fakeSpawn(
+      config: quietQualityGateConfig(
+        agent([
           "---\ndescription: Use ripgrep for recursive repository searches\nwhen_to_use: Searching a repository recursively\n---\n\n# Title\n\nUse rg for recursive search.\n",
-          "",
-          0,
-        ),
-      },
+        ]),
+      ),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -409,32 +335,12 @@ describe("akm reflect", () => {
 
   test("timeout → no proposal, reason=timeout", async () => {
     const stash = makeStashDir();
-    const fakeTimers: Array<{ id: number; cb: () => void }> = [];
-    let nextId = 1;
-    const setTimeoutFn = ((cb: () => void) => {
-      const id = nextId++;
-      fakeTimers.push({ id, cb });
-      // Auto-fire on the next microtask so the test stays simple even though
-      // `akmReflect` does an awaited `indexer.lookup()` call before reaching
-      // `runAgent`. Since we are the only setTimeout caller in the wrapper
-      // (runAgent's hard timeout), this is unambiguous.
-      queueMicrotask(() => {
-        const stillThere = fakeTimers.find((t) => t.id === id);
-        if (stillThere) stillThere.cb();
-      });
-      return id;
-    }) as unknown as typeof setTimeout;
-    const clearTimeoutFn = ((id: number) => {
-      const idx = fakeTimers.findIndex((t) => t.id === id);
-      if (idx >= 0) fakeTimers.splice(idx, 1);
-    }) as unknown as typeof clearTimeout;
 
     const result = await akmReflect({
       ref: "lessons/any",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      timeoutMs: 5,
-      runAgentOptions: { spawn: hangingSpawn(), setTimeoutFn, clearTimeoutFn },
+      config: quietQualityGateConfig(agent([""], { hang: true })),
+      timeoutMs: 400,
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -454,23 +360,19 @@ describe("akm reflect", () => {
       ref: "skills/hello",
       metadata: { signal: "positive", note: "nice greeting" },
     });
-    let prompt = "";
     const unscoped = reflectReply(LESSON_PATCH, { ref: "lessons/rg-over-grep" });
+    const bin = agent([unscoped]);
     const result = await akmReflect({
       stashDir: stash,
       task: "Focus on the highest-value recent signal",
-      config: quietQualityGateConfig(),
+      config: quietQualityGateConfig(bin),
       // The asset the reply names, read once it has named it.
       assetContent: LESSON_SOURCE,
-      runAgentOptions: {
-        spawn: fakeSpawnWithCapture(unscoped, "", 0, (cmd) => {
-          prompt = cmd.at(-1) ?? "";
-        }),
-      },
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
     expect(listProposals(stash).length).toBe(1);
+    const prompt = promptOf(harnessCalls(bin)[0]);
     expect(prompt).toContain("No target ref was supplied.");
     expect(prompt).toContain("lessons/rg-over-grep [negative] too vague");
     expect(prompt).toContain("skills/hello [positive] nice greeting");
@@ -485,31 +387,19 @@ describe("akm reflect", () => {
 
   test("asks an agent for the same JSON reply as an LLM: its schema is the output schema", async () => {
     const stash = makeStashDir();
-    let capturedCmd: string[] = [];
-    let capturedStdoutMode: string | undefined;
-    let capturedStderrMode: string | undefined;
+    const bin = agent([VALID_LESSON_PAYLOAD]);
     const result = await akmReflect({
       ref: "lessons/rg-over-grep",
       stashDir: stash,
       task: "Tighten the guidance",
-      config: quietQualityGateConfig(),
+      config: quietQualityGateConfig(bin),
       assetContent: LESSON_SOURCE,
-      runAgentOptions: {
-        spawn: (cmd, opts) => {
-          capturedCmd = cmd;
-          capturedStdoutMode = opts.stdout;
-          capturedStderrMode = opts.stderr;
-          return fakeSpawn(VALID_LESSON_PAYLOAD, "", 0)(cmd, opts);
-        },
-      },
     });
 
     expect(result.ok).toBe(true);
-    expect(capturedStdoutMode).toBe("pipe");
-    expect(capturedStderrMode).toBe("pipe");
     // Under the model-work tool policy an agent edits only its own scratch directory, so the
     // proposal comes back on stdout, as the JSON object an LLM engine gets natively.
-    const prompt = capturedCmd.at(-1) ?? "";
+    const prompt = promptOf(harnessCalls(bin)[0]);
     expect(prompt).toContain("Task / focus: Tighten the guidance");
     expect(prompt).toContain("Respond only through the provider's native JSON schema.");
     expect(
@@ -525,7 +415,6 @@ describe("akm reflect", () => {
 describe("akm propose", () => {
   test("nothing configured leaves proposal and event state untouched", async () => {
     const stash = makeStashDir();
-    let spawnCalls = 0;
 
     await expect(
       akmPropose({
@@ -534,16 +423,9 @@ describe("akm propose", () => {
         task: "Author a skill without mutating state before dispatch",
         stashDir: stash,
         agentConfig: { configVersion: "0.9.0", semanticSearchMode: "off" },
-        runAgentOptions: {
-          spawn: () => {
-            spawnCalls += 1;
-            throw new Error("unconfigured proposal reached transport");
-          },
-        },
       }),
     ).rejects.toMatchObject({ name: "ConfigError", code: "AGENT_NOT_CONFIGURED" });
 
-    expect(spawnCalls).toBe(0);
     expect(fs.readdirSync(xdgDataDir, { recursive: true })).toEqual([]);
     expect(fs.existsSync(path.join(stash, "proposals"))).toBe(false);
   });
@@ -558,8 +440,7 @@ describe("akm propose", () => {
         name: "hello",
         task: "Say hi",
         stashDir: stash,
-        agentConfig: quietQualityGateConfig(),
-        runAgentOptions: { spawn: fakeSpawn(echoed, "", 0) },
+        agentConfig: quietQualityGateConfig(agent([echoed])),
       }),
     );
 
@@ -577,8 +458,7 @@ describe("akm propose", () => {
       name: "hello",
       task: "Say hi politely",
       stashDir: stash,
-      agentConfig: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
+      agentConfig: quietQualityGateConfig(agent([VALID_SKILL_PAYLOAD])),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
@@ -598,15 +478,15 @@ describe("akm propose", () => {
 
   test("proposals use the resolved bundle name rather than the source root", async () => {
     const stash = makeStashDir();
-    const config = {
-      ...quietQualityGateConfig(),
-      bundles: { team: { path: stash, writable: true } },
-      defaultBundle: "team",
-    } as ReturnType<typeof quietQualityGateConfig>;
     const payload = JSON.stringify({
       ref: "skills/bundle-named",
       content: "---\ndescription: A skill proposed into a named bundle\n---\n\nBundle body.\n",
     });
+    const config = {
+      ...quietQualityGateConfig(agent([payload])),
+      bundles: { team: { path: stash, writable: true } },
+      defaultBundle: "team",
+    } as ReturnType<typeof quietQualityGateConfig>;
 
     const result = await akmPropose({
       type: "skill",
@@ -614,7 +494,6 @@ describe("akm propose", () => {
       task: "Propose into the named bundle",
       stashDir: stash,
       agentConfig: config,
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
 
     expect(result.ok).toBe(true);
@@ -631,8 +510,7 @@ describe("akm propose", () => {
         name: "anything",
         task: "do a thing",
         stashDir: stash,
-        agentConfig: quietQualityGateConfig(),
-        runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
+        agentConfig: quietQualityGateConfig(agent([VALID_SKILL_PAYLOAD])),
       });
     } catch (err) {
       thrown = err;
@@ -650,8 +528,7 @@ describe("akm propose", () => {
         name: "x",
         task: "",
         stashDir: stash,
-        agentConfig: quietQualityGateConfig(),
-        runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
+        agentConfig: quietQualityGateConfig(agent([VALID_SKILL_PAYLOAD])),
       });
     } catch (err) {
       thrown = err;
@@ -666,8 +543,7 @@ describe("akm propose", () => {
       name: "hello",
       task: "Say hi",
       stashDir: stash,
-      agentConfig: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn("", "agent failed", 3) },
+      agentConfig: quietQualityGateConfig(agent([""], { stderr: "agent failed", exitCode: 3 })),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -686,8 +562,7 @@ describe("akm propose", () => {
       name: "hello",
       task: "Say hi",
       stashDir: stash,
-      agentConfig: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn('{"ref": "skills/hello"}', "", 0) }, // missing content
+      agentConfig: quietQualityGateConfig(agent(['{"ref": "skills/hello"}'])),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -706,8 +581,7 @@ describe("akm propose", () => {
       name: "hello",
       task: "Say hi",
       stashDir: stash,
-      agentConfig: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn(mismatchedPayload, "", 0) },
+      agentConfig: quietQualityGateConfig(agent([mismatchedPayload])),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -723,8 +597,7 @@ describe("akm propose", () => {
       name: "hello",
       task: "Say hi",
       stashDir: stash,
-      agentConfig: quietQualityGateConfig(),
-      runAgentOptions: { spawn: spawnFailedSpawn() },
+      agentConfig: quietQualityGateConfig(path.join(makeTempDir("akm-reflect-propose-bin-"), "no-such-agent")),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -754,8 +627,7 @@ describe("akm propose", () => {
         name: "gear",
         task: "Build a gear widget",
         stashDir: stash,
-        agentConfig: quietQualityGateConfig(),
-        runAgentOptions: { spawn: fakeSpawn(widgetPayload, "", 0) },
+        agentConfig: quietQualityGateConfig(agent([widgetPayload])),
       });
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error("expected ok");
@@ -772,8 +644,7 @@ describe("akm propose", () => {
       name: "hello",
       task: "Say hi politely",
       stashDir: stash,
-      agentConfig: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
+      agentConfig: quietQualityGateConfig(agent([VALID_SKILL_PAYLOAD])),
     });
     expect(result.ok).toBe(true);
     // The skill file should NOT be materialised — only the proposal entry.

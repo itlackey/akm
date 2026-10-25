@@ -35,7 +35,7 @@ import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { warnOnce } from "../../core/warn";
 import { lookup } from "../../indexer/indexer";
-import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
+import type { AgentFailureReason, AgentRunResult } from "../../integrations/agent";
 import { buildExecution, currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
 import {
   buildReflectOutputRepairPrompt,
@@ -90,8 +90,6 @@ export interface AkmReflectOptions {
   stashDir?: string;
   /** Bundle destination for the proposal. */
   target?: NonNullable<CreateProposalInput["target"]>;
-  /** Test seam: forwarded to the agent spawn. */
-  runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
   /** Test seam: proposal clock / id. */
   ctx?: ProposalsContext;
   /** The improve run's events context (its long-lived state.db handle). */
@@ -390,8 +388,6 @@ export interface RunReflectIterationOptions {
   onNotices?: (notices: readonly Notice[]) => void;
   /** The child process's environment: an agent or SDK engine has one, an LLM does not. */
   environment?: Record<string, string>;
-  /** Test seam: the agent spawn's operational options. */
-  runOptions?: AkmReflectOptions["runAgentOptions"];
 }
 
 interface ReflectTelemetry {
@@ -553,7 +549,6 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
         // Visible chain-of-thought can exhaust the output before the envelope.
         enableThinking: false,
         ...(opts.chat ? { chat: opts.chat } : {}),
-        ...(opts.runOptions ? { runOptions: opts.runOptions } : {}),
       },
       ...(opts.environment ? { current: { environment: opts.environment } } : {}),
       ...(opts.onNotices ? { onNotices: opts.onNotices } : {}),
@@ -941,14 +936,9 @@ async function runReflectRefineIterations(args: {
   let result = {} as AgentRunResult;
   let priorDraft: string | undefined;
   let repairAttempts = 0;
-  // Only a harness (or the internal runtime) runs a child process, with an environment and spawn or SDK seams.
+  // Only a harness (or the internal runtime) runs a child process, which has an environment.
   const childProcess =
-    runnerSpec.kind === "connection"
-      ? {}
-      : {
-          ...(Object.keys(agentEnv).length > 0 ? { environment: agentEnv } : {}),
-          ...(options.runAgentOptions ? { runOptions: options.runAgentOptions } : {}),
-        };
+    runnerSpec.kind === "connection" || Object.keys(agentEnv).length === 0 ? {} : { environment: agentEnv };
   for (let iter = 0; iter < maxRefineIters; iter++) {
     const { prompt, outputMode } = buildReflectPromptText({
       options,
@@ -1224,10 +1214,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
   const sources = gatherReflectPromptSources(options, stash, parsedRef, assetContent);
   const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
-  const sensitiveValues = collectDispatchSensitiveValues(runnerSpec, {
-    ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
-    ...(options.runAgentOptions ?? {}),
-  });
+  const sensitiveValues = collectDispatchSensitiveValues(runnerSpec);
   let result: AgentRunResult;
   let payload: ReflectPayload;
   try {

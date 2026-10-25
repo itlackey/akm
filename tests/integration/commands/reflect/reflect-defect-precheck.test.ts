@@ -15,10 +15,15 @@ import { listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
 import { openStateDatabase } from "../../../../src/core/state-db";
-import type { SpawnedSubprocess, SpawnFn } from "../../../../src/core/subprocess";
 import { listImproveLedgerRows } from "../../../../src/storage/repositories/improve-ledger-repository";
+import { writeFakeHarness } from "../../../_helpers/engine-stubs";
 import { quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  makeSandboxDir,
+  type SandboxedDir,
+  withIsolatedAkmStorage,
+} from "../../../_helpers/sandbox";
 
 const FRONTMATTER = [
   "---",
@@ -108,43 +113,26 @@ describe("findReflectDefect", () => {
 // ── akmReflect: refused before the judge ─────────────────────────────────────
 
 let storage: IsolatedAkmStorage;
+let binDir: SandboxedDir;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  binDir = makeSandboxDir("akm-defect-precheck-bin");
 });
 
 afterEach(() => {
+  binDir.cleanup();
   storage.cleanup();
 });
 
 const REF = "knowledge/nightly-export";
 
-function fakeSpawn(stdout: string): SpawnFn {
-  const stream = () =>
-    new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(stdout));
-        controller.close();
-      },
-    });
-  return () =>
-    ({
-      exitCode: 0,
-      exited: Promise.resolve(0),
-      stdout: stream(),
-      stderr: new ReadableStream<Uint8Array>({ start: (c) => c.close() }),
-      stdin: null,
-      kill: () => undefined,
-    }) as SpawnedSubprocess;
-}
-
 /** A judge engine with the quality gate on, or (`gate: false`) the gate off. */
-function config(gate: boolean): AkmConfig {
-  if (!gate) return quietQualityGateConfig();
+function config(gate: boolean, bin: string): AkmConfig {
+  if (!gate) return quietQualityGateConfig(bin);
   return {
-    ...quietQualityGateConfig(),
+    ...quietQualityGateConfig(bin),
     connections: { judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "judge-model" } } },
-    harnesses: { "fake-agent": { platform: "gemini", bin: "fake-agent" } },
     improve: {
       strategy: "default",
       strategies: {
@@ -163,15 +151,15 @@ async function reflect(
   defectFilter?: AkmReflectOptions["defectFilter"],
 ) {
   const judgeCalls = { count: 0 };
+  const bin = writeFakeHarness(binDir.dir, "fake-agent", [reflectReply(patch)]);
   const result = await akmReflect({
     ref: REF,
     stashDir: storage.stashDir,
-    config: config(gate),
+    config: config(gate, bin),
     // Reflect runs on the harness; the judge, with no harness named, on the default connection.
     engine: "fake-agent",
     assetContent: SOURCE,
     ...(defectFilter ? { defectFilter } : {}),
-    runAgentOptions: { spawn: fakeSpawn(reflectReply(patch)) },
     chat: async () => {
       judgeCalls.count += 1;
       return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "fine" });

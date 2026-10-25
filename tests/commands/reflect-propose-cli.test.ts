@@ -8,8 +8,7 @@
  * require spawning the CLI and stubbing PATH-resolved binaries, which is
  * brittle. Instead we replicate the exact argv coercion logic and assert it
  * matches the production code, then drive `akmReflect` / `akmPropose` with
- * a captured-spawn fake (mirroring `tests/agent/agent-spawn.test.ts`) for
- * deterministic happy + failure paths.
+ * a fake harness binary for deterministic happy + failure paths.
  *
  * Backfill for issue #284 GAP-CRIT 2.
  */
@@ -19,8 +18,8 @@ import os from "node:os";
 import path from "node:path";
 import { akmReflect } from "../../src/commands/improve/reflect";
 import { akmPropose } from "../../src/commands/proposal/propose";
-import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
 import { durableItemRef } from "../_helpers/durable-ref";
+import { type FakeHarnessOptions, harnessCalls, writeFakeHarness } from "../_helpers/engine-stubs";
 import { quietQualityGateConfig, reflectReply } from "../_helpers/factories";
 import { installFakeOpencodeHost } from "../_helpers/fake-opencode-host";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
@@ -47,47 +46,9 @@ afterAll(() => {
   }
 });
 
-function asReadableStream(text: string): ReadableStream<Uint8Array> {
-  const bytes = new TextEncoder().encode(text);
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(bytes);
-      controller.close();
-    },
-  });
-}
-
-function fakeSpawn(stdout: string, stderr: string, exitCode: number, capture?: (cmd: string[]) => void): SpawnFn {
-  return (cmd) => {
-    capture?.(cmd);
-    const proc: SpawnedSubprocess = {
-      exitCode,
-      exited: Promise.resolve(exitCode),
-      stdout: asReadableStream(stdout),
-      stderr: asReadableStream(stderr),
-      stdin: null,
-      kill: () => undefined,
-    };
-    return proc;
-  };
-}
-
-function hangingSpawn(): SpawnFn {
-  return () => {
-    let resolveExit: ((code: number) => void) | undefined;
-    const exited = new Promise<number>((r) => {
-      resolveExit = r;
-    });
-    const proc: SpawnedSubprocess = {
-      exitCode: null,
-      exited,
-      stdout: asReadableStream(""),
-      stderr: asReadableStream(""),
-      stdin: null,
-      kill: () => resolveExit?.(143),
-    };
-    return proc;
-  };
+/** A fake harness binary that answers with `replies`, in its own directory; returns its path. */
+function fakeAgent(replies: readonly string[], options?: FakeHarnessOptions): string {
+  return writeFakeHarness(makeTempDir("akm-rp-cli-bin-"), "fake-agent", replies, options);
 }
 
 const VALID_LESSON_PAYLOAD = reflectReply({
@@ -206,22 +167,17 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
   test("happy: argv-shape passed through coercion → queues a proposal", async () => {
     const stash = makeStashDir();
     const coerced = coerceReflectArgs({ ref: "lessons/rg-over-grep", task: "focus on speed", "timeout-ms": "5000" });
-    let capturedCmd: string[] = [];
+    const bin = fakeAgent([VALID_LESSON_PAYLOAD]);
     const result = await akmReflect({
       ...coerced,
       stashDir: stash,
-      config: quietQualityGateConfig(),
+      config: quietQualityGateConfig(bin),
       assetContent: LESSON_SOURCE,
-      runAgentOptions: {
-        spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0, (cmd) => {
-          capturedCmd = cmd;
-        }),
-      },
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
     expect(result.proposal.ref).toBe(durableItemRef(stash, "lesson", "rg-over-grep"));
-    expect(capturedCmd[0]).toBe("fake-agent");
+    expect(harnessCalls(bin)).toHaveLength(1);
   });
 
   test("parse_error: agent stdout is malformed → ok:false envelope", async () => {
@@ -230,8 +186,7 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
     const result = await akmReflect({
       ...coerced,
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn("not json", "", 0) },
+      config: quietQualityGateConfig(fakeAgent(["not json"])),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -240,24 +195,11 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
 
   test("timeout: short --timeout-ms is honoured by the wrapper", async () => {
     const stash = makeStashDir();
-    const coerced = coerceReflectArgs({ ref: "lessons/rg-over-grep", "timeout-ms": "1" });
+    const coerced = coerceReflectArgs({ ref: "lessons/rg-over-grep", "timeout-ms": "400" });
     const result = await akmReflect({
       ...coerced,
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: {
-        spawn: hangingSpawn(),
-        // `runAgent` registers several timers through this seam — the wrapper
-        // timeout AND the stdout/stderr stream-drain watchdogs (spawn.ts). Fire
-        // EACH callback independently on the next tick; a single shared `timerCb`
-        // would let a later drain-timer registration clobber the wrapper timeout
-        // so it never fires and the hanging spawn wedges the test.
-        setTimeoutFn: ((cb: () => void) => {
-          queueMicrotask(() => cb());
-          return 1 as unknown as ReturnType<typeof setTimeout>;
-        }) as unknown as typeof setTimeout,
-        clearTimeoutFn: (() => undefined) as unknown as typeof clearTimeout,
-      },
+      config: quietQualityGateConfig(fakeAgent([""], { hang: true })),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -288,8 +230,7 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
     const result = await akmPropose({
       ...coerced,
       stashDir: stash,
-      agentConfig: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
+      agentConfig: quietQualityGateConfig(fakeAgent([VALID_SKILL_PAYLOAD])),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
@@ -302,8 +243,7 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
     const result = await akmPropose({
       ...coerced,
       stashDir: stash,
-      agentConfig: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn("garbage {", "", 0) },
+      agentConfig: quietQualityGateConfig(fakeAgent(["garbage {"])),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -333,8 +273,7 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
       await akmPropose({
         ...coerced,
         stashDir: stash,
-        agentConfig: quietQualityGateConfig(),
-        runAgentOptions: { spawn: fakeSpawn(VALID_SKILL_PAYLOAD, "", 0) },
+        agentConfig: quietQualityGateConfig(fakeAgent([VALID_SKILL_PAYLOAD])),
       });
     } catch (err) {
       thrown = err;

@@ -13,7 +13,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../core/paths";
+import { akmLocations } from "../../core/paths";
 import { COMMON_SPAWN_ENV_PASSTHROUGH, collectAllowlistedEnv, WIN32_SPAWN_ENV_FLOOR } from "../../core/spawn-env";
 import {
   type ManagedSubprocessResult,
@@ -356,23 +356,6 @@ function childEnv(
   for (const [name, value] of Object.entries(bindings ?? {})) env[name] = value;
   for (const [name, value] of Object.entries(context ?? {})) env[name] = value;
   return env;
-}
-
-/**
- * The directories this akm resolved, as the `AKM_*` variables that name them, so
- * a step that runs `akm` uses the same installation even when the parent found
- * them through `XDG_*_HOME`. `AKM_BUNDLE_DIR` is passed only when the parent set one.
- */
-function akmLocations(): Record<string, string> {
-  const locations: Record<string, string> = {
-    AKM_CONFIG_DIR: getConfigDir(),
-    AKM_DATA_DIR: getDataDir(),
-    AKM_CACHE_DIR: getCacheDir(),
-    AKM_STATE_DIR: getStateDir(),
-  };
-  const bundleDir = process.env.AKM_BUNDLE_DIR?.trim();
-  if (bundleDir) locations.AKM_BUNDLE_DIR = bundleDir;
-  return locations;
 }
 
 /** The unit's effective allowlist: the shared default plus its own `passEnv` names. */
