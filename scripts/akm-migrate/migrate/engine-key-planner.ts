@@ -118,11 +118,31 @@ interface Splice {
   readonly text: string;
 }
 
-/** The scalar's own text in `source`, and its range, which excludes any comment after it. */
-function scalarText(node: unknown, source: string): { start: number; end: number; text: string } | undefined {
+/**
+ * The splice that makes the scalar `node` read as `value`, in the style it was written in (plain, 'single' or
+ * "double" quoted): the scalar's own range in the source, which excludes any comment after it, and the new value
+ * serialized for that style, never a substring of the old spelling, which may be escaped (`"la\u0062"`). A
+ * scalar written as a block, which this step does not rewrite, has none.
+ */
+function scalarSplice(node: unknown, value: string, offset: number): Splice | undefined {
   if (!isScalar(node) || !node.range) return undefined;
   const [start, end] = node.range;
-  return { start, end, text: source.slice(start, end) };
+  const text =
+    node.type === "QUOTE_DOUBLE"
+      ? JSON.stringify(value)
+      : node.type === "QUOTE_SINGLE"
+        ? `'${value.replaceAll("'", "''")}'`
+        : node.type === "PLAIN" || node.type === undefined
+          ? value
+          : undefined;
+  return text === undefined ? undefined : { start: offset + start, end: offset + end, text };
+}
+
+/** What a rewritten place must read as once the splices are made: its key and value, and no `engine` beside them. */
+interface Expectation {
+  readonly at: string;
+  readonly key: string;
+  readonly name: string;
 }
 
 function planYaml(
@@ -130,12 +150,13 @@ function planYaml(
   offset: number,
   role: EngineKeyRole,
   resolve: ResolveEngineKey,
-): { splices: Splice[]; rewrites: EngineKeyRewrite[]; notes: string[] } | { problem: string } {
+): { splices: Splice[]; rewrites: EngineKeyRewrite[]; notes: string[]; expected: Expectation[] } | { problem: string } {
   const document = parseDocument(yaml);
   if (document.errors.length > 0 || !isMap(document.contents)) return { problem: "it is not YAML this step can read" };
   const splices: Splice[] = [];
   const rewrites: EngineKeyRewrite[] = [];
   const notes: string[] = [];
+  const expected: Expectation[] = [];
   const places = enginePlaces(document.contents, role);
   // A task source older than v4 still on disk is one the task step left blocked. `engine` is a field of it, and
   // renaming the key would keep the task step from converting it once the blocker is fixed, so only the name moves:
@@ -156,26 +177,42 @@ function planYaml(
       continue;
     }
     const resolution = resolve(value);
-    const key = scalarText(pair.key, yaml);
-    const name = scalarText(pair.value, yaml);
-    if (!key || !name) continue;
-    if (nameOnly) {
-      if (resolution.name === value) continue;
-      splices.push({ start: offset + name.start, end: offset + name.end, text: name.text.replace(value, resolution.name) });
-      rewrites.push({ at: where, from: `engine: ${value}`, to: `engine: ${resolution.name}` });
+    const newKey = nameOnly ? undefined : scalarSplice(pair.key, resolution.key, offset);
+    const newName = resolution.name === value ? undefined : scalarSplice(pair.value, resolution.name, offset);
+    if ((!nameOnly && !newKey) || (resolution.name !== value && !newName)) {
+      notes.push(`${where}: left as written, because it is spelled in a style this step does not rewrite.`);
       continue;
     }
-    splices.push({ start: offset + key.start, end: offset + key.end, text: key.text.replace("engine", resolution.key) });
-    if (resolution.name !== value) {
-      splices.push({ start: offset + name.start, end: offset + name.end, text: name.text.replace(value, resolution.name) });
+    if (nameOnly) {
+      if (!newName) continue;
+      splices.push(newName);
+      rewrites.push({ at: where, from: `engine: ${value}`, to: `engine: ${resolution.name}` });
+      expected.push({ at, key: "engine", name: resolution.name });
+      continue;
     }
+    if (newKey) splices.push(newKey);
+    if (newName) splices.push(newName);
     rewrites.push({ at: where, from: `engine: ${value}`, to: `${resolution.key}: ${resolution.name}` });
+    expected.push({ at, key: resolution.key, name: resolution.name });
     if (resolution.note) notes.push(`${where}: ${resolution.note}`);
   }
   if (nameOnly && rewrites.length === 0 && places.some(({ map }) => pairOf(map, "engine"))) {
     return { problem: "it is not task source v4; convert it to v4 first, then run this step again" };
   }
-  return { splices, rewrites, notes };
+  return { splices, rewrites, notes, expected };
+}
+
+/** Whether `yaml` now reads as the planned places do: the key and name written, no `engine` left beside them. */
+function readsAsPlanned(yaml: string, role: EngineKeyRole, expected: readonly Expectation[]): boolean {
+  const document = parseDocument(yaml);
+  if (document.errors.length > 0 || !isMap(document.contents)) return false;
+  const places = new Map(enginePlaces(document.contents, role).map(({ at, map }) => [at, map]));
+  return expected.every(({ at, key, name }) => {
+    const map = places.get(at);
+    const value = map ? pairOf(map, key)?.value : undefined;
+    const stale = key !== "engine" && map ? pairOf(map, "engine") : undefined;
+    return isScalar(value) && value.value === name && stale === undefined;
+  });
 }
 
 function applySplices(source: string, splices: readonly Splice[]): string {
@@ -191,7 +228,6 @@ export function planEngineKeyFile(input: EngineKeyFileInput, resolve: ResolveEng
   const beforeHash = sha256(input.bytes);
   const raw = input.bytes.toString("utf8");
   const base = { filePath: input.filePath, beforeHash };
-  if (!raw.includes("engine")) return { ...base, status: "unchanged" };
 
   const frontmatter = input.role === "task" ? { text: raw, offset: 0 } : frontmatterOf(raw);
   if (!frontmatter) return { ...base, status: "unchanged" };
@@ -207,10 +243,10 @@ export function planEngineKeyFile(input: EngineKeyFileInput, resolve: ResolveEng
   }
 
   const after = Buffer.from(applySplices(raw, planned.splices), "utf8");
-  // What is written must still read as YAML.
+  // What is written must read as YAML, and as the keys and names that were planned.
   const written = input.role === "task" ? after.toString("utf8") : frontmatterOf(after.toString("utf8"))?.text;
-  if (written === undefined || parseDocument(written).errors.length > 0) {
-    return { ...base, status: "skipped", reason: "the rewrite would not leave valid YAML, so it was not made" };
+  if (written === undefined || !readsAsPlanned(written, input.role, planned.expected)) {
+    return { ...base, status: "skipped", reason: "the rewrite would not read as planned, so it was not made" };
   }
   return {
     ...base,

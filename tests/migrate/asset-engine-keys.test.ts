@@ -12,10 +12,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
 import { planEngineKeyFile, type ResolveEngineKey } from "../../scripts/akm-migrate/migrate/engine-key-planner";
 import { runMigration } from "../../scripts/akm-migrate/run-migrate";
 import { resetConfigCache } from "../../src/core/config/config";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+
+/** The text between the `---` fences at the top of a Markdown file. */
+const frontmatterBlock = (text: string): string => /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? "";
 
 describe("planEngineKeyFile", () => {
   const resolve: ResolveEngineKey = (engine) =>
@@ -107,6 +111,38 @@ describe("planEngineKeyFile", () => {
     const both = plan("command", "---\nengine: lab\nconnection: other\n---\n");
     expect(both).toMatchObject({ status: "skipped" });
     expect((both as { reason: string }).reason).toContain("also names a connection or a harness");
+  });
+
+  test("a name or key spelled with escapes is rewritten by what it reads as, in the style it was written in", () => {
+    // `"la\u0062"` reads as `lab`, and `"eng\u0069ne"` as `engine`: neither holds those words in its source.
+    const escapedName = plan("command", '---\nakm:\n  engine: "la\\u0062" # the model\n---\n');
+    expect(after(escapedName)).toBe('---\nakm:\n  connection: "default" # the model\n---\n');
+    const escapedKey = plan("command", '---\n"eng\\u0069ne": lab\n---\n');
+    expect(after(escapedKey)).toBe('---\n"connection": default\n---\n');
+    const single = plan("command", "---\nengine: 'lab'\n---\n");
+    expect(after(single)).toBe("---\nconnection: 'default'\n---\n");
+    const plain = plan("command", "---\n'engine': lab\n---\n");
+    expect(after(plain)).toBe("---\n'connection': default\n---\n");
+    // A task source older than v4 only has its name moved, escaped or not.
+    expect(after(plan("task", 'version: 2\nrun: echo\nengine: "la\\u0062"\n'))).toBe(
+      'version: 2\nrun: echo\nengine: "default"\n',
+    );
+  });
+
+  test("whatever it writes reads, once parsed, as the planned key and name", () => {
+    for (const spelling of ['"la\\u0062"', "'lab'", "lab", '"lab"']) {
+      const text = `---\nname: x\nengine: ${spelling}\n---\nbody\n`;
+      const written = after(plan("command", text));
+      const parsed = parseYaml(frontmatterBlock(written)) as Record<string, unknown>;
+      expect(parsed).toMatchObject({ name: "x", connection: "default" });
+      expect(parsed).not.toHaveProperty("engine");
+    }
+  });
+
+  test("a name written as a block scalar is left as written, with a word", () => {
+    const outcome = plan("command", "---\nengine: >-\n  lab\n---\n");
+    expect(outcome).toMatchObject({ status: "skipped" });
+    expect((outcome as { reason: string }).reason).toContain("spelled in a style this step does not rewrite");
   });
 
   test("a name that resolves with a note carries the note", () => {
