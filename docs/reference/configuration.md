@@ -241,8 +241,11 @@ the major version `opencode --version` reports:
 - OpenCode 2 runs embedded in akm's process (no server, no port), with your
   OpenCode configuration (providers, plugins, MCP servers, agents), your logins
   read from your OpenCode 2 database, and your default model unless akm names one.
-  A model name is OpenCode's `provider/model`. Its sessions are stored in akm's
-  own database, `<akm data dir>/opencode.db`.
+  A model name is OpenCode's `provider/model`, from the request, else the
+  `--model` in the harness's `args`, as on OpenCode 1. The embedded run carries
+  no other `args` (the CLI's flags have no meaning there): any it cannot carry
+  are named once. Its sessions are stored in akm's own database,
+  `<akm data dir>/opencode.db`.
 - Enabling this harness on OpenCode 2 opens your OpenCode database through
   OpenCode's own database layer, as any OpenCode build opening it does: the
   migrations bundled with the OpenCode that akm embeds run on it, it is put in

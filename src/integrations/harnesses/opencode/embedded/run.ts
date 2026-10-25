@@ -30,6 +30,7 @@ import {
   buildChildEnv,
   type RunAgentOptions,
 } from "../../../agent/spawn";
+import { modelFromArgs, withoutLeading, withoutModelFlag } from "../../harness";
 import { type EmbeddedHost, hostFor } from "./host";
 import type { HostKind } from "./host-spec";
 import { forgetSession, type SessionSettings } from "./plugin";
@@ -290,12 +291,29 @@ function modelWorkDirectory(): string {
 }
 
 /**
+ * The harness's authored `args` the embedded run cannot carry, as OpenCode 1's CLI would have passed them. The
+ * `--model` they name is the model unless the request names one (see {@link runOpencodeHarness}); a leading
+ * `run` is the CLI's own subcommand; anything else is for the CLI alone, and is named once.
+ */
+function warnOfUncarriedArgs(profile: AgentProfile): void {
+  const uncarried = withoutModelFlag(withoutLeading(profile.args, "run"));
+  if (uncarried.length === 0) return;
+  warnOnce(
+    `opencode-embedded-args:${profile.name}:${uncarried.join(" ")}`,
+    `The opencode harness "${profile.name}" runs OpenCode 2 embedded in akm, which carries only the --model of its args; ${uncarried.join(" ")} ${uncarried.length === 1 ? "is" : "are"} not applied. Set the harness's model, agent or workspace instead.`,
+  );
+}
+
+/**
  * Run one prompt on the user's OpenCode 2, embedded: their config, providers and
- * logins, and their default model unless akm names one. Model work is confined
- * (the deny permissions, akm's read tools) and runs in a fixed directory.
+ * logins, and their default model unless akm names one. The model is the
+ * request's, else the `--model` the harness's authored `args` carry, as on
+ * OpenCode 1's CLI. Model work is confined (the deny permissions, akm's read
+ * tools) and runs in a fixed directory.
  */
 export function runOpencodeHarness(profile: AgentProfile, opts: RunAgentOptions): Promise<AgentRunResult> {
-  const model = userModel(opts.dispatch?.model);
+  warnOfUncarriedArgs(profile);
+  const model = userModel(opts.dispatch?.model ?? modelFromArgs(profile.args));
   return runSession(
     { kind: "opencode", settings: {}, ...(model ? { model } : {}) },
     profile,

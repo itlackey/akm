@@ -11,12 +11,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../src/core/config/config";
 import { getCacheDir } from "../src/core/paths";
+import { _setWarnSinkForTests } from "../src/core/warn";
 import { buildExecution, currentLayer, resolveExecution } from "../src/integrations/agent/execution";
 import { type RunExecutionOptions, runExecution } from "../src/integrations/agent/runner-dispatch";
 import type { AgentRunResult, RunAgentOptions } from "../src/integrations/agent/spawn";
+import { modelFromArgs } from "../src/integrations/harnesses/harness";
+import { opencodeBuilder } from "../src/integrations/harnesses/opencode/agent-builder";
 import { installFakeOpencodeHost } from "./_helpers/fake-opencode-host";
 import { fakeOpencodeMajor } from "./_helpers/opencode-version";
 import { makeSandboxDir, withEnv, writeSandboxConfig } from "./_helpers/sandbox";
+import { overrideSeam } from "./_helpers/seams";
 
 const writeConfig = (harness: Record<string, unknown> = {}): void => {
   writeSandboxConfig({ harnesses: { opencode: harness } });
@@ -108,6 +112,53 @@ describe("a request on the embedded OpenCode", () => {
     const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
     await runExecution(request({ layers: [currentLayer({ model: "balanced" })] }));
     expect(calls[0]?.model).toEqual({ providerID: "lab", id: "mid" });
+  });
+
+  describe("a model selected through the harness's authored args", () => {
+    const args = ["run", "--model", "provider/chosen"];
+
+    test("is the session's model, as it is the CLI's --model on OpenCode 1", async () => {
+      writeConfig({ args });
+      const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
+      await runExecution(request());
+      expect(calls[0]?.model).toEqual({ providerID: "provider", id: "chosen" });
+
+      // The same configuration on OpenCode 1 puts the same model on the command line.
+      fakeOpencodeMajor(1);
+      const built = request();
+      const argv = opencodeBuilder.build(built.profile as never, built.options.dispatch ?? { prompt: "p" }).argv;
+      expect(modelFromArgs(argv)).toBe("provider/chosen");
+    });
+
+    test("is used for model work too, as the documentation says", async () => {
+      writeConfig({ args });
+      const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
+      await runExecution(request({ modelWork: true }));
+      expect(calls[0]?.model).toEqual({ providerID: "provider", id: "chosen" });
+    });
+
+    test("loses to a model the request names", async () => {
+      writeConfig({ args, models: { fast: "lab/small" } });
+      const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
+      await runExecution(request({ layers: [currentLayer({ model: "fast" })] }));
+      expect(calls[0]?.model).toEqual({ providerID: "lab", id: "small" });
+    });
+  });
+
+  test("an authored arg the embedded run cannot carry is named once, and the rest still apply", async () => {
+    const warnings: string[] = [];
+    overrideSeam(_setWarnSinkForTests, (level, logged) => {
+      if (level === "warn") warnings.push(logged.map(String).join(" "));
+    });
+    writeConfig({ args: ["run", "--model", "provider/chosen", "--variant", "high", "--print-logs"] });
+    const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
+    await runExecution(request());
+    await runExecution(request());
+    expect(calls[0]?.model).toEqual({ providerID: "provider", id: "chosen" });
+    const named = warnings.filter((line) => line.includes("not applied"));
+    expect(named).toHaveLength(1);
+    expect(named[0]).toContain("--variant high --print-logs");
+    expect(named[0]).not.toContain("provider/chosen");
   });
 
   test("keeps the persona in the prompt, with the settings it cannot translate reported", async () => {
