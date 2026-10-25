@@ -25,7 +25,6 @@ import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
-import { type RunStructuredResult, runStructured } from "../../core/structured";
 import { resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveEntryProvenance } from "../../indexer/installations";
@@ -38,6 +37,7 @@ import {
   validateProposalPayload,
 } from "../../integrations/agent/prompts";
 import { collectDispatchSensitiveValues, runExecution } from "../../integrations/agent/runner-dispatch";
+import { jsonParser, type StructuredLoopResult, structuredLoop } from "../../llm/structured";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type CreateProposalInput,
@@ -114,7 +114,7 @@ interface ProposalDispatchResult {
   /** The last dispatch. */
   result: AgentRunResult;
   /** The proposal the engine returned, or why its last reply was not one; absent when a dispatch failed. */
-  reply?: RunStructuredResult<AgentProposalPayload>;
+  reply?: StructuredLoopResult<AgentProposalPayload>;
   /** Every dispatch's duration. */
   durationMs: number;
   engineName: string;
@@ -159,19 +159,19 @@ async function dispatchProposalPrompt(
   const engineName = prepared.request.target.name;
   onDispatchReady();
   options.onDispatchReady?.();
-  // runStructured dispatches at least once, so a returned or DISPATCH_FAILED exchange has a result.
+  // The loop dispatches at least once, so a returned or DISPATCH_FAILED exchange has a result.
   const results: AgentRunResult[] = [];
-  let reply: RunStructuredResult<AgentProposalPayload> | undefined;
+  let reply: StructuredLoopResult<AgentProposalPayload> | undefined;
   try {
-    reply = await runStructured({
-      dispatch: async (feedback) => {
-        const execution = feedback ? corrected(`${prompt}\n\n${feedback}`) : lowered;
+    reply = await structuredLoop({
+      dispatch: async (correction) => {
+        const execution = correction ? corrected(`${prompt}\n\n${correction.text}`) : lowered;
         const result = await runExecution(execution);
         results.push(result);
         if (!result.ok) throw DISPATCH_FAILED;
         return result.stdout;
       },
-      validate: validateProposalPayload,
+      parse: jsonParser(validateProposalPayload),
     });
   } catch (err) {
     if (err !== DISPATCH_FAILED) throw err;

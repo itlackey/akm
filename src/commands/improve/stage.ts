@@ -15,7 +15,6 @@ import { ConfigError } from "../../core/errors";
 import type { EventsContext } from "../../core/events";
 import { effectiveRequestFields, thinkingSetting } from "../../core/llm-inference";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
-import { defaultFeedback } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
@@ -24,6 +23,7 @@ import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { AgentRunResult } from "../../integrations/agent/spawn";
 import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import type { LlmFeatureKey } from "../../llm/feature-gate";
+import { structuredLoop } from "../../llm/structured";
 import {
   type CallStructuredRequest,
   callStructured,
@@ -108,21 +108,40 @@ export interface StageLlmCall {
   gate?: { config: AkmConfig; enabled?: boolean };
 }
 
+/** A dispatch that came back `{ ok: false }`, carried out of the structured loop. */
+class StageFailed extends Error {
+  constructor(readonly outcome: Extract<StageLlmOutcome, { ok: false }>) {
+    super(outcome.error ?? outcome.reason);
+  }
+}
+
 /**
  * One model call. Provider trouble (transport error, timeout, abort, a
  * disabled feature) comes back as `{ ok: false }`; only a configuration
  * failure throws. A reply to a call with `request.responseSchema` that the
- * stage's own `parse` rejects gets one corrective retry; the last reply comes
- * back either way, and the caller parses it again.
+ * stage's own `parse` rejects gets one corrective retry (the structured loop);
+ * the last reply comes back either way, and the caller parses it again.
  */
 export async function callStage(call: StageLlmCall): Promise<StageLlmOutcome> {
-  const reply = await callStageOnce(call);
-  if (!reply.ok || !call.request?.responseSchema) return reply;
-  if ((call.parse ?? parseEmbeddedJsonResponse)(reply.raw) !== undefined) return reply;
-  const feedback = defaultFeedback({ reason: "parse_error", errors: [] });
-  const retry = await callStageOnce({ ...call, prompt: `${call.prompt}\n\n${feedback}` });
-  // A retry that fails in transport keeps the first reply, which the caller may still accept.
-  return retry.ok ? retry : reply;
+  if (!call.request?.responseSchema) return callStageOnce(call);
+  const parse = call.parse ?? parseEmbeddedJsonResponse;
+  try {
+    const loop = await structuredLoop<string>({
+      dispatch: async (correction) => {
+        const outcome = await callStageOnce(
+          correction ? { ...call, prompt: `${call.prompt}\n\n${correction.text}` } : call,
+        );
+        if (!outcome.ok) throw new StageFailed(outcome);
+        return outcome.raw;
+      },
+      parse: (raw) =>
+        parse(raw) === undefined ? { ok: false, errors: ["no parseable JSON"] } : { ok: true, value: raw },
+    });
+    return { ok: true, raw: loop.raw };
+  } catch (error) {
+    if (error instanceof StageFailed) return error.outcome;
+    throw error;
+  }
 }
 
 /** Timeout and abort come from the dispatch's own reason, whatever the runner's kind. */

@@ -56,7 +56,6 @@ test("reflect forwards a 1ms normalized timeout to the direct HTTP transport", a
     prompt: "reflect",
     runner: directRunner({ endpoint: `http://localhost:${server.port}`, model: "test-model" }),
     timeoutMs: 1,
-    iteration: 0,
     outputMode: "json_schema",
   });
 
@@ -77,7 +76,6 @@ test("reflect explicit null disables the direct HTTP timer", async () => {
     prompt: "reflect",
     runner: directRunner({ endpoint: `http://localhost:${server.port}`, model: "test-model" }, 1),
     timeoutMs: null,
-    iteration: 0,
     outputMode: "json_schema",
   });
 

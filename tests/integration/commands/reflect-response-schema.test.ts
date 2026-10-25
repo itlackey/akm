@@ -199,13 +199,13 @@ describe("REFLECT_JSON_SCHEMA — top-level shape", () => {
 // ── 2. Wiring ───────────────────────────────────────────────────────────────
 
 describe("runReflectIteration — responseSchema is plumbed to chatCompletion", () => {
-  test("direct generation and refinement each read the credential current at that call", async () => {
+  test("direct generation and repair each read the credential current at that call", async () => {
     const stash = makeStashDir();
     const original = "reflect-direct-original-secret";
     const rotated = "reflect-direct-rotated-secret";
     const observed: Array<string | undefined> = [];
     const source =
-      "---\ndescription: Read direct operation credentials per call\n---\n\n# Existing\n\nPick up a rotated credential during refinement.\n";
+      "---\ndescription: Read direct operation credentials per call\n---\n\n# Existing\n\nPick up a rotated credential during repair.\n";
     const config = await reflectLlmConfig({ apiKey: "$AKM_REFLECT_DIRECT_ROTATING_KEY" });
     const result = await withEnv({ AKM_REFLECT_DIRECT_ROTATING_KEY: original }, () =>
       akmReflect({
@@ -213,13 +213,15 @@ describe("runReflectIteration — responseSchema is plumbed to chatCompletion", 
         assetContent: source,
         stashDir: stash,
         config,
-        maxRefineIters: 2,
         chat: async (connection) => {
           observed.push(connection.apiKey);
-          if (observed.length === 1) mutateScopedEnv("AKM_REFLECT_DIRECT_ROTATING_KEY", rotated);
+          if (observed.length === 1) {
+            mutateScopedEnv("AKM_REFLECT_DIRECT_ROTATING_KEY", rotated);
+            return "not the contract";
+          }
           return JSON.stringify({
             confidence: 0.9,
-            frontmatterPatch: { ...NULL_PATCH, description: "Pick up a rotated credential on every refinement call" },
+            frontmatterPatch: { ...NULL_PATCH, description: "Pick up a rotated credential on every call" },
           });
         },
       }),
@@ -235,7 +237,6 @@ describe("runReflectIteration — responseSchema is plumbed to chatCompletion", 
     const result = await runReflectIteration({
       prompt: "test prompt",
       runner: fakeLlmRunner(),
-      iteration: 0,
       outputMode: "json_schema",
       responseSchema: REFLECT_JSON_SCHEMA,
     });
@@ -254,7 +255,6 @@ describe("runReflectIteration — responseSchema is plumbed to chatCompletion", 
     const result = await runReflectIteration({
       prompt: "test prompt",
       runner: fakeLlmRunner(),
-      iteration: 0,
       outputMode: "json_schema",
       responseSchema: REFLECT_JSON_SCHEMA,
       chat: async () => {
@@ -273,7 +273,6 @@ describe("runReflectIteration — responseSchema is plumbed to chatCompletion", 
     await runReflectIteration({
       prompt: "test prompt",
       runner: fakeLlmRunner(),
-      iteration: 0,
       outputMode: "json_schema",
     });
     expect(capturedCalls.length).toBe(1);
@@ -286,7 +285,6 @@ describe("runReflectIteration — responseSchema is plumbed to chatCompletion", 
       await runReflectIteration({
         prompt: "test prompt",
         runner: fakeLlmRunner(),
-        iteration: 0,
         outputMode: "json_schema",
         timeoutMs,
         chat: async (_config, _messages, options) => {
@@ -300,7 +298,7 @@ describe("runReflectIteration — responseSchema is plumbed to chatCompletion", 
 });
 
 describe("runReflectIteration — the reply is a patch, and a body or a malformed field is refused", () => {
-  /** What the parser says about `reply`, with no repair turn. */
+  /** What the parser says about `reply`, which the model repeats on its repair turn. */
   async function errorFor(
     reply: Record<string, unknown>,
     outputMode: "json_schema" | "framed_markdown" = "json_schema",
@@ -308,10 +306,8 @@ describe("runReflectIteration — the reply is a patch, and a body or a malforme
     const result = await runReflectIteration({
       prompt: "test prompt",
       runner: fakeLlmRunner(),
-      iteration: 0,
       outputMode,
       targetRef: "lessons/test",
-      allowRepair: false,
       chat: async () =>
         outputMode === "json_schema"
           ? JSON.stringify(reply)
@@ -352,7 +348,6 @@ describe("runReflectIteration — the reply is a patch, and a body or a malforme
     const result = await runReflectIteration({
       prompt: "test prompt",
       runner: fakeLlmRunner(),
-      iteration: 0,
       outputMode: "json_schema",
       targetRef: "lessons/test",
       chat: async () =>
@@ -629,39 +624,6 @@ describe("akmReflect — direct LLM output recovery", () => {
     expect(completed?.metadata?.repairAttempts).toBe(1);
   });
 
-  test("preserves the first framed response as the self-refine prior draft", async () => {
-    const stash = makeStashDir();
-    const first = framedReply({ description: "First framed draft: keep this frame intact for refinement" });
-    const second = framedReply({ description: "Second framed draft: refine the original framed draft" }, 0.9);
-    const responses = [first, second];
-    const calls: Array<Array<{ role: string; content: string }>> = [];
-
-    const result = await akmReflect({
-      ref: "lessons/framed-self-refine",
-      stashDir: stash,
-      config: await reflectLlmConfig({ rejectsJsonSchema: true }),
-      maxRefineIters: 2,
-      assetContent:
-        "---\ndescription: Preserve framed prior drafts during self refinement\nwhen_to_use: When direct reflect runs multiple semantic iterations\n---\n\n# Existing draft\n\nRefine this guidance.\n",
-      chat: async (_config, messages) => {
-        calls.push(messages.map((message) => ({ ...message })));
-        return responses.shift() ?? "";
-      },
-    });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error(result.error);
-    expect(calls).toHaveLength(2);
-    expect(calls[0]?.map(({ role }) => role)).toEqual(["user"]);
-    expect(calls[1]?.map(({ role }) => role)).toEqual(["user", "assistant", "user"]);
-    expect(calls[1]?.[0]?.content).toContain(first);
-    expect(calls[1]?.[1]?.content).toBe(first);
-    expect(calls[1]?.[2]?.content).toBe(
-      "Your previous proposal is shown above. Review it critically and provide an improved version that is more specific, actionable, and avoids any issues with the previous attempt. Return only the improved response using the output contract from the original prompt.",
-    );
-    expect(calls[1]?.[0]?.content).not.toContain('{"ref":"lessons/framed-self-refine"');
-  });
-
   for (const invalidConfidence of ["", "   ", "0x0", "Infinity", "NaN", "-0.1", "1.1"]) {
     test(`repairs framed output with invalid confidence ${JSON.stringify(invalidConfidence)}`, async () => {
       const stash = makeStashDir();
@@ -747,37 +709,6 @@ describe("akmReflect — direct LLM output recovery", () => {
       expect(completed?.metadata?.repairAttempts).toBe(1);
     });
   }
-
-  test("shares the single repair budget across semantic refinement iterations", async () => {
-    const stash = makeStashDir();
-    const responses = [
-      "malformed first iteration",
-      framedReply({ description: "Share one output repair across refinement passes" }),
-      "malformed second iteration",
-      framedReply({ description: "A second repair would exceed the invocation budget" }, 0.9),
-    ];
-    let calls = 0;
-
-    const result = await akmReflect({
-      ref: "lessons/shared-repair-budget",
-      stashDir: stash,
-      config: await reflectLlmConfig({ rejectsJsonSchema: true }),
-      maxRefineIters: 2,
-      assetContent:
-        "---\ndescription: Share one output repair across refinement iterations\nwhen_to_use: When semantic refinement is configured for direct reflect\n---\n\n# Existing body\n\nDo not multiply repair attempts.\n",
-      chat: async () => {
-        calls += 1;
-        return responses.shift() ?? "";
-      },
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("expected the second malformed iteration to fail");
-    expect(result.reason).toBe("parse_error");
-    expect(calls).toBe(3);
-    const completed = readEvents({ type: "reflect_completed" }).events.at(-1);
-    expect(completed?.metadata?.repairAttempts).toBe(1);
-  });
 
   test("does not start repair after the caller aborts", async () => {
     const stash = makeStashDir();

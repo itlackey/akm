@@ -30,9 +30,9 @@ import { isInstalledBundle } from "../../core/env-secret-ref";
 import { NotFoundError } from "../../core/errors";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { substituteRefTokens } from "../../core/ref-token";
-import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
+import { jsonParser, structuredLoop } from "../../llm/structured";
 import {
   type WorkflowRunUnitAttemptRowV4,
   type WorkflowRunUnitRow,
@@ -828,7 +828,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
  * and hunts for a JSON island inside prose, which is the right forgiving
  * behavior for an LLM and the wrong one for a command, where it would silently
  * promote a JSON fragment found in unrelated log noise as the typed artifact.
- * Returning `undefined` makes `runStructured` report `parse_error` (a real
+ * Returning `undefined` makes the structured loop report `parse_error` (a real
  * member of the retry taxonomy), so `retry.on: [parse_error]` still works.
  */
 function parseExecJson(raw: string): unknown {
@@ -841,7 +841,7 @@ function parseExecJson(raw: string): unknown {
   }
 }
 
-/** Transport failures surface as this sentinel so runStructured doesn't retry them. */
+/** Transport failures surface as this sentinel so the structured loop doesn't retry them. */
 class UnitTransportError extends Error {
   constructor(readonly result: UnitDispatchResult) {
     super(result.error ?? "unit dispatch failed");
@@ -887,24 +887,36 @@ async function dispatchUnit(
   try {
     if (request.schema) {
       const schema = request.schema;
-      const structured = await runStructured<unknown>({
-        dispatch: dispatchOnce,
+      const validate = (candidate: unknown) => {
+        const errors = validateJsonSchemaSubset(candidate, schema);
+        return errors.length === 0
+          ? ({ ok: true, value: candidate } as const)
+          : ({ ok: false, errors, reason: "validation_error" } as const);
+      };
+      const structured = await structuredLoop<unknown>({
+        dispatch: (correction) => dispatchOnce(correction?.text),
         // A command is not re-promptable. Its stdout must be EXACTLY one JSON
         // value: the default embedded-JSON scan (fences, think-blocks, "find the
         // JSON inside the prose") is right for an LLM and wrong for a command,
         // where it would pluck a JSON fragment out of unrelated log noise and
-        // promote it as the typed artifact. And it gets exactly ONE attempt —
-        // `runStructured`'s corrective retry re-dispatches with feedback, which
+        // promote it as the typed artifact. And it gets exactly ONE attempt:
+        // the loop's corrective retry re-dispatches with feedback, which
         // for a command means running a SIDE-EFFECTING process a second time
         // with byte-identical argv: it cannot produce different output, and it
         // can produce a second deployment. Declared `retry:` still applies (the
         // executor's own loop), because that is a policy the author opted into
         // per failure reason.
-        ...(request.frozenTarget.kind !== "command" ? { parse: parseExecJson, maxAttempts: 1 } : {}),
-        validate: (candidate) => {
-          const errors = validateJsonSchemaSubset(candidate, schema);
-          return errors.length === 0 ? { ok: true, value: candidate } : { ok: false, errors };
-        },
+        ...(request.frozenTarget.kind !== "command"
+          ? {
+              attempts: 1,
+              parse: (raw: string) => {
+                const candidate = parseExecJson(raw);
+                return candidate === undefined
+                  ? ({ ok: false, errors: ["no JSON structure found in response"], reason: "parse_error" } as const)
+                  : validate(candidate);
+              },
+            }
+          : { parse: jsonParser(validate) }),
       });
       if (structured.ok) {
         return { unitId: request.unitId, ok: true, result: structured.value, ...captured() };

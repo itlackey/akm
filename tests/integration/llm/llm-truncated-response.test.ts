@@ -23,8 +23,8 @@
  * classification (decision: no — see PR/issue notes).
  */
 import { describe, expect, test } from "bun:test";
-import { runStructured } from "../../../src/core/structured";
 import { chatCompletion } from "../../../src/llm/client";
+import { jsonParser, structuredLoop } from "../../../src/llm/structured";
 
 function createRequestServer(respond: () => Response): { url: string; server: ReturnType<typeof Bun.serve> } {
   const server = Bun.serve({ port: 0, fetch: () => respond() });
@@ -50,16 +50,17 @@ describe("truncated LLM responses collapse into a generic parse_error (#865)", (
     }
   });
 
-  test("runStructured reports the same parse_error for a truncated response as for garbage", async () => {
-    const truncated = await runStructured({
+  test("the structured loop reports the same parse_error for a truncated response as for garbage", async () => {
+    const parse = jsonParser((candidate) => ({ ok: true, value: candidate }));
+    const truncated = await structuredLoop({
       dispatch: async () => '{"file":"a.ts","summary":"this got cut off mid-str',
-      validate: (candidate) => (candidate ? { ok: true, value: candidate } : { ok: false, errors: ["unreachable"] }),
-      maxAttempts: 1,
+      parse,
+      attempts: 1,
     });
-    const garbage = await runStructured({
+    const garbage = await structuredLoop({
       dispatch: async () => "the model said something unrelated, no JSON at all",
-      validate: (candidate) => (candidate ? { ok: true, value: candidate } : { ok: false, errors: ["unreachable"] }),
-      maxAttempts: 1,
+      parse,
+      attempts: 1,
     });
 
     expect(truncated.ok).toBe(false);

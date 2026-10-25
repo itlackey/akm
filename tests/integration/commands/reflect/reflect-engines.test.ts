@@ -53,7 +53,6 @@ const SCENARIOS: Record<string, readonly string[]> = {
   // What the engine says to a reflect run that names no asset: the asset, too.
   unscoped: [reflectReply(PATCH, { ref: REF })],
   // The first pass needs its repair; the second pass replies in prose again.
-  refine: [PROSE, reflectReply(PATCH), PROSE],
 };
 
 const { server: llmStub, bodies: llmBodies } = serveLlmStub(SCENARIOS);
@@ -221,22 +220,6 @@ describe("reflect repairs an invalid reply once, on every engine kind", () => {
     // The parser's own message, on every engine kind: improve feeds a failed reflect's error into later prompts.
     expect(result.error).toBe("direct reflect response was not valid JSON");
     expect(transport.prompts("invalid")).toHaveLength(2);
-    expect(listProposals(storage.stashDir)).toEqual([]);
-    expect(completedEvent()).toMatchObject({ ok: false, reason: "parse_error", repairAttempts: 1 });
-  });
-});
-
-describe("reflect's repair is spent once across refine passes, on every engine kind", () => {
-  test.each(TRANSPORTS)("%s: a second pass with an invalid reply is not repaired again", async (_name, transport) => {
-    const result = await reflect(transport, "refine", { maxRefineIters: 2 });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("expected a failure");
-    expect(result.reason).toBe("parse_error");
-    // The first pass, its repair, and the second pass, which critiques the repaired draft and gets no repair.
-    const prompts = transport.prompts("refine");
-    expect(prompts).toHaveLength(3);
-    expect(prompts[2]).toContain("Your previous proposal is shown above");
     expect(listProposals(storage.stashDir)).toEqual([]);
     expect(completedEvent()).toMatchObject({ ok: false, reason: "parse_error", repairAttempts: 1 });
   });

@@ -40,7 +40,7 @@ import {
 } from "../../core/authoring-rules";
 import { isRecord } from "../../core/common";
 import { parseEmbeddedJsonResponse, stripCodeFences, stripThinkBlocks } from "../../core/parse";
-import type { StructuredValidation } from "../../core/structured";
+import type { Parsed } from "../../core/structured";
 import type { ExecutionJsonObject } from "../../execution/json";
 
 /** Agent-returned proposal payload (after JSON parse). */
@@ -195,12 +195,6 @@ export interface ReflectPromptInput {
    * proposals that have already been reviewed and refused.
    */
   rejectedProposals?: RejectedProposalContext[];
-  /**
-   * Prior draft content from the previous refinement iteration (R-1 / #372).
-   * When set, the agent is asked to critique the draft and produce a better
-   * version. Self-Refine arXiv:2303.17651 — iterative feedback+revise loop.
-   */
-  priorDraft?: string;
   /** The response contract, for any engine kind. Defaults to the JSON Schema contract. */
   outputMode?: ReflectOutputMode;
   /**
@@ -432,22 +426,6 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     );
   }
 
-  // R-1 / #372: Self-Refine (arXiv:2303.17651) — inject prior draft as critique target.
-  // On refinement iterations (iter > 0), the agent is shown its previous proposal
-  // and asked to self-critique and improve it rather than starting from scratch.
-  if (input.priorDraft?.trim()) {
-    sections.push(
-      "## Self-Refine: Critique and Improve\n" +
-        "The following is your previous draft proposal. " +
-        "Identify specific weaknesses: missing evidence, vague wording, incomplete frontmatter, " +
-        "or claims that duplicate existing content without adding new signal. " +
-        "Then produce an improved version that addresses those weaknesses.\n\n" +
-        "Previous draft:\n```\n" +
-        input.priorDraft.trimEnd() +
-        "\n```",
-    );
-  }
-
   if (input.ref && input.assetContent?.trim()) {
     const problems = frontmatterProblems(input.assetContent);
     sections.push(
@@ -543,7 +521,7 @@ export function parseAgentProposalPayload(stdout: string): AgentProposalPayload 
  * `content` must be non-empty strings. A malformed optional field is dropped,
  * never refused.
  */
-export function validateProposalPayload(parsed: unknown): StructuredValidation<AgentProposalPayload> {
+export function validateProposalPayload(parsed: unknown): Parsed<AgentProposalPayload> {
   if (!isRecord(parsed)) return { ok: false, errors: ["agent response is not a JSON object"] };
   if (typeof parsed.ref !== "string" || !parsed.ref.trim()) {
     return { ok: false, errors: ['agent response missing required string field "ref"'] };

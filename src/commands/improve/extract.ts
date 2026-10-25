@@ -37,7 +37,6 @@ import { redactErrorBody } from "../../core/redaction";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { resolveTypeConventions, typeConventionRef } from "../../core/standards/resolve-type-conventions";
 import { getStateDbPath, openStateDatabase } from "../../core/state-db";
-import { runStructured } from "../../core/structured";
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warn, warnVerbose } from "../../core/warn";
@@ -48,6 +47,7 @@ import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
 import type { ChatCompletionConfig, ChatMessage } from "../../llm/client";
+import { structuredLoop } from "../../llm/structured";
 import type { Database } from "../../storage/database";
 import {
   type ExtractedSessionRow,
@@ -575,13 +575,13 @@ const EXTRACT_LLM_UNAVAILABLE = Symbol("extract-llm-unavailable");
 async function extractFromSession(run: ExtractRun, prompt: string): Promise<SessionExtraction> {
   const { llmRunner } = run;
   try {
-    const result = await runStructured<ExtractPayload>({
-      dispatch: async (feedback) => {
+    const result = await structuredLoop<ExtractPayload>({
+      dispatch: async (correction) => {
         // This loop parses and repairs the reply itself, so each attempt is one unvalidated dispatch.
         const outcome = await callStageOnce({
           feature: "session_extraction",
           runner: llmRunner,
-          prompt: feedback ? `${prompt}\n\n## Corrective output instruction\n\n${feedback}` : prompt,
+          prompt: correction ? `${prompt}\n\n## Corrective output instruction\n\n${correction.text}` : prompt,
           gate: { config: run.config },
           request: {
             timeoutMs: run.timeoutMs,
@@ -596,10 +596,11 @@ async function extractFromSession(run: ExtractRun, prompt: string): Promise<Sess
       },
       parse: (raw) => {
         const payload = parseExtractPayload(raw);
-        return payload.parseFailure ? undefined : payload;
+        return payload.parseFailure
+          ? { ok: false, errors: [payload.parseFailure.message] }
+          : { ok: true, value: payload as ExtractPayload };
       },
-      validate: (payload) => ({ ok: true, value: payload as ExtractPayload }),
-      buildFeedback: () =>
+      correct: () =>
         "Your previous response did not contain a valid extraction payload. Respond with ONLY a JSON object matching the requested schema, with a candidates array and no prose or code fences.",
     });
     if (result.ok) return { kind: "success", payload: result.value, attempts: result.attempts };
