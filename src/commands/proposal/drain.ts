@@ -33,15 +33,15 @@ import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement"
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
-import { ConfigError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { escapeJsonStringControls, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 import { info, warn } from "../../core/warn";
-import { noticeSet } from "../../execution/notices";
+import { type Notice, noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { type RunExecutionOptions, runExecution } from "../../integrations/agent/runner-dispatch";
+import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
+import { callStructured } from "../../llm/structured-call";
 import {
   NEIGHBOUR_EXCERPT_CHARS,
   NEIGHBOUR_NOTE_COUNT,
@@ -86,6 +86,8 @@ export interface DrainOptions {
   excludeIds?: Set<string>;
   /** The judgment tier's runner; absent leaves undecided proposals for review. */
   judgment?: RunnerSpec | null;
+  /** The caller's deadline (an improve run's budget): no judgment starts after it, and one in flight stops. */
+  signal?: AbortSignal;
   eventsCtx?: EventsContext;
   /**
    * Where this run's accepts wait for their commit. A caller that commits them
@@ -119,10 +121,9 @@ export interface JudgmentVerdict {
   reason: string;
 }
 
-/** Test seams for the judgment dispatch (chat and harness transports). */
+/** Test seam for the judgment dispatch's chat transport. */
 export interface JudgmentSeams {
   chat?: RunExecutionOptions["chat"];
-  runAgentFn?: NonNullable<RunExecutionOptions["runAgent"]>;
 }
 
 /** A consolidate promotion: a memory proposed as a new knowledge note. The only kind the judgment tier may accept. */
@@ -329,28 +330,24 @@ interface DeferNote {
   judgeReason?: string;
 }
 
-/** Lower the judgment prompt through the frozen runner and dispatch it. */
+/** Dispatch the judgment prompt on the frozen runner: one model call, under the model-work tool policy. */
 async function dispatchJudgment(
   runner: RunnerSpec,
   prompt: string,
   seams: JudgmentSeams,
-): Promise<{ verdict: JudgmentVerdict | null; notices: readonly Readonly<LoweringNotice>[]; error?: string }> {
-  let notices: readonly Readonly<LoweringNotice>[] = [];
-  try {
-    // The judgment runs under the model-work tool policy.
-    const prepared = resolveExecution({ content: prompt, runner, modelWork: true });
-    const lowered = buildExecution(prepared.request, prepared.runner);
-    notices = lowered.notices;
-    const result = await runExecution(lowered, {
-      ...(seams.runAgentFn ? { runAgent: seams.runAgentFn } : {}),
-      ...(seams.chat ? { chat: seams.chat } : {}),
-    });
-    if (!result.ok) return { verdict: null, notices, error: result.error ?? result.reason ?? "unknown error" };
-    return { verdict: parseJudgmentVerdict(result.stdout), notices };
-  } catch (error) {
-    if (error instanceof ConfigError) throw error;
-    return { verdict: null, notices, error: errMessage(error) };
-  }
+  signal: AbortSignal | undefined,
+): Promise<{ verdict: JudgmentVerdict | null; notices: readonly Notice[]; error?: string }> {
+  let notices: readonly Notice[] = [];
+  const outcome = await callStructured({
+    runner,
+    messages: [{ role: "user", content: prompt }],
+    request: { ...(seams.chat ? { chat: seams.chat } : {}), ...(signal ? { signal } : {}) },
+    onNotices: (value) => {
+      notices = value;
+    },
+  });
+  if (!outcome.ok) return { verdict: null, notices, error: outcome.error };
+  return { verdict: parseJudgmentVerdict(outcome.raw), notices };
 }
 
 /**
@@ -379,6 +376,12 @@ async function runJudgmentTier(
       stillDeferred.push(item);
       continue;
     }
+    // Past the deadline nothing is dispatched: the item stays undecided, as an error would leave it.
+    if (opts.signal?.aborted) {
+      deferNotes.set(item.id, { reason: "judgment-error" });
+      stillDeferred.push(item);
+      continue;
+    }
     const liveAsset = readLiveAssetContent(opts.stashDir, proposal.ref);
     const prompt = buildJudgmentPrompt(proposal, item.reason, {
       liveAsset,
@@ -388,7 +391,7 @@ async function runJudgmentTier(
         ? { neighbours: promotionNeighbours(opts.stashDir, proposal, acceptedPromotions) }
         : {}),
     });
-    const dispatch = await dispatchJudgment(opts.judgment, prompt, seams);
+    const dispatch = await dispatchJudgment(opts.judgment, prompt, seams, opts.signal);
     notices.add(dispatch.notices);
     if (dispatch.error) warn(`[triage] judgment dispatch failed for ${item.id}: ${dispatch.error}`);
     const verdict = dispatch.error ? null : dispatch.verdict;

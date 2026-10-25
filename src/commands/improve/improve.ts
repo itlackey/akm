@@ -884,6 +884,7 @@ async function runTriagePrePass(run: ImproveRunSetup): Promise<DrainResult | und
           dryRun: false,
           excludeIds: new Set<string>(),
           judgment: resolvedPlan.triageJudgment,
+          signal: run.budgetAbortController.signal,
         }),
       { engine: resolvedPlan.triageJudgment?.name, process: "triage.judgment" },
     );

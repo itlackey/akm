@@ -177,6 +177,16 @@ describe("akm proposal drain strategy selector", () => {
     expect(JSON.parse(forced.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "harness" });
   });
 
+  test("--judgment with nothing to judge with is an error, not a drain without judgment", async () => {
+    const stashDir = makeStashDir();
+
+    const forced = await runCli(["proposal", "drain", "--judgment", "--dry-run", "--format=json"], { stashDir });
+
+    expect(forced.status).not.toBe(0);
+    expect(forced.stderr).toContain("LLM_NOT_CONFIGURED");
+    expect(forced.stdout).toBe("");
+  });
+
   test("a stale-target refusal is auto-rejected, not left as a generic failure (STALE, R20)", async () => {
     const stashDir = makeStashDir();
     const assetPath = path.join(stashDir, "lessons", "cli-stale.md");

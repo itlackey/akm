@@ -123,6 +123,8 @@ describe("akm improve — triage pre-pass", () => {
       // Decision #2: no fresh ids exist pre-improve, so excludeIds is empty.
       expect(opts?.excludeIds?.size).toBe(0);
       expect(opts?.applyMode).toBe("queue");
+      // The run's budget reaches the drain, so a judgment stops with the run.
+      expect(opts?.signal).toBeInstanceOf(AbortSignal);
     },
     TIMEOUT_MS,
   );

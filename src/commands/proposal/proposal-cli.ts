@@ -20,7 +20,7 @@ import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output } from "../..
 import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
-import { UsageError } from "../../core/errors";
+import { ConfigError, UsageError } from "../../core/errors";
 import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { installLlmUsagePersistenceIfAbsent } from "../../llm/usage-persist";
@@ -518,15 +518,23 @@ const proposalDrainCommand = defineJsonCommand({
     // disabled block. An explicitly selected strategy may opt in through its
     // judgment block; the implicit default strategy keeps standalone drain's
     // historical no-judge behavior.
-    const judgmentResolution =
-      args.judgment === true || (args.strategy !== undefined && triageConfig?.judgment?.enabled === true)
-        ? resolveImproveExecution({
-            config: cfg,
-            process: "triage",
-            processName: "proposal-triage-judgment",
-            alias: SHIPPED_ALIAS.judge,
-          })
-        : null;
+    const judgmentWanted =
+      args.judgment === true || (args.strategy !== undefined && triageConfig?.judgment?.enabled === true);
+    const judgmentResolution = judgmentWanted
+      ? resolveImproveExecution({
+          config: cfg,
+          process: "triage",
+          processName: "proposal-triage-judgment",
+          alias: SHIPPED_ALIAS.judge,
+        })
+      : null;
+    if (judgmentWanted && !judgmentResolution) {
+      throw new ConfigError(
+        "Proposal judgment was requested, but no connection or harness is configured to judge with.",
+        "LLM_NOT_CONFIGURED",
+        "Run `akm setup`, or set improve.connection or improve.processes.triage.connection.",
+      );
+    }
     const judgment = judgmentResolution?.runner ?? null;
 
     // #576: persist + attribute per-call LLM usage for the standalone drain
