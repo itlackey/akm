@@ -116,8 +116,6 @@ export interface AgentRunResult {
   stdout: string;
   stderr: string;
   durationMs: number;
-  /** Reflect's telemetry, which it builds itself; no dispatch sets it. Goes with reflect's result round trip. */
-  parsed?: unknown;
   reason?: AgentFailureReason;
   /** Safe typed discriminator for a caught direct-LLM transport error; absent for agent/SDK and generic failures. */
   llmErrorCode?: Exclude<import("../../llm/usage-telemetry").LlmUsageErrorCode, "unknown_error">;
