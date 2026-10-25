@@ -13,8 +13,9 @@ order, and print one combined JSON plan (exit 1 when any step is blocked):
      `apiKeyFile`, a literal or `${secrets/...}` `apiKey`, and the same on a
      connection, `embedding` or `search.curateRerank`) move to
      credentials.json, one note per key (never its value). The retired
-     models.json is folded into the models it names, then moved to the
-     config backups. A connection or harness akm cannot use stays in the
+     models.json is folded into the models of the connections and harnesses
+     it names (the entries it cannot place are listed in the notes), then
+     moved to the config backups. A connection or harness akm cannot use stays in the
      file as written, with a note on what to fix
   2. pending state.db migrations, historical-destructive ones included,
      with a verified sibling safety copy (the only path that admits them)

@@ -95,8 +95,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     connection's new name, `embedding` or `curateRerank`, then removed from the
     file. One note per key names it, never its value. `AKM_ENGINE_<NAME>_API_KEY`
     and `AKM_LLM_API_KEY`, when set, become `apiKey: "$VAR"`.
-  - The user `models.json` is folded into the models it names, then moved to
-    `<cache dir>/config-backups/models.json.<timestamp>`.
+  - The user `models.json` is folded into the models of the connections and
+    harnesses it names, then moved to
+    `<cache dir>/config-backups/models.json.<timestamp>`. A connection's own
+    column beats the `*` column and the flat shorthand, which beat the engine's
+    own model; a model the config already names for an alias stands. What it
+    cannot place is listed in the notes.
   - `engine:` on commands, agents, workflows (`defaults` and units) and task
     sources becomes `connection:` or `harness:` by what the name is now, under
     one backup directory per run (a name that is neither is written as

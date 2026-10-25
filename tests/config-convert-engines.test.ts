@@ -387,16 +387,61 @@ describe("models.json folds into the models of what it named", () => {
     expect(modelsOf(config, "connections", "lab")).toMatchObject({ fast: "lab-model", balanced: "sdk-balanced" });
   });
 
-  test("a wildcard fills every connection that lacks the alias, and a new alias", () => {
+  test("a wildcard fills every connection with no column of its own for the alias, ahead of the engine's own model", () => {
     const { config } = convert(
       { engines },
-      { modelsOverlay: overlay({ coder: { model: "qwen3-coder" }, fast: { model: "wild", other: "own" } }) },
+      { modelsOverlay: overlay({ coder: { "*": "qwen3-coder" }, fast: { "*": "wild", other: "own" } }) },
     );
     expect(modelsOf(config, "connections", "lab").coder).toBe("qwen3-coder");
     expect(modelsOf(config, "connections", "other").coder).toBe("qwen3-coder");
-    // `fast` already had an entry on both (the engine's model), so the wildcard fills nothing.
-    expect(modelsOf(config, "connections", "lab").fast).toBe("qwen3-32b");
+    // A wildcard that differs from the engine's own model lands; an explicit column still beats it.
+    expect(modelsOf(config, "connections", "lab").fast).toBe("wild");
     expect(modelsOf(config, "connections", "other").fast).toBe("own");
+    // Only what nothing names is the engine's own model.
+    expect(modelsOf(config, "connections", "lab").balanced).toBe("qwen3-32b");
+    expect(modelsOf(config, "connections", "other").balanced).toBe("other-model");
+  });
+
+  test("the flat shorthand is the wildcard, and its inference becomes request fields", () => {
+    const { config, notes } = convert(
+      { engines },
+      { modelsOverlay: overlay({ reasoning: { model: "qwen3-235b", inference: { effort: "high" } } }) },
+    );
+    for (const name of ["lab", "other"]) {
+      expect(modelsOf(config, "connections", name).reasoning).toEqual({
+        model: "qwen3-235b",
+        reasoning_effort: "high",
+      });
+      expect(modelsOf(config, "connections", name).fast).toBe(name === "lab" ? "qwen3-32b" : "other-model");
+    }
+    expect(notes.join("\n")).not.toContain("names no configured connection");
+  });
+
+  test("a config already in the connections form gets its aliases filled, and keeps the ones it names", () => {
+    const current = {
+      connections: {
+        lab: { endpoint: "http://lab:8080/v1", models: { fast: "mine" } },
+        solo: { endpoint: "http://solo:8080/v1" },
+      },
+      harnesses: { claude: {} },
+    };
+    const { config, changed, notes } = convert(current, {
+      modelsOverlay: overlay({
+        fast: { lab: "ignored", solo: "solo-fast", claude: "haiku" },
+        balanced: { "*": "wild", nowhere: "x" },
+      }),
+    });
+
+    expect(changed).toBe(true);
+    expect(modelsOf(config, "connections", "lab")).toEqual({ fast: "mine", balanced: "wild" });
+    expect(modelsOf(config, "connections", "solo")).toEqual({ fast: "solo-fast", balanced: "wild" });
+    expect(modelsOf(config, "harnesses", "claude")).toEqual({ fast: "haiku" });
+    const text = notes.join("\n");
+    expect(text).toContain("models.json fast.lab: the config already names a model for it");
+    expect(text).toContain("models.json balanced.nowhere: names no configured connection or harness");
+    // The input is not modified, and an overlay that places nothing changes nothing.
+    expect(current.connections.solo).toEqual({ endpoint: "http://solo:8080/v1" });
+    expect(convert(current, { modelsOverlay: overlay({ fast: { lab: "ignored" } }) }).changed).toBe(false);
   });
 
   test("a column naming a harness's platform sets the alias on that harness", () => {
@@ -678,6 +723,26 @@ describe("the loader reads the retired form in memory", () => {
     expect(retired).toHaveLength(1);
     expect(retired[0]).toContain("akm migrate apply");
     expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
+  });
+
+  test("a models.json beside a config already in the connections form is folded in, with one warning that says so", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "mine" } } },
+    });
+    fs.writeFileSync(
+      path.join(path.dirname(getConfigPath()), "models.json"),
+      JSON.stringify({ version: 1, aliases: { fast: { lab: "ignored" }, balanced: { "*": "wild" } } }),
+    );
+    let config!: ReturnType<typeof loadUserConfig>;
+    const warnings = captureWarnings(() => {
+      config = loadUserConfig();
+    });
+    expect(config.connections?.lab?.models).toEqual({ fast: "mine", balanced: "wild" });
+    const folded = warnings.filter((w) => w.includes("models.json"));
+    expect(folded).toHaveLength(1);
+    expect(folded[0]).toContain("akm migrate apply");
+    expect(folded[0]).not.toContain("retired engines/defaults form");
   });
 
   test("the one warning names each key the file holds that akm no longer reads, never its value", () => {

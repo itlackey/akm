@@ -144,6 +144,8 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
   const harnesses: Dict = {};
   const runtimes = new Map<string, string | undefined>(); // removed opencode-sdk engines → their llmEngine
   const keyHolders: Array<{ engine: string; field: EngineKey["field"] }> = [];
+  /** An engine's own model: what an alias nothing else names falls back to. */
+  const ownModelOf: Array<{ kind: "connections" | "harnesses"; engine: string; model: string }> = [];
   for (const [name, engine] of Object.entries(engines)) {
     if (!isRecord(engine)) continue;
     const unknown = Object.keys(engine).filter(
@@ -161,8 +163,8 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
       const harness: Dict = { platform: engine.platform };
       for (const key of ["bin", "args", "workspace", "agent", "timeoutMs"])
         if (engine[key] !== undefined) harness[key] = engine[key];
-      const models = allAliases(str(engine.model));
-      if (models) harness.models = models;
+      const model = str(engine.model);
+      if (model !== undefined) ownModelOf.push({ kind: "harnesses", engine: name, model });
       harnesses[name] = harness;
       continue;
     }
@@ -176,8 +178,8 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
       const variable = implicitKeyVariable(name, defaults, options.env);
       if (variable !== undefined) connection.apiKey = `$${variable}`;
     }
-    const models = allAliases(str(engine.model));
-    if (models) connection.models = models;
+    const model = str(engine.model);
+    if (model !== undefined) ownModelOf.push({ kind: "connections", engine: name, model });
     if (engine.supportsJsonSchema === false) {
       notes.push(
         `engines.${name}: supportsJsonSchema is not a setting any more; akm retries without a schema when the endpoint rejects one.`,
@@ -254,7 +256,22 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
     return { connection: engine };
   };
 
+  // What the file writes under `connections` / `harnesses` itself is read with the converted entries, whichever
+  // comes first in the file: the written entry wins field by field, so a write beside `engines` is enough.
+  for (const [name, harness] of Object.entries(named.harnesses)) {
+    if ((harness as Dict).platform === name) delete (harness as Dict).platform;
+  }
+  const written = (value: unknown): Dict => (isRecord(value) ? (value as Dict) : {});
+  const mergedConnections = deepMergeConfig(named.connections, written(out.connections)) as Dict;
+  const mergedHarnesses = deepMergeConfig(named.harnesses, written(out.harnesses)) as Dict;
+  const ownModels = { connections: new Map<string, string>(), harnesses: new Map<string, string>() };
+  for (const { kind, engine, model } of ownModelOf) {
+    ownModels[kind].set(newName(engine, kind === "connections" ? defaultConnection : defaultHarness), model);
+  }
+
   // ── models.json folds into the models of what it named ─────────────────────
+  // An alias is set by, nearest first: the config's own `models`, models.json's column for that connection or
+  // harness, models.json's `*` column (and the flat shorthand, which is that), the engine's own model.
   const overlay =
     isRecord(options.modelsOverlay) && isRecord(options.modelsOverlay.aliases) ? options.modelsOverlay.aliases : {};
   const entries = Object.entries(overlay as Dict).flatMap(([alias, columns]) => {
@@ -276,6 +293,9 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
     entry.models ??= {};
     return entry.models as Dict;
   };
+  const hasModel = (entry: unknown, alias: string): boolean =>
+    isRecord(entry) && isRecord(entry.models) && alias in entry.models;
+  let folded = false;
   for (const { alias, column, profile } of entries) {
     const p: Dict = typeof profile === "string" ? { model: profile } : isRecord(profile) ? profile : {};
     const { effort, ...portable } = (isRecord(p.inference) ? p.inference : {}) as LlmInference & { effort?: string };
@@ -285,35 +305,67 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
       notes.push(`${where}: an engine indirection is not carried over.`);
       continue;
     }
-    const connectionNames =
+    const candidates =
       column === "*"
-        ? Object.keys(named.connections).filter((n) => !(alias in modelsOf(named.connections[n] as Dict)))
+        ? Object.keys(mergedConnections)
         : column === "opencode-sdk"
           ? [...runtimes.values()]
               .filter((n): n is string => n !== undefined && n in connections)
               .map((n) => newName(n, defaultConnection))
           : column in connections
             ? [newName(column, defaultConnection)]
-            : [];
-    const harnessNames = Object.entries(named.harnesses)
-      .filter(([, h]) => (h as Dict).platform === column)
+            : column in written(out.connections)
+              ? [column]
+              : [];
+    const harnessNamed = Object.entries(mergedHarnesses)
+      .filter(([name, h]) => ((h as Dict).platform ?? name) === column)
       .map(([n]) => n);
-    if (connectionNames.length === 0 && harnessNames.length === 0) {
+    if (candidates.length === 0 && harnessNamed.length === 0) {
       notes.push(`${where}: names no configured connection or harness, so it is not carried over.`);
       continue;
     }
+    // The config's own choice stands, and `*` leaves what an explicit column already set.
+    const connectionNames = candidates.filter(
+      (name) =>
+        !hasModel(written(out.connections)[name], alias) &&
+        !(column === "*" && hasModel(mergedConnections[name], alias)),
+    );
+    const harnessNames = harnessNamed.filter((name) => !hasModel(written(out.harnesses)[name], alias));
+    if (connectionNames.length === 0 && harnessNames.length === 0) {
+      notes.push(`${where}: the config already names a model for it, so it is not carried over.`);
+      continue;
+    }
     for (const name of connectionNames) {
-      const models = modelsOf(named.connections[name] as Dict);
+      const models = modelsOf(mergedConnections[name] as Dict);
       const existing = models[alias];
-      const model = str(p.model) ?? str(isRecord(existing) ? existing.model : existing);
-      if (model !== undefined) models[alias] = modelEntry(model, wire);
+      const model =
+        str(p.model) ?? str(isRecord(existing) ? existing.model : existing) ?? ownModels.connections.get(name);
+      if (model === undefined) continue;
+      models[alias] = modelEntry(model, wire);
+      folded = true;
     }
     for (const name of harnessNames) {
-      const harness = named.harnesses[name] as Dict;
-      const model = str(p.model) ?? str(getHarness(String(harness.platform))?.models?.[alias]);
-      if (model !== undefined) modelsOf(harness)[alias] = model;
+      const harness = mergedHarnesses[name] as Dict;
+      const model = str(p.model) ?? str(getHarness(String(harness.platform ?? name))?.models?.[alias]);
+      if (model === undefined) continue;
+      modelsOf(harness)[alias] = model;
+      folded = true;
       if (Object.keys(wire).length > 0)
         notes.push(`${where}: a harness takes the model only; the inference settings are not carried over.`);
+    }
+  }
+  if (folded) changed = true;
+  // What nothing named falls back to the engine's own model, for every alias.
+  for (const [kind, merged] of [
+    ["connections", mergedConnections],
+    ["harnesses", mergedHarnesses],
+  ] as const) {
+    for (const [name, model] of ownModels[kind]) {
+      const entry = merged[name];
+      if (!isRecord(entry)) continue;
+      for (const [alias, value] of Object.entries(allAliases(model) ?? {})) {
+        if (!hasModel(entry, alias)) modelsOf(entry)[alias] = value;
+      }
     }
   }
 
@@ -398,14 +450,6 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
   }
 
   // ── assemble, keeping the file's key order ─────────────────────────────────
-  for (const [name, harness] of Object.entries(named.harnesses)) {
-    if ((harness as Dict).platform === name) delete (harness as Dict).platform;
-  }
-  // What the file writes under `connections` / `harnesses` itself is read with the converted entries, whichever
-  // comes first in the file: the written entry wins field by field, so a write beside `engines` is enough.
-  const written = (value: unknown): Dict => (isRecord(value) ? (value as Dict) : {});
-  const mergedConnections = deepMergeConfig(named.connections, written(out.connections)) as Dict;
-  const mergedHarnesses = deepMergeConfig(named.harnesses, written(out.harnesses)) as Dict;
   const config: Dict = {};
   let placed = false;
   for (const [key, value] of Object.entries(out)) {

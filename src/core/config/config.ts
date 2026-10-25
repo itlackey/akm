@@ -207,9 +207,14 @@ function readRetiredEngines(raw: Record<string, unknown>, sourcePath?: string): 
     ({ engine, field }) =>
       `engines.${engine}: its ${field} is not read from config any more; \`akm migrate apply\` moves it to credentials.json.`,
   );
+  const retiredForm = raw.engines !== undefined || raw.defaults !== undefined;
   warnOnce(
     `config:retired-engines:${sourcePath ?? "inline"}`,
-    `${sourcePath ?? "config.json"} uses the retired engines/defaults form; reading it as connections/harnesses. \`akm migrate apply\` rewrites config.json.${[...notes, ...keyNotes].map((note) => `\n  - ${note}`).join("")}`,
+    `${sourcePath ?? "config.json"} ${
+      retiredForm
+        ? "uses the retired engines/defaults form; reading it as connections/harnesses"
+        : "is read with the retired models.json folded into its models"
+    }. \`akm migrate apply\` rewrites config.json${retiredForm ? "" : " and moves models.json aside"}.${[...notes, ...keyNotes].map((note) => `\n  - ${note}`).join("")}`,
   );
   return config;
 }
@@ -1005,7 +1010,7 @@ function refuseRemovalFromRetiredForm(
   );
   if (fromRetiredForm.length === 0) return;
   throw new UsageError(
-    `Cannot remove ${fromRetiredForm.map((keyPath) => keyPath.join(".")).join(", ")}: it comes from the retired engines form this config.json still uses. ` +
+    `Cannot remove ${fromRetiredForm.map((keyPath) => keyPath.join(".")).join(", ")}: it comes from the retired engines form or models.json, which this config.json still reads. ` +
       "Run `akm migrate apply` to convert the file, then repeat the change.",
   );
 }
@@ -1125,7 +1130,9 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     keepUnusableEntries(body, localRaw, notes);
     const hasModelsFile = modelsFileExists();
     if (hasModelsFile) {
-      notes.push("models.json: its aliases are folded in above, then the file moves to the config-backups directory.");
+      notes.push(
+        "models.json: its aliases are folded in where they name a configured connection or harness (the ones that do not are listed above), then the file moves to the config-backups directory.",
+      );
     }
     const keys = [...new Set([...Object.keys(raw), ...Object.keys(body)])]
       .filter((key) => JSON.stringify(raw[key]) !== JSON.stringify(body[key]))

@@ -1393,7 +1393,17 @@ describe("previous-release corpus — a 0.9 `engines` config converts end to end
     expect(fs.readFileSync(configFile?.backupPath as string, "utf8")).toBe(originalConfig);
 
     // models.json: folded in, then moved to the config backups.
-    expect(written.connections.default?.models).toMatchObject({ fast: "qwen3-8b", reasoning: "qwen3-32b" });
+    // `lab` has its own column for `fast`; the wildcard (a model that differs from the engine's own, with its
+    // effort) and the flat shorthand reach every connection without one.
+    expect(written.connections.default?.models).toEqual({
+      fast: "qwen3-8b",
+      balanced: "qwen3-30b-a3b",
+      reasoning: { model: "qwen3-235b", reasoning_effort: "high" },
+    });
+    expect(written.connections.cloud?.models).toMatchObject({
+      fast: "gpt-4o-mini",
+      reasoning: { model: "qwen3-235b", reasoning_effort: "high" },
+    });
     expect(written.harnesses.claude?.models).toMatchObject({ fast: "haiku" });
     expect(fs.existsSync(path.join(configDir, "models.json"))).toBe(false);
     expect(fs.readFileSync(configFile?.modelsFileBackupPath as string, "utf8")).toBe(originalModels);
