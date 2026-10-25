@@ -67,7 +67,7 @@ function positional(body: Record<string, unknown>, key: string): string {
 function preserveUnrelatedConfig(config = loadConfig()) {
   if (!isDeepStrictEqual(sanitizeConfigForWrite(config, { quiet: true }), config)) {
     throw new UsageError(
-      "AKM's config sanitizer would remove unrelated credentials. Move literal API keys to $VAR or ${secrets/name} references and remove registry URL credentials using the CLI before changing bundle configuration in the UI.",
+      "AKM's config sanitizer would remove unrelated credentials. Remove registry URL credentials using the CLI before changing bundle configuration in the UI.",
     );
   }
 }

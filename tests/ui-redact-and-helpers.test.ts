@@ -16,7 +16,7 @@ type Json = Record<string, any>;
 describe("redactForUi", () => {
   test("masks secret-like string values by key, keeps symbolic references and numbers", () => {
     const redacted = redactForUi({
-      engines: {
+      connections: {
         a: { apiKey: "sk-live-1", apiKeyFile: "/run/key", maxTokens: 4096, model: "m" },
         b: { apiKey: "$B_KEY", credential: "${secrets/deploy}" },
       },
@@ -24,10 +24,10 @@ describe("redactForUi", () => {
       password: "pw",
       authorization: "Bearer x",
     }) as Json;
-    expect(redacted.engines.a.apiKey).toBe("[redacted]");
-    expect(redacted.engines.a.maxTokens).toBe(4096);
-    expect(redacted.engines.a.model).toBe("m");
-    expect(redacted.engines.b).toEqual({ apiKey: "$B_KEY", credential: "${secrets/deploy}" });
+    expect(redacted.connections.a.apiKey).toBe("[redacted]");
+    expect(redacted.connections.a.maxTokens).toBe(4096);
+    expect(redacted.connections.a.model).toBe("m");
+    expect(redacted.connections.b).toEqual({ apiKey: "$B_KEY", credential: "${secrets/deploy}" });
     expect(redacted.webhookToken).toBe("[redacted]");
     expect(redacted.password).toBe("[redacted]");
     expect(redacted.authorization).toBe("[redacted]");

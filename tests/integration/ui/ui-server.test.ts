@@ -35,6 +35,7 @@ import { git, makeGitRepo } from "../../_helpers/git";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const PLANTED_API_KEY = "sk-planted-literal-api-key-0001";
+const PLANTED_REGISTRY_PASSWORD = "registry-planted-password-0001";
 const PLANTED_CONFIG_TOKEN = "tok-planted-config-token-0002";
 const PLANTED_URL_TOKEN = "tok-planted-url-query-0003";
 const PLANTED_SECRET_FILE = "planted-secret-file-value-0004";
@@ -124,11 +125,10 @@ async function seed(): Promise<void> {
   writeSandboxConfig({
     ...makeConfig(stash),
     semanticSearchMode: "off",
-    engines: {
+    connections: {
       default: {
-        kind: "llm",
         endpoint: `https://llm.example.test/v1/chat/completions?token=${PLANTED_URL_TOKEN}`,
-        model: "chat-model",
+        models: { fast: "chat-model" },
         apiKey: PLANTED_API_KEY,
       },
     },
@@ -389,16 +389,16 @@ describe("endpoints", () => {
     expect(fs.existsSync(fetchHead)).toBe(before);
   });
 
-  test("GET /api/config: effective config with provenance, engines, and no secret values", async () => {
+  test("GET /api/config: effective config with provenance, connections, and no secret values", async () => {
     await seed();
     const s = await start();
     const config = await data(s, "/api/config");
     expect(config.exists).toBe(true);
     const sources = Object.fromEntries(config.entries.map((e: { path: string; source: string }) => [e.path, e.source]));
     expect(sources.semanticSearchMode).toBe("file");
-    expect(sources["engines.default.model"]).toBe("file");
+    expect(sources["connections.default.models.fast"]).toBe("file");
     expect(config.engines).toHaveLength(1);
-    expect(config.engines[0]).toMatchObject({ name: "default", kind: "llm", model: "chat-model" });
+    expect(config.engines[0]).toMatchObject({ name: "default", kind: "connection", models: { fast: "chat-model" } });
     expect(config.engines[0].endpoint).toContain("token=%5Bredacted%5D");
     expect(config.engines[0].apiKey).toBeUndefined();
     expect(config.config.someToken).toBe("[redacted]");
@@ -992,7 +992,7 @@ describe("workspace actions", () => {
     const config = loadConfig();
     writeSandboxConfig({
       ...config,
-      engines: { default: { ...config.engines!.default!, apiKey: "$AKM_UI_TEST_KEY" } },
+      connections: { default: { ...config.connections!.default!, apiKey: "$AKM_UI_TEST_KEY" } },
     });
   }
   test("asset navigation resolves indexed relative targets within the owning bundle and keeps fragment selectors", async () => {
@@ -1128,7 +1128,7 @@ describe("workspace actions", () => {
       componentWritability: { main: false },
       defaultBundle: "",
       defaultWriteTarget: "",
-      engines: { default: { apiKey: "[redacted]" } },
+      connections: { default: { apiKey: "[redacted]" } },
       unrelated: "overwrite attempt",
     });
     expect(changed.status, changed.body.error).toBe(200);
@@ -1138,7 +1138,7 @@ describe("workspace actions", () => {
       writable: false,
       components: { main: { writable: false } },
     });
-    expect(saved.engines.default.apiKey).toBe("$AKM_UI_TEST_KEY");
+    expect(saved.connections.default.apiKey).toBe("$AKM_UI_TEST_KEY");
     expect(saved.someToken).toBe(PLANTED_CONFIG_TOKEN);
     expect(saved.unrelated).toEqual({ keep: [1, "two"] });
     const listed = await data(s, "/api/bundles");
@@ -1178,10 +1178,13 @@ describe("workspace actions", () => {
     expect(fs.existsSync(path.join(source, "knowledge", "extra.md"))).toBe(true);
   });
 
-  test("config-affecting actions refuse unrelated sanitizer changes rather than losing legacy credentials", async () => {
+  test("config-affecting actions refuse unrelated sanitizer changes rather than losing registry credentials", async () => {
     await seed();
-    const config = loadConfig();
-    writeSandboxConfig({ engines: { default: { ...config.engines!.default!, apiKey: PLANTED_API_KEY } } });
+    writeSandboxConfig({
+      registries: [
+        { url: `https://bot:${PLANTED_REGISTRY_PASSWORD}@registry.example.test/index.json`, name: "private" },
+      ],
+    });
     const s = await start();
     const configPath = getConfigPath();
     const before = fs.readFileSync(configPath, "utf8");
@@ -1195,7 +1198,7 @@ describe("workspace actions", () => {
       expect(result.status).toBe(400);
       expect(result.body.code).toBe("INVALID_FLAG_VALUE");
       expect(result.body.error).toContain("sanitizer");
-      expect(result.body.error).not.toContain(PLANTED_API_KEY);
+      expect(result.body.error).not.toContain(PLANTED_REGISTRY_PASSWORD);
       expect(fs.readFileSync(configPath, "utf8")).toBe(before);
     }
     // A settings request that changes nothing writes nothing, so it is not refused.
@@ -1270,7 +1273,10 @@ describe("workspace actions", () => {
   test("knowledge creation and feedback succeed under a legacy literal apiKey and leave config bytes untouched", async () => {
     await seed();
     const config = loadConfig();
-    writeSandboxConfig({ ...config, engines: { default: { ...config.engines!.default!, apiKey: PLANTED_API_KEY } } });
+    writeSandboxConfig({
+      ...config,
+      connections: { default: { ...config.connections!.default!, apiKey: PLANTED_API_KEY } },
+    });
     const configPath = getConfigPath();
     const before = fs.readFileSync(configPath, "utf8");
     const s = await start();

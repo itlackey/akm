@@ -36,14 +36,18 @@ function node(key, value, path, sources, depth) {
 
 function enginesTable(engines) {
   if (engines.length === 0) return emptyState("No engines are configured.");
+  const modelIds = (e) =>
+    Object.values(e.models ?? {})
+      .map((entry) => (typeof entry === "string" ? entry : entry.model))
+      .join(", ");
   const rest = (e) => {
-    const { name, kind, endpoint, model, ...others } = e;
+    const { name, kind, endpoint, models, ...others } = e;
     return Object.keys(others).length > 0 ? JSON.stringify(others) : "";
   };
   return tableWrap(
     html`<table><thead><tr><th>Name</th><th>Kind</th><th>Endpoint</th><th>Model</th><th>Other</th></tr></thead><tbody>${engines.map(
       (e) =>
-        html`<tr><td class="mono">${e.name}</td><td>${e.kind}</td><td class="mono wrap">${e.endpoint ?? ""}</td><td class="mono">${e.model ?? ""}</td><td class="mono small wrap">${rest(e)}</td></tr>`,
+        html`<tr><td class="mono">${e.name}</td><td>${e.kind}</td><td class="mono wrap">${e.endpoint ?? ""}</td><td class="mono">${modelIds(e)}</td><td class="mono small wrap">${rest(e)}</td></tr>`,
     )}</tbody></table>`,
   );
 }

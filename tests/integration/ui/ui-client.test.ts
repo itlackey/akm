@@ -150,11 +150,10 @@ async function seed(): Promise<{ proposalId: string }> {
   writeSandboxConfig({
     ...makeConfig(stash),
     semanticSearchMode: "off",
-    engines: {
+    connections: {
       default: {
-        kind: "llm",
         endpoint: "https://llm.example.test/v1/chat/completions",
-        model: "m",
+        models: { fast: "m" },
         apiKey: PLANTED_API_KEY,
       },
     },
