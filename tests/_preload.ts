@@ -81,6 +81,7 @@ const HARNESSED: readonly string[] = [
   // Codex and Claude Code session-log roots (pointed into the sandbox at preload).
   "CODEX_HOME",
   "CLAUDE_CONFIG_DIR",
+  "OPENCODE_TEST_HOME",
   // Diagnostic / secret env vars production code reads.
   "AKM_VERBOSE",
   "AKM_LLM_API_KEY",
@@ -144,6 +145,9 @@ function installSuiteWideSandbox(): void {
   process.env.CODEX_HOME = path.join(suiteSandboxRoot, "codex-home");
   // Likewise Claude Code's config directory, which holds the `projects` transcripts the Claude reader scans.
   process.env.CLAUDE_CONFIG_DIR = path.join(suiteSandboxRoot, "claude-home");
+  // And OpenCode's home, which is `OPENCODE_TEST_HOME ?? os.homedir()`: without it the real-SDK suites load the
+  // developer's `~/.agents` (and, on the user's OpenCode host, `~/.claude`).
+  process.env.OPENCODE_TEST_HOME = home;
   // Teardown must fire on signal-kills too, not just clean exit. A worker that
   // is SIGTERM/SIGINT/SIGHUP'd (e.g. an orphaned/hung `bun test` worker being
   // reaped) otherwise leaks its entire `akm-test-suite-*` root under /tmp — the

@@ -352,6 +352,11 @@ describe("what akm replaces in the embedded OpenCode", () => {
     }
   });
 
+  test("OpenCode's home is the suite's, so a run never loads the developer's ~/.agents", async () => {
+    const { Global } = await import("@opencode/util/global");
+    expect(Global.Path.home).toBe(process.env.HOME as string);
+  });
+
   // OpenCode's roots follow XDG; akm gives it its own, so a run leaves the user's OpenCode directories as they were.
   test("a run writes OpenCode's own files under akm's directories, not under the XDG ones", async () => {
     const xdg = ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"].map((name) =>
