@@ -45,6 +45,8 @@ export interface TaskFilesMigrationStatus {
   taskFiles: TaskFilesSummary;
   backupPath?: string;
   applied?: number;
+  /** Files that changed after they were planned and were left as they are: a run again plans them afresh. */
+  conflicts?: string[];
 }
 
 function expandTilde(value: string): string {
@@ -221,6 +223,11 @@ export function applyTaskFilesMigration(): TaskFilesMigrationStatus {
     if (before.result.taskFiles.changed === 0) return before.result;
     const backupPath = path.join(getDataDir(), "backups", "tasks", `${Date.now()}-${randomUUID()}`);
     const applied = applyTaskFilesPlan(before.plan, { backupRoot: backupPath });
-    return { ...inspectCurrent().result, backupPath, applied: applied.changed.length };
+    return {
+      ...inspectCurrent().result,
+      backupPath,
+      applied: applied.changed.length,
+      ...(applied.conflicts.length > 0 ? { conflicts: [...applied.conflicts] } : {}),
+    };
   });
 }

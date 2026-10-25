@@ -77,10 +77,14 @@ export function inspectEngineKeyFiles(roots: readonly TaskFileRoot[]): EngineKey
 
 /**
  * Write every `changed` file with its keys rewritten, under one backup (see
- * {@link replaceFilesWithBackups}). Returns the paths it rewrote.
+ * {@link replaceFilesWithBackups}). Returns the paths it rewrote and the ones that
+ * changed since they were planned, which it left as they are.
  */
-export function applyEngineKeysPlan(plan: EngineKeysPlan, options: { readonly backupRoot: string }): string[] {
+export function applyEngineKeysPlan(
+  plan: EngineKeysPlan,
+  options: { readonly backupRoot: string },
+): { readonly rewritten: readonly string[]; readonly conflicts: readonly string[] } {
   const changes = plan.files.filter((file): file is EngineKeyChange => file.status === "changed");
-  replaceFilesWithBackups(changes, options.backupRoot);
-  return changes.map((change) => change.filePath);
+  const { replaced, conflicts } = replaceFilesWithBackups(changes, options.backupRoot);
+  return { rewritten: replaced, conflicts };
 }

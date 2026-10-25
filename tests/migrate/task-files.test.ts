@@ -8,7 +8,7 @@
  * v4 under one backup directory per run; `status` never writes.
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -138,6 +138,78 @@ describe("task files: every version through one planner", () => {
     expect(fs.readFileSync(b.file(longName), "utf8")).toBe(V3);
     expect(fs.readFileSync(taskFileBackupPath(b.backup, b.file("a.yml")), "utf8")).toBe(V2);
     expect(fs.readFileSync(taskFileBackupPath(b.backup, b.file(longName)), "utf8")).toBe(V3);
+  });
+
+  test("a file edited after it was planned is left as the user wrote it, in neither the backup nor a replacement", () => {
+    const b = bundle({ "edited.yml": V2, "fine.yml": V3 });
+    const preview = plan(b.root);
+    const edited = "version: 2\nschedule: '@hourly'\ncommand: /bin/echo user concurrent edit\n";
+    fs.writeFileSync(b.file("edited.yml"), edited);
+
+    const applied = applyTaskFilesPlan(preview, { backupRoot: b.backup });
+
+    expect(applied.conflicts).toEqual([b.file("edited.yml")]);
+    expect(applied.changed).toEqual([b.file("fine.yml")]);
+    expect(fs.readFileSync(b.file("edited.yml"), "utf8")).toBe(edited);
+    expect(fs.existsSync(taskFileBackupPath(b.backup, b.file("edited.yml")))).toBe(false);
+    expect(fs.readFileSync(b.file("fine.yml"), "utf8")).toContain("version: 4");
+    // The backup of what was replaced is what was replaced.
+    expect(fs.readFileSync(taskFileBackupPath(b.backup, b.file("fine.yml")), "utf8")).toBe(V3);
+    // A run again plans the edited file afresh from what it now holds.
+    expect(outcomes(b.root)["edited.yml"]?.[0]).toBe("changed");
+  });
+
+  test("a file edited between its backup and its replacement is checked again and left alone", () => {
+    const b = bundle({ "late.yml": V2 });
+    const preview = plan(b.root);
+    const edited = "version: 2\nschedule: '@hourly'\ncommand: /bin/echo edited late\n";
+    // The first read of the file is the check before its backup; the user writes right after it.
+    const read = fs.readFileSync.bind(fs);
+    let reads = 0;
+    spyOn(fs, "readFileSync").mockImplementation(((target: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+      const bytes = (read as (...args: unknown[]) => unknown)(target, ...rest);
+      if (target === b.file("late.yml")) {
+        reads += 1;
+        if (reads === 1) fs.writeFileSync(b.file("late.yml"), edited);
+      }
+      return bytes;
+    }) as typeof fs.readFileSync);
+
+    const applied = applyTaskFilesPlan(preview, { backupRoot: b.backup });
+    mock.restore();
+
+    expect(applied).toEqual({ changed: [], conflicts: [b.file("late.yml")] });
+    expect(fs.readFileSync(b.file("late.yml"), "utf8")).toBe(edited);
+    expect(fs.existsSync(taskFileBackupPath(b.backup, b.file("late.yml")))).toBe(false);
+  });
+
+  test("a rollback does not overwrite a file that changed after it was replaced, and says which", () => {
+    const b = bundle({ "a.yml": V2, "b.yml": V3 });
+    const preview = plan(b.root);
+    // The second file's replace fails; the user edited the first file's new version just before.
+    const edited = "version: 4\nschedule: '@weekly'\nuses: commands/user-edit\n";
+    const rename = fs.renameSync.bind(fs);
+    spyOn(fs, "renameSync").mockImplementation(((from: fs.PathLike, to: fs.PathLike) => {
+      if (String(to) !== b.file("b.yml")) return rename(from, to);
+      fs.writeFileSync(b.file("a.yml"), edited);
+      throw new Error("disk full");
+    }) as typeof fs.renameSync);
+
+    let failure: unknown;
+    try {
+      applyTaskFilesPlan(preview, { backupRoot: b.backup });
+    } catch (error) {
+      failure = error;
+    }
+    mock.restore();
+
+    const message = String((failure as Error).message);
+    expect(message).toContain("disk full");
+    expect(message).toContain(
+      `not restored from the backup, because it changed after it was replaced: ${b.file("a.yml")}`,
+    );
+    expect(fs.readFileSync(b.file("a.yml"), "utf8")).toBe(edited);
+    expect(fs.readFileSync(b.file("b.yml"), "utf8")).toBe(V3);
   });
 
   test("symlinked task sources are refused", () => {

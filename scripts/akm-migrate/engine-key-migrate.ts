@@ -152,9 +152,32 @@ export function applyEngineKeysMigration(targets?: Readonly<Record<string, Engin
     if (summary.skipped === 0 && summary.changed === 0) fs.rmSync(rememberedTargetsPath(), { force: true });
     if (summary.changed === 0) return statusOf(summary);
     const backupPath = path.join(getDataDir(), "backups", "asset-engine-keys", `${Date.now()}-${randomUUID()}`);
-    const rewritten = applyEngineKeysPlan(before, { backupRoot: backupPath });
-    if (summary.skipped === 0) fs.rmSync(rememberedTargetsPath(), { force: true });
-    // The report keeps what was rewritten, notes included; nothing is left to do.
-    return { schemaVersion: 1, status: "current", assetEngineKeys: { ...summary, backupPath, applied: rewritten.length } };
+    const { rewritten, conflicts } = applyEngineKeysPlan(before, { backupRoot: backupPath });
+    // A file that changed since it was planned was left as it is; the report says so, and a run again plans it afresh.
+    const files = summary.files.map((file): EngineKeyFileSummary =>
+      conflicts.includes(file.filePath)
+        ? {
+            filePath: file.filePath,
+            status: "skipped",
+            beforeHash: file.beforeHash,
+            reason: "it changed after it was planned, so it was left as it is; run again to plan it afresh",
+          }
+        : file,
+    );
+    const left = files.filter((file) => file.status === "skipped").length;
+    if (left === 0) fs.rmSync(rememberedTargetsPath(), { force: true });
+    // The report keeps what was rewritten, notes included.
+    return {
+      schemaVersion: 1,
+      status: conflicts.length > 0 ? "ready" : "current",
+      assetEngineKeys: {
+        ...summary,
+        files,
+        changed: summary.changed - conflicts.length,
+        skipped: left,
+        backupPath,
+        applied: rewritten.length,
+      },
+    };
   });
 }

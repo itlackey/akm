@@ -11,9 +11,15 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { planEngineKeyFile, type ResolveEngineKey } from "../../scripts/akm-migrate/migrate/engine-key-planner";
+import { applyEngineKeysPlan, inspectEngineKeyFiles } from "../../scripts/akm-migrate/migrate/engine-key-files";
+import {
+  planEngineKeyFile,
+  planEngineKeys,
+  type ResolveEngineKey,
+} from "../../scripts/akm-migrate/migrate/engine-key-planner";
 import { runMigration } from "../../scripts/akm-migrate/run-migrate";
 import { resetConfigCache } from "../../src/core/config/config";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -160,6 +166,31 @@ describe("planEngineKeyFile", () => {
     );
     expect(outcome).toMatchObject({ status: "skipped" });
     expect((outcome as { reason: string }).reason).toContain("read-only");
+  });
+});
+
+describe("applying a plan to files that changed since", () => {
+  test("a command edited after it was planned keeps the user's edit and is reported as a conflict, not overwritten", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-engine-keys-"));
+    try {
+      fs.mkdirSync(path.join(root, "commands"), { recursive: true });
+      const file = path.join(root, "commands", "task.md");
+      fs.writeFileSync(file, "---\nname: task\nengine: lab\n---\nold task\n");
+      const planned = planEngineKeys(
+        inspectEngineKeyFiles([{ bundleId: "b", root, bundleRoot: root, writable: true, layout: "akm-stash" }]),
+        (engine) => ({ key: "connection", name: engine === "lab" ? "default" : engine }),
+      );
+      const edited = "---\nname: task\nengine: lab\n---\nuser concurrent edit\n";
+      fs.writeFileSync(file, edited);
+
+      const applied = applyEngineKeysPlan(planned, { backupRoot: path.join(root, "backup") });
+
+      expect(applied).toEqual({ rewritten: [], conflicts: [file] });
+      expect(fs.readFileSync(file, "utf8")).toBe(edited);
+      expect(fs.existsSync(path.join(root, "backup"))).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

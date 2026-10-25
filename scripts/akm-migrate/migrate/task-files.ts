@@ -34,6 +34,8 @@ export interface TaskFileRoot {
 
 export interface AppliedTaskFilesPlan {
   readonly changed: readonly string[];
+  /** Files that changed after they were planned: left as they now are. */
+  readonly conflicts: readonly string[];
 }
 
 function migrationError(detail: string): ConfigError {
@@ -198,27 +200,70 @@ export interface FileReplacement {
   readonly mode: number;
 }
 
+/** Whether the file on disk holds exactly `bytes` now; a file that cannot be read holds nothing. */
+function holds(filePath: string, bytes: Buffer): boolean {
+  try {
+    return fs.readFileSync(filePath).equals(bytes);
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Replace each file with its new bytes. Every original is backed up under
- * `backupRoot` before any file is touched, and a failed replace restores the
- * files already replaced from those backups.
+ * Replace each file with its new bytes. A file whose bytes are no longer the
+ * ones it was planned from (an editor or a bundle sync wrote it since) is a
+ * conflict: it is neither backed up nor replaced, and the paths are returned.
+ * The bytes are checked before the backup and again immediately before the
+ * file is replaced, so a backup is always what was replaced. Every original is
+ * backed up under `backupRoot` before any file is touched, and a failed replace
+ * restores the files already replaced from those backups, except one that has
+ * changed since it was replaced, which is left as it is and named.
  */
-export function replaceFilesWithBackups(changes: readonly FileReplacement[], backupRoot: string): void {
+export function replaceFilesWithBackups(
+  changes: readonly FileReplacement[],
+  backupRoot: string,
+): { readonly replaced: readonly string[]; readonly conflicts: readonly string[] } {
+  const conflicts: string[] = [];
+  const backedUp: FileReplacement[] = [];
   for (const change of changes) {
+    if (!holds(change.filePath, change.before)) {
+      conflicts.push(change.filePath);
+      continue;
+    }
     writeDurable(taskFileBackupPath(backupRoot, change.filePath), change.before, change.mode, true);
+    backedUp.push(change);
   }
   const replaced: FileReplacement[] = [];
   try {
-    for (const change of changes) {
+    for (const change of backedUp) {
+      if (!holds(change.filePath, change.before)) {
+        fs.rmSync(taskFileBackupPath(backupRoot, change.filePath), { force: true });
+        conflicts.push(change.filePath);
+        continue;
+      }
       replaceAtomically(change.filePath, change.after, change.mode);
       replaced.push(change);
     }
   } catch (cause) {
+    const unrestored: string[] = [];
     for (const change of [...replaced].reverse()) {
-      replaceAtomically(change.filePath, fs.readFileSync(taskFileBackupPath(backupRoot, change.filePath)), change.mode);
+      if (holds(change.filePath, change.after)) {
+        replaceAtomically(
+          change.filePath,
+          fs.readFileSync(taskFileBackupPath(backupRoot, change.filePath)),
+          change.mode,
+        );
+      } else {
+        unrestored.push(change.filePath);
+      }
     }
-    throw cause;
+    if (unrestored.length === 0) throw cause;
+    throw new Error(
+      `${cause instanceof Error ? cause.message : String(cause)}; not restored from the backup, because it changed after it was replaced: ${unrestored.join(", ")}`,
+      { cause },
+    );
   }
+  return { replaced: replaced.map((change) => change.filePath), conflicts };
 }
 
 /**
@@ -238,6 +283,6 @@ export function applyTaskFilesPlan(
       filePath: change.filePath,
     });
   }
-  replaceFilesWithBackups(changes, options.backupRoot);
-  return { changed: changes.map((file) => file.filePath) };
+  const { replaced, conflicts } = replaceFilesWithBackups(changes, options.backupRoot);
+  return { changed: replaced, conflicts };
 }
