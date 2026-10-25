@@ -10,6 +10,7 @@
  *   question  call the `question` tool, then reply "Q-DONE"
  *   shell     call `shell`, then reply with the tool result
  *   env       call `shell` to print $AKM_PROBE and $AKM_AMBIENT, then reply with the tool result
+ *   hang      accept the request and never answer it
  *   subagent  call `subagent`, whose prompt asks the child for MODE:env, then reply with its result
  *   write     call `write`, then reply with the tool result
  *   akm       call `akm_search`, then reply with the tool result
@@ -138,6 +139,7 @@ export function startFakeModel(): FakeModelServer {
           reply = { tool: { name: "shell", args: { command: "echo BIG", description: "big" } }, big: true };
         else reply = { content: "COMPACT-DONE" };
       }
+      if (mode === "hang") return new Promise<Response>(() => {});
       const id = `c${n}`;
       const created = Math.floor(Date.now() / 1000);
       const usage = reply.big

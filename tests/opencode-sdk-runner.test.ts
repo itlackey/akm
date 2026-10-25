@@ -9,9 +9,12 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { Plugin } from "@opencode/plugin";
-import { resetConfigCache } from "../src/core/config/config";
+import { OpenCode } from "@opencode/sdk";
+import { loadConfig, resetConfigCache } from "../src/core/config/config";
+import { getDataDir } from "../src/core/paths";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import {
   _setOpencodeHostFactoryForTests,
@@ -20,6 +23,7 @@ import {
 } from "../src/integrations/harnesses/opencode/embedded/host";
 import { akmOpencodeDatabasePath } from "../src/integrations/harnesses/opencode/embedded/host-spec";
 import { runOpencodeSdk } from "../src/integrations/harnesses/opencode/embedded/run";
+import { runtimeConfigContent } from "../src/integrations/harnesses/opencode/embedded/runtime-config";
 import { createSdkHost } from "../src/integrations/harnesses/opencode/embedded/sdk-host";
 import type { ChatCompletionConfig } from "../src/llm/client";
 import { type FakeModelServer, startFakeModel } from "./_helpers/fake-model-server";
@@ -307,5 +311,62 @@ describe("limits", () => {
     const result = await run("MODE:answer down", { timeoutMs: 2_000 }, down);
     expect(result.reason).toBe("timeout");
     expect(Date.now() - started).toBeLessThan(10_000);
+  });
+});
+
+describe("what akm replaces in the embedded OpenCode", () => {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const hangingRequests = () => model.requests.filter((r) => r.mode === "hang").length;
+  const until = async (done: () => boolean, ms: number): Promise<boolean> => {
+    for (const end = Date.now() + ms; !done() && Date.now() < end; ) await sleep(25);
+    return done();
+  };
+
+  // At every start OpenCode resumes each top-level session whose turn never finished, whichever process owns it.
+  test("akm's next host does not resume a turn left unfinished, where OpenCode's own sweep does", async () => {
+    const before = hangingRequests();
+    const running = run("MODE:hang go", { timeoutMs: 30_000 });
+    expect(await until(() => hangingRequests() === before + 1, 10_000)).toBe(true);
+    await closeOpencodeSdk(); // the process ends mid-turn: the turn stays unfinished in the database
+    expect((await running).ok).toBe(false);
+
+    await hostFor("runtime");
+    await sleep(1_500);
+    expect(hangingRequests()).toBe(before + 1);
+    await closeOpencodeSdk();
+
+    const control = await OpenCode.create({
+      database: { path: akmOpencodeDatabasePath() },
+      models: { fetch: false },
+      config: {
+        directory: fs.mkdtempSync(path.join(os.tmpdir(), "akm-sweep-control-")),
+        project: false,
+        claude: false,
+        content: JSON.stringify(runtimeConfigContent(loadConfig().connections)),
+      },
+    } as never);
+    try {
+      expect(await until(() => hangingRequests() === before + 2, 10_000)).toBe(true);
+    } finally {
+      await control.close();
+    }
+  });
+
+  // OpenCode's roots follow XDG; akm gives it its own, so a run leaves the user's OpenCode directories as they were.
+  test("a run writes OpenCode's own files under akm's directories, not under the XDG ones", async () => {
+    const xdg = ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"].map((name) =>
+      path.join(process.env[name] ?? "", "opencode"),
+    );
+    const tree = (dir: string): string[] =>
+      fs.existsSync(dir)
+        ? fs
+            .readdirSync(dir, { recursive: true })
+            .map((entry) => `${entry}:${fs.statSync(path.join(dir, String(entry))).mtimeMs}`)
+            .sort()
+        : [];
+    const before = xdg.map(tree);
+    expect((await run("MODE:answer roots")).ok).toBe(true);
+    expect(xdg.map(tree)).toEqual(before);
+    expect(fs.existsSync(path.join(getDataDir(), "opencode", "repos"))).toBe(true);
   });
 });
