@@ -42,9 +42,16 @@
  *    old/removed command, demonstrating an error). It is a marker on the
  *    exact line, never a whole-file or whole-directory carve-out.
  *  - A document that describes a PRIOR release is skipped wholesale — see
- *    `isArchivedDoc` below. That covers `docs/migration/**` and any doc
+ *    `isArchivedDoc` below. That covers the earlier releases' migration
+ *    documents (named one by one in `HISTORICAL_MIGRATION_DOCS`) and any doc
  *    carrying the dated-archive banner, whose examples are expected to name
- *    commands the current CLI no longer has.
+ *    commands the current CLI no longer has. The current migration guide and
+ *    release note are linted.
+ *
+ * What this does NOT establish: only fenced examples are read. Inline code,
+ * prose and the behaviour a document describes are outside it, so a pass says
+ * that the commands and flags in the examples exist, not that the document is
+ * true of the product.
  *
  * What this is a STATIC APPROXIMATION of, not a citty re-implementation:
  *  - Allowed flags for a resolved command are the UNION of every level's own
@@ -76,6 +83,7 @@ const DOC_FILES = ["README.md", "AGENTS.md", "STABILITY.md"];
 const SKIP_MARKER = "doclint:ignore";
 
 /**
+/**
  * Documents that describe a PRIOR release, and are therefore expected to
  * reference commands the current CLI no longer has.
  *
@@ -87,10 +95,15 @@ const SKIP_MARKER = "doclint:ignore";
  * contents row shifted it down one, and another entry carried the standing
  * note "Line number shifted +3 from this post's original 86".
  *
- * Both waived files were the same category, so express the category instead:
+ * The category is expressed instead, and scoped to what is actually historical:
  *
- *   1. `docs/migration/**` — a migration guide's whole purpose is showing the
- *      commands you are migrating AWAY from.
+ *   1. A migration document of an EARLIER release, named in
+ *      `HISTORICAL_MIGRATION_DOCS`: it shows the commands its own readers were
+ *      migrating away from. The CURRENT upgrade guide and release note, and any
+ *      migration document not listed (a new release note is current by
+ *      default), are linted like every other doc: the commands they tell a
+ *      reader to run must exist. A removed command they name on purpose (the
+ *      "what is gone" lists) carries `doclint:ignore` on that line.
  *   2. Any doc carrying the dated-archive banner — a published post is
  *      immutable history, not documentation to be retrofitted to a rename.
  *
@@ -101,9 +114,34 @@ const SKIP_MARKER = "doclint:ignore";
  */
 const ARCHIVED_DOC_BANNER = "This is a dated article from AKM's publishing archive.";
 
+const HISTORICAL_MIGRATION_DOCS: ReadonlySet<string> = new Set([
+  "docs/migration/v0.8-to-v0.9.md",
+  "docs/migration/v0.9.0-troubleshooting.md",
+  "docs/migration/v0.9.1-to-v0.9.2.md",
+  ...[
+    "0.0.13",
+    "0.1.0",
+    "0.2.0",
+    "0.3.0",
+    "0.5.0",
+    "0.6.0",
+    "0.7.0",
+    "0.7.3",
+    "0.7.4",
+    "0.7.5",
+    "0.8.0",
+    "0.9.0",
+    "0.9.2",
+    "0.9.14",
+    "0.9.15",
+    "0.9.16",
+    "0.9.17",
+    "0.9.19",
+  ].map((version) => `docs/migration/release-notes/${version}.md`),
+]);
+
 function isArchivedDoc(relPath: string, raw: string): boolean {
-  if (relPath.startsWith("docs/migration/")) return true;
-  return raw.includes(ARCHIVED_DOC_BANNER);
+  return HISTORICAL_MIGRATION_DOCS.has(relPath) || raw.includes(ARCHIVED_DOC_BANNER);
 }
 
 // ── 1. Build the real command tree from src/cli.ts (single source of truth —
