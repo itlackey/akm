@@ -347,9 +347,9 @@ export async function executeInteractiveAgentInvocation(
 }
 
 /**
- * Close the embedded OpenCode instances the internal runtime keeps for reuse. An
- * open one holds the event loop open, so the CLI and workflow engine call this
- * in `finally` blocks. A no-op when none was started.
+ * Close the embedded OpenCode hosts this process started (akm's own runtime and the
+ * opencode harness's). An open one holds the event loop open, so the CLI and
+ * workflow engine call this in `finally` blocks. A no-op when none was started.
  */
 export async function disposeDispatchResources(): Promise<void> {
   await closeOpencodeSdk();

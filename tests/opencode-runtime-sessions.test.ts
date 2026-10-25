@@ -247,6 +247,7 @@ describe("a run that is cut short", () => {
     });
     const result = await run("p", { timeoutMs: 20 });
     expect(result.reason).toBe("timeout");
+    expect(result.error).toStartWith(`akm's runtime on connection "lab" timed out after 20ms`);
     expect(interrupted).toEqual([result.sessionId as string]);
   });
 

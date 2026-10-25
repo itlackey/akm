@@ -71,13 +71,6 @@ function builtinProfiles(): Record<string, AgentProfile> {
   return builtins;
 }
 
-/**
- * The OpenCode CLI binary: the opencode harness runs it for OpenCode 1 and asks
- * it for its major, and plugin upgrades refresh OpenCode's plugin caches with it.
- * akm's own runtime and OpenCode 2 run embedded and need no binary.
- */
-export const OPENCODE_BIN = "opencode";
-
 /** Returns the built-in descriptor for a canonical harness id. */
 export function getBuiltinAgentProfile(name: string): AgentProfile | undefined {
   return builtinProfiles()[name];

@@ -140,6 +140,17 @@ describe("a request on the embedded OpenCode", () => {
   });
 });
 
+describe("a request on the embedded OpenCode that is cut short", () => {
+  test("names the harness in the failure", async () => {
+    fakeOpencodeMajor(2);
+    installFakeOpencodeHost({ reply: () => new Promise(() => {}) });
+    const built = request();
+    const result = await runExecution({ ...built, options: { ...built.options, timeoutMs: 20 } });
+    expect(result.reason).toBe("timeout");
+    expect(result.error).toStartWith('the opencode harness "opencode" timed out after 20ms');
+  });
+});
+
 describe("model work on the embedded OpenCode", () => {
   beforeEach(() => fakeOpencodeMajor(2));
 

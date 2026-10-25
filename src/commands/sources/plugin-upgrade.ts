@@ -17,7 +17,6 @@ import os from "node:os";
 import path from "node:path";
 import { IS_WINDOWS, parseJsonc } from "../../core/common";
 import { moveToTrash } from "../../core/trash";
-import { OPENCODE_BIN } from "../../integrations/agent/profiles";
 import {
   OPENCODE_V1,
   OPENCODE_V2,
@@ -25,7 +24,7 @@ import {
   readPackageVersion,
 } from "../../integrations/harnesses/opencode/plugin-layout";
 import { opencodeCacheDir, opencodeConfigDir } from "../../integrations/harnesses/opencode/roots";
-import { detectOpencodeMajor, resolveOpencodeBin } from "../../integrations/harnesses/opencode/version";
+import { detectOpencodeMajor, OPENCODE_BIN, resolveOpencodeBin } from "../../integrations/harnesses/opencode/version";
 import { semverOrder } from "../../runtime";
 import type {
   PluginUpgradeEntry,

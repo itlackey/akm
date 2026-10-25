@@ -15,7 +15,13 @@
 import childProcess from "node:child_process";
 import { warnOnce } from "../../../core/warn";
 import { defaultWhich } from "../../agent/detect";
-import { OPENCODE_BIN } from "../../agent/profiles";
+
+/**
+ * The OpenCode CLI binary: the opencode harness runs it for OpenCode 1 and asks it
+ * for its major, and plugin upgrades refresh OpenCode's plugin caches with it.
+ * akm's own runtime and OpenCode 2 run embedded and need no binary.
+ */
+export const OPENCODE_BIN = "opencode";
 
 /** OpenCode 2's own alias for its binary; it can sit next to an OpenCode 1 `opencode` on PATH. */
 export const OPENCODE2_BIN = "opencode2";

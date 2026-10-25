@@ -133,7 +133,10 @@ async function runSession(
   const timeoutMs = opts.timeoutMs !== undefined ? opts.timeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
   const deadline = timeoutMs === null ? null : start + timeoutMs;
   const timers = { set: setTimeout, clear: clearTimeout };
-  const name = `opencode-sdk agent "${profile.name}"`;
+  const name =
+    target.kind === "runtime"
+      ? `akm's runtime on connection "${profile.name}"`
+      : `the opencode harness "${profile.name}"`;
   if (opts.signal?.aborted) return failed(start, "aborted", `${name} not started: caller signal already aborted`);
 
   const dispatch = opts.dispatch;
