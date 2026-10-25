@@ -138,7 +138,7 @@ function fsyncDirectory(directory: string): void {
   }
 }
 
-function writeDurable(filePath: string, bytes: Buffer, mode: number, exclusive = false): void {
+export function writeDurable(filePath: string, bytes: Buffer, mode: number, exclusive = false): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const fd = fs.openSync(filePath, exclusive ? "wx" : "w", mode);
   try {
@@ -151,7 +151,7 @@ function writeDurable(filePath: string, bytes: Buffer, mode: number, exclusive =
   fsyncDirectory(path.dirname(filePath));
 }
 
-function replaceAtomically(filePath: string, bytes: Buffer, mode: number): void {
+export function replaceAtomically(filePath: string, bytes: Buffer, mode: number): void {
   const temporary = path.join(path.dirname(filePath), `.${path.basename(filePath)}.migrate-${crypto.randomUUID()}`);
   try {
     writeDurable(temporary, bytes, mode, true);

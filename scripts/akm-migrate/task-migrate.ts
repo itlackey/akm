@@ -82,7 +82,7 @@ function reconcileDuplicateRoot(existing: TaskFileRoot, candidate: TaskFileRoot,
   );
 }
 
-function taskRoots(config: AkmConfig, resolutionBase = process.cwd()): TaskFileRoot[] {
+export function taskRoots(config: AkmConfig, resolutionBase = process.cwd()): TaskFileRoot[] {
   const sources = new Map((bundlesToSourceEntries(config) ?? []).map((source) => [source.name, source]));
   const rootsByPath = new Map<string, TaskFileRoot>();
   for (const [bundleId, bundle] of Object.entries(config.bundles ?? {})) {

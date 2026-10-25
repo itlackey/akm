@@ -42,7 +42,12 @@ export interface ConvertEnginesResult {
   readonly changed: boolean;
   /** The keys `config` does not carry; their values are still in `raw`. */
   readonly keys: readonly EngineKey[];
+  /** What each engine of `raw` became, under the name it has now; a runtime with no connection behind it has none. */
+  readonly targets: Readonly<Record<string, EngineTarget>>;
 }
+
+/** The connection or harness an engine became. */
+export type EngineTarget = { readonly connection: string } | { readonly harness: string };
 
 const LLM_ENGINE_KEYS = new Set([
   "kind",
@@ -386,5 +391,10 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
       if (Object.keys(mergedHarnesses).length > 0) config.harnesses = mergedHarnesses;
     }
   }
-  return { config: changed ? config : raw, notes, changed, keys };
+  const targets: Record<string, EngineTarget> = {};
+  for (const name of Object.keys(engines).filter((engine) => isRecord(engines[engine]))) {
+    const became = target(name);
+    if (became !== undefined) targets[name] = became;
+  }
+  return { config: changed ? config : raw, notes, changed, keys, targets };
 }

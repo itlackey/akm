@@ -41,7 +41,7 @@ import type {
   SourceConfigEntry,
 } from "./config-types";
 import { isOpaqueSchema, resolveSchemaAt } from "./config-walker";
-import { convertEngineConfig } from "./convert-engines";
+import { convertEngineConfig, type EngineTarget } from "./convert-engines";
 import { writeCredential } from "./credentials";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
 import { planKeyMoves } from "./migrate-keys";
@@ -1061,6 +1061,8 @@ export interface ConfigFileNormalization {
   readonly credentials?: readonly string[];
   /** Where the retired `models.json` was moved to, after its aliases were folded in. */
   readonly modelsFileBackupPath?: string;
+  /** What each engine of the retired `engines` form became, for the step that rewrites assets' `engine:` keys. */
+  readonly engineTargets?: Readonly<Record<string, EngineTarget>>;
   /** What the conversion could not carry, and each key and entry the step left alone or moved. */
   readonly notes?: readonly string[];
 }
@@ -1132,6 +1134,7 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       keys,
       ...(plan.moves.length > 0 ? { credentials: plan.moves.map((move) => move.name) } : {}),
       ...(notes.length > 0 ? { notes } : {}),
+      ...(Object.keys(converted.targets).length > 0 ? { engineTargets: converted.targets } : {}),
     };
     const changed = keys.length > 0 || hasModelsFile;
     if (!changed || !options.apply) return { ...reported, changed, applied: false };

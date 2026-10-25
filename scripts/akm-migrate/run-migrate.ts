@@ -4,8 +4,8 @@
 
 /**
  * The whole migration, in order, as one plan: config.json in its current
- * shape, pending state.db migrations, task files to task source v4, then the
- * residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
+ * shape, pending state.db migrations, task files to task source v4, assets'
+ * retired `engine:` keys, then the residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
  * this; `akm migrate` and `akm upgrade` spawn that executable and re-emit
  * it. Every historical shape lives here or under `./migrate/`, so the CLI
  * proper only ever reads current schemas.
@@ -23,6 +23,11 @@ import {
   findDeadResidueEntries,
   removeDeadResidue,
 } from "./migrate/dead-residue";
+import {
+  applyEngineKeysMigration,
+  type EngineKeysMigrationStatus,
+  inspectEngineKeysMigration,
+} from "./engine-key-migrate";
 import { applyTaskFilesMigration, inspectTaskFilesMigration, type TaskFilesMigrationStatus } from "./task-migrate";
 
 export type MigrationStatus = "current" | "ready" | "blocked";
@@ -56,6 +61,8 @@ export interface CombinedMigrationPlan {
   configFile?: ConfigFileNormalization;
   stateMigrations?: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
   taskFiles?: TaskFilesMigrationStatus["taskFiles"];
+  /** Assets whose retired `engine:` key becomes `connection:` or `harness:`. */
+  assetEngineKeys?: EngineKeysMigrationStatus["assetEngineKeys"];
   /** Present after a real apply that rewrote at least one task file: the run's backup directory. */
   backupPath?: string;
   applied?: number;
@@ -162,6 +169,14 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? applyTaskFilesMigration() : inspectTaskFilesMigration()),
     apply ? () => inspectTaskFilesMigration() : undefined,
   );
+  // After the task files (a v2/v3 task file may still carry `engine:` until it is rewritten) and the
+  // config (the names an engine had before its conversion come from that step's result).
+  const assetEngineKeys = await migrationStep(
+    failedSteps,
+    "assetEngineKeys",
+    () => (apply ? applyEngineKeysMigration(configFile?.engineTargets) : inspectEngineKeysMigration(configFile?.engineTargets)),
+    apply ? () => inspectEngineKeysMigration(configFile?.engineTargets) : undefined,
+  );
   // Resolving the stash dir runs as its own step: a config that fails to
   // load here is this step's own failure, not an uncaught throw out of
   // `runMigration`.
@@ -178,10 +193,11 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const stateStatus: MigrationStatus =
     stateMigrations && "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
   const configFileStatus: MigrationStatus = configFile?.changed && !configFile.applied ? "ready" : "current";
+  const engineKeysStatus: MigrationStatus = assetEngineKeys?.status ?? "current";
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
-      worstStatus(worstStatus(taskFiles?.status ?? "blocked", stateStatus), configFileStatus),
+      worstStatus(worstStatus(worstStatus(taskFiles?.status ?? "blocked", stateStatus), configFileStatus), engineKeysStatus),
       failedSteps,
     ),
     blockers: [...(taskFiles?.blockers ?? []), ...failedStepBlockers(failedSteps)],
@@ -191,6 +207,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     ...(taskFiles !== undefined ? { taskFiles: taskFiles.taskFiles } : {}),
     ...(taskFiles?.backupPath !== undefined ? { backupPath: taskFiles.backupPath } : {}),
     ...(taskFiles?.applied !== undefined ? { applied: taskFiles.applied } : {}),
+    ...(assetEngineKeys !== undefined ? { assetEngineKeys: assetEngineKeys.assetEngineKeys } : {}),
     ...(deadResidue !== undefined ? { deadResidue } : {}),
   };
 }
