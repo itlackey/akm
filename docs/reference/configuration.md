@@ -104,7 +104,7 @@ akm reads these keys of a connection:
 | `apiKey` | A `$VAR` or `${VAR}` reference to an environment variable. Absent, the key is the one stored under the connection's name in `credentials.json`. See [Credentials](#credentials). |
 | `models` | Alias to model. See [Aliases](#aliases). |
 | `contextLength` | The model's context window in tokens. `akm improve` sizes its prompts from it (consolidate's chunks, reflect's asset content); unset, it assumes 4096. |
-| `timeoutMs` | How long one call may take, in milliseconds; `null` runs unbounded. Unset, a call stops after 600 000 (ten minutes). The ceiling is 2 147 483 647. |
+| `timeoutMs` | How long one call may take, in milliseconds; `null` runs unbounded. Unset, a model call stops after 600 000 (ten minutes) and agent work runs until it finishes. The ceiling is 2 147 483 647. |
 | `concurrency` | How many requests a workflow `map` step may have in flight on this connection. Unset, 1 on a loopback endpoint (a local model server runs one inference at a time) and 4 on a remote one. akm never sends it. |
 
 Every other key, on the connection or in a model entry, is a request field in

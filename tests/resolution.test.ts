@@ -328,6 +328,14 @@ describe("the timeout", () => {
     expect(connectionFor(withTimeout, [{ timeout: 1000 }, { timeout: null }]).timeoutMs).toBeNull();
   });
 
+  test("agent work on a connection has none unless set; a model call on it gets 600 s", () => {
+    const config = configOf({ connections: { default: lab, slow: { ...lab, timeoutMs: 30_000 } } });
+    expect(connectionFor(config, [{ connection: "default" }], false).timeoutMs).toBeNull();
+    expect(connectionFor(config, [{ connection: "slow" }], false).timeoutMs).toBe(30_000);
+    expect(connectionFor(config, [{ connection: "default" }], true).timeoutMs).toBe(600_000);
+    expect(connectionFor(config, [{ connection: "default" }, { timeout: "1m" }], false).timeoutMs).toBe(60_000);
+  });
+
   test("a harness running agent work has none unless set; model work on it gets 600 s", () => {
     const config = configOf({ harnesses: { claude: {}, slow: { platform: "claude", timeoutMs: 30_000 } } });
     expect(harnessFor(config, [{ harness: "claude" }]).timeoutMs).toBeNull();

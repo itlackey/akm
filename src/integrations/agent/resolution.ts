@@ -208,6 +208,11 @@ function firstTimeout(...timeouts: readonly (number | null | undefined)[]): numb
   return timeouts.find((timeout) => timeout !== undefined) ?? null;
 }
 
+/** What bounds a run when nothing sets a timeout, on a connection or a harness alike: agent work runs until it finishes, a model call stops at the model-call default. */
+function defaultTimeout(modelWork: boolean): number | null {
+  return modelWork ? DEFAULT_LLM_TIMEOUT_MS : DEFAULT_AGENT_TIMEOUT_MS;
+}
+
 /** The timeout the nearest layer sets, if any. */
 function layerTimeout(layers: readonly UnresolvedExecutionDefaults[]): number | null | undefined {
   const value = nearest(layers, "timeout");
@@ -220,6 +225,7 @@ function connectionRunner(
   requested: string | undefined,
   aliases: ReadonlySet<string>,
   layers: readonly UnresolvedExecutionDefaults[],
+  modelWork: boolean,
 ): ConnectionRunner {
   const entry = modelEntry(connection.models ?? {}, requested, aliases);
   if (entry === undefined) {
@@ -243,7 +249,7 @@ function connectionRunner(
     ...(apiKeyReference(connection.apiKey) !== undefined ? { apiKey: connection.apiKey } : {}),
     ...(connection.contextLength !== undefined ? { contextLength: connection.contextLength } : {}),
     ...(connection.concurrency !== undefined ? { concurrency: connection.concurrency } : {}),
-    timeoutMs: firstTimeout(layerTimeout(layers), connection.timeoutMs, DEFAULT_LLM_TIMEOUT_MS),
+    timeoutMs: firstTimeout(layerTimeout(layers), connection.timeoutMs, defaultTimeout(modelWork)),
   };
 }
 
@@ -306,7 +312,6 @@ function harnessRunner(
     );
   }
   const model = harnessModel(name, platform, harness, requested, aliases);
-  const defaultTimeout = modelWork ? DEFAULT_LLM_TIMEOUT_MS : DEFAULT_AGENT_TIMEOUT_MS;
   return {
     kind: "harness",
     name,
@@ -316,7 +321,7 @@ function harnessRunner(
     ...(harness.workspace !== undefined ? { workspace: path.resolve(harness.workspace) } : {}),
     ...(harness.agent !== undefined && HARNESS_NATIVE_AGENT_IDS.has(platform) ? { agent: harness.agent } : {}),
     ...(model !== undefined ? { model } : {}),
-    timeoutMs: firstTimeout(layerTimeout(layers), harness.timeoutMs, defaultTimeout),
+    timeoutMs: firstTimeout(layerTimeout(layers), harness.timeoutMs, defaultTimeout(modelWork)),
   };
 }
 
@@ -326,14 +331,15 @@ export function resolveTarget(input: ResolveTargetInput): RunnerSpec {
   const requestedModel = nearest(input.layers, "model");
   const requested = typeof requestedModel === "string" && requestedModel ? requestedModel : undefined;
   const aliases = knownAliases(input.config);
+  const modelWork = input.modelWork === true;
   return target.kind === "connection"
-    ? connectionRunner(target.name, target.connection, requested, aliases, input.layers)
+    ? connectionRunner(target.name, target.connection, requested, aliases, input.layers, modelWork)
     : harnessRunner(
         target.name,
         target.harness,
         requestedModel === null ? null : requested,
         aliases,
         input.layers,
-        input.modelWork === true,
+        modelWork,
       );
 }

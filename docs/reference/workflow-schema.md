@@ -499,8 +499,8 @@ fail later at `akm workflow run`:
 dispatch applies — there is no separate ceiling on top of it. The
 first of these that is set wins: the unit's `timeout`, then the document's
 `defaults.timeout`, then the selected connection's or harness's `timeoutMs`,
-then the default — **10m on a connection, and none on a harness**, which
-manages its own process lifetime. Writing `timeout: none` is an explicit opt
+then the default — **none for agent work, whether it runs on a harness or on
+akm's runtime over a connection, and 10m for model work**. Writing `timeout: none` is an explicit opt
 out and leaves the unit genuinely unbounded; nothing later re-imposes a cap.
 
 ## Exec (shell) units
