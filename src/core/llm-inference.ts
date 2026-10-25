@@ -13,6 +13,7 @@
 import type { z } from "zod";
 import { isPlainObject } from "./config/deep-merge";
 import type { LlmInvocationOverridesSchema } from "./config/schema/primitives";
+import { warnOnce } from "./warn";
 
 export type LlmInference = z.infer<typeof LlmInvocationOverridesSchema>;
 
@@ -77,13 +78,32 @@ export function mergeRequestFields(
 }
 
 /**
- * The fields a request carries: `request` as written, with the translation of
+ * The fields of a request that are not the user's to set: the model akm resolved, the conversation and tool
+ * state the transport builds, whether the reply streams, and the response format the caller asks for. A
+ * connection or model entry that writes one of them is ignored for that field, on both transports.
+ */
+export const OWNED_REQUEST_FIELDS = ["model", "messages", "tools", "stream", "response_format"] as const;
+
+function withoutOwnedFields(request: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  const written = OWNED_REQUEST_FIELDS.filter((field) => Object.hasOwn(request, field));
+  if (written.length === 0) return request;
+  warnOnce(
+    `request-fields:owned:${written.join(",")}`,
+    `Request field${written.length === 1 ? "" : "s"} ${written.map((field) => `"${field}"`).join(", ")} in a connection's or model entry's fields ${written.length === 1 ? "is" : "are"} ignored: akm sets the model, the conversation, the tools, streaming and the response format itself.`,
+  );
+  return Object.fromEntries(
+    Object.entries(request).filter(([field]) => !(OWNED_REQUEST_FIELDS as readonly string[]).includes(field)),
+  );
+}
+
+/**
+ * The fields a request carries: `request` as written (less the fields akm owns), with the translation of
  * `inference` laid on it. The one place portable settings meet an endpoint's own
- * spelling.
+ * spelling, and where both transports take the user's fields from.
  */
 export function effectiveRequestFields(
   request: Readonly<Record<string, unknown>> | undefined,
   inference: LlmInference | null | undefined,
 ): Record<string, unknown> {
-  return mergeRequestFields(request ?? {}, inferenceWireFields(inference ?? undefined));
+  return mergeRequestFields(withoutOwnedFields(request ?? {}), inferenceWireFields(inference ?? undefined));
 }

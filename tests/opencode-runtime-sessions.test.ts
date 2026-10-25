@@ -184,6 +184,30 @@ describe("the settings the plugin applies to a session's model requests", () => 
     expect(calls[0]?.requestHeaders.authorization).toBe("Bearer sk-lab");
   });
 
+  test("never replace the model, the conversation, the tools, streaming or the response format, which are akm's and the SDK's", async () => {
+    const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
+    await run(
+      "p",
+      {},
+      {
+        ...connection,
+        request: {
+          model: "overridden",
+          messages: [],
+          tools: [],
+          stream: false,
+          response_format: { type: "json_object" },
+          top_p: 0.9,
+        },
+      },
+    );
+    const body = calls[0]?.requestBody ?? {};
+    expect(body.model).toBe("glm-5");
+    expect(body.stream).toBe(true);
+    for (const field of ["messages", "tools", "response_format"]) expect(body).not.toHaveProperty(field);
+    expect(body.top_p).toBe(0.9);
+  });
+
   test("change nothing for a call that sets none", async () => {
     const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
     await run("p");

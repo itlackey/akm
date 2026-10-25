@@ -112,8 +112,12 @@ Every other key, on the connection or in a model entry, is a request field in
 the endpoint's own spelling and is sent with each request as written (`top_p`,
 `reasoning_effort`, `chat_template_kwargs`, ...). A connection's fields apply to
 all its models and a model entry's override them; an object field on both sides
-(`chat_template_kwargs`) merges key by key. `model`, `messages` and
-`response_format` are akm's: a field of those names is overwritten.
+(`chat_template_kwargs`) merges key by key. `model`, `messages`, `tools`,
+`stream` and `response_format` are akm's, on a direct call and in akm's own
+runtime alike: the resolved model, the conversation and tool state, whether the
+reply streams and the response format a caller asks for are never replaced. A
+connection or model entry that writes one of them is ignored for that field,
+with one warning.
 
 A transient failure (an HTTP 5xx, a dropped connection) is retried once, within
 what is left of the call's timeout. A 4xx is not.

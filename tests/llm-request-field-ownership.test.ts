@@ -1,0 +1,94 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * Which request fields are the user's to set, on both transports: a connection or
+ * model entry writes tuning fields (`top_p`, `reasoning_effort`, provider
+ * options), and akm owns the model, the conversation, the tools, streaming and
+ * the response format. `effectiveRequestFields` is where both transports take the
+ * user's fields from; the chat client's body is checked here, the embedded
+ * runtime's in tests/opencode-runtime-sessions.test.ts and
+ * tests/opencode-sdk-runner.test.ts.
+ */
+
+import { beforeEach, describe, expect, test } from "bun:test";
+import { effectiveRequestFields, OWNED_REQUEST_FIELDS } from "../src/core/llm-inference";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+import { chatCompletion } from "../src/llm/client";
+import { withMockedFetch } from "./_helpers/sandbox";
+
+let warnings: string[] = [];
+beforeEach(() => {
+  warnings = [];
+  _resetWarnOnceForTests();
+  _setWarnSinkForTests((level, args) => {
+    if (level === "warn") warnings.push(args.map(String).join(" "));
+  });
+});
+
+const written = {
+  model: "overridden",
+  messages: [],
+  tools: [{ type: "function" }],
+  stream: true,
+  response_format: { type: "json_object" },
+  top_p: 0.9,
+  provider: { order: ["a"] },
+};
+
+describe("effectiveRequestFields", () => {
+  test("keeps tuning fields and provider options, and drops the five fields akm owns, with one warning", () => {
+    const fields = effectiveRequestFields(written, { temperature: 0.2 });
+    expect(fields).toEqual({ top_p: 0.9, provider: { order: ["a"] }, temperature: 0.2 });
+    effectiveRequestFields(written, undefined);
+    const named = warnings.filter((w) => w.includes("ignored"));
+    expect(named).toHaveLength(1);
+    for (const field of OWNED_REQUEST_FIELDS) expect(named[0]).toContain(`"${field}"`);
+  });
+
+  test("says nothing when none is written", () => {
+    expect(effectiveRequestFields({ top_p: 0.9 }, undefined)).toEqual({ top_p: 0.9 });
+    expect(warnings).toEqual([]);
+  });
+});
+
+describe("the chat transport", () => {
+  test("sends the resolved model, its own messages and the caller's response schema whatever the connection writes", async () => {
+    let body: Record<string, unknown> = {};
+    await withMockedFetch(
+      () =>
+        chatCompletion(
+          { endpoint: "https://example.invalid/v1", model: "resolved", request: written },
+          [{ role: "user", content: "hi" }],
+          { responseSchema: { type: "object" } },
+        ),
+      async (_url, init) => {
+        body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Response.json({ choices: [{ message: { content: "ok" } }] });
+      },
+    );
+    expect(body.model).toBe("resolved");
+    expect(body.messages).toEqual([{ role: "user", content: "hi" }]);
+    expect(body.response_format).toMatchObject({ type: "json_schema" });
+    expect(body).not.toHaveProperty("tools");
+    expect(body).not.toHaveProperty("stream");
+    expect(body.top_p).toBe(0.9);
+    expect(body.provider).toEqual({ order: ["a"] });
+  });
+
+  test("sends no response format when the caller asks for none, even if the connection writes one", async () => {
+    let body: Record<string, unknown> = {};
+    await withMockedFetch(
+      () =>
+        chatCompletion({ endpoint: "https://example.invalid/v1", model: "m", request: written }, [
+          { role: "user", content: "hi" },
+        ]),
+      async (_url, init) => {
+        body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return Response.json({ choices: [{ message: { content: "ok" } }] });
+      },
+    );
+    expect(body).not.toHaveProperty("response_format");
+  });
+});

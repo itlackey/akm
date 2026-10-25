@@ -245,6 +245,28 @@ describe("what the endpoint receives", () => {
     expect(sent?.params.reasoning_effort).toBe("low");
   });
 
+  test("a connection that writes the model, the messages or the response format cannot replace them", async () => {
+    const owned: ChatCompletionConfig = {
+      ...connection,
+      request: {
+        model: "overridden",
+        messages: [],
+        stream: false,
+        response_format: { type: "json_object" },
+        top_p: 0.5,
+      },
+    };
+    const before = model.requests.length;
+    const result = await run("MODE:answer owned", {}, owned);
+    expect(result.ok).toBe(true);
+    const sent = lastAnswer(before);
+    expect(sent?.params.model).toBe("fake-model");
+    expect(sent?.lastUser).toContain("MODE:answer owned");
+    expect(sent?.params.stream).toBe(true);
+    expect(sent?.params).not.toHaveProperty("response_format");
+    expect(sent?.params.top_p).toBe(0.5);
+  });
+
   test("a call's portable settings are translated, and its enableThinking keeps the thinking fields beside it", async () => {
     const withSettings: ChatCompletionConfig = {
       ...connection,
