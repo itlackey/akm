@@ -13,10 +13,10 @@ import { resolveApiKey } from "../../core/config/credentials";
 import { UsageError } from "../../core/errors";
 import { openAiBaseUrl } from "../../llm/client";
 import { isEmbeddingModel } from "../../llm/model-list";
-import type { EngineFlags } from "../engine-flags";
-import type { ConnectionAnswer, EmbeddingAnswer, KeyAnswer } from "../engine-plan";
 import { prompt } from "../prompt";
 import { describeSemanticSearchAssets, isRemoteEmbeddingConfig } from "../semantic-assets";
+import type { SetupFlags } from "../setup-flags";
+import type { ConnectionAnswer, EmbeddingAnswer, KeyAnswer } from "../setup-plan";
 import { listModels, pickModel, promptApiKey, promptEndpoint, promptModelName } from "./connection-shared";
 
 export interface SemanticSearchChoice {
@@ -26,7 +26,7 @@ export interface SemanticSearchChoice {
 
 export interface EmbeddingStepInput {
   current: AkmConfig;
-  flags: EngineFlags;
+  flags: SetupFlags;
   interactive: boolean;
   probe: boolean;
   /** What the connection step decided, and the models its endpoint listed. */

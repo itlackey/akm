@@ -269,8 +269,8 @@ const setupCommand = defineCommand({
     await runWithJsonErrors(async () => {
       const noInit = !args.init;
       const noProbe = (args as { probe?: boolean }).probe === false;
-      const { hasEngineFlags, parseEngineFlags } = await import("./setup/engine-flags");
-      const flags = parseEngineFlags({
+      const { hasSetupFlags, parseSetupFlags } = await import("./setup/setup-flags");
+      const flags = parseSetupFlags({
         endpoint: args.endpoint,
         apiKeyEnv: args["api-key-env"],
         name: args.name,
@@ -280,8 +280,11 @@ const setupCommand = defineCommand({
         embeddingApiKeyEnv: args["embedding-api-key-env"],
       });
       if (args.from) {
-        if (hasEngineFlags(flags) && !args.yes) {
-          throw new UsageError("--from takes the engine flags only with --yes.", "INVALID_FLAG_VALUE");
+        if (hasSetupFlags(flags) && !args.yes) {
+          throw new UsageError(
+            "--from takes --endpoint, --harness and the other answer flags only with --yes.",
+            "INVALID_FLAG_VALUE",
+          );
         }
         // File-based bootstrap. `loadSetupConfigFromFile` expands a leading
         // `~`, resolves relative paths against cwd, picks the YAML or JSON

@@ -6,23 +6,16 @@
  * Tests for the consolidated environment-detection pipeline (issue #514).
  *
  * Coverage:
- *   - `scanProviderEnvVars()` returns env var NAMES only — never values.
  *   - `detectStashDir()` ranking from a temp HOME/CWD.
  *   - `detectLocalServers()` tolerates every endpoint being down.
- *   - `detectEnvironment()` aggregator shape + safety invariant.
- *   - `runDetectOnly()` never returns an API key value.
+ *   - `detectEnvironment()` aggregator shape.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { detectEnvironment, detectLocalServers, detectStashDir, scanProviderEnvVars } from "../../src/setup/detect";
-import { runDetectOnly } from "../../src/setup/setup";
-import { withEnv } from "../_helpers/sandbox";
-
-// A value no test should ever surface anywhere in output.
-const SECRET_VALUE = "sk-SECRET-VALUE-MUST-NEVER-LEAK-1234567890";
+import { detectEnvironment, detectLocalServers, detectStashDir } from "../../src/setup/detect";
 
 let workDir: string;
 
@@ -32,54 +25,6 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(workDir, { recursive: true, force: true });
-});
-
-describe("scanProviderEnvVars", () => {
-  test("returns the env var NAME and never the value", () => {
-    const fakeEnv = { ANTHROPIC_API_KEY: SECRET_VALUE } as NodeJS.ProcessEnv;
-    const result = scanProviderEnvVars(fakeEnv);
-
-    expect(result.length).toBe(1);
-    const entry = result[0];
-    expect(entry?.provider).toBe("anthropic");
-    expect(entry?.envVar).toBe("ANTHROPIC_API_KEY");
-    expect(entry?.kind).toBe("apiKey");
-
-    // Hard invariant: the value must appear NOWHERE in the serialized result.
-    const serialized = JSON.stringify(result);
-    expect(serialized).not.toContain(SECRET_VALUE);
-    // And no field carries the value under any key.
-    for (const e of result) {
-      for (const v of Object.values(e)) {
-        expect(v).not.toBe(SECRET_VALUE);
-      }
-    }
-  });
-
-  test("ignores empty/whitespace-only env vars", () => {
-    expect(scanProviderEnvVars({ OPENAI_API_KEY: "" } as NodeJS.ProcessEnv)).toEqual([]);
-    expect(scanProviderEnvVars({ OPENAI_API_KEY: "   " } as NodeJS.ProcessEnv)).toEqual([]);
-  });
-
-  test("detects endpoint-kind vars and multiple providers", () => {
-    const result = scanProviderEnvVars({
-      OPENAI_API_KEY: "x",
-      OLLAMA_HOST: "http://localhost:11434",
-    } as NodeJS.ProcessEnv);
-    const byVar = Object.fromEntries(result.map((r) => [r.envVar, r.kind]));
-    expect(byVar.OPENAI_API_KEY).toBe("apiKey");
-    expect(byVar.OLLAMA_HOST).toBe("endpoint");
-  });
-
-  test("does not read variables akm itself never reads", () => {
-    expect(scanProviderEnvVars({ AKM_LLM_API_KEY: "y", AKM_LLM_ENDPOINT: "http://x" } as NodeJS.ProcessEnv)).toEqual(
-      [],
-    );
-  });
-
-  test("returns nothing for an empty environment", () => {
-    expect(scanProviderEnvVars({} as NodeJS.ProcessEnv)).toEqual([]);
-  });
 });
 
 describe("detectStashDir", () => {
@@ -136,10 +81,9 @@ describe("detectLocalServers", () => {
 });
 
 describe("detectEnvironment aggregator", () => {
-  test("returns a typed result with NAMES only (no key value)", async () => {
+  test("returns a typed result", async () => {
     const env = await detectEnvironment({
       existingStashDir: "/cfg/stash",
-      envSource: { ANTHROPIC_API_KEY: SECRET_VALUE } as NodeJS.ProcessEnv,
       whichFn: () => undefined,
       cwd: workDir,
       home: workDir,
@@ -148,16 +92,11 @@ describe("detectEnvironment aggregator", () => {
     expect(env.harnesses).toEqual([]);
     expect(Array.isArray(env.localServers)).toBe(true);
     expect(env.stashSuggestions[0]?.path).toBe(path.resolve("/cfg/stash"));
-    expect(env.providers.some((p) => p.envVar === "ANTHROPIC_API_KEY")).toBe(true);
-
-    const serialized = JSON.stringify(env);
-    expect(serialized).not.toContain(SECRET_VALUE);
   });
 
   test("lists the agent programs found on PATH, OpenCode like any other", async () => {
     const present = new Set(["claude", "opencode", "codex"]);
     const env = await detectEnvironment({
-      envSource: {} as NodeJS.ProcessEnv,
       whichFn: (bin) => (present.has(bin) ? `/usr/bin/${bin}` : undefined),
       cwd: workDir,
       home: workDir,
@@ -176,7 +115,6 @@ describe("detectEnvironment aggregator", () => {
     }) as unknown as typeof fetch;
     try {
       const env = await detectEnvironment({
-        envSource: {} as NodeJS.ProcessEnv,
         whichFn: () => undefined,
         probe: false,
       });
@@ -185,15 +123,5 @@ describe("detectEnvironment aggregator", () => {
     } finally {
       globalThis.fetch = realFetch;
     }
-  });
-});
-
-describe("runDetectOnly", () => {
-  test("never returns an API key value", async () => {
-    await withEnv({ ANTHROPIC_API_KEY: SECRET_VALUE }, async () => {
-      const env = await runDetectOnly();
-      expect(JSON.stringify(env)).not.toContain(SECRET_VALUE);
-      expect(env.providers.some((p) => p.envVar === "ANTHROPIC_API_KEY")).toBe(true);
-    });
   });
 });

@@ -4,8 +4,10 @@
 
 /**
  * The models an OpenAI-compatible endpoint serves: one `GET <base>/models`, with
- * the connection's key when it has one. `akm setup`, `akm models` and `akm health`
- * all ask the endpoint this way, so what they show agrees.
+ * the connection's key when it has one. `akm setup` (the connection, its local-server
+ * detection and an embedding endpoint) and `akm models` list models this way, so
+ * what they show agrees. `akm health` asks only whether the endpoint answers, with
+ * its own request (`probeLlmEndpoint` in `client.ts`), and reads no list.
  */
 import { openAiBaseUrl } from "./client";
 

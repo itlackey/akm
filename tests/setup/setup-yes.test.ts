@@ -17,8 +17,8 @@ import { resetConfigCache } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { _setAgentDetectForTests } from "../../src/integrations/agent";
-import { type EngineFlags, parseEngineFlags, type RawEngineFlags } from "../../src/setup/engine-flags";
 import { runSetupFromConfig, runSetupWithDefaults, type SetupSummary } from "../../src/setup/setup";
+import { parseSetupFlags, type RawSetupFlags, type SetupFlags } from "../../src/setup/setup-flags";
 import {
   type IsolatedAkmStorage,
   withEnv,
@@ -53,7 +53,7 @@ afterEach(() => {
   storage.cleanup();
 });
 
-const flags = (raw: RawEngineFlags): EngineFlags => parseEngineFlags(raw);
+const flags = (raw: RawSetupFlags): SetupFlags => parseSetupFlags(raw);
 const written = (): Record<string, unknown> => JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
 const credentialsPath = () => path.join(path.dirname(getConfigPath()), "credentials.json");
 const claudeInstalled = () =>
@@ -77,7 +77,7 @@ function endpoint(base: string, models: string[]) {
 }
 
 const MODELS = ["qwen3-8b", "nomic-embed-text", "qwen3-32b"];
-const run = (raw: RawEngineFlags = {}, extra: { noProbe?: boolean } = {}) =>
+const run = (raw: RawSetupFlags = {}, extra: { noProbe?: boolean } = {}) =>
   runSetupWithDefaults({ noInit: true, flags: flags(raw), ...extra });
 
 describe("akm setup --endpoint --yes", () => {
@@ -282,7 +282,7 @@ describe("akm setup --yes defaults", () => {
     expect(server.keys).toEqual([]);
   });
 
-  test("with nothing detected and nothing flagged, no engine is configured and the run says so", async () => {
+  test("with nothing detected and nothing flagged, no connection or harness is configured and the run says so", async () => {
     const summary = await run();
 
     const saved = written();
@@ -332,7 +332,7 @@ describe("akm setup --harness", () => {
 });
 
 describe("akm setup --embedding", () => {
-  const withConnection = (extra: RawEngineFlags) => run({ endpoint: "http://localhost:11434/v1", ...extra });
+  const withConnection = (extra: RawSetupFlags) => run({ endpoint: "http://localhost:11434/v1", ...extra });
 
   test("a model on the connection is the bare model", async () => {
     await endpoint("http://localhost:11434/v1", MODELS).serve(() =>
@@ -372,7 +372,7 @@ describe("akm setup --embedding", () => {
   });
 });
 
-describe("akm setup --from <file> --yes with engine flags", () => {
+describe("akm setup --from <file> --yes with answer flags", () => {
   test("the file is merged, then the flags and defaults fill what it leaves", async () => {
     const server = endpoint("http://localhost:11434/v1", MODELS);
 

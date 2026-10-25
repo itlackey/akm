@@ -23,8 +23,8 @@ import { resetConfigCache } from "../../src/core/config/config";
 import { getConfigLockPath } from "../../src/core/config/config-io";
 import { getConfigPath } from "../../src/core/paths";
 import { _setWarnSinkForTests } from "../../src/core/warn";
-import { parseEngineFlags } from "../../src/setup/engine-flags";
 import { rebaseSetupChanges, runSetupFromConfig, runSetupWithDefaults } from "../../src/setup/setup";
+import { parseSetupFlags } from "../../src/setup/setup-flags";
 import {
   type Cleanup,
   sandboxXdgCacheHome,
@@ -118,7 +118,7 @@ describe("runSetupFromConfig — deep merge", () => {
           runSetupFromConfig({
             configJson: JSON.stringify({ output: { format: "text" } }),
             applyDefaults: true,
-            flags: parseEngineFlags({ endpoint: "https://example.test/v1" }),
+            flags: parseSetupFlags({ endpoint: "https://example.test/v1" }),
           }),
         ).rejects.toThrow(/Setup config conflict at output\.format/);
       },

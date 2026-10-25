@@ -13,9 +13,9 @@ import { type AkmConfig, defaultConnection, defaultHarness } from "../../core/co
 import { warn } from "../../core/warn";
 import { getHarness } from "../../integrations/harnesses";
 import type { InstalledHarness } from "../detect";
-import type { EngineFlags } from "../engine-flags";
-import type { HarnessAnswer } from "../engine-plan";
 import { prompt } from "../prompt";
+import type { SetupFlags } from "../setup-flags";
+import type { HarnessAnswer } from "../setup-plan";
 import { runsReadOnly } from "../summary";
 
 export interface HarnessStepResult {
@@ -28,7 +28,7 @@ export interface HarnessStepResult {
 export interface HarnessStepInput {
   current: AkmConfig;
   installed: readonly InstalledHarness[];
-  flags: EngineFlags;
+  flags: SetupFlags;
   interactive: boolean;
 }
 

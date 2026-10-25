@@ -25,7 +25,7 @@ import { type AkmConfig, defaultConnection, defaultHarness } from "../../core/co
 import type { ConnectionConfig, HarnessConfig } from "../../core/config/config-types";
 import { apiKeyReference } from "../../core/config/credentials";
 import { deepMergeConfig } from "../../core/config/deep-merge";
-import { STANDARD_ALIASES } from "../../core/config/model-aliases";
+import { type ModelEntry, STANDARD_ALIASES } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
 import { type LlmInference, mergeRequestFields } from "../../core/llm-inference";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
@@ -47,8 +47,6 @@ export interface ResolveTargetInput {
 
 /** The keys of a connection that akm reads; every other key is a request field. */
 const CONNECTION_OWNED_KEYS = new Set(["endpoint", "apiKey", "models", "contextLength", "timeoutMs", "concurrency"]);
-
-type ModelEntry = string | { readonly model: string; readonly [field: string]: unknown };
 
 function present(layer: UnresolvedExecutionDefaults, key: keyof UnresolvedExecutionDefaults): boolean {
   return layer[key] !== undefined;

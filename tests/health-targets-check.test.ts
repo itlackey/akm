@@ -5,7 +5,7 @@
 /**
  * The `targets` health check: one table of the connections and harnesses and
  * the work that runs on them, with reachability and versions from the probes
- * the caller supplies. Registered in place of the per-engine advisories.
+ * the caller supplies. Registered in place of the earlier per-connection checks.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -166,7 +166,7 @@ describe("runTargetsCheck", () => {
 });
 
 describe("the health-check registry", () => {
-  test("`targets` is one hard check in place of the engine, model-alias and improve-strategy advisories", () => {
+  test("`targets` is one hard check in place of the earlier connection, model-alias and improve-strategy advisories", () => {
     const names = HEALTH_CHECKS.map((check) => check.name);
     expect(names).toContain("targets");
     expect(HEALTH_CHECKS.find((check) => check.name === "targets")?.channel).toBe("hard");

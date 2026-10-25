@@ -19,6 +19,7 @@ import {
 } from "../../src/commands/targets";
 import type { AkmConfig } from "../../src/core/config/config";
 import { writeCredential } from "../../src/core/config/credentials";
+import { renderTargetsTable } from "../../src/output/text/targets-table";
 
 const cfg = (partial: Partial<AkmConfig> = {}): AkmConfig => ({ semanticSearchMode: "off", ...partial });
 const MODELS = { fast: "small", balanced: "mid", reasoning: "big" };
@@ -198,7 +199,24 @@ describe("work rows", () => {
         improve: { processes: { distill: { connection: "cloud" } } },
       }),
     );
-    expect(work(all, "improve")).toMatchObject({ target: "default", model: "small", overrides: ["distill"] });
+    expect(work(all, "improve")).toMatchObject({
+      target: "default",
+      model: "small",
+      overrides: [{ name: "distill", target: "cloud", model: "c-small" }],
+    });
+  });
+
+  test("the text table says where a pinned part runs and on which model", () => {
+    const all = rows(
+      cfg({
+        connections: {
+          default: { endpoint: "http://a/v1", models: MODELS },
+          cloud: { endpoint: "https://b/v1", models: { fast: "c-small", balanced: "c-mid", reasoning: "c-big" } },
+        },
+        improve: { processes: { distill: { connection: "cloud" } } },
+      }),
+    );
+    expect(renderTargetsTable(all).join("\n")).toContain("distill → cloud (c-small)");
   });
 
   test("the quality gate and the triage judgment may judge elsewhere", () => {
@@ -214,7 +232,10 @@ describe("work rows", () => {
     expect(work(all, "judges")).toMatchObject({
       target: "default",
       model: "mid",
-      overrides: ["triage judgment", "quality gate"],
+      overrides: [
+        { name: "triage judgment", target: "cloud", model: "c-mid" },
+        { name: "quality gate", target: "cloud", model: "c-mid" },
+      ],
     });
   });
 

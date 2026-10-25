@@ -90,7 +90,7 @@ interface AkmHarnessCommon {
 
   /**
    * LLM-config importer (requires `capabilities.configImport`). `akm setup` no
-   * longer imports engine settings from a harness, so only a harness's own
+   * longer imports connection settings from a harness, so only a harness's own
    * runner calls it.
    */
   readonly configImporter?: HarnessConfigImporter;

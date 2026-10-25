@@ -37,21 +37,21 @@ export type EmbeddingAnswer =
   | { readonly kind: "connection"; readonly model: string }
   | { readonly kind: "endpoint"; readonly endpoint: string; readonly model: string; readonly key?: KeyAnswer };
 
-export interface EngineAnswers {
+export interface SetupAnswers {
   readonly harnesses?: HarnessAnswer;
   readonly connection?: ConnectionAnswer;
   readonly embedding?: EmbeddingAnswer;
 }
 
 /** The config keys setup replaces; a key present with `undefined` is removed. */
-export type EnginePatch = {
+export type SetupPatch = {
   connections?: Record<string, ConnectionConfig>;
   harnesses?: Record<string, HarnessConfig> | undefined;
   embedding?: EmbeddingConnectionConfig | undefined;
 };
 
-export interface EngineChange {
-  readonly patch: EnginePatch;
+export interface SetupChange {
+  readonly patch: SetupPatch;
   /** Keys to store in `credentials.json`, by the name of the block they belong to. */
   readonly credentials: Readonly<Record<string, string>>;
 }
@@ -148,8 +148,8 @@ function embeddingBlock(
 }
 
 /** The config keys and credentials the answers change, over the current config. */
-export function applyEngineAnswers(current: AkmConfig, answers: EngineAnswers): EngineChange {
-  const patch: EnginePatch = {};
+export function applySetupAnswers(current: AkmConfig, answers: SetupAnswers): SetupChange {
+  const patch: SetupPatch = {};
   const credentials: Record<string, string> = {};
 
   if (answers.harnesses) {

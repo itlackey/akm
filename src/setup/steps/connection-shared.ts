@@ -55,6 +55,12 @@ export async function pickModel(message: string, models: readonly string[], init
   );
 }
 
+/** A warning for the user: in the wizard's own output when it is interactive, on stderr otherwise. */
+export function warnUser(message: string, interactive: boolean): void {
+  if (interactive) p.log.warn(message);
+  else warn(`[akm setup] ${message}`);
+}
+
 /** The models the endpoint lists, with a note when it cannot say; never throws. */
 export async function listModels(
   endpoint: string,
@@ -69,8 +75,6 @@ export async function listModels(
     return result.models;
   }
   spin?.stop("Could not list models.");
-  const message = `Could not list models from ${endpoint} (${result.error}).`;
-  if (interactive) p.log.warn(message);
-  else warn(`[akm setup] ${message}`);
+  warnUser(`Could not list models from ${endpoint} (${result.error}).`, interactive);
   return [];
 }

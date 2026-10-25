@@ -59,6 +59,15 @@ export interface HarnessRow {
   readonly version?: string;
 }
 
+/** A part of a kind of work that resolves to something other than the row's own target. */
+export interface ProcessOverride {
+  /** Which part: an improve process such as `distill`, `triage judgment`, `quality gate`. */
+  readonly name: string;
+  /** The connection or harness it runs on; `null` when it does not run. */
+  readonly target: string | null;
+  readonly model: string | null;
+}
+
 /** The kind of work a process row is about. */
 export type ProcessName =
   | "improve"
@@ -77,8 +86,8 @@ export interface ProcessRow {
   readonly kind: "connection" | "harness" | "endpoint" | "local" | null;
   readonly target: string | null;
   readonly model: string | null;
-  /** Parts of the work that resolve somewhere else, by name (an improve process pinned to another connection). */
-  readonly overrides?: readonly string[];
+  /** Parts of the work that resolve somewhere else (an improve process pinned to another connection), and where. */
+  readonly overrides?: readonly ProcessOverride[];
   /** Why it could not be resolved, when something is wrong with the config rather than simply not set up. */
   readonly problem?: string;
 }
@@ -171,7 +180,13 @@ function runnerRow(
   base: Resolution,
   variants: ReadonlyArray<readonly [string, Resolution]> = [],
 ): ProcessRow {
-  const overrides = variants.filter(([, variant]) => !sameTarget(variant, base)).map(([name]) => name);
+  const overrides = variants
+    .filter(([, variant]) => !sameTarget(variant, base))
+    .map(([name, variant]) => ({
+      name,
+      target: variant.runner?.name ?? null,
+      model: variant.runner?.model ?? null,
+    }));
   const problem = base.problem ?? variants.find(([, variant]) => variant.problem)?.[1].problem;
   return {
     type: "process",
