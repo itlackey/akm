@@ -84,7 +84,7 @@ describe("embedded task registry", () => {
       (t) => t.label === "core/improve" || t.label.startsWith("improve/"),
     );
     expect(scheduledImproveTasks.length).toBe(2);
-    for (const task of scheduledImproveTasks) expect(task.command).toContain("--require-engines");
+    for (const task of scheduledImproveTasks) expect(task.command).toContain("--require-targets");
   });
 
   test("every enabled embedded command resolves to a real top-level CLI command", () => {

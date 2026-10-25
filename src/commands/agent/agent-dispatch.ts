@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm agent [--engine <name>] [--prompt <text>]`
+ * `akm agent [--connection <name> | --harness <name>] [--prompt <text>]`
  *
  * Dispatch an agent on a named harness (or connection), optionally injecting an inline prompt.
  * Stored commands execute only through `akm command run`; workflows execute
@@ -26,7 +26,6 @@ import { executeInteractiveAgentInvocation } from "../../integrations/agent/runn
 import { executeCommandInvocation, type PrepareCommandInvocationOptions } from "../command/command-execution";
 
 export interface AkmAgentDispatchOptions {
-  engine?: string;
   prompt?: string;
   /** Portable agent asset ref used by the canonical command path. */
   agentRef?: string;
@@ -38,7 +37,7 @@ export interface AkmAgentDispatchOptions {
    */
   cwd?: string;
   /** Current invocation-layer selections consumed by the execution cascade. */
-  selection?: Pick<UnresolvedExecutionDefaults, "model" | "inference" | "outputSchema">;
+  selection?: Pick<UnresolvedExecutionDefaults, "connection" | "harness" | "model" | "inference" | "outputSchema">;
 }
 
 export interface AkmAgentDispatchSeams {
@@ -68,7 +67,8 @@ export interface AkmAgentDispatchResult {
 function canonicalCurrent(options: AkmAgentDispatchOptions): UnresolvedExecutionDefaults {
   const current: Record<string, unknown> = {};
   if (options.agentRef !== undefined) current.agent = options.agentRef;
-  if (options.engine !== undefined) current.engine = options.engine;
+  if (options.selection?.connection !== undefined) current.connection = options.selection.connection;
+  if (options.selection?.harness !== undefined) current.harness = options.selection.harness;
   if (options.selection?.model !== undefined) current.model = options.selection.model;
   if (Object.hasOwn(options.selection ?? {}, "inference")) current.inference = options.selection?.inference;
   if (options.selection?.outputSchema !== undefined) current.outputSchema = options.selection.outputSchema;
@@ -119,8 +119,8 @@ export async function akmAgentDispatch(
 
   if (options.prompt !== undefined) return delegateCanonicalCommand(options, seams, { content: options.prompt });
 
-  // No prompt: the harness is started for a person. Only a model rides along; the rest needs a task.
-  const { model, ...needsTask } = options.selection ?? {};
+  // No prompt: the harness is started for a person. Only where and which model ride along; the rest needs a task.
+  const { connection, harness, model, ...needsTask } = options.selection ?? {};
   if (options.agentRef !== undefined || Object.keys(needsTask).length > 0) {
     throw new UsageError(
       "An agent persona, inference setting or output schema applies to a task: pass --prompt or --prompt-stdin. Without a prompt only the harness (and a model) is started.",
@@ -131,7 +131,8 @@ export async function akmAgentDispatch(
   const executeInteractive = seams.executeInteractive ?? executeInteractiveAgentInvocation;
   const execution = await executeInteractive({
     config: options.agentConfig,
-    ...(options.engine !== undefined ? { engine: options.engine } : {}),
+    ...(typeof connection === "string" ? { connection } : {}),
+    ...(typeof harness === "string" ? { harness } : {}),
     ...(typeof model === "string" ? { model } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),

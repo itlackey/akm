@@ -97,8 +97,8 @@ than replacing either.
 
 - **Tab completion.** `akm completions --install` sets up shell completions
   for subcommands and flags. See [CLI Reference](../reference/cli.md#completions).
-- **Dispatching a bundle agent asset.** `akm agent agents/<name> --engine
-  <engine> --prompt "..."` runs a bundle `agents/<name>` persona and model
+- **Dispatching a bundle agent asset.** `akm agent agents/<name> --harness
+  <harness> --prompt "..."` runs a bundle `agents/<name>` persona and model
   defaults through a named engine — including built-in model aliases like
   `sonnet` and `opus` that resolve per platform. See
   [Configuration](../reference/configuration.md#engines) for the alias table

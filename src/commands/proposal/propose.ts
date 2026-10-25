@@ -15,6 +15,7 @@
  * `akm reflect`. `propose_invoked` is emitted at command entry.
  */
 
+import type { SelectionFlags } from "../../cli/selection";
 import { placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
@@ -50,7 +51,8 @@ export interface AkmProposeOptions {
   type: string;
   name: string;
   task: string;
-  engine?: string;
+  /** Where to run and on which model (`--connection`, `--harness`, `--model`); omitted means the default. */
+  selection?: SelectionFlags;
   timeoutMs?: number;
   /** Configured bundle to queue the proposal for (`--bundle`); default: the working bundle. */
   bundle?: string;
@@ -135,7 +137,7 @@ async function dispatchProposalPrompt(
   onDispatchReady: () => void,
 ): Promise<ProposalDispatchResult> {
   const current = {
-    ...(options.engine !== undefined ? { engine: options.engine } : {}),
+    ...options.selection,
     ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
     outputSchema: PROPOSAL_JSON_SCHEMA,
   };
@@ -202,6 +204,7 @@ function proposeItemRef(bundleId: string, type: string, name: string): string {
  * (`proposeItemRef`), so the entry event and the stored proposal agree.
  */
 function emitProposeInvoked(bundleId: string, options: AkmProposeOptions): void {
+  const named = options.selection?.connection ?? options.selection?.harness;
   appendEvent({
     eventType: "propose_invoked",
     ref: proposeItemRef(bundleId, options.type, options.name),
@@ -209,7 +212,7 @@ function emitProposeInvoked(bundleId: string, options: AkmProposeOptions): void 
       type: options.type,
       name: options.name,
       task: options.task,
-      ...(options.engine ? { engine: options.engine } : {}),
+      ...(named ? { engine: named } : {}),
     },
   });
 }

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * R17 (second half) — `--require-engines`'s reachability probe used to only
+ * R17 (second half) — `--require-targets`'s reachability probe used to only
  * ever report a FAILURE (abort, exit 78); a passing probe left no trace, so
  * a slow or flapping gateway was invisible in the improve result. The CLI
  * now records per-target outcomes and threads them through
@@ -14,7 +14,7 @@
  * (same seam pattern as improve-lowering-notices.test.ts) so only the
  * option -> result threading and the persisted-envelope decode are under
  * test. The CLI-level probe computation itself (dedup, latency, per-target
- * rows) is unit-tested in require-engines-cli.test.ts.
+ * rows) is unit-tested in require-targets-cli.test.ts.
  */
 
 import { expect, test } from "bun:test";
@@ -145,7 +145,7 @@ test("akmImprove copies options.engineProbe onto the dry-run result too", async 
   }
 });
 
-test("engineProbe is absent from the result when --require-engines was not set", async () => {
+test("engineProbe is absent from the result when --require-targets was not set", async () => {
   const stash = makeStashDir();
   try {
     const result = await akmImprove(noopStageSeams(cheapConfig(), stash.dir));

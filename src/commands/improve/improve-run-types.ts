@@ -62,7 +62,7 @@ export interface AkmImproveOptions {
   requireFeedbackSignal?: boolean;
   /** End-of-run auto-sync override (`--no-sync` / `--no-push`). */
   sync?: { enabled?: boolean; push?: boolean };
-  /** `--require-engines` probe outcomes, recorded on the result. */
+  /** `--require-targets` probe outcomes, recorded on the result. */
   engineProbe?: readonly EngineProbeOutcome[];
   /** Called once before the budget watchdog force-exits a run that did not drain (the CLI records the terminated run). */
   onBudgetHardKill?: () => void;

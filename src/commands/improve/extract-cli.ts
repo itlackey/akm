@@ -20,6 +20,7 @@
  */
 
 import { getStringArg } from "../../cli/parse-args";
+import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -69,13 +70,10 @@ export const extractCommand = defineJsonCommand({
       type: "string",
       description: "Per-session LLM timeout in ms. Default: the engine's own timeout.",
     },
-    engine: {
-      type: "string",
-      description: "Connection (or harness) to use for this invocation, by name. Mutually exclusive with --strategy.",
-    },
+    ...SELECTION_ARGS,
     strategy: {
       type: "string",
-      description: "Improve strategy supplying extract behavior. Mutually exclusive with --engine.",
+      description: "Improve strategy supplying extract behavior.",
     },
   },
   async run({ args }) {
@@ -86,7 +84,6 @@ export const extractCommand = defineJsonCommand({
     const auto = args.auto === true;
     const dryRun = args["dry-run"] === true;
     const force = args.force === true;
-    const engine = getStringArg(args, "engine");
     const strategy = getStringArg(args, "strategy");
     const timeoutMs =
       typeof args["timeout-ms"] === "string" && args["timeout-ms"] !== ""
@@ -98,10 +95,6 @@ export const extractCommand = defineJsonCommand({
         "INVALID_FLAG_VALUE",
       );
     }
-    if (engine && strategy) {
-      throw new UsageError("--engine and --strategy are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
-    }
-
     if (auto && type) {
       throw new UsageError("--auto and --type are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
     }
@@ -114,7 +107,7 @@ export const extractCommand = defineJsonCommand({
 
     const config = loadConfig();
     const resolvedPlan = resolveStandaloneExtractPlan(config, {
-      ...(engine ? { engine } : {}),
+      ...selectionFromArgs(args),
       ...(strategy ? { strategy } : {}),
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     });

@@ -15,6 +15,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { SelectionFlags } from "../../cli/selection";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
@@ -210,17 +211,16 @@ export interface ResolvedExtractPlan {
 /** Resolve standalone extract selection once, before discovery, auto iteration or watch startup. */
 export function resolveStandaloneExtractPlan(
   config: AkmConfig,
-  selection: { engine?: string; strategy?: string; timeoutMs?: number | null },
+  selection: SelectionFlags & { strategy?: string; timeoutMs?: number | null },
 ): ResolvedExtractPlan {
-  if (selection.engine && selection.strategy) {
-    throw new UsageError("--engine and --strategy are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
-  }
   const selected = resolveImproveStrategy(selection.strategy, config);
   const process = cloneAndFreeze(getImproveProcessConfig("extract", selected.config) ?? {});
   const resolved = resolveImproveExecution({
     config,
     current: {
-      ...(selection.engine ? { engine: selection.engine } : {}),
+      ...(selection.connection ? { connection: selection.connection } : {}),
+      ...(selection.harness ? { harness: selection.harness } : {}),
+      ...(selection.model ? { model: selection.model } : {}),
       ...(Object.hasOwn(selection, "timeoutMs") ? { timeoutMs: selection.timeoutMs ?? null } : {}),
     },
     processName: "extract",
@@ -228,7 +228,7 @@ export function resolveStandaloneExtractPlan(
   });
   if (!resolved) {
     throw new ConfigError(
-      "No connection or harness is configured for extract. Run `akm setup`, pass --engine, or set improve.connection or improve.processes.extract.connection.",
+      "No connection or harness is configured for extract. Run `akm setup`, pass --connection or --harness, or set improve.connection or improve.processes.extract.connection.",
       "LLM_NOT_CONFIGURED",
     );
   }

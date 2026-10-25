@@ -17,7 +17,7 @@ import { effectiveRequestFields, thinkingSetting } from "../../core/llm-inferenc
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { warn } from "../../core/warn";
 import type { NoticeSink } from "../../execution/notices";
-import type { UnresolvedExecutionDefaults } from "../../execution/source";
+import type { ConfiguredExecutionSettings, UnresolvedExecutionDefaults } from "../../execution/source";
 import type { RejectedProposalContext } from "../../integrations/agent/prompts";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../../llm/client";
@@ -261,7 +261,8 @@ function gateNamesAJudge(gate: object): boolean {
  * The judge of a process's quality gate (#1011). Its layers are the improve-wide
  * `improve.connection` / `improve.harness`, then `improve.qualityGate`'s
  * connection or harness, model, timeout and inference, asking for the `judge`
- * alias when neither names a model. The process's own `improve.processes.<name>`
+ * alias when neither names a model. What the run selected (`--connection`,
+ * `--harness`, `--model`) is nearer than all of these. The process's own `improve.processes.<name>`
  * settings (its `model`, `llm`, connection) are the generation call's and do not
  * reach the judge, so a `reasoning` model chosen for the writer is not the one
  * that judges it. `undefined` when the strategy turns the gate off or no
@@ -276,6 +277,7 @@ export function resolveQualityGateJudge(
   profile: ImproveProfileConfig | undefined,
   processName: "reflect" | "distill",
   onNotices?: NoticeSink,
+  run?: ConfiguredExecutionSettings,
 ): RunnerSpec | undefined {
   if (profile?.processes?.[processName]?.qualityGate?.enabled === false) return undefined;
   const gate = config.improve?.qualityGate;
@@ -284,6 +286,7 @@ export function resolveQualityGateJudge(
     processName: `${processName}-quality-judge`,
     alias: SHIPPED_ALIAS.judge,
     ...(gate ? { current: gate } : {}),
+    ...(run ? { run } : {}),
   });
   if (!resolved) {
     if (gate && gateNamesAJudge(gate)) {

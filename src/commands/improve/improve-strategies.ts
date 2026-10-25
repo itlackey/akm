@@ -17,6 +17,7 @@ import {
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
 import type { LoweringNotice } from "../../execution/resolved-request";
+import type { ConfiguredExecutionSettings } from "../../execution/source";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { applyAutonomyGate, type GatedLane } from "./autonomy-gate";
 import { resolveImproveExecution } from "./execution";
@@ -192,11 +193,11 @@ export interface EngineUnavailableProcess {
 }
 
 /**
- * R17 — one `--require-engines` reachability probe outcome, recorded on the
+ * R17 — one `--require-targets` reachability probe outcome, recorded on the
  * improve run result so a passing (but slow or flaky) probe leaves a trace
  * instead of vanishing the moment the run proceeds. Built in
- * `improve-cli.ts`'s `assertRequiredEnginesReachable` from the same
- * `RequiredEngineTarget` list the unreachable-abort path already computes.
+ * `improve-cli.ts`'s `assertRequiredTargetsReachable` from the same
+ * `RequiredTarget` list the unreachable-abort path already computes.
  */
 export interface EngineProbeOutcome {
   process: EngineUnavailableProcessName;
@@ -215,6 +216,8 @@ export interface ResolvedImprovePlan {
   processes: Readonly<Record<ImproveProcessName, ResolvedImproveProcess>>;
   triageJudgment: RunnerSpec | null;
   triageJudgmentNotices?: readonly Readonly<LoweringNotice>[];
+  /** What the run selected, which the stages' own judges resolve under (see {@link ImprovePlanOptions.run}). */
+  run?: Readonly<ConfiguredExecutionSettings>;
   /**
    * D8 — lanes the autonomy gate downgraded for this run. Empty when
    * `experimental.improveAutonomy` is set. The run reports each one so a gated
@@ -309,11 +312,17 @@ export function cloneAndFreeze<T>(value: T): Readonly<T> {
   return clone;
 }
 
+export interface ImprovePlanOptions {
+  repairValidationFailures?: boolean;
+  /** What the run selected (`--connection`, `--harness`, `--model`): the nearest layer of every call in it, the judges included. */
+  run?: ConfiguredExecutionSettings;
+}
+
 /** Resolve every enabled process structurally before improve emits signals or performs I/O. */
 export function resolveImprovePlan(
   name: string | undefined,
   config: AkmConfig,
-  options: { repairValidationFailures?: boolean } = {},
+  options: ImprovePlanOptions = {},
 ): ResolvedImprovePlan {
   const selected = resolveImproveStrategy(name, config);
   // D8 — gate autonomy BEFORE the plan is built, so every downstream consumer
@@ -327,7 +336,7 @@ export function resolveImprovePlan(
 function buildImprovePlan(
   strategy: SelectedStrategy,
   config: AkmConfig,
-  options: { repairValidationFailures?: boolean },
+  options: ImprovePlanOptions,
 ): Omit<ResolvedImprovePlan, "autonomyGated"> {
   const processes = {} as Record<ImproveProcessName, ResolvedImproveProcess>;
   const engineUnavailable: EngineUnavailableProcess[] = [];
@@ -344,7 +353,12 @@ function buildImprovePlan(
     // step needs a model, so disabling repair must not create an LLM preflight.
     const skipsRepairEngine = processName === "validation" && options.repairValidationFailures === false;
     if (!skipsRepairEngine) {
-      const resolved = resolveImproveExecution({ config, processName, alias: SHIPPED_ALIAS.improve });
+      const resolved = resolveImproveExecution({
+        config,
+        processName,
+        alias: SHIPPED_ALIAS.improve,
+        ...(options.run ? { run: options.run } : {}),
+      });
       runner = resolved?.runner ?? null;
       notices = resolved?.notices ?? [];
     }
@@ -392,6 +406,7 @@ function buildImprovePlan(
           process: "triage",
           processName: "triage-judgment",
           alias: SHIPPED_ALIAS.judge,
+          ...(options.run ? { run: options.run } : {}),
         })
       : null;
   const triageJudgment = triageJudgmentResolution?.runner ?? null;
@@ -416,6 +431,7 @@ function buildImprovePlan(
     strategy: frozenStrategy,
     processes: frozenProcesses,
     triageJudgment: triageJudgment ? cloneAndFreeze(triageJudgment) : null,
+    ...(options.run ? { run: cloneAndFreeze(options.run) } : {}),
     ...(triageJudgmentResolution?.notices.length
       ? { triageJudgmentNotices: cloneAndFreeze(triageJudgmentResolution.notices) }
       : {}),

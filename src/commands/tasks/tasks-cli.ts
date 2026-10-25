@@ -27,6 +27,7 @@
 import { defineCommand } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
+import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import {
   defineGroupCommand,
   defineJsonCommand,
@@ -206,11 +207,7 @@ const tasksAddCommand = defineJsonCommand({
       description:
         'Exact shell string to run on the schedule (no AI agent), e.g. "akm improve --strategy consolidate".',
     },
-    engine: {
-      type: "string",
-      description: "Harness (or connection) to use for prompt targets, by name (default: the default harness)",
-    },
-    model: { type: "string", description: "Model override for prompt targets" },
+    ...SELECTION_ARGS,
     "timeout-ms": { type: "string", description: "Positive timeout in milliseconds for prompt or command targets" },
     params: { type: "string", description: "Workflow params as a JSON object" },
     name: { type: "string", description: "Human-readable name for the task" },
@@ -233,8 +230,7 @@ const tasksAddCommand = defineJsonCommand({
       workflow: args.workflow,
       prompt: args.prompt,
       command: args.command,
-      engine: args.engine,
-      model: args.model,
+      ...selectionFromArgs(args),
       timeoutMs: args["timeout-ms"] === undefined ? undefined : parsePositiveIntFlag(args["timeout-ms"]),
       params: args.params,
       name: args.name,

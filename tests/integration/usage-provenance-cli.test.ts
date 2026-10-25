@@ -50,7 +50,7 @@ test("audit provenance survives curate, remember, and agent nested reads", async
     const agent = await runCliCapture([
       "agent",
       "agents/reviewer",
-      "--engine",
+      "--harness",
       "audit",
       "--prompt",
       "Review this plan",

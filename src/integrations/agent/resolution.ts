@@ -134,7 +134,7 @@ function namedByLayers(
       const name = layer[kind];
       if (typeof name === "string" && name) return { kind, name };
     }
-    // `engine` is the retired spelling (and the name `--engine` takes): a connection by that name, else a harness.
+    // `engine` is the retired spelling of `connection` / `harness`: a connection by that name, else a harness.
     const engine = layer.engine;
     if (typeof engine === "string" && engine) {
       return {

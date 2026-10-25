@@ -32,7 +32,11 @@ const cliPath = path.join(repoRoot, "src", "cli.ts");
 
 /** Subprocess runner for improve-executing tests (see header comment).
  * Passes env to spawnSync rather than mutating process.env. */
-function spawnImprove(args: string[], stashDir: string): { status: number; stdout: string; stderr: string } {
+function spawnImprove(
+  args: string[],
+  stashDir: string,
+  extraConfig: Record<string, unknown> = {},
+): { status: number; stdout: string; stderr: string } {
   const data = sandboxMakeStashDir();
   const config = makeSandboxDir("akm-improve-cli-config");
   disposers.push(data, config);
@@ -44,6 +48,7 @@ function spawnImprove(args: string[], stashDir: string): { status: number; stdou
       configVersion: "0.9.0",
       semanticSearchMode: "off",
       connections: { test: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "test" } } },
+      ...extraConfig,
     }),
   );
   const result = spawnSync("bun", [cliPath, ...args], {
@@ -79,5 +84,27 @@ describe("improve CLI flags (0.8.0) — subprocess-only", () => {
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout) as { ok: boolean };
     expect(parsed.ok).toBe(true);
+  });
+
+  test("--harness moves every process of the run to that harness, and --connection with it is refused", () => {
+    const stash = makeStashDir();
+    const extra = { harnesses: { reviewer: { platform: "claude", bin: "/bin/true" } } };
+
+    const moved = spawnImprove(["improve", "--dry-run", "--harness", "reviewer", "--json-to-stdout"], stash, extra);
+    expect(moved.status).toBe(0);
+    const { plan } = JSON.parse(moved.stdout) as {
+      plan: { processes: Array<{ name: string; enabled: boolean; engine?: string }> };
+    };
+    const enabled = plan.processes.filter((process) => process.enabled && process.engine !== undefined);
+    expect(enabled.length).toBeGreaterThan(0);
+    expect(new Set(enabled.map((process) => process.engine))).toEqual(new Set(["reviewer"]));
+
+    const both = spawnImprove(
+      ["improve", "--dry-run", "--harness", "reviewer", "--connection", "test", "--json-to-stdout"],
+      stash,
+      extra,
+    );
+    expect(both.status).toBe(2);
+    expect(both.stderr).toContain("--connection and --harness are mutually exclusive");
   });
 });

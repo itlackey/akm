@@ -903,7 +903,7 @@ export interface AkmImproveResult {
    * code follows `ok` — a scheduler must not start failing because one LLM
    * process's credential is temporarily missing while others still run.
    * Consumers that need to know branch on this field's presence/length
-   * (or `akm improve --require-engines`, which aborts up front instead of
+   * (or `akm improve --require-targets`, which aborts up front instead of
    * degrading). A credential-unavailable `reason` names the engine and WHICH
    * env var / apiKeyFile path / secret reference is missing — never its
    * value — so an operator whose own shell passes config validation can see
@@ -911,13 +911,13 @@ export interface AkmImproveResult {
    */
   skippedProcesses?: readonly Readonly<EngineUnavailableProcess>[];
   /**
-   * R17 — `--require-engines`'s reachability probe outcomes (one row per
+   * R17 — `--require-targets`'s reachability probe outcomes (one row per
    * probed target: process, engine, endpoint, reachable, latencyMs).
    * A failing probe already aborts the run (exit 78) before this result is
    * ever built, so every row present here is `reachable: true` — this
    * exists so a slow or flapping gateway that still passed leaves a trace.
    * Sourced verbatim from `AkmImproveOptions.engineProbe`. Omitted entirely
-   * when `--require-engines` was not passed.
+   * when `--require-targets` was not passed.
    */
   engineProbe?: readonly Readonly<EngineProbeOutcome>[];
   actions?: ImproveActionResult[];

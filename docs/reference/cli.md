@@ -2587,7 +2587,7 @@ Resolve a stored command through its owning bundle adapter and execute one
 fresh session through the common engine/model cascade:
 
 ```sh
-akm command run <command-ref> [--arguments <exact-text>] [--agent <selector>] [--engine <name>] [--model <id-or-alias>] [--timeout-ms <ms>] [--cwd <path>] [--dry-run]
+akm command run <command-ref> [--arguments <exact-text>] [--agent <selector>] [--connection <name> | --harness <name>] [--model <id-or-alias>] [--timeout-ms <ms>] [--cwd <path>] [--dry-run]
 ```
 
 `--dry-run` does not dispatch and does not materialize credentials.
@@ -2597,7 +2597,7 @@ akm command run <command-ref> [--arguments <exact-text>] [--agent <selector>] [-
 | `<command-ref>` | Local indexed command ref, optionally bundle-qualified (for example `commands/review` or `team//commands/review`) |
 | `--arguments <exact-text>` | Exact string substituted for every literal `$ARGUMENTS`; it is not trimmed, tokenized, quoted, or recursively expanded |
 | `--agent <selector>` | Portable `agents/...` ref or a native harness selector |
-| `--engine <name>` | Current-invocation engine override |
+| `--connection <name>` / `--harness <name>` | Current-invocation connection or harness override (mutually exclusive) |
 | `--model <id-or-alias>` | Current-invocation exact model or operator model-map alias |
 | `--timeout-ms <ms>` | Current-invocation timeout override |
 | `--cwd <path>` | Current-invocation workspace override |
@@ -2643,13 +2643,13 @@ Stored command assets execute only through `akm command run`; `akm agent` has
 no command compatibility alias.
 
 ```sh
-akm agent [<agent-ref>] [--engine <name>] [--prompt <text>] [--model <model>] [--timeout-ms <ms>] [--cwd <path>]
+akm agent [<agent-ref>] [--connection <name> | --harness <name>] [--prompt <text>] [--model <model>] [--timeout-ms <ms>] [--cwd <path>]
 ```
 
 | Argument / Flag | Description |
 | --- | --- |
 | `<agent-ref>` | Optional agent asset ref (e.g. `agents/code-reviewer`). Resolves persona and model defaults. |
-| `--engine <name>` | Agent engine to use; defaults to `defaults.engine` |
+| `--connection <name>` / `--harness <name>` | Connection or harness to run on, by name (mutually exclusive); default: the default harness |
 | `--prompt <text>` | Task prompt to pass to the agent |
 | `--model <model>` | Model override. Accepts aliases (`opus`, `sonnet`, `haiku`) or exact platform model IDs. Overrides the model in the agent asset. Resolved per platform: `opencode/claude-opus-4-7` for opencode, `claude-opus-4-7` for claude. |
 | `--timeout-ms <ms>` | Override the agent CLI timeout in milliseconds |
@@ -2657,10 +2657,10 @@ akm agent [<agent-ref>] [--engine <name>] [--prompt <text>] [--model <model>] [-
 
 When `<agent-ref>` is provided, akm resolves the bundle agent's persona and
 `modelHint`. The `--model` flag wins over any model
-specified in the asset. An alias resolves per the selected `--engine`'s
+specified in the asset. An alias resolves per the selected `--connection` or `--harness`'s
 model-map column (see [Model-map files](configuration.md#model-map-files)),
 which — as of 0.9.15 — may itself be an `engine`-backed indirection, so
-`--engine local-fast --model fast` can resolve to `local-fast`'s own
+`--connection local-fast --model fast` can resolve to `local-fast`'s own
 `engines.local-fast.model` instead of a hardcoded per-platform literal.
 Selecting a persona or model without `--prompt` or `--prompt-stdin` is also
 rejected; akm never fabricates an empty command. The
@@ -2688,19 +2688,19 @@ interactive stdio, hard timeout, and structured failure reasons.
 
 ```sh
 # Interactive launch:
-akm agent --engine opencode
+akm agent --harness opencode
 
 # Dispatch with a prompt only:
-akm agent --engine claude --prompt "summarize recent changes"
+akm agent --harness claude --prompt "summarize recent changes"
 
 # Embody a bundle agent asset:
-akm agent agents/code-reviewer --engine opencode --prompt "review src/"
+akm agent agents/code-reviewer --harness opencode --prompt "review src/"
 
 # Model override with alias:
-akm agent agents/planner --engine claude --model sonnet --prompt "plan the sprint"
+akm agent agents/planner --harness claude --model sonnet --prompt "plan the sprint"
 
 # Exact model ID override:
-akm agent --engine opencode --model opencode/claude-opus-4-7 --prompt "audit the API"
+akm agent --harness opencode --model opencode/claude-opus-4-7 --prompt "audit the API"
 ```
 
 Returns `{ ok, exitCode, stdout?, stderr?, durationMs, reason?, sessionId? }`; `sessionId` is the
@@ -2768,7 +2768,8 @@ akm improve memory
 akm improve skills/code-review
 akm improve workflows/release-checklist --task "reduce duplication"
 akm improve --skip-if-locked           # for high-frequency scheduled runs: skip (exit 0) if a run is already in progress
-akm improve --require-engines          # for scheduled runs: abort (exit 78) instead of degrading if an engine/credential is unavailable
+akm improve --require-targets          # for scheduled runs: abort (exit 78) instead of degrading if a connection or harness the run needs is not usable
+akm improve --harness claude            # run every call of this run, judges included, on the claude harness
 akm improve --no-sync                  # skip the pre-run and end-of-run git sync entirely (default: on for git-backed bundles)
 akm improve --sync --no-push           # commit only, skip the push after it
 akm improve --dry-run --strategy consolidate # preview consolidate's resolved engine/model routing; nothing is dispatched
@@ -2787,10 +2788,12 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
 | `--require-feedback-signal` | Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned |
-| `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
+| `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`); it chooses which processes run, never where |
+| `--connection <name>` / `--harness <name>` | Run every call of this run, judges included, on this connection or harness instead of the default; they are mutually exclusive |
+| `--model <alias\|name>` | The model for every call of this run: an alias (`fast`, `balanced`, `reasoning`) or an exact name |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
-| `--require-engines` | Abort (exit 78, before any indexing, lock, or log side effect) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe — the same probe `akm health`'s `default-llm-engine`/`configured-engines` checks run, once per distinct endpoint. An agent engine's check is that its binary is on PATH; an `opencode-sdk` engine runs embedded, so its only check is its `llmEngine` fallback's endpoint, when it sets one. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
+| `--require-targets` | Fail before the run starts (exit 78, before any indexing, lock, or log side effect) if a connection or harness the run needs is not usable: an enabled process has none configured, a connection's credential cannot be resolved in this process's environment, a connection does not answer one short completion (bounded by its `timeoutMs`, at most two minutes, once per distinct endpoint and model), or a harness binary is not on PATH. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
 | `--show-prompt` | Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or engine dispatch. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside the resolved `engine`/`engineKind`; pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
 | `--sync` / `--no-sync` | Sync the git-backed primary bundle like `akm sync` (fetch and merge the upstream, commit, push) before the run, and commit (and optionally push) when it finishes. A conflict or fetch failure before the run only warns; the run continues on the local state. Default: on for git-backed bundles (per profile config). |
 | `--push` / `--no-push` | Push after the pre-run and end-of-run sync commits when writable with a remote configured. `--no-push` commits only, skipping the push. Default: per profile config (`true`). `sync.push` stays outside the autonomy gate — this is a per-run opt-out, not a default change. |
@@ -2893,7 +2896,7 @@ resolving an engine at all), the entry also carries the structurally resolved
 `engine`/`model`/`contextLength` it would have used — never the credential
 itself. `ok` and the exit code are unchanged either way, matching `extract`'s
 `skipReasons` contract: consumers that need to know branch on
-`skippedProcesses` (or pass `--require-engines` to abort instead of
+`skippedProcesses` (or pass `--require-targets` to abort instead of
 degrading). `reason` names which engine and which credential reference (an env
 var, `apiKeyFile` path, or `${ref}` reference — never its value) is
 missing. A `--dry-run` preview never dispatches, so it never aborts
@@ -3078,8 +3081,9 @@ akm proposal extract --type claude --location /custom/path --session-id <id>
 | `--dry-run` | Show candidates without queuing proposals. |
 | `--force` | Re-process sessions even if they were already extracted and have no new events. Default: skip already-seen sessions. |
 | `--timeout-ms <ms>` | Per-session LLM timeout in ms. Default: the engine's own timeout. |
-| `--engine <name>` | Named engine for this invocation: an LLM engine, or a `claude` or `opencode-sdk` agent engine. Mutually exclusive with `--strategy`. |
-| `--strategy <name>` | Improve strategy supplying extract behavior and engine. Mutually exclusive with `--engine`. |
+| `--connection <name>` / `--harness <name>` | Connection or harness for this invocation, by name (mutually exclusive). |
+| `--model <alias\|name>` | Model for this invocation: an alias or an exact name. |
+| `--strategy <name>` | Improve strategy supplying extract behavior; it never chooses where the model runs. |
 
 `--type` and `--auto` are mutually exclusive; one of them is required.
 `--auto` iterates `getAvailableHarnesses()` — every harness with a detectable
@@ -3109,7 +3113,7 @@ dropped — a foreground polling daemon in a one-shot CLI); the shipped
 schedule) is the answer.
 
 Requires an engine that can run unattended model work (an LLM engine, or a
-`claude` or `opencode-sdk` agent): pass `--engine`, select a
+`claude` or `opencode-sdk` agent): pass `--connection` or `--harness`, select a
 `--strategy` whose `processes.extract.engine` is set, or configure
 `defaults.llmEngine`.
 
@@ -3147,7 +3151,8 @@ akm proposal new skill code-review --bundle team --task "PR-style review skill" 
 | `--bundle` | Configured writable bundle to queue the proposal for. The prompt takes its convention facts from that bundle, the proposal records it as its target (so `akm proposal accept` writes there), and it is queued in that bundle's queue (`akm proposal list --queue <bundle>`). An unknown, disabled or read-only bundle is refused, as for `akm remember --bundle`. Default: the working bundle |
 | `--task` | Inline task text |
 | `--file` | Read task text from a UTF-8 file |
-| `--engine` | Override the default execution engine. Any kind works: an LLM engine, an agent CLI or `opencode-sdk` |
+| `--connection` / `--harness` | Override the default connection or harness, by name (mutually exclusive) |
+| `--model` | Override the model: an alias or an exact name |
 | `--timeout-ms` | Override the selected engine timeout for this call |
 
 Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
@@ -3518,7 +3523,7 @@ akm search --type task                       # List tasks (cross-bundle)
 akm show tasks/<id>                          # Inspect one task
 akm task add <id> --schedule "@daily" \     # Register a new task and install it
   --command "akm improve --strategy default"
-akm task add review --schedule "@daily" --prompt "Review recent changes" --engine reviewer
+akm task add review --schedule "@daily" --prompt "Review recent changes" --harness reviewer
 akm task add nightly --schedule "@daily" --command "akm improve" --disabled  # register but leave off
 akm task add nightly --schedule "@daily" --command "akm improve" --force    # overwrite an existing task id
 akm task enable team//tasks/nightly       # Add local activation and sync its bundle

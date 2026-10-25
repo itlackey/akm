@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm improve --require-engines` (#957): abort before any indexing, lock, or
+ * `akm improve --require-targets` (#957): abort before any indexing, lock, or
  * log side effect when the active strategy's plan already knows a process is
  * unavailable, instead of the default degrade-and-report-in-skippedProcesses
  * behavior. Drives the real `improveCommand` in-process via `runCliCapture`
@@ -15,8 +15,8 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { akmImprove } from "../../../src/commands/improve/improve";
 import {
   _setAkmImproveForTests,
-  assertRequiredEnginesReachable,
-  requiredEngineProbeTimeoutMs,
+  assertRequiredTargetsReachable,
+  requiredTargetProbeTimeoutMs,
 } from "../../../src/commands/improve/improve-cli";
 import type { ResolvedImprovePlan } from "../../../src/commands/improve/improve-strategies";
 import { runCliCapture } from "../../_helpers/cli";
@@ -25,11 +25,11 @@ import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv, writeSandboxC
 const disposers: SandboxedDir[] = [];
 
 function freshEnv(stashDir: string): Record<string, string> {
-  const home = makeSandboxDir("akm-require-engines-home");
-  const cfg = makeSandboxDir("akm-require-engines-cfg");
-  const cache = makeSandboxDir("akm-require-engines-cache");
-  const data = makeSandboxDir("akm-require-engines-data");
-  const state = makeSandboxDir("akm-require-engines-state");
+  const home = makeSandboxDir("akm-require-targets-home");
+  const cfg = makeSandboxDir("akm-require-targets-cfg");
+  const cache = makeSandboxDir("akm-require-targets-cache");
+  const data = makeSandboxDir("akm-require-targets-data");
+  const state = makeSandboxDir("akm-require-targets-state");
   disposers.push(home, cfg, cache, data, state);
   return {
     AKM_BUNDLE_DIR: stashDir,
@@ -55,22 +55,22 @@ afterEach(() => {
   for (const d of disposers.splice(0)) d.cleanup();
 });
 
-describe("akm improve --require-engines", () => {
+describe("akm improve --require-targets", () => {
   test("aborts with exit 78 before akmImprove runs, naming each process that has no connection or harness", async () => {
     const stash = makeStashDir();
     disposers.push(stash);
     const fakeAkmImprove = mock(async () => {
-      throw new Error("akmImprove must not run when --require-engines aborts first");
+      throw new Error("akmImprove must not run when --require-targets aborts first");
     });
     _setAkmImproveForTests(fakeAkmImprove as unknown as typeof akmImprove);
 
     const result = await withEnv(freshEnv(stash.dir), async () => {
       writeNothingConfiguredConfig();
-      return runCliCapture(["improve", "--dry-run", "--require-engines"]);
+      return runCliCapture(["improve", "--dry-run", "--require-targets"]);
     });
 
     expect(result.code).toBe(78);
-    expect(result.stderr).toContain("--require-engines");
+    expect(result.stderr).toContain("--require-targets");
     expect(result.stderr).toContain("reflect");
     expect(result.stderr).toContain("improve.processes.reflect.connection");
     expect(result.stderr).toContain("akm setup");
@@ -102,7 +102,7 @@ describe("akm improve --require-engines", () => {
   });
 });
 
-/** Minimal `ResolvedImprovePlan` fixture: only the fields `collectRequiredEngineTargets` reads. */
+/** Minimal `ResolvedImprovePlan` fixture: only the fields `collectRequiredTargets` reads. */
 function connectionRunner(name: string, endpoint: string, model: string, extra: Record<string, unknown> = {}) {
   return { kind: "connection", name, endpoint, model, request: {}, timeoutMs: null, ...extra };
 }
@@ -121,7 +121,7 @@ function planWithTargets(
   } as unknown as ResolvedImprovePlan;
 }
 
-describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
+describe("assertRequiredTargetsReachable — R17 engineProbe", () => {
   test("returns one outcome per target, with numeric latency, when every probe is reachable", async () => {
     const plan = planWithTargets({
       reflect: { endpoint: "https://a.example.test/v1", model: "model-a", engine: "engineA" },
@@ -129,7 +129,7 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     });
     const probeReachable = mock(async () => ({ reachable: true }));
 
-    const outcomes = await assertRequiredEnginesReachable(plan, probeReachable);
+    const outcomes = await assertRequiredTargetsReachable(plan, probeReachable);
 
     expect(probeReachable).toHaveBeenCalledTimes(2);
     expect(outcomes).toHaveLength(2);
@@ -161,7 +161,7 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     });
     process.env.AKM_PROBE_KEY_TEST = "probe-secret";
     try {
-      await assertRequiredEnginesReachable(plan, probeReachable);
+      await assertRequiredTargetsReachable(plan, probeReachable);
     } finally {
       delete process.env.AKM_PROBE_KEY_TEST;
     }
@@ -181,7 +181,7 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     } as unknown as ResolvedImprovePlan;
     const probeReachable = mock(async () => ({ reachable: true }));
 
-    const outcomes = await assertRequiredEnginesReachable(plan, probeReachable);
+    const outcomes = await assertRequiredTargetsReachable(plan, probeReachable);
 
     expect(probeReachable).toHaveBeenCalledTimes(1);
     expect(outcomes).toHaveLength(2);
@@ -209,7 +209,7 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     const onPath = new Set(["claude"]);
     const which = (bin: string) => (onPath.has(bin) ? `/usr/bin/${bin}` : undefined);
 
-    const outcomes = await assertRequiredEnginesReachable(plan, probeReachable, which);
+    const outcomes = await assertRequiredTargetsReachable(plan, probeReachable, which);
 
     // Only the connection is probed over the network.
     expect(probeReachable).toHaveBeenCalledTimes(1);
@@ -224,8 +224,8 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     ]);
 
     onPath.delete("claude");
-    await expect(assertRequiredEnginesReachable(plan, probeReachable, which)).rejects.toThrow(
-      /reflect \(engine "cc", claude\): claude is not on PATH/,
+    await expect(assertRequiredTargetsReachable(plan, probeReachable, which)).rejects.toThrow(
+      /reflect \(harness "cc", claude\): claude is not on PATH/,
     );
   });
 
@@ -235,7 +235,7 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     });
     const probeReachable = mock(async () => ({ reachable: false, error: "boom" }));
 
-    await expect(assertRequiredEnginesReachable(plan, probeReachable)).rejects.toThrow(
+    await expect(assertRequiredTargetsReachable(plan, probeReachable)).rejects.toThrow(
       /completion path is not reachable/,
     );
   });
@@ -264,7 +264,7 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
         triageJudgment: null,
       } as unknown as ResolvedImprovePlan;
 
-      const outcomes = await assertRequiredEnginesReachable(plan);
+      const outcomes = await assertRequiredTargetsReachable(plan);
 
       expect(outcomes).toHaveLength(1);
       expect(outcomes[0]?.reachable).toBe(true);
@@ -281,17 +281,17 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
         model: "m",
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       }) as never;
-    expect(requiredEngineProbeTimeoutMs(connection(10_000))).toBe(10_000);
-    expect(requiredEngineProbeTimeoutMs(connection(900_000))).toBe(120_000);
-    expect(requiredEngineProbeTimeoutMs(connection(null))).toBe(120_000);
-    expect(requiredEngineProbeTimeoutMs(connection())).toBe(120_000);
+    expect(requiredTargetProbeTimeoutMs(connection(10_000))).toBe(10_000);
+    expect(requiredTargetProbeTimeoutMs(connection(900_000))).toBe(120_000);
+    expect(requiredTargetProbeTimeoutMs(connection(null))).toBe(120_000);
+    expect(requiredTargetProbeTimeoutMs(connection())).toBe(120_000);
   });
 
   test("returns an empty array when there are no required-engine targets", async () => {
     const plan: ResolvedImprovePlan = { processes: {}, triageJudgment: null } as unknown as ResolvedImprovePlan;
     const probeReachable = mock(async () => ({ reachable: true }));
 
-    const outcomes = await assertRequiredEnginesReachable(plan, probeReachable);
+    const outcomes = await assertRequiredTargetsReachable(plan, probeReachable);
 
     expect(outcomes).toEqual([]);
     expect(probeReachable).not.toHaveBeenCalled();

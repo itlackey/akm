@@ -820,7 +820,7 @@ export async function probeLlmEndpoint(
 /**
  * Endpoint-keyed probe memoization (#957): every caller that probes several
  * engine connections in one pass (`akm health`'s engine checks, `akm
- * improve --require-engines`) shares one in-flight probe per distinct
+ * improve --require-targets`) shares one in-flight probe per distinct
  * endpoint (trailing slashes normalized) instead of firing a duplicate probe
  * when two engines point at the same server. `cache` must be scoped to one
  * invocation and never shared across calls — a stale "reachable" surviving

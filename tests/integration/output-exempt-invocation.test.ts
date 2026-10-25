@@ -142,7 +142,7 @@ console.log(JSON.stringify({ before: before ?? null, after: process.exitCode }))
       }),
     );
 
-    const result = spawnCli(["--format", "text", "agent", "--engine", "test"], {
+    const result = spawnCli(["--format", "text", "agent", "--harness", "test"], {
       AKM_BUNDLE_DIR: stash,
       XDG_CONFIG_HOME: configHome,
     });

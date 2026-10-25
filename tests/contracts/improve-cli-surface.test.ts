@@ -23,16 +23,17 @@ describe("current improvement CLI documentation contract", () => {
     expect(cli).not.toContain("§9.4");
   });
 
-  test("agent and proposal new select named engines while improve selects a strategy", () => {
-    expect(extractSection(cli, "### agent")).toContain("--engine <name>");
-    expect(extractSection(cli, "#### proposal new")).toContain("`--engine`");
+  test("agent, proposal new and improve select a connection or harness, and improve's strategy chooses what runs", () => {
+    expect(extractSection(cli, "### agent")).toContain("--harness <name>");
+    expect(extractSection(cli, "#### proposal new")).toContain("`--connection`");
+    expect(extractSection(cli, "### improve")).toContain("`--harness <name>`");
     expect(extractSection(cli, "### improve")).toContain("`--strategy <name>`");
     expect(extractSection(cli, "### agent")).not.toContain("profiles.agent");
   });
 
-  test("improve documents --require-engines and the skippedProcesses result field (#957)", () => {
+  test("improve documents --require-targets and the skippedProcesses result field (#957)", () => {
     const section = extractSection(cli, "### improve");
-    expect(section).toContain("--require-engines");
+    expect(section).toContain("--require-targets");
     expect(section).toContain("skippedProcesses");
   });
 

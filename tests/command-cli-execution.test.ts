@@ -121,6 +121,26 @@ describe("command CLI execution convergence", () => {
     expect(snapshotTree(storage.root)).toEqual(before);
   });
 
+  test("command run --dry-run runs where --connection or --harness says, and refuses both together", async () => {
+    writeSandboxConfig({
+      connections: { lab: { endpoint: "https://lab.invalid/v1/chat/completions", models: { fast: "lab-model" } } },
+    });
+    const dryRun = (...flags: string[]) =>
+      runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json", ...flags]);
+
+    const harness = await dryRun("--harness", "reviewer");
+    expect(harness.code).toBe(0);
+    expect(JSON.parse(harness.stdout)).toMatchObject({ engine: "reviewer" });
+
+    const connection = await dryRun("--connection", "lab", "--model", "fast");
+    expect(connection.code).toBe(0);
+    expect(JSON.parse(connection.stdout)).toMatchObject({ engine: "lab" });
+
+    const both = await dryRun("--connection", "lab", "--harness", "reviewer");
+    expect(both.code).toBe(2);
+    expect(both.stderr).toContain("--connection and --harness are mutually exclusive");
+  });
+
   test("live --verbose reports only safe dry-run diagnostics before preserving the dispatch envelope", async () => {
     const ordinary = await runCliCapture([
       "command",

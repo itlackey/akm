@@ -99,6 +99,20 @@ describe("resolveQualityGateJudge (#1011)", () => {
     expect(asLlmRunner(runner).inference?.temperature).toBe(0.5);
   });
 
+  test("what the run selected is nearer than the gate's own judge, for reflect's and distill's alike", () => {
+    const cfg = gated({ connection: "judge" });
+    for (const process of ["reflect", "distill"] as const) {
+      expect(resolveQualityGateJudge(cfg, undefined, process, undefined, { harness: "agent" })).toMatchObject({
+        kind: "harness",
+        name: "agent",
+      });
+    }
+    expect(resolveQualityGateJudge(cfg, undefined, "reflect", undefined, { model: "exact-name" })).toMatchObject({
+      name: "judge",
+      model: "exact-name",
+    });
+  });
+
   test("one setting serves the judges of reflect and distill", () => {
     const cfg = gated({ connection: "judge" });
     expect(resolveQualityGateJudge(cfg, undefined, "reflect")?.name).toBe("judge");

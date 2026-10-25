@@ -45,7 +45,7 @@
  *     needing the index, never reading the referenced file's bytes, and never
  *     risking a leaked `runtime.environment` value (the cascade's own
  *     "current" layer, built here from the TASK's own `execution` overrides
- *     ONLY — engine/model/inference/outputSchema/timeout, deliberately
+ *     ONLY — connection/harness/engine/model/inference/outputSchema/timeout, deliberately
  *     never `environment`/`workspace`/`agent`, so a portable persona selector
  *     can never demand a persona this module never loads). Only
  *     `engine`/`model`/`runtime.timeoutMs` and the cascade's own
@@ -273,7 +273,7 @@ function currentExecutionValues(document: PreparableTaskDocument): Record<string
   const akm = document.akm;
   if (!akm) return {};
   const out: Record<string, unknown> = {};
-  for (const key of ["engine", "model", "inference", "outputSchema", "timeout"] as const) {
+  for (const key of ["connection", "harness", "engine", "model", "inference", "outputSchema", "timeout"] as const) {
     if (Object.hasOwn(akm, key)) out[key] = akm[key];
   }
   return out;

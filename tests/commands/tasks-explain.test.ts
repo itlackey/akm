@@ -47,7 +47,12 @@ import path from "node:path";
 import { isTaskRunWithId } from "../../src/cli";
 import { resetConfigCache } from "../../src/core/config/config";
 import { runCliCapture } from "../_helpers/cli";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+  writeWorkflowTestConfig,
+} from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 let tasksDir: string;
@@ -371,6 +376,31 @@ describe("akm task explain <ref> — a required input with no default, left unsu
     // No suppliedInputs entry / provenance row exists for the unsupplied
     // required input: it has neither a default nor a flag-supplied value.
     expect(suppliedValueProvenances(envelope, "assignee")).toEqual([]);
+  });
+});
+
+describe("akm task explain <ref> — where a task runs", () => {
+  test.each([
+    ["harness", { harnesses: { reviewer: { platform: "claude", bin: "/bin/true" } } }, "claude"],
+    [
+      "connection",
+      { connections: { lab: { endpoint: "http://lab.invalid/v1", models: { fast: "lab-model" } } } },
+      undefined,
+    ],
+  ])("a task that names its %s is explained on it", async (key, config, platform) => {
+    const name = key === "harness" ? "reviewer" : "lab";
+    writeSandboxConfig(config);
+    resetConfigCache();
+    writeTask(
+      "explain-where",
+      ["version: 4", "uses: akm/command", "with:", "  content: Review.", `${key}: ${name}`, ""].join("\n"),
+    );
+
+    const result = await runCliCapture(["task", "explain", "explain-where", "--format", "json"]);
+
+    expect(result.code).toBe(0);
+    const { execution } = JSON.parse(result.stdout) as { execution?: { engine?: { name: string; platform?: string } } };
+    expect(execution?.engine).toMatchObject({ name, ...(platform ? { platform } : {}) });
   });
 });
 

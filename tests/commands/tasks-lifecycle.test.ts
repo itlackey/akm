@@ -192,14 +192,14 @@ describe("task lifecycle failure handling", () => {
     expect(fs.readFileSync(result.path, "utf8")).toContain("timeout: 900000");
   });
 
-  test("add still refuses --engine on a workflow task", async () => {
+  test("add still refuses --harness on a workflow task", async () => {
     const workflowsDir = path.join(storage.stashDir, "workflows");
     fs.mkdirSync(workflowsDir, { recursive: true });
     fs.writeFileSync(path.join(workflowsDir, "nightly.md"), "# Nightly\n", "utf8");
 
     await expect(
       akmTasksAdd(
-        { id: "nightly-engine", schedule: "@daily", workflow: "workflows/nightly", engine: "reviewer" },
+        { id: "nightly-engine", schedule: "@daily", workflow: "workflows/nightly", harness: "reviewer" },
         { backend },
       ),
     ).rejects.toMatchObject({ code: "INVALID_FLAG_VALUE" });
@@ -400,6 +400,35 @@ describe("task lifecycle failure handling", () => {
       uses: { kind: "builtin-command", ref: "akm/command" },
       command: { kind: "inline", content: "Review the latest changes carefully." },
     });
+  });
+
+  test.each([
+    ["harness", { harness: "reviewer" }],
+    ["connection", { connection: "lab" }],
+  ])("add writes a prompt task's --%s into the task, with --model", async (key, where) => {
+    writeSandboxConfig({
+      bundles: { stash: { path: storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      semanticSearchMode: "off",
+      harnesses: { reviewer: { platform: "opencode", bin: "fake-agent" } },
+      connections: { lab: { endpoint: "http://lab.invalid/v1", models: { fast: "m" } } },
+    });
+
+    const result = await akmTasksAdd(
+      {
+        id: `where-${key}`,
+        schedule: "@daily",
+        prompt: "Review the latest changes carefully.",
+        model: "fast",
+        ...where,
+      },
+      { backend },
+    );
+
+    const written = fs.readFileSync(result.path, "utf8");
+    expect(written).toContain(`${key}: ${Object.values(where)[0]}`);
+    expect(written).toContain("model: fast");
+    expect(written).not.toMatch(/\bengine\s*:/);
   });
 });
 

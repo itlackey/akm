@@ -33,7 +33,7 @@ describe("akmAgentDispatch engine capability", () => {
             semanticSearchMode: "off",
             harnesses: { native: { platform: "claude", bin: "/bin/true" } },
           },
-          engine: "native",
+          harness: "native",
           timeoutMs: 0,
           cwd: "/fixture/workspace",
         },
@@ -85,7 +85,7 @@ describe("akmAgentDispatch engine capability", () => {
       dispatches += 1;
       return { ok: true, exitCode: 0, stdout: "", stderr: "", durationMs: 1 };
     };
-    for (const input of [{ config }, { config, engine: "lab" }]) {
+    for (const input of [{ config }, { config, connection: "lab" }]) {
       await expect(executeInteractiveAgentInvocation(input, { runAgent })).rejects.toThrow(
         /connection.*--prompt.*harness/is,
       );
@@ -103,9 +103,9 @@ describe("akmAgentDispatch engine capability", () => {
         harnesses: { native: { platform: "claude", bin, models: { fast: "claude-fast" } } },
       };
 
-      const plain = await executeInteractiveAgentInvocation({ config, engine: "native" });
+      const plain = await executeInteractiveAgentInvocation({ config, harness: "native" });
       expect(plain).toMatchObject({ engine: "native", result: { ok: true, exitCode: 0 } });
-      const withModel = await executeInteractiveAgentInvocation({ config, engine: "native", model: "fast" });
+      const withModel = await executeInteractiveAgentInvocation({ config, harness: "native", model: "fast" });
       expect(withModel.result.ok).toBe(true);
 
       const calls = harnessCalls(bin);
@@ -145,7 +145,7 @@ describe("akmAgentDispatch engine capability", () => {
     };
     const calls: unknown[] = [];
     const result = await akmAgentDispatch(
-      { agentConfig: config, engine: "native", timeoutMs: 0, cwd: "" },
+      { agentConfig: config, selection: { harness: "native" }, timeoutMs: 0, cwd: "" },
       {
         executeInteractive: async (input) => {
           calls.push(input);
@@ -163,7 +163,7 @@ describe("akmAgentDispatch engine capability", () => {
       },
     );
 
-    expect(calls).toEqual([{ config, engine: "native", timeoutMs: 0, cwd: "" }]);
+    expect(calls).toEqual([{ config, harness: "native", timeoutMs: 0, cwd: "" }]);
     expect(result).toMatchObject({ ok: true, engine: "native", exitCode: 0 });
   });
 
@@ -173,10 +173,10 @@ describe("akmAgentDispatch engine capability", () => {
       {
         prompt: "Review exactly this.",
         agentRef: "fixture//agents/reviewer",
-        engine: "reviewer",
         timeoutMs: 0,
         cwd: "",
         selection: {
+          harness: "reviewer",
           model: "balanced",
           inference: { effort: "high", temperature: 0 },
           outputSchema: { type: "object" },
@@ -210,7 +210,7 @@ describe("akmAgentDispatch engine capability", () => {
         config: { configVersion: "0.9.0", semanticSearchMode: "off" },
         current: {
           agent: "fixture//agents/reviewer",
-          engine: "reviewer",
+          harness: "reviewer",
           model: "balanced",
           inference: { effort: "high", temperature: 0 },
           outputSchema: { type: "object" },
@@ -282,7 +282,7 @@ describe("akmAgentDispatch engine capability", () => {
 
   test("returns the exact v2 public result envelope", async () => {
     const result = await akmAgentDispatch({
-      engine: "test-agent",
+      selection: { harness: "test-agent" },
       prompt: "hello",
       agentConfig: {
         configVersion: "0.9.0",
@@ -317,7 +317,7 @@ describe("akmAgentDispatch engine capability", () => {
       },
     };
     const result = await akmAgentDispatch(
-      { engine: "fast", prompt: "hello", agentConfig: config },
+      { selection: { connection: "fast" }, prompt: "hello", agentConfig: config },
       {
         executeCommand: async (input) => {
           calls.push(input);
@@ -336,13 +336,13 @@ describe("akmAgentDispatch engine capability", () => {
     );
     expect(result.stdout).toBe("llm output");
     expect(calls).toEqual([
-      { action: { content: "hello" }, inlineContentMode: "literal", config, current: { engine: "fast" } },
+      { action: { content: "hello" }, inlineContentMode: "literal", config, current: { connection: "fast" } },
     ]);
   });
 
   test("returns one structured envelope for a normal runner failure", async () => {
     const result = await akmAgentDispatch({
-      engine: "test-agent",
+      selection: { harness: "test-agent" },
       prompt: "hello",
       agentConfig: {
         configVersion: "0.9.0",
@@ -384,7 +384,7 @@ describe("akm agent --prompt is free text, not a template", () => {
     test(`passes through verbatim: ${JSON.stringify(prompt.slice(0, 32))}...`, async () => {
       const seen: Array<{ content?: string; mode?: string }> = [];
       const result = await akmAgentDispatch(
-        { prompt, agentConfig, engine: "native" },
+        { prompt, agentConfig, selection: { harness: "native" } },
         {
           executeCommand: async (options) => {
             seen.push({

@@ -107,7 +107,9 @@ export interface TasksAddInput {
    * `workflow` and `prompt`.
    */
   command?: string | string[];
-  engine?: string;
+  /** Where a prompt target runs and on which model (`--connection`, `--harness`, `--model`), written into the task. */
+  connection?: string;
+  harness?: string;
   model?: string;
   timeoutMs?: number;
   params?: string;
@@ -170,7 +172,8 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     workflow: input.workflow,
     prompt: input.prompt,
     command: input.command,
-    engine: input.engine,
+    connection: input.connection,
+    harness: input.harness,
     model: input.model,
     timeoutMs: input.timeoutMs,
     params: input.params,
@@ -271,16 +274,20 @@ function assertTaskAddTargetShape(input: TasksAddInput): void {
       "INVALID_FLAG_VALUE",
     );
   }
-  // `--timeout-ms` is the workflow's whole-run bound. Engine and model stay
-  // prompt-only because workflow engines come from the frozen plan.
-  if (input.workflow && (input.engine !== undefined || input.model !== undefined)) {
+  // `--timeout-ms` is the workflow's whole-run bound. Connection, harness and
+  // model stay prompt-only because workflow engines come from the frozen plan.
+  const selects = input.connection !== undefined || input.harness !== undefined || input.model !== undefined;
+  if (input.workflow && selects) {
     throw new UsageError(
-      "Workflow tasks accept --params and --timeout-ms; engine and model are prompt-task fields.",
+      "Workflow tasks accept --params and --timeout-ms; connection, harness and model are prompt-task fields.",
       "INVALID_FLAG_VALUE",
     );
   }
-  if (hasCommand && (input.engine !== undefined || input.model !== undefined)) {
-    throw new UsageError("Command tasks accept --timeout-ms but not --engine or --model.", "INVALID_FLAG_VALUE");
+  if (hasCommand && selects) {
+    throw new UsageError(
+      "Command tasks accept --timeout-ms but not --connection, --harness or --model.",
+      "INVALID_FLAG_VALUE",
+    );
   }
   if (input.prompt !== undefined) assertInlineTaskPrompt(input.prompt);
 }
@@ -1055,7 +1062,8 @@ interface RenderInput {
   workflow?: string;
   prompt?: string;
   command?: string | string[];
-  engine?: string;
+  connection?: string;
+  harness?: string;
   model?: string;
   timeoutMs?: number;
   params?: string;
@@ -1117,7 +1125,8 @@ function renderTaskYaml(input: RenderInput): string {
   if (input.description !== undefined) obj.description = input.description;
   if (input.when_to_use !== undefined) obj.when_to_use = input.when_to_use;
   if (input.tags && input.tags.length > 0) obj.tags = input.tags;
-  if (input.engine !== undefined) obj.engine = input.engine;
+  if (input.connection !== undefined) obj.connection = input.connection;
+  if (input.harness !== undefined) obj.harness = input.harness;
   if (input.model !== undefined) obj.model = input.model;
   if (input.timeoutMs !== undefined) obj.timeout = input.timeoutMs;
   if (input.schedule.length > 0) obj.schedule = input.schedule;

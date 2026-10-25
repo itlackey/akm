@@ -38,6 +38,7 @@ import { withStateDb } from "../../core/state-db";
 import { warn, warnVerbose } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import { type NoticeSet, noticeSet } from "../../execution/notices";
+import type { ConfiguredExecutionSettings } from "../../execution/source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { chatCompletion } from "../../llm/client";
@@ -100,6 +101,8 @@ export interface AkmDistillOptions {
   config?: AkmConfig;
   /** Exact runner frozen by the improve plan (an own key, `null` meaning none). */
   llmRunner?: RunnerSpec | null;
+  /** What the improve run selected: the nearest layer of this stage's quality-gate judge. */
+  run?: ConfiguredExecutionSettings;
   /** Shared improve deadline for generation and judging. */
   signal?: AbortSignal;
   /** Test seam: transport override. */
@@ -502,7 +505,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     config,
     profile,
     runner: stageRunner(options, config, "distill", notices.add),
-    judgeRunner: resolveQualityGateJudge(config, profile, "distill", notices.add),
+    judgeRunner: resolveQualityGateJudge(config, profile, "distill", notices.add, options.run),
     notices,
     eligMeta,
     asset,

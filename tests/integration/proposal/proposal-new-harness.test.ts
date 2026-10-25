@@ -82,7 +82,7 @@ function proposalNew(engine: string): Promise<CliResult> {
     NAME,
     "--task",
     "Author a skill that proves this engine returns JSON",
-    "--engine",
+    "--harness",
     engine,
     "--format",
     "json",
@@ -94,7 +94,7 @@ const calls = (bin: string) => harnessCalls(path.join(bins.dir, bin));
 
 /** `proposal new` succeeded on `engine` and queued the reply's proposal. */
 function expectProposalCreated(result: CliResult, engine: string): void {
-  if (result.code !== 0) throw new Error(`proposal new --engine ${engine} exited ${result.code}: ${result.stdout}`);
+  if (result.code !== 0) throw new Error(`proposal new --harness ${engine} exited ${result.code}: ${result.stdout}`);
   expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, engine, ref: `work//skills/${NAME}` });
   const proposals = listProposals(storage.stashDir);
   expect(proposals).toHaveLength(1);

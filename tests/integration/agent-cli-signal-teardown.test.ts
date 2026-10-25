@@ -105,7 +105,7 @@ for (const { platform, signal, ignoresTerm } of CASES) {
 
       const cli = spawn(
         process.execPath,
-        [path.join(REPO_ROOT, "src/cli.ts"), "agent", "--engine", "fake", "--prompt", "hi"],
+        [path.join(REPO_ROOT, "src/cli.ts"), "agent", "--harness", "fake", "--prompt", "hi"],
         { cwd: REPO_ROOT, stdio: ["ignore", "pipe", "pipe"] },
       );
       let output = "";

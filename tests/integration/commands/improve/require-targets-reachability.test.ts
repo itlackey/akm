@@ -3,10 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm improve --require-engines` (#957 field re-test): the flag's static
+ * `akm improve --require-targets` (#957 field re-test): the flag's static
  * config/credential check let a run through even when the engine's endpoint
  * was completely dead. Field, beta.3: engines pointed at a dead endpoint,
- * then `akm improve --require-engines` sat silent for ~4 minutes, ignoring
+ * then `akm improve --require-targets` sat silent for ~4 minutes, ignoring
  * an external `timeout 30` (SIGTERM) and akm's own `--timeout-ms`, and
  * needed `kill -9` — the documented exit-78 "required engines unavailable"
  * path could never be observed, because nothing ever probed reachability.
@@ -14,7 +14,7 @@
  * This spawns the REAL CLI process (`bun src/cli.ts`) against real TCP
  * targets — one that never answers, one that refuses the connection outright
  * — so the reachability probe genuinely has to cross the network. Neither
- * case needs a real asset or a built index: `--require-engines` aborts
+ * case needs a real asset or a built index: `--require-targets` aborts
  * before any lock/log/index side effect, so an empty stash is enough to
  * prove the probe fires.
  *
@@ -68,7 +68,7 @@ async function spawnImprove(
   return { code, stdout, stderr, elapsedMs: Date.now() - startedAt };
 }
 
-describe("akm improve --require-engines — reachability probe (#957)", () => {
+describe("akm improve --require-targets — reachability probe (#957)", () => {
   test("a healthy models route cannot hide a dead completion upstream (#980)", async () => {
     let modelsRequests = 0;
     let completionRequests = 0;
@@ -95,7 +95,7 @@ describe("akm improve --require-engines — reachability probe (#957)", () => {
         },
       });
 
-      const result = await spawnImprove(["--require-engines"]);
+      const result = await spawnImprove(["--require-targets"]);
 
       expect(result.code).toBe(78);
       expect(modelsRequests).toBe(0);
@@ -118,11 +118,11 @@ describe("akm improve --require-engines — reachability probe (#957)", () => {
       },
     });
 
-    const result = await spawnImprove(["--require-engines"]);
+    const result = await spawnImprove(["--require-targets"]);
 
     expect(result.code).toBe(78);
     expect(result.elapsedMs).toBeLessThan(10_000);
-    expect(result.stderr).toContain("--require-engines");
+    expect(result.stderr).toContain("--require-targets");
     expect(result.stderr).toContain("dead");
     expect(result.stderr).toContain("http://127.0.0.1:1/v1");
   }, 20_000);
@@ -137,13 +137,13 @@ describe("akm improve --require-engines — reachability probe (#957)", () => {
         },
       });
 
-      const result = await spawnImprove(["--require-engines"]);
+      const result = await spawnImprove(["--require-targets"]);
 
       expect(result.code).toBe(78);
       // The probe is bounded by the connection's own timeoutMs (capped at two
       // minutes), so this 2s connection ends it in a handful of seconds.
       expect(result.elapsedMs).toBeLessThan(10_000);
-      expect(result.stderr).toContain("--require-engines");
+      expect(result.stderr).toContain("--require-targets");
       expect(result.stderr).toContain("hung");
     } finally {
       server.stop(true);

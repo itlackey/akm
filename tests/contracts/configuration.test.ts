@@ -107,7 +107,7 @@ describe("current connection, harness and strategy configuration contract", () =
   test("retired execution scan ignores ordinary words, current selectors, and explicit retirement sections", () => {
     const example = [
       "Use your shell profile with the workflow runner.",
-      "Configure `engines.fast.endpoint`, `defaults.engine`, and `--engine fast`.",
+      "Configure `engines.fast.endpoint`, `defaults.engine`, and `--connection fast`.",
       "## Retired Configuration",
       "`llm.endpoint`, `defaults.agent`, `--profile`, and `runner:` are retired.",
     ].join("\n");

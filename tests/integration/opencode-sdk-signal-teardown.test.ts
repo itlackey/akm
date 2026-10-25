@@ -76,7 +76,7 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
         },
       });
 
-      const cli = spawn(process.execPath, [entry, "agent", "--engine", "local", "--prompt", "hi"], {
+      const cli = spawn(process.execPath, [entry, "agent", "--connection", "local", "--prompt", "hi"], {
         cwd: REPO_ROOT,
         stdio: ["ignore", "pipe", "pipe"],
       });

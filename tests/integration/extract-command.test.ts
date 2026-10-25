@@ -2102,12 +2102,12 @@ describe("akmExtract — engine + strategy config resolution", () => {
     } as AkmConfig;
   }
 
-  test("standalone selection rejects simultaneous --engine and --strategy", () => {
+  test("a connection and a strategy are chosen apart: the strategy never says where the model runs", () => {
     const stash = makeStashDir();
-    const config = configWithStrategy(stash, {});
-    expect(() => resolveStandaloneExtractPlan(config, { engine: "extract-special", strategy: "extract" })).toThrow(
-      "--engine and --strategy are mutually exclusive",
-    );
+    const config = configWithStrategy(stash, { maxTotalChars: 4321 });
+    const plan = resolveStandaloneExtractPlan(config, { connection: "extract-special", strategy: "extract" });
+    expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special" });
+    expect(plan.process.maxTotalChars).toBe(4321);
   });
 
   test("an explicitly selected strategy supplies settings but cannot disable standalone extract", () => {
@@ -2139,7 +2139,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
     let chatCalls = 0;
 
     await withEnv({ EXTRACT_REQUIRED_API_KEY: undefined }, async () => {
-      const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special" });
+      const plan = resolveStandaloneExtractPlan(config, { connection: "extract-special" });
       expect(asLlmRunner(plan.runner).apiKey).toBe("$EXTRACT_REQUIRED_API_KEY");
 
       const result = await akmExtract({
@@ -2182,7 +2182,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
     const strategy = config.improve?.strategies?.extract;
     if (strategy) {
     }
-    const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special" });
+    const plan = resolveStandaloneExtractPlan(config, { connection: "extract-special" });
     expect(Object.isFrozen(plan)).toBe(true);
     expect(Object.isFrozen(plan.process)).toBe(true);
     expect(Object.isFrozen(plan.process.triage)).toBe(true);
@@ -2197,7 +2197,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(plan.process.maxTotalChars).toBe(1234);
 
     const timeoutOverridePlan = resolveStandaloneExtractPlan(config, {
-      engine: "extract-special",
+      connection: "extract-special",
       timeoutMs: 45_000,
     });
     expect(timeoutOverridePlan.runner?.timeoutMs).toBe(45_000);

@@ -299,8 +299,9 @@ export async function runExecution(
 
 export interface InteractiveAgentInvocationOptions {
   readonly config: AkmConfig;
-  /** The harness to launch; omitted means the default. */
-  readonly engine?: string;
+  /** What to launch, by name; omitted means the default harness. */
+  readonly connection?: string;
+  readonly harness?: string;
   /** The model it starts with, as an alias or an exact name. */
   readonly model?: string;
   readonly timeoutMs?: number;
@@ -325,7 +326,8 @@ export async function executeInteractiveAgentInvocation(
   const runner = resolveTarget({
     config: input.config,
     layers: [
-      ...(input.engine === undefined ? [] : [{ engine: input.engine }]),
+      ...(input.connection === undefined ? [] : [{ connection: input.connection }]),
+      ...(input.harness === undefined ? [] : [{ harness: input.harness }]),
       ...(input.model === undefined ? [] : [{ model: input.model }]),
     ],
   });

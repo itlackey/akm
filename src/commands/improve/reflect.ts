@@ -35,6 +35,7 @@ import { resolveStandardsContext } from "../../core/standards/resolve-standards-
 import type { Parsed } from "../../core/structured";
 import { warnOnce } from "../../core/warn";
 import { type Notice, noticeSet } from "../../execution/notices";
+import type { ConfiguredExecutionSettings } from "../../execution/source";
 import { lookup } from "../../indexer/indexer";
 import type { AgentFailureReason } from "../../integrations/agent";
 import {
@@ -81,6 +82,8 @@ export interface AkmReflectOptions {
   ref?: string;
   /** Task hint passed through to the prompt. */
   task?: string;
+  /** What the improve run selected: the nearest layer of this stage and of its quality-gate judge. */
+  run?: ConfiguredExecutionSettings;
   timeoutMs?: number;
   /** Shared improve deadline for dispatch and judging. */
   signal?: AbortSignal;
@@ -792,7 +795,12 @@ function resolveReflectRunner(options: AkmReflectOptions): {
 } {
   const config = options.config ?? loadConfig();
   const activeStrategy = options.improveProfile ?? config.improve?.strategies?.[config.improve?.strategy ?? "default"];
-  const resolved = resolveImproveExecution({ config, processName: "reflect", alias: SHIPPED_ALIAS.improve });
+  const resolved = resolveImproveExecution({
+    config,
+    processName: "reflect",
+    alias: SHIPPED_ALIAS.improve,
+    ...(options.run ? { run: options.run } : {}),
+  });
   if (!resolved) {
     throw new ConfigError(
       "Reflect requires a connection or harness for the active improve strategy.",
@@ -1129,7 +1137,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // Judge selection is frozen before dispatch so a missing judge credential fails first.
   const judgeWanted = activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? true;
   let judgeRunner: RunnerSpec | undefined;
-  if (judgeWanted) judgeRunner = resolveQualityGateJudge(config, activeStrategy, "reflect", notices.add);
+  if (judgeWanted) judgeRunner = resolveQualityGateJudge(config, activeStrategy, "reflect", notices.add, options.run);
   const skippedNoJudge = judgeWanted && !judgeRunner;
   if (skippedNoJudge) {
     warnOnce(
