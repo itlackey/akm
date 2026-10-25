@@ -18,7 +18,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { toErrorMessage } from "../../../../core/common";
-import { loadConfig } from "../../../../core/config/config";
 import { effectiveRequestFields } from "../../../../core/llm-inference";
 import { getCacheDir } from "../../../../core/paths";
 import { warnOnce } from "../../../../core/warn";
@@ -34,7 +33,7 @@ import {
 import { type EmbeddedHost, hostFor } from "./host";
 import type { HostKind } from "./host-spec";
 import { forgetSession, type SessionSettings } from "./plugin";
-import { declaredModels, runtimeProviderId } from "./runtime-config";
+import { type RunnerModel, runnerModel } from "./runner-models";
 import { runTurn, turnResult } from "./turn";
 
 /** Model work reads but changes nothing: OpenCode's tools that edit files, run commands or start subagents are denied. */
@@ -111,7 +110,9 @@ async function interrupt(host: EmbeddedHost, sessionID: string, timers: Timers):
 /** What distinguishes a run on one kind of host from a run on the other. */
 interface Target {
   readonly kind: HostKind;
-  /** The model the session is created with; absent, OpenCode's own default for the host decides. */
+  /** The connection's model a runtime run brings, declared on the host before its session is created. */
+  readonly runner?: RunnerModel;
+  /** The model the session is created with on the user's OpenCode; absent, OpenCode's own default decides. */
   readonly model?: { readonly providerID: string; readonly id: string };
   readonly settings: SessionSettings;
 }
@@ -143,12 +144,14 @@ async function runSession(target: Target, profile: AgentProfile, opts: RunAgentO
     if (started === TIMED_OUT) return failed(start, "timeout", `${name} timed out during startup after ${timeoutMs}ms`);
     handle = started;
     const { host, sessions } = handle;
+    if (target.runner) await handle.models.declare(target.runner);
+    const model = target.runner ? { providerID: target.runner.providerID, id: target.runner.modelID } : target.model;
 
     const session = await host.sessions.create({
       title: "akm",
       metadata: { akm: modelWork ? "model-work" : "agent" },
       location: { directory: opts.cwd ?? process.cwd() },
-      ...(target.model ? { model: target.model } : {}),
+      ...(model ? { model } : {}),
       ...(!modelWork && dispatch?.agent ? { agent: dispatch.agent } : {}),
       ...(modelWork ? { permissions: MODEL_WORK_PERMISSIONS } : {}),
     });
@@ -195,31 +198,21 @@ async function runSession(target: Target, profile: AgentProfile, opts: RunAgentO
 
 /**
  * Run one prompt on akm's internal runtime: the embedded OpenCode driven by the
- * connection the run resolved to. The connection's endpoint is the host's
- * provider (`./runtime-config.ts`); the run contributes its model, request fields
- * and key.
+ * connection the run was dispatched with. Nothing below this point reads config:
+ * the connection's endpoint, model and window become the provider the session runs
+ * on (`./runner-models.ts`), and its key and request fields are the session's.
  */
 export function runOpencodeSdk(
   profile: AgentProfile,
   opts: RunAgentOptions,
   connection: ChatCompletionConfig,
 ): Promise<AgentRunResult> {
-  // Chat sends any model name; OpenCode offers only the models a provider declares. An exact name outside the
-  // connection's alias map runs on one of its declared models and replaces that name in the session's requests.
-  const declared = declaredModels(loadConfig().connections, profile.name);
-  const undeclared = declared.length > 0 && !declared.includes(connection.model);
   return runSession(
     {
       kind: "runtime",
-      model: {
-        providerID: runtimeProviderId(profile.name),
-        id: undeclared ? (declared[0] ?? connection.model) : connection.model,
-      },
+      runner: runnerModel(connection),
       settings: {
-        requestFields: {
-          ...effectiveRequestFields(connection.request, connection.inference),
-          ...(undeclared ? { model: connection.model } : {}),
-        },
+        requestFields: effectiveRequestFields(connection.request, connection.inference),
         ...(connection.apiKey ? { apiKey: connection.apiKey } : {}),
       },
     },

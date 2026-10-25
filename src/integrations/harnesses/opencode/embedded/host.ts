@@ -7,11 +7,12 @@
  *
  * A process runs at most two, created on first use and kept until
  * {@link closeOpencodeSdk}: the `runtime` host, akm's own agent runtime driven
- * by the user's connections, and the `opencode` host, the user's own OpenCode
- * (their config, providers and logins) for the opencode harness. A host serves
- * any number of sessions; what differs per session (model, environment, request
- * fields) is set on the session, never on the host, so a host is never keyed by
- * its configuration.
+ * by the connections its runs bring, and the `opencode` host, the user's own
+ * OpenCode (their config, providers and logins) for the opencode harness. A host
+ * serves any number of sessions; what differs per session (model, environment,
+ * request fields) is set on the session, and the connection a runtime run brings
+ * is declared on the host as it arrives, so a host is never keyed by its
+ * configuration.
  *
  * The SDK itself is reached only through `./sdk-host.ts`. Everything here and in
  * the runner depends on the narrow {@link EmbeddedHost} below.
@@ -20,6 +21,7 @@
 import { isRecord } from "../../../../core/common";
 import { type HostKind, type HostSpec, specFor } from "./host-spec";
 import type { SessionRegistry } from "./plugin";
+import { RunnerModels } from "./runner-models";
 import { createSdkHost } from "./sdk-host";
 
 /** The text every session on a host is answered with when it asks for something only a person could give. */
@@ -69,10 +71,11 @@ export interface EmbeddedHost {
   close(): Promise<void>;
 }
 
-/** A started host, with the settings of the sessions it is running. */
+/** A started host, with the settings of the sessions it is running and the models its runs have brought. */
 export interface HostHandle {
   readonly host: EmbeddedHost;
   readonly sessions: SessionRegistry;
+  readonly models: RunnerModels;
 }
 
 const hosts = new Map<HostKind, Promise<HostHandle>>();
@@ -110,9 +113,10 @@ async function answerRequests(host: EmbeddedHost, signal: AbortSignal): Promise<
 
 async function start(kind: HostKind): Promise<HostHandle> {
   const sessions: SessionRegistry = new Map();
+  const models = new RunnerModels();
   let started: EmbeddedHost | undefined;
   const host = await createHost(
-    specFor(kind, sessions, async (sessionID, variables) => {
+    specFor(kind, sessions, models, async (sessionID, variables) => {
       await started?.sessions.environment({ sessionID, variables });
     }),
   );
@@ -122,6 +126,7 @@ async function start(kind: HostKind): Promise<HostHandle> {
   const close = host.close.bind(host);
   return {
     sessions,
+    models,
     host: Object.assign(host, {
       close: async () => {
         stop.abort();

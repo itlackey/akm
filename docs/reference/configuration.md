@@ -257,8 +257,10 @@ installed beyond akm.
 
 - It uses your connections and nothing of your OpenCode. It loads none of your
   OpenCode configuration, plugins, MCP servers or agents, and OpenCode's free
-  models are off. Each connection is a provider named `akm-<connection>`, whose
-  models are the connection's.
+  models are off. The connection a run is dispatched with (its endpoint, model
+  and context window, as they were when the run was planned) is declared as a
+  provider of its own when the run starts, so a connection edited or removed
+  afterwards cannot redirect a run that was already planned.
 - It has OpenCode's tools, editing files and running commands included, and
   akm's `akm_search`, `akm_show` and `akm_curate`.
 - Its own files live under `opencode/` in akm's data, cache and state

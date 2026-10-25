@@ -10,6 +10,9 @@
  *   A call records its usage event under the source of the run it is in (the
  *   session's `AKM_EVENT_SOURCE`), so model work's own reads never count as user
  *   demand.
+ * - **The models of the runs it serves**: a run's connection is declared as a
+ *   provider of its own when the run asks (`./runner-models.ts`), so the host
+ *   never reads config.
  * - **Per-session request settings**: what a call resolves to differs from
  *   session to session on one shared host: the request fields (the connection's
  *   and model entry's, and the portable settings of the call, in the endpoint's
@@ -24,6 +27,7 @@ import type { Plugin } from "@opencode/plugin";
 import { isRecord, toErrorMessage } from "../../../../core/common";
 import { mergeRequestFields } from "../../../../core/llm-inference";
 import { AKM_READ_TOOLS } from "../../../agent/akm-read-tools";
+import type { RunnerModels } from "./runner-models";
 
 /** What akm knows about one session on a host, from `sessions.create` until the run ends. */
 export interface SessionSettings {
@@ -78,15 +82,18 @@ async function withSettings(request: Request, { requestFields, apiKey }: Session
 
 /**
  * `setEnvironment` sets a session's environment on the host the plugin is loaded
- * into; a subagent session gets its run's.
+ * into; a subagent session gets its run's. `models` holds the connections the
+ * host's runs bring.
  */
 export function akmPlugin(
   sessions: SessionRegistry,
+  models: RunnerModels,
   setEnvironment: (sessionID: string, variables: Record<string, string>) => Promise<void>,
 ): Plugin.Plugin {
   return {
     id: "akm",
     setup: async (ctx) => {
+      const detach = await models.attach(ctx.provider);
       await ctx.tool.transform((editor) => {
         for (const tool of AKM_READ_TOOLS) {
           editor.add({
@@ -119,6 +126,7 @@ export function akmPlugin(
         }
         if (settings) event.request = await withSettings(event.request, settings);
       });
+      return detach;
     },
   };
 }

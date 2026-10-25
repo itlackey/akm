@@ -604,9 +604,10 @@ Agent programs are reachable by two execution paths, both behind
   wiring), and only lazily, so the harness stays replaceable.
 - A process starts at most two hosts, each on first use and kept until
   `disposeDispatchResources()`: the **runtime** host, which is akm's own agent
-  runtime driven by the default connection (one provider per connection, its
-  models the connection's aliases, no OpenCode configuration of the user's, its
-  files under akm's data, cache and state directories), and the **opencode**
+  runtime driven by the connection a run was dispatched with (a provider
+  declared from that connection's endpoint, model and context window as the run
+  froze them, never from the live config; no OpenCode configuration of the
+  user's; its files under akm's data, cache and state directories), and the **opencode**
   host, which is the user's OpenCode for the `opencode` harness (their
   configuration, providers and default model, with their logins read from their
   OpenCode database). A host serves any number of sessions; what differs per

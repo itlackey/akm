@@ -10,8 +10,8 @@
  * of the host and the session is recorded in `calls`.
  *
  * The fake runs akm's plugin the way OpenCode would: it calls its `setup` with a
- * context that records the tools it registers and the session hooks it
- * subscribes, and for every prompt it runs the `http.request` hooks over the
+ * context that records the tools it registers, the providers it declares and the
+ * session hooks it subscribes, and for every prompt it runs the `http.request` hooks over the
  * model request OpenCode would send (`requestBody`, `requestHeaders`), so a test
  * sees what a session's requests would carry.
  *
@@ -75,12 +75,20 @@ export interface FakeOpencodeHosts {
   readonly specs: HostSpec[];
   /** The tools akm's plugin registered, by host kind. */
   readonly tools: Record<string, string[]>;
+  /** The providers akm's plugin declared on the hosts, by provider id: what OpenCode would route a session's model to. */
+  readonly providers: Map<string, FakeProvider>;
   /** Run a tool akm's plugin registered, as OpenCode would for a session on the host of `kind`. */
   runTool(kind: HostSpec["kind"], name: string, input: unknown, sessionID: string): Promise<{ content: string }>;
   /** A subagent session OpenCode starts under `parentID` on the host of `kind`. */
   spawnChild(kind: HostSpec["kind"], parentID: string): FakeChildSession;
   /** Hosts created and closed so far. */
   readonly lifecycle: { created: number; closed: number };
+}
+
+/** A provider akm's plugin declared, with the models it carries. */
+export interface FakeProvider {
+  readonly info: Record<string, unknown>;
+  readonly models: readonly Record<string, unknown>[];
 }
 
 /** A subagent session on the fake host. */
@@ -103,7 +111,10 @@ interface HookEvent {
 type ToolExecute = (input: unknown, context: { sessionID: string }) => Promise<{ content: string }>;
 
 /** Run the plugin's setup against a context that keeps what it registers. */
-async function loadPlugin(spec: HostSpec): Promise<{
+async function loadPlugin(
+  spec: HostSpec,
+  providers: Map<string, FakeProvider>,
+): Promise<{
   tools: string[];
   executes: Map<string, ToolExecute>;
   requestHooks: Array<(e: HookEvent) => Promise<void>>;
@@ -111,7 +122,18 @@ async function loadPlugin(spec: HostSpec): Promise<{
   const tools: string[] = [];
   const executes = new Map<string, ToolExecute>();
   const requestHooks: Array<(e: HookEvent) => Promise<void>> = [];
+  const providerEdits: Array<(editor: { add: (provider: FakeProvider) => void }) => void> = [];
+  const editor = { add: (provider: FakeProvider) => void providers.set(String(provider.info.id), provider) };
   const context = {
+    provider: {
+      transform: async (edit: (typeof providerEdits)[number]) => {
+        providerEdits.push(edit);
+        edit(editor);
+      },
+      reload: async () => {
+        for (const edit of providerEdits) edit(editor);
+      },
+    },
     tool: {
       transform: async (edit: (editor: { add: (tool: { name: string; execute: ToolExecute }) => void }) => void) =>
         edit({
@@ -134,6 +156,7 @@ async function loadPlugin(spec: HostSpec): Promise<{
 export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpencodeHosts {
   const calls: FakeOpencodeCall[] = [];
   const specs: HostSpec[] = [];
+  const providers = new Map<string, FakeProvider>();
   const tools: Record<string, string[]> = {};
   const executes: Record<string, Map<string, ToolExecute>> = {};
   const children: Record<string, FakeOpencodeHosts["spawnChild"]> = {};
@@ -142,7 +165,7 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
     await options.ready;
     lifecycle.created += 1;
     specs.push(spec);
-    const plugin = await loadPlugin(spec);
+    const plugin = await loadPlugin(spec, providers);
     tools[spec.kind] = plugin.tools;
     executes[spec.kind] = plugin.executes;
     const sessions = new Map<
@@ -300,5 +323,5 @@ export function installFakeOpencodeHost(options: FakeOpencodeOptions): FakeOpenc
     if (!spawn) throw new Error(`no ${kind} host`);
     return spawn(kind, parentID);
   };
-  return { calls, specs, tools, runTool, spawnChild, lifecycle };
+  return { calls, specs, tools, providers, runTool, spawnChild, lifecycle };
 }

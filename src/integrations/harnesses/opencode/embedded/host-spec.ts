@@ -7,8 +7,8 @@
  * carried out (`./sdk-host.ts` builds the real host from a {@link HostSpec}, a
  * test's fake host reads one).
  *
- * - The `runtime` host is akm's own agent runtime. It runs the user's
- *   connections and nothing of the user's OpenCode.
+ * - The `runtime` host is akm's own agent runtime. It runs the connections its
+ *   runs bring (`./runner-models.ts`) and nothing of the user's OpenCode.
  * - The `opencode` host is the user's OpenCode: their config directory,
  *   providers and default model, with their logins read from their own database
  *   (when it exists: akm never creates it) and akm's plugin added.
@@ -16,10 +16,10 @@
 
 import fs from "node:fs";
 import type { Plugin } from "@opencode/plugin";
-import { loadConfig } from "../../../../core/config/config";
 import { getDataDir } from "../../../../core/paths";
 import { akmOpencodeDatabasePath, opencodeConfigDirOverride, opencodeDatabasePath } from "../roots";
 import { akmPlugin, type SessionRegistry } from "./plugin";
+import type { RunnerModels } from "./runner-models";
 import { runtimeConfigContent } from "./runtime-config";
 
 export type HostKind = "runtime" | "opencode";
@@ -46,21 +46,22 @@ export interface HostSpec {
   readonly configDirectory?: string;
 }
 
-/** The spec of a new host of `kind`; `sessions` is the registry its plugin reads, `setEnvironment` how it sets a session's environment. */
+/** The spec of a new host of `kind`; `sessions` and `models` are what its plugin reads, `setEnvironment` how it sets a session's environment. */
 export function specFor(
   kind: HostKind,
   sessions: SessionRegistry,
+  models: RunnerModels,
   setEnvironment: (sessionID: string, variables: Record<string, string>) => Promise<void>,
 ): HostSpec {
   fs.mkdirSync(getDataDir(), { recursive: true });
   const database = akmOpencodeDatabasePath();
-  const plugin = akmPlugin(sessions, setEnvironment);
+  const plugin = akmPlugin(sessions, models, setEnvironment);
   if (kind === "runtime") {
     return {
       kind,
       database,
       plugin,
-      content: runtimeConfigContent(loadConfig().connections),
+      content: runtimeConfigContent(),
       isolated: true,
       fetchModels: false,
     };

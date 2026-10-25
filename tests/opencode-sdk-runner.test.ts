@@ -7,13 +7,13 @@
 // the endpoint receives are asserted; the fake host (tests/opencode-runtime-sessions.test.ts)
 // covers the rest.
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Plugin } from "@opencode/plugin";
 import { OpenCode } from "@opencode/sdk";
-import { loadConfig, resetConfigCache } from "../src/core/config/config";
+import { resetConfigCache } from "../src/core/config/config";
 import { getConfigDir, getDataDir } from "../src/core/paths";
 import { runtimeProfile } from "../src/integrations/agent/profiles";
 import {
@@ -22,6 +22,7 @@ import {
   hostFor,
 } from "../src/integrations/harnesses/opencode/embedded/host";
 import { runOpencodeSdk } from "../src/integrations/harnesses/opencode/embedded/run";
+import { runnerModel } from "../src/integrations/harnesses/opencode/embedded/runner-models";
 import { runtimeConfigContent } from "../src/integrations/harnesses/opencode/embedded/runtime-config";
 import { createSdkHost } from "../src/integrations/harnesses/opencode/embedded/sdk-host";
 import { akmOpencodeDatabasePath } from "../src/integrations/harnesses/opencode/roots";
@@ -40,24 +41,31 @@ const profile = runtimeProfile({
 });
 
 let model: FakeModelServer;
+let decoy: FakeModelServer;
 let connection: ChatCompletionConfig;
 let work: string;
 
 beforeAll(() => {
   model = startFakeModel();
+  decoy = startFakeModel();
   connection = { endpoint: model.url, model: "fake-model", apiKey: "test-key", contextLength: 40000 };
   work = fs.mkdtempSync(path.join(process.env.HOME ?? "/tmp", "sdk-work-"));
 });
 
-// The runtime's providers are the configured connections; the real factory builds the host.
+// A run is dispatched with its connection and reads no config: the live config names a different endpoint
+// under the same name, and nothing may ever reach it. The real factory builds the host.
 beforeEach(() => {
   writeSandboxConfig({
     connections: {
-      lab: { endpoint: model.url, models: { fast: "fake-model" }, contextLength: 40000, max_tokens: 4000 },
+      lab: { endpoint: decoy.url, models: { fast: "fake-model" }, contextLength: 1000, max_tokens: 10 },
     },
   });
   resetConfigCache();
   overrideSeam(_setOpencodeHostFactoryForTests, createSdkHost);
+});
+
+afterEach(() => {
+  expect(decoy.requests).toHaveLength(0);
 });
 
 afterAll(async () => {
@@ -65,6 +73,7 @@ afterAll(async () => {
   // The suite's data directory is shared with the files that run after this one.
   for (const suffix of ["", "-wal", "-shm"]) fs.rmSync(`${akmOpencodeDatabasePath()}${suffix}`, { force: true });
   model.stop();
+  decoy.stop();
 });
 
 const run = (prompt: string, extra: Parameters<typeof runOpencodeSdk>[1] = {}, using = connection) =>
@@ -134,15 +143,75 @@ describe("a run on akm's internal runtime", () => {
     expect(result.ok).toBe(true);
     expect(lastAnswer(before)?.params.model).toBe("not-listed");
   });
+});
 
-  test("a connection that is not configured fails the run, naming it", async () => {
+// The dispatched connection is the whole of a run's destination: its endpoint, key, model and window.
+describe("a run's connection is what it was dispatched with", () => {
+  const keyed = (key: string, endpoint = model.url): ChatCompletionConfig => ({ ...connection, endpoint, apiKey: key });
+
+  test("a connection the live config does not list runs, and the live config's endpoint of that name gets nothing", async () => {
+    const before = model.requests.length;
     const result = await runOpencodeSdk(
       { ...profile, name: "ghost" },
-      { cwd: work, dispatch: { prompt: "MODE:answer go" } },
-      connection,
+      { cwd: work, timeoutMs: 60_000, dispatch: { prompt: "MODE:answer go" } },
+      keyed("frozen-key"),
     );
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("akm-ghost/fake-model");
+    expect(result.ok).toBe(true);
+    expect(lastAnswer(before)?.authorization).toBe("Bearer frozen-key");
+  });
+
+  test("a connection edited or removed in the live config after it was frozen still runs against its own endpoint", async () => {
+    writeSandboxConfig({ connections: { lab: { endpoint: decoy.url, models: { fast: "other-model" } } } });
+    resetConfigCache();
+    const edited = model.requests.length;
+    expect((await run("MODE:answer edited", {}, keyed("edited-key"))).ok).toBe(true);
+    expect(lastAnswer(edited)?.authorization).toBe("Bearer edited-key");
+    writeSandboxConfig({});
+    resetConfigCache();
+    const removed = model.requests.length;
+    expect((await run("MODE:answer removed", {}, keyed("removed-key"))).ok).toBe(true);
+    expect(lastAnswer(removed)?.authorization).toBe("Bearer removed-key");
+  });
+
+  test("two frozen runners that share a name and differ in endpoint run side by side, each with its own key", async () => {
+    const second = startFakeModel();
+    try {
+      const results = await Promise.all([
+        run("MODE:answer first", {}, keyed("key-a")),
+        run("MODE:answer second", {}, keyed("key-b", second.url)),
+      ]);
+      expect(results.map((r) => r.ok)).toEqual([true, true]);
+      const seenBy = (server: FakeModelServer) =>
+        server.requests.filter((r) => r.mode === "answer").map((r) => r.authorization);
+      expect(seenBy(second)).toEqual(["Bearer key-b"]);
+      expect(seenBy(model).slice(-1)).toEqual(["Bearer key-a"]);
+      expect(seenBy(model)).not.toContain("Bearer key-b");
+    } finally {
+      second.stop();
+    }
+  });
+
+  test("an endpoint-only connection runs its explicit model, with no alias map anywhere", async () => {
+    writeSandboxConfig({ connections: { lab: { endpoint: decoy.url } } });
+    resetConfigCache();
+    const before = model.requests.length;
+    const result = await run("MODE:answer bare", {}, { ...connection, model: "explicit-model" });
+    expect(result.ok).toBe(true);
+    expect(lastAnswer(before)?.params.model).toBe("explicit-model");
+  });
+
+  test("a window with no output cap is kept: the run compacts when its context nears it", async () => {
+    // OpenCode's own assumption for an unstated window is 200,000 tokens, which a 38,000-token step does not near.
+    const before = model.requests.length;
+    const windowOnly: ChatCompletionConfig = { ...connection, contextLength: 40000 };
+    expect(windowOnly.request).toBeUndefined();
+    const result = await run("MODE:compact go", {}, windowOnly);
+    expect(model.requests.slice(before).some((r) => r.summarize)).toBe(true);
+    expect(result.ok).toBe(true);
+    const unstated = model.requests.length;
+    const { contextLength: _window, ...noWindow } = windowOnly;
+    await run("MODE:compact again", {}, noWindow);
+    expect(model.requests.slice(unstated).some((r) => r.summarize)).toBe(false);
   });
 });
 
@@ -249,7 +318,7 @@ describe("model work on the runtime's host", () => {
 });
 
 describe("the runtime's host", () => {
-  test("offers the connections' models and none of OpenCode's own free ones", async () => {
+  test("offers the models its runs brought and none of OpenCode's own free ones", async () => {
     // A probe plugin beside akm's keeps the context OpenCode hands plugins, to ask it which models a session may pick.
     let context: Parameters<Plugin.Plugin["setup"]>[0] | undefined;
     overrideSeam(_setOpencodeHostFactoryForTests, (spec) =>
@@ -271,16 +340,18 @@ describe("the runtime's host", () => {
       providerID: string;
       id: string;
     }>;
-    expect(models.map((m) => `${m.providerID}/${m.id}`)).toEqual(["akm-lab/fake-model"]);
+    expect(models.map((m) => `${m.providerID}/${m.id}`)).toEqual([`${runnerModel(connection).providerID}/fake-model`]);
   });
 
   test("rejects a permission request with a message, and the run carries on", async () => {
-    const { host } = await hostFor("runtime");
+    const { host, models } = await hostFor("runtime");
+    const declared = runnerModel(connection);
+    await models.declare(declared);
     const session = await host.sessions.create({
       title: "asks",
       metadata: { akm: "agent" },
       location: { directory: work },
-      model: { providerID: "akm-lab", id: "fake-model" },
+      model: { providerID: declared.providerID, id: declared.modelID },
       permissions: [{ action: "shell", resource: "*", effect: "ask" }],
     });
     await host.sessions.prompt({ sessionID: session.id, text: "MODE:shell ask first" });
@@ -307,10 +378,6 @@ describe("limits", () => {
   test("a unit timeout ends a turn promptly on an endpoint that is down", async () => {
     // OpenCode retries a failing endpoint with backoff for over a minute; the unit's timeout is what ends the turn.
     const down: ChatCompletionConfig = { ...connection, endpoint: "http://127.0.0.1:1/v1" };
-    writeSandboxConfig({
-      connections: { lab: { endpoint: down.endpoint, models: { fast: "fake-model" } } },
-    });
-    resetConfigCache();
     await closeOpencodeSdk();
     const started = Date.now();
     const result = await run("MODE:answer down", { timeoutMs: 2_000 }, down);
@@ -340,6 +407,7 @@ describe("what akm replaces in the embedded OpenCode", () => {
     expect(hangingRequests()).toBe(before + 1);
     await closeOpencodeSdk();
 
+    const declared = runnerModel(connection);
     const control = await OpenCode.create({
       database: { path: akmOpencodeDatabasePath() },
       models: { fetch: false },
@@ -347,7 +415,16 @@ describe("what akm replaces in the embedded OpenCode", () => {
         directory: fs.mkdtempSync(path.join(os.tmpdir(), "akm-sweep-control-")),
         project: false,
         claude: false,
-        content: JSON.stringify(runtimeConfigContent(loadConfig().connections)),
+        content: JSON.stringify({
+          ...runtimeConfigContent(),
+          provider: {
+            [declared.providerID]: {
+              npm: "@ai-sdk/openai-compatible",
+              options: { baseURL: declared.baseURL },
+              models: { "fake-model": {} },
+            },
+          },
+        }),
       },
     } as never);
     try {

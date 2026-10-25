@@ -8,15 +8,15 @@
 // applies to that session's requests, and how a timeout or abort ends a turn.
 // tests/opencode-sdk-runner.test.ts runs the same runner on the real OpenCode.
 
-import { beforeEach, describe, expect, test } from "bun:test";
-import { resetConfigCache } from "../src/core/config/config";
+import { describe, expect, test } from "bun:test";
 import { getConfigDir } from "../src/core/paths";
 import { runtimeProfile } from "../src/integrations/agent/profiles";
 import { closeOpencodeSdk, hostFor } from "../src/integrations/harnesses/opencode/embedded/host";
 import { runOpencodeSdk } from "../src/integrations/harnesses/opencode/embedded/run";
+import { runnerModel } from "../src/integrations/harnesses/opencode/embedded/runner-models";
 import type { ChatCompletionConfig } from "../src/llm/client";
 import { type FakeChildSession, installFakeOpencodeHost } from "./_helpers/fake-opencode-host";
-import { withEnv, writeSandboxConfig } from "./_helpers/sandbox";
+import { withEnv } from "./_helpers/sandbox";
 
 const profile = runtimeProfile({
   kind: "connection",
@@ -28,45 +28,55 @@ const profile = runtimeProfile({
 });
 const connection: ChatCompletionConfig = { endpoint: "https://lab.invalid/v1/chat/completions", model: "glm-5" };
 
-beforeEach(() => {
-  writeSandboxConfig({
-    connections: {
-      lab: {
-        endpoint: connection.endpoint,
-        apiKey: "$LAB_KEY",
-        contextLength: 32768,
-        models: { fast: "glm-5", balanced: { model: "glm-5.1", max_tokens: 2048 }, reasoning: "glm-5.1" },
-      },
-      other: { endpoint: "http://localhost:11434/v1", models: { fast: "qwen3" } },
-    },
-  });
-  resetConfigCache();
-});
-
 const run = (prompt: string, opts: Parameters<typeof runOpencodeSdk>[1] = {}, using = connection) =>
   runOpencodeSdk(profile, { timeoutMs: 5_000, ...opts, dispatch: { ...opts.dispatch, prompt } }, using);
 
 describe("the runtime host", () => {
-  test("has one provider per configured connection, listing its models, and OpenCode's free ones off", async () => {
+  test("is created with no provider of its own and OpenCode's free ones off, whatever the config lists", async () => {
     const { specs } = installFakeOpencodeHost({ reply: () => "ok" });
     await run("p");
     expect(specs).toHaveLength(1);
     expect(specs[0]).toMatchObject({ kind: "runtime", isolated: true, fetchModels: false });
-    expect(specs[0]?.content).toEqual({
-      disabled_providers: ["opencode"],
-      provider: {
-        "akm-lab": {
-          npm: "@ai-sdk/openai-compatible",
-          options: { baseURL: "https://lab.invalid/v1" },
-          models: { "glm-5": {}, "glm-5.1": { limit: { context: 32768, output: 2048 } } },
-        },
-        "akm-other": {
-          npm: "@ai-sdk/openai-compatible",
-          options: { baseURL: "http://localhost:11434/v1" },
-          models: { qwen3: {} },
-        },
+    expect(specs[0]?.content).toEqual({ disabled_providers: ["opencode"] });
+  });
+
+  test("declares the connection a run brings as a provider: its base URL, its model, its window and its cap", async () => {
+    const { providers, calls } = installFakeOpencodeHost({ reply: () => "ok" });
+    await run(
+      "p",
+      {},
+      {
+        ...connection,
+        endpoint: "https://lab.invalid/v1/chat/completions",
+        contextLength: 32768,
+        request: { max_tokens: 2048 },
       },
+    );
+    const provider = providers.get(calls[0]?.model?.providerID ?? "");
+    expect(provider?.info).toMatchObject({ activation: "enabled", settings: { baseURL: "https://lab.invalid/v1" } });
+    expect(provider?.models).toHaveLength(1);
+    expect(provider?.models[0]).toMatchObject({ id: "glm-5", limit: { context: 32768, output: 2048 } });
+  });
+
+  test("keeps OpenCode's own assumption for a window or cap the connection does not state", async () => {
+    const { providers, calls } = installFakeOpencodeHost({ reply: () => "ok" });
+    await run("p", {}, { ...connection, contextLength: 8192 });
+    expect(providers.get(calls[0]?.model?.providerID ?? "")?.models[0]).toMatchObject({
+      limit: { context: 8192, output: 32000 },
     });
+  });
+
+  test("declares connections that differ in endpoint, model or window as different providers, and one connection once", async () => {
+    const { providers, calls } = installFakeOpencodeHost({ reply: () => "ok" });
+    await run("a", {}, connection);
+    await run("b", {}, connection);
+    await run("c", {}, { ...connection, endpoint: "https://elsewhere.invalid/v1" });
+    await run("d", {}, { ...connection, model: "glm-5.1" });
+    await run("e", {}, { ...connection, contextLength: 4096 });
+    const ids = calls.map((call) => call.model?.providerID);
+    expect(ids[0]).toBe(ids[1]);
+    expect(new Set(ids).size).toBe(4);
+    expect(providers.size).toBe(4);
   });
 
   test("is started once and shared by every run, until it is closed", async () => {
@@ -97,30 +107,23 @@ describe("the runtime host", () => {
 });
 
 describe("a session on the runtime", () => {
-  test("is created with the connection's provider and the run's model, in the working directory", async () => {
+  test("is created with the run's model on the connection's provider, in the working directory", async () => {
     const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
     await run("p", { cwd: "/work/here" }, { ...connection, model: "glm-5.1" });
     expect(calls[0]).toMatchObject({
       kind: "runtime",
-      model: { providerID: "akm-lab", id: "glm-5.1" },
+      model: { providerID: runnerModel({ ...connection, model: "glm-5.1" }).providerID, id: "glm-5.1" },
       directory: "/work/here",
       metadata: { akm: "agent" },
     });
     expect(calls[0]?.permissions).toBeUndefined();
   });
 
-  test("an exact model name outside the alias map runs on a declared model and is sent as written", async () => {
+  test("an exact model name is the session's model and the request's, whatever the config lists", async () => {
     const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
     await run("p", {}, { ...connection, model: "glm-exact" });
-    expect(calls[0]?.model).toEqual({ providerID: "akm-lab", id: "glm-5" });
+    expect(calls[0]?.model?.id).toBe("glm-exact");
     expect(calls[0]?.requestBody.model).toBe("glm-exact");
-  });
-
-  test("a model the alias map lists is the session's model and the request's", async () => {
-    const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
-    await run("p", {}, { ...connection, model: "glm-5.1" });
-    expect(calls[0]?.model).toEqual({ providerID: "akm-lab", id: "glm-5.1" });
-    expect(calls[0]?.requestBody.model).toBe("glm-5.1");
   });
 
   test("carries the run's environment, and the persona as its instructions", async () => {
