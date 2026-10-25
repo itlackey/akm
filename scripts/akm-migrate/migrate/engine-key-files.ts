@@ -12,7 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { EngineKeyChange, EngineKeyFileInput, EngineKeyRole, EngineKeysPlan } from "./engine-key-planner";
-import { replaceAtomically, type TaskFileRoot, taskFileBackupPath, writeDurable } from "./task-files";
+import { replaceFilesWithBackups, type TaskFileRoot, walkRootFiles } from "./task-files";
 
 /** Where a stash keeps the files that can name an engine; a task root is itself the task directory. */
 const STASH_DIRECTORIES: ReadonlyArray<{ dir: string; role: EngineKeyRole; extension: string }> = [
@@ -26,38 +26,38 @@ const STASH_DIRECTORIES: ReadonlyArray<{ dir: string; role: EngineKeyRole; exten
 const MAX_ASSET_BYTES = 2 * 1024 * 1024;
 
 function collect(
+  root: TaskFileRoot,
   directory: string,
   role: EngineKeyRole,
   extension: string,
-  writable: boolean,
   out: Map<string, EngineKeyFileInput>,
 ): void {
-  let entries: fs.Dirent[];
+  let top: fs.Stats;
   try {
-    entries = fs.readdirSync(directory, { withFileTypes: true });
+    top = fs.lstatSync(directory);
   } catch (cause) {
-    if ((cause as NodeJS.ErrnoException).code === "ENOENT" || (cause as NodeJS.ErrnoException).code === "ENOTDIR") return;
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return;
     throw cause;
   }
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    const candidate = path.join(directory, entry.name);
-    // A link may lead anywhere; an asset behind one is the user's to rewrite.
-    if (entry.isSymbolicLink()) continue;
-    if (entry.isDirectory()) {
-      collect(candidate, role, extension, writable, out);
-      continue;
-    }
-    if (!entry.isFile() || !entry.name.endsWith(extension) || out.has(candidate)) continue;
-    const stat = fs.lstatSync(candidate);
-    if (stat.size > MAX_ASSET_BYTES) continue;
-    out.set(candidate, {
-      filePath: candidate,
-      bytes: fs.readFileSync(candidate),
-      mode: stat.mode & 0o777,
-      role,
-      writable,
-    });
-  }
+  // A link may lead anywhere; an asset behind one is the user's to rewrite.
+  if (!top.isDirectory()) return;
+  walkRootFiles(
+    root,
+    directory,
+    extension,
+    () => undefined,
+    (candidate) => {
+      const stat = fs.lstatSync(candidate);
+      if (stat.size > MAX_ASSET_BYTES || out.has(candidate)) return;
+      out.set(candidate, {
+        filePath: candidate,
+        bytes: fs.readFileSync(candidate),
+        mode: stat.mode & 0o777,
+        role,
+        writable: root.writable,
+      });
+    },
+  );
 }
 
 /** Every file under each root that can name an engine, as planner input. Read-only. */
@@ -65,37 +65,22 @@ export function inspectEngineKeyFiles(roots: readonly TaskFileRoot[]): EngineKey
   const files = new Map<string, EngineKeyFileInput>();
   for (const root of [...roots].sort((a, b) => a.bundleId.localeCompare(b.bundleId))) {
     if (root.layout === "akm-task") {
-      collect(root.root, "task", ".yml", root.writable, files);
+      collect(root, root.root, "task", ".yml", files);
       continue;
     }
     for (const { dir, role, extension } of STASH_DIRECTORIES) {
-      collect(path.join(root.root, dir), role, extension, root.writable, files);
+      collect(root, path.join(root.root, dir), role, extension, files);
     }
   }
   return [...files.values()].sort((a, b) => a.filePath.localeCompare(b.filePath));
 }
 
 /**
- * Write every `changed` file with its keys rewritten. Every original is backed
- * up under `backupRoot` before any file is touched, and a failed replace
- * restores the files already replaced from those backups.
+ * Write every `changed` file with its keys rewritten, under one backup (see
+ * {@link replaceFilesWithBackups}). Returns the paths it rewrote.
  */
 export function applyEngineKeysPlan(plan: EngineKeysPlan, options: { readonly backupRoot: string }): string[] {
   const changes = plan.files.filter((file): file is EngineKeyChange => file.status === "changed");
-  for (const change of changes) {
-    writeDurable(taskFileBackupPath(options.backupRoot, change.filePath), change.before, change.mode, true);
-  }
-  const replaced: typeof changes = [];
-  try {
-    for (const change of changes) {
-      replaceAtomically(change.filePath, change.after, change.mode);
-      replaced.push(change);
-    }
-  } catch (cause) {
-    for (const change of [...replaced].reverse()) {
-      replaceAtomically(change.filePath, change.before, change.mode);
-    }
-    throw cause;
-  }
+  replaceFilesWithBackups(changes, options.backupRoot);
   return changes.map((change) => change.filePath);
 }

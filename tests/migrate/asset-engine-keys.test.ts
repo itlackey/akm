@@ -287,6 +287,26 @@ describe("the step", () => {
     expect(fs.readFileSync(path.join(stash(), "commands/c.md"), "utf8")).toContain("harness: claude");
   });
 
+  test("the assets wait when the config step failed: nothing is rewritten and the step is absent from the plan", async () => {
+    // A credentials.json akm cannot write stops the config step.
+    fs.writeFileSync(path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "credentials.json"), "not json");
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: { primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } } },
+      engines: {
+        lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "m", apiKey: "sk-literal" },
+      },
+      defaults: { llmEngine: "lab" },
+    });
+    const file = write("commands/review.md", "---\nname: review\nakm:\n  engine: lab\n---\nReview it.\n");
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.failedSteps?.some((failure) => failure.step === "configFile")).toBe(true);
+    expect(plan.assetEngineKeys).toBeUndefined();
+    expect(fs.readFileSync(file, "utf8")).toContain("engine: lab");
+  });
+
   test("a bundle with no engine keys is current, and a config with no bundle is no error", async () => {
     configure();
     write("commands/clean.md", "---\nname: clean\n---\nClean.\n");

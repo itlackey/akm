@@ -17,6 +17,8 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import { runCliCapture } from "./_helpers/cli";
 import { makeSandboxDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
 
@@ -95,5 +97,40 @@ describe("akm config set --silent", () => {
     expect(setResult.code).toBe(0);
     expect(unsetResult.code).toBe(0);
     expect(unsetResult.stdout).toBe("");
+  });
+});
+
+describe("akm config unset on an entry the reader drops", () => {
+  test("is refused, naming the entry and why it is ignored, and leaves the file as it was", async () => {
+    const draft = { models: { fast: "m" } };
+    const { key, entry, after, before } = await withEnv(freshEnv(), async () => {
+      const file = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ configVersion: "0.9.0", connections: { draft } }));
+      const before = fs.readFileSync(file, "utf8");
+      const whole = await runCliCapture(["config", "unset", "connections.draft"]);
+      const nested = await runCliCapture(["config", "unset", "connections.draft.models.fast"]);
+      return { key: nested, entry: whole, after: fs.readFileSync(file, "utf8"), before };
+    });
+    for (const result of [entry, key]) {
+      expect(result.code).toBe(2);
+      const envelope = JSON.parse(result.stderr.slice(result.stderr.indexOf("{"))) as { code?: string; error?: string };
+      expect(envelope.code).toBe("TARGET_NOT_UPDATABLE");
+      expect(envelope.error).toContain('connection "draft", which akm ignores (endpoint');
+    }
+    expect(after).toBe(before);
+  });
+
+  test("an entry the reader uses is unset as ever", async () => {
+    const lab = { endpoint: "http://lab:1/v1", models: { fast: "m" } };
+    const { result, config } = await withEnv(freshEnv(), async () => {
+      const file = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ configVersion: "0.9.0", connections: { lab, other: lab } }));
+      const result = await runCliCapture(["config", "unset", "connections.other"]);
+      return { result, config: JSON.parse(fs.readFileSync(file, "utf8")) as { connections: Record<string, unknown> } };
+    });
+    expect(result.code).toBe(0);
+    expect(Object.keys(config.connections)).toEqual(["lab"]);
   });
 });

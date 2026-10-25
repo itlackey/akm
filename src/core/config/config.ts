@@ -46,7 +46,7 @@ import { writeCredential } from "./credentials";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
 import { planKeyMoves } from "./migrate-keys";
 import { modelsFileExists, readModelsFile, retireModelsFile } from "./models-file";
-import { dropUnusableEntries, findUnusableEntries } from "./unusable-entries";
+import { dropUnusableEntries, findUnusableEntries, type UnusableEntry } from "./unusable-entries";
 
 export { stripJsonComments } from "./config-io";
 
@@ -1056,6 +1056,24 @@ function configWriteBody(
   return ordered as AkmConfig;
 }
 
+/**
+ * The connection or harness that `key` (`connections.<name>[.…]`,
+ * `harnesses.<name>[.…]`) is inside, when the config file holds it and the reader
+ * drops it. `akm config` cannot edit an entry it cannot see.
+ */
+export function unusableEntryAt(key: string): (UnusableEntry & { group: "connections" | "harnesses" }) | undefined {
+  const [group, name] = key.split(".");
+  if (group !== "connections" && group !== "harnesses") return undefined;
+  const configPath = getConfigPath();
+  const text = readConfigText(configPath);
+  if (text === undefined) return undefined;
+  const localRaw = readRetiredEngines(readConfigFile(text, configPath), configPath);
+  const entry = findUnusableEntries(localRaw).find(
+    (found) => found.name === name && found.kind === (group === "connections" ? "connection" : "harness"),
+  );
+  return entry ? { ...entry, group } : undefined;
+}
+
 export interface ConfigFileNormalization {
   /** Top-level keys whose stored shape differs from the current one. */
   readonly keys: readonly string[];
@@ -1078,10 +1096,20 @@ export interface NormalizeConfigOptions {
   readonly resolveFromStore?: SecretStoreResolver;
 }
 
-/** A connection or harness the reader drops stays in the file exactly as written, with a note on what to fix. */
-function keepUnusableEntries(body: Record<string, unknown>, localRaw: Record<string, unknown>, notes: string[]): void {
+/**
+ * A connection or harness the reader drops stays in the file exactly as written,
+ * with a note on what to fix. One this file only half says, which an `extends`
+ * base completes, is not dropped (it is in `current`) and gets no note.
+ */
+function keepUnusableEntries(
+  body: Record<string, unknown>,
+  localRaw: Record<string, unknown>,
+  current: AkmConfig,
+  notes: string[],
+): void {
   for (const { kind, name, why } of findUnusableEntries(localRaw)) {
     const holder = kind === "connection" ? "connections" : "harnesses";
+    if (Object.hasOwn(current[holder] ?? {}, name)) continue;
     const entries = isRecord(body[holder]) ? (body[holder] as Record<string, unknown>) : {};
     body[holder] = { ...entries, [name]: (localRaw[holder] as Record<string, unknown>)[name] };
     notes.push(`${holder}.${name}: kept as written, and ignored by akm because ${why}. Fix it, or remove it.`);
@@ -1127,7 +1155,7 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       | undefined;
     if (strategies && Object.hasOwn(strategies, "graph-refresh")) delete strategies["graph-refresh"];
     const notes = [...converted.notes, ...plan.notes];
-    keepUnusableEntries(body, localRaw, notes);
+    keepUnusableEntries(body, localRaw, current, notes);
     const hasModelsFile = modelsFileExists();
     if (hasModelsFile) {
       notes.push(

@@ -280,6 +280,18 @@ describe("the entries the reader drops", () => {
     expect(notes).toContain("harnesses.Claude_Work: kept as written");
   });
 
+  test("are not claimed when an extends base completes them: no note, nothing kept as an orphan", () => {
+    fs.writeFileSync(
+      path.join(path.dirname(getConfigPath()), "base.json"),
+      JSON.stringify({ configVersion: "0.9.0", connections: { lab: { endpoint: "http://lab:8080/v1" } } }),
+    );
+    writeConfig({ extends: "base.json", connections: { lab: { models: { fast: "m" } } } });
+
+    const result = normalizeConfigFile(getConfigPath(), { apply: false, resolveFromStore });
+
+    expect(result.notes?.join("\n") ?? "").not.toContain("connections.lab");
+  });
+
   test("are kept when they are all the file holds", () => {
     writeConfig({ connections: { draft }, bundles: {} });
 

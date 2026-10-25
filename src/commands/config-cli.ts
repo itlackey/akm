@@ -24,6 +24,7 @@ import {
   mutateConfig,
   parseAndValidateConfigText,
   resolveConfigRefSource,
+  unusableEntryAt,
 } from "../core/config/config";
 import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
 import { isEnvReference } from "../core/config/schema/primitives";
@@ -231,6 +232,15 @@ export const configCommand = defineGroupCommand({
             `Config key "${args.key}" is inherited from ${source} and cannot be unset here.`,
             "TARGET_NOT_UPDATABLE",
             `Override it locally with "akm config set ${args.key} <value>", or edit the base file directly.`,
+          );
+        }
+        // An entry the reader drops is not in the config `unsetConfigValue` sees, so it would no-op and say ok.
+        const ignored = unusableEntryAt(args.key);
+        if (ignored) {
+          throw new UsageError(
+            `Config key "${args.key}" is inside ${ignored.kind} "${ignored.name}", which akm ignores (${ignored.why}), so \`akm config\` cannot edit it.`,
+            "TARGET_NOT_UPDATABLE",
+            `Remove or fix the ${ignored.group}.${ignored.name} entry in ${getConfigPath()} by hand.`,
           );
         }
         const result = mutateConfig((current) => unsetConfigValue(current, args.key), { absentNoop: true });

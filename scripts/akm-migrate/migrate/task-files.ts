@@ -60,26 +60,55 @@ function isWritable(filePath: string): boolean {
   }
 }
 
-function walkTasks(root: TaskFileRoot, tasksDir: string, out: TaskToV4FileInput[]): void {
+/**
+ * Visit every file ending in `extension` under `directory`, depth first in name
+ * order, never leaving the root's own bundle. A symbolic link is not followed:
+ * `onLink` says what it means (a task migration refuses one, an asset migration
+ * leaves it alone).
+ */
+export function walkRootFiles(
+  root: TaskFileRoot,
+  directory: string,
+  extension: string,
+  onLink: (link: string) => void,
+  visit: (file: string, parent: string) => void,
+): void {
   const physicalRoot = realDirectory(root.root);
   const physicalBundleRoot = realDirectory(root.bundleRoot ?? root.root);
   if (!contained(physicalBundleRoot, physicalRoot)) {
     throw migrationError(`${root.root} resolves outside bundle ${root.bundleId}.`);
   }
 
-  const visit = (directory: string): void => {
-    const physicalDirectory = fs.realpathSync(directory);
+  const walk = (current: string): void => {
+    const physicalDirectory = fs.realpathSync(current);
     if (!contained(physicalRoot, physicalDirectory)) {
-      throw migrationError(`${directory} resolves outside bundle ${root.bundleId}.`);
+      throw migrationError(`${current} resolves outside bundle ${root.bundleId}.`);
     }
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const candidate = path.join(directory, entry.name);
-      if (entry.isSymbolicLink()) throw migrationError(`task migration does not follow symbolic link ${candidate}.`);
-      if (entry.isDirectory()) {
-        visit(candidate);
+    for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const candidate = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) {
+        onLink(candidate);
         continue;
       }
-      if (!entry.isFile() || !entry.name.endsWith(".yml")) continue;
+      if (entry.isDirectory()) {
+        walk(candidate);
+        continue;
+      }
+      if (entry.isFile() && entry.name.endsWith(extension)) visit(candidate, current);
+    }
+  };
+  walk(directory);
+}
+
+function walkTasks(root: TaskFileRoot, tasksDir: string, out: TaskToV4FileInput[]): void {
+  walkRootFiles(
+    root,
+    tasksDir,
+    ".yml",
+    (link) => {
+      throw migrationError(`task migration does not follow symbolic link ${link}.`);
+    },
+    (candidate, directory) => {
       const stat = fs.lstatSync(candidate);
       const mode = stat.mode & 0o777;
       out.push({
@@ -89,9 +118,8 @@ function walkTasks(root: TaskFileRoot, tasksDir: string, out: TaskToV4FileInput[
         writable: root.writable,
         onDiskWritable: isWritable(candidate) && isWritable(directory) && (mode & 0o222) !== 0,
       });
-    }
-  };
-  visit(tasksDir);
+    },
+  );
 }
 
 /** Every `.yml` under each root's task directory, as planner input. Read-only. */
@@ -138,7 +166,7 @@ function fsyncDirectory(directory: string): void {
   }
 }
 
-export function writeDurable(filePath: string, bytes: Buffer, mode: number, exclusive = false): void {
+function writeDurable(filePath: string, bytes: Buffer, mode: number, exclusive = false): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const fd = fs.openSync(filePath, exclusive ? "wx" : "w", mode);
   try {
@@ -151,7 +179,7 @@ export function writeDurable(filePath: string, bytes: Buffer, mode: number, excl
   fsyncDirectory(path.dirname(filePath));
 }
 
-export function replaceAtomically(filePath: string, bytes: Buffer, mode: number): void {
+function replaceAtomically(filePath: string, bytes: Buffer, mode: number): void {
   const temporary = path.join(path.dirname(filePath), `.${path.basename(filePath)}.migrate-${crypto.randomUUID()}`);
   try {
     writeDurable(temporary, bytes, mode, true);
@@ -162,12 +190,42 @@ export function replaceAtomically(filePath: string, bytes: Buffer, mode: number)
   }
 }
 
+/** A file to replace: its path, its bytes before and after, and its mode. */
+export interface FileReplacement {
+  readonly filePath: string;
+  readonly before: Buffer;
+  readonly after: Buffer;
+  readonly mode: number;
+}
+
+/**
+ * Replace each file with its new bytes. Every original is backed up under
+ * `backupRoot` before any file is touched, and a failed replace restores the
+ * files already replaced from those backups.
+ */
+export function replaceFilesWithBackups(changes: readonly FileReplacement[], backupRoot: string): void {
+  for (const change of changes) {
+    writeDurable(taskFileBackupPath(backupRoot, change.filePath), change.before, change.mode, true);
+  }
+  const replaced: FileReplacement[] = [];
+  try {
+    for (const change of changes) {
+      replaceAtomically(change.filePath, change.after, change.mode);
+      replaced.push(change);
+    }
+  } catch (cause) {
+    for (const change of [...replaced].reverse()) {
+      replaceAtomically(change.filePath, fs.readFileSync(taskFileBackupPath(backupRoot, change.filePath)), change.mode);
+    }
+    throw cause;
+  }
+}
+
 /**
  * Write every `changed` file in its v4 shape. Each emitted document is
  * re-parsed by the runtime v4 parser first, so nothing the runtime cannot
- * read reaches disk; every original is backed up under `backupRoot` before
- * any file is touched; a failed replace restores the files already replaced
- * from those backups. Blocked files are left alone.
+ * read reaches disk; the replacement is {@link replaceFilesWithBackups}.
+ * Blocked files are left alone.
  */
 export function applyTaskFilesPlan(
   plan: TaskToV4MigrationPlan,
@@ -180,24 +238,6 @@ export function applyTaskFilesPlan(
       filePath: change.filePath,
     });
   }
-  for (const change of changes) {
-    writeDurable(taskFileBackupPath(options.backupRoot, change.filePath), change.before, change.mode, true);
-  }
-  const replaced: TaskToV4Changed[] = [];
-  try {
-    for (const change of changes) {
-      replaceAtomically(change.filePath, change.after, change.mode);
-      replaced.push(change);
-    }
-  } catch (cause) {
-    for (const change of [...replaced].reverse()) {
-      replaceAtomically(
-        change.filePath,
-        fs.readFileSync(taskFileBackupPath(options.backupRoot, change.filePath)),
-        change.mode,
-      );
-    }
-    throw cause;
-  }
+  replaceFilesWithBackups(changes, options.backupRoot);
   return { changed: changes.map((file) => file.filePath) };
 }

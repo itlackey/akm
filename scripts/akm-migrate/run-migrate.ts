@@ -171,12 +171,17 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   );
   // After the task files (a v2/v3 task file may still carry `engine:` until it is rewritten) and the
   // config (the names an engine had before its conversion come from that step's result).
-  const assetEngineKeys = await migrationStep(
-    failedSteps,
-    "assetEngineKeys",
-    () => (apply ? applyEngineKeysMigration(configFile?.engineTargets) : inspectEngineKeysMigration(configFile?.engineTargets)),
-    apply ? () => inspectEngineKeysMigration(configFile?.engineTargets) : undefined,
-  );
+  // A config the step could not read or write leaves the names unsettled, so the assets wait for a run that can.
+  const configFailed = failedSteps.some((failure) => failure.step.startsWith("configFile"));
+  const engineTargets = configFile?.engineTargets;
+  const assetEngineKeys = configFailed
+    ? undefined
+    : await migrationStep(
+        failedSteps,
+        "assetEngineKeys",
+        () => (apply ? applyEngineKeysMigration(engineTargets) : inspectEngineKeysMigration(engineTargets)),
+        apply ? () => inspectEngineKeysMigration(engineTargets) : undefined,
+      );
   // Resolving the stash dir runs as its own step: a config that fails to
   // load here is this step's own failure, not an uncaught throw out of
   // `runMigration`.
