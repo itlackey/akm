@@ -120,7 +120,7 @@ export interface WorkflowUnitDiagnostic {
    * tokens resolve to right now.
    */
   orchestration?: WorkflowStepOrchestrationSummary;
-  /** Journaled resolved runtime kind for a frozen-engine unit. */
+  /** Journaled resolved runtime kind for a frozen unit. */
   runtimeKind: WorkflowRuntimeKind | null;
   platform: string | null;
 }
@@ -191,8 +191,8 @@ export interface WorkflowNextResult {
   done?: true;
   autoStarted?: true;
   /**
-   * Non-fatal notices produced when THIS invocation created the run (e.g. the
-   * implicit engine fallback). Only present on the auto-start path — a resume
+   * Non-fatal notices produced when THIS invocation created the run (a param
+   * that looks like a secret). Only present on the auto-start path — a resume
    * never re-surfaces a decision it did not make.
    */
   startWarnings?: string[];
@@ -211,7 +211,7 @@ export interface CompleteWorkflowStepInput {
    */
   summary?: string;
   /**
-   * Optional override for the summary-validation judge. When omitted the engine
+   * Optional override for the summary-validation judge. When omitted the run loop
    * builds one from the judge frozen into the run plan.
    * Injected primarily for tests.
    */

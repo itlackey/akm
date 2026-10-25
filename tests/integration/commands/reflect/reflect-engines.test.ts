@@ -46,12 +46,12 @@ const PROSE = "I have improved the asset.";
 const SCHEMA_INSTRUCTION = "\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n";
 const REPAIR_REQUEST = "could not be extracted using the required output contract";
 
-/** The replies an engine gives to its first, second, … dispatch; the last one repeats. */
+/** The replies a connection or harness gives to its first, second, … dispatch; the last one repeats. */
 const SCENARIOS: Record<string, readonly string[]> = {
   valid: [reflectReply(PATCH)],
   repair: [PROSE, reflectReply(PATCH)],
   invalid: [PROSE],
-  // What the engine says to a reflect run that names no asset: the asset, too.
+  // What the model says to a reflect run that names no asset: the asset, too.
   unscoped: [reflectReply(PATCH, { ref: REF })],
   // The first pass needs its repair; the second pass replies in prose again.
 };
@@ -89,7 +89,7 @@ interface Transport {
   engine(scenario: string): Record<string, unknown>;
   /** Each dispatch's prompt, in order. */
   prompts(scenario: string): string[];
-  /** The schema the engine received as a native channel, if it has one. */
+  /** The schema the connection received as a native channel, if it has one. */
   nativeSchema?(): unknown;
 }
 
@@ -118,7 +118,7 @@ const CLAUDE: Transport = {
 
 const TRANSPORTS: [string, Transport][] = [LLM, CLAUDE].map((transport) => [transport.name, transport]);
 
-/** Reflect `REF` on `transport`'s engine for `scenario`, with the quality gate off. */
+/** Reflect `REF` on `transport`'s connection or harness for `scenario`, with the quality gate off. */
 function reflect(transport: Transport, scenario: string, options: Parameters<typeof akmReflect>[0] = {}) {
   const config = {
     configVersion: "0.9.0",
@@ -235,7 +235,7 @@ describe("reflect asks every engine kind for the same JSON reply", () => {
     expect(completedEvent()).toMatchObject({ source: "reflect", engine: "contract", outputMode: "json_schema" });
   });
 
-  // An LLM gets the schema as response_format; an agent engine gets it as the one instruction at the end of its prompt.
+  // A connection gets the schema as response_format; a harness gets it as the one instruction at the end of its prompt.
   test.each(TRANSPORTS)("%s: the reply's JSON Schema is the request's output schema", async (name, transport) => {
     await reflect(transport, "valid");
 
@@ -288,7 +288,7 @@ describe("reflect repairs an invalid reply once, on every engine kind", () => {
     if (result.ok) throw new Error("expected a failure");
     expect(result).toMatchObject({ reason: "parse_error", engine: "contract" });
     expect(result.stdout?.trim()).toBe(PROSE);
-    // The parser's own message, on every engine kind: improve feeds a failed reflect's error into later prompts.
+    // The parser's own message, on a connection and a harness alike: improve feeds a failed reflect's error into later prompts.
     expect(result.error).toBe("direct reflect response was not valid JSON");
     expect(transport.prompts("invalid")).toHaveLength(2);
     expect(listProposals(storage.stashDir)).toEqual([]);

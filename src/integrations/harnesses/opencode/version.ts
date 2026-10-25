@@ -89,7 +89,7 @@ export function parseOpencodeMajor(versionOutput: string): number | undefined {
 }
 
 /**
- * The binary an OpenCode engine runs: its own `bin` when it sets one, else the
+ * The binary an OpenCode harness runs: its own `bin` when it sets one, else the
  * most recent OpenCode on PATH (`opencode2` when present, else `opencode`).
  */
 export function resolveOpencodeBin(explicitBin?: string, which?: Which): string {

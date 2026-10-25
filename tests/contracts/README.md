@@ -20,7 +20,7 @@ section names are intentionally absent from this active suite.
 | File | Current contract |
 | --- | --- |
 | `quality-rules.test.ts` | Runtime quality normalization and proposed filtering |
-| `configuration.test.ts` | Engine/strategy schema and source write constraints |
+| `configuration.test.ts` | Connection, harness and strategy schema, source write constraints, and the retired-selector scan over the active docs |
 | `runtime-boundaries.test.ts` | Current search/show/write/storage architecture |
 | `module-boundaries.test.ts` | Current module-boundary anchors |
 | `extension-points.test.ts` | Supported source and registry provider boundaries |

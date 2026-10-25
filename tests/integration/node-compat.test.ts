@@ -39,6 +39,8 @@ import os from "node:os";
 import path from "node:path";
 import { BOUNDARY_MARKERS, NATIVE_CRASH_MARKER } from "../../scripts/node-runtime-markers";
 import { runCliCapture } from "../_helpers/cli";
+import { startFakeModel } from "../_helpers/fake-model-server";
+import { expectConnectionConfig, expectHarnessOnlyConfig, type SmokeRun } from "../_helpers/model-surface-smoke";
 import { withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const ENABLED = process.env.AKM_NODE_COMPAT_TESTS === "1";
@@ -71,6 +73,25 @@ function nodeRunAt(entry: string, args: string[], env: Record<string, string>, s
 
 function nodeRun(args: string[], env: Record<string, string>, stdin?: string): NodeResult {
   return nodeRunAt(CLI_ENTRY, args, env, stdin);
+}
+
+/** Like `nodeRun`, without blocking this process's event loop, so a model server living in it can answer. */
+function nodeRunAsync(args: string[], env: Record<string, string>): Promise<NodeResult> {
+  return new Promise((resolve) => {
+    const child = nodeSpawn(NODE_BIN, [CLI_ENTRY, ...args], {
+      env: { ...process.env, ...env, AKM_OUTPUT: "json", NO_COLOR: "1", CI: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("close", (status) => resolve({ status: status ?? -1, stdout, stderr }));
+  });
 }
 
 // Safety net for every `withEnv` override below: well under this file's own
@@ -758,6 +779,56 @@ describe("setup parity", () => {
   );
 });
 
+// ── models: connections, harnesses, health, info, agent work ─────────────────
+
+describe("model surface parity", () => {
+  afterEach(() => cleanup());
+
+  /** `nodeRun` for the shared model-surface sequences, with the boundary check every other test makes. */
+  const onNode: SmokeRun = (args) => {
+    const result = nodeRun(args, nodeEnv);
+    assertNoBoundaryLeak(result, args.join(" "));
+    return result;
+  };
+
+  test.skipIf(!ENABLED)(
+    "setup --endpoint, models, health and info report a connection on Node",
+    () => {
+      setupStorage();
+      expectConnectionConfig(onNode);
+    },
+    180_000,
+  );
+
+  test.skipIf(!ENABLED)("a config with only a harness is reported, and models points at setup, on Node", () => {
+    setupStorage();
+    expectHarnessOnlyConfig(onNode);
+  });
+
+  test.skipIf(!ENABLED)(
+    "agent work over a connection runs on akm's own runtime under Node",
+    async () => {
+      setupStorage();
+      const model = startFakeModel();
+      try {
+        configureConnection("default", {
+          endpoint: model.url,
+          models: { fast: "fake-model", balanced: "fake-model", reasoning: "fake-model" },
+        });
+        const run = await nodeRunAsync(["agent", "--prompt", "MODE:answer"], nodeEnv);
+        assertNoBoundaryLeak(run, "agent over a connection");
+        expect(run.status, `agent over a connection:\nstdout:\n${run.stdout}\nstderr:\n${run.stderr}`).toBe(0);
+        const envelope = parseJson(run.stdout) as { ok?: boolean; engine?: string; stdout?: string } | undefined;
+        expect(envelope).toMatchObject({ ok: true, engine: "default" });
+        expect(envelope?.stdout).toMatch(/^ANSWER-\d+$/);
+      } finally {
+        model.stop();
+      }
+    },
+    120_000,
+  );
+});
+
 // ── scope flags ───────────────────────────────────────────────────────────────
 
 describe("scope flag parity", () => {
@@ -872,7 +943,7 @@ describe("workflow smoke parity", () => {
 // Reviewer #9: bare `require(...)` in ESM modules throws
 // `ReferenceError: require is not defined` under Node. The offending sites were
 // on the workflow LLM paths — the summary-validation judge
-// (`buildDefaultSummaryJudge` → canonical engine resolution + `await import llm/client`)
+// (`buildDefaultSummaryJudge` → connection resolution + `await import llm/client`)
 // and the native unit dispatcher (`resolveUnitRunner`/`requireDefaultLlm` →
 // `await import` of `integrations/agent/config` and `core/config/config`). These
 // smokes drive those paths on the Node runtime with an LLM configured at a
@@ -962,7 +1033,7 @@ describe("workflow LLM import-site parity (reviewer #9)", () => {
       configureDeadLlm();
       writeJudgeWorkflow("judge-smoke");
 
-      // The gated exec step runs no engine, so the only LLM call is its frozen
+      // The gated exec step makes no model call, so the only LLM call is its frozen
       // judge. The dead endpoint rejects the gate, but the dynamic import must load.
       const run = nodeRun(["workflow", "run", "workflows/judge-smoke", "--max-steps=1"], nodeEnv);
       assertNoBoundaryLeak(run, "judge run");

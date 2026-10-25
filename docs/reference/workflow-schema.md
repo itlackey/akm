@@ -51,9 +51,9 @@ steps:
 The step needs a `## investigate` body section like any other step (it is
 documentation for a human; the child's own steps carry the instructions).
 
-- `workflow` names the child. A workflow unit reaches no engine and the child
-  carries its own environment, so `exec`, `engine`, `model`, `llm` and `env`
-  beside `workflow` are lint errors. `workflow` is not allowed inside
+- `workflow` names the child. A workflow unit runs no model of its own and the
+  child carries its own environment, so `exec`, `connection`, `harness`, `model`,
+  `llm` and `env` beside `workflow` are lint errors. `workflow` is not allowed inside
   `map.unit`.
 - `with:` binds the child's declared `params:` (a workflow has no `inputs:`).
   Each value is a literal (validated against the param's declared type at
@@ -159,12 +159,14 @@ families) plus the orchestration keys:
 - `params` — name → `{ type, description, default }` (JSON-Schema-typed, unlike a bare
   description string). A param the run does not supply takes its `default:`; an explicit
   value wins. Params are never required.
-- `defaults` — run-level dispatch defaults (`engine`, `model`, `llm`,
-  `timeout`, `on_error`), overridable per unit. `llm:` tuning reaches an engine
-  of any kind, and a document-level `llm:` reaches EVERY step. An LLM engine
-  sends it; an agent engine reports it as an `untranslated-field` notice on that
-  step (see
-  [Inference on an agent engine](configuration.md#inference-on-an-agent-engine)).
+- `defaults` — run-level dispatch defaults (`connection`, `harness`, `model`,
+  `llm`, `timeout`, `on_error`), overridable per unit. A step with neither runs
+  on the default harness, else akm's own runtime over the default connection.
+  `llm:` tuning (`temperature`, `max_tokens`, `enable_thinking`,
+  `reasoning_effort`) reaches every step, and a document-level `llm:` reaches
+  EVERY step. A connection and akm's own runtime send it; a harness reports it as
+  an `untranslated-field` notice on that step (see
+  [Settings a call asks for](configuration.md#settings-a-call-asks-for)).
   There is no per-step opt-out (`llm: {}` is a no-op and `llm: null` is a parse
   error), so in a mixed document put `llm:` on the `unit:` of each step it is
   meant for instead of in `defaults:`.
@@ -174,8 +176,8 @@ families) plus the orchestration keys:
   (`[A-Za-z_][A-Za-z0-9_-]*` — no dots) and **at most one** of `unit` or `map`.
   A step with neither is **still a unit step** — bare
   `- id: validate` is the complete minimal declaration. `unit:` is the
-  optional dispatch-override bag (`exec`, `engine`, `model`, `llm`, `timeout`,
-  `retry`, `on_error`, `output`, `env`; see
+  optional dispatch-override bag (`exec`, `connection`, `harness`, `model`,
+  `llm`, `timeout`, `retry`, `on_error`, `output`, `env`; see
   [Exec (shell) units](#exec-shell-units) and
   [Failure policy](#failure-policy)). Dispatch settings live under `unit:`
   (`map.unit:` on a map step), not on the step itself; `unit.output` types
@@ -267,7 +269,7 @@ type: workflow
 description: Review changed files and give an overall verdict
 params:
   changed_files: { type: array, description: Files to review }
-defaults: { engine: reviewer, model: balanced, timeout: 10m, on_error: fail }
+defaults: { harness: claude, model: balanced, timeout: 10m, on_error: fail }
 budget: { max_units: 40, max_tokens: 200000 }
 steps:
   - id: discover
@@ -278,8 +280,8 @@ steps:
       over: steps.discover.output.files
       concurrency: 8
       unit:
-        engine: reviewer
-        model: deep
+        harness: claude
+        model: reasoning
         timeout: 5m
         retry: { max: 1, on: [timeout, llm_rate_limit] }
         on_error: continue
@@ -491,20 +493,20 @@ fail later at `akm workflow run`:
 | `map.concurrency` | 1 – 64 |
 | `retry.max` | 0 – 100 |
 | `timeout` | ≤ 2147483647 ms (~24.8 days), or `none` |
-| `engine` names | `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`, ≤ 63 chars |
+| `connection` and `harness` names | `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`, ≤ 63 chars |
 
 `timeout` is resolved **once, at freeze time**, and the frozen value is what
-dispatch applies — there is no separate engine-side ceiling on top of it. The
+dispatch applies — there is no separate ceiling on top of it. The
 first of these that is set wins: the unit's `timeout`, then the document's
-`defaults.timeout`, then `engines.<name>.timeoutMs`, then the engine-kind
-default — **10m for `kind: llm` engines, and none for agent engines**, which
-manage their own process lifetime. Writing `timeout: none` is an explicit opt
+`defaults.timeout`, then the selected connection's or harness's `timeoutMs`,
+then the default — **10m on a connection, and none on a harness**, which
+manages its own process lifetime. Writing `timeout: none` is an explicit opt
 out and leaves the unit genuinely unbounded; nothing later re-imposes a cap.
 
 ## Exec (shell) units
 
 A step whose `unit:` block declares `exec:` runs a **shell command** instead of
-dispatching to an engine. Deterministic work — running the test suite, building,
+dispatching a model. Deterministic work — running the test suite, building,
 linting, copying a file, invoking a script — is a command, not a prompt, and
 paying for an LLM or agent dispatch to get it done buys nondeterminism, latency,
 and tokens in exchange for nothing.
@@ -520,10 +522,10 @@ steps:
       retry: { max: 1, on: [timeout] }
 ```
 
-An exec unit names **no engine**. It carries no `engine`, `model`, or `llm` (the
-parser rejects those alongside `exec:`), it consumes no tokens, and a workflow
-made only of exec steps freezes and runs on an install with no engine configured
-at all. Everything else about a unit still applies unchanged: `timeout`, `retry`,
+An exec unit names **no connection or harness**. It carries no `connection`,
+`harness`, `model`, or `llm` (the parser rejects those alongside `exec:`), it
+consumes no tokens, and a workflow made only of exec steps freezes and runs on an
+install with no connection or harness configured at all. Everything else about a unit still applies unchanged: `timeout`, `retry`,
 `on_error`, `output`, `env`, `map` fan-out and its concurrency, the
 unit journal, budget accounting, and replay/reuse.
 
@@ -581,7 +583,7 @@ full.
 | **Argv** | Spawned directly, never shell-interpreted. A `${ref}` token in an entry is replaced at dispatch. |
 | **Environment** | Starts empty: the [default allowlist](#the-childs-environment-is-an-allowlist) plus `pass_env`, then the unit's `env:` bindings, then the engine's `AKM_*` [context](#context-reaching-the-command). |
 | **`${ref}` tokens** | In argv, `cwd` and env-asset values. `${secrets/name}` becomes the secret's value, any other asset ref the asset's absolute path. A ref no bundle owns fails the unit before it spawns. Prompts are not substituted. |
-| **Redaction** | Only values substituted from `secrets/` refs, engine credentials and unsafe passthrough values are scrubbed from stdout, stderr, diagnostics and the journal. Configuration, such as a URL bound through an env asset, is not. |
+| **Redaction** | Only values substituted from `secrets/` refs, connection keys and unsafe passthrough values are scrubbed from stdout, stderr, diagnostics and the journal. Configuration, such as a URL bound through an env asset, is not. |
 
 #### What is frozen, and what is found at dispatch
 
@@ -930,14 +932,15 @@ env asset:
   or a channel id, reaches the journal and the next step unredacted. A
   credential typed straight into an env file is not redacted, so keep
   credentials in `secrets/` and bind them with a `${secrets/name}` token.
-- `env:` needs a child process: it works on exec units and on agent and SDK
-  engines. A unit on an `llm` engine that declares `env:` fails
-  `env_unsupported`.
+- `env:` needs a child process: it works on exec units and on every unit that
+  runs an agent, whether on a harness or on akm's own runtime. A model call that
+  runs no agent cannot take a per-unit environment and fails `env_unsupported`.
 
-#### Durable v4 (`irVersion: 7`) forbids `inherit_env`
+#### Durable v4 (`irVersion: 8`) forbids `inherit_env`
 
 Every new workflow start freezes the durable plan v4 family's current
-executable format (`irVersion: 7`; 5 and 6 still decode). It rejects
+executable format (`irVersion: 8`; a plan frozen earlier decodes when it holds no
+model step). It rejects
 `inherit_env: true` and any other request for whole-process inheritance; use
 exact named environment bindings and `pass_env:` instead. Both mechanisms are
 dispatch-significant, keep the visible environment surface bounded, and form
@@ -949,8 +952,8 @@ The historical `inherit_env` spelling is unsupported.
 
 `akm show <workflow> --format json` summarizes each step under
 `steps[].orchestration`. For an exec step that summary carries an `exec` object
-and **no `engine`/`model`** — an exec unit names no engine, so reporting the
-workflow's `defaults.engine` there would describe a dispatch that never
+and **no `engine`/`model`** — an exec unit runs on no connection or harness, so
+reporting the workflow's `defaults` there would describe a dispatch that never
 happens. Field presence is the discriminator, the same way `fanOut` marks a
 `map` step:
 
@@ -1062,18 +1065,16 @@ Raising one never raises the others:
 | --- | --- | --- |
 | `map.concurrency` | the step | `workflow.defaultMapConcurrency`, else **4** |
 | `execution.maxConcurrency` | `workflow.maxConcurrency` config | CPU-derived `min(16, max(1, cores − 2))` |
-| the selected LLM engine's concurrency | `engines.<name>.concurrency` | **1** for a loopback endpoint, **4** for a remote one |
+| the selected connection's concurrency | `connections.<name>.concurrency` | **1** for a loopback endpoint, **4** for a remote one |
 | the host CPU safety cap | nothing — reapplied at dispatch | `min(16, max(1, cores − 2))` |
 
-The engine limit is per **endpoint kind** on purpose. A local model server (LM
+The connection limit is per **endpoint kind** on purpose. A local model server (LM
 Studio, Ollama) has one loaded model, and concurrent inference makes it reload
 and return HTTP 500 — a hard failure, so loopback endpoints stay at 1 and a
 `map` against a local model is still effectively serial unless you raise
-`engines.<name>.concurrency` yourself. Remote providers fail softly (a
+`connections.<name>.concurrency` yourself. Remote providers fail softly (a
 retryable 429), and four concurrent completions is well inside any hosted
-provider's entry tier. Agent engines carry no concurrency limit of their own —
-except an `opencode-sdk` engine that sets `llmEngine`, which inherits that
-fallback engine's limit.
+provider's entry tier. A harness carries no concurrency limit of its own.
 
 #### What counts as a loopback endpoint
 
@@ -1095,15 +1096,15 @@ exactly as single-model as one on `127.0.0.1`.
 re-serializes the dotted form to the hex one before the check ever sees it. A
 mapped public address such as `[::ffff:8.8.8.8]` still reads as remote. The
 deprecated IPv4-compatible form `[::127.0.0.1]` is not recognized; if you use
-it, set `engines.<name>.concurrency: 1`.
+it, set `connections.<name>.concurrency: 1`.
 
 The check is **purely syntactic — it never resolves a name.** A frozen plan has
 to come out the same on your laptop, on CI, and on a machine with no network at
 all, and a DNS lookup would make the frozen width depend on what a resolver
 happened to answer. So a *name* that resolves to loopback (a hosts-file alias,
 `host.docker.internal`, an internal DNS record) is treated as **remote**; point
-the engine at the address itself, or set `engines.<name>.concurrency: 1`
-explicitly. In the other direction the classification is deliberately
+the connection's endpoint at the address itself, or set
+`connections.<name>.concurrency: 1` explicitly. In the other direction the classification is deliberately
 conservative: an endpoint akm cannot parse at all is treated as loopback, since
 freezing 4 for a config it does not understand is the failure worth avoiding.
 
@@ -1177,17 +1178,17 @@ verdict that cannot change. So a step whose unit is `exec:` still has its
 artifact judged and can still be failed by the verdict; a rejection simply lands
 on the first evaluation, carrying the same missing criteria and feedback the
 one-shot case does. `gate.max_loops` on such a step is capped at 1 rather than
-rejected, and an engine step's declared `max_loops` is untouched. This is the
+rejected, and a model step's declared `max_loops` is untouched. This is the
 same reasoning that makes an exec unit's `output:` schema miss fail without a
 corrective re-dispatch.
 
 **Fail-closed verification.** With no non-empty `### gate` rubric, no
-verification runs. When a rubric is present, the workflow requires
-`workflow.judgeEngine` to name a configured LLM or agent engine before the
-plan can be frozen — see
+verification runs. When a rubric is present, the workflow requires a
+connection or a harness to judge it before the plan can be frozen: the judge
+runs where model work runs (the default connection, else the default harness; see
+[Where each process runs](configuration.md#where-each-process-runs)) — see
 [Author's Guide: Troubleshooting](https://github.com/itlackey/akm/blob/main/docs/guides/author-workflows.md#troubleshooting)
-if that engine isn't configured yet. That verifier invocation is frozen into
-the run.
+if neither is configured yet. That verifier invocation is frozen into the run.
 
 Only a well-formed `complete: true` verdict advances a criteria-bearing step.
 A missing verifier, dispatch failure, or malformed result rejects the gate
@@ -1209,28 +1210,25 @@ budget means starting a new run.
 ## Model references
 
 Reference semantic aliases in `model:` fields instead of exact model ids so a
-workflow stays harness-agnostic. Aliases are defined only in the installed and
-optional user `models.json` files:
+workflow stays portable across machines. The standard aliases are `fast`,
+`balanced` and `reasoning`; each connection and harness says which of its models
+answers them (`connections.<name>.models`, `harnesses.<name>.models`; Claude Code
+ships a map of its own):
 
-```jsonc
-{
-  "version": 1,
-  "aliases": {
-    "fast": { "claude": "claude-haiku-4-5", "opencode": "opencode/claude-haiku-4-5" },
-    "balanced": { "claude": "claude-sonnet-4-6", "opencode": "opencode/claude-sonnet-4-6" },
-    "reasoning": { "claude": "claude-opus-4-7", "opencode": "opencode/claude-opus-4-7" }
-  }
-}
+```yaml
+defaults: { model: balanced }
+steps:
+  - id: review
+    unit:
+      model: reasoning
 ```
 
-Resolution checks the selected engine name or canonical harness column. A
-known alias without that column fails rather than guessing a provider model;
-an unknown string is treated as an exact model selector. A column may itself
-be an `engine`-backed indirection (0.9.15) rather than a literal model string
-— see [Model-map files](configuration.md#model-map-files) — so a step naming
-`model: fast` also benefits from whatever engine-backed mapping the operator
-configured for the selected engine, with no workflow-authored change. See the [Author's Guide](https://github.com/itlackey/akm/blob/main/docs/guides/author-workflows.md#choosing-engines-and-models)
-for guidance on which tier to pick per step.
+Resolution looks the alias up on the connection or harness the step runs on. A
+string that is not an alias is an exact model name and is used as written. An
+alias the connection does not map answers with that connection's first model; a
+harness with no model for it passes none and uses its own default. See
+[Aliases](configuration.md#aliases) for the full rules and the author's guide
+for [which tier to pick per step](https://github.com/itlackey/akm/blob/main/docs/guides/author-workflows.md#choosing-where-a-step-runs-and-which-model).
 
 ## See also
 

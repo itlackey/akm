@@ -10,7 +10,7 @@
  * Surface:
  *   • Types: AgentProfile, AgentRunResult, AgentFailureReason.
  *   • Profiles: getBuiltinAgentProfile, listBuiltinAgentProfiles.
- *   • Engine lowering lives in engine-resolution.ts; public config has no profile aliases.
+ *   • Which connection or harness a call runs on is resolved in resolution.ts; public config has no profile aliases.
  *   • Builder contract types: AgentDispatchRequest, BuiltCommand (harnesses/harness.ts).
  *   • Detection: detectAgentCliProfiles, defaultWhich.
  */

@@ -86,6 +86,11 @@ feedback signals and usage patterns, then generates proposals — it never
 writes directly to your bundle. By default, generated proposals always queue
 for review; the underlying autonomy gate and strategy configuration are
 covered in [Architecture: The Improvement Loop](../architecture/improvement.md).
+Its model calls run on your default connection, else your default harness
+(`--connection`, `--harness` and `--model` choose another for a run; see
+[Configuration](../reference/configuration.md#where-each-process-runs)). With
+neither, `akm improve` skips each process that needs a model, says so, and points
+at `akm setup`.
 
 ```sh
 akm improve                           # Full bundle pass
@@ -194,10 +199,11 @@ akm proposal accept abc12345           # write it to the bundle
 
 ## akm proposal new
 
-`akm proposal new` asks an engine to author a brand-new asset — useful
+`akm proposal new` asks an agent to author a brand-new asset — useful
 when you want to create something from scratch rather than improving an
-existing asset. Any engine kind works (an LLM engine, an agent CLI or
-`opencode-sdk`): the engine returns the asset as JSON, which akm validates.
+existing asset. It runs on your default harness, or on akm's own runtime over
+your connection when you have no harness (`--harness` and `--connection` choose
+another): the agent returns the asset as JSON, which akm validates.
 Output always goes to the proposal queue, never directly to the bundle.
 
 ```sh

@@ -55,9 +55,10 @@ the drift is invisible until a user hits the one that differs.
 Enforced by: `tests/harnesses-registry.test.ts` for the registry;
 `scripts/lint-secret-resolver-boundary.ts` for secret reads;
 `tests/contracts/module-boundaries.test.ts` for the module table. The write
-chokepoint and the no-direct-harness-imports rule are held by review; the
-opencode-sdk path still bypasses the second one in the config schema, setup,
-health, the engine fallback and workflow teardown, which is open work.
+chokepoint and the no-direct-harness-imports rule are held by review; akm's
+own runtime (reached from `src/integrations/agent/runner-dispatch.ts`, and not a
+registered harness) and the OpenCode plugin upgrade and staleness checks still
+import the OpenCode folder directly, which is open work.
 
 ### 3. One current shape per format, one converter
 
@@ -93,7 +94,7 @@ Every default works out of the box for the common case, which for anything
 touching a model means a slow local model on a single-threaded server: no
 `max_tokens` sent unless asked, one timeout, concurrency one against a
 loopback endpoint. Every default is overridable where it applies, per
-engine under `engines.<name>.*`, per workflow step, per command flag, and
+connection or harness under `connections.<name>.*` and `harnesses.<name>.*`, per workflow step, per command flag, and
 the override is honored as given. The tool never second-guesses a value
 the user set; the one place it still does, clamping a workflow fan-out width
 above 64, is debt rather than policy.
@@ -103,12 +104,12 @@ user; overrides that are ignored or capped behind the user's back lose
 their trust.
 
 Enforced by: `tests/workflows/concurrency-defaults.test.ts` and
-`tests/engine-resolution.test.ts`; the rest is review.
+`tests/resolution.test.ts`; the rest is review.
 
 ### 5. If it matters, a test or lint checks it
 
 Any rule we want to hold is pinned: output shapes and exit codes, the ref
-grammar, the module table, the engine boundary, that every command and
+grammar, the module table, the execution transport contract, that every command and
 flag named in a doc exists, that shipped assets carry no dead refs. The pin
 is a test under `tests/contracts/`, a unit test, or a script in the `lint`
 chain. A rule nobody pinned is a preference, and may change without
@@ -188,7 +189,7 @@ live under `src/commands/`. The one programmatic entry point is `akm-cli/api`
 (`src/api.ts`, which exports only `curate`), so the akm plugins can recall
 in-process; the `exports` map in `package.json` lists only `./api`,
 `./package.json` and `./dist/*`, and there are no barrel exports. Bun is the
-preferred runtime and the toolchain. Node 22 is the floor (`engines.node`):
+preferred runtime and the toolchain. Node 24 is the floor (`engines.node`):
 the npm package bootstraps through Node, and its launcher falls back to Node
 when no usable Bun is on `PATH`. Anything that would become another API for
 other programs is a separate decision, not an incidental export.
@@ -198,7 +199,7 @@ Why: an accidental API is a compatibility promise nobody agreed to make.
 Enforced by: `tests/contracts/api-surface.test.ts` (the export list),
 `tests/integration/install/package-exports.test.ts` (the `exports` map),
 `package.json` (`engines.node` and the `preinstall` check), and the
-`node-smoke` job in `.github/workflows/ci.yml` (Node 22 and 24).
+`node-smoke` job in `.github/workflows/ci.yml` (Node 24 and 26).
 
 ### 10. Agent harnesses are thin, replaceable internals
 
@@ -209,8 +210,8 @@ akm core, and can be replaced without touching the rest of akm.
 
 Why: heavy machinery and tight coupling are the opposite of akm's goals.
 
-Enforced by: review. The seam is `HARNESS_REGISTRY` (principle 2), which the
-opencode-sdk path still bypasses.
+Enforced by: review. The seam is `HARNESS_REGISTRY` (principle 2), which akm's own
+runtime and the OpenCode plugin checks still bypass.
 
 ### 11. Simple is not sloppy
 

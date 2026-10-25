@@ -13,7 +13,7 @@
  * resolved provenance into `dispatchPreparedCommandInvocation` via a new
  * `eventSource` option — the fix for R-07 (a command task run
  * previously never stamped `AKM_EVENT_SOURCE` anywhere, so its nested usage
- * was recorded as user demand). The dispatched engine's child env now carries
+ * was recorded as user demand). The dispatched harness's child env now carries
  * the stamp too, matching the native arm.
  *
  * F-2 (D8, spec §5.3): the result's `target` is now `{kind:"command", engine}`
@@ -46,7 +46,7 @@ export async function runPreparedCommandTask(input: {
   const dispatchOptions: DispatchPreparedCommandOptions = {
     ...(input.runAgentImpl ? { runAgent: input.runAgentImpl } : {}),
     // F-1 (R-07 fix, spec §5.2 point 3): threads the resolved event source
-    // into the dispatched engine's child env and the recorded usage events.
+    // into the dispatched harness's child env and the recorded usage events.
     eventSource: provenance.eventSource,
   };
   // Unset anywhere (task `timeout:`, command asset, connection or harness) → the

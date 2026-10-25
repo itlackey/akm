@@ -16,13 +16,15 @@ commands that drive a run, see [Running Workflows](../guides/run-workflows.md).
 ## Frozen plans
 
 The first `akm workflow run <ref>` compiles the Markdown source straight to
-the one plan type and stores it as durable plan **`irVersion` 7** on the run row
+the one plan type and stores it as durable plan **`irVersion` 8** on the run row
 (`plan_json` + `plan_hash`); a new start never emits an older version.
 `plan_ir_version` and `plan_hash` are recorded provenance, not gates: a stored
-plan is decoded as it is — irVersion 4, 5 and 6 plans included — and one frozen
-by an older or newer akm that still decodes simply runs (with one warning). A
-newer akm's plan that does not decode is refused with a message naming "Upgrade
-akm".
+plan is decoded as it is — irVersion 5, 6 and 7 plans that hold no model step
+included — and one frozen by an older or newer akm that still decodes simply
+runs (with one warning). A plan frozen before 8 with a model step recorded an
+engine where 8 records a connection or harness; it does not decode, and
+`akm workflow run` abandons it and starts afresh. A newer akm's plan that does
+not decode is refused with a message naming "Upgrade akm".
 
 The durable plan records `sourceHash`, the sha256 of the workflow source file
 at freeze. It is used only for the resume warning below, never to refuse a
@@ -191,8 +193,7 @@ the lock.
 
 Native fan-out (`akm workflow run`) uses the minimum of four limits: the
 map's declared `concurrency`, the run's frozen `workflow.maxConcurrency`, the
-selected frozen LLM engine's `concurrency` (including an SDK engine's
-fallback LLM), and the current host's CPU-derived safety limit. Reapplying
+selected frozen connection's `concurrency` (a harness has none), and the current host's CPU-derived safety limit. Reapplying
 host safety keeps a run safe when it resumes on a smaller machine.
 
 - **Unset (default):** the CPU-derived value `min(16, max(1, cores − 2))` — a

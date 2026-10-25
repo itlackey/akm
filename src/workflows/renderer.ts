@@ -59,16 +59,16 @@ function projectParameters(plan: WorkflowPlan): WorkflowParameter[] | undefined 
 
 /**
  * Compact, show-facing orchestration summary for one step. Field mapping:
- * `engine`/`model`/`timeoutMs` merge the run-level `defaults` exactly like the
+ * `engine` (the connection or harness a unit names), `model` and `timeoutMs` merge the run-level `defaults` exactly like the
  * compiler does (per-unit override wins), `fanOut.over` carries the raw
  * reference string.
  * Returns undefined when the step declares nothing worth summarizing.
  *
  * ## exec units
  *
- * An `exec` unit runs a shell command and names NO engine — the parser rejects
- * `engine`/`model`/`llm` alongside `exec:`. Merging `defaults.engine` into its
- * summary would make `show` state something untrue about what will run, so the
+ * An `exec` unit runs a shell command and names no connection or harness — the parser rejects
+ * `connection`/`harness`/`model`/`llm` alongside `exec:`. Merging the run's default
+ * into its summary would make `show` state something untrue about what will run, so the
  * two fields are suppressed and the argv is projected instead, under `exec`
  * (field presence carries the dispatch kind, exactly like `fanOut`
  * carries the step kind).

@@ -1,6 +1,6 @@
 # AKM Data & Telemetry
 
-AKM stores your data locally on your machine and has **no telemetry**: it does not send usage data, analytics, or crash reports to Anthropic or to the AKM project, and it has no servers of its own that receive your data. It does, however, make network requests to the endpoints **you** configure — your LLM/embedding provider, the registries and source hosts you install from, and GitHub for upgrades — and those endpoints necessarily receive whatever those requests contain. This document describes exactly what AKM reads, writes, and sends.
+AKM stores your data locally on your machine and has **no telemetry**: it does not send usage data, analytics, or crash reports to Anthropic or to the AKM project, and it has no servers of its own that receive your data. It does, however, make network requests to the endpoints **you** configure — your model connections and embedding provider, the harness programs you enable, the registries and source hosts you install from, and GitHub for upgrades — and those endpoints necessarily receive whatever those requests contain. This document describes exactly what AKM reads, writes, and sends.
 
 ## No Telemetry
 
@@ -12,10 +12,11 @@ AKM does not:
 
 AKM adds no network destinations of its own. The requests it *does* make all go to endpoints you chose or invoked, and those third parties receive whatever the request contains:
 
-1. **Your configured LLM/embedding provider** (e.g. Anthropic, OpenAI, a local Ollama, or any OpenAI-compatible endpoint) receives the prompts and asset content sent for reflect/propose/distill/embedding when you enable those features. If you point AKM at Anthropic, Anthropic receives those requests.
+1. **Your configured connections and embedding provider** (e.g. Anthropic, OpenAI, a local Ollama, or any OpenAI-compatible endpoint) receive the prompts and asset content sent for reflect/propose/distill/embedding when you enable those features, and `akm setup`, `akm models` and `akm health` ask each endpoint which models it serves. If you point AKM at Anthropic, Anthropic receives those requests. Your API key is sent only to the endpoint of the connection it belongs to.
+   **A harness you enable** (Claude Code, Codex, OpenCode, ...) is a program akm runs on your machine, and what akm hands it reaches whatever that harness is configured for: its own provider, its own tools, its own MCP servers. akm's own agent runtime (used when no harness is enabled) sends to your connection only.
 2. **Registry metadata and bundle packages** from sources you explicitly configure (GitHub, npm, git remotes, websites) — those hosts receive the fetch/clone/crawl requests, and website sources receive requests for the pages you crawl.
 3. **`akm upgrade`** — fetches the latest release from GitHub releases (GitHub sees the request).
-4. **`akm setup`** — a single DNS lookup for `github.com` to decide whether to skip network-dependent steps (Ollama detection, remote embedding probes) when offline. No HTTP request is made by this probe; if it succeeds, akm proceeds with the network-dependent steps you already configured.
+4. **`akm setup`** — looks for an OpenAI-compatible server on `localhost` (ports 11434, 1234 and 8080) with one `GET /v1/models` each, and asks the endpoint you give it (and the embedding endpoint, if you pick another) for its model list. `--no-probe` contacts none of them.
 5. **`akm improve` dead-link checks** — a full-scope improve run (the default for a bare `akm improve`) sends best-effort `HEAD` requests (following redirects, with a short per-request timeout, checked at a bounded concurrency rather than all at once) to every URL found in the bodies of the knowledge assets it is improving, to flag dead links. The hosts of those URLs see a `HEAD` request; no asset content is sent. Keep URLs you don't want probed out of knowledge-asset bodies, or run improve with an explicit narrower scope.
 
 In every case the receiving endpoint is one you configured or invoked; the data leaving your machine is the data you directed AKM to send there.
@@ -48,7 +49,8 @@ AKM writes to these locations on your machine. All paths follow [XDG Base Direct
 
 | Path | Contents | Safe to delete? |
 |---|---|---|
-| `config.json` | Your AKM configuration: engines, improve strategies, bundles (bundle sources), and experimental opt-ins — see [Configuration](configuration.md) | **No** — deleting resets all settings |
+| `config.json` | Your AKM configuration: connections, harnesses, improve strategies, bundles (bundle sources), and experimental opt-ins — see [Configuration](configuration.md) | **No** — deleting resets all settings |
+| `credentials.json` | The API keys akm holds for your connections, `embedding` and `search.curateRerank`, as a flat `{ "<name>": "<key>" }` map written with mode 0600 (see [Credentials](configuration.md#credentials)) | **No** — deleting it removes those keys; akm sends requests without them |
 
 Override: set `AKM_CONFIG_DIR` or `XDG_CONFIG_HOME`.
 
@@ -62,6 +64,8 @@ Override: set `AKM_CONFIG_DIR` or `XDG_CONFIG_HOME`.
 | `akm.lock` | Inter-process write lock | Yes — recreated automatically |
 | `backups/tasks/` | Copies of task files taken by `akm migrate apply` before it rewrites them, one timestamped directory per run that rewrote a file | Yes — once the migrated tasks are verified |
 | `akm.lock.lck` | Lock write sentinel | Yes — recreated automatically |
+| `opencode.db` | The sessions of akm's own agent runtime and of the OpenCode 2 harness (an OpenCode database; `akm proposal extract --type opencode` reads it back, read-only) | Yes — it loses that session history |
+| `opencode/` | The embedded OpenCode's own working files for akm's runtime: logs, repositories, shell output and a config directory. akm creates a matching `opencode/` under the state and cache directories | Yes — recreated on next use |
 
 Override: set `AKM_DATA_DIR` or `XDG_DATA_HOME`.
 
@@ -105,6 +109,7 @@ Everything in the cache is regenerable. It is safe to delete the entire cache di
 | `bin/` | Downloaded AKM binary cache (used by `akm upgrade`) | Yes |
 | `tasks/logs/` | Scheduled task log files. Written at your umask; they hold captured command/agent output, so tighten the directory yourself if the machine is shared | Yes — ephemeral logs |
 | `tasks/history/` | Legacy task history JSONL (v0.7 migration artifact) | Yes |
+| `opencode/model-work/` | The fixed working directory in which model work runs on the OpenCode 2 harness; `opencode/bin/` holds the embedded OpenCode's binaries | Yes |
 
 Override: set `AKM_CACHE_DIR` or `XDG_CACHE_HOME`.
 

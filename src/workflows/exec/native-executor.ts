@@ -978,7 +978,7 @@ async function dispatchUnit(
 // ── Default dispatcher (production substrate) ───────────────────────────────
 
 /**
- * Dispatch a frozen engine through the common prepare → lower → dispatch seam.
+ * Dispatch a frozen connection or harness through the common prepare → lower → dispatch seam.
  * No live profile/default/model map is consulted, and credentials remain
  * symbolic until the final dispatch boundary.
  */

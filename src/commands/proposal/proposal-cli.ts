@@ -492,10 +492,9 @@ const proposalDrainCommand = defineJsonCommand({
     }
 
     // `--older-than` is applied here as a pre-filter on excludeIds: ids that
-    // are too fresh are excluded so the engine never touches them. This reads
+    // are too fresh are excluded so the drain never touches them. This reads
     // the pending set once here; drainProposals reads the pending set again
-    // internally, so a future engine-level olderThan option could remove this
-    // second read (engine API owned by another agent — not changed here).
+    // internally.
     let excludeIds: Set<string> | undefined;
     if (olderThanMs !== undefined) {
       const { listProposals } = await import("./repository");

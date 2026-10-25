@@ -233,7 +233,7 @@ unit](../reference/workflow-schema.md#binding-a-secret-to-a-unit)). `pass_env:`
 values are not redacted.
 
 Workflow starts freeze the durable plan v4 family's current executable format
-(`irVersion: 7`), which rejects `inherit_env` instead of persisting an
+(`irVersion: 8`), which rejects `inherit_env` instead of persisting an
 unbounded ambient environment. Pre-`irVersion`-5 stored plans do not execute;
 start a new run after updating the source.
 
@@ -292,7 +292,7 @@ contract](../reference/workflow-schema.md#the-exec-contract).
 - **Don't assume your shell's environment.** The child gets an allowlist, not
   an inheritance. If a command fails with "not found" or reads a missing
   toolchain variable, name it in `pass_env:`; use a named `env:` binding for a
-  fixed or secret value. The durable v4 family (`irVersion: 7`) deliberately
+  fixed or secret value. The durable v4 family (`irVersion: 8`) deliberately
   has no whole-process fallback.
 - **A very chatty command still passes; its artifact just says so.** akm retains
   8 MiB of stdout and 8 MiB of stderr. Past that it keeps draining and discards,
@@ -395,14 +395,19 @@ If lint reports a very broken workflow, note that its errors are sorted by
 line, so fix from the top and re-run — the later ones are usually fallout from
 the first.
 
-## Choosing engines and models
+## Choosing where a step runs and which model
 
-Set `defaults.engine`/`defaults.model` (or per-unit `unit.engine`/`unit.model`)
-rather than hardcoding an exact model id, so the workflow stays
-harness-agnostic. Reference semantic aliases — `fast`, `balanced`, `reasoning`,
-or aliases defined in the installed/user `models.json` files — in `model:` fields; see
+A step that dispatches a model runs on your default harness, or on akm's own
+runtime over your default connection when you have no harness. Leave that to
+the machine the workflow runs on. Name one only when a step needs it:
+`harness:` or `connection:` in `defaults` (or per-unit `unit.harness` /
+`unit.connection`), where a name the machine has not configured is warned about
+and the default is used. Set `defaults.model`/`unit.model` to an alias rather
+than hardcoding an exact model id, so the workflow stays portable. The aliases
+are `fast`, `balanced`, `reasoning` and any a connection or harness maps in its
+`models`; see
 [Workflow Schema: Model references](../reference/workflow-schema.md#model-references)
-for the exact resolution order and config shape.
+for the exact resolution order.
 
 Point `reasoning` work at a capable model and keep high-volume fan-out units
 on `fast`/`balanced`. The richer example's `review` map step is a good template: `reasoning` on the
@@ -434,13 +439,13 @@ serial behavior wholesale — set
 `akm config set workflow.defaultMapConcurrency 1`.
 
 The declared width is a **ceiling, not a promise**. Three other limits clamp it
-and the smallest wins: `workflow.maxConcurrency`, the selected engine's
-`engines.<name>.concurrency`, and the host's CPU cap. The engine limit is the
-one that surprises people: an LLM engine pointed at **localhost defaults to 1**,
-because local model servers hold a single loaded model and fall over under
-concurrent requests — so a `map` against a local model stays serial no matter
-what the step declares, until you raise that engine's own `concurrency`. Remote
-LLM endpoints default to 4. See
+and the smallest wins: `workflow.maxConcurrency`, the selected connection's
+`concurrency`, and the host's CPU cap. The connection limit is the one that
+surprises people: a connection pointed at **localhost defaults to 1**, because
+local model servers hold a single loaded model and fall over under concurrent
+requests — so a `map` against a local model stays serial no matter what the step
+declares, until you raise that connection's own `concurrency`. Remote endpoints
+default to 4, and a step on a harness has no limit of this kind. See
 [Workflow Schema: Fan-out and concurrency](../reference/workflow-schema.md#fan-out-and-concurrency)
 for the full table.
 
@@ -490,8 +495,8 @@ blast radius before running it.
 
 4. **Deliberately break a gate once.** Run the workflow with params you
    expect to fail validation, and confirm the gate actually rejects rather
-   than silently passing — a missing `workflow.judgeEngine` or a malformed
-   verdict rejects the gate rather than bypassing it (see
+   than silently passing — a missing judge (no connection or harness to run
+   it) or a malformed verdict rejects the gate rather than bypassing it (see
    [Workflow Schema: Gates and verification](../reference/workflow-schema.md#gates-and-verification)),
    so this is worth confirming once per workflow rather than assuming.
 
@@ -538,25 +543,22 @@ for blocked-child recovery and the limits.
 
 ## Troubleshooting
 
-**Every workflow run needs a selected engine.** Freezing resolves an engine
-for each unit. With no `defaults.engine`, akm falls back to a config-free
-`opencode-sdk` engine, the OpenCode embedded in akm — provider, model, and auth
-come from OpenCode's own configuration — and announces it once in the run's
-`warnings`. The fallback needs nothing installed beyond akm.
+**A step that dispatches a model needs a harness or a connection.** Freezing
+resolves where each unit runs: its `unit.harness` or `unit.connection`, else the
+document's `defaults`, else your default harness, else akm's own runtime over
+your default connection. With none of those, freezing fails and the error points
+at `akm setup`. A workflow made only of exec steps needs neither.
 
-A workflow with a non-empty `### gate` additionally requires
-`workflow.judgeEngine` to name a configured LLM or agent engine — the gate
-judge is not covered by the fallback.
+A workflow with a non-empty `### gate` also needs one for the gate judge, which
+runs where model work runs: your default connection, else your default harness.
+An exec-only workflow with a gate still needs it.
 
-`akm setup` normally selects a default execution engine. On a bare container
-or CI image, either install opencode and let the fallback apply, or choose an
-engine explicitly:
+`akm setup` normally configures both. On a bare container or CI image, run it
+with the answers as flags, or add one by hand:
 
 ```sh
-npm i -g opencode-ai           # fallback route: puts `opencode` on PATH
-# ...or pick an engine yourself:
-akm config set engines.claude '{"kind":"agent","platform":"claude"}'
-akm config set defaults.engine claude
+akm setup --yes --endpoint http://localhost:11434/v1   # a model endpoint
+akm setup --yes --harness claude                       # or an agent program you have
 ```
 
 ## See also

@@ -114,7 +114,7 @@ export interface DispatchPreparedCommandOptions {
    * for `resolveUsageEventSource` — an ambient `AKM_EVENT_SOURCE` still wins
    * — used for the usage events recorded against any consumed command/persona
    * ref, and (b) stamps `AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE ??
-   * eventSource` into the child env handed to the dispatched engine (the
+   * eventSource` into the child env handed to the dispatched harness (the
    * `env` bag `runAgent`/`runSdk` receive), matching the native arm. Absent
    * (every non-task caller: `akm command run`, `akm agent`, …) this function
    * is byte-identical to before P1b.

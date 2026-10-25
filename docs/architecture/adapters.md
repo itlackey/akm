@@ -12,7 +12,7 @@ conversion: the adapter projects native files into AKM's index/runtime shapes
 while the source file remains authoritative. AKM does not synchronize native
 formats, maintain translated canonical copies, or write agent/command assets
 back through the Claude/OpenCode adapters. Execution of agent and command
-assets is described in [Architecture: Engine Boundary](architecture.md#engine-boundary).
+assets is described in [Architecture: Connections and Harnesses](architecture.md#connections-and-harnesses).
 
 > **Stability note.** The adapter set, bundle-recognition rules, and the
 > `bundles` config shape are still evolving — see [STABILITY.md](../../STABILITY.md).

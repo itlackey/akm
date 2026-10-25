@@ -6,8 +6,9 @@ By default it builds the local index and keeps metadata in the index.
 Metadata is generated deterministically (`src/indexer/passes/metadata.ts`);
 the LLM metadata-enhancement pass that used to run during indexing is
 retired (0.9.17-alpha.9, see CHANGELOG). There is no top-level `llm` config
-key in 0.9 — it is retired and hard-rejected at load; per-call tuning lives
-on each named engine under `engines.<name>.*`.
+key: it is an unknown key, named once and ignored; per-call tuning lives on a
+named connection under `connections.<name>.*` (see
+[Configuration](../../reference/configuration.md#connections)).
 
 ## High-Level Flow
 

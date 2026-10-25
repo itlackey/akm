@@ -4,7 +4,7 @@
 
 /**
  * `akm improve judge`: reflect's quality judge on a revision read from stdin,
- * with the engine the reflect quality gate names. Spawns the real CLI against a
+ * on the connection or harness the reflect quality gate names. Spawns the real CLI against a
  * stub chat-completions server.
  */
 

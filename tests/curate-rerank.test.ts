@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #951 — the "rerank engine kind" curate wiring: an optional cross-encoder
+ * #951 — the rerank wiring in curate: an optional cross-encoder
  * rerank pass over the top fused search candidates.
  *
  * Locks:

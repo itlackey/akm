@@ -46,7 +46,7 @@ const extraCleanups: Array<() => void> = [];
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
-  // Improve verbs resolve an engine before dispatch; the injected `chat`
+  // Improve verbs resolve a connection or harness before dispatch; the injected `chat`
   // stubs keep every call offline.
   saveConfig(
     withTestImproveLlm({

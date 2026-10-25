@@ -5,7 +5,7 @@
  * injected through the pass's `options` parameter to return deterministic
  * derived-memory drafts (no `mock.module`). These tests cover:
  *   - pending detection (parent vs already-inferred vs already-processed)
- *   - the disabled-by-default path (no index engine configured)
+ *   - the disabled-by-default path (no index connection configured)
  *   - the `index.memory.enabled = false` opt-out
  *   - derived memories written with `inferred: true` + `source:` backref
  *   - re-running the pass is idempotent (no duplicate children, parent stays

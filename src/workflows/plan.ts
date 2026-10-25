@@ -10,7 +10,7 @@
  * plan carries what the author wrote — each step's {@link WorkflowStepSpec},
  * the document `defaults`, display prose — and no execution
  * decisions. Freeze (`freeze/freeze.ts`) resolves every spec into a frozen
- * `root` (engine, model, concurrency, dispatch target), fills gate judges,
+ * `root` (connection or harness, model, concurrency, dispatch target), fills gate judges,
  * drops the compile-only fields, and records the source file's sha256. The
  * frozen plan is what `workflow_runs.plan_json` stores.
  *
@@ -212,7 +212,7 @@ export interface WorkflowGateNode {
   /** The `### gate` rubric, whole, as the one criterion; `[]` = no verification. */
   readonly criteria: string[];
   readonly maxLoops: number;
-  /** Filled at freeze; `null` when there are no criteria or no judge engine. */
+  /** Filled at freeze; `null` when there are no criteria or no judge connection or harness. */
   readonly frozenJudge: FrozenWorkflowCommandTarget | null;
 }
 

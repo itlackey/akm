@@ -6,7 +6,7 @@
  * Zod schema for AkmConfig — the single source of truth for the on-disk shape.
  *
  * ASSEMBLY BARREL: the individual section schemas live under `./schema/*` (one
- * cohesive module per config area — engines, embedding, improve, sources/
+ * cohesive module per config area — connections, harnesses, embedding, improve, sources/
  * bundles, index, search, output, feedback, workflow, setup, plus shared
  * `primitives`). This file assembles them into the top-level {@link AkmConfigShape}
  * / {@link AkmConfigSchema}, owns the cross-field {@link AkmConfigSchema.superRefine},

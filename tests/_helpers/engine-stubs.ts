@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Local stand-ins for the engines a per-engine test drives: an LLM stub on
- * 127.0.0.1 and a fake harness binary. Each replays scripted replies, so a test
- * sees what reached the engine and what the command did with the reply.
+ * Local stand-ins for what a test drives a command against: an LLM stub on
+ * 127.0.0.1 standing for a connection and a fake harness binary. Each replays scripted replies, so a test
+ * sees what reached it and what the command did with the reply.
  */
 
 import fs from "node:fs";
@@ -17,13 +17,13 @@ export interface LlmStubBody {
   response_format?: { json_schema?: { schema?: unknown } };
 }
 
-/** What an engine says to its `call`th request, from its scripted replies; the last one repeats. */
+/** What a connection or harness says to its `call`th request, from its scripted replies; the last one repeats. */
 export function scriptedReply(replies: readonly string[], call: number): string {
   return replies[Math.min(call, replies.length) - 1] ?? "";
 }
 
 /**
- * An LLM stub that answers by the first path segment of the engine's endpoint,
+ * An LLM stub that answers by the first path segment of the connection's endpoint,
  * with a list of scripted replies or a function of the request. `bodies` holds
  * every request body it has received, in order.
  */

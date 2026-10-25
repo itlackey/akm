@@ -39,9 +39,9 @@
  * Three sources, and the distinction between them is the whole design:
  *
  *  1. **Declared by config** — the config names which variables hold
- *     credentials (`engines.<n>.apiKey: ${VAR}`, `embedding.apiKey`, and the
- *     implicit `AKM_ENGINE_<NAME>_API_KEY` / `AKM_LLM_API_KEY` /
- *     `AKM_EMBED_API_KEY` recipes). akm KNOWS these are secret.
+ *     credentials (a connection's `apiKey: $VAR`, `embedding.apiKey`, the
+ *     reranker's) and which keys sit in `credentials.json`. akm KNOWS these
+ *     are secret.
  *  2. **Declared by the task** — the `redact:` list, names only.
  *  3. **Inferred** — a name-shape heuristic over the remaining environment, for
  *     the ambient credential akm was never told about.

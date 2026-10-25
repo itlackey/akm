@@ -10,7 +10,7 @@
  *
  * Coverage:
  *   1. Strict-provider-compatible schema shape and target identity derivation.
- *   2. Wiring: when `akmReflect` resolves a named LLM engine, the underlying
+ *   2. Wiring: when `akmReflect` resolves a named connection, the underlying
  *      `chatCompletion` call receives
  *      REFLECT_JSON_SCHEMA as `responseSchema`.
  *   3. Framed fallback, bounded parse repair, cancellation/deadline behavior,

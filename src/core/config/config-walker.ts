@@ -106,7 +106,7 @@ export function resolveSchemaAt(path: Path, config?: Record<string, unknown>, ra
         schema = next;
       }
     } else if (schema instanceof z.ZodRecord) {
-      // Named records (engines, improve.strategies, sources, etc.)
+      // Named records (connections, harnesses, improve.strategies, sources, etc.)
       // accept any string key — descend into the value schema.
       schema = schema._def.valueType;
     } else if (schema instanceof z.ZodUnion) {

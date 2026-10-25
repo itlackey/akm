@@ -5,11 +5,11 @@
 /**
  * P1.3 (meta-review 07, Chain G), as the model-work tool policy now states it:
  * unattended `akm improve` never hands reflect an agent that can write the
- * stash. An agent process engine runs under the policy (its own scratch
+ * stash. A process on a harness runs under the policy (its own scratch
  * directory, no stash access beyond `akm search`/`akm show`); one whose
  * harness cannot confine the policy runs unrestricted, in the same scratch
- * directory, with a notice; an LLM
- * process engine is honored as-is; with no engine to resolve, reflect fails
+ * directory, with a notice; a process on a
+ * connection is honored as-is; with no connection or harness to resolve, reflect fails
  * CLOSED instead of dispatching an agent.
  */
 

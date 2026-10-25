@@ -4,7 +4,7 @@
 
 /**
  * #952 — `renderReflectPromptPreview` (reflect.ts) renders the composed
- * reflect prompt for exactly one asset with no engine dispatch. `akm improve
+ * reflect prompt for exactly one asset with no model call. `akm improve
  * <ref> --show-prompt` (improve-cli.ts) is its CLI surface.
  *
  * Under tests/integration (not tests/) because the read-only helpers reused

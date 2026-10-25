@@ -1118,7 +1118,7 @@ describe("runTask — prompt target", () => {
       };
     };
 
-    // The prompt task resolves this named agent engine before dispatch.
+    // The prompt task resolves this named harness before dispatch.
     process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(

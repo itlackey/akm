@@ -125,7 +125,7 @@ describe("akm config unset on an entry the reader drops", () => {
     const result = await withEnv(freshEnv(), async () => {
       const file = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      // An LLM engine with no endpoint: the reader reads it as a connection it then drops.
+      // A 0.9 LLM engine with no endpoint: the reader reads it as a connection it then drops.
       fs.writeFileSync(
         file,
         JSON.stringify({

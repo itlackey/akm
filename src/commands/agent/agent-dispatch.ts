@@ -63,7 +63,7 @@ export interface AkmAgentDispatchResult {
   sessionId?: string;
   /** Non-fatal announcements, surfaced here so JSON consumers see them alongside the stderr `warn()`. */
   warnings?: readonly string[];
-  /** Secret-free optimistic-lowering diagnostics from the selected engine adapter. */
+  /** Secret-free optimistic-lowering diagnostics from the selected harness adapter. */
   notices?: readonly Readonly<LoweringNotice>[];
 }
 

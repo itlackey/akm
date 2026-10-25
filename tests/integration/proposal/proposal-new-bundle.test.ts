@@ -5,7 +5,7 @@
 /**
  * `akm proposal new --bundle <name>` queues the proposal for another configured
  * bundle. Drives the real CLI against a fake harness binary (the way
- * proposal-new-engines.test.ts does), with two configured bundles: the working
+ * proposal-new-harness.test.ts does), with two configured bundles: the working
  * bundle `work` and a second one, `other`.
  */
 

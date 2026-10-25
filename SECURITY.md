@@ -87,16 +87,17 @@ graph content to an arbitrary path.
 
 `akm improve` (whose strategies run processes such as reflect, distill, and
 consolidate) and `akm proposal new` can send asset frontmatter and body to the
-named LLM engine selected by the command, strategy, or current defaults. LLM
-connections live under
-`engines.<name>` in `~/.config/akm/config.json`. If you configure a third-party
-LLM, your asset content goes to that third party. Use a local engine endpoint
-(for example, `http://localhost:11434/v1/chat/completions` via Ollama) for assets
-containing secrets or private notes.
+connection (or harness) selected by the command, strategy, or current defaults.
+Connections live under `connections.<name>` in `~/.config/akm/config.json`,
+with their keys in the environment or in `~/.config/akm/credentials.json`. If you
+configure a third-party LLM, your asset content goes to that third party, and a
+harness you enable (Claude Code, Codex, ...) sends it wherever it is configured
+to. Use a local endpoint (for example, `http://localhost:11434/v1` via Ollama)
+for assets containing secrets or private notes.
 
 ## Known non-issues
 
-- **The `akm-cli` npm package requires Node.js >= 22 as its bootstrap.** A
+- **The `akm-cli` npm package requires Node.js >= 24 as its bootstrap.** A
   working Bun >= 1.0 is preferred for execution when it is also on `PATH`; old,
   unusable, or absent Bun installations fall back to Node.js. Bun does not
   remove the package's Node.js requirement. Standalone binaries are

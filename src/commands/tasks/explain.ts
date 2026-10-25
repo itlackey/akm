@@ -67,7 +67,7 @@
  *
  * Field-level execution provenance is READ from `resolveExecution`'s own
  * `provenance` — this module is a CONSUMER of the one common resolver, never a
- * second resolver: it never re-derives engine/model precedence itself.
+ * second resolver: it never re-derives connection, harness or model precedence itself.
  */
 
 import fs from "node:fs";
@@ -257,7 +257,7 @@ function targetSection(document: PreparableTaskDocument): Readonly<{ kind: strin
   return { kind: uses.kind, ref: uses.ref };
 }
 
-/** True only for the two `uses:` kinds an execution cascade (engine/model resolution) actually applies to. */
+/** True only for the two `uses:` kinds an execution cascade (connection, harness and model resolution) actually applies to. */
 function isCommandTarget(document: PreparableTaskDocument): boolean {
   return (
     document.target.kind === "uses" &&
