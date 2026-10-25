@@ -120,7 +120,7 @@ When you tag a new release:
    publisher changes, breaking CLI/flag moves. Link to the longform guide
    (e.g. `docs/migration/v0.8-to-v0.9.md`) in the last paragraph if one
    exists.
-3. Extend the `for ... of` list in `tests/integration/migration-help.test.ts`
+3. Extend the `for ... of` list in `tests/migration-help.test.ts`
    (`"every bundled release-notes file is surfaced by the loader"`) so the
    new version is explicitly exercised.
 4. Smoke-test end-to-end: `bun src/cli.ts help migrate <version>`.
