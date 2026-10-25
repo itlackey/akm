@@ -16,12 +16,7 @@ import type { FrozenWorkflowCommandTarget } from "../plan";
 import { resolveRunBundleRoot } from "../runtime/workflow-asset-loader";
 import type { JudgeCallIdentity, SummaryJudge } from "../validate-summary";
 import { collectWorkflowDispatchSensitiveValues, withDispatchRedaction } from "./dispatch-redaction";
-import {
-  dispatchWorkflowExecution,
-  prepareWorkflowExecution,
-  type UnitDispatcher,
-  type UnitDispatchRequest,
-} from "./unit-dispatch";
+import { dispatchWorkflowExecution, type UnitDispatcher, type UnitDispatchRequest } from "./unit-dispatch";
 
 /** The run/step a judge belongs to; a caller that journals a gate row also passes its exact identity per call. */
 export interface JudgeOwner {
@@ -97,12 +92,6 @@ export function frozenSummaryJudge(
       timeoutMs: target.runner.timeoutMs ?? null,
       ...(eventSource !== undefined ? { eventSource } : {}),
     };
-    // Lowering precedes every live credential/passthrough
-    // sample. The injected dispatcher may be a test seam, but it receives the
-    // exact same already-validated request and redaction declaration.
-    const lowered = prepareWorkflowExecution(
-      request as UnitDispatchRequest & { frozenTarget: FrozenWorkflowCommandTarget },
-    );
     const sensitiveValues = collectWorkflowDispatchSensitiveValues({ runner: target.runner });
     const outcome = await dispatch({
       ...request,
@@ -113,9 +102,8 @@ export function frozenSummaryJudge(
         (outcome.usage.inputTokens ?? 0) + (outcome.usage.outputTokens ?? 0) + (outcome.usage.reasoningTokens ?? 0),
       );
     }
-    // Only the common lowerer's own sanitized notices are loggable here. An
-    // injected dispatcher is not trusted to supply prompt/body-free messages.
-    warnLoweringNotices(lowered.notices);
+    // The dispatcher lowers the request once, and its notices are the lowerer's own sanitized ones.
+    warnLoweringNotices(outcome.notices);
     if (!outcome.ok) {
       throw new Error(outcome.error || `Verification judge "${target.request.target.name}" failed.`);
     }

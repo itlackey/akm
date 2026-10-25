@@ -142,17 +142,20 @@ async function dispatchProposalPrompt(
     ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
     outputSchema: PROPOSAL_JSON_SCHEMA,
   };
-  const lower = (content: string) => {
-    const prepared = resolveExecution({
-      content,
-      config,
-      layers: [shippedAlias(SHIPPED_ALIAS.agent), currentLayer(current)],
-    });
-    return { prepared, lowered: buildExecution(prepared.request, prepared.runner) };
-  };
+  // The target is resolved once; a corrective attempt rebuilds only the request, for the same runner.
+  const prepared = resolveExecution({
+    content: prompt,
+    config,
+    layers: [shippedAlias(SHIPPED_ALIAS.agent), currentLayer(current)],
+  });
+  const lowered = buildExecution(prepared.request, prepared.runner);
+  const corrected = (content: string) =>
+    buildExecution(
+      resolveExecution({ content, runner: prepared.runner, layers: [currentLayer(current)] }).request,
+      prepared.runner,
+    );
   // Resolution and lowering come before the entry event opens durable state; provider and
   // runtime failures occur after it, preserving the command-attempt observability contract.
-  const { prepared, lowered } = lower(prompt);
   const engineName = prepared.request.target.name;
   onDispatchReady();
   options.onDispatchReady?.();
@@ -162,7 +165,7 @@ async function dispatchProposalPrompt(
   try {
     reply = await runStructured({
       dispatch: async (feedback) => {
-        const execution = feedback ? lower(`${prompt}\n\n${feedback}`).lowered : lowered;
+        const execution = feedback ? corrected(`${prompt}\n\n${feedback}`) : lowered;
         const result = await runExecution(execution);
         results.push(result);
         if (!result.ok) throw DISPATCH_FAILED;

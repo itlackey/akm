@@ -828,20 +828,6 @@ function resolveReflectRunner(options: AkmReflectOptions): {
 }
 
 /**
- * Lower a runner under the model-work tool policy, so a bad transport fails
- * before any work.
- */
-function preflightReflectDispatch(runnerSpec: RunnerSpec, onNotices: (notices: readonly Notice[]) => void): void {
-  const prepared = resolveExecution({
-    content: "Validate reflect operation transport before dispatch.",
-    runner: runnerSpec,
-    modelWork: true,
-  });
-  const lowered = buildExecution(prepared.request, prepared.runner);
-  onNotices(lowered.notices);
-}
-
-/**
  * The flat 12k content cap exists for CLI argv; the HTTP runner can spend half
  * its context window (after the rest of the prompt) on the asset, reserving
  * the other half for the reply. Never below the flat floor.
@@ -1209,8 +1195,6 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       "Reflect proposal quality gate has no connection or harness to judge proposals (run `akm setup`). Skipping the gate for this run; the proposal is queued for human review instead.",
     );
   }
-  preflightReflectDispatch(runnerSpec, notices.add);
-  if (judgeRunner && judgeRunner !== runnerSpec) preflightReflectDispatch(judgeRunner, notices.add);
 
   const sources = gatherReflectPromptSources(options, stash, parsedRef, assetContent);
   const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
