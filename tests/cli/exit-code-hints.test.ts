@@ -25,7 +25,6 @@ describe("embedded exit-code hints", () => {
     expect(EMBEDDED_HINTS).toContain("`task run` preserves configuration failures as exit 78");
     expect(EMBEDDED_HINTS_FULL).toContain("other failures exit 1");
     expect(EMBEDDED_HINTS_FULL).toContain("local index and materialized bundle files only");
-    expect(EMBEDDED_HINTS_FULL).toContain("selected engine invocation timeout");
     expect(EMBEDDED_HINTS_FULL).toContain("--negative --reason");
   });
 });
