@@ -469,18 +469,45 @@ describe("callStructured contract", () => {
     });
     expect({ value, chatRan }).toEqual({ value: "answer", chatRan: true });
 
-    // A harness that cannot confine the policy is refused before anything runs.
-    const codex = harness("codex", "codex-must-not-run");
-    const refused = callStructured<string>({
+    // A harness that cannot confine the policy runs the call unrestricted, with one notice.
+    const stdout = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("from codex"));
+        controller.close();
+      },
+    });
+    let spawned = 0;
+    let notices: readonly { code: string }[] = [];
+    const ran = await callStructured<string>({
       feature: "memory_inference",
       akmConfig: GATED,
-      runner: codex,
+      runner: harness("codex", "codex-stub"),
       messages: [{ role: "user", content: "judge this" }],
+      request: {
+        runOptions: {
+          spawn: (): SpawnedSubprocess => {
+            spawned += 1;
+            return {
+              exitCode: 0,
+              exited: Promise.resolve(0),
+              stdout,
+              stderr: new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
+              stdin: null,
+              kill: () => {},
+            };
+          },
+        },
+      },
+      onNotices: (value) => {
+        notices = value;
+      },
       parse: (raw) => raw ?? "",
       onError: () => "ERR",
       fallback: "FB",
     });
-    await expect(refused).rejects.toThrow(/cannot enforce the model-work tool policy/);
+    expect(spawned).toBe(1);
+    expect(ran).toContain("from codex");
+    expect(notices.map((notice) => notice.code)).toContain("model-work-unrestricted");
   });
 
   test("(13b) an agent dispatch gets the caller's environment and spawn seam, and its failure keeps the dispatch's own result", async () => {

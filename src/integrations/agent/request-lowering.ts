@@ -64,6 +64,15 @@ export function createAgentRequestLowerer(
         prompt = composed.prompt;
         notices.push(...composed.notices);
       }
+    } else if (typeof request.agent === "string" && request.modelWork) {
+      // Model work is not agent work: a native agent would replace the confined run.
+      notices.push({
+        code: "model-work-agent-ignored",
+        severity: "warning",
+        adapter: options.adapter,
+        field: "agent",
+        message: `The ${options.adapter} transport ignores native agent ${JSON.stringify(request.agent)} for model work.`,
+      });
     } else if (typeof request.agent === "string") {
       if (!getHarness(options.adapter)?.capabilities.nativeAgent) {
         throw new ConfigError(
@@ -88,20 +97,16 @@ export function createAgentRequestLowerer(
       }
     }
     if (request.modelWork) {
-      if (!getHarness(options.adapter)?.capabilities.modelWork) {
-        throw new ConfigError(
-          `The ${options.adapter} transport cannot enforce the model-work tool policy.`,
-          "INVALID_CONFIG_FILE",
-        );
+      if (getHarness(options.adapter)?.capabilities.modelWork) dispatch.modelWork = true;
+      else {
+        notices.push({
+          code: "model-work-unrestricted",
+          severity: "info",
+          adapter: options.adapter,
+          field: "modelWork",
+          message: `The ${options.adapter} transport cannot restrict its tools for model work; the run is unrestricted, in a scratch directory.`,
+        });
       }
-      // The builder selects its own confined agent or flags; another agent would replace them.
-      if (dispatch.agent) {
-        throw new ConfigError(
-          `The ${options.adapter} transport cannot run native agent ${JSON.stringify(dispatch.agent)} under the model-work tool policy.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
-      dispatch.modelWork = true;
     }
     return { prompt, dispatch, notices };
   };

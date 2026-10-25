@@ -29,14 +29,14 @@ interface HarnessCapabilityFlags {
   /** Can import an existing harness LLM/config into akm config. */
   readonly configImport: boolean;
   /**
-   * Confines the model-work tool policy (`MODEL_WORK_POLICY_ID`), so unattended
-   * model work may run on it. The one copy of this fact: the config schema and
-   * the shared request lowerer both read it.
+   * Confines the model-work tool policy (`MODEL_WORK_POLICY_ID`): model work on
+   * it runs read-only. A harness without it still runs model work, unrestricted
+   * and with a notice. The shared request lowerer reads it.
    */
   readonly modelWork: boolean;
   /**
    * Can run a named agent of its own (`opencode run --agent`, `claude --agent`,
-   * the SDK's per-prompt `agent`). Read by the shared lowerer and by the engine
+   * the SDK's per-prompt `agent`). Read by the shared lowerer and by the harness
    * schema's `agent` field.
    */
   readonly nativeAgent: boolean;

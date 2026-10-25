@@ -139,18 +139,18 @@ describe("a quality gate's judge is checked when it resolves, not when the confi
     return result.ok ? [] : result.errors.map((issue) => `${issue.path}: ${issue.message}`);
   }
 
-  test("any name loads: a harness that cannot confine the policy, or one that is not configured", () => {
+  test("any name loads, configured or not", () => {
     expect(gateErrors({ connection: "judge" })).toEqual([]);
     expect(gateErrors({ harness: "confined" })).toEqual([]);
     expect(gateErrors({ harness: "reviewer" })).toEqual([]);
     expect(gateErrors({ connection: "missing" })).toEqual([]);
   });
 
-  test("a harness that cannot confine the policy is refused when the judge resolves", () => {
+  test("a harness that cannot confine the policy judges unrestricted: it resolves", () => {
     const cfg = config({ harnesses: { reviewer: { platform: "pi" } } });
-    expect(() =>
+    expect(
       resolveQualityGateJudge(cfg, strategy({ reflect: { qualityGate: { harness: "reviewer" } } }), "reflect"),
-    ).toThrow("The pi transport cannot enforce the model-work tool policy.");
+    ).toMatchObject({ kind: "harness", name: "reviewer" });
   });
 
   test("a connection that is not configured uses the default one", () => {

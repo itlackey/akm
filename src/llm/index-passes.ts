@@ -45,7 +45,7 @@ export function resolveIndexPassExecution(passName: string, config: AkmConfig): 
   const pass = config.index?.[passName] as IndexPassConfig | undefined;
   if (pass?.enabled === false) return Object.freeze({ runner: undefined, notices: NO_LOWERING_NOTICES });
   try {
-    // Under the model-work tool policy, so a harness that cannot confine it is refused here.
+    // Under the model-work tool policy: confined where the harness can be, unrestricted (with a notice) elsewhere.
     const prepared = resolveExecution({
       content: "",
       config,

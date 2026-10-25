@@ -311,8 +311,8 @@ type QualityJudgeChat = (
  * `model`, `timeoutMs` and `llm` over the process's own settings, as
  * `processes.triage.judgment` resolves over triage. `undefined` when the gate
  * is off or sets none of them, so the caller keeps its own judge. The engine
- * may be of any kind; config validation has required one that confines the
- * model-work tool policy. Throws when they resolve to no engine at all,
+ * may be of any kind; a harness that cannot confine the model-work tool policy
+ * runs unrestricted, with a notice. Throws when they resolve to no engine at all,
  * before anything is generated: the gate never falls back to another judge.
  */
 export function resolveQualityGateJudge(

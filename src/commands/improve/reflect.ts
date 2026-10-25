@@ -831,8 +831,8 @@ function resolveReflectRunner(options: AkmReflectOptions): {
 }
 
 /**
- * Lower a runner under the model-work tool policy, so a bad transport, or one
- * that cannot confine the policy, fails before any work.
+ * Lower a runner under the model-work tool policy, so a bad transport fails
+ * before any work.
  */
 function preflightReflectDispatch(runnerSpec: RunnerSpec, onNotices: (notices: readonly Notice[]) => void): void {
   const prepared = resolveExecution({

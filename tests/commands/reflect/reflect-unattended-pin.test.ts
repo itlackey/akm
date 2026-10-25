@@ -7,7 +7,8 @@
  * unattended `akm improve` never hands reflect an agent that can write the
  * stash. An agent process engine runs under the policy (its own scratch
  * directory, no stash access beyond `akm search`/`akm show`); one whose
- * harness cannot confine the policy is refused before dispatch; an LLM
+ * harness cannot confine the policy runs unrestricted, in the same scratch
+ * directory, with a notice; an LLM
  * process engine is honored as-is; with no engine to resolve, reflect fails
  * CLOSED instead of dispatching an agent.
  */
@@ -109,24 +110,26 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
     expect(seen?.cmd.at(-1)).toContain("Respond with ONLY a JSON value matching this JSON Schema");
   });
 
-  test("eventSource=improve refuses a harness that cannot confine the policy, before dispatch", async () => {
+  test("eventSource=improve runs a harness that cannot confine the policy unrestricted, in the scratch directory", async () => {
     const stash = makeStashDir();
     const config = agentModeConfig({
       harnesses: { "fake-agent": { platform: "pi", bin: "fake-agent" } },
     } as Partial<AkmConfig>);
-    let spawned = false;
+    let seen: { cmd: string[]; cwd?: string } | undefined;
+    const payload = reflectReply({ description: "Alpha, the first memory" });
 
-    await expect(
-      akmReflect({
-        ref: "memories/alpha",
-        stashDir: stash,
-        eventSource: "improve",
-        config,
-        improveProfile: config.improve?.strategies?.default,
-        runAgentOptions: { spawn: spySpawn(() => (spawned = true)) },
-      }),
-    ).rejects.toThrow("The pi transport cannot enforce the model-work tool policy.");
-    expect(spawned).toBe(false);
+    const result = await akmReflect({
+      ref: "memories/alpha",
+      stashDir: stash,
+      eventSource: "improve",
+      config,
+      improveProfile: config.improve?.strategies?.default,
+      runAgentOptions: { spawn: spySpawn((cmd, _env, cwd) => (seen = { cmd, cwd }), payload) },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(seen?.cmd[0]).toBe("fake-agent");
+    expect(path.basename(seen?.cwd ?? "")).toStartWith("akm-model-work-");
   });
 
   test("eventSource=improve honors a connection process unchanged", async () => {

@@ -23,6 +23,7 @@ import {
   resolveExecution,
 } from "../../src/integrations/agent/execution";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
+import { getHarness, HARNESS_CONFIG_PLATFORMS } from "../../src/integrations/harnesses";
 import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { withEnv } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
@@ -542,23 +543,41 @@ describe("the model-work tool policy", () => {
     expect(() => buildExecution(again.request, again.runner)).not.toThrow();
   });
 
-  test("cannot run a native agent, which would replace the confined one", () => {
+  test("ignores a native agent, which would replace the confined one, with one notice", () => {
     const resolved = resolveExecution({
       content: "x",
       config: modelWork,
       current: { agent: "reviewer" },
       modelWork: true,
     });
-    expect(() => buildExecution(resolved.request, resolved.runner)).toThrow(
-      /native agent "reviewer" under the model-work tool policy/,
-    );
+    const built = buildExecution(resolved.request, resolved.runner);
+    expect(built.options.dispatch?.agent).toBeUndefined();
+    expect(built.options.dispatch?.modelWork).toBe(true);
+    expect(built.notices.filter((notice) => notice.code === "model-work-agent-ignored")).toHaveLength(1);
   });
 
-  test("a harness that cannot confine model work cannot run it", () => {
+  test("a harness that cannot confine model work runs it unrestricted, with one notice", () => {
     const resolved = resolveExecution({ content: "x", config: config({ harnesses: { pi: {} } }), modelWork: true });
-    expect(() => buildExecution(resolved.request, resolved.runner)).toThrow(
-      /pi transport cannot enforce the model-work tool policy/,
-    );
+    const built = buildExecution(resolved.request, resolved.runner);
+    expect(built.options.dispatch?.modelWork).toBeUndefined();
+    expect(built.notices.filter((notice) => notice.code === "model-work-unrestricted")).toHaveLength(1);
+  });
+
+  test("every harness a config can name builds model work, confined only where it can be", () => {
+    for (const platform of HARNESS_CONFIG_PLATFORMS) {
+      const resolved = resolveExecution({
+        content: "x",
+        config: config({ harnesses: { [platform]: {} } }),
+        modelWork: true,
+      });
+      const built = buildExecution(resolved.request, resolved.runner);
+      const confines = getHarness(platform)?.capabilities.modelWork === true;
+      expect(built.options.dispatch?.modelWork === true, platform).toBe(confines);
+      expect(
+        built.notices.some((notice) => notice.code === "model-work-unrestricted"),
+        platform,
+      ).toBe(!confines);
+    }
   });
 
   test("an agent runs in a fresh scratch directory, removed afterwards even when the dispatch throws", async () => {

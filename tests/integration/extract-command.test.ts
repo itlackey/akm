@@ -2293,21 +2293,13 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(receivedModel).toBe("default-model");
   });
 
-  test("refuses a process engine that cannot confine the model-work tool policy, before any dispatch", async () => {
+  test("a process harness that cannot confine the model-work tool policy still resolves, with a notice", () => {
     const stash = makeStashDir();
-    const session = fakeSession("ses_bad_mode", Date.now() - 60_000);
     const config = configWithStrategy(stash, { harness: "fake-agent" });
     config.harnesses = { "fake-agent": { platform: "pi", bin: "pi-must-not-run" } };
-    await expect(
-      akmExtract({
-        type: "claude",
-        sessionId: "ses_bad_mode",
-        stashDir: stash,
-        config,
-        harnesses: [makeFakeHarness([session])],
-        chat: async () => JSON.stringify({ candidates: [] }),
-      }),
-    ).rejects.toThrow(/cannot enforce the model-work tool policy/);
+    const plan = resolveStandaloneExtractPlan(config, {});
+    expect(plan.runner).toMatchObject({ kind: "harness", name: "fake-agent" });
+    expect(plan.notices?.map((notice) => notice.code)).toContain("model-work-unrestricted");
   });
 
   test("honors process timeoutMs override", async () => {

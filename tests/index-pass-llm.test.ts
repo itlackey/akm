@@ -158,14 +158,14 @@ describe("resolveIndexPassExecution", () => {
       expect(resolved.runner).toMatchObject({ kind: "harness", name: "agent" });
     });
 
-    test("a harness that cannot confine the policy is refused when the pass resolves", () => {
+    test("a harness that cannot confine the policy runs the pass unrestricted, with a notice", () => {
       const config: AkmConfig = {
         semanticSearchMode: "auto",
         harnesses: { wrong: { platform: "pi" } },
       };
-      expect(() => resolveIndexPassExecution("memory", config)).toThrow(
-        "The pi transport cannot enforce the model-work tool policy.",
-      );
+      const resolved = resolveIndexPassExecution("memory", config);
+      expect(resolved.runner).toMatchObject({ kind: "harness", name: "wrong" });
+      expect(resolved.notices.map((notice) => notice.code)).toContain("model-work-unrestricted");
     });
 
     test("index.<pass>.enabled === false opts the pass out", () => {

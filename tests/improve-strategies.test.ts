@@ -400,7 +400,7 @@ describe("resolveImprovePlan", () => {
     expect(fallback.triageJudgment).toMatchObject({ kind: "connection", name: "default" });
   });
 
-  test("rejects a model-only selection, and a harness that cannot confine the model-work tool policy, before dispatch", () => {
+  test("rejects a model-only selection before dispatch", () => {
     expect(() =>
       resolveImprovePlan("quick", {
         configVersion: "0.9.0",
@@ -410,14 +410,17 @@ describe("resolveImprovePlan", () => {
         },
       }),
     ).toThrow('"reflect" requires a connection or harness that is not configured');
-    expect(() =>
-      resolveImprovePlan("quick", {
-        configVersion: "0.9.0",
-        semanticSearchMode: "auto",
-        harnesses: { wrong: { platform: "pi" } },
-        improve: { strategies: { quick: strategy(QUICK) } },
-      }),
-    ).toThrow("The pi transport cannot enforce the model-work tool policy.");
+  });
+
+  test("a harness that cannot confine the policy still runs model work", () => {
+    const plan = resolveImprovePlan("quick", {
+      configVersion: "0.9.0",
+      semanticSearchMode: "auto",
+      harnesses: { wrong: { platform: "pi" } },
+      improve: { strategies: { quick: strategy(QUICK) } },
+    });
+    expect(plan.processes.reflect.runner).toMatchObject({ kind: "harness", name: "wrong" });
+    expect(plan.engineUnavailable).toEqual([]);
   });
 
   test("a harness that confines the policy runs model work", () => {
