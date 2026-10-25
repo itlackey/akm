@@ -316,12 +316,13 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
       }
       for (const [processName, process] of Object.entries(isRecord(strategy.processes) ? strategy.processes : {})) {
         const where = `improve.strategies.${strategyName}.processes.${processName}`;
-        hoist(process, where, `improve.processes.${processName}`, processEntry(processName));
         if (!isRecord(process)) continue;
+        // Triage's judgment is the model call; in 0.9 its setting was the nearer one, so it is hoisted first and wins.
+        hoist(process.judgment, `${where}.judgment`, "improve.processes.triage", processEntry("triage"));
+        hoist(process, where, `improve.processes.${processName}`, processEntry(processName));
         hoist(process.qualityGate, `${where}.qualityGate`, "improve.qualityGate", () =>
           objectAt(improve, "qualityGate"),
         );
-        hoist(process.judgment, `${where}.judgment`, "improve.processes.triage", processEntry("triage"));
       }
     }
   }

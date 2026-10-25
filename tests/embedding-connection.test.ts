@@ -11,9 +11,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../src/core/config/config";
 import { deleteCredential, writeCredential } from "../src/core/config/credentials";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
-import { embed, resolveEmbeddingModelId } from "../src/llm/embedder";
+import { _setEmbedderForTests, embed, resolveEmbeddingModelId } from "../src/llm/embedder";
 import { effectiveEmbedding } from "../src/llm/embedders/connection";
 import { hasRemoteEndpoint } from "../src/llm/embedders/remote";
+import { prepareSemanticSearchAssets } from "../src/setup/semantic-assets";
 import { withEnv } from "./_helpers/sandbox";
 
 const LAB = { endpoint: "http://lab:8080/v1/chat/completions", models: { fast: "qwen3-8b" } };
@@ -135,5 +136,27 @@ describe("an embedding on the default connection sends that connection's key", (
 
   test("no key anywhere sends none", async () => {
     expect(await authSeenBy(configOf({ embedding: { model: "m" }, connections: { default: LAB } }))).toBe("");
+  });
+});
+
+describe("setup's semantic-search preparation", () => {
+  test("checks the endpoint of the connection that serves the embedding model, not the local model", async () => {
+    let checked: unknown;
+    _setEmbedderForTests({
+      isTransformersAvailable: () => false,
+      checkEmbeddingAvailability: async (embedding) => {
+        checked = embedding;
+        return { available: true };
+      },
+    });
+    try {
+      const ready = await prepareSemanticSearchAssets(
+        configOf({ connections: { default: LAB }, embedding: { model: "nomic-embed-text" } }),
+      );
+      expect(ready).toEqual({ ok: true });
+    } finally {
+      _setEmbedderForTests(undefined);
+    }
+    expect(checked).toMatchObject({ endpoint: "http://lab:8080/v1", model: "nomic-embed-text" });
   });
 });

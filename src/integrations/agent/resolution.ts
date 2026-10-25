@@ -27,7 +27,7 @@ import { apiKeyReference } from "../../core/config/credentials";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { STANDARD_ALIASES } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
-import type { LlmInference } from "../../core/llm-inference";
+import { type LlmInference, mergeRequestFields } from "../../core/llm-inference";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warnOnce } from "../../core/warn";
 import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
@@ -241,7 +241,7 @@ function connectionRunner(
     name,
     endpoint: connection.endpoint,
     model,
-    request: { ...connectionFields, ...entryFields },
+    request: mergeRequestFields(connectionFields, entryFields),
     ...(inference && Object.keys(inference).length > 0 ? { inference } : {}),
     ...(apiKeyReference(connection.apiKey) !== undefined ? { apiKey: connection.apiKey } : {}),
     ...(connection.contextLength !== undefined ? { contextLength: connection.contextLength } : {}),

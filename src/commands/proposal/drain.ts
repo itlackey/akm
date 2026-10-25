@@ -611,7 +611,7 @@ async function drainPending(
   }
 
   if (opts.judgment && result.deferred.some((d) => d.reason === "needs-judgment")) {
-    // The runner's model-work tool policy is checked before any gate, reject or promote.
+    // Build the judgment runner's request before any gate, reject or promote: a transport that cannot run at all fails here, not after a mutation.
     const prepared = resolveExecution({
       content: "Validate the selected proposal judgment runner before mutation.",
       runner: opts.judgment,

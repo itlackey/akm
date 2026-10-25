@@ -12,6 +12,7 @@ import * as p from "../cli/clack";
 import { isHttpUrl } from "../core/common";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config/config";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
+import { effectiveEmbedding } from "../llm/embedders/connection";
 
 // Approximate first-download size of the default local model (DEFAULT_LOCAL_MODEL), used in the setup note.
 const LOCAL_MODEL_APPROX_SIZE_MB = 130;
@@ -36,7 +37,8 @@ export function describeSemanticSearchAssets(embedding?: EmbeddingConnectionConf
 export async function prepareSemanticSearchAssets(
   config: AkmConfig,
 ): Promise<{ ok: true } | { ok: false; message: string; reason: string }> {
-  const remote = isRemoteEmbeddingConfig(config.embedding);
+  const embedding = effectiveEmbedding(config);
+  const remote = isRemoteEmbeddingConfig(embedding);
 
   // Local embeddings require the declared Transformers dependency.
   if (!remote) {
@@ -52,10 +54,10 @@ export async function prepareSemanticSearchAssets(
   spin.start(
     remote
       ? "Checking remote embedding endpoint..."
-      : `Downloading local embedding model (${config.embedding?.localModel ?? DEFAULT_LOCAL_MODEL})...`,
+      : `Downloading local embedding model (${embedding?.localModel ?? DEFAULT_LOCAL_MODEL})...`,
   );
 
-  const result = await checkEmbeddingAvailability(config.embedding);
+  const result = await checkEmbeddingAvailability(embedding);
   if (!result.available) {
     spin.stop("Semantic-search assets could not be prepared.");
     if (result.reason === "remote-unreachable") {

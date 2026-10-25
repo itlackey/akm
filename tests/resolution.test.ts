@@ -224,6 +224,21 @@ describe("the request", () => {
     });
   });
 
+  test("an object-valued field of a model entry adds to the connection's, key by key, as a call's settings do", () => {
+    const config = configOf({
+      connections: {
+        default: {
+          endpoint: "http://lab:8080/v1",
+          chat_template_kwargs: { enable_thinking: false, preserve: 1 },
+          models: { reasoning: { model: "r", chat_template_kwargs: { enable_thinking: true, thinking_budget: 8192 } } },
+        },
+      },
+    });
+    expect(connectionFor(config, [{ model: "reasoning" }]).request).toEqual({
+      chat_template_kwargs: { enable_thinking: true, preserve: 1, thinking_budget: 8192 },
+    });
+  });
+
   test("the keys akm owns are not request fields", () => {
     const config = configOf({
       connections: {

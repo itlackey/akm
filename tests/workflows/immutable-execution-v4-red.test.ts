@@ -250,4 +250,34 @@ describe("durable workflow v4 immutable executable schema", () => {
       expect(() => decodeWorkflowPlan(plan), kind).toThrow(/Invalid frozen workflow plan:.*schemaVersion: 1/);
     }
   });
+
+  test("refuses a parent whose embedded child plan holds such a command target, whole, before a unit is keyed", () => {
+    const content = "Use the frozen engine request.";
+    const child = commandPlan({
+      target: {
+        kind: "command",
+        ref: null,
+        contentHash: sha256(content),
+        request: {
+          schemaVersion: 1,
+          command: { template: content, content, source: null },
+          engine: { name: "cli", kind: "agent", platform: "claude" },
+          authorization: { status: "not-required" },
+          runtime: {},
+          notices: [],
+        },
+        runner: { kind: "agent", engine: "cli", profile: { name: "cli", platform: "claude", bin: "/bin/true" } },
+      },
+    });
+    const parent = commandPlan({
+      target: {
+        kind: "child-workflow",
+        ref: "fixture//workflows/child",
+        planHash: "a".repeat(64),
+        contentHash: "b".repeat(64),
+        frozenPlan: child,
+      },
+    });
+    expect(() => decodeWorkflowPlan(parent)).toThrow(/Invalid frozen workflow plan:.*schemaVersion: 1/);
+  });
 });

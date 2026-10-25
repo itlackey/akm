@@ -12,12 +12,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { setConfigValue, unsetConfigValue } from "../src/commands/config-cli";
-import { resolveImproveExecution } from "../src/commands/improve/execution";
+import { resolveImprovePlan } from "../src/commands/improve/improve-strategies";
 import { resolveQualityGateJudge } from "../src/commands/improve/stage";
 import { stripJsonComments } from "../src/core/common";
 import {
   type AkmConfig,
   type ConnectionConfig,
+  loadConfig,
   loadUserConfig,
   mutateConfig,
   normalizeConfigFile,
@@ -491,6 +492,21 @@ describe("what a strategy no longer decides, and per-process names", () => {
     expect(text).not.toContain("reflect.model");
   });
 
+  test("triage's judgment, the nearer setting in 0.9, wins over the triage process's own, and the other is noted", () => {
+    const { config, notes } = convert({
+      engines: { lab: llm(), cloud: llm({ endpoint: "https://api.openai.com/v1/chat/completions" }) },
+      improve: {
+        strategies: {
+          nightly: {
+            processes: { triage: { enabled: true, engine: "lab", model: "fast", judgment: { engine: "cloud" } } },
+          },
+        },
+      },
+    });
+    expect((config.improve as Dict).processes).toEqual({ triage: { connection: "cloud", model: "fast" } });
+    expect(notes.join("\n")).toContain("improve.strategies.nightly.processes.triage.connection");
+  });
+
   test("a per-process engine that was the runtime with no connection behind it is dropped with a note", () => {
     const { config, notes } = convert({
       engines: { lab: llm(), sdk: { kind: "agent", platform: "opencode-sdk" } },
@@ -796,23 +812,34 @@ describe("the example configs load unchanged and validate", () => {
     expect(unknownConfigKeyPaths({ configVersion: "0.9.0", ...raw })).toEqual([]);
   });
 
-  test("3-power.jsonc: triage runs on the anthropic connection's reasoning model, and the quality gate judges on anthropic", () => {
+  test("3-power.jsonc, loaded from a file: triage judges on the anthropic connection's reasoning model, the quality gate on anthropic's balanced one", () => {
     const raw = JSON.parse(stripJsonComments(fs.readFileSync(path.join(examples, "3-power.jsonc"), "utf8"))) as Dict;
-    const config = AkmConfigSchema.parse({ configVersion: "0.9.0", semanticSearchMode: "off", ...raw }) as AkmConfig;
-    const triage = resolveImproveExecution({
-      config,
-      processName: "triage-judgment",
-      process: "triage",
-      alias: "balanced",
-    })?.runner;
-    expect(triage).toMatchObject({ kind: "connection", name: "anthropic", model: "claude-opus-4-7" });
-    const distill = resolveImproveExecution({ config, processName: "distill", alias: "fast" })?.runner;
-    expect(distill).toMatchObject({ kind: "connection", name: "default", model: "qwen3-32b" });
+    const improve = raw.improve as Dict;
+    fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
+    fs.writeFileSync(
+      getConfigPath(),
+      JSON.stringify({
+        ...raw,
+        improve: {
+          ...improve,
+          strategy: "nightly",
+          strategies: {
+            nightly: { processes: { triage: { enabled: true, judgment: true }, distill: { enabled: true } } },
+          },
+        },
+      }),
+    );
+    resetConfigCache();
+    const config = loadConfig();
+    const plan = resolveImprovePlan("nightly", config);
+    expect(plan.triageJudgment).toMatchObject({ kind: "connection", name: "anthropic", model: "claude-opus-4-7" });
+    expect(plan.processes.distill.runner).toMatchObject({ kind: "connection", name: "default", model: "qwen3-32b" });
     // Nothing names a model for the gate's judge, so it asks for the shipped judge alias: `balanced`.
     expect(resolveQualityGateJudge(config, undefined, "reflect")).toMatchObject({
       kind: "connection",
       name: "anthropic",
       model: "claude-sonnet-4-5",
     });
+    resetConfigCache();
   });
 });

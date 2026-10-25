@@ -19,14 +19,11 @@ section names are intentionally absent from this active suite.
 
 | File | Current contract |
 | --- | --- |
-| `asset-types.test.ts` | Runtime asset registry and current architecture docs |
 | `quality-rules.test.ts` | Runtime quality normalization and proposed filtering |
 | `configuration.test.ts` | Engine/strategy schema and source write constraints |
 | `runtime-boundaries.test.ts` | Current search/show/write/storage architecture |
 | `module-boundaries.test.ts` | Current module-boundary anchors |
 | `extension-points.test.ts` | Supported source and registry provider boundaries |
 | `improve-cli-surface.test.ts` | Current improvement CLI surface |
-| `engine-boundary.test.ts` | Engine lowering and stateless LLM boundary |
 | `transport-contract.test.ts` | One contract over a connection's chat, every CLI harness and the internal runtime |
-| `lesson-type.test.ts` | Lesson registration and lint behavior |
 | `response-schemas-strict.test.ts` | Every response schema akm sends is valid for a strict structured-output provider |
