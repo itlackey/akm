@@ -11,6 +11,7 @@ import {
   type ImproveProfileConfig,
   loadConfig,
   loadUserConfig,
+  mutateConfig,
   primaryBundlePath,
   resetConfigCache,
   saveConfig,
@@ -86,6 +87,8 @@ afterEach(() => {
 });
 
 // ── getConfigPath ───────────────────────────────────────────────────────────
+
+const LAB = { endpoint: "http://lab:1/v1", models: { fast: "m" } };
 
 describe("getConfigPath", () => {
   test("returns config.json under XDG_CONFIG_HOME", () => {
@@ -572,9 +575,21 @@ describe("connections", () => {
     expect(loadConfig().connections?.cloud?.apiKey).toBeUndefined();
   });
 
-  test("requires an endpoint", () => {
-    writeCurrentConfig({ connections: { cloud: { models: { fast: "gpt-4" } } } });
-    expect(() => loadConfig()).toThrow(/connections\.cloud\.endpoint/);
+  test("a connection with no endpoint is dropped with one warning; the connections beside it load", () => {
+    writeCurrentConfig({
+      connections: {
+        cloud: { models: { fast: "gpt-4" } },
+        lab: LAB,
+      },
+    });
+    const warnings = captureWarnings(() => {
+      expect(Object.keys(loadConfig().connections ?? {})).toEqual(["lab"]);
+      resetConfigCache();
+      loadConfig();
+    });
+    const dropped = warnings.filter((w) => w.includes('connection "cloud"'));
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]).toContain("no endpoint");
   });
 
   test("keeps request fields on the connection and on a model entry as written, without warning", () => {
@@ -822,17 +837,40 @@ describe("0.9 config shape parsing", () => {
     expect(loaded.harnesses?.["claude-work"]?.models).toEqual({ fast: "m" });
   });
 
-  test("rejects a harness with an invalid platform, or one named for no platform (no silent drop)", () => {
-    writeCurrentConfig({ harnesses: { bad: { platform: "invalid-platform" } } });
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/harnesses\.bad/);
-    writeCurrentConfig({ harnesses: { mine: {} } });
-    expect(() => loadConfig()).toThrow(/harness "mine" is not a platform name/);
+  test("a harness with an unknown platform, or named for none, is dropped with one warning; the rest loads", () => {
+    writeCurrentConfig({ harnesses: { bad: { platform: "invalid-platform" }, claude: {} } });
+    const unknownPlatform = captureWarnings(() => {
+      expect(Object.keys(loadConfig().harnesses ?? {})).toEqual(["claude"]);
+    });
+    expect(unknownPlatform.filter((w) => w.includes('harness "bad"') && w.includes('"invalid-platform"'))).toHaveLength(
+      1,
+    );
+
+    writeCurrentConfig({ harnesses: { cursor: {}, codex: {} }, connections: { lab: LAB } });
+    const unnamed = captureWarnings(() => {
+      const loaded = loadConfig();
+      expect(Object.keys(loaded.harnesses ?? {})).toEqual(["codex"]);
+      expect(Object.keys(loaded.connections ?? {})).toEqual(["lab"]);
+    });
+    expect(unnamed.filter((w) => w.includes('harness "cursor"') && w.includes("names no platform"))).toHaveLength(1);
   });
 
-  test("opencode-sdk is akm's own runtime, not a platform a harness can name", () => {
+  test("opencode-sdk is akm's own runtime, not a platform a harness can name: dropped, with a warning", () => {
     writeCurrentConfig({ harnesses: { runtime: { platform: "opencode-sdk" } } });
-    expect(() => loadConfig()).toThrow(/harnesses\.runtime\.platform/);
+    const warnings = captureWarnings(() => {
+      expect(loadConfig().harnesses).toEqual({});
+    });
+    expect(warnings.some((w) => w.includes('harness "runtime"') && w.includes("opencode-sdk"))).toBe(true);
+  });
+
+  test("an entry that is dropped stays in the file through a write", () => {
+    writeCurrentConfig({ harnesses: { cursor: {}, claude: {} }, connections: { cloud: { models: { fast: "m" } } } });
+    captureWarnings(() => {
+      mutateConfig((current) => ({ ...current, output: { format: "text" } }));
+    });
+    const after = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(after.harnesses).toEqual({ cursor: {}, claude: {} });
+    expect(after.connections).toEqual({ cloud: { models: { fast: "m" } } });
   });
 
   test("a key a harness does not read warns once and is ignored", () => {

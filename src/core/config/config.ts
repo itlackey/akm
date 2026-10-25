@@ -43,6 +43,7 @@ import type {
 import { isOpaqueSchema, resolveSchemaAt } from "./config-walker";
 import { convertEngineConfig } from "./convert-engines";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
+import { dropUnusableEntries } from "./unusable-entries";
 
 export { stripJsonComments } from "./config-io";
 
@@ -283,7 +284,7 @@ function readConfigVersion(raw: Record<string, unknown>, sourcePath?: string): R
  * keeps around, instead of only getting the final merged `AkmConfig` back.
  */
 function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePath?: string): AkmConfig {
-  const withExtends = resolveExtendsChain(liftedLocalRaw, sourcePath);
+  const withExtends = dropUnusableEntries(resolveExtendsChain(liftedLocalRaw, sourcePath), sourcePath);
 
   const where = sourcePath ? ` at ${sourcePath}` : "";
   warnUnknownConfigKeys(liftedLocalRaw, sourcePath);
