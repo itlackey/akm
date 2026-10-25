@@ -235,9 +235,10 @@ platform (OpenCode: on version 2):
 - OpenCode 2 runs as a read-only agent that akm passes inline with the run, so
   nothing is written to your files: its tools that edit files, run commands,
   fetch from the web, start subagents or ask questions are denied, which leaves
-  `read`, `grep`, `glob` and `skill`, and what your plugins add. akm's own read
-  tools (`akm_search`, `akm_show`, `akm_curate`) come from the akm OpenCode
-  plugin when you have it installed.
+  `read`, `grep`, `glob` and `skill`. akm's own read tools (`akm_search`,
+  `akm_show`, `akm_curate`) come from the akm OpenCode plugin when you have it
+  installed; the agent also denies the plugin's `akm_feedback` and
+  `akm_remember`, which write.
 - On those three, `args` do not apply to model work, except a `--model` they
   name.
 - Every other platform, and OpenCode 1, cannot be restricted: the run is
@@ -268,10 +269,14 @@ sessions: akm reads, copies and embeds nothing of yours, and passes
 background service left behind.
 - A model name is OpenCode's `provider/model`, from the request, else the
   `--model` in the harness's `args`; without one, your OpenCode's default decides.
-- Every run sets `OPENCODE_DISABLE_FREE_MODELS=1`, so a run with no usable
-  provider fails instead of sending the prompt and the working directory's files
-  to OpenCode's hosted free model.
-- OpenCode 2 also gets `--standalone` and `--title akm`.
+- Model work sets `OPENCODE_DISABLE_FREE_MODELS=1`, which OpenCode 2.1 and later
+  honor: a call with no usable provider fails instead of sending the prompt to
+  OpenCode's hosted free model, and so does a call whose model (named, or your
+  OpenCode's default) is one of its free ones. Agent work does not set it: your
+  OpenCode's models are as you would get running it by hand.
+- OpenCode 2 also gets `--standalone` and `--title akm`. A run akm stops
+  (timeout, abort) stays suspended in your OpenCode history, and your own
+  OpenCode's background service resumes it once when it next starts.
 - Its sessions are in your OpenCode history, and `akm proposal extract` and
   improve read them there. On OpenCode 2 they leave out the sessions of akm's
   model work, which ran as the `akm-model-work` agent; OpenCode 1 keeps no such

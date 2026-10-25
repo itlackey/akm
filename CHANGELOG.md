@@ -140,16 +140,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   configuration, logins and sessions; akm reads, copies and embeds nothing of
   yours, and its runs are in your OpenCode history, which improve reads.
   OpenCode 2 runs `--standalone` (one process that ends with the run, not a
-  background service) with `--title akm`, and every run sets
-  `OPENCODE_DISABLE_FREE_MODELS=1`, so a run with no usable provider fails
-  instead of sending the prompt to OpenCode's hosted free model. An interactive
-  `akm agent` still hands the terminal to the CLI.
-  - Model work on the opencode harness is confined where OpenCode 2 is
-    installed: it runs as a read-only agent that akm passes inline for the run
-    (the tools that edit files, run commands, fetch from the web or start
-    subagents are denied, and nothing is written to your files), in a scratch
-    directory. On OpenCode 1 it runs unrestricted in a scratch directory, with
-    one warning.
+  background service) with `--title akm`. Model work sets
+  `OPENCODE_DISABLE_FREE_MODELS=1`, which OpenCode 2.1 and later honor: a call
+  with no usable provider fails instead of sending the prompt to OpenCode's
+  hosted free model. Agent work leaves your OpenCode's models as they are. An
+  interactive `akm agent` still hands the terminal to the CLI.
+  - Model work runs read-only on OpenCode 2 (below) and unrestricted on
+    OpenCode 1, with one warning, in a scratch directory.
 - A config in the old form (`engines`, `defaults.engine`, `defaults.llmEngine`,
   `defaults.improveStrategy`, `workflow.judgeEngine`, a strategy's `engine`,
   `model`, `llm` and `timeoutMs`) still loads: it is read as the new form in
@@ -334,11 +331,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm setup --probe` and `--config`, and the engine, Ollama and provider steps
   of the wizard.
 - The `opencode serve` server management, the OpenCode 1 and 2 HTTP adapters,
-  the 0.9 `akm-model-work` OpenCode agent definition (OpenCode 2 model work now
-  passes a smaller read-only agent inline for the run, never written into your
-  files), and the `@opencode-ai/sdk` and `@opencode/client` dependencies. Agent
-  work on a connection needs no OpenCode binary or client package, so `akm
-  health` checks for neither.
+  the 0.9 `akm-model-work` OpenCode agent definition, and the
+  `@opencode-ai/sdk` and `@opencode/client` dependencies. Agent work on a
+  connection needs no OpenCode binary or client package, so `akm health` checks
+  for neither.
 - Asset tool requests. An agent or command's `tools:` (or a Claude command's
   `allowed-tools:`) is no longer read, a task's `tools:` is ignored with a
   warning, and `akm migrate apply` drops a v3 task's `akm.tools`. With them go
