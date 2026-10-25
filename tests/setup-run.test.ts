@@ -3,14 +3,21 @@ import fs from "node:fs";
 import path from "node:path";
 import { _setClackForTests } from "../src/cli/clack";
 import { _setAkmInitForTests } from "../src/commands/sources/init";
+import { loadUserConfig, resetConfigCache } from "../src/core/config/config";
 import type { IndexResponse } from "../src/indexer/indexer";
 import { _setAkmIndexForTests } from "../src/indexer/indexer";
 import { _setAgentDetectForTests } from "../src/integrations/agent";
+import { resolveTarget } from "../src/integrations/agent/resolution";
 import { _setEmbedderForTests } from "../src/llm/embedder";
 import { _setDetectForTests } from "../src/setup/detect";
 import { _setLoadSetupStashesForTests, type SetupBundleEntry } from "../src/setup/registry-stash-loader";
 import { runSetupFromConfig, runSetupWizard } from "../src/setup/setup";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, withMockedFetch } from "./_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  withIsolatedAkmStorage,
+  withMockedFetch,
+  writeSandboxConfig,
+} from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
 // Per-test sandbox (withIsolatedAkmStorage in beforeEach). The REAL
@@ -276,10 +283,13 @@ function withEndpoint<T>(base: string, models: string[], run: () => Promise<T>):
 
 /** Make `claude` the one agent program found on PATH. */
 function installClaude(): void {
+  installHarness("claude");
+}
+
+/** Make `name` the one agent program found on PATH. */
+function installHarness(name: string): void {
   overrideSeam(_setAgentDetectForTests, {
-    detectAgentCliProfiles: () => [
-      { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/local/bin/claude" },
-    ],
+    detectAgentCliProfiles: () => [{ name, bin: name, available: true, resolvedPath: `/usr/local/bin/${name}` }],
   });
 }
 
@@ -311,6 +321,53 @@ describe("runSetupWizard", () => {
     expect(setupState.initCalls).toEqual([{ dir: DEFAULT_STASH_DIR }]);
     expect(setupState.indexCalls).toEqual([{ stashDir: DEFAULT_STASH_DIR, enrich: undefined }]);
     expect(promptState.outros[0]).toContain(DEFAULT_CONFIG_PATH);
+  });
+
+  test("saying no to model calls on a harness with no connection to take them is saved: the call goes nowhere and the summary says so", async () => {
+    installSetupSeams();
+    installHarness("gemini");
+
+    promptState.multiselects.push(["gemini"], [...DEFAULT_REGISTRY_URLS], [], []);
+    promptState.confirms.push(false, true, false);
+    promptState.texts.push("");
+    promptState.selects.push("default", "off", "done", "json", "brief");
+
+    await runSetupWizard();
+
+    expect(readSavedConfig().harnesses).toEqual({ gemini: { modelWork: false } });
+    expect("connections" in readSavedConfig()).toBe(false);
+    const summary = promptState.notes.find((note) => note.startsWith("Configuration Summary")) ?? "";
+    expect(summary).toContain(
+      'Model calls:      off: no connection is configured, and harness "gemini" is set not to take model calls.',
+    );
+    expect(summary).toContain("akm setup --endpoint URL");
+    expect(summary).toContain('Agent work:       harness "gemini"');
+
+    resetConfigCache();
+    const config = loadUserConfig();
+    expect(() => resolveTarget({ config, modelWork: true, layers: [] })).toThrow(/set not to run akm's model calls/);
+    expect(resolveTarget({ config, modelWork: false, layers: [] })).toMatchObject({ kind: "harness", name: "gemini" });
+  });
+
+  test("saying yes keeps the harness for model calls, and a rerun that says yes clears an earlier no", async () => {
+    installSetupSeams();
+    installHarness("gemini");
+    writeSandboxConfig({ semanticSearchMode: "off", harnesses: { gemini: { modelWork: false } } });
+    resetConfigCache();
+
+    promptState.multiselects.push(["gemini"], [...DEFAULT_REGISTRY_URLS], [], []);
+    promptState.confirms.push(true, true, false);
+    promptState.texts.push("");
+    promptState.selects.push("default", "off", "done", "json", "brief");
+
+    await runSetupWizard();
+
+    expect(readSavedConfig().harnesses).toEqual({ gemini: {} });
+    resetConfigCache();
+    expect(resolveTarget({ config: loadUserConfig(), modelWork: true, layers: [] })).toMatchObject({
+      kind: "harness",
+      name: "gemini",
+    });
   });
 
   test("a harness and a connection with a typed key: the key lands in credentials.json and nowhere else", async () => {

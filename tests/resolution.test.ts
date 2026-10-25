@@ -103,6 +103,28 @@ describe("the default is chosen by name", () => {
     expect(resolveTarget({ config: harnessOnly, layers: [], modelWork: true }).kind).toBe("harness");
   });
 
+  test("model work skips a default harness set to modelWork: false: the connection, else nothing; a call that names it still runs there", () => {
+    const declined = { claude: { modelWork: false } };
+    const both = configOf({ connections: { default: lab }, harnesses: declined });
+    expect(resolveTarget({ config: both, layers: [], modelWork: true }).kind).toBe("connection");
+    expect(harnessFor(both).name).toBe("claude");
+
+    const harnessOnly = configOf({ harnesses: declined });
+    const error = failureOf(() => resolveTarget({ config: harnessOnly, layers: [], modelWork: true }));
+    expect(error.code).toBe("LLM_NOT_CONFIGURED");
+    expect(error.message).toContain('harness "claude" is set not to run akm\'s model calls (modelWork: false)');
+    expect(error.message).toContain("akm setup --endpoint URL");
+    expect(harnessFor(harnessOnly, [], false).name).toBe("claude");
+    expect(resolveTarget({ config: harnessOnly, layers: [{ harness: "claude" }], modelWork: true }).kind).toBe(
+      "harness",
+    );
+    // `modelWork: true` on the entry, or absent, is the default.
+    expect(
+      resolveTarget({ config: configOf({ harnesses: { claude: { modelWork: true } } }), layers: [], modelWork: true })
+        .kind,
+    ).toBe("harness");
+  });
+
   test("agent work prefers the default harness and falls back to a connection, which akm's own runtime runs over", () => {
     const both = configOf({ connections: { default: lab }, harnesses: { claude: {} } });
     expect(resolveTarget({ config: both, layers: [] }).kind).toBe("harness");

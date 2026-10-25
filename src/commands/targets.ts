@@ -56,6 +56,8 @@ export interface HarnessRow {
   readonly platform: string;
   /** Whether its binary is on PATH. */
   readonly installed: boolean;
+  /** Present, and `false`, when the harness is set not to take akm's own model calls by default. */
+  readonly modelWork?: false;
   /** What `--version` printed; absent when it was not asked or nothing came back. */
   readonly version?: string;
 }
@@ -150,6 +152,7 @@ function harnessRows(input: TargetsInput): HarnessRow[] {
       default: name === defaultName,
       platform: harness.platform ?? name,
       installed: Boolean(which(harnessBin(config, name, harness))),
+      ...(harness.modelWork === false ? { modelWork: false as const } : {}),
       ...(version ? { version } : {}),
     };
   });

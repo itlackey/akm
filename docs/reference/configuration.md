@@ -212,6 +212,7 @@ An entry sets any of:
 | `agent` | The harness's native agent to run when a request names none (`claude` and `opencode` only). A request's own agent wins, an agent asset's persona is kept, and model work runs no native agent. |
 | `timeoutMs` | How long a run may take, in milliseconds; `null` runs unbounded. Unset, agent work runs until it finishes and model work stops after 600 000. |
 | `models` | Alias to model name for this harness, over the map akm ships for its platform. See [Aliases](#aliases). |
+| `modelWork` | `false` keeps akm's own model calls (improve, judging, extraction) off this harness when it is the default for them: with no connection to run them on, they are off. A call that names the harness (`--harness`, `improve.harness`) still runs there. Absent or `true`, the default harness takes model calls when no connection does. `akm info` and `akm health` list a harness set this way. |
 
 Asset frontmatter cannot set `workspace`, `environment` or opaque `runtime`
 values; those belong to this configuration or to a workflow's environment
@@ -249,7 +250,10 @@ the library, and akm does not check what it did. `akm setup` says so when you
 enable such a harness for akm's model calls ("Model work on `<name>` cannot be
 restricted: it can edit files and run commands."), and its summary repeats it.
 Any harness may be enabled for model calls; a connection is the way to keep
-them from touching anything.
+them from touching anything. When setup asks whether the harness may take them
+and the answer is no (or `--yes` finds one that cannot be restricted), it saves
+`modelWork: false` on the harness and, with no connection, the summary says
+model calls are off and points at `akm setup --endpoint URL`.
 
 **OpenCode.** The `opencode` platform runs your own OpenCode, choosing how from
 the major version `opencode --version` reports:
@@ -403,7 +407,7 @@ akm's work is of two kinds, and each has a default place to run.
   validation's repair), the quality and triage judges, the judge of a workflow
   `### gate`, the index passes, and `akm remember --enrich`. It runs on the
   default connection, as a direct request to the endpoint. With no connection it
-  runs on the default harness.
+  runs on the default harness, unless that harness has `modelWork: false`.
 - **Agent work** runs an agent: `akm agent`, `akm command run`, `akm proposal
   new`, agent tasks and workflow agent steps. It runs on the default harness.
   With no harness it runs on akm's own runtime, over the default connection.

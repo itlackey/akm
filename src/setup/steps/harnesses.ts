@@ -23,6 +23,12 @@ export interface HarnessStepResult {
   answer?: HarnessAnswer;
   /** Whether model calls need no connection because the harness takes them. */
   modelCallsOnHarness: boolean;
+  /**
+   * The answer to "may the default harness take akm's own model calls": absent when it was not a question (a
+   * connection exists or is being added, or there is no harness). `false` is for the config to keep (see
+   * `harnessModelWork`) when no connection is added after all.
+   */
+  modelWork?: boolean;
 }
 
 export interface HarnessStepInput {
@@ -66,9 +72,11 @@ export async function stepHarnesses(input: HarnessStepInput): Promise<HarnessSte
   } else {
     answer = await askHarnesses(current, installed, configured);
   }
-  const result = (modelCallsOnHarness: boolean): HarnessStepResult => ({
+  // `modelWork` is whether the default harness may take akm's model calls, once that has been decided.
+  const result = (modelCallsOnHarness: boolean, modelWork?: boolean): HarnessStepResult => ({
     ...(answer ? { answer } : {}),
     modelCallsOnHarness,
+    ...(modelWork !== undefined ? { modelWork } : {}),
   });
 
   // Model calls can go to a harness only when one is enabled and no connection exists or is being added.
@@ -76,7 +84,10 @@ export async function stepHarnesses(input: HarnessStepInput): Promise<HarnessSte
   if (defaultPlatform === undefined || defaultConnection(current) !== undefined || flags.endpoint !== undefined) {
     return result(false);
   }
-  if (!input.interactive) return result(runsReadOnly(defaultPlatform));
+  if (!input.interactive) {
+    const readOnly = runsReadOnly(defaultPlatform);
+    return result(readOnly, readOnly);
+  }
   const readOnly = runsReadOnly(defaultPlatform);
   const yes = await prompt(() =>
     p.confirm({
@@ -86,7 +97,7 @@ export async function stepHarnesses(input: HarnessStepInput): Promise<HarnessSte
   );
   // Said again once it is chosen, so it stays in the transcript beside the answer.
   if (yes && !readOnly) p.log.warn(unrestrictedModelWorkNote(defaultPlatform));
-  return result(yes);
+  return result(yes, yes);
 }
 
 async function askHarnesses(

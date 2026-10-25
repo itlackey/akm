@@ -8,7 +8,13 @@
  * `connections`, `harnesses` and `embedding`, and the keys to put in
  * `credentials.json`. Nothing here prompts, reads the network or writes.
  */
-import type { AkmConfig, ConnectionConfig, EmbeddingConnectionConfig, HarnessConfig } from "../core/config/config";
+import {
+  type AkmConfig,
+  type ConnectionConfig,
+  defaultHarness,
+  type EmbeddingConnectionConfig,
+  type HarnessConfig,
+} from "../core/config/config";
 import type { CredentialSlot } from "../core/config/credentials";
 import { entryWithModel } from "../core/config/model-aliases";
 import { sameEndpoint } from "../core/endpoint-url";
@@ -41,6 +47,8 @@ export type EmbeddingAnswer =
 
 export interface SetupAnswers {
   readonly harnesses?: HarnessAnswer;
+  /** Whether the default harness may take akm's own model calls: `false` is saved on its entry, `true` clears it. Absent leaves the entry as it is. */
+  readonly harnessModelWork?: boolean;
   readonly connection?: ConnectionAnswer;
   readonly embedding?: EmbeddingAnswer;
 }
@@ -173,6 +181,15 @@ export function applySetupAnswers(current: AkmConfig, answers: SetupAnswers): Se
   if (answers.harnesses) {
     const entries = harnessEntries(current.harnesses, answers.harnesses.platforms, answers.harnesses.default);
     patch.harnesses = Object.keys(entries).length > 0 ? entries : undefined;
+  }
+
+  const modelWork = answers.harnessModelWork;
+  const harnesses = patch.harnesses ?? (answers.harnesses ? undefined : current.harnesses);
+  const taker = modelWork === undefined ? undefined : defaultHarness({ harnesses } as AkmConfig)?.name;
+  const entry = harnesses && taker !== undefined ? harnesses[taker] : undefined;
+  if (harnesses && taker !== undefined && entry && (entry.modelWork === false) === modelWork) {
+    const { modelWork: _kept, ...rest } = entry;
+    patch.harnesses = { ...harnesses, [taker]: modelWork ? rest : { ...rest, modelWork: false } };
   }
 
   const connection = answers.connection;

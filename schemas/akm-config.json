@@ -154,6 +154,9 @@
                 }
               ]
             }
+          },
+          "modelWork": {
+            "type": "boolean"
           }
         },
         "additionalProperties": true
@@ -1527,6 +1530,9 @@
                     }
                   ]
                 }
+              },
+              "modelWork": {
+                "type": "boolean"
               }
             },
             "additionalProperties": true

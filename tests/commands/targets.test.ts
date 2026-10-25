@@ -136,6 +136,18 @@ describe("harness rows", () => {
     expect(harness(all, "claude-work")).toMatchObject({ platform: "claude", installed: true });
   });
 
+  test("a harness set to modelWork: false says so on its row and in the table, and model work has nowhere to run", () => {
+    const all = rows(cfg({ harnesses: { gemini: { modelWork: false } } }), { which: onPath("gemini") });
+    expect(harness(all, "gemini")).toMatchObject({ installed: true, modelWork: false });
+    expect(work(all, "improve")).toMatchObject({ kind: null, target: null });
+    expect(work(all, "agents")).toMatchObject({ kind: "harness", target: "gemini" });
+    const table = renderTargetsTable(all).join("\n");
+    expect(table).toContain("MODEL CALLS");
+    expect(table).toMatch(/gemini\s+yes\s+gemini\s+yes\s+off/);
+    // A config with no such harness has no such column.
+    expect(renderTargetsTable(rows(cfg({ harnesses: { claude: {} } }))).join("\n")).not.toContain("MODEL CALLS");
+  });
+
   test("the version a caller read appears on the row", () => {
     const all = rows(cfg({ harnesses: { claude: {} } }), {
       which: onPath("claude"),

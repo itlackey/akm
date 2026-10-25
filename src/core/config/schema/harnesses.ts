@@ -24,6 +24,8 @@ export const HarnessSchema = z
     timeoutMs: timeoutMsField,
     /** Alias to model for this harness, over the map akm ships for its platform. A harness is given the name only. */
     models: ModelAliasesSchema.optional(),
+    /** `false`: akm's own model calls are never sent here by default; a call that names this harness still runs on it. */
+    modelWork: z.boolean().optional(),
   })
   .passthrough();
 

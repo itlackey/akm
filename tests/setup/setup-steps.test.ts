@@ -67,7 +67,11 @@ describe("stepHarnesses", () => {
     expect(asked?.initialValues).toEqual(["claude", "gemini"]);
     expect(asked?.options[0]?.hint).toContain("model calls run read-only");
     expect(asked?.options[1]?.hint).toContain("cannot be restricted to read-only");
-    expect(result).toEqual({ answer: { platforms: ["claude"], default: "claude" }, modelCallsOnHarness: true });
+    expect(result).toEqual({
+      answer: { platforms: ["claude"], default: "claude" },
+      modelCallsOnHarness: true,
+      modelWork: true,
+    });
   });
 
   test("interactive: the model-calls question names the harness and says what the note says, and No means a connection", async () => {
@@ -83,6 +87,7 @@ describe("stepHarnesses", () => {
     );
     expect(question?.initialValue).toBe(true);
     expect(result.modelCallsOnHarness).toBe(false);
+    expect(result.modelWork).toBe(false);
   });
 
   test("interactive: choosing a harness that cannot be restricted for model calls says so again, beside the answer; a restricted one does not", async () => {
@@ -157,11 +162,13 @@ describe("stepHarnesses", () => {
     expect(readOnly).toEqual({
       answer: { platforms: ["claude", "gemini"], default: "claude" },
       modelCallsOnHarness: true,
+      modelWork: true,
     });
 
     const notReadOnly = await stepHarnesses(input({ interactive: false, installed: installed("gemini", "claude") }));
     expect(notReadOnly.answer?.default).toBe("gemini");
     expect(notReadOnly.modelCallsOnHarness).toBe(false);
+    expect(notReadOnly.modelWork).toBe(false);
     expect(prompts.asked).toHaveLength(0);
   });
 

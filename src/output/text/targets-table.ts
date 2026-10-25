@@ -67,6 +67,7 @@ const HARNESS_COLUMNS: readonly Column[] = [
   { header: "DEFAULT", cell: (row) => (row.default ? "yes" : "") },
   { header: "PLATFORM", cell: (row) => text(row.platform) },
   { header: "INSTALLED", cell: (row) => yesNo(row.installed) },
+  { header: "MODEL CALLS", cell: (row) => (row.modelWork === false ? "off" : ""), field: "modelWork" },
   { header: "VERSION", cell: (row) => text(row.version), field: "version" },
 ];
 

@@ -13,10 +13,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { _setAkmInitForTests } from "../../src/commands/sources/init";
-import { resetConfigCache } from "../../src/core/config/config";
+import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { _setAgentDetectForTests } from "../../src/integrations/agent";
+import { resolveTarget } from "../../src/integrations/agent/resolution";
 import { runSetupFromConfig, runSetupWithDefaults, type SetupSummary } from "../../src/setup/setup";
 import { parseSetupFlags, type RawSetupFlags, type SetupFlags } from "../../src/setup/setup-flags";
 import {
@@ -62,6 +63,12 @@ const claudeInstalled = () =>
       { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/local/bin/claude" },
       { name: "codex", bin: "codex", available: true, resolvedPath: "/usr/local/bin/codex" },
     ],
+  });
+
+const installed = (...names: string[]) =>
+  overrideSeam(_setAgentDetectForTests, {
+    detectAgentCliProfiles: () =>
+      names.map((name) => ({ name, bin: name, available: true, resolvedPath: `/usr/local/bin/${name}` })),
   });
 
 /** An endpoint at `base` listing `models`, recording the key each request carried; every other URL is unreachable. */
@@ -290,6 +297,73 @@ describe("akm setup --yes defaults", () => {
     expect("harnesses" in saved).toBe(false);
     expect(summary.runs.modelCalls).toContain("off");
     expect(summary.runs.agentWork).toContain("off");
+  });
+
+  test("a harness that cannot be restricted does not take model calls unasked: it is saved as off, and nothing dispatches there", async () => {
+    installed("gemini");
+
+    const summary = await run();
+
+    expect(written().harnesses).toEqual({ gemini: { modelWork: false } });
+    expect("connections" in written()).toBe(false);
+    expect(summary.runs.modelCalls).toContain('harness "gemini" is set not to take model calls');
+    expect(summary.runs.modelCalls).toContain("akm setup --endpoint URL");
+    expect(summary.runs.agentWork).toContain('harness "gemini"');
+
+    resetConfigCache();
+    const config = loadUserConfig();
+    expect(() => resolveTarget({ config, modelWork: true, layers: [] })).toThrow(/modelWork: false/);
+    expect(resolveTarget({ config, modelWork: false, layers: [] })).toMatchObject({ kind: "harness", name: "gemini" });
+    // A call that names the harness is still honoured.
+    expect(resolveTarget({ config, modelWork: true, layers: [{ harness: "gemini" }] })).toMatchObject({
+      kind: "harness",
+      name: "gemini",
+    });
+  });
+
+  test("a second run over that config changes nothing, and the hand-written setting is kept", async () => {
+    installed("gemini");
+    await run();
+    const first = fs.readFileSync(getConfigPath(), "utf8");
+    resetConfigCache();
+
+    await run();
+
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(first);
+  });
+
+  test("an endpoint given with the harness takes the model calls, and the harness is not marked", async () => {
+    installed("gemini");
+    const server = endpoint("https://api.example.test/v1", MODELS);
+
+    const summary = await server.serve(() => run({ endpoint: "https://api.example.test/v1" }));
+
+    expect(written().harnesses).toEqual({ gemini: {} });
+    expect(summary.runs.modelCalls).toContain('connection "default"');
+  });
+
+  test("a local server found takes the model calls, and the harness is not marked", async () => {
+    installed("gemini");
+    const localOnly = (url: string) => {
+      if (url === "http://localhost:1234/v1/models") return Response.json({ data: MODELS.map((id) => ({ id })) });
+      throw new Error("unreachable");
+    };
+
+    await withMockedFetch(() => run(), localOnly);
+
+    expect(written().harnesses).toEqual({ gemini: {} });
+    expect((written().connections as Record<string, unknown>).default).toBeDefined();
+  });
+
+  test("a harness that can run read-only takes the model calls and is not marked; a mark from an earlier run is cleared", async () => {
+    installed("claude");
+    writeSandboxConfig({ semanticSearchMode: "off", harnesses: { claude: { modelWork: false } } });
+    resetConfigCache();
+
+    const summary = await run();
+
+    expect(written().harnesses).toEqual({ claude: {} });
+    expect(summary.runs.modelCalls).toContain('harness "claude"');
   });
 
   test("harnesses the config already has are left alone", async () => {

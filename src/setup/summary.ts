@@ -8,7 +8,7 @@
  * print (`../commands/targets.ts`), so the summary says what those say and what
  * a call does.
  */
-import { type ProcessRow, type TargetRow, targetRows } from "../commands/targets";
+import { type HarnessRow, type ProcessRow, type TargetRow, targetRows } from "../commands/targets";
 import type { AkmConfig } from "../core/config/config";
 import { getHarness } from "../integrations/harnesses";
 
@@ -48,7 +48,12 @@ function describeWork(row: ProcessRow, rows: readonly TargetRow[], modelWork: bo
         : "";
     return `harness "${row.target}"${modelSuffix(row)}${restriction}`;
   }
-  return "off: no connection or harness is configured";
+  const declined = modelWork
+    ? rows.find((r): r is HarnessRow => r.type === "harness" && r.modelWork === false)
+    : undefined;
+  return declined
+    ? `off: no connection is configured, and harness "${declined.name}" is set not to take model calls. Add a connection with \`akm setup --endpoint URL\`.`
+    : "off: no connection or harness is configured";
 }
 
 function describeEmbeddings(row: ProcessRow): string {

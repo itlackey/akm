@@ -71,7 +71,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   info` contacts nothing, and neither does `akm health --no-probe`.
 - `akm setup` asks which installed agent programs to enable (saying whether each
   can run read-only for akm's own model calls), whether the default one also
-  takes akm's model calls, an endpoint with its key at a masked prompt and one
+  takes akm's model calls (a no with no connection after it is saved as
+  `modelWork: false` on that harness, which keeps model calls off it by default),
+  an endpoint with its key at a masked prompt and one
   model for each alias, picked from the models the endpoint lists, and where
   embeddings come from. A key you type is stored in `credentials.json` for the
   connection and its endpoint. Each flag answers one question and `--yes` takes the

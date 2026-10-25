@@ -26,6 +26,7 @@ import type { AkmConfig, BundleConfigEntry, SourceConfigEntry } from "../core/co
 import {
   bundleEntryToSourceEntry,
   DEFAULT_CONFIG,
+  defaultConnection,
   loadUserConfig,
   mutateConfigWithPrecommit,
   parseAndValidateConfigText,
@@ -433,7 +434,10 @@ export function buildSetupSteps(options: {
           flags,
           interactive: !ctx.nonInteractive,
         });
-        applyAnswers(ctx, { harnesses: harness.answer });
+        applyAnswers(ctx, {
+          harnesses: harness.answer,
+          ...(harness.modelWork === true ? { harnessModelWork: true } : {}),
+        });
       },
     },
     {
@@ -450,6 +454,10 @@ export function buildSetupSteps(options: {
           localServers: detection.localServers,
         });
         applyAnswers(ctx, { connection: connection.answer });
+        // A "no" to model calls on the harness is saved when no connection came to take them either.
+        if (harness.modelWork === false && defaultConnection(ctx.config) === undefined) {
+          applyAnswers(ctx, { harnessModelWork: false });
+        }
       },
     },
     {

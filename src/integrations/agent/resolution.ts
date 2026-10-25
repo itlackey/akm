@@ -171,10 +171,14 @@ function namedByLayers(
   return undefined;
 }
 
-/** The connection or harness the default-by-name rule picks for this work, if either is configured. */
+/**
+ * The connection or harness the default-by-name rule picks for this work, if either is configured. Model work
+ * skips a harness that is set not to do it (`modelWork: false`); a call that names the harness still runs on it.
+ */
 function defaultTarget(config: AkmConfig, modelWork: boolean): Target | undefined {
   const connection = defaultConnection(config);
-  const harness = defaultHarness(config);
+  const found = defaultHarness(config);
+  const harness = found && !(modelWork && found.harness.modelWork === false) ? found : undefined;
   const asConnection = connection && ({ kind: "connection", ...connection } as const);
   const asHarness = harness && ({ kind: "harness", ...harness } as const);
   return modelWork ? (asConnection ?? asHarness) : (asHarness ?? asConnection);
@@ -218,11 +222,14 @@ function selectTarget(input: ResolveTargetInput): Target {
   const target = defaultTarget(input.config, modelWork);
   if (target) return target;
   const ambiguous = ambiguousDefaultAdvice(input.config);
+  const declined = modelWork ? defaultHarness(input.config) : undefined;
   throw new ConfigError(
     (ambiguous ? `${ambiguous}.` : undefined) ??
-      (modelWork
-        ? "No connection or harness is configured, so there is nothing to run model work on."
-        : "No harness or connection is configured, so there is nothing to run agent work on."),
+      (declined?.harness.modelWork === false
+        ? `No connection is configured, and harness "${declined.name}" is set not to run akm's model calls (modelWork: false), so there is nothing to run model work on. Add a connection with \`akm setup --endpoint URL\`.`
+        : modelWork
+          ? "No connection or harness is configured, so there is nothing to run model work on."
+          : "No harness or connection is configured, so there is nothing to run agent work on."),
     modelWork ? "LLM_NOT_CONFIGURED" : "AGENT_NOT_CONFIGURED",
   );
 }

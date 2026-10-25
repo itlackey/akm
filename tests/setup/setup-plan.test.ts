@@ -163,6 +163,41 @@ describe("harnessEntries", () => {
   });
 });
 
+describe("the answer about model calls on the default harness", () => {
+  test("no is saved on the default harness's entry and nowhere else, and yes clears it", () => {
+    const current = cfg({ harnesses: { default: { platform: "gemini" }, claude: {} } });
+    const off = applySetupAnswers(current, { harnessModelWork: false }).patch.harnesses;
+    expect(off).toEqual({ default: { platform: "gemini", modelWork: false }, claude: {} });
+
+    const on = applySetupAnswers(cfg({ harnesses: off }), { harnessModelWork: true }).patch.harnesses;
+    expect(on).toEqual({ default: { platform: "gemini" }, claude: {} });
+  });
+
+  test("applies to a lone harness whatever it is called, and to the harnesses the same answer sets", () => {
+    expect(applySetupAnswers(cfg({ harnesses: { gemini: {} } }), { harnessModelWork: false }).patch.harnesses).toEqual({
+      gemini: { modelWork: false },
+    });
+    expect(
+      applySetupAnswers(cfg(), {
+        harnesses: { platforms: ["gemini"], default: "gemini" },
+        harnessModelWork: false,
+      }).patch.harnesses,
+    ).toEqual({ gemini: { modelWork: false } });
+  });
+
+  test("changes nothing when the entry already says it, or there is no harness", () => {
+    expect(applySetupAnswers(cfg({ harnesses: { gemini: {} } }), { harnessModelWork: true }).patch).toEqual({});
+    expect(
+      applySetupAnswers(cfg({ harnesses: { gemini: { modelWork: false } } }), { harnessModelWork: false }).patch,
+    ).toEqual({});
+    expect(applySetupAnswers(cfg(), { harnessModelWork: false }).patch).toEqual({});
+    // Several and none called default: there is no default harness to mark.
+    expect(
+      applySetupAnswers(cfg({ harnesses: { gemini: {}, claude: {} } }), { harnessModelWork: false }).patch,
+    ).toEqual({});
+  });
+});
+
 describe("an embedding answer", () => {
   const withModel = cfg({ embedding: { model: "nomic-embed-text" } });
 

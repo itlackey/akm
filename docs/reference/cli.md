@@ -199,7 +199,11 @@ The wizard asks, in order:
 2. **Model calls.** Whether the default agent program also takes akm's own
    model calls (improve, judging, extraction). It is asked only when a harness is
    enabled and there is no connection yet and no `--endpoint`, because a connection
-   always takes model calls; answering no leads to a connection.
+   always takes model calls; answering no leads to a connection. A no that no
+   connection follows is saved as `modelWork: false` on that harness, so model
+   calls stay off (the summary says so and points at `akm setup --endpoint`) rather
+   than falling back to it. With `--yes` the answer is yes only for a harness akm
+   can run read-only.
 3. **Connection.** An OpenAI-compatible endpoint, its API key (typed at a masked
    prompt and stored in `credentials.json`, never in `config.json`), and one model
    per alias (`fast`, `balanced`, `reasoning`) picked from the models the
