@@ -37,6 +37,7 @@ import { resolveStandardsContext } from "../../core/standards/resolve-standards-
 import { withStateDb } from "../../core/state-db";
 import { warn, warnVerbose } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
+import { type NoticeSet, noticeSet } from "../../execution/notices";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { chatCompletion } from "../../llm/client";
@@ -70,8 +71,6 @@ import {
   callStage,
   LESSON_REJECT_MAX_SCORE,
   mintProposal,
-  type NoticeSet,
-  noticeSet,
   type QualityJudgeResult,
   rejectedProposalContext,
   resolveQualityGateJudge,

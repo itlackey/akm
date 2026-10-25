@@ -18,6 +18,7 @@ import path from "node:path";
 import { TransientError, UsageError } from "../../core/errors";
 import { type LockOwnership, probeLock, releaseLock } from "../../core/file-lock";
 import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
+import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { disposeDispatchResources } from "../../integrations/agent/runner-dispatch";
 import type { WorkflowRunStepState, WorkflowRunSummary } from "../../sources/types";
@@ -38,7 +39,6 @@ import {
 import { loadWorkflowAsset } from "../runtime/workflow-asset-loader";
 import type { SummaryJudge } from "../validate-summary";
 import { frozenSummaryJudge, resolveJudgeCwd } from "./frozen-judge";
-import { mergeLoweringNotices } from "./lowering-notices";
 import {
   defaultUnitDispatcher,
   executeStepPlan,
@@ -181,7 +181,7 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
     );
     executed.push(...result.executed);
     stepsProcessed += result.stepsProcessed;
-    const notices = mergeLoweringNotices(...executed.map((step) => step.notices));
+    const notices = mergeNotices(...executed.map((step) => step.notices));
     const aggregate = { ...result, executed, stepsProcessed, ...(notices ? { notices } : {}) };
     // An attempt that executed nothing (an abandoned, undecodable plan) has no
     // failed step for a retry to re-open.
@@ -793,7 +793,7 @@ async function driveRun(
 
   // Re-read for the freshest run state (the loop may have exited on maxSteps).
   const finalState = await getNextWorkflowStep(next.run.id);
-  const notices = mergeLoweringNotices(...executed.map((step) => step.notices));
+  const notices = mergeNotices(...executed.map((step) => step.notices));
   return {
     run: finalState.run,
     executed,

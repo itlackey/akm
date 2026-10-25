@@ -23,7 +23,6 @@ import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { generatedContentRejection } from "../../core/content-safety";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
@@ -36,7 +35,7 @@ import {
   PROPOSAL_JSON_SCHEMA,
   validateProposalPayload,
 } from "../../integrations/agent/prompts";
-import { collectDispatchSensitiveValues, runExecution } from "../../integrations/agent/runner-dispatch";
+import { runExecution } from "../../integrations/agent/runner-dispatch";
 import { jsonParser, type StructuredLoopResult, structuredLoop } from "../../llm/structured";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
@@ -120,8 +119,6 @@ interface ProposalDispatchResult {
   engineName: string;
   engineBin?: string;
   notices: readonly Readonly<LoweringNotice>[];
-  /** Every secret this dispatch could expose; generated content echoing one is not persisted. */
-  sensitiveValues: string[];
 }
 
 const DISPATCH_FAILED = Symbol("proposal-dispatch-failed");
@@ -183,7 +180,6 @@ async function dispatchProposalPrompt(
     engineName,
     ...(lowered.runner.kind === "harness" ? { engineBin: lowered.runner.bin } : {}),
     notices: lowered.notices,
-    sensitiveValues: collectDispatchSensitiveValues(lowered.runner),
   };
 }
 
@@ -264,7 +260,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   const dispatch = await dispatchProposalPrompt(prompt, config, options, () =>
     emitProposeInvoked(target.source, options),
   );
-  const { result, reply, engineName, notices, sensitiveValues } = dispatch;
+  const { result, reply, engineName, notices } = dispatch;
   if (!reply) {
     // B3: ENOENT / not-found gives an actionable hint.
     if (isEnoentFailure(result)) {
@@ -294,10 +290,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   }
   const payload = reply.value;
 
-  const unsafeContent = generatedContentRejection(
-    payload.content,
-    redactSensitiveText(payload.content, sensitiveValues),
-  );
+  const unsafeContent = generatedContentRejection(payload.content);
   if (unsafeContent) {
     return {
       schemaVersion: 2,

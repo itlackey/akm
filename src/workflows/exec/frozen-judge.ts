@@ -11,11 +11,11 @@
  */
 
 import { warn } from "../../core/warn";
+import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { FrozenWorkflowCommandTarget } from "../plan";
 import { resolveRunBundleRoot } from "../runtime/workflow-asset-loader";
 import type { JudgeCallIdentity, SummaryJudge } from "../validate-summary";
-import { collectWorkflowDispatchSensitiveValues, withDispatchRedaction } from "./dispatch-redaction";
 import { dispatchWorkflowExecution, type UnitDispatcher, type UnitDispatchRequest } from "./unit-dispatch";
 
 /** The run/step a judge belongs to; a caller that journals a gate row also passes its exact identity per call. */
@@ -46,15 +46,9 @@ function dispatchIdentity(owner: JudgeOwner, identity: JudgeCallIdentity | undef
   return identity ?? { ...owner, unitId: gateNodeId(owner.stepId) };
 }
 
-function warnLoweringNotices(...groups: readonly (readonly Readonly<LoweringNotice>[] | undefined)[]): void {
-  const emitted = new Set<string>();
-  for (const notices of groups) {
-    for (const notice of notices ?? []) {
-      const key = JSON.stringify([notice.code, notice.severity, notice.adapter, notice.field, notice.message]);
-      if (emitted.has(key)) continue;
-      emitted.add(key);
-      warn(`Workflow judge lowering notice (${notice.code}; ${notice.adapter}; ${notice.field}): ${notice.message}`);
-    }
+function warnLoweringNotices(notices: readonly Readonly<LoweringNotice>[] | undefined): void {
+  for (const notice of mergeNotices(notices) ?? []) {
+    warn(`Workflow judge lowering notice (${notice.code}; ${notice.adapter}; ${notice.field}): ${notice.message}`);
   }
 }
 
@@ -71,7 +65,7 @@ export function frozenSummaryJudge(
   cwd?: string,
 ): SummaryJudge | null {
   if (!target) return null;
-  const dispatch = withDispatchRedaction(dispatcher ?? dispatchWorkflowExecution);
+  const dispatch = dispatcher ?? dispatchWorkflowExecution;
   return async ({ system, user }, identity) => {
     const id = dispatchIdentity(owner, identity);
     const commonRequest = {
@@ -92,11 +86,7 @@ export function frozenSummaryJudge(
       timeoutMs: target.runner.timeoutMs ?? null,
       ...(eventSource !== undefined ? { eventSource } : {}),
     };
-    const sensitiveValues = collectWorkflowDispatchSensitiveValues({ runner: target.runner });
-    const outcome = await dispatch({
-      ...request,
-      ...(sensitiveValues.length > 0 ? { sensitiveValues } : {}),
-    });
+    const outcome = await dispatch(request);
     if (outcome.usage && id.recordTokens) {
       id.recordTokens(
         (outcome.usage.inputTokens ?? 0) + (outcome.usage.outputTokens ?? 0) + (outcome.usage.reasoningTokens ?? 0),

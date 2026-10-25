@@ -16,7 +16,7 @@ import type { EventsContext } from "../../core/events";
 import { effectiveRequestFields, thinkingSetting } from "../../core/llm-inference";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { warn } from "../../core/warn";
-import type { LoweringNotice } from "../../execution/resolved-request";
+import type { NoticeSink } from "../../execution/notices";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import type { RejectedProposalContext } from "../../integrations/agent/prompts";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -38,25 +38,10 @@ import {
 import { resolveImproveExecution } from "./execution";
 import type { ImproveProcessName, ResolvedImprovePlan } from "./improve-strategies";
 
-export type Notice = Readonly<LoweringNotice>;
-export type NoticeSink = (notices: readonly Notice[]) => void;
-
 /** Normalize an unknown thrown value to a message. */
 export function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
-
-/** The lowering notices a stage's dispatches emitted, each once. */
-export function noticeSet(forward?: NoticeSink) {
-  const byKey = new Map<string, Notice>();
-  const add: NoticeSink = (notices) => {
-    for (const notice of notices) byKey.set(JSON.stringify(notice), notice);
-    forward?.(notices);
-  };
-  const list = (): readonly Notice[] => Object.freeze([...byKey.values()]);
-  return { add, list, fields: (): { notices?: readonly Notice[] } => (byKey.size > 0 ? { notices: list() } : {}) };
-}
-export type NoticeSet = ReturnType<typeof noticeSet>;
 
 /**
  * A stage's runner: the one the improve plan froze for it (an own

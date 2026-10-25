@@ -63,6 +63,7 @@ import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { beginWriteProvenance, recordWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
 import { type WriteTargetSource, writeAssetToSource } from "../../core/write-source";
+import { type NoticeSink, noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { type ResolvedIndexPassExecution, resolveIndexPassExecution } from "../../llm/index-passes";
@@ -299,7 +300,7 @@ async function inferPendingMemoryRecord(
     llmRunner: RunnerSpec;
     inferTelemetry: MemoryInferTelemetry;
     compressMemoryToDerivedMemory: typeof memoryInfer.compressMemoryToDerivedMemory;
-    onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
+    onNotices: NoticeSink;
     onConfigFailure: (error: ConfigError) => void;
   },
 ) {
@@ -454,12 +455,9 @@ async function runMemoryInferencePassBody(
   // HTML-error categorization (which is otherwise logged and dropped as a
   // skipped memory) bubbles up into the pass result.
   const inferTelemetry: MemoryInferTelemetry = {};
-  const noticesByKey = new Map<string, Readonly<LoweringNotice>>();
-  const onNotices = (notices: readonly Readonly<LoweringNotice>[]): void => {
-    for (const notice of notices) noticesByKey.set(JSON.stringify(notice), notice);
-  };
+  const notices = noticeSet();
   const completeResult = (): MemoryInferenceResult => {
-    if (noticesByKey.size > 0) result.notices = Object.freeze([...noticesByKey.values()]);
+    Object.assign(result, notices.fields());
     // Non-destructive read — the wrapper's `finally` owns closing the journal.
     result.writtenPaths = provenance.writtenPaths();
     return result;
@@ -471,7 +469,7 @@ async function runMemoryInferencePassBody(
   // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or
   // `undefined` when the pass should not run.
   const execution = memoryExecutionForContext(ctx, config);
-  onNotices(execution.notices);
+  notices.add(execution.notices);
   const llmRunner = execution.runner;
   if (!llmRunner) return completeResult();
 
@@ -518,7 +516,7 @@ async function runMemoryInferencePassBody(
         llmRunner,
         inferTelemetry,
         compressMemoryToDerivedMemory,
-        onNotices,
+        onNotices: notices.add,
         onConfigFailure: (error) => {
           configFailure ??= error;
         },

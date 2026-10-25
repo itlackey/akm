@@ -31,10 +31,10 @@ import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { AkmReflectFailure, AkmReflectResult } from "../../core/improve-types";
 import { lintLessonContent } from "../../core/lesson-lint";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
-import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import type { Parsed } from "../../core/structured";
 import { warnOnce } from "../../core/warn";
+import { type Notice, noticeSet } from "../../execution/notices";
 import { lookup } from "../../indexer/indexer";
 import type { AgentFailureReason, AgentRunResult } from "../../integrations/agent";
 import { buildExecution, currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
@@ -46,7 +46,6 @@ import {
   type ReflectPromptInput,
 } from "../../integrations/agent/prompts";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { collectDispatchSensitiveValues } from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported, LlmCallError } from "../../llm/client";
 import { structuredLoop } from "../../llm/structured";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
@@ -69,8 +68,6 @@ import {
   callStageOnce,
   errMessage,
   mintProposal,
-  type Notice,
-  noticeSet,
   type QualityJudgeResult,
   rejectedProposalContext,
   resolveQualityGateJudge,
@@ -1147,7 +1144,6 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
   const sources = gatherReflectPromptSources(options, stash, parsedRef, assetContent);
   const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
-  const sensitiveValues = collectDispatchSensitiveValues(runnerSpec);
   let result: AgentRunResult;
   let payload: ReflectPayload;
   try {
@@ -1187,7 +1183,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   }
 
   const generated = Object.values(payload.patch).join("\n");
-  const unsafeContent = generatedContentRejection(generated, redactSensitiveText(generated, sensitiveValues));
+  const unsafeContent = generatedContentRejection(generated);
   if (unsafeContent) {
     emitFailed("parse_error", "parse_error", options.ref, exitCodeMeta(result));
     return reflectFailure(run, result, "parse_error", unsafeContent, false);

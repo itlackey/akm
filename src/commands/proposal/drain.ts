@@ -37,6 +37,7 @@ import { ConfigError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { escapeJsonStringControls, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 import { info, warn } from "../../core/warn";
+import { noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -48,7 +49,7 @@ import {
   shingleContainment,
   wordShingles,
 } from "../improve/consolidate/coverage";
-import { errMessage, noticeSet } from "../improve/stage";
+import { errMessage } from "../improve/stage";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
 import { isRetireProposal, PAIR_PASS_GATE, STALE_TARGET_GATE_REASON } from "./proposal-types";
 import {

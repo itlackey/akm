@@ -3,15 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The one redaction contract every frozen-workflow dispatch (unit or gate
- * judge) is held to before anything about its outcome reaches durable state.
- * A leaf module, so the judge path reuses it without an import cycle.
+ * What a frozen-workflow unit's outcome is scrubbed of before it reaches
+ * durable state: the secrets its environment bindings substituted, on top of
+ * what the dispatch itself already redacted (the runner's credential and
+ * unsafe passthrough values).
  */
 
-import { collectSensitiveValues, redactSensitiveText, redactSensitiveValue } from "../../core/redaction";
+import { collectSensitiveValues, redactSensitiveValue } from "../../core/redaction";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { collectDispatchSensitiveValues } from "../../integrations/agent/runner-dispatch";
-import type { UnitDispatcher } from "./unit-dispatch";
 
 /** What a dispatch may draw credentials from. `StepWorkUnit` satisfies it structurally. */
 export interface DispatchSecretSources {
@@ -64,30 +64,4 @@ export function redactUnitOutcome<T extends { failureReason?: string }>(
     redacted.failureReason = "reported_failure";
   }
   return redacted;
-}
-
-/** Scrub a value thrown out of a dispatch; re-wrapped only when the scrub changed its message. */
-function redactDispatchError(err: unknown, sensitiveValues: readonly string[]): unknown {
-  if (sensitiveValues.length === 0 || !(err instanceof Error)) return err;
-  const redacted = redactSensitiveText(err.message, sensitiveValues);
-  if (redacted === err.message) return err;
-  const replacement = new Error(redacted);
-  replacement.name = err.name;
-  return replacement;
-}
-
-/**
- * Wrap a dispatcher so both its outcome and its thrown error are scrubbed with
- * the request's `sensitiveValues` (the gate judge; the unit path scrubs at its
- * own journal boundary after the structured-output parse).
- */
-export function withDispatchRedaction(inner: UnitDispatcher): UnitDispatcher {
-  return async (request, feedback) => {
-    const sensitiveValues = request.sensitiveValues ?? [];
-    try {
-      return redactUnitOutcome(await inner(request, feedback), sensitiveValues);
-    } catch (err) {
-      throw redactDispatchError(err, sensitiveValues);
-    }
-  };
 }

@@ -32,6 +32,7 @@ import { openStateDatabase } from "../../core/state-db";
 import { info, warn, warnVerbose } from "../../core/warn";
 import { beginWriteProvenance, relativeWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
 import { resolveWorkingStashTarget, resolveWritable, resolveWriteTarget } from "../../core/write-source";
+import { type Notice, noticeSet } from "../../execution/notices";
 import { ensureIndex } from "../../indexer/ensure-index";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { akmIndex } from "../../indexer/indexer";
@@ -88,7 +89,7 @@ import {
 import { buildImproveExecutionPlan } from "./planner";
 import { CONSOLIDATION_CONFIG_KEYS, pickDefined, recordImproveSkip, runImprovePreparationStage } from "./preparation";
 import { akmReflect } from "./reflect";
-import { errMessage, type Notice, noticeSet } from "./stage";
+import { errMessage } from "./stage";
 
 export type {
   AkmImproveOptions,

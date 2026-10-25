@@ -163,7 +163,7 @@ describe("akm reflect", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected unsafe content rejection");
     expect(result.reason).toBe("parse_error");
-    expect(result.error).toMatch(/configured credential|\[REDACTED\]/);
+    expect(result.error).toMatch(/\[REDACTED\]/);
     expect(result.error).not.toContain(sentinel);
     expect(listProposals(stash)).toEqual([]);
   });
@@ -409,7 +409,7 @@ describe("akm propose", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected unsafe content rejection");
     expect(result.reason).toBe("parse_error");
-    expect(result.error).toMatch(/configured credential|\[REDACTED\]/);
+    expect(result.error).toMatch(/\[REDACTED\]/);
     expect(result.error).not.toContain(sentinel);
     expect(listProposals(stash)).toEqual([]);
   });

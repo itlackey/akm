@@ -37,6 +37,7 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { openStateDatabase } from "../../core/state-db";
 import { warn, warnVerbose } from "../../core/warn";
 import { type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-source";
+import { type NoticeSink, noticeSet } from "../../execution/notices";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
@@ -61,7 +62,7 @@ import { contentHash } from "./content-hash";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { isContentDrivenRow, isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt } from "./ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "./retrieval-scope";
-import { callStage, mintProposal, type NoticeSink, noticeSet, stageRunner } from "./stage";
+import { callStage, mintProposal, stageRunner } from "./stage";
 
 export interface MemoryEntry {
   name: string;

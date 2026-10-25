@@ -31,6 +31,7 @@ import { NotFoundError } from "../../core/errors";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { substituteRefTokens } from "../../core/ref-token";
 import { warn } from "../../core/warn";
+import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { jsonParser, structuredLoop } from "../../llm/structured";
 import {
@@ -46,15 +47,13 @@ import { resolveRunBundleRoot } from "../runtime/workflow-asset-loader";
 // `child-workflow`-targeted unit; this module's dispatch seam is its only
 // production caller.
 import { driveChildWorkflowUnit } from "./child-workflow";
-// The ONE dispatch redaction contract, shared with the gate-judge path
-// (exec/frozen-judge.ts). Consumers import the leaf directly — this module is
+// The unit outcome scrub. Consumers import the leaf directly — this module is
 // not a second front door onto the seam.
 import { collectWorkflowDispatchSensitiveValues, redactUnitOutcome } from "./dispatch-redaction";
 import { materializeFrozenWorkflowEnvironment } from "./environment";
 // The exec (shell) unit runner — a leaf that owns argv spawning, containment,
 // and the process-outcome → failure-reason mapping.
 import { runExecUnit } from "./exec-unit";
-import { mergeLoweringNotices } from "./lowering-notices";
 import { secretShapedParamValues } from "./param-secrets";
 import { scheduleUnits } from "./scheduler";
 // Shared step semantics — the ONE implementation consumed by the engine
@@ -454,7 +453,7 @@ async function executeStepPlanInConnection(
   // list with a failed-step envelope. Budget/cap and journal-write failures
   // must not erase notices already observed from real dispatches; durable row
   // reuses naturally contribute none.
-  const notices = mergeLoweringNotices(...outcomes.map((outcome) => outcome?.notices));
+  const notices = mergeNotices(...outcomes.map((outcome) => outcome?.notices));
 
   // A declared budget ceiling is a hard backstop: a step that hit one FAILS
   // regardless of on_error policy (a capped run must never quietly pass its
@@ -871,7 +870,7 @@ async function dispatchUnit(
       tokens +=
         (result.usage.inputTokens ?? 0) + (result.usage.outputTokens ?? 0) + (result.usage.reasoningTokens ?? 0);
     }
-    loweringNotices = mergeLoweringNotices(loweringNotices, result.notices);
+    loweringNotices = mergeNotices(loweringNotices, result.notices);
     // Capture before the ok-check: a failed attempt can still have configured
     // a session (e.g. codex `session_configured` then a tool crash).
     if (result.sessionId !== undefined) sessionId = result.sessionId;

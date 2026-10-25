@@ -157,7 +157,7 @@ describe("proposal new on a connection runs akm's own runtime", () => {
     if (echo) {
       expect(result).toMatchObject({ ok: false, reason: "parse_error", engine: "direct" });
       if (result.ok) throw new Error("expected the echoed credential to be refused");
-      expect(result.error).toMatch(/configured credential|\[REDACTED\]/);
+      expect(result.error).toMatch(/\[REDACTED\]/);
       expect(listProposals(stashDir)).toEqual([]);
     } else {
       expect(result.ok).toBe(true);

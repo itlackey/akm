@@ -40,6 +40,7 @@ import { getStateDbPath, openStateDatabase } from "../../core/state-db";
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warn, warnVerbose } from "../../core/warn";
+import { noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -79,7 +80,7 @@ import {
   sessionMeetsDurationGate,
   writeSessionAsset,
 } from "./session-asset";
-import { callStage, callStageOnce, mintProposal, noticeSet } from "./stage";
+import { callStage, callStageOnce, mintProposal } from "./stage";
 
 export type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
 

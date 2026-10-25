@@ -21,6 +21,7 @@ import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { UsageError } from "../../core/errors";
+import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { installLlmUsagePersistenceIfAbsent } from "../../llm/usage-persist";
 import { withLlmStage } from "../../llm/usage-telemetry";
@@ -41,16 +42,6 @@ import {
 } from "./proposal";
 import { proposalWaitingSince } from "./proposal-types";
 import { proposeCommand } from "./propose-cli";
-
-export function mergeProposalDrainNotices(
-  resolutionNotices: readonly Readonly<LoweringNotice>[] | undefined,
-  dispatchNotices: readonly Readonly<LoweringNotice>[] | undefined,
-): readonly Readonly<LoweringNotice>[] | undefined {
-  const byKey = new Map<string, Readonly<LoweringNotice>>();
-  for (const notice of resolutionNotices ?? []) byKey.set(JSON.stringify(notice), notice);
-  for (const notice of dispatchNotices ?? []) byKey.set(JSON.stringify(notice), notice);
-  return byKey.size > 0 ? Object.freeze([...byKey.values()]) : undefined;
-}
 
 /**
  * Parse + validate the shared bulk-adjudication filter flags
@@ -560,7 +551,7 @@ const proposalDrainCommand = defineJsonCommand({
     }
 
     const dispatchNotices = (result as typeof result & { notices?: readonly Readonly<LoweringNotice>[] }).notices;
-    const notices = mergeProposalDrainNotices(judgmentResolution?.notices, dispatchNotices);
+    const notices = mergeNotices(judgmentResolution?.notices, dispatchNotices);
 
     output("proposal-drain", {
       schemaVersion: 1,

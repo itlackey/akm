@@ -19,6 +19,7 @@ import { ConfigError, UsageError } from "../core/errors";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { DURATION_UNITS, parseDuration as parseDurationSpec } from "../core/time";
 import { warn } from "../core/warn";
+import { noticeSet } from "../execution/notices";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { StashEntryScope } from "../indexer/passes/metadata";
 import { SCOPE_KEYS } from "../indexer/passes/metadata";
@@ -320,9 +321,8 @@ export async function runLlmEnrich(body: string): Promise<EnrichmentResult> {
     return { tags: [] };
   }
   const runner = resolved.runner;
-  const noticesByKey = new Map(resolved.notices.map((notice) => [JSON.stringify(notice), notice]));
-  const noticeFields = (): { notices?: readonly Readonly<LoweringNotice>[] } =>
-    noticesByKey.size > 0 ? { notices: Object.freeze([...noticesByKey.values()]) } : {};
+  const notices = noticeSet();
+  notices.add(resolved.notices);
 
   const prompt = `You are a memory tagger for a developer knowledge base.
 Given the memory text below, return ONLY a JSON object with these fields:
@@ -345,20 +345,18 @@ Return ONLY the JSON object, no prose, no markdown fences.`;
         ],
         // The write path must not block on a misbehaving endpoint.
         request: { maxTokens: 256, temperature: 0.1, timeoutMs: LLM_ENRICH_TIMEOUT_MS },
-        onNotices: (value) => {
-          for (const notice of value) noticesByKey.set(JSON.stringify(notice), notice);
-        },
+        onNotices: notices.add,
       }),
     );
     if (!outcome.ok) {
       warn(`Warning: --enrich failed (${outcome.error}). Writing memory without enrichment.`);
-      return { tags: [], ...noticeFields() };
+      return { tags: [], ...notices.fields() };
     }
 
     const parsed = parseEmbeddedJsonResponse<Record<string, unknown>>(outcome.raw);
     if (!parsed) {
       warn("Warning: --enrich received invalid JSON from the LLM. Writing memory without enrichment.");
-      return { tags: [], ...noticeFields() };
+      return { tags: [], ...notices.fields() };
     }
 
     const tags = Array.isArray(parsed.tags)
@@ -368,11 +366,11 @@ Return ONLY the JSON object, no prose, no markdown fences.`;
     const description =
       typeof parsed.description === "string" && parsed.description.trim() ? parsed.description.trim() : undefined;
 
-    return { tags, description, observed_at: parseEnrichObserved(parsed), ...noticeFields() };
+    return { tags, description, observed_at: parseEnrichObserved(parsed), ...notices.fields() };
   } catch (err) {
     if (err instanceof ConfigError) throw err;
     warn(`Warning: --enrich failed (${toErrorMessage(err)}). Writing memory without enrichment.`);
-    return { tags: [], ...noticeFields() };
+    return { tags: [], ...notices.fields() };
   }
 }
 

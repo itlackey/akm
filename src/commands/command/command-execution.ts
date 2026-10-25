@@ -5,6 +5,7 @@
 import type { AkmConfig } from "../../core/config/config-types";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { UsageError } from "../../core/errors";
+import { mergeNotices } from "../../execution/notices";
 import {
   createInlineResolvedCommand,
   createResolvedCommand,
@@ -346,13 +347,9 @@ function safeDiagnosticNotice(notice: Readonly<LoweringNotice>): Readonly<Comman
 }
 
 function diagnosticNotices(notices: readonly Readonly<LoweringNotice>[]): readonly Readonly<CommandDiagnosticNotice>[] {
-  const canonical = new Map<string, Readonly<CommandDiagnosticNotice>>();
-  for (const notice of notices) {
-    const safe = safeDiagnosticNotice(notice);
-    if (safe) canonical.set(JSON.stringify(safe), safe);
-  }
+  const safe = notices.flatMap((notice) => safeDiagnosticNotice(notice) ?? []);
   return Object.freeze(
-    [...canonical.values()].sort((left, right) => compareText(JSON.stringify(left), JSON.stringify(right))),
+    [...(mergeNotices(safe) ?? [])].sort((left, right) => compareText(JSON.stringify(left), JSON.stringify(right))),
   );
 }
 
