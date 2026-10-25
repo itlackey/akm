@@ -18,7 +18,13 @@
  *     `akm.engine`;
  *   - a workflow (`workflows/`): `defaults.engine`, and `engine` on a step's
  *     `unit` and on the `unit` of its `map`;
- *   - a task source (`tasks/`, YAML): `engine` at the top level.
+ *   - a task source (`tasks/`, YAML): `engine` at the top level; one older than
+ *     v4 is left whole for the task step.
+ *
+ * An `engine:` key that stays (a style the splice does not write, a read-only
+ * bundle, a conflict) is counted in `pending`, apart from the file's outcome: the
+ * old names are needed for as long as one is left, in a rewritten file too
+ * ({@link pendingEngineKeys}).
  */
 
 import crypto from "node:crypto";
@@ -59,6 +65,8 @@ interface EngineKeyOutcomeBase {
 
 export interface EngineKeyChange extends EngineKeyOutcomeBase {
   readonly status: "changed";
+  /** The `engine:` keys this plan leaves as written (a style it does not rewrite): old names still waiting on the remembered map. */
+  readonly pending: number;
   readonly before: Buffer;
   readonly after: Buffer;
   readonly afterHash: string;
@@ -70,7 +78,12 @@ export interface EngineKeyChange extends EngineKeyOutcomeBase {
 export type EngineKeyOutcome =
   | (EngineKeyOutcomeBase & { readonly status: "unchanged" })
   | EngineKeyChange
-  | (EngineKeyOutcomeBase & { readonly status: "skipped"; readonly reason: string });
+  | (EngineKeyOutcomeBase & {
+      readonly status: "skipped";
+      readonly reason: string;
+      /** The `engine:` keys in the file that name an old engine and are not rewritten. */
+      readonly pending: number;
+    });
 
 export interface EngineKeysPlan {
   readonly files: readonly EngineKeyOutcome[];
@@ -150,19 +163,24 @@ function planYaml(
   offset: number,
   role: EngineKeyRole,
   resolve: ResolveEngineKey,
-): { splices: Splice[]; rewrites: EngineKeyRewrite[]; notes: string[]; expected: Expectation[] } | { problem: string } {
+):
+  | { splices: Splice[]; rewrites: EngineKeyRewrite[]; notes: string[]; expected: Expectation[]; references: number }
+  | { problem: string; references: number } {
   const document = parseDocument(yaml);
-  if (document.errors.length > 0 || !isMap(document.contents)) return { problem: "it is not YAML this step can read" };
+  if (document.errors.length > 0 || !isMap(document.contents)) {
+    return { problem: "it is not YAML this step can read", references: 0 };
+  }
   const splices: Splice[] = [];
   const rewrites: EngineKeyRewrite[] = [];
   const notes: string[] = [];
   const expected: Expectation[] = [];
+  /** The `engine:` keys that name an old engine: the ones the remembered names are kept for. */
+  let references = 0;
   const places = enginePlaces(document.contents, role);
-  // A task source older than v4 still on disk is one the task step left blocked. `engine` is a field of it, and
-  // renaming the key would keep the task step from converting it once the blocker is fixed, so only the name moves:
-  // an engine the conversion renamed (`lab` is now `default`) is a name no later run could recover.
+  // A task source older than v4 still on disk is one the task step left blocked: the key waits for that step, and
+  // the old names for it.
   const version = pairOf(document.contents, "version")?.value;
-  const nameOnly = role === "task" && !(isScalar(version) && version.value === 4);
+  const blocked = role === "task" && !(isScalar(version) && version.value === 4);
   for (const { at, map } of places) {
     const pair = pairOf(map, "engine");
     if (!pair) continue;
@@ -176,30 +194,25 @@ function planYaml(
       notes.push(`${where}: left as written, because the same place also names a connection or a harness.`);
       continue;
     }
+    references += 1;
+    if (blocked) continue;
     const resolution = resolve(value);
-    const newKey = nameOnly ? undefined : scalarSplice(pair.key, resolution.key, offset);
+    const newKey = scalarSplice(pair.key, resolution.key, offset);
     const newName = resolution.name === value ? undefined : scalarSplice(pair.value, resolution.name, offset);
-    if ((!nameOnly && !newKey) || (resolution.name !== value && !newName)) {
+    if (!newKey || (resolution.name !== value && !newName)) {
       notes.push(`${where}: left as written, because it is spelled in a style this step does not rewrite.`);
       continue;
     }
-    if (nameOnly) {
-      if (!newName) continue;
-      splices.push(newName);
-      rewrites.push({ at: where, from: `engine: ${value}`, to: `engine: ${resolution.name}` });
-      expected.push({ at, key: "engine", name: resolution.name });
-      continue;
-    }
-    if (newKey) splices.push(newKey);
+    splices.push(newKey);
     if (newName) splices.push(newName);
     rewrites.push({ at: where, from: `engine: ${value}`, to: `${resolution.key}: ${resolution.name}` });
     expected.push({ at, key: resolution.key, name: resolution.name });
     if (resolution.note) notes.push(`${where}: ${resolution.note}`);
   }
-  if (nameOnly && rewrites.length === 0 && places.some(({ map }) => pairOf(map, "engine"))) {
-    return { problem: "it is not task source v4; convert it to v4 first, then run this step again" };
+  if (blocked && places.some(({ map }) => pairOf(map, "engine"))) {
+    return { problem: "it is not task source v4; convert it to v4 first, then run this step again", references };
   }
-  return { splices, rewrites, notes, expected };
+  return { splices, rewrites, notes, expected, references };
 }
 
 /** Whether `yaml` now reads as the planned places do: the key and name written, no `engine` left beside them. */
@@ -232,21 +245,33 @@ export function planEngineKeyFile(input: EngineKeyFileInput, resolve: ResolveEng
   const frontmatter = input.role === "task" ? { text: raw, offset: 0 } : frontmatterOf(raw);
   if (!frontmatter) return { ...base, status: "unchanged" };
   const planned = planYaml(frontmatter.text, frontmatter.offset, input.role, resolve);
-  if ("problem" in planned) return { ...base, status: "skipped", reason: planned.problem };
+  if ("problem" in planned) {
+    return { ...base, status: "skipped", reason: planned.problem, pending: planned.references };
+  }
   if (planned.rewrites.length === 0) {
     return planned.notes.length > 0
-      ? { ...base, status: "skipped", reason: planned.notes.join(" ") }
+      ? { ...base, status: "skipped", reason: planned.notes.join(" "), pending: planned.references }
       : { ...base, status: "unchanged" };
   }
   if (!input.writable) {
-    return { ...base, status: "skipped", reason: "its bundle is read-only; change the asset where it comes from" };
+    return {
+      ...base,
+      status: "skipped",
+      reason: "its bundle is read-only; change the asset where it comes from",
+      pending: planned.references,
+    };
   }
 
   const after = Buffer.from(applySplices(raw, planned.splices), "utf8");
   // What is written must read as YAML, and as the keys and names that were planned.
   const written = input.role === "task" ? after.toString("utf8") : frontmatterOf(after.toString("utf8"))?.text;
   if (written === undefined || !readsAsPlanned(written, input.role, planned.expected)) {
-    return { ...base, status: "skipped", reason: "the rewrite would not read as planned, so it was not made" };
+    return {
+      ...base,
+      status: "skipped",
+      reason: "the rewrite would not read as planned, so it was not made",
+      pending: planned.references,
+    };
   }
   return {
     ...base,
@@ -257,7 +282,18 @@ export function planEngineKeyFile(input: EngineKeyFileInput, resolve: ResolveEng
     mode: input.mode,
     rewrites: planned.rewrites,
     notes: planned.notes,
+    pending: planned.references - planned.rewrites.length,
   };
+}
+
+/** The `engine:` keys a plan leaves naming an old engine, or would leave if it were not applied: zero means the remembered names are no longer needed. */
+export function pendingEngineKeys(plan: EngineKeysPlan): number {
+  let pending = 0;
+  for (const file of plan.files) {
+    if (file.status === "changed") pending += file.pending + file.rewrites.length;
+    else if (file.status === "skipped") pending += file.pending;
+  }
+  return pending;
 }
 
 export function planEngineKeys(inputs: readonly EngineKeyFileInput[], resolve: ResolveEngineKey): EngineKeysPlan {

@@ -7,11 +7,13 @@
  * workflow files and task sources becomes `connection:` or `harness:`, by the
  * kind of thing the name is now. The names an engine had before the `engines`
  * form was converted come from that step's result (`engineTargets`: `lab` may now
- * be `default`), and are kept in the data directory until no file is left skipped, so
- * a read-only bundle's asset that becomes writable, or a retry after the config has
- * been rewritten, is written under the same names; a name it does not know is looked
- * up in the configuration as it stands; a name that is neither a connection nor a
- * harness is written as a harness, with a note.
+ * be `default`), and are kept in the data directory (`src/core/config/retired-engines.ts`)
+ * until a re-read of the files finds no `engine:` key that still names an old engine
+ * (a skipped file, or a block of a rewritten file that is spelled in a style the
+ * splice does not write), so a read-only bundle's asset that becomes writable, or a
+ * retry after the config has been rewritten, is written under the same names; a name
+ * it does not know is looked up in the configuration as it stands; a name that is
+ * neither a connection nor a harness is written as a harness, with a note.
  */
 
 import { randomUUID } from "node:crypto";
@@ -24,6 +26,7 @@ import {
   type EngineKeyOutcome,
   type EngineKeyResolution,
   type EngineKeyRewrite,
+  pendingEngineKeys,
   planEngineKeys,
   type ResolveEngineKey,
 } from "./migrate/engine-key-planner";
@@ -123,9 +126,10 @@ export function applyEngineKeysMigration(targets?: EngineTargets): EngineKeysMig
   return withConfigLock(() => {
     const before = plan(targets);
     const summary = summarize(before.files);
-    // Nothing left skipped: every reference that could be rewritten is, and the old names are no longer needed.
-    if (summary.skipped === 0 && summary.changed === 0) forgetEngineTargets();
-    if (summary.changed === 0) return statusOf(summary);
+    if (summary.changed === 0) {
+      if (pendingEngineKeys(before) === 0) forgetEngineTargets();
+      return statusOf(summary);
+    }
     const backupPath = path.join(getDataDir(), "backups", "asset-engine-keys", `${Date.now()}-${randomUUID()}`);
     const { rewritten, conflicts } = applyEngineKeysPlan(before, { backupRoot: backupPath });
     // A file that changed since it was planned was left as it is; the report says so, and a run again plans it afresh.
@@ -140,7 +144,9 @@ export function applyEngineKeysMigration(targets?: EngineTargets): EngineKeysMig
         : file,
     );
     const left = files.filter((file) => file.status === "skipped").length;
-    if (left === 0) forgetEngineTargets();
+    // The old names go only when the files, read again, no longer have an `engine:` key that names one: a file
+    // rewritten in part (a block scalar the splice cannot write) or changed since it was planned still does.
+    if (pendingEngineKeys(plan(targets)) === 0) forgetEngineTargets();
     // The report keeps what was rewritten, notes included.
     return {
       schemaVersion: 1,

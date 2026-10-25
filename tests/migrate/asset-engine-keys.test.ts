@@ -24,6 +24,7 @@ import { runMigration } from "../../scripts/akm-migrate/run-migrate";
 import { selectionFromArgs } from "../../src/cli/selection";
 import { executionDefaultsFromFrontmatter } from "../../src/core/adapter/execution-source";
 import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
+import { rememberedEngineTargets } from "../../src/core/config/retired-engines";
 import { executionDefaultsOf } from "../../src/execution/source";
 import { resolveTarget } from "../../src/integrations/agent/resolution";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -94,11 +95,9 @@ describe("planEngineKeyFile", () => {
     ).toBe("unchanged");
   });
 
-  test("a task source older than v4 keeps its engine key; only an engine the conversion renamed has its name moved", () => {
+  test("a task source older than v4 is left whole, even for an engine the conversion renamed: its old name waits for the task step", () => {
     const outcome = plan("task", "version: 2\nrun: echo\nengine: lab # the model\n");
-    expect(after(outcome)).toBe("version: 2\nrun: echo\nengine: default # the model\n");
-    expect(outcome).toMatchObject({ rewrites: [{ at: "engine", from: "engine: lab", to: "engine: default" }] });
-    // A name that did not change leaves the file for the task step, untouched.
+    expect(outcome).toMatchObject({ status: "skipped", pending: 1 });
     expect(plan("task", "version: 3\nrun: echo\nengine: claude\n").status).toBe("skipped");
   });
 
@@ -133,10 +132,6 @@ describe("planEngineKeyFile", () => {
     expect(after(single)).toBe("---\nconnection: 'default'\n---\n");
     const plain = plan("command", "---\n'engine': lab\n---\n");
     expect(after(plain)).toBe("---\n'connection': default\n---\n");
-    // A task source older than v4 only has its name moved, escaped or not.
-    expect(after(plan("task", 'version: 2\nrun: echo\nengine: "la\\u0062"\n'))).toBe(
-      'version: 2\nrun: echo\nengine: "default"\n',
-    );
   });
 
   test("whatever it writes reads, once parsed, as the planned key and name", () => {
@@ -308,7 +303,7 @@ describe("the step", () => {
     expect(fs.readFileSync(file, "utf8")).toBe("version: 2\nrun: echo hi\nengine: lab\n");
   });
 
-  test("a v2 task source that names the engine the conversion renamed has only that name moved, so a later run still reads it", async () => {
+  test("a v2 task source that names the engine the conversion renamed is left whole, so a later run reads the old name", async () => {
     writeSandboxConfig({
       defaultBundle: "primary",
       bundles: { primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } } },
@@ -319,10 +314,8 @@ describe("the step", () => {
 
     const plan = await runMigration({ apply: false });
 
-    expect(plan.assetEngineKeys).toMatchObject({ changed: 1, skipped: 0 });
-    expect(plan.assetEngineKeys?.files[0]?.rewrites).toEqual([
-      { at: "engine", from: "engine: lab", to: "engine: default" },
-    ]);
+    expect(plan.assetEngineKeys).toMatchObject({ changed: 0, skipped: 1 });
+    expect(plan.assetEngineKeys?.files[0]?.reason).toContain("convert it to v4 first");
     expect(fs.readFileSync(file, "utf8")).toBe("version: 2\nrun: echo hi\nengine: lab\n");
   });
 
@@ -480,6 +473,62 @@ describe("the step", () => {
     expect(retry.assetEngineKeys).toMatchObject({ changed: 1, skipped: 0 });
     expect(fs.readFileSync(command, "utf8")).toContain("connection: legacy-default");
     expect(assetSays()).toBe(A);
+  });
+
+  test("a file rewritten in part keeps the old names for the engine key it could not rewrite", async () => {
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: { primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } } },
+      engines: {
+        lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "qwen3-32b" },
+        default: { kind: "llm", endpoint: "http://old:8080/v1/chat/completions", model: "old-model" },
+      },
+      defaults: { llmEngine: "lab" },
+    });
+    // The top-level key is plain; the nested one is a block scalar, a style the step does not rewrite.
+    const file = write(
+      "commands/partial.md",
+      "---\nname: partial\nengine: default\nakm:\n  engine: >-\n    lab\n---\nBody.\n",
+    );
+
+    const first = await runMigration({ apply: true });
+
+    expect(first.assetEngineKeys).toMatchObject({ changed: 1, skipped: 0 });
+    expect(first.assetEngineKeys?.files[0]?.notes?.join("\n")).toContain("akm.engine: left as written");
+    const afterFirst = fs.readFileSync(file, "utf8");
+    expect(afterFirst).toContain("connection: legacy-default");
+    expect(afterFirst).toContain("engine: >-");
+    expect(rememberedEngineTargets()).toMatchObject({ lab: { connection: "default" } });
+
+    // The user writes the nested one in a style the step can rewrite; the old name `lab` must still mean B's engine.
+    fs.writeFileSync(file, afterFirst.replace("engine: >-\n    lab", "engine: lab"));
+    const second = await runMigration({ apply: true });
+
+    expect(second.assetEngineKeys).toMatchObject({ changed: 1, skipped: 0 });
+    const afterSecond = fs.readFileSync(file, "utf8");
+    expect(afterSecond).toContain("connection: legacy-default");
+    expect(afterSecond).toContain("akm:\n  connection: default");
+    expect(afterSecond).not.toContain("harness:");
+    // Every reference is rewritten, so the old names are forgotten.
+    expect(rememberedEngineTargets()).toEqual({});
+  });
+
+  test("a rewrite that leaves nothing behind forgets the old names, and a file that is only skipped does not", async () => {
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: { primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } } },
+      engines: { lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "m" } },
+      defaults: { llmEngine: "lab" },
+    });
+    write("commands/a.md", "---\nname: a\nakm:\n  engine: lab\n---\nA.\n");
+    const skipped = write("commands/b.md", "---\nname: b\nakm:\n  engine: >-\n    lab\n---\nB.\n");
+
+    await runMigration({ apply: true });
+    expect(rememberedEngineTargets()).toMatchObject({ lab: { connection: "default" } });
+
+    fs.writeFileSync(skipped, "---\nname: b\nakm:\n  connection: default\n---\nB.\n");
+    await runMigration({ apply: true });
+    expect(rememberedEngineTargets()).toEqual({});
   });
 
   test("the assets wait when the config step failed: nothing is rewritten and the step is absent from the plan", async () => {
