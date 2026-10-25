@@ -96,6 +96,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { planTaskToV4File } from "../../scripts/akm-migrate/migrate/task-to-v4";
+import { runMigration } from "../../scripts/akm-migrate/run-migrate";
 import { inspectTaskFilesMigration } from "../../scripts/akm-migrate/task-migrate";
 import { akmHealth } from "../../src/commands/health";
 import { createProposal as createProposalImpl } from "../../src/commands/proposal/repository";
@@ -1233,5 +1234,186 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
     } finally {
       stash.cleanup();
     }
+  });
+});
+
+/** The parts of the converted 0.9 fixture that the end-to-end test reads. */
+interface MigratedConfig {
+  engines?: unknown;
+  defaults?: unknown;
+  workflow?: { judgeEngine?: unknown };
+  connections: Record<string, Record<string, unknown> & { models?: Record<string, unknown> }>;
+  harnesses: Record<string, { models?: Record<string, unknown> }>;
+  improve: { strategy?: string; processes: Record<string, Record<string, unknown>> };
+}
+
+describe("previous-release corpus — a 0.9 `engines` config converts end to end through `akm migrate apply`", () => {
+  let storage: IsolatedAkmStorage;
+  let keyFile: string;
+
+  /** A secret in the bundle's own store, which a `${secrets/openai}` key reads. */
+  const STORED_SECRET = "sk-from-the-bundle-secret-store";
+  const KEY_FILE_SECRET = "sk-from-the-key-file";
+  const LITERAL = "sk-literal-from-0-9";
+
+  beforeEach(() => {
+    storage = withIsolatedAkmStorage();
+    resetConfigCache();
+    keyFile = path.join(storage.root, "lab.key");
+    fs.writeFileSync(keyFile, `${KEY_FILE_SECRET}\n`);
+    fs.mkdirSync(path.join(storage.stashDir, "secrets"), { recursive: true });
+    fs.writeFileSync(path.join(storage.stashDir, "secrets", "openai"), `${STORED_SECRET}\n`);
+    const configDir = path.dirname(getConfigPath());
+    fs.writeFileSync(getConfigPath(), readFixture("config-v09-engines.json").replace("__KEY_FILE__", keyFile));
+    fs.writeFileSync(path.join(configDir, "models.json"), readFixture("models-v09.json"));
+    // Assets that still say `engine:`.
+    for (const [relative, text] of [
+      ["commands/review.md", "---\nname: review\nakm:\n  engine: lab\n---\nReview it.\n"],
+      [
+        "workflows/nightly.md",
+        "---\ntype: workflow\ndefaults:\n  engine: cloud\nsteps:\n  - id: one\n    unit: { engine: claude }\n---\n",
+      ],
+      ["tasks/daily.yml", "version: 4\nrun: echo hi\nengine: sdk\n"],
+    ] as const) {
+      fs.mkdirSync(path.dirname(path.join(storage.stashDir, relative)), { recursive: true });
+      fs.writeFileSync(path.join(storage.stashDir, relative), text);
+    }
+  });
+  afterEach(() => {
+    _setWarnSinkForTests(undefined);
+    resetConfigCache();
+    storage.cleanup();
+  });
+
+  /** Every file under the config, cache and stash dirs, as bytes, to see that a dry run changes none. */
+  function snapshot(): Record<string, string> {
+    const out: Record<string, string> = {};
+    const visit = (directory: string): void => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) visit(file);
+        else out[file] = fs.readFileSync(file, "utf8");
+      }
+    };
+    for (const directory of [path.dirname(getConfigPath()), storage.stashDir, path.join(storage.root, "cache")]) {
+      if (fs.existsSync(directory)) visit(directory);
+    }
+    return out;
+  }
+
+  const read = (relative: string): string => fs.readFileSync(path.join(storage.stashDir, relative), "utf8");
+
+  test("loads in memory with one warning naming `akm migrate apply`, and the file is not touched", () => {
+    const warnings: string[] = [];
+    _resetWarnOnceForTests();
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    const before = snapshot();
+
+    const config = loadConfig();
+
+    expect(Object.keys(config.connections ?? {}).sort()).toEqual(["cloud", "default", "env", "hosted"]);
+    expect(Object.keys(config.harnesses ?? {})).toEqual(["claude"]);
+    expect(config.improve?.strategy).toBe("nightly");
+    expect(warnings.filter((warning) => warning.includes("retired engines/defaults form"))).toHaveLength(1);
+    expect(warnings.join("\n")).toContain("akm migrate apply");
+    for (const secret of [KEY_FILE_SECRET, STORED_SECRET, LITERAL]) expect(warnings.join("\n")).not.toContain(secret);
+    expect(snapshot()).toEqual(before);
+  });
+
+  test("--dry-run lists the whole plan and changes nothing", async () => {
+    const before = snapshot();
+
+    const plan = await runMigration({ apply: false });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.configFile).toMatchObject({
+      changed: true,
+      applied: false,
+      credentials: ["default", "cloud", "hosted"],
+    });
+    expect(plan.assetEngineKeys?.changed).toBe(3);
+    expect(JSON.stringify(plan)).not.toMatch(new RegExp(`${KEY_FILE_SECRET}|${STORED_SECRET}|${LITERAL}`));
+    expect(snapshot()).toEqual(before);
+    expect(fs.existsSync(path.join(path.dirname(getConfigPath()), "credentials.json"))).toBe(false);
+  });
+
+  test("apply writes connections and harnesses, files the keys in credentials.json, folds and removes models.json, and rewrites the assets", async () => {
+    const configDir = path.dirname(getConfigPath());
+    const originalConfig = fs.readFileSync(getConfigPath(), "utf8");
+    const originalModels = fs.readFileSync(path.join(configDir, "models.json"), "utf8");
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.failedSteps).toBeUndefined();
+    const configFile = plan.configFile;
+    expect(configFile).toMatchObject({ changed: true, applied: true, credentials: ["default", "cloud", "hosted"] });
+
+    // The file, converted: the default LLM engine is `default`, the runtime is gone, references follow.
+    const written = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as MigratedConfig;
+    expect(written.engines).toBeUndefined();
+    expect(written.defaults).toBeUndefined();
+    expect(written.workflow?.judgeEngine).toBeUndefined();
+    expect(Object.keys(written.connections).sort()).toEqual(["cloud", "default", "env", "hosted"]);
+    expect(written.harnesses).toEqual({ claude: expect.any(Object) });
+    expect(written.improve.strategy).toBe("nightly");
+    expect(written.improve.processes.reflect).toMatchObject({ connection: "cloud", model: "balanced" });
+    expect(written.connections.default).toMatchObject({
+      endpoint: "http://lab:8080/v1/chat/completions",
+      temperature: 0.2,
+      top_p: 0.9,
+      contextLength: 32768,
+      timeoutMs: 900000,
+    });
+    // The key a reference names stays a reference; the others are gone from the file.
+    expect(written.connections.env?.apiKey).toBe("$ENV_ENGINE_KEY");
+    for (const name of ["default", "cloud", "hosted"]) expect(written.connections[name]).not.toHaveProperty("apiKey");
+    expect(JSON.stringify(written)).not.toMatch(
+      new RegExp(`${KEY_FILE_SECRET}|${STORED_SECRET}|${LITERAL}|apiKeyFile`),
+    );
+
+    // credentials.json: each key under the connection's name after the rename, 0600.
+    const credentials = path.join(configDir, "credentials.json");
+    expect(JSON.parse(fs.readFileSync(credentials, "utf8"))).toEqual({
+      default: KEY_FILE_SECRET,
+      cloud: STORED_SECRET,
+      hosted: LITERAL,
+    });
+    expect(fs.statSync(credentials).mode & 0o777).toBe(0o600);
+    // The notes name places and entries, never values.
+    const notes = (configFile?.notes ?? []).join("\n");
+    expect(notes).toContain('engines.lab.apiKeyFile: its key moves to credentials.json as "default"');
+    expect(notes).toContain('engines.cloud.apiKey: its key moves to credentials.json as "cloud"');
+    expect(notes).toContain('engines.hosted.apiKey: its key moves to credentials.json as "hosted"');
+    expect(notes).toContain("models.json coder.nowhere: names no configured connection or harness");
+    expect(JSON.stringify(plan)).not.toMatch(new RegExp(`${KEY_FILE_SECRET}|${STORED_SECRET}|${LITERAL}`));
+
+    // The config is backed up as it was.
+    expect(fs.readFileSync(configFile?.backupPath as string, "utf8")).toBe(originalConfig);
+
+    // models.json: folded in, then moved to the config backups.
+    expect(written.connections.default?.models).toMatchObject({ fast: "qwen3-8b", reasoning: "qwen3-32b" });
+    expect(written.harnesses.claude?.models).toMatchObject({ fast: "haiku" });
+    expect(fs.existsSync(path.join(configDir, "models.json"))).toBe(false);
+    expect(fs.readFileSync(configFile?.modelsFileBackupPath as string, "utf8")).toBe(originalModels);
+
+    // The assets: `lab` is now `default`, `cloud` a connection, `claude` a harness, the runtime `sdk` is `lab`'s connection.
+    expect(read("commands/review.md")).toBe("---\nname: review\nakm:\n  connection: default\n---\nReview it.\n");
+    expect(read("workflows/nightly.md")).toContain("defaults:\n  connection: cloud");
+    expect(read("workflows/nightly.md")).toContain("unit: { harness: claude }");
+    expect(read("tasks/daily.yml")).toBe("version: 4\nrun: echo hi\nconnection: default\n");
+
+    // Nothing is left to do, and the converted file reads with no warning.
+    resetConfigCache();
+    const warnings: string[] = [];
+    _resetWarnOnceForTests();
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    expect(loadConfig().connections?.default?.endpoint).toBe("http://lab:8080/v1/chat/completions");
+    expect(warnings).toEqual([]);
+    _setWarnSinkForTests(undefined);
+    expect((await runMigration({ apply: false })).status).toBe("current");
   });
 });

@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "aliases": {
+    "fast": { "lab": "qwen3-8b", "claude": "haiku" },
+    "reasoning": { "*": { "model": "qwen3-32b", "inference": { "effort": "high" } } },
+    "coder": { "nowhere": "qwen3-coder" }
+  }
+}
