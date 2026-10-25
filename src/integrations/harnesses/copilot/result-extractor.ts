@@ -42,7 +42,7 @@
  */
 
 import { isRecord, tryParseJson } from "../../../core/common";
-import type { AgentResultExtraction, AgentResultExtractor } from "../../agent/builder-shared";
+import type { AgentResultExtraction, AgentResultExtractor } from "../harness";
 
 /** Keys that may carry the final answer, in precedence order. */
 const TEXT_KEYS = ["result", "response", "text", "output", "content", "message"] as const;

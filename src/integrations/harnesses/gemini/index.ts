@@ -14,8 +14,7 @@
  * reader or config importer yet.
  */
 
-import { caps } from "../shared";
-import { BaseHarness } from "../types";
+import type { AkmHarness } from "../harness";
 import { geminiBuilder } from "./agent-builder";
 import { geminiResultExtractor } from "./result-extractor";
 
@@ -27,10 +26,10 @@ export { geminiResultExtractor } from "./result-extractor";
  *
  * Canonical id is `'gemini'`; no alias or distinct runtime identity.
  */
-export class GeminiHarness extends BaseHarness {
+export class GeminiHarness implements AkmHarness {
   readonly id = "gemini" as const;
   readonly displayName = "Gemini CLI";
-  readonly agentBuilder = geminiBuilder;
+  readonly build = geminiBuilder.build;
   readonly profile = { bin: "gemini", args: [], envPassthrough: ["GEMINI_API_KEY", "GOOGLE_API_KEY"] };
   readonly resultExtractor = geminiResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
@@ -40,8 +39,7 @@ export class GeminiHarness extends BaseHarness {
   // a session id, so it is registered as `presenceEnv` (harness inference
   // only), never `identityEnv` (whose values persist as agent_session_id).
   readonly presenceEnv = ["GEMINI_CLI"] as const;
-  readonly capabilities = caps({
-    agentDispatch: true,
-    detection: true,
-  });
+  readonly systemPrompt = false;
+  readonly nativeAgent = false;
+  readonly confinable = false;
 }

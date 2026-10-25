@@ -49,7 +49,7 @@
  * schema validation.
  */
 
-import type { AgentResultExtraction, AgentResultExtractor } from "../../agent/builder-shared";
+import type { AgentResultExtraction, AgentResultExtractor } from "../harness";
 
 /**
  * ANSI escape sequences (CSI color/cursor codes). Defensive only: the builder

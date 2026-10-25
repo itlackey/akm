@@ -85,7 +85,7 @@ export function renderHarnessTable(): string {
   const yes = (v: boolean): string => (v ? "yes" : "no");
   const rows = HARNESS_REGISTRY.map(
     (h) =>
-      `| \`${h.id}\` | ${h.displayName} | ${h.profile ? `\`${h.profile.bin}\`` : "in-process"} | ${yes(h.capabilities.sessionLogs)} | ${yes(h.capabilities.modelWork)} | ${yes(h.capabilities.nativeAgent)} |`,
+      `| \`${h.id}\` | ${h.displayName} | \`${h.profile.bin}\` | ${yes(h.sessionLogProvider !== undefined)} | ${yes(h.confinable)} | ${yes(h.nativeAgent)} |`,
   );
   return [
     "| `platform` | Harness | Binary | Session logs | Model work | Native `agent` |",

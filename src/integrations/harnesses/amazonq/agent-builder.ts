@@ -55,8 +55,7 @@
  * name without any further wiring.
  */
 
-import type { AgentCommandBuilder, AgentDispatchRequest } from "../../agent/builder-shared";
-import { createAgentRequestLowerer } from "../../agent/request-lowering";
+import type { AgentDispatchRequest, HarnessBuilder } from "../harness";
 
 /** Canonical harness/platform id used for model-alias resolution. */
 export const AMAZONQ_PLATFORM = "amazonq";
@@ -75,13 +74,7 @@ function buildPromptPayload(req: AgentDispatchRequest): string {
  *   q chat --no-interactive --trust-all-tools
  *          [--model <m>] -- "<systemPrompt?\n\nprompt>"
  */
-export const amazonqBuilder: AgentCommandBuilder = {
-  platform: AMAZONQ_PLATFORM,
-  personaChannel: "prompt",
-  lower: createAgentRequestLowerer({
-    adapter: AMAZONQ_PLATFORM,
-    personaChannel: "prompt",
-  }),
+export const amazonqBuilder: HarnessBuilder = {
   build(profile, req) {
     // Built-in q profiles would ship `args: []`; headless dispatch is the
     // `chat` subcommand. Don't double it when a user profile already pins it.

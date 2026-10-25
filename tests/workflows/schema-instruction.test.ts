@@ -12,8 +12,7 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
-import { getCommandBuilder } from "../../src/integrations/agent/builders";
-import { HARNESS_CONFIG_PLATFORMS } from "../../src/integrations/harnesses";
+import { getHarness, HARNESS_CONFIG_PLATFORMS } from "../../src/integrations/harnesses";
 import { buildUnitPrompt, computeStepWorkList } from "../../src/workflows/exec/step-work";
 import { prepareWorkflowExecution } from "../../src/workflows/exec/unit-dispatch";
 import { canonicalPlanJson } from "../../src/workflows/ir/plan-hash";
@@ -88,7 +87,7 @@ function deliveredPrompt(name: string): { delivered: string; expected: string; i
   const instruction = instructionFor(schema);
   if (built.runner.kind === "connection") return { delivered: built.prompt, expected, instruction };
   // A harness that reads its prompt on stdin (OpenCode 1) gets it there instead of in argv.
-  const command = getCommandBuilder(built.runner.platform).build(built.profile!, built.options.dispatch!);
+  const command = getHarness(built.runner.platform)!.build(built.profile!, built.options.dispatch!);
   return { delivered: [...command.argv, command.stdin ?? ""].join("\n"), expected, instruction };
 }
 

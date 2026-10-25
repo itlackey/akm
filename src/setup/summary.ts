@@ -21,7 +21,7 @@ export interface SetupRuns {
 
 /** Whether akm can run this platform read-only for model calls, which keeps them from changing anything. */
 export function runsReadOnly(platform: string): boolean {
-  return getHarness(platform)?.capabilities.modelWork === true;
+  return getHarness(platform)?.confinable === true;
 }
 
 function describeTarget(config: AkmConfig, modelWork: boolean): string {

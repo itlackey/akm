@@ -1,12 +1,20 @@
 /**
  * Tests for the agent command builder feature:
- *   - builders.ts: opencodeBuilder, claudeBuilder, getCommandBuilder
+ *   - the opencode and claude builders, reached through the registry
  *
  * Coverage follows v1 spec §12.2 and §12.3.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentCommandBuilder, AgentDispatchRequest } from "../../src/integrations/agent/builder-shared";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
+import { getHarness } from "../../src/integrations/harnesses";
+import type { AgentDispatchRequest } from "../../src/integrations/harnesses/harness";
+
+/** The harness registered under `platform`; there is no builder for anything else. */
+function getCommandBuilder(platform: string) {
+  const harness = getHarness(platform);
+  if (!harness) throw new Error(`Agent platform "${platform}" has no registered command builder.`);
+  return harness;
+}
 
 // NOTE: this file previously carried a full 13-export mock.module fake of
 // src/core/warn. Nothing under test here (builders and profiles)
@@ -50,8 +58,7 @@ function makeClaudeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile 
 // ── builders.ts — opencodeBuilder ────────────────────────────────────────────
 
 describe("opencodeBuilder — basic dispatch", () => {
-  test("no agent options: argv = [opencode, run] and the prompt goes on stdin", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("no agent options: argv = [opencode, run] and the prompt goes on stdin", () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile();
     const req: AgentDispatchRequest = { prompt: "do work" };
@@ -60,16 +67,14 @@ describe("opencodeBuilder — basic dispatch", () => {
     expect(cmd.stdin).toBe("do work");
   });
 
-  test("without a model override, configured model args are preserved", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("without a model override, configured model args are preserved", () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile({ args: ["run", "--model", "openai/gpt-5.4-mini"] });
     const cmd = builder.build(profile, { prompt: "do work" });
     expect(cmd.argv).toEqual(["opencode", "run", "--model", "openai/gpt-5.4-mini"]);
   });
 
-  test("forwards an exact native agent selector through --agent", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("forwards an exact native agent selector through --agent", () => {
     const builder = getCommandBuilder("opencode");
     const req = { prompt: "do work", agent: "Review-Team.Exact" } as AgentDispatchRequest;
     expect(builder.build(makeOpencodeProfile(), req).argv).toEqual(["opencode", "run", "--agent", "Review-Team.Exact"]);
@@ -77,16 +82,14 @@ describe("opencodeBuilder — basic dispatch", () => {
 
   // `opencode run` 1.18.25 has no --system-prompt: it prints its usage and
   // exits 1. A persona reaches opencode through the prompt instead.
-  test("never emits --system-prompt; the persona channel is the prompt", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("never emits --system-prompt; the persona channel is the prompt", () => {
     const builder = getCommandBuilder("opencode");
     const req: AgentDispatchRequest = { prompt: "do work", systemPrompt: "You are helpful." };
-    expect(builder.personaChannel).toBe("prompt");
+    expect(builder.systemPrompt).toBe(false);
     expect(builder.build(makeOpencodeProfile(), req).argv).toEqual(["opencode", "run"]);
   });
 
-  test("with pre-resolved model: --model flag present", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("with pre-resolved model: --model flag present", () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile();
     const req: AgentDispatchRequest = { prompt: "do work", model: "opencode/claude-opus-4-7" };
@@ -97,8 +100,7 @@ describe("opencodeBuilder — basic dispatch", () => {
     expect(argv[idx + 1]).toBe("opencode/claude-opus-4-7");
   });
 
-  test('an exact model selector "opus" is forwarded unchanged', async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test('an exact model selector "opus" is forwarded unchanged', () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile();
     const req: AgentDispatchRequest = { prompt: "do work", model: "opus" };
@@ -109,8 +111,7 @@ describe("opencodeBuilder — basic dispatch", () => {
     expect(argv[idx + 1]).toBe("opus");
   });
 
-  test("the engine's agent default and a model both reach the argv", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("the engine's agent default and a model both reach the argv", () => {
     const req: AgentDispatchRequest = { prompt: "p", agent: "planner", model: "lab/m" };
     expect(getCommandBuilder("opencode").build(makeOpencodeProfile(), req).argv).toEqual([
       "opencode",
@@ -122,24 +123,21 @@ describe("opencodeBuilder — basic dispatch", () => {
     ]);
   });
 
-  test("a bare exact override replaces the configured model without reinterpretation", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("a bare exact override replaces the configured model without reinterpretation", () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile({ args: ["run", "--model", "openai/gpt-5.4-mini"] });
     const cmd = builder.build(profile, { prompt: "do work", model: "gpt-5.6-terra" });
     expect(cmd.argv).toEqual(["opencode", "run", "--model", "gpt-5.6-terra"]);
   });
 
-  test("provider-qualified override replaces the configured model unchanged", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("provider-qualified override replaces the configured model unchanged", () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile({ args: ["run", "--model=openai/gpt-5.4-mini"] });
     const cmd = builder.build(profile, { prompt: "do work", model: "openai/gpt-5.6-terra" });
     expect(cmd.argv).toEqual(["opencode", "run", "--model", "openai/gpt-5.6-terra"]);
   });
 
-  test("an exact override replaces the configured model without provider rewriting", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("an exact override replaces the configured model without provider rewriting", () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile({ args: ["run", "--model", "openai/gpt-5.4-mini"] });
     const cmd = builder.build(profile, { prompt: "do work", model: "opus" });
@@ -155,8 +153,7 @@ describe("opencodeBuilder — inference", () => {
   const INFERENCE = { temperature: 0.2, reasoningEffort: "low", maxTokens: 4096, contextLength: 120000 };
 
   // akm injects nothing, whatever the request carries.
-  test("an ordinary dispatch injects nothing: argv and env are the engine's", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("an ordinary dispatch injects nothing: argv and env are the engine's", () => {
     const profile = makeOpencodeProfile({ args: ["run", "--model", "krang/chat/qwen3.8-27b"] });
     for (const inference of [{}, INFERENCE]) {
       const cmd = getCommandBuilder("opencode").build(profile, { prompt: "do work", inference });
@@ -170,8 +167,7 @@ describe("opencodeBuilder — inference", () => {
 // ── builders.ts — claudeBuilder ───────────────────────────────────────────────
 
 describe("claudeBuilder — basic dispatch", () => {
-  test("no agent options: argv contains --print and prompt", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("no agent options: argv contains --print and prompt", () => {
     const builder = getCommandBuilder("claude");
     const profile = makeClaudeProfile();
     const req: AgentDispatchRequest = { prompt: "do work" };
@@ -181,8 +177,7 @@ describe("claudeBuilder — basic dispatch", () => {
     expect(argv[argv.length - 1]).toBe("do work");
   });
 
-  test("--print is always present", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("--print is always present", () => {
     const builder = getCommandBuilder("claude");
     const profile = makeClaudeProfile();
     // No extra flags
@@ -190,8 +185,7 @@ describe("claudeBuilder — basic dispatch", () => {
     expect((cmd.argv as string[]).includes("--print")).toBe(true);
   });
 
-  test("forwards an exact native agent selector through --agent", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("forwards an exact native agent selector through --agent", () => {
     const builder = getCommandBuilder("claude");
     const req = { prompt: "do work", agent: "Review-Team.Exact" } as AgentDispatchRequest;
     expect(builder.build(makeClaudeProfile(), req).argv).toEqual([
@@ -204,8 +198,7 @@ describe("claudeBuilder — basic dispatch", () => {
     ]);
   });
 
-  test("with systemPrompt: --system-prompt flag present", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("with systemPrompt: --system-prompt flag present", () => {
     const builder = getCommandBuilder("claude");
     const profile = makeClaudeProfile();
     const req: AgentDispatchRequest = { prompt: "do work", systemPrompt: "Be concise." };
@@ -216,8 +209,7 @@ describe("claudeBuilder — basic dispatch", () => {
     expect(argv[idx + 1]).toBe("Be concise.");
   });
 
-  test("with model: exact value appears in --model", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("with model: exact value appears in --model", () => {
     const builder = getCommandBuilder("claude");
     const profile = makeClaudeProfile();
     const req: AgentDispatchRequest = { prompt: "do work", model: "opus" };
@@ -232,60 +224,19 @@ describe("claudeBuilder — basic dispatch", () => {
 // ── builders.ts — getCommandBuilder ───────────────────────────────────────────
 
 describe("getCommandBuilder — platform routing", () => {
-  test('getCommandBuilder("opencode") returns opencode builder (platform === "opencode")', async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const builder = getCommandBuilder("opencode");
-    expect(builder.platform).toBe("opencode");
-  });
-
-  test('getCommandBuilder("claude") returns claude builder (platform === "claude")', async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const builder = getCommandBuilder("claude");
-    expect(builder.platform).toBe("claude");
-  });
-
-  test('getCommandBuilder("opencode-headless") rejects the retired profile alias', async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test('getCommandBuilder("opencode-headless") rejects the retired profile alias', () => {
     expect(() => getCommandBuilder("opencode-headless")).toThrow(/no registered command builder/);
   });
 
-  test('getCommandBuilder("unknown") rejects an unregistered platform', async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test('getCommandBuilder("unknown") rejects an unregistered platform', () => {
     expect(() => getCommandBuilder("unknown-platform")).toThrow(/no registered command builder/);
-  });
-
-  test("custom registry: getCommandBuilder returns custom builder when platform matches", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const myBuilder: AgentCommandBuilder = {
-      platform: "my-platform",
-      personaChannel: "prompt",
-      build(_profile, req) {
-        return { argv: ["my-cli", req.prompt] };
-      },
-    };
-    const builder = getCommandBuilder("my-platform", { "my-platform": myBuilder });
-    expect(builder).toBe(myBuilder);
-    expect(builder.platform).toBe("my-platform");
-  });
-
-  test("custom registry: unknown key is still rejected", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const myBuilder: AgentCommandBuilder = {
-      platform: "my-platform",
-      personaChannel: "prompt",
-      build(_profile, req) {
-        return { argv: ["my-cli", req.prompt] };
-      },
-    };
-    expect(() => getCommandBuilder("other", { "my-platform": myBuilder })).toThrow(/no registered command builder/);
   });
 });
 
 // ── builders.ts — argument injection guards (M5) ──────────────────────────────
 
 describe("builders — argument injection guards", () => {
-  test("opencodeBuilder: a prompt that looks like a flag goes on stdin, not in argv", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("opencodeBuilder: a prompt that looks like a flag goes on stdin, not in argv", () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile();
     const cmd = builder.build(profile, { prompt: "--do work" });
@@ -293,8 +244,7 @@ describe("builders — argument injection guards", () => {
     expect(cmd.stdin).toBe("--do work");
   });
 
-  test("claudeBuilder: prompt preceded by '--' end-of-options separator", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("claudeBuilder: prompt preceded by '--' end-of-options separator", () => {
     const builder = getCommandBuilder("claude");
     const profile = makeClaudeProfile();
     const cmd = builder.build(profile, { prompt: "do work" });
@@ -308,8 +258,7 @@ describe("builders — argument injection guards", () => {
   // identical call and assertion as the "getCommandBuilder — platform
   // routing" describe block's `getCommandBuilder("unknown")` test at :284-287.
 
-  test("opencodeBuilder: a model/systemPrompt starting with '--' is passed through, not rejected", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("opencodeBuilder: a model/systemPrompt starting with '--' is passed through, not rejected", () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile();
     expect(() =>
@@ -317,8 +266,7 @@ describe("builders — argument injection guards", () => {
     ).not.toThrow();
   });
 
-  test("claudeBuilder: a model/systemPrompt starting with '--' is passed through, not rejected", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("claudeBuilder: a model/systemPrompt starting with '--' is passed through, not rejected", () => {
     const builder = getCommandBuilder("claude");
     const profile = makeClaudeProfile();
     expect(() => builder.build(profile, { prompt: "task", model: "--evil", systemPrompt: "--injected" })).not.toThrow();
@@ -329,8 +277,7 @@ describe("builders — argument injection guards", () => {
   // nor the removed :380-383 test asserted anything about argv or model
   // flags despite their names.
 
-  test("valid model and systemPrompt values do not throw", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+  test("valid model and systemPrompt values do not throw", () => {
     const builder = getCommandBuilder("opencode");
     const profile = makeOpencodeProfile();
     expect(() =>
@@ -340,48 +287,5 @@ describe("builders — argument injection guards", () => {
         systemPrompt: "You are a helpful assistant.",
       }),
     ).not.toThrow();
-  });
-});
-
-// ── Registry-derived builders + missing-builder error (P0.5 drift fix) ────────
-
-describe("getCommandBuilder — derived from HARNESS_REGISTRY", () => {
-  test("canonical ids resolve while profile and harness aliases are rejected", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    expect(getCommandBuilder("opencode").platform).toBe("opencode");
-    expect(getCommandBuilder("claude").platform).toBe("claude");
-    expect(() => getCommandBuilder("opencode-headless")).toThrow();
-    expect(() => getCommandBuilder("claude-code")).toThrow();
-  });
-
-  test("P2 adapters resolve only through canonical harness ids", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    for (const platform of ["codex", "gemini", "aider"]) {
-      expect(getCommandBuilder(platform).platform).toBe(platform);
-      expect(() => getCommandBuilder(`${platform}-headless`)).toThrow();
-    }
-  });
-
-  test("the P2 harness additions resolve without profile aliases", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    for (const platform of ["copilot", "pi", "amazonq", "openhands"]) {
-      expect(getCommandBuilder(platform).platform).toBe(platform);
-      expect(() => getCommandBuilder(`${platform}-headless`)).toThrow();
-    }
-  });
-
-  test("unknown custom platforms are rejected", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    expect(() => getCommandBuilder("my-custom-wrapper")).toThrow(/no registered command builder/);
-  });
-
-  test("a builtin profile whose builder is missing from the injected registry still surfaces the ConfigError", async () => {
-    // The loud missing-builder guard is still live for any future builtin
-    // profile that ships without a dedicated builder; simulate one by
-    // resolving against an EMPTY builder registry.
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const { ConfigError } = await import("../../src/core/errors");
-    expect(() => getCommandBuilder("codex", {})).toThrow(ConfigError);
-    expect(() => getCommandBuilder("codex", {})).toThrow(/no registered command builder/);
   });
 });

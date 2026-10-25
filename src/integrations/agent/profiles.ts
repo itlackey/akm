@@ -10,8 +10,8 @@
  * intentionally small internal shape. The wrapper is in `./spawn.ts`.
  */
 import { COMMON_SPAWN_ENV_PASSTHROUGH } from "../../core/spawn-env";
-import { getHarness, HARNESS_REGISTRY } from "../harnesses";
-import type { AkmHarness } from "../harnesses/types";
+import { HARNESS_REGISTRY } from "../harnesses";
+import type { AkmHarness } from "../harnesses/harness";
 import type { ConnectionRunner, HarnessRunner } from "./runner";
 
 export type AgentStdioMode = "captured" | "interactive";
@@ -26,18 +26,12 @@ export interface AgentProfile {
   readonly name: string;
   /** Canonical harness platform. */
   readonly platform?: string;
-  /** Harness-owned lowering contract for persona delivery. */
-  readonly personaChannel?: "native" | "prompt";
-  /** Normalized workspace used when the caller does not provide a cwd. */
-  readonly workspace?: string;
   /** Command to spawn (looked up on PATH). */
   readonly bin: string;
   /** Base args prepended to caller args. */
   readonly args: readonly string[];
   /** Default stdio mode. Callers may override per-call. */
   readonly stdio: AgentStdioMode;
-  /** Extra env vars merged on top of process.env at spawn time. */
-  readonly env?: Readonly<Record<string, string>>;
   /**
    * Names of environment variables that should be passed through to the
    * child even if the caller scrubs the env (e.g. for credential vars
@@ -47,8 +41,6 @@ export interface AgentProfile {
   readonly envPassthrough: readonly string[];
   /** How the wrapper should attempt to parse stdout. */
   readonly parseOutput: AgentParseMode;
-  /** The harness's default native agent, used when a request names none. */
-  readonly agent?: string;
   /** Exact model selected for this dispatch. */
   readonly model?: string;
 }
@@ -68,7 +60,6 @@ function builtinProfiles(): Record<string, AgentProfile> {
   if (builtins) return builtins;
   builtins = {};
   for (const harness of HARNESS_REGISTRY as readonly AkmHarness[]) {
-    if (!harness.profile) continue;
     builtins[harness.id] = {
       name: harness.id,
       bin: harness.profile.bin,
@@ -110,20 +101,15 @@ export function listBuiltinAgentProfiles(): Record<string, AgentProfile> {
 
 /** The profile a harness runner spawns: its platform's built-in defaults under what the config set. */
 export function harnessProfile(runner: HarnessRunner): AgentProfile {
-  const harness = getHarness(runner.platform);
-  const builtin = getBuiltinAgentProfile(runner.platform);
   return {
     name: runner.name,
     platform: runner.platform,
-    personaChannel: harness?.agentBuilder?.personaChannel ?? "prompt",
     bin: runner.bin,
     args: runner.args,
     stdio: "captured",
-    ...(builtin?.env ? { env: builtin.env } : {}),
-    envPassthrough: builtin?.envPassthrough ?? [],
+    envPassthrough: getBuiltinAgentProfile(runner.platform)?.envPassthrough ?? [],
     parseOutput: "text",
     ...(runner.model ? { model: runner.model } : {}),
-    ...(runner.agent ? { agent: runner.agent } : {}),
   };
 }
 
@@ -131,7 +117,6 @@ export function harnessProfile(runner: HarnessRunner): AgentProfile {
 export function runtimeProfile(connection: ConnectionRunner): AgentProfile {
   return {
     name: connection.name,
-    personaChannel: "native",
     bin: "",
     args: [],
     stdio: "captured",

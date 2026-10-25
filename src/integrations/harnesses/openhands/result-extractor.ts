@@ -51,7 +51,7 @@
  */
 
 import { asNonEmptyString, isRecord, tryParseJson } from "../../../core/common";
-import type { AgentResultExtraction, AgentResultExtractor } from "../../agent/builder-shared";
+import type { AgentResultExtraction, AgentResultExtractor } from "../harness";
 
 /** Keys that may carry the harness-native session id, in precedence order. */
 const SESSION_KEYS = ["session_id", "sessionId", "sid", "conversation_id"] as const;

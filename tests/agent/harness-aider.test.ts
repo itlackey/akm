@@ -72,7 +72,6 @@ describe("aiderBuilder — plain prompt", () => {
   });
 
   test("platform id is 'aider'", () => {
-    expect(aiderBuilder.platform).toBe("aider");
     expect(AIDER_PLATFORM).toBe("aider");
   });
 

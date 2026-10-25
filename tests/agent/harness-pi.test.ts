@@ -59,7 +59,6 @@ describe("piBuilder — plain prompt", () => {
   });
 
   test("platform id is 'pi' (matrix)", () => {
-    expect(piBuilder.platform).toBe("pi");
     expect(PI_PLATFORM).toBe("pi");
   });
 

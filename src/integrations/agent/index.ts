@@ -11,13 +11,12 @@
  *   • Types: AgentProfile, AgentRunResult, AgentFailureReason.
  *   • Profiles: getBuiltinAgentProfile, listBuiltinAgentProfiles.
  *   • Engine lowering lives in engine-resolution.ts; public config has no profile aliases.
- *   • Builder contract types: AgentCommandBuilder, AgentDispatchRequest.
- *     The concrete builder lookup stays private to the spawn authority.
+ *   • Builder contract types: AgentDispatchRequest, BuiltCommand (harnesses/harness.ts).
  *   • Detection: detectAgentCliProfiles, defaultWhich.
  */
 
 export type { SpawnedSubprocess, SpawnFn } from "../../core/subprocess";
-export type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "./builder-shared";
+export type { AgentDispatchRequest, BuiltCommand } from "../harnesses/harness";
 export { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 export type {
   AgentDetectionResult,

@@ -17,11 +17,11 @@ import {
   decodeResolvedExecutionRequest,
 } from "../../src/execution/resolved-request";
 import { type AdapterRenderedExecutionSource, createAdapterRenderedExecutionSource } from "../../src/execution/source";
-import type { AgentDispatchRequest } from "../../src/integrations/agent/builder-shared";
-import { getCommandBuilder } from "../../src/integrations/agent/builders";
 import { buildExecution } from "../../src/integrations/agent/execution";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { RunAgentOptions } from "../../src/integrations/agent/spawn";
+import { getHarness } from "../../src/integrations/harnesses";
+import type { AgentDispatchRequest } from "../../src/integrations/harnesses/harness";
 import type { ChatCompletionConfig } from "../../src/llm/client";
 import { withEnv } from "../_helpers/sandbox";
 
@@ -528,7 +528,7 @@ describe("common command invocation preparation", () => {
     if (!fallback.capture.profile || !fallback.capture.options?.dispatch) {
       throw new Error("expected a captured Aider dispatch");
     }
-    const aiderCommand = getCommandBuilder("aider").build(
+    const aiderCommand = getHarness("aider")!.build(
       fallback.capture.profile,
       fallback.capture.options.dispatch as AgentDispatchRequest,
     );

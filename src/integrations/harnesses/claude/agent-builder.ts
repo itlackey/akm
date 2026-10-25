@@ -30,8 +30,7 @@
  * The builder's `platform` stays `'claude'` (the canonical harness id).
  */
 
-import { type AgentCommandBuilder, modelFromArgs } from "../../agent/builder-shared";
-import { createAgentRequestLowerer } from "../../agent/request-lowering";
+import { type HarnessBuilder, modelFromArgs } from "../harness";
 
 /** The model-work tool policy on Claude Code: read, edit in the working directory, `akm search`, `akm show`. */
 export const MODEL_WORK_CLAUDE_FLAGS: readonly string[] = Object.freeze([
@@ -67,13 +66,7 @@ export const MODEL_WORK_CLAUDE_FLAGS: readonly string[] = Object.freeze([
  * The engine's `args` are left out because `--add-dir`, `--settings` or a
  * second `--allowedTools` would widen that. Only the model they name is kept.
  */
-export const claudeBuilder: AgentCommandBuilder = {
-  platform: "claude",
-  personaChannel: "native",
-  lower: createAgentRequestLowerer({
-    adapter: "claude",
-    personaChannel: "native",
-  }),
+export const claudeBuilder: HarnessBuilder = {
   build(profile, req) {
     const modelWork = req.modelWork === true;
     const args: string[] = modelWork ? [...MODEL_WORK_CLAUDE_FLAGS] : [...profile.args];

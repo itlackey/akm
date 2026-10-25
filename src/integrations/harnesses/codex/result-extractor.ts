@@ -46,7 +46,7 @@
  */
 
 import { asNonEmptyString, isRecord } from "../../../core/common";
-import type { AgentResultExtraction, AgentResultExtractor } from "../../agent/builder-shared";
+import type { AgentResultExtraction, AgentResultExtractor } from "../harness";
 
 /** What one JSONL event contributed, if anything. */
 interface EventContribution {

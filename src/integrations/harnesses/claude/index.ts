@@ -5,11 +5,9 @@
 /**
  * Claude Code harness (#563).
  *
- * This is the per-harness barrel that gathers the Claude Code integration
- * surfaces that were previously scattered across the codebase:
+ * The per-harness barrel for Claude Code:
  *   - session-log reader     → ./session-log.ts   (ClaudeCodeProvider)
  *   - agent command builder  → ./agent-builder.ts (claudeBuilder)
- *   - config importer        → ./config-import.ts (claudeCodeImporter)
  *
  * It also defines {@link ClaudeHarness}, the {@link AkmHarness} descriptor that
  * `HARNESS_REGISTRY` registers.
@@ -19,15 +17,12 @@
  */
 
 import type { SessionLogHarness } from "../../session-logs/types";
-import { caps, type HarnessModelMap } from "../shared";
-import { BaseHarness } from "../types";
+import type { AkmHarness } from "../harness";
 import { claudeBuilder } from "./agent-builder";
-import { claudeCodeImporter } from "./config-import";
 import { claudeResultExtractor } from "./result-extractor";
 import { ClaudeCodeProvider } from "./session-log";
 
 export { claudeBuilder } from "./agent-builder";
-export { claudeCodeImporter } from "./config-import";
 export { claudeResultExtractor } from "./result-extractor";
 export { ClaudeCodeProvider } from "./session-log";
 
@@ -36,32 +31,26 @@ export { ClaudeCodeProvider } from "./session-log";
  *
  * `claude` is the sole runtime and persisted id.
  */
-export class ClaudeHarness extends BaseHarness {
+export class ClaudeHarness implements AkmHarness {
   readonly id = "claude" as const;
   readonly displayName = "Claude Code";
   // Home-relative config dir scanned by `akm setup` (#567). Claude Code has a
   // session-log provider, so offering it as a stash source is functional.
   readonly setupDetectionDir = ".claude";
-  readonly agentBuilder = claudeBuilder;
+  readonly build = claudeBuilder.build;
   readonly profile = { bin: "claude", args: [], envPassthrough: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG"] };
   readonly resultExtractor = claudeResultExtractor;
   readonly models = {
     fast: "claude-haiku-4-5-20251001",
     balanced: "claude-sonnet-4-6",
     reasoning: "claude-opus-4-7",
-  } satisfies HarnessModelMap;
-  readonly configImporter = claudeCodeImporter;
+  };
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Session-id env marker: presence of a concrete session id (not the bare
   // "running under Claude Code" flag) attributes a run to this harness.
   readonly identityEnv = ["CLAUDE_SESSION_ID"] as const;
   readonly sessionLogProvider = (): SessionLogHarness => new ClaudeCodeProvider();
-  readonly capabilities = caps({
-    sessionLogs: true,
-    agentDispatch: true,
-    detection: true,
-    modelWork: true,
-    nativeAgent: true,
-    configImport: true,
-  });
+  readonly systemPrompt = true;
+  readonly nativeAgent = true;
+  readonly confinable = true;
 }

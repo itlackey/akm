@@ -15,7 +15,6 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { getCacheDir } from "../../src/core/paths";
-import type { AgentDispatchRequest } from "../../src/integrations/agent/builder-shared";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { AgentRunResult } from "../../src/integrations/agent/spawn";
 import {
@@ -24,6 +23,7 @@ import {
   writeCodexOutputSchemaFile,
 } from "../../src/integrations/harnesses/codex/agent-builder";
 import { codexResultExtractor } from "../../src/integrations/harnesses/codex/result-extractor";
+import type { AgentDispatchRequest } from "../../src/integrations/harnesses/harness";
 import { makeSandboxDir, withEnvSync } from "../_helpers/sandbox";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -59,10 +59,6 @@ describe("codexBuilder — basic dispatch", () => {
   test("plain prompt: argv includes sandbox default then --json", () => {
     const cmd = codexBuilder.build(makeCodexProfile(), { prompt: "do work" });
     expect(cmd.argv).toEqual(["codex", "exec", "--sandbox", "workspace-write", "--json", "--", "do work"]);
-  });
-
-  test("platform id is 'codex' (canonical harness id)", () => {
-    expect(codexBuilder.platform).toBe("codex");
   });
 
   test("`exec` subcommand comes first and is not doubled when the profile pins it", () => {

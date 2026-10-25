@@ -313,12 +313,12 @@ describe("runAgent — argument and env construction", () => {
         kill() {},
       };
     };
-    await runAgent(makeProfile({ envPassthrough: ["KEEP_ME"], env: { PROFILE_VAR: "1" } }), undefined, {
+    await runAgent(makeProfile({ envPassthrough: ["KEEP_ME"] }), undefined, {
       spawn,
       env: { CALL_VAR: "2" },
       envSource: { KEEP_ME: "yes", DROP_ME: "no" } as NodeJS.ProcessEnv,
     });
-    expect(capturedEnv).toEqual({ KEEP_ME: "yes", PROFILE_VAR: "1", CALL_VAR: "2" });
+    expect(capturedEnv).toEqual({ KEEP_ME: "yes", CALL_VAR: "2" });
   });
 
   // Regression: usage-event provenance (AKM_EVENT_SOURCE) must survive the

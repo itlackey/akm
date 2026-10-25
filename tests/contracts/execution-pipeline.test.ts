@@ -580,7 +580,7 @@ describe("the model-work tool policy", () => {
         modelWork: true,
       });
       const built = buildExecution(resolved.request, resolved.runner);
-      const confines = getHarness(platform)?.capabilities.modelWork === true;
+      const confines = getHarness(platform)?.confinable === true;
       expect(built.options.dispatch?.modelWork === true, platform).toBe(confines);
       expect(
         built.notices.some((notice) => notice.code === "model-work-unrestricted"),

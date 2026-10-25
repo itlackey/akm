@@ -66,8 +66,7 @@
  * name without any further wiring.
  */
 
-import type { AgentCommandBuilder, AgentDispatchRequest } from "../../agent/builder-shared";
-import { createAgentRequestLowerer } from "../../agent/request-lowering";
+import type { AgentDispatchRequest, HarnessBuilder } from "../harness";
 
 /** Canonical harness/platform id used for model-alias resolution. */
 export const AIDER_PLATFORM = "aider";
@@ -85,13 +84,7 @@ function buildMessagePayload(req: AgentDispatchRequest): string {
  * Command shape:
  *   aider [--model <m>] --yes-always --no-pretty --message=<[system\n\n]prompt>
  */
-export const aiderBuilder: AgentCommandBuilder = {
-  platform: AIDER_PLATFORM,
-  personaChannel: "prompt",
-  lower: createAgentRequestLowerer({
-    adapter: AIDER_PLATFORM,
-    personaChannel: "prompt",
-  }),
+export const aiderBuilder: HarnessBuilder = {
   build(profile, req) {
     const args: string[] = [...profile.args];
     if (req.model) {

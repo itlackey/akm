@@ -14,8 +14,7 @@
  * config importer yet.
  */
 
-import { caps } from "../shared";
-import { BaseHarness } from "../types";
+import type { AkmHarness } from "../harness";
 import { aiderBuilder } from "./agent-builder";
 import { aiderResultExtractor } from "./result-extractor";
 
@@ -27,10 +26,10 @@ export { aiderResultExtractor } from "./result-extractor";
  *
  * Canonical id is `'aider'`; no alias or distinct runtime identity.
  */
-export class AiderHarness extends BaseHarness {
+export class AiderHarness implements AkmHarness {
   readonly id = "aider" as const;
   readonly displayName = "Aider";
-  readonly agentBuilder = aiderBuilder;
+  readonly build = aiderBuilder.build;
   readonly profile = {
     bin: "aider",
     args: ["--no-auto-commits"],
@@ -44,8 +43,7 @@ export class AiderHarness extends BaseHarness {
   // durable resume source of truth.
   // No `identityEnv`: the matrix lists Aider's identity markers as uncertain,
   // and Aider stamps no session var onto child processes.
-  readonly capabilities = caps({
-    agentDispatch: true,
-    detection: true,
-  });
+  readonly systemPrompt = false;
+  readonly nativeAgent = false;
+  readonly confinable = false;
 }

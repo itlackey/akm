@@ -15,8 +15,7 @@
  * descriptor.
  */
 
-import { caps } from "../shared";
-import { BaseHarness } from "../types";
+import type { AkmHarness } from "../harness";
 import { copilotBuilder } from "./agent-builder";
 import { copilotResultExtractor } from "./result-extractor";
 
@@ -28,10 +27,10 @@ export { copilotResultExtractor } from "./result-extractor";
  *
  * Canonical id is `'copilot'`; no alias or distinct runtime identity.
  */
-export class CopilotHarness extends BaseHarness {
+export class CopilotHarness implements AkmHarness {
   readonly id = "copilot" as const;
   readonly displayName = "GitHub Copilot CLI";
-  readonly agentBuilder = copilotBuilder;
+  readonly build = copilotBuilder.build;
   readonly profile = { bin: "copilot", args: [], envPassthrough: ["GH_TOKEN", "GITHUB_TOKEN"] };
   readonly resultExtractor = copilotResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
@@ -40,8 +39,7 @@ export class CopilotHarness extends BaseHarness {
   // stamp identity onto manual runs, so they are deliberately NOT registered
   // (see `AkmHarness.identityEnv`).
   readonly identityEnv = ["COPILOT_SESSION_ID"] as const;
-  readonly capabilities = caps({
-    agentDispatch: true,
-    detection: true,
-  });
+  readonly systemPrompt = false;
+  readonly nativeAgent = false;
+  readonly confinable = false;
 }

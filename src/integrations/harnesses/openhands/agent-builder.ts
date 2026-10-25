@@ -69,8 +69,7 @@
  * platform name without any further wiring.
  */
 
-import type { AgentCommandBuilder, AgentDispatchRequest } from "../../agent/builder-shared";
-import { createAgentRequestLowerer } from "../../agent/request-lowering";
+import type { AgentDispatchRequest, HarnessBuilder } from "../harness";
 
 /** Canonical harness/platform id used for model-alias resolution. */
 export const OPENHANDS_PLATFORM = "openhands";
@@ -97,13 +96,7 @@ function buildTaskPayload(req: AgentDispatchRequest): string {
  *   openhands --headless --json --task=<[system\n\n]prompt>
  * with the resolved model (if any) carried on env as LLM_MODEL.
  */
-export const openhandsBuilder: AgentCommandBuilder = {
-  platform: OPENHANDS_PLATFORM,
-  personaChannel: "prompt",
-  lower: createAgentRequestLowerer({
-    adapter: OPENHANDS_PLATFORM,
-    personaChannel: "prompt",
-  }),
+export const openhandsBuilder: HarnessBuilder = {
   build(profile, req) {
     const args: string[] = [...profile.args];
     // Headless essentials (matrix shape): non-interactive run, JSONL stdout

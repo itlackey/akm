@@ -48,7 +48,7 @@
  * schema validation.
  */
 
-import type { AgentResultExtraction, AgentResultExtractor } from "../../agent/builder-shared";
+import type { AgentResultExtraction, AgentResultExtractor } from "../harness";
 
 const ESC = "\u001B";
 const BEL = "\u0007";

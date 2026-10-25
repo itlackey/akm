@@ -60,8 +60,7 @@ import { join } from "node:path";
 import { writeFileAtomic } from "../../../core/common";
 import { getCacheDir } from "../../../core/paths";
 import { sha256Hex } from "../../../runtime";
-import type { AgentCommandBuilder } from "../../agent/builder-shared";
-import { createAgentRequestLowerer } from "../../agent/request-lowering";
+import type { HarnessBuilder } from "../harness";
 
 /**
  * Write a node's JSON Schema to a file for `--output-schema`, named by the hash
@@ -117,13 +116,7 @@ function ensureSandboxFlags(base: readonly string[]): string[] {
  * OpenAI Codex builder.
  * Command shape: codex exec --sandbox workspace-write [--model <m>] --json [--output-schema <file>] -- "<prompt>"
  */
-export const codexBuilder: AgentCommandBuilder = {
-  platform: "codex",
-  personaChannel: "prompt",
-  lower: createAgentRequestLowerer({
-    adapter: "codex",
-    personaChannel: "prompt",
-  }),
+export const codexBuilder: HarnessBuilder = {
   build(profile, req) {
     // Built-in codex profiles ship `args: []`; headless dispatch is the `exec`
     // subcommand. Don't double it when a user profile already pins it.

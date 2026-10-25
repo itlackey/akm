@@ -42,7 +42,7 @@ import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import { getHarness } from "../harnesses";
 import { runtimeLowerer } from "../harnesses/opencode/embedded/runtime-lowerer";
 import { type AgentProfile, harnessProfile, runtimeProfile } from "./profiles";
-import { untranslated } from "./request-lowering";
+import { lowerRequest, untranslated } from "./request-lowering";
 import { mergeLayerInference, parseTimeout, resolveTarget, withReasoningEffort } from "./resolution";
 import { decodeFrozenRunnerSpec, type RunnerSpec } from "./runner";
 import type { RunAgentOptions } from "./spawn";
@@ -333,17 +333,16 @@ export function buildExecution(request: ResolvedExecutionRequestV1, runner: Runn
   };
   if (runner.kind === "connection" && request.modelWork) return buildChat(request, runner, options);
 
-  // Agent work on a connection runs on akm's own runtime, which is no harness and has its own lowerer.
+  // Agent work on a connection runs on akm's own runtime, which is no harness and has its own lowering target.
   const profile = runner.kind === "harness" ? harnessProfile(runner) : runtimeProfile(runner);
-  const harness = runner.kind === "harness" ? getHarness(runner.platform) : undefined;
-  const lower = runner.kind === "connection" ? runtimeLowerer : harness?.agentBuilder?.lower;
-  if (!lower) {
+  const target = runner.kind === "connection" ? runtimeLowerer : getHarness(runner.platform);
+  if (!target) {
     throw new ConfigError(
       `Agent platform ${JSON.stringify(profile.platform)} has no registered request builder.`,
       "INVALID_CONFIG_FILE",
     );
   }
-  const built = lower(profile, request);
+  const built = lowerRequest(target, request);
   return {
     request,
     runner,

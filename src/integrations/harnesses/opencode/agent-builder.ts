@@ -17,11 +17,9 @@
  */
 
 import { warnOnce } from "../../../core/warn";
-import type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "../../agent/builder-shared";
-import type { AgentProfile } from "../../agent/profiles";
-import { createAgentRequestLowerer } from "../../agent/request-lowering";
+import type { AgentDispatchRequest, BuiltCommand, HarnessBuilder, HarnessSpawn } from "../harness";
 
-function flags(profile: AgentProfile, req: AgentDispatchRequest): string[] {
+function flags(profile: HarnessSpawn, req: AgentDispatchRequest): string[] {
   const args: string[] = [];
   for (let index = 0; index < profile.args.length; index += 1) {
     const arg = profile.args[index];
@@ -34,10 +32,7 @@ function flags(profile: AgentProfile, req: AgentDispatchRequest): string[] {
   return args;
 }
 
-export const opencodeBuilder: AgentCommandBuilder = {
-  platform: "opencode",
-  personaChannel: "prompt",
-  lower: createAgentRequestLowerer({ adapter: "opencode", personaChannel: "prompt" }),
+export const opencodeBuilder: HarnessBuilder = {
   build(profile, req): BuiltCommand {
     if (req.modelWork) {
       warnOnce(

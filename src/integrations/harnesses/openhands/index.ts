@@ -14,8 +14,7 @@
  * reader or config importer yet.
  */
 
-import { caps } from "../shared";
-import { BaseHarness } from "../types";
+import type { AkmHarness } from "../harness";
 import { openhandsBuilder } from "./agent-builder";
 import { openhandsResultExtractor } from "./result-extractor";
 
@@ -27,10 +26,10 @@ export { openhandsResultExtractor } from "./result-extractor";
  *
  * Canonical id is `'openhands'`; no alias or distinct runtime identity.
  */
-export class OpenhandsHarness extends BaseHarness {
+export class OpenhandsHarness implements AkmHarness {
   readonly id = "openhands" as const;
   readonly displayName = "OpenHands";
-  readonly agentBuilder = openhandsBuilder;
+  readonly build = openhandsBuilder.build;
   readonly profile = { bin: "openhands", args: [], envPassthrough: ["LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL"] };
   readonly resultExtractor = openhandsResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
@@ -40,8 +39,7 @@ export class OpenhandsHarness extends BaseHarness {
   // of truth.
   // No `identityEnv`: the matrix lists OpenHands' identity markers as
   // uncertain, and it stamps no session var onto child processes.
-  readonly capabilities = caps({
-    agentDispatch: true,
-    detection: true,
-  });
+  readonly systemPrompt = false;
+  readonly nativeAgent = false;
+  readonly confinable = false;
 }

@@ -33,7 +33,7 @@
  */
 
 import { asNonEmptyString, isRecord, tryParseJson } from "../../../core/common";
-import type { AgentResultExtraction, AgentResultExtractor } from "../../agent/builder-shared";
+import type { AgentResultExtraction, AgentResultExtractor } from "../harness";
 
 /**
  * Is this parsed object Claude Code's `--output-format json` RESULT ENVELOPE

@@ -59,7 +59,6 @@ describe("amazonqBuilder — plain prompt", () => {
   });
 
   test("platform id is 'amazonq' (matrix)", () => {
-    expect(amazonqBuilder.platform).toBe("amazonq");
     expect(AMAZONQ_PLATFORM).toBe("amazonq");
   });
 

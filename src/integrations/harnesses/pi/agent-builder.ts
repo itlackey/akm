@@ -51,8 +51,7 @@
  * (`./index.ts`).
  */
 
-import type { AgentCommandBuilder } from "../../agent/builder-shared";
-import { createAgentRequestLowerer } from "../../agent/request-lowering";
+import type { HarnessBuilder } from "../harness";
 
 /** Canonical harness/platform id used for model-alias resolution. */
 export const PI_PLATFORM = "pi";
@@ -62,13 +61,7 @@ export const PI_PLATFORM = "pi";
  * Command shape:
  *   pi [--system-prompt "..."] [--model <m>] [--mode json] -p -- "<prompt>"
  */
-export const piBuilder: AgentCommandBuilder = {
-  platform: PI_PLATFORM,
-  personaChannel: "native",
-  lower: createAgentRequestLowerer({
-    adapter: PI_PLATFORM,
-    personaChannel: "native",
-  }),
+export const piBuilder: HarnessBuilder = {
   build(profile, req) {
     const args: string[] = [...profile.args];
     if (req.systemPrompt) {

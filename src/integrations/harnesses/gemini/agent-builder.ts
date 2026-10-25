@@ -43,8 +43,7 @@
  * name without any further wiring.
  */
 
-import type { AgentCommandBuilder, AgentDispatchRequest } from "../../agent/builder-shared";
-import { createAgentRequestLowerer } from "../../agent/request-lowering";
+import type { AgentDispatchRequest, HarnessBuilder } from "../harness";
 
 /** Canonical harness/platform id used for model-alias resolution. */
 export const GEMINI_PLATFORM = "gemini";
@@ -63,13 +62,7 @@ function buildPromptPayload(req: AgentDispatchRequest): string {
  *   gemini [--model <m>]
  *          [--output-format json] -p "<systemPrompt?\n\nprompt>"
  */
-export const geminiBuilder: AgentCommandBuilder = {
-  platform: GEMINI_PLATFORM,
-  personaChannel: "prompt",
-  lower: createAgentRequestLowerer({
-    adapter: GEMINI_PLATFORM,
-    personaChannel: "prompt",
-  }),
+export const geminiBuilder: HarnessBuilder = {
   build(profile, req) {
     const args: string[] = [...profile.args];
     if (req.model) {

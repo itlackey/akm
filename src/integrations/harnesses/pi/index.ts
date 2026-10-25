@@ -14,8 +14,7 @@
  * config importer yet.
  */
 
-import { caps } from "../shared";
-import { BaseHarness } from "../types";
+import type { AkmHarness } from "../harness";
 import { piBuilder } from "./agent-builder";
 import { piResultExtractor } from "./result-extractor";
 
@@ -27,18 +26,17 @@ export { piResultExtractor } from "./result-extractor";
  *
  * Canonical id is `'pi'`; no alias or distinct runtime identity.
  */
-export class PiHarness extends BaseHarness {
+export class PiHarness implements AkmHarness {
   readonly id = "pi" as const;
   readonly displayName = "Pi";
-  readonly agentBuilder = piBuilder;
+  readonly build = piBuilder.build;
   readonly profile = { bin: "pi", args: [], envPassthrough: ["PI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"] };
   readonly resultExtractor = piResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Session-id env marker only — the matrix's bare PI_* presence vars must
   // not stamp identity onto manual runs (see `AkmHarness.identityEnv`).
   readonly identityEnv = ["PI_SESSION_ID"] as const;
-  readonly capabilities = caps({
-    agentDispatch: true,
-    detection: true,
-  });
+  readonly systemPrompt = true;
+  readonly nativeAgent = false;
+  readonly confinable = false;
 }

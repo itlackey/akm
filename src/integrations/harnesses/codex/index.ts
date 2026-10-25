@@ -15,8 +15,7 @@
  */
 
 import type { SessionLogHarness } from "../../session-logs/types";
-import { caps } from "../shared";
-import { BaseHarness } from "../types";
+import type { AkmHarness } from "../harness";
 import { codexBuilder } from "./agent-builder";
 import { codexResultExtractor } from "./result-extractor";
 import { CodexProvider } from "./session-log";
@@ -30,12 +29,12 @@ export { CodexProvider } from "./session-log";
  *
  * Canonical id is `'codex'`; no alias or distinct runtime identity.
  */
-export class CodexHarness extends BaseHarness {
+export class CodexHarness implements AkmHarness {
   readonly id = "codex" as const;
   readonly displayName = "OpenAI Codex CLI";
   // No `setupDetectionDir`: `~/.codex` holds credentials and session rollouts,
   // not assets, so `akm setup` must not offer it as a stash source.
-  readonly agentBuilder = codexBuilder;
+  readonly build = codexBuilder.build;
   readonly profile = { bin: "codex", args: [], envPassthrough: ["OPENAI_API_KEY", "CODEX_CONFIG"] };
   readonly resultExtractor = codexResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
@@ -51,9 +50,7 @@ export class CodexHarness extends BaseHarness {
   // identity onto manual runs (see `AkmHarness.presenceEnv`).
   readonly presenceEnv = ["CODEX_SANDBOX"] as const;
   readonly sessionLogProvider = (): SessionLogHarness => new CodexProvider();
-  readonly capabilities = caps({
-    sessionLogs: true,
-    agentDispatch: true,
-    detection: true,
-  });
+  readonly systemPrompt = false;
+  readonly nativeAgent = false;
+  readonly confinable = false;
 }

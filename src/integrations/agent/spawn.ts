@@ -15,6 +15,7 @@
  * NEVER imports an LLM SDK. Agents are reachable only via shell-out;
  * this is a pre-emptive guarantee against the #222 invariant.
  */
+import { ConfigError } from "../../core/errors";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { collectAllowlistedEnv } from "../../core/spawn-env";
 import {
@@ -24,7 +25,8 @@ import {
   type StreamReadResult,
   streamCaptureFailure,
 } from "../../core/subprocess";
-import { getCommandBuilder } from "./builders";
+import { getHarness } from "../harnesses";
+import type { AgentDispatchRequest } from "../harnesses/harness";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
 
@@ -128,12 +130,7 @@ export interface RunAgentOptions {
    * AgentCommandBuilder constructs the argv from these fields (system prompt,
    * model). When absent, the prompt is passed positionally.
    */
-  dispatch?: import("./builder-shared").AgentDispatchRequest;
-  /**
-   * Builder registry override — used by tests to inject fake builders without
-   * touching the global BUILTIN_BUILDERS map.
-   */
-  builderRegistry?: Record<string, import("./builder-shared").AgentCommandBuilder>;
+  dispatch?: AgentDispatchRequest;
 }
 
 /**
@@ -173,14 +170,10 @@ export interface AgentRunResult {
  *   • Every name in `profile.envPassthrough` (via the shared
  *     {@link collectAllowlistedEnv}, which also supplements PATH for
  *     scheduler contexts where the inherited PATH is stripped).
- *   • Every entry in `profile.env`.
  *   • Every entry in `options.env` (highest precedence).
  */
 function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<string, string> {
   const env = collectAllowlistedEnv(profile.envPassthrough, options.envSource ?? process.env);
-  if (profile.env) {
-    for (const [k, v] of Object.entries(profile.env)) env[k] = v;
-  }
   if (options.env) {
     for (const [k, v] of Object.entries(options.env)) env[k] = v;
   }
@@ -249,8 +242,16 @@ export async function runAgent(
   let builtEnv: Record<string, string> | undefined;
   let builtStdin: string | undefined;
   if (options.dispatch !== undefined) {
-    const builder = getCommandBuilder(profile.platform ?? profile.name, options.builderRegistry);
-    const built = builder.build(profile, options.dispatch);
+    const platform = profile.platform ?? profile.name;
+    const harness = getHarness(platform);
+    if (!harness) {
+      throw new ConfigError(
+        `Agent platform "${platform}" has no registered command builder.`,
+        "INVALID_CONFIG_FILE",
+        "Select a canonical agent platform in harnesses.<name>.platform.",
+      );
+    }
+    const built = harness.build(profile, options.dispatch);
     builtArgv = built.argv;
     builtEnv = built.env;
     builtStdin = built.stdin;

@@ -50,10 +50,6 @@ describe("copilotBuilder — plain prompt", () => {
     expect(cmd.argv).toEqual(["copilot", "--allow-all-tools", "-p", "do work"]);
   });
 
-  test("platform id is 'copilot'", () => {
-    expect(copilotBuilder.platform).toBe("copilot");
-  });
-
   test("profile.args are preserved ahead of builder flags", () => {
     const cmd = copilotBuilder.build(makeCopilotProfile({ args: ["--no-color"] }), { prompt: "go" });
     expect(cmd.argv).toEqual(["copilot", "--no-color", "--allow-all-tools", "-p", "go"]);

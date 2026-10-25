@@ -15,11 +15,11 @@
  * No real `claude` binary is spawned.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDispatchRequest } from "../../src/integrations/agent/builder-shared";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { AgentRunResult } from "../../src/integrations/agent/spawn";
 import { claudeBuilder } from "../../src/integrations/harnesses/claude/agent-builder";
 import { claudeResultExtractor } from "../../src/integrations/harnesses/claude/result-extractor";
+import type { AgentDispatchRequest } from "../../src/integrations/harnesses/harness";
 
 function makeClaudeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
   return {

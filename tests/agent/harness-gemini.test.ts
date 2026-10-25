@@ -51,7 +51,6 @@ describe("geminiBuilder — plain prompt", () => {
   });
 
   test("platform id is 'gemini'", () => {
-    expect(geminiBuilder.platform).toBe("gemini");
     expect(GEMINI_PLATFORM).toBe("gemini");
   });
 

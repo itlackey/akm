@@ -16,7 +16,6 @@
  * Per-harness barrel that gathers the OpenCode integration surfaces:
  *   - session-log reader     → ./session-log.ts   (OpenCodeProvider)
  *   - agent command builder  → ./agent-builder.ts (opencodeBuilder)
- *   - config importer        → ./config-import.ts (openCodeImporter)
  *
  * It also defines {@link OpencodeHarness}, the {@link AkmHarness} descriptor
  * that `HARNESS_REGISTRY` registers. The embedded transport imports `core/config`,
@@ -29,15 +28,12 @@
 
 import { XDG_BASE_DIR_ENV_PASSTHROUGH } from "../../../core/spawn-env";
 import type { SessionLogHarness } from "../../session-logs/types";
-import { caps } from "../shared";
-import { BaseHarness } from "../types";
+import type { AkmHarness } from "../harness";
 import { opencodeBuilder } from "./agent-builder";
-import { openCodeImporter } from "./config-import";
 import { OpenCodeProvider } from "./session-log";
 import { detectOpencodeMajor } from "./version";
 
 export { opencodeBuilder } from "./agent-builder";
-export { openCodeImporter } from "./config-import";
 export { OpenCodeProvider } from "./session-log";
 
 /**
@@ -52,32 +48,26 @@ const OPENCODE_ENV_PASSTHROUGH = ["OPENCODE_API_KEY", "OPENCODE_CONFIG", ...XDG_
  *
  * Canonical id is `'opencode'`; it has no distinct runtime identity or alias.
  */
-export class OpencodeHarness extends BaseHarness {
+export class OpencodeHarness implements AkmHarness {
   readonly id = "opencode" as const;
   readonly displayName = "OpenCode";
   // Home-relative config dir scanned by `akm setup` (#567). OpenCode has a
   // session-log provider, so offering it as a stash source is functional.
   readonly setupDetectionDir = ".config/opencode";
-  readonly agentBuilder = opencodeBuilder;
-  readonly configImporter = openCodeImporter;
+  readonly build = opencodeBuilder.build;
   readonly profile = { bin: "opencode", args: ["run"], envPassthrough: OPENCODE_ENV_PASSTHROUGH };
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Session-id env marker for run attribution.
   readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;
   readonly sessionLogProvider = (): SessionLogHarness => new OpenCodeProvider();
   /** OpenCode 2 runs embedded; OpenCode 1, and a binary whose version cannot be read, run as the CLI. */
-  readonly runInProcess: BaseHarness["runInProcess"] = (profile, prompt, opts) => {
+  readonly runInProcess: AkmHarness["runInProcess"] = (profile, prompt, opts) => {
     const major = detectOpencodeMajor(profile.bin).reportedMajor;
     if (major === undefined || major < 2) return undefined;
     return import("./embedded/run").then((embedded) => embedded.runOpencodeHarness(profile, prompt, opts));
   };
-  // `modelWork`: model work can be confined (read-only) on OpenCode 2; OpenCode 1 runs it unrestricted.
-  readonly capabilities = caps({
-    sessionLogs: true,
-    agentDispatch: true,
-    detection: true,
-    nativeAgent: true,
-    configImport: true,
-    modelWork: true,
-  });
+  readonly systemPrompt = false;
+  readonly nativeAgent = true;
+  // Model work can be confined (read-only) on OpenCode 2; OpenCode 1 runs it unrestricted.
+  readonly confinable = true;
 }

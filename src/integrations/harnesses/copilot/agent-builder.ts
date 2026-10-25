@@ -39,8 +39,7 @@
  * name without any further wiring.
  */
 
-import type { AgentCommandBuilder, AgentDispatchRequest } from "../../agent/builder-shared";
-import { createAgentRequestLowerer } from "../../agent/request-lowering";
+import type { AgentDispatchRequest, HarnessBuilder } from "../harness";
 
 /** Canonical harness/platform id used for model-alias resolution. */
 export const COPILOT_PLATFORM = "copilot";
@@ -59,13 +58,7 @@ function buildPromptPayload(req: AgentDispatchRequest): string {
  *   copilot [--model <m>] --allow-all-tools
  *           [--output-format json] -p "<systemPrompt?\n\nprompt>"
  */
-export const copilotBuilder: AgentCommandBuilder = {
-  platform: COPILOT_PLATFORM,
-  personaChannel: "prompt",
-  lower: createAgentRequestLowerer({
-    adapter: COPILOT_PLATFORM,
-    personaChannel: "prompt",
-  }),
+export const copilotBuilder: HarnessBuilder = {
   build(profile, req) {
     const args: string[] = [...profile.args];
     if (req.model) {

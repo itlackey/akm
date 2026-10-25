@@ -67,7 +67,6 @@ describe("openhandsBuilder — plain prompt", () => {
   });
 
   test("platform id is 'openhands'; model env constant is LLM_MODEL", () => {
-    expect(openhandsBuilder.platform).toBe("openhands");
     expect(OPENHANDS_PLATFORM).toBe("openhands");
     expect(OPENHANDS_MODEL_ENV).toBe("LLM_MODEL");
   });

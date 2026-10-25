@@ -26,9 +26,9 @@ import type { ExecutionJsonObject } from "../../execution/json";
 import { type ChatCompletionConfig, chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { getHarness } from "../harnesses";
+import { type AgentResultExtraction, modelFromArgs } from "../harnesses/harness";
 import { closeOpencodeSdk } from "../harnesses/opencode/embedded/host";
 import { runOpencodeSdk } from "../harnesses/opencode/embedded/run";
-import { type AgentResultExtraction, modelFromArgs } from "./builder-shared";
 import type { BuiltExecution } from "./execution";
 import { type AgentProfile, harnessProfile, runtimeProfile } from "./profiles";
 import { mergeLayerInference, resolveTarget } from "./resolution";
@@ -82,9 +82,7 @@ export function collectDispatchSensitiveValues(
   if (runner.kind === "connection") {
     values.push(resolveApiKey(runner.apiKey, runner.name, envSource, true));
   } else {
-    const profile = harnessProfile(runner);
-    values.push(...Object.values(profile.env ?? {}));
-    for (const name of profile.envPassthrough) {
+    for (const name of harnessProfile(runner).envPassthrough) {
       if (!isEnvPassthroughValueSafeToExpose(name, envSource[name])) values.push(envSource[name]);
     }
   }
