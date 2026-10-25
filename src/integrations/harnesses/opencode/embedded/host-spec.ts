@@ -11,9 +11,8 @@
  *   runs bring (`./runner-models.ts`) and no user or project OpenCode config,
  *   though OpenCode still reads `~/.agents` and its system config.
  * - The `opencode` host is the user's OpenCode: their config directory,
- *   providers and default model, with their logins read from their own database
- *   (when it exists: akm never creates it, and `./sdk-host.ts` reads it only when
- *   opening it would migrate nothing) and akm's plugin added.
+ *   providers and default model, with their logins copied from their own database
+ *   (when it exists: akm never creates it) and akm's plugin added.
  */
 
 import fs from "node:fs";
@@ -42,7 +41,7 @@ export interface HostSpec {
   readonly isolated: boolean;
   /** Whether OpenCode may fetch the model catalog (models.dev); otherwise the bundled snapshot is used. */
   readonly fetchModels: boolean;
-  /** The user's OpenCode database, whose logins the host reads (and refreshes) in place of its own when it is up to date. */
+  /** The user's OpenCode database, whose logins the host copies into its own at start; the user's file is only read. */
   readonly credentialsFrom?: string;
   /** The user's config directory, when `OPENCODE_CONFIG_DIR` moves it (the embedded OpenCode does not read that variable). */
   readonly configDirectory?: string;

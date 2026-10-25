@@ -18,11 +18,10 @@
  *   timed-out turn again, under whichever process started next. The sweep is
  *   replaced by an inert one.
  * - **The user's logins** (the opencode host): OpenCode 2 keeps credentials in its
- *   database. The host keeps its sessions in akm's database and has its credential
- *   service read the user's, so their logins work and a refreshed token is written
- *   back where their own OpenCode finds it. OpenCode's database layer applies every
- *   migration a file it opens has not had, and akm changes no file it does not own,
- *   so a user's database that has not had them all is left alone, with a warning.
+ *   database. The host keeps its sessions in akm's database, and at start copies the
+ *   rows of the user's `credential` table into it. The user's file is read read-only
+ *   and never changed; a token akm's instance refreshes stays in akm's copy, and
+ *   their own OpenCode refreshes theirs.
  * - **akm's own roots** (an isolated host): OpenCode keeps its logs, repositories
  *   and binaries under akm's data and cache directories, and loads no user or
  *   project config, though it still reads `~/.agents` and its system config.
@@ -30,48 +29,63 @@
 
 import path from "node:path";
 import { getCacheDir, getDataDir, getStateDir } from "../../../../core/paths";
-import { warnOnce } from "../../../../core/warn";
-import { openDatabase } from "../../../../storage/database";
+import { openDatabase, type SqlValue } from "../../../../storage/database";
+import { SQLITE_BUSY_TIMEOUT_MS } from "../../../../storage/sqlite-pragmas";
 import type { EmbeddedHost } from "./host";
 import type { HostSpec } from "./host-spec";
 
 async function load() {
-  const [sdk, plugin, restart, global, credential, database, migration, effect] = await Promise.all([
+  const [sdk, plugin, restart, global, effect] = await Promise.all([
     import("@opencode/sdk/effect"),
     import("@opencode/core/plugin/promise"),
     import("@opencode/core/session/execution/restart"),
     import("@opencode/util/global"),
-    import("@opencode/core/credential"),
-    import("@opencode/core/database/database"),
-    import("@opencode/core/database/migration.gen"),
     import("effect"),
   ]);
-  return { sdk, plugin, restart, global, credential, database, migration, effect };
+  return { sdk, plugin, restart, global, effect };
 }
 
-/** Whether the user's database at `file` has had every migration id in `known`, read with SQLite read-only; warns once when not. */
-function upToDate(file: string, known: readonly string[]): boolean {
-  const db = openDatabase(file, { readonly: true, create: false });
-  let had = 0;
+const LOGIN_COLUMNS = [
+  "id",
+  "integration_id",
+  "label",
+  "value",
+  "connector_id",
+  "method_id",
+  "active",
+  "time_created",
+  "time_updated",
+] as const;
+type Login = Record<(typeof LOGIN_COLUMNS)[number], SqlValue>;
+
+/** Make the `credential` table of akm's OpenCode database `into` hold the rows of the user's `from`, which is only read. */
+function mirrorLogins(from: string, into: string): void {
+  const columns = LOGIN_COLUMNS.join(", ");
+  let logins: Login[] = [];
+  const theirs = openDatabase(from, { readonly: true, create: false });
   try {
-    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'migration'").get()) {
-      const ids = new Set(
-        db
-          .prepare<{ id: string }>("SELECT id FROM migration")
-          .all()
-          .map((row) => row.id),
-      );
-      had = known.filter((id) => ids.has(id)).length;
+    if (theirs.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'credential'").get()) {
+      logins = theirs.prepare<Login>(`SELECT ${columns} FROM credential`).all();
     }
   } finally {
-    db.close();
+    theirs.close();
   }
-  if (had === known.length) return true;
-  warnOnce(
-    `opencode-logins-behind:${file}`,
-    `Your OpenCode database is older than akm's embedded OpenCode (ledger ${had} vs ${known.length}); upgrade OpenCode to use its logins from akm.`,
-  );
-  return false;
+  const ours = openDatabase(into);
+  try {
+    // Another akm process may be writing to this database; wait for it rather than fail the start.
+    ours.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    ours.transaction(() => {
+      ours.run("DELETE FROM credential");
+      for (const login of logins) {
+        ours.run(
+          `INSERT INTO credential (${columns}) VALUES (${LOGIN_COLUMNS.map(() => "?").join(", ")})`,
+          ...LOGIN_COLUMNS.map((column) => login[column]),
+        );
+      }
+    })();
+  } finally {
+    ours.close();
+  }
 }
 
 /** The directories OpenCode keeps its own files under on the runtime host. */
@@ -91,7 +105,7 @@ function akmRoots() {
 
 /** Start the embedded OpenCode `spec` describes; aborting `signal` while it starts stops the start and releases what it had begun. */
 export async function createSdkHost(spec: HostSpec, signal?: AbortSignal): Promise<EmbeddedHost> {
-  const { sdk, plugin, restart, global, credential, database, migration, effect } = await load();
+  const { sdk, plugin, restart, global, effect } = await load();
   const { Effect, Exit, Layer, References, Scope, Stream } = effect;
   const run = <A>(work: import("effect").Effect.Effect<A, unknown>, signal?: AbortSignal): Promise<A> =>
     Effect.runPromise(
@@ -99,21 +113,10 @@ export async function createSdkHost(spec: HostSpec, signal?: AbortSignal): Promi
       signal ? { signal } : undefined,
     );
 
-  /** OpenCode's credential service, pointed at the user's database: it reads their logins and writes a refreshed token back, as a second OpenCode process would. */
-  const readLogins = (userDatabase: string) =>
-    credential.Credential.node.replace(
-      credential.Credential.node.mapLayer(
-        (layer) => Layer.provide(layer, database.Database.layer({ path: userDatabase })) as never,
-      ),
-    );
-  const userDatabase = spec.credentialsFrom;
-  const known = migration.migrations.map(({ id }) => id);
-  const logins = userDatabase && upToDate(userDatabase, known) ? [readLogins(userDatabase)] : [];
   const inertSweep = Layer.succeed(restart.SessionRestart.Service, { resumeSuspendedSessions: Effect.void });
   const overrides = [
     restart.SessionRestart.node.replace(inertSweep),
     ...(spec.isolated ? [global.Global.node.replace(global.Global.layerWith(akmRoots()))] : []),
-    ...logins,
   ];
   const scope = await Effect.runPromise(Scope.make());
   const close = () => Effect.runPromise(Scope.close(scope, Exit.void));
@@ -133,10 +136,16 @@ export async function createSdkHost(spec: HostSpec, signal?: AbortSignal): Promi
       { overrides },
     ).pipe(Effect.provideService(Scope.Scope, scope)),
     signal,
-  ).catch(async (error: unknown) => {
-    await close();
-    throw error;
-  });
+  )
+    .then((started) => {
+      // After `OpenCode.create` has made and migrated akm's database; the credential service reads a row when it resolves a model.
+      if (spec.credentialsFrom) mirrorLogins(spec.credentialsFrom, spec.database);
+      return started;
+    })
+    .catch(async (error: unknown) => {
+      await close();
+      throw error;
+    });
 
   // The SDK's generated input types wrap every field in an indexed-access type; `EmbeddedHost` is the contract
   // akm codes against, so each input crosses this boundary as the narrow type it was written to.

@@ -13,7 +13,6 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { OpenCode } from "@opencode/sdk";
-import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { harnessProfile } from "../../src/integrations/agent/profiles";
 import {
   _setOpencodeHostFactoryForTests,
@@ -24,7 +23,7 @@ import { createSdkHost } from "../../src/integrations/harnesses/opencode/embedde
 import { akmOpencodeDatabasePath } from "../../src/integrations/harnesses/opencode/roots";
 import { openDatabase } from "../../src/storage/database";
 import { type FakeModelServer, startFakeModel } from "../_helpers/fake-model-server";
-import { makeSandboxDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
+import { makeSandboxDir, type SandboxedDir, withEnv, withEnvSync } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
 
 const profile = harnessProfile({
@@ -178,6 +177,8 @@ describe("a run on the user's OpenCode 2", () => {
   test("signs in with the logins in their database, and leaves it as it was", async () => {
     const { data, userDb } = await theirDatabase("xdg-data-logins");
     const state = fileState(userDb);
+    // A cold start: akm has no OpenCode database of its own yet.
+    expect(fs.existsSync(withEnvSync({ XDG_DATA_HOME: data }, akmOpencodeDatabasePath))).toBe(false);
 
     const before = model.requests.length;
     const result = await withEnv({ XDG_DATA_HOME: data }, () => run(userConfig(), "MODE:answer signed in"));
@@ -185,6 +186,20 @@ describe("a run on the user's OpenCode 2", () => {
     expect(model.requests.slice(before).find((r) => r.mode === "answer")?.authorization).toBe("Bearer sk-their-login");
     await closeOpencodeSdk();
     expect(fileState(userDb)).toEqual(state);
+
+    // A warm start: akm's database holds the earlier copy, and the user's login has changed since.
+    edit(userDb, (db) =>
+      db.run("UPDATE credential SET value = ?", JSON.stringify({ type: "key", key: "sk-their-new-login" })),
+    );
+    const changed = fileState(userDb);
+    const again = model.requests.length;
+    const second = await withEnv({ XDG_DATA_HOME: data }, () => run(userConfig(), "MODE:answer signed in again"));
+    expect(second.ok).toBe(true);
+    expect(model.requests.slice(again).find((r) => r.mode === "answer")?.authorization).toBe(
+      "Bearer sk-their-new-login",
+    );
+    await closeOpencodeSdk();
+    expect(fileState(userDb)).toEqual(changed);
   });
 
   test("signs in with the logins of a database a newer OpenCode wrote, and leaves it as it was", async () => {
@@ -202,7 +217,7 @@ describe("a run on the user's OpenCode 2", () => {
     expect(fileState(userDb)).toEqual(state);
   });
 
-  test("leaves a database older than its own OpenCode untouched and runs without its logins, saying so once", async () => {
+  test("signs in with the logins of a database an older OpenCode wrote, and leaves it as it was", async () => {
     const { data, userDb } = await theirDatabase("xdg-data-older");
     // As OpenCode 2.0.26 leaves it: without the embedded OpenCode's newest migration.
     edit(userDb, (db) => {
@@ -211,24 +226,25 @@ describe("a run on the user's OpenCode 2", () => {
     });
     const state = fileState(userDb);
 
-    const warnings: string[] = [];
-    _resetWarnOnceForTests();
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-    try {
-      const before = model.requests.length;
-      const result = await withEnv({ XDG_DATA_HOME: data }, () => run(userConfig(), "MODE:answer older database"));
-      expect(result.ok).toBe(true);
-      expect(model.requests.slice(before).find((r) => r.mode === "answer")?.authorization).toBeUndefined();
-      await closeOpencodeSdk();
-    } finally {
-      _setWarnSinkForTests(undefined);
-    }
+    const before = model.requests.length;
+    const result = await withEnv({ XDG_DATA_HOME: data }, () => run(userConfig(), "MODE:answer older database"));
+    expect(result.ok).toBe(true);
+    expect(model.requests.slice(before).find((r) => r.mode === "answer")?.authorization).toBe("Bearer sk-their-login");
+    await closeOpencodeSdk();
     expect(fileState(userDb)).toEqual(state);
-    expect(warnings.filter((w) => w.startsWith("Your OpenCode database is older"))).toEqual([
-      `Your OpenCode database is older than akm's embedded OpenCode (ledger ${state.ledger.length} vs ${state.ledger.length + 1}); upgrade OpenCode to use its logins from akm.`,
-    ]);
+  });
+
+  test("with no stored logins, runs without them and leaves the file as it was", async () => {
+    const { data, userDb } = await theirDatabase("xdg-data-no-logins");
+    edit(userDb, (db) => db.exec("DELETE FROM credential"));
+    const state = fileState(userDb);
+
+    const before = model.requests.length;
+    const result = await withEnv({ XDG_DATA_HOME: data }, () => run(userConfig(), "MODE:answer no logins"));
+    expect(result.ok).toBe(true);
+    expect(model.requests.slice(before).find((r) => r.mode === "answer")?.authorization).toBeUndefined();
+    await closeOpencodeSdk();
+    expect(fileState(userDb)).toEqual(state);
   });
 
   test("passes the run's environment to the commands it runs, and nothing the harness's allowlist leaves out", async () => {

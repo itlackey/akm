@@ -18,7 +18,7 @@ import { hasV2Tables, listV2Sessions, readV2Session } from "./session-log-v2";
  * `<opencode data dir>/opencode.db`, and akm's own `<akm data dir>/opencode.db`,
  * where the embedded OpenCode stores akm's agent runs. This reader opens them
  * read-only, with SQLite alone, and starts no OpenCode on them; the embedded
- * OpenCode writes akm's file and reads the user's for logins
+ * OpenCode writes akm's file, and its host copies the user's logins into it
  * (`./embedded/sdk-host.ts`). The file's layout decides the reader:
  *
  *   - OpenCode 2 (`session_v2` and `session_message`): `session-log-v2.ts`.
