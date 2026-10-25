@@ -13,7 +13,7 @@
  *   • Engine lowering lives in engine-resolution.ts; public config has no profile aliases.
  *   • Builder contract types: AgentCommandBuilder, AgentDispatchRequest.
  *     The concrete builder lookup stays private to the spawn authority.
- *   • Detection: detectAgentCliProfiles, pickDefaultAgentProfile, defaultWhich.
+ *   • Detection: detectAgentCliProfiles, defaultWhich.
  */
 
 export type { SpawnedSubprocess, SpawnFn } from "../../core/subprocess";
@@ -23,7 +23,7 @@ export type {
   AgentDetectionResult,
   WhichFn,
 } from "./detect";
-export { _setAgentDetectForTests, defaultWhich, detectAgentCliProfiles, pickDefaultAgentProfile } from "./detect";
+export { _setAgentDetectForTests, defaultWhich, detectAgentCliProfiles } from "./detect";
 export type {
   AgentParseMode,
   AgentProfile,

@@ -17,7 +17,6 @@ import { describe, expect, it } from "bun:test";
 import { VALID_HARNESS_IDS as CONFIG_VALID_HARNESS_IDS } from "../src/core/config/config-types";
 import {
   AGENT_DISPATCH_HARNESSES,
-  defaultProfileName,
   getHarness,
   HARNESS_BY_ID,
   HARNESS_REGISTRY,
@@ -130,20 +129,6 @@ describe("exact harness ids", () => {
     expect(getHarness("claude")).toBeDefined();
     expect(getHarness("claude-code")).toBeUndefined();
     expect(getHarness("nope")).toBeUndefined();
-  });
-});
-
-describe("defaultProfileName — registry-derived headless default (#566)", () => {
-  it("returns the canonical id for each dispatch-capable detected harness", () => {
-    expect(defaultProfileName("opencode")).toBe("opencode");
-    expect(defaultProfileName("claude")).toBe("claude");
-  });
-
-  it("returns undefined for 'none' and unknown ids (no spurious default)", () => {
-    expect(defaultProfileName("none")).toBeUndefined();
-    expect(defaultProfileName("opencode-sdk")).toBeUndefined();
-    expect(defaultProfileName("cursor")).toBeUndefined();
-    expect(defaultProfileName("claude-code")).toBeUndefined();
   });
 });
 

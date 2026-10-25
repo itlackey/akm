@@ -126,7 +126,7 @@ enumeration of the whole `proposal` noun group.
 | `akm log` | Evolving | |
 | `akm agent` | Evolving | |
 | `akm command run` | Evolving | Runs stored command templates through the same agent dispatch as `akm agent`. |
-| `akm models` | Evolving | `list` and `copy-defaults` for model intent aliases. |
+| `akm models` | Evolving | The alias picks of a connection beside the models its endpoint lists, and `set` to change one. |
 | `akm lint` | Evolving | |
 | `akm improve` | Evolving | Review-first by default; mutating lanes require `experimental.improveAutonomy` — see below. |
 | `akm improve report` | Evolving | Subcommand since 0.10 (was a magic `scope` value); owns `--run` and `--since`. |
@@ -367,8 +367,8 @@ CHANGELOG with a migration note.
   covers it, including a default agent (#1098). It may be removed in 0.11 or
   later. The rest of the OpenCode integration (session-log import, config
   import) is not deprecated.
-- **Model aliases** — `akm models list|copy-defaults` and the intent-alias
-  defaults they expose.
+- **Model aliases** — `akm models` and `akm models set`, and the intent-alias
+  picks a connection holds.
 - **Proposal queue** — quality classifications (`accepted`, `pending`,
   `proposed`, `rejected`, `archived`) are stable; the JSON shape of a
   proposal record may add fields.

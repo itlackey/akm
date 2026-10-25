@@ -435,7 +435,6 @@ describe("task definition preparation", () => {
 describe("scheduled-tasks step registration", () => {
   test("is not part of non-interactive setup steps", () => {
     const { steps } = buildSetupSteps({
-      online: false,
       semanticSearchOutcome: { mode: "off", prepareAssets: false },
     });
     expect(steps.find((step) => step.id === "scheduled-tasks")).toBeUndefined();

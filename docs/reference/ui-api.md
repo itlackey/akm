@@ -210,14 +210,16 @@ The effective configuration, as `akm config list` shows it, with where each valu
     "exists": true,
     "config": {
       "semanticSearchMode": "off",
-      "engines": { "default": { "kind": "llm", "endpoint": "https://llm.example.test/v1/chat/completions?token=%5Bredacted%5D", "model": "chat-model" } },
+      "connections": { "default": { "endpoint": "https://llm.example.test/v1?token=%5Bredacted%5D", "models": { "fast": "chat-model" } } },
+      "harnesses": { "claude": {} },
       "defaultBundle": "stash"
     },
     "entries": [
       { "path": "semanticSearchMode", "value": "off", "source": "file" },
       { "path": "output.format", "value": "json", "source": "default" }
     ],
-    "engines": [{ "name": "default", "kind": "llm", "endpoint": "https://llm.example.test/v1/chat/completions?token=%5Bredacted%5D", "model": "chat-model" }],
+    "connections": [{ "name": "default", "endpoint": "https://llm.example.test/v1?token=%5Bredacted%5D", "models": { "fast": "chat-model" } }],
+    "harnesses": [{ "name": "claude" }],
     "env": [{ "name": "AKM_BUNDLE_DIR", "value": "/home/me/akm" }]
   }
 }
@@ -226,7 +228,10 @@ The effective configuration, as `akm config list` shows it, with where each valu
 - `config` is the redacted effective config tree. `entries` is the same data flattened to one row per leaf (arrays are
   leaves) with `source`: `default` (no config file sets it), `file` (this install's `config.json`),
   `extends:<ref>` (a config it extends), or `null` when the key cannot be traced (a key containing a `.`).
-- `engines` is `config.engines` as a list. Reachability is a health probe, not config: use `/api/overview?probe=1`.
+- `connections` and `harnesses` are `config.connections` and `config.harnesses` as lists, each entry with its `name`
+  and the entry's own keys (a connection's `endpoint` and `models`, a harness's `platform`, ...); keys are never
+  included (`apiKey` shows as `[redacted]` or its `$VAR` reference). Reachability is a health probe, not config: use
+  `/api/overview?probe=1`.
 - `env` lists the `AKM_*` environment variables set for the server, which override paths and credentials. A
   secret-like name (`...KEY`, `...TOKEN`, ...) has `value: "[redacted]"`.
 

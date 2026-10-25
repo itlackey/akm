@@ -116,7 +116,6 @@ export interface AgentDetectionResult {
 // Swap-and-restore override. Inert in production; only tests call the setter.
 interface AgentDetectOverridesForTests {
   detectAgentCliProfiles?: typeof detectAgentCliProfiles;
-  pickDefaultAgentProfile?: typeof pickDefaultAgentProfile;
 }
 let detectOverrides: AgentDetectOverridesForTests | undefined;
 
@@ -161,25 +160,4 @@ function probeProfile(profile: AgentProfile, whichFn: WhichFn): AgentDetectionRe
     available: Boolean(resolved),
     ...(resolved ? { resolvedPath: resolved } : {}),
   };
-}
-
-/**
- * Pick the default profile to persist after a setup-time detection run.
- *
- * Strategy:
- *   1. If the user already set `agent.default` and that profile is
- *      available, keep it (round-trip stability).
- *   2. Otherwise, pick the first available result in detection order.
- *   3. If nothing is available, return `undefined` and the caller skips
- *      writing `agent.default`.
- */
-export function pickDefaultAgentProfile(results: AgentDetectionResult[], existingDefault?: string): string | undefined {
-  if (detectOverrides?.pickDefaultAgentProfile)
-    return detectOverrides.pickDefaultAgentProfile(results, existingDefault);
-  if (existingDefault) {
-    const match = results.find((r) => r.name === existingDefault && r.available);
-    if (match) return match.name;
-  }
-  const first = results.find((r) => r.available);
-  return first?.name;
 }

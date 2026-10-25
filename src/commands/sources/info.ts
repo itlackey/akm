@@ -20,6 +20,7 @@ import { countLinksByKind } from "../../storage/repositories/index-links-reposit
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { isSqliteContentionError } from "../../storage/sqlite-transaction";
 import { pkgVersion } from "../../version";
+import { type TargetRow, targetRows } from "../targets";
 
 /**
  * Bound for `akm info`'s diagnostic index.db read — short enough that a
@@ -162,9 +163,19 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
       status: semanticStatus,
     },
     registries,
+    targets: safeTargets(config),
     sourceProviders,
     indexStats,
   };
+}
+
+/** The connections, harnesses and work table, or none when it cannot be built: `akm info` never throws. */
+function safeTargets(config: AkmConfig): TargetRow[] {
+  try {
+    return targetRows({ config });
+  } catch {
+    return [];
+  }
 }
 
 /** Best-effort path resolution for a section that must degrade, not throw: an empty string in place of an exception. */

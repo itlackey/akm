@@ -179,7 +179,7 @@ describe("the model", () => {
     const empty = configOf({ connections: { default: { endpoint: "http://x/v1" } } });
     const failure = failureOf(() => resolveTarget({ config: empty, layers: [], modelWork: true }));
     expect(failure.code).toBe("INVALID_CONFIG_FILE");
-    expect(failure.message).toContain("connections.default.models");
+    expect(failure.message).toContain("akm models set fast <model> --connection default");
   });
 });
 

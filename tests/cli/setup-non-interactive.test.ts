@@ -46,18 +46,37 @@ describe("akm setup without a TTY", () => {
     const { error } = JSON.parse(stderr.trim()) as { error: string };
 
     expect(error).toContain("--yes");
-    expect(error).toContain("--config");
     expect(error).toContain("--from");
   });
 
-  test("classifies malformed --config JSON as a usage error", async () => {
-    const { code, stderr } = await runCliCapture(["setup", "--config", "not-json"]);
+  test("flags that answer a question do not make setup non-interactive on their own", async () => {
+    const { code, stderr } = await runCliCapture(["setup", "--endpoint", "http://localhost:11434/v1"]);
 
     expect(code).toBe(2);
-    const parsed = JSON.parse(stderr.trim());
-    expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
-    expect(parsed.error).toContain("Invalid JSON in --config");
+    expect(JSON.parse(stderr.trim()).code).toBe("NON_INTERACTIVE_REQUIRES_YES");
+  });
+
+  test("a flag that cannot be right is a usage error before anything is asked or written", async () => {
+    for (const args of [
+      ["--endpoint", "not a url"],
+      ["--api-key-env", "sk-this-is-a-key-not-a-name"],
+      ["--harness", "cursor"],
+      ["--embedding-endpoint", "https://emb.example.test/v1"],
+    ]) {
+      const { code, stderr } = await runCliCapture(["setup", "--yes", ...args]);
+      expect(code, args.join(" ")).toBe(2);
+      const parsed = JSON.parse(stderr.trim());
+      expect(parsed.code, args.join(" ")).toBe("INVALID_FLAG_VALUE");
+      expect(stderr).not.toContain("sk-this-is-a-key-not-a-name");
+    }
+  });
+
+  test("the removed --config and --probe flags are unknown", async () => {
+    for (const flag of [["--config", "{}"], ["--probe"]] as const) {
+      const { code, stderr } = await runCliCapture(["setup", "--yes", ...flag]);
+      expect(code, flag.join(" ")).toBe(2);
+      expect(stderr).toContain(flag[0]);
+    }
   });
 });
 
@@ -122,7 +141,7 @@ describe("akm setup against a config akm 0.9 cannot load", () => {
 
     for (const args of [
       ["setup", "--yes"],
-      ["setup", "--config", "{}"],
+      ["setup", "--yes", "--endpoint", "http://localhost:11434/v1"],
     ]) {
       const { code, stderr } = await runCliCapture(args);
       expect(code, args.join(" ")).toBe(78);

@@ -256,20 +256,6 @@ export function listRecentImproveRuns(db: Database, limit: number): ImproveRunSu
 }
 
 /**
- * #950: count real (non-dry-run) improve_runs rows whose `started_at` falls
- * in `[since, now)` — same filter as {@link queryImproveRuns}, but a `SELECT
- * COUNT(*)` for a caller (the `engine-last-used` gate) that only needs to
- * know whether any run happened, not the rows themselves (which would pull
- * every `result_json` blob in the window just to test for zero).
- */
-export function countImproveRunsSince(db: Database, since: string): number {
-  const row = db
-    .prepare("SELECT COUNT(*) AS cnt FROM improve_runs WHERE started_at >= ? AND dry_run = 0")
-    .get(since) as { cnt: number };
-  return row.cnt;
-}
-
-/**
  * Delete improve_runs rows older than `retentionDays` (default: 90). Mirrors
  * {@link purgeOldEvents} — same default, same return shape (number of rows
  * actually deleted), same disabled-when-non-finite semantics.

@@ -32,3 +32,16 @@ export const SHIPPED_ALIAS = {
 export function modelForEveryAlias(model: string): Record<StandardAlias, string> {
   return { fast: model, balanced: model, reasoning: model };
 }
+
+/** What an alias maps to: a model's name, or the name together with request fields of its own. */
+export type ModelEntry = string | { readonly model: string; readonly [field: string]: unknown };
+
+/** The model name an alias entry holds. */
+export function entryModel(entry: ModelEntry): string {
+  return typeof entry === "string" ? entry : entry.model;
+}
+
+/** The entry for `entry` once it names `model`: an entry with request fields keeps them. */
+export function entryWithModel(entry: ModelEntry | undefined, model: string): ModelEntry {
+  return typeof entry === "object" ? { ...entry, model } : model;
+}

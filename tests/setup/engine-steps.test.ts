@@ -1,0 +1,533 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * The first three of setup's steps, driven through a scripted terminal and a
+ * stand-in for the endpoint's model list: which harnesses to enable and whether
+ * they take model calls, the connection (endpoint, key, one model per alias),
+ * and embeddings. Flags, `--yes` defaults and the interactive questions all end
+ * in the same answers.
+ */
+
+import { beforeEach, describe, expect, test } from "bun:test";
+import type { AkmConfig } from "../../src/core/config/config";
+import { UsageError } from "../../src/core/errors";
+import type { InstalledHarness } from "../../src/setup/detect";
+import { parseEngineFlags } from "../../src/setup/engine-flags";
+import { stepConnection } from "../../src/setup/steps/connection";
+import { stepEmbeddings } from "../../src/setup/steps/embeddings";
+import { stepHarnesses } from "../../src/setup/steps/harnesses";
+import { withEnv, withMockedFetch } from "../_helpers/sandbox";
+import { type ScriptedPrompts, scriptPrompts } from "../_helpers/setup-prompts";
+
+let prompts: ScriptedPrompts;
+beforeEach(() => {
+  prompts = scriptPrompts();
+});
+
+const cfg = (partial: Partial<AkmConfig> = {}): AkmConfig => ({ semanticSearchMode: "off", ...partial });
+const installed = (...platforms: string[]): InstalledHarness[] =>
+  platforms.map((platform) => ({ platform, bin: platform, path: `/usr/bin/${platform}` }) as InstalledHarness);
+
+/** A stand-in endpoint: lists `models`, records each request's URL and key, or fails with `status`. */
+function endpoint(models: string[], opts: { status?: number } = {}) {
+  const requests: { url: string; authorization: string | null }[] = [];
+  const mock = (url: string, init?: RequestInit) => {
+    requests.push({ url, authorization: new Headers(init?.headers).get("authorization") });
+    return opts.status
+      ? new Response("no", { status: opts.status })
+      : Response.json({ object: "list", data: models.map((id) => ({ id })) });
+  };
+  return { requests, serve: <T>(run: () => Promise<T>) => withMockedFetch(run, mock) };
+}
+
+describe("stepHarnesses", () => {
+  const input = (over: Partial<Parameters<typeof stepHarnesses>[0]> = {}) => ({
+    current: cfg(),
+    installed: installed("claude", "codex"),
+    flags: {},
+    interactive: true,
+    ...over,
+  });
+
+  test("interactive: offers what is installed, preselected, each saying whether model calls run read-only", async () => {
+    prompts.answers.multiselect.push(["claude"]);
+    prompts.answers.confirm.push(true);
+
+    const result = await stepHarnesses(input());
+
+    const [asked] = prompts.of("multiselect");
+    expect(asked?.options.map((o) => o.value)).toEqual(["claude", "codex"]);
+    expect(asked?.initialValues).toEqual(["claude", "codex"]);
+    expect(asked?.options[0]?.hint).toContain("model calls run read-only");
+    expect(asked?.options[1]?.hint).toContain("cannot be restricted to read-only");
+    expect(result).toEqual({ answer: { platforms: ["claude"], default: "claude" }, modelCallsOnHarness: true });
+  });
+
+  test("interactive: the model-calls question names the harness and says what the note says, and No means a connection", async () => {
+    prompts.answers.multiselect.push(["codex"]);
+    prompts.answers.confirm.push(false);
+
+    const result = await stepHarnesses(input());
+
+    const [question] = prompts.of("confirm");
+    expect(question?.message).toContain("Use codex for akm's own model calls too");
+    expect(question?.message).toContain("cannot be restricted to read-only");
+    expect(question?.initialValue).toBe(true);
+    expect(result.modelCallsOnHarness).toBe(false);
+  });
+
+  test("interactive: with several selected, asks which one is the default", async () => {
+    prompts.answers.multiselect.push(["claude", "codex"]);
+    prompts.answers.select.push("codex");
+    prompts.answers.confirm.push(true);
+
+    const result = await stepHarnesses(input());
+
+    expect(prompts.of("select")[0]?.initialValue).toBe("claude");
+    expect(result.answer).toEqual({ platforms: ["claude", "codex"], default: "codex" });
+    expect(prompts.of("confirm")[0]?.message).toContain("Use codex");
+  });
+
+  test("a rerun is prefilled from the config: its harnesses selected and its default preselected", async () => {
+    prompts.answers.multiselect.push(["codex", "claude"]);
+    prompts.answers.select.push("codex");
+    prompts.answers.confirm.push(true);
+    const current = cfg({ harnesses: { default: { platform: "codex" }, claude: {} } });
+
+    await stepHarnesses(input({ current }));
+
+    expect(prompts.of("multiselect")[0]?.initialValues).toEqual(["codex", "claude"]);
+    expect(prompts.of("select")[0]?.initialValue).toBe("codex");
+  });
+
+  test("a harness that is configured but no longer on PATH is still listed, so it can be kept or dropped", async () => {
+    prompts.answers.multiselect.push([]);
+    const current = cfg({ harnesses: { aider: {} } });
+
+    const result = await stepHarnesses(input({ current, installed: [] }));
+
+    const [asked] = prompts.of("multiselect");
+    expect(asked?.options.map((o) => [o.value, o.hint?.startsWith("not found on PATH")])).toEqual([["aider", true]]);
+    expect(result.answer).toEqual({ platforms: [] });
+    expect(prompts.of("confirm")).toHaveLength(0);
+  });
+
+  test("model calls are not asked about when a connection exists or is being added", async () => {
+    prompts.answers.multiselect.push(["claude"], ["claude"]);
+    const withConnection = cfg({ connections: { default: { endpoint: "http://localhost:11434/v1" } } });
+
+    expect((await stepHarnesses(input({ current: withConnection }))).modelCallsOnHarness).toBe(false);
+    expect((await stepHarnesses(input({ flags: { endpoint: "http://x/v1" } }))).modelCallsOnHarness).toBe(false);
+    expect(prompts.of("confirm")).toHaveLength(0);
+  });
+
+  test("nothing installed and nothing configured: says so and asks nothing", async () => {
+    const result = await stepHarnesses(input({ installed: [] }));
+    expect(result).toEqual({ modelCallsOnHarness: false });
+    expect(prompts.asked).toHaveLength(0);
+    expect(prompts.output.join("\n")).toContain("No agent programs found on PATH");
+  });
+
+  test("--yes: every detected harness, the first the default, used for model calls only when it can run read-only", async () => {
+    const readOnly = await stepHarnesses(input({ interactive: false }));
+    expect(readOnly).toEqual({
+      answer: { platforms: ["claude", "codex"], default: "claude" },
+      modelCallsOnHarness: true,
+    });
+
+    const notReadOnly = await stepHarnesses(input({ interactive: false, installed: installed("codex", "claude") }));
+    expect(notReadOnly.answer?.default).toBe("codex");
+    expect(notReadOnly.modelCallsOnHarness).toBe(false);
+    expect(prompts.asked).toHaveLength(0);
+  });
+
+  test("--yes leaves harnesses the config already has alone", async () => {
+    const current = cfg({ harnesses: { aider: {} } });
+    const result = await stepHarnesses(input({ interactive: false, current }));
+    expect(result.answer).toBeUndefined();
+  });
+
+  test("--harness enables the named platforms in addition to the configured ones, the first being the default", async () => {
+    const current = cfg({ harnesses: { aider: {} } });
+    const result = await stepHarnesses(
+      input({ interactive: false, current, flags: parseEngineFlags({ harness: "opencode,claude" }) }),
+    );
+    expect(result.answer).toEqual({ platforms: ["aider", "opencode", "claude"], default: "opencode" });
+  });
+});
+
+describe("stepConnection", () => {
+  const input = (over: Partial<Parameters<typeof stepConnection>[0]> = {}) => ({
+    current: cfg(),
+    flags: {},
+    interactive: true,
+    probe: true,
+    modelCallsOnHarness: false,
+    localServers: [],
+    ...over,
+  });
+  const MODELS = ["qwen3-8b", "nomic-embed-text", "qwen3-32b"];
+
+  test("interactive: URL, masked key, then the endpoint's own models, one pick per alias", async () => {
+    const server = endpoint(MODELS);
+    prompts.answers.text.push("http://localhost:11434");
+    prompts.answers.password.push("sk-typed-secret");
+    prompts.answers.select.push("qwen3-8b", "qwen3-32b", "qwen3-32b");
+
+    const result = await server.serve(() => stepConnection(input()));
+
+    expect(result.answer).toEqual({
+      name: "default",
+      endpoint: "http://localhost:11434/v1",
+      key: { pasted: "sk-typed-secret" },
+      picks: { fast: "qwen3-8b", balanced: "qwen3-32b", reasoning: "qwen3-32b" },
+    });
+    expect(result.listed).toEqual(MODELS);
+    expect(server.requests).toEqual([
+      { url: "http://localhost:11434/v1/models", authorization: "Bearer sk-typed-secret" },
+    ]);
+    // The embedding model is not offered as a chat model.
+    expect(prompts.of("select")[0]?.options.map((o) => o.value)).toEqual(["qwen3-8b", "qwen3-32b"]);
+    expect(prompts.of("password")[0]?.message).toBe("API key (blank for none)");
+    // The key appears in the answer and the request, never in anything shown.
+    expect(prompts.transcript()).not.toContain("sk-typed-secret");
+  });
+
+  test("interactive: a rerun is prefilled; a blank key keeps the current one; picks are preselected", async () => {
+    const server = endpoint(MODELS);
+    const current = cfg({
+      connections: {
+        default: {
+          endpoint: "http://localhost:11434/v1",
+          apiKey: "$LAB_KEY",
+          models: { fast: "qwen3-8b", balanced: "qwen3-32b", reasoning: { model: "qwen3-32b", top_p: 0.9 } },
+        },
+      },
+    });
+    prompts.answers.text.push("http://localhost:11434/v1");
+    prompts.answers.password.push("");
+    prompts.answers.select.push("qwen3-8b", "qwen3-32b", "qwen3-8b");
+
+    const result = await withEnv({ LAB_KEY: "env-key" }, () => server.serve(() => stepConnection(input({ current }))));
+
+    expect(prompts.of("text")[0]?.initialValue).toBe("http://localhost:11434/v1");
+    expect(prompts.of("password")[0]?.message).toBe("API key (blank keeps the current one)");
+    expect(prompts.of("select").map((r) => r.initialValue)).toEqual(["qwen3-8b", "qwen3-32b", "qwen3-32b"]);
+    expect(result.answer?.key).toBeUndefined();
+    expect(result.answer?.picks.reasoning).toBe("qwen3-8b");
+    // The connection's own key is what lists its models.
+    expect(server.requests[0]?.authorization).toBe("Bearer env-key");
+  });
+
+  test("the key of a connection is not sent to a different endpoint", async () => {
+    const server = endpoint(MODELS);
+    const current = cfg({ connections: { default: { endpoint: "https://old.example.test/v1", apiKey: "$LAB_KEY" } } });
+    prompts.answers.text.push("http://other.example.test/v1");
+    prompts.answers.password.push("");
+    prompts.answers.select.push("qwen3-8b", "qwen3-8b", "qwen3-8b");
+
+    await withEnv({ LAB_KEY: "env-key" }, () => server.serve(() => stepConnection(input({ current }))));
+
+    expect(server.requests[0]?.authorization).toBeNull();
+  });
+
+  test("interactive: when the endpoint cannot list its models, say so and take one name for every alias", async () => {
+    const server = endpoint([], { status: 401 });
+    prompts.answers.text.push("https://api.example.test/v1", "my-model");
+    prompts.answers.password.push("");
+
+    const result = await server.serve(() => stepConnection(input()));
+
+    expect(prompts.output.join("\n")).toContain("Could not list models from https://api.example.test/v1 (HTTP 401)");
+    expect(result.answer?.picks).toEqual({ fast: "my-model", balanced: "my-model", reasoning: "my-model" });
+    expect(result.listed).toEqual([]);
+  });
+
+  test("--no-probe: the endpoint is not contacted, and a name is typed instead", async () => {
+    const server = endpoint(MODELS);
+    prompts.answers.text.push("http://localhost:11434", "typed-model");
+    prompts.answers.password.push("");
+
+    const result = await server.serve(() => stepConnection(input({ probe: false })));
+
+    expect(server.requests).toEqual([]);
+    expect(result.answer?.picks.fast).toBe("typed-model");
+  });
+
+  test("a blank URL means no connection", async () => {
+    prompts.answers.text.push("");
+    expect(await stepConnection(input())).toEqual({ listed: [] });
+    expect(prompts.of("password")).toHaveLength(0);
+  });
+
+  test("interactive: not asked at all when a harness takes the model calls", async () => {
+    expect(await stepConnection(input({ modelCallsOnHarness: true }))).toEqual({ listed: [] });
+    expect(prompts.asked).toHaveLength(0);
+  });
+
+  test("the URL is prefilled with a local server that answered", async () => {
+    const server = endpoint(MODELS);
+    prompts.answers.text.push("http://localhost:1234/v1");
+    prompts.answers.password.push("");
+    prompts.answers.select.push("qwen3-8b", "qwen3-8b", "qwen3-8b");
+    const localServers = [{ baseUrl: "http://localhost:1234", label: "LM Studio", available: true, models: MODELS }];
+
+    await server.serve(() => stepConnection(input({ localServers })));
+
+    expect(prompts.of("text")[0]?.initialValue).toBe("http://localhost:1234/v1");
+  });
+
+  test("--endpoint with --api-key-env: asks nothing but the picks (none under --yes), the key stays a $VAR", async () => {
+    const server = endpoint(MODELS);
+    const flags = parseEngineFlags({ endpoint: "https://api.example.test", apiKeyEnv: "EXAMPLE_KEY" });
+
+    const result = await withEnv({ EXAMPLE_KEY: "from-env" }, () =>
+      server.serve(() => stepConnection(input({ flags, interactive: false }))),
+    );
+
+    expect(result.answer).toEqual({
+      name: "default",
+      endpoint: "https://api.example.test/v1",
+      key: { env: "EXAMPLE_KEY" },
+      picks: { fast: "qwen3-8b", balanced: "qwen3-8b", reasoning: "qwen3-8b" },
+    });
+    expect(server.requests[0]?.authorization).toBe("Bearer from-env");
+    expect(prompts.asked).toHaveLength(0);
+  });
+
+  test("--yes keeps the connection's current picks and picks the first model for the rest", async () => {
+    const server = endpoint(MODELS);
+    const current = cfg({
+      connections: {
+        default: { endpoint: "http://localhost:11434/v1", models: { balanced: { model: "qwen3-32b", top_p: 1 } } },
+      },
+    });
+    const flags = parseEngineFlags({ endpoint: "http://localhost:11434/v1" });
+
+    const result = await server.serve(() => stepConnection(input({ current, flags, interactive: false })));
+
+    expect(result.answer?.picks).toEqual({ fast: "qwen3-8b", balanced: "qwen3-32b", reasoning: "qwen3-8b" });
+  });
+
+  test("--name adds a further connection and leaves the default alone", async () => {
+    const server = endpoint(MODELS);
+    const current = cfg({ connections: { default: { endpoint: "http://localhost:11434/v1" } } });
+    const flags = parseEngineFlags({ endpoint: "https://cloud.example.test/v1", name: "cloud" });
+
+    const result = await server.serve(() => stepConnection(input({ current, flags, interactive: false })));
+
+    expect(result.answer?.name).toBe("cloud");
+  });
+
+  test("--yes takes a detected local server when there is no connection and no harness for model calls", async () => {
+    const server = endpoint(MODELS);
+    const localServers = [
+      { baseUrl: "http://localhost:11434", label: "Ollama", available: false, models: [] },
+      { baseUrl: "http://localhost:1234", label: "LM Studio", available: true, models: MODELS },
+    ];
+
+    const result = await server.serve(() => stepConnection(input({ interactive: false, localServers })));
+
+    expect(result.answer?.endpoint).toBe("http://localhost:1234/v1");
+    expect(result.answer?.name).toBe("default");
+  });
+
+  test("--yes leaves a configured connection alone, and does nothing when a harness takes model calls", async () => {
+    const server = endpoint(MODELS);
+    const localServers = [{ baseUrl: "http://localhost:1234", label: "LM Studio", available: true, models: MODELS }];
+    const configured = cfg({ connections: { default: { endpoint: "http://elsewhere/v1" } } });
+
+    await server.serve(async () => {
+      expect(await stepConnection(input({ interactive: false, localServers, current: configured }))).toEqual({
+        listed: [],
+      });
+      expect(await stepConnection(input({ interactive: false, localServers, modelCallsOnHarness: true }))).toEqual({
+        listed: [],
+      });
+    });
+    expect(server.requests).toEqual([]);
+  });
+
+  test("--yes with no flag and nothing detected configures no connection", async () => {
+    expect(await stepConnection(input({ interactive: false }))).toEqual({ listed: [] });
+  });
+
+  test("--api-key-env with no connection to update is a usage error", async () => {
+    const flags = parseEngineFlags({ apiKeyEnv: "EXAMPLE_KEY" });
+    await expect(stepConnection(input({ flags, interactive: false }))).rejects.toBeInstanceOf(UsageError);
+  });
+
+  test("--yes with --no-probe writes the endpoint and keeps whatever picks the connection had", async () => {
+    const flags = parseEngineFlags({ endpoint: "http://localhost:11434" });
+    const result = await stepConnection(input({ flags, interactive: false, probe: false }));
+    expect(result.answer).toEqual({ name: "default", endpoint: "http://localhost:11434/v1", picks: {} });
+  });
+});
+
+describe("stepEmbeddings", () => {
+  const input = (over: Partial<Parameters<typeof stepEmbeddings>[0]> = {}) => ({
+    current: cfg(),
+    flags: {},
+    interactive: true,
+    probe: true,
+    listed: [] as string[],
+    ...over,
+  });
+  const connection = { name: "default", endpoint: "http://localhost:11434/v1", picks: {} };
+  const withConnection = (over: Partial<Parameters<typeof stepEmbeddings>[0]> = {}) =>
+    input({ connection, listed: ["qwen3-8b", "nomic-embed-text"], ...over });
+
+  test("interactive: offers the connection's embedding models, the built-in embedder, another endpoint and off; ON is preselected", async () => {
+    prompts.answers.select.push("model:nomic-embed-text");
+    prompts.answers.confirm.push(true);
+
+    const result = await stepEmbeddings(withConnection());
+
+    const [asked] = prompts.of("select");
+    expect(asked?.options.map((o) => o.value)).toEqual(["model:nomic-embed-text", "local", "endpoint", "off"]);
+    expect(asked?.initialValue).toBe("model:nomic-embed-text");
+    expect(result).toEqual({
+      answer: { kind: "connection", model: "nomic-embed-text" },
+      semantic: { mode: "auto", prepareAssets: true },
+    });
+  });
+
+  test("interactive: with no embedding model listed the preselected source is the built-in embedder, and the note warns of the download", async () => {
+    prompts.answers.select.push("local");
+    prompts.answers.confirm.push(false);
+
+    const result = await stepEmbeddings(input());
+
+    expect(prompts.of("select")[0]?.initialValue).toBe("local");
+    expect(prompts.output.join("\n")).toContain("download");
+    expect(prompts.of("confirm")[0]?.message).toContain("Download and verify semantic-search assets now?");
+    expect(result).toEqual({ answer: { kind: "local" }, semantic: { mode: "auto", prepareAssets: false } });
+  });
+
+  test("interactive: off turns semantic search off and asks nothing more", async () => {
+    prompts.answers.select.push("off");
+    const result = await stepEmbeddings(withConnection());
+    expect(result).toEqual({ answer: { kind: "off" }, semantic: { mode: "off", prepareAssets: false } });
+    expect(prompts.of("confirm")).toHaveLength(0);
+  });
+
+  test("interactive: a model served by the connection says no local download, and asks to check the endpoint", async () => {
+    prompts.answers.select.push("model:nomic-embed-text");
+    prompts.answers.confirm.push(true);
+    await stepEmbeddings(withConnection());
+    expect(prompts.output.join("\n")).toContain("no local model download");
+    expect(prompts.of("confirm")[0]?.message).toContain("Check the embedding endpoint");
+  });
+
+  test("interactive: another endpoint takes a URL, a masked key, and a model from its own list", async () => {
+    const server = endpoint(["chat-model", "e5-embed"]);
+    prompts.answers.select.push("endpoint", "e5-embed");
+    prompts.answers.text.push("https://emb.example.test");
+    prompts.answers.password.push("sk-embedding-secret");
+    prompts.answers.confirm.push(false);
+
+    const result = await server.serve(() => stepEmbeddings(withConnection()));
+
+    expect(result.answer).toEqual({
+      kind: "endpoint",
+      endpoint: "https://emb.example.test/v1",
+      model: "e5-embed",
+      key: { pasted: "sk-embedding-secret" },
+    });
+    expect(server.requests[0]).toEqual({
+      url: "https://emb.example.test/v1/models",
+      authorization: "Bearer sk-embedding-secret",
+    });
+    expect(prompts.of("select")[1]?.options.map((o) => o.value)).toEqual(["e5-embed"]);
+    expect(prompts.transcript()).not.toContain("sk-embedding-secret");
+  });
+
+  test("a rerun preselects what the config has", async () => {
+    prompts.answers.select.push("endpoint");
+    prompts.answers.text.push("https://emb.example.test/v1");
+    prompts.answers.password.push("");
+    prompts.answers.text.push("e5");
+    prompts.answers.confirm.push(false);
+    const current = cfg({ embedding: { endpoint: "https://emb.example.test/v1", model: "e5" } });
+
+    await endpoint([]).serve(() => stepEmbeddings(input({ current })));
+
+    expect(prompts.of("select")[0]?.initialValue).toBe("endpoint");
+    expect(prompts.of("text")[0]?.initialValue).toBe("https://emb.example.test/v1");
+    expect(prompts.of("password")[0]?.message).toContain("Embedding API key");
+  });
+
+  test("a held embedding key is sent only to the endpoint it belongs to", async () => {
+    const current = cfg({
+      embedding: { endpoint: "https://emb.example.test/v1", model: "e5-embed", apiKey: "$EMB_KEY" },
+    });
+    const same = endpoint(["e5-embed"]);
+    prompts.answers.select.push("endpoint", "e5-embed");
+    prompts.answers.text.push("https://emb.example.test/v1");
+    prompts.answers.password.push("");
+    prompts.answers.confirm.push(false);
+    await withEnv({ EMB_KEY: "held-key" }, () => same.serve(() => stepEmbeddings(input({ current }))));
+    expect(same.requests[0]?.authorization).toBe("Bearer held-key");
+
+    const other = endpoint(["e5-embed"]);
+    prompts.answers.select.push("endpoint", "e5-embed");
+    prompts.answers.text.push("https://other.example.test/v1");
+    prompts.answers.password.push("");
+    prompts.answers.confirm.push(false);
+    await withEnv({ EMB_KEY: "held-key" }, () => other.serve(() => stepEmbeddings(input({ current }))));
+    expect(other.requests[0]?.authorization).toBeNull();
+  });
+
+  test("--embedding off, local, or a model on the connection, with no question asked", async () => {
+    expect(await stepEmbeddings(withConnection({ flags: parseEngineFlags({ embedding: "off" }) }))).toEqual({
+      answer: { kind: "off" },
+      semantic: { mode: "off", prepareAssets: false },
+    });
+    expect(await stepEmbeddings(withConnection({ flags: parseEngineFlags({ embedding: "local" }) }))).toEqual({
+      answer: { kind: "local" },
+      semantic: { mode: "auto", prepareAssets: false },
+    });
+    const model = await stepEmbeddings(
+      withConnection({ flags: parseEngineFlags({ embedding: "text-embedding-3-small" }) }),
+    );
+    expect(model.answer).toEqual({ kind: "connection", model: "text-embedding-3-small" });
+    expect(prompts.asked).toHaveLength(0);
+  });
+
+  test("--embedding with --embedding-endpoint and --embedding-api-key-env names another endpoint and its key variable", async () => {
+    const flags = parseEngineFlags({
+      embedding: "e5",
+      embeddingEndpoint: "https://emb.example.test",
+      embeddingApiKeyEnv: "EMB_KEY",
+    });
+    const result = await stepEmbeddings(input({ flags, interactive: false }));
+    expect(result.answer).toEqual({
+      kind: "endpoint",
+      endpoint: "https://emb.example.test/v1",
+      model: "e5",
+      key: { env: "EMB_KEY" },
+    });
+  });
+
+  test("--embedding <model> with no connection to serve it is a usage error", async () => {
+    const flags = parseEngineFlags({ embedding: "nomic-embed-text" });
+    await expect(stepEmbeddings(input({ flags, interactive: false }))).rejects.toBeInstanceOf(UsageError);
+  });
+
+  test("--yes turns embeddings on only when the connection lists an embedding model", async () => {
+    const listed = await stepEmbeddings(withConnection({ interactive: false }));
+    expect(listed).toEqual({
+      answer: { kind: "connection", model: "nomic-embed-text" },
+      semantic: { mode: "auto", prepareAssets: false },
+    });
+
+    const none = await stepEmbeddings(
+      input({ interactive: false, connection, listed: ["qwen3-8b"], current: cfg({ semanticSearchMode: "auto" }) }),
+    );
+    expect(none).toEqual({ semantic: { mode: "auto", prepareAssets: false } });
+    expect((await stepEmbeddings(input({ interactive: false }))).semantic.mode).toBe("off");
+    expect(prompts.asked).toHaveLength(0);
+  });
+});

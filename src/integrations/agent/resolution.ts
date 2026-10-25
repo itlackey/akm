@@ -227,7 +227,7 @@ function connectionRunner(
   const entry = modelEntry(connection.models ?? {}, requested, aliases);
   if (entry === undefined) {
     throw new ConfigError(
-      `Connection "${name}" lists no models, so no model can be chosen. Add some under connections.${name}.models, or run \`akm setup\`.`,
+      `Connection "${name}" lists no models, so no model can be chosen. Name one with \`akm models set fast <model> --connection ${name}\`, or run \`akm setup\`.`,
       "INVALID_CONFIG_FILE",
     );
   }

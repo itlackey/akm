@@ -179,32 +179,47 @@ hijacking your real default bundle.
 
 ### setup
 
-Run the interactive first-run wizard.
+Run the first-run wizard.
 
 ```sh
 akm setup
+akm setup --endpoint http://localhost:11434/v1 --yes   # no prompts
 ```
 
-The setup wizard configures AKM in two steps:
+The wizard asks, in order:
 
-**Step 1 — Small model connection** (for background processing)
-Configures the OpenAI-compatible endpoint and model used for `akm improve`
-and `akm remember --enrich`. Supports Ollama,
-OpenAI, LM Studio, or any custom endpoint. Skipping disables enrichment features.
+1. **Agent programs.** Which installed agent programs (Claude Code, Codex,
+   OpenCode, ...) akm may use; each is shown with whether akm can run it
+   read-only for its own model calls. With several, you pick the default.
+2. **Model calls.** Whether the default agent program also takes akm's own
+   model calls (improve, judging, extraction). Answering no leads to a connection.
+3. **Connection.** An OpenAI-compatible endpoint, its API key (typed at a masked
+   prompt and stored in `credentials.json`, never in `config.json`), and one model
+   per alias (`fast`, `balanced`, `reasoning`) picked from the models the
+   endpoint lists. Change a pick later with `akm models set`.
+4. **Embeddings.** A model the connection serves, akm's built-in local embedder,
+   another endpoint, or off.
+5. **Save.** The config is written, the bundle directory initialized, and a
+   summary says what runs where.
 
-**Step 2 — Agent connection** (for agentic commands)
-Configures how `akm improve`, `akm proposal new`, and `akm task run` dispatch AI sessions.
-Options:
-- **Same connection** — reuse the Step 1 endpoint with a (optionally different) model
-- **New connection** — separate endpoint, model, and API key
-- **Installed CLI agent** — use an installed agent binary (opencode, claude, codex, etc.)
-- **None** — agentic commands disabled with a clear warning
+Flags answer one question each; `--yes` takes the detected default for every
+question left, so nothing is prompted.
 
-A feature capability summary is shown at the end of setup.
+| Flag | Answers |
+|---|---|
+| `--endpoint <url>` | The connection to add or update (the first is named `default`) |
+| `--api-key-env <NAME>` | The environment variable holding its key (`apiKey: "$NAME"`) |
+| `--name <name>` | A further connection, with `--endpoint` |
+| `--harness <a,b>` | Agent programs to enable; the first is the default |
+| `--embedding <model\|local\|off>` | Embeddings |
+| `--embedding-endpoint <url>`, `--embedding-api-key-env <NAME>` | Another endpoint serving the embedding model |
+| `--from <file>` | A config file (JSON or YAML) to merge |
+| `--dir <path>`, `--no-init` | The bundle directory; skip scaffolding it |
+| `--no-probe` | Offline: the endpoint is not contacted and its models are not listed |
 
-The wizard also lets you choose a bundle directory, review registries, and add bundle
-sources. When you save, akm writes the config file, initializes the bundle directory,
-and builds the search index.
+The wizard also lets you review registries and add bundle sources. A scripted run
+prints its result with a `runs` object saying what runs where: `modelCalls`,
+`agentWork` and `embeddings`.
 
 ### index
 
@@ -323,6 +338,7 @@ Returns a JSON object with:
 | `searchModes` | Active search modes (`fts`, optionally `semantic` and `hybrid`) |
 | `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
 | `registries` | Configured registries |
+| `targets` | The connections, harnesses and work that runs on them, as the rows `akm health` reports under its `targets` check, without contacting anything: each connection's endpoint and whether its key is held, each harness's platform and whether its binary is on `PATH`, and for each kind of work the connection or harness and model it resolves to |
 | `sourceProviders` | Configured sources (filesystem, git, website, npm) |
 | `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `links` (declared links per kind with `total` and `unresolved`; absent when the index holds none), `lastBuiltAt`, `hasEmbeddings`, `unreadable` (index.db exists but the filesystem refuses to read it — a permissions problem), `unavailable` (index.db is readable but the SQLite-level read didn't complete: locked by another akm process, a newer layout this akm can't understand, or a corrupt file) |
 
@@ -366,14 +382,13 @@ akm health --report --window-compare 7d --format html
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
+| `--no-probe` | Skip the `targets` reachability probes, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
-default agent engine, and summarizes recent `improve_*` events. Unless
+configured connections and harnesses (the `targets` table), and summarizes recent `improve_*` events. Unless
 `--no-probe` is given, it also sends a bounded (3s timeout) reachability probe
-to the `default-llm-engine` and every `configured-engines` LLM connection (and
-an SDK engine's LLM fallback), one probe per distinct endpoint, checks the
+to each connection's endpoint, one probe per distinct endpoint, checks the
 installed akm-cli version against the latest GitHub release (`cli-version`),
 runs the scheduler's recorded akm binary with `--version` to check it
 against the running CLI (`scheduler-binary`).
@@ -383,8 +398,8 @@ Primary result fields:
 | Field | Description |
 | --- | --- |
 | `status` | Overall health verdict: `pass`, `warn`, or `fail` |
-| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `active-runs`, `default-engine`, `model-map-files`, `default-llm-engine`, `configured-engines`, and `active-improve-strategy` |
-| `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), `thinking-control` (an `enableThinking: false` engine whose recorded usage still shows reasoning tokens), and `engine-last-used` (an engine bound to an enabled improve process with no recorded use in 30 days) |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `active-runs`, and `targets` |
+| `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), and `scheduler-binary` |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
 
@@ -401,27 +416,21 @@ It `fail`s only when a pending migration could not be applied — naming it and
 pointing at `akm migrate apply` — rather than the command crashing. Read this
 check's `status` instead of grepping akm's error text.
 
-`default-llm-engine` and `configured-engines` probe reachability (not just
-configuration) for a `kind: "llm"` engine — an unreachable endpoint is a hard
-`fail` for `default-llm-engine` and a `warn` for any other engine. `--no-probe`
-skips this. When a required credential is missing from the shell but an
-`env/` asset defines the same variable name, the warn names that asset's ref
-(never the variable name) and points at `akm env run <ref> -- ...`.
-`active-improve-strategy` names the resolved engine per process
-in its evidence and message, so a strategy-level `engine` pin that shadows
-`defaults.llmEngine` is visible without config archaeology.
+`targets` is one table: a row for each configured connection (endpoint, whether
+its key is held, whether the endpoint answers) and harness (platform, whether
+its binary is found, its `--version`), then a row for each kind of work
+(`improve`, `judges`, `agents`, `extract`, `enrich`, `index`, `embedding`,
+`curate-rerank`) naming the connection or harness and the model it resolves to.
+The rows are in `evidence.rows`, each typed `connection`, `harness` or `process`;
+the text format always prints them. It is a `warn` when a key variable is unset,
+an endpoint does not answer (skipped by `--no-probe`), a harness is not
+installed, or the config leaves a kind of work unresolvable, and `unknown` when
+nothing is configured.
 
 `cli-version` compares the installed akm-cli version against the latest
 GitHub release — the same source `akm upgrade` trusts — and `warn`s with the
 upgrade command when a newer release exists. `--no-probe`, offline, or a
 rate-limited request all degrade it to `unknown`, never a false `warn`.
-
-`engine-last-used` checks, for every engine bound to an enabled process in
-the active improve strategy, whether it has a recorded `llm_usage` call in
-the last 30 days (independent of `--since`). It `warn`s naming the idle
-engine and its bound process, and stays `unknown` — not a noisy `warn` —
-until at least one improve run has been recorded (started) in that window,
-so a fresh install is quiet.
 
 The `session-extraction` advisory is derived from the `extract_sessions_seen`
 ledger for the last 7 days — not `improve_runs`, which the hook-driven `akm
@@ -504,7 +513,7 @@ the matching CLI commands use, so the UI and the CLI report the same numbers.
 | --- | --- |
 | Overview | Overall health, failing and warning check counts and the akm version; the health checks grouped by status with expandable evidence; metrics tiles; the last 10 improve runs (result, duration, model calls and failures, sync, triage) with bars; and a 14-day stacked usage chart (search, curate, show, feedback). |
 | Bundles | Cards including disabled bundles, source, component writability, settings origin, Git and index state. Explicit add, update, confirmed removal, enabled/writable settings and default-bundle/write-target controls use existing AKM operations. |
-| Config | The effective config as a collapsible tree with a `default` / `file` / `extends:<ref>` source badge on every key, the engines table and the `AKM_*` environment. |
+| Config | The effective config as a collapsible tree with a `default` / `file` / `extends:<ref>` source badge on every key, the connections and harnesses tables and the `AKM_*` environment. |
 | Proposals | The pending queue grouped by source (filter by source) with age and gate decision, a Recent tab of accepted, rejected and reverted proposals with reasons, and a detail page with the unified diff and, for retirements, the pair judgment. The detail page has Accept (after an inline confirmation) and Reject (with a required reason); the pending list has checkboxes and an Accept selected bar that accepts several in one commit. |
 | Changes | Recent stash commits as a timeline by day, each tagged by origin (`improve-sync`, `accept`, `remember`, `sync`, `other`) with its changed paths. |
 | Search | Search or browse the existing index grouped by path, with type/bundle, current/all/historical and user/agent/run/channel scope controls. Asset detail includes safe Markdown tables/tasks, indexed relative links, heading navigation, source, per-file Git history/diffs and explicit feedback with reasons/tags. New knowledge supports Markdown source and preview through `akm import`, without overwriting existing files. |
@@ -2169,6 +2178,26 @@ work with.
 > schema checks already reject an invalid config) were also removed.
 
 See [configuration.md](configuration.md) for details.
+
+### models
+
+Show which model answers each alias (`fast`, `balanced`, `reasoning`, and any
+you add) on a connection, beside the models its endpoint lists, and change one.
+Connections only: a harness's alias map is `harnesses.<name>.models`, edited
+with `akm config set`. Run `akm models --help` for the options.
+
+```sh
+akm models                            # The default connection's picks and the endpoint's models
+akm models --connection cloud         # Another connection
+akm models --no-probe                 # The picks only; the endpoint is not contacted
+akm models set reasoning glm-5        # Make glm-5 answer "reasoning"
+```
+
+`akm models` prints `{ connection, aliases, available }`. `set` writes
+`connections.<name>.models.<alias>`; an alias whose entry carries request fields
+keeps them and changes the model. A model the endpoint does not list is written
+with a warning. With no connection configured both commands say so and point at
+`akm setup`.
 
 ### help
 

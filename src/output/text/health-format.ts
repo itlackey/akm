@@ -38,6 +38,7 @@
 import type { DetailLevel } from "../context";
 import { flattenForText } from "../generic-render";
 import { renderStatusEntries, type StatusEntry, summarizeCounts } from "./status-list";
+import { renderTargetsTable } from "./targets-table";
 
 /** The subset of `HealthCheckResult` (`src/commands/health/types-checks.ts`) this formatter reads. */
 interface HealthCheckLike {
@@ -72,7 +73,13 @@ function checkStatusEntry(check: HealthCheckLike, detail: DetailLevel): StatusEn
     // Evidence is diagnostic detail, not the headline signal — gated behind
     // --detail the same way `formatSearchPlain`/`formatCuratePlain` gate
     // their own verbose fields (full path/editHint/whyMatched, "why" reasoning).
-    detailLines: detail === "brief" ? [] : evidenceLines(check.evidence),
+    // The `targets` table is the exception: it is the check's answer, so it always shows.
+    detailLines:
+      check.name === "targets" && Array.isArray(check.evidence?.rows)
+        ? renderTargetsTable(check.evidence.rows)
+        : detail === "brief"
+          ? []
+          : evidenceLines(check.evidence),
   };
 }
 
@@ -108,7 +115,7 @@ export function formatHealthPlain(r: Record<string, unknown>, detail: DetailLeve
 
   if (
     detail === "brief" &&
-    [...hardChecks, ...advisories].some((c) => c.evidence && Object.keys(c.evidence).length > 0)
+    [...hardChecks, ...advisories].some((c) => c.name !== "targets" && c.evidence && Object.keys(c.evidence).length > 0)
   ) {
     lines.push("", "(evidence omitted at --detail brief; re-run with --detail normal or --detail full to see it)");
   }
