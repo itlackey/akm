@@ -65,7 +65,6 @@ import { beginWriteProvenance, recordWrittenPath, type WriteProvenanceJournal } 
 import { type WriteTargetSource, writeAssetToSource } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { isProcessEnabled } from "../../llm/feature-gate";
 import { type ResolvedIndexPassExecution, resolveIndexPassExecution } from "../../llm/index-passes";
 import type { DerivedMemoryDraft, MemoryInferNoChange, MemoryInferTelemetry } from "../../llm/memory-infer";
 import * as memoryInfer from "../../llm/memory-infer";
@@ -294,8 +293,6 @@ function memoryExecutionForContext(
 async function inferPendingMemoryRecord(
   plan: MemoryInferencePlan,
   ctx: {
-    config: MemoryInferencePassContext["config"];
-    featureConfig: MemoryInferencePassContext["config"];
     signal?: AbortSignal;
     db?: MemoryInferencePassContext["db"];
     reEnrich?: boolean;
@@ -307,18 +304,8 @@ async function inferPendingMemoryRecord(
   },
 ) {
   const { record } = plan;
-  const {
-    config,
-    featureConfig,
-    signal,
-    db,
-    reEnrich,
-    llmRunner,
-    inferTelemetry,
-    compressMemoryToDerivedMemory,
-    onNotices,
-    onConfigFailure,
-  } = ctx;
+  const { signal, db, reEnrich, llmRunner, inferTelemetry, compressMemoryToDerivedMemory, onNotices, onConfigFailure } =
+    ctx;
   if (signal?.aborted || plan.kind === "aborted") return { aborted: true } as const;
 
   // Existing children are complete, but the parent may be unmarked after a
@@ -349,16 +336,7 @@ async function inferPendingMemoryRecord(
     retryAttempts += 1;
   };
   const infer = () =>
-    compressMemoryToDerivedMemory(
-      llmRunner,
-      record.effectiveInput,
-      signal,
-      featureConfig,
-      (event) => warn(`[akm] LLM fallback for ${event.feature}: ${event.reason}`),
-      inferTelemetry,
-      onRetryAttempt,
-      onNotices,
-    );
+    compressMemoryToDerivedMemory(llmRunner, record.effectiveInput, signal, inferTelemetry, onRetryAttempt, onNotices);
   let derived: MemoryInferDecision | undefined = plan.kind === "cache-hit" ? plan.decision : undefined;
   try {
     if (plan.kind === "model") {
@@ -382,8 +360,6 @@ async function inferPendingMemoryRecord(
             llmRunner,
             record.effectiveInput,
             signal,
-            config,
-            (event) => warn(`[akm] LLM fallback for ${event.feature}: ${event.reason}`),
             inferTelemetry,
             onRetryAttempt,
             onNotices,
@@ -475,8 +451,8 @@ async function runMemoryInferencePassBody(
   };
 
   // Mutable sink threaded into compressMemoryToDerivedMemory so the per-call
-  // HTML-error categorization (which is otherwise swallowed inside the feature
-  // gate) bubbles up into the pass result.
+  // HTML-error categorization (which is otherwise logged and dropped as a
+  // skipped memory) bubbles up into the pass result.
   const inferTelemetry: MemoryInferTelemetry = {};
   const noticesByKey = new Map<string, Readonly<LoweringNotice>>();
   const onNotices = (notices: readonly Readonly<LoweringNotice>[]): void => {
@@ -489,10 +465,8 @@ async function runMemoryInferencePassBody(
     return result;
   };
 
-  // Gate 1 — feature gate via isProcessEnabled, which reads the 0.8.0 path
-  // (selected strategy's processes.memoryInference.enabled). Defaults to
-  // enabled when the key is absent.
-  if (!invocationOwnsRunner && !isProcessEnabled("index", "memory_inference", config)) return completeResult();
+  // Gate 1 — `index.memory.enabled`, on unless set to false. A caller that owns the runner has decided.
+  if (!invocationOwnsRunner && config.index?.memory?.enabled === false) return completeResult();
 
   // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or
   // `undefined` when the pass should not run.
@@ -500,9 +474,6 @@ async function runMemoryInferencePassBody(
   onNotices(execution.notices);
   const llmRunner = execution.runner;
   if (!llmRunner) return completeResult();
-  const featureConfig = invocationOwnsRunner
-    ? { ...config, index: { ...config.index, memory: { ...config.index?.memory, enabled: true } } }
-    : config;
 
   // The pass only writes to the default (working) stash, found by its
   // `isDefault` flag and never by array position. Read-only caches (git, npm,
@@ -541,8 +512,6 @@ async function runMemoryInferencePassBody(
     plans,
     (plan) =>
       inferPendingMemoryRecord(plan, {
-        config,
-        featureConfig,
         signal,
         db,
         reEnrich,

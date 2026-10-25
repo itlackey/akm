@@ -8,7 +8,7 @@
  *
  * Locks:
  *   - disabled by default: the search order is untouched with no
- *     `search.curateRerank` config at all
+ *     `search.curateRerank` config at all, or with an endpoint but no `enabled: true`
  *   - enabled + a working endpoint: candidates come back reordered by the
  *     endpoint's relevance scores
  *   - enabled: the top 30 candidates are sent, not just the final `limit`
@@ -49,6 +49,27 @@ describe("curateSearchResults — rerank wiring (#951)", () => {
   test("disabled by default: original ranking order is unchanged", async () => {
     const sb = sandboxXdgConfigHome();
     restoreConfigEnv = sb.cleanup;
+
+    let called = false;
+    globalThis.fetch = (async () => {
+      called = true;
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+
+    const result = await curateSearchResults("query", searchResponse(HITS), 3);
+
+    expect(called).toBe(false);
+    expect(result.items.map((item) => ("ref" in item ? item.ref : undefined))).toEqual([
+      "skill/alpha",
+      "skill/beta",
+      "skill/gamma",
+    ]);
+  });
+
+  test("an endpoint alone does not turn it on: only `enabled: true` does", async () => {
+    const sb = sandboxXdgConfigHome();
+    restoreConfigEnv = sb.cleanup;
+    writeSandboxConfig({ search: { curateRerank: { endpoint: "http://localhost:9/rerank" } } });
 
     let called = false;
     globalThis.fetch = (async () => {

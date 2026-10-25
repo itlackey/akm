@@ -67,7 +67,7 @@ export const extractCommand = defineJsonCommand({
     },
     "timeout-ms": {
       type: "string",
-      description: "Per-session LLM timeout in ms (default 600000).",
+      description: "Per-session LLM timeout in ms. Default: the engine's own timeout.",
     },
     engine: {
       type: "string",

@@ -28,7 +28,7 @@ import { readEvents } from "../../src/core/events";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
-import { LlmFeatureTimeoutError } from "../../src/llm/feature-gate";
+import { LlmCallError } from "../../src/llm/client";
 import { listImproveLedgerRows } from "../../src/storage/repositories/improve-ledger-repository";
 import { testLlmRunner } from "../_helpers/llm-runner";
 import {
@@ -555,9 +555,7 @@ describe("akmDistill — LLM error paths", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => {
-        // The wrapper only wraps tryLlmFeature's own timer, but the chat seam
-        // throwing a timeout-shaped error is observably the same path.
-        throw new LlmFeatureTimeoutError("distill", 30_000);
+        throw new LlmCallError("Request timed out after 30000ms", "timeout");
       },
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
@@ -573,8 +571,7 @@ describe("akmDistill — LLM error paths", () => {
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
       // 0.8.0: the distill gate defaults to true; with no llm profile wired,
-      // the inner call throws ConfigError(LLM_NOT_CONFIGURED) which the
-      // tryLlmFeature wrapper folds into llm_failed.
+      // the inner call throws ConfigError(LLM_NOT_CONFIGURED) which folds into llm_failed.
     } as unknown as AkmConfig;
     const result = await akmDistill({
       ref: "skills/deploy",
@@ -632,9 +629,8 @@ describe("akmDistill — Item 1: precise gate-off vs LLM-failed outcomes", () =>
   test("gate enabled + LLM returns null → outcome 'llm_failed', event IS emitted", async () => {
     const stash = makeStashDir();
     // configEnabled flips distill: true. The chat seam throws
-    // (simulating a transport failure); tryLlmFeature catches it with
-    // reason "error" → outcome resolves to llm_failed AND the event fires
-    // so the failure is observable on the events stream.
+    // (simulating a transport failure); the failed call resolves to llm_failed
+    // AND the event fires so the failure is observable on the events stream.
     const result = await akmDistill({
       ref: "skills/deploy",
       config: configEnabled(stash),
@@ -1461,8 +1457,7 @@ describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
     // Validation in parseLlmFeatures requires `llm`; we bypass that by
     // assembling the shape directly (this mimics a partial / racy config).
     // The gate is OPEN (distill: true) but the inner LLM call
-    // throws ConfigError("LLM_NOT_CONFIGURED") → tryLlmFeature catches it
-    // with reason "error" → outcome resolves to `llm_failed`.
+    // throws ConfigError("LLM_NOT_CONFIGURED") → outcome resolves to `llm_failed`.
     // Gate is open (distill enabled) but no llm profile is wired.
     const config: AkmConfig = {
       semanticSearchMode: "auto",

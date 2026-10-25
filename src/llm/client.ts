@@ -14,7 +14,6 @@ import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-param
 import { effectiveRequestFields, type LlmInference } from "../core/llm-inference";
 import { redactErrorBody, redactSensitiveText } from "../core/redaction";
 import { warn, warnVerbose } from "../core/warn";
-import { DEFAULT_LLM_TIMEOUT_MS } from "../integrations/agent/config";
 import {
   emitLlmUsage,
   extractUsageTokens,
@@ -312,6 +311,20 @@ export async function chatCompletion(
   return chatCompletionReal(config, messages, options);
 }
 
+/**
+ * One call's time budget: the first attempt is given all of it and a retry
+ * only what is left, so a call and its retries never outlast its timeout.
+ */
+function timeBudget(totalMs: number | null): () => number | null {
+  if (totalMs === null) return () => null;
+  let deadlineAt: number | undefined;
+  return () => {
+    const now = Date.now();
+    deadlineAt ??= now + totalMs;
+    return Math.max(0, deadlineAt - now);
+  };
+}
+
 async function chatCompletionReal(
   config: ChatCompletionConfig,
   messages: ChatMessage[],
@@ -322,22 +335,18 @@ async function chatCompletionReal(
       ? (options.timeoutMs ?? null)
       : Object.hasOwn(config, "timeoutMs")
         ? (config.timeoutMs ?? null)
-        : DEFAULT_LLM_TIMEOUT_MS;
+        : null;
 
   const started = Date.now();
+  const budget = timeBudget(effectiveTimeoutMs);
   try {
-    return await chatCompletionAttempt(config, messages, options, effectiveTimeoutMs);
+    return await chatCompletionAttempt(config, messages, options, budget);
   } catch (err) {
     if (!(err instanceof LlmCallError) || !isRetryable(err)) throw err;
 
     // Timeout-budget guard: if the first attempt already burned most of the
     // budget, a second attempt cannot complete — skip the retry.
-    const elapsed = Date.now() - started;
-    const remaining = effectiveTimeoutMs === null ? null : effectiveTimeoutMs - elapsed;
-    if (
-      effectiveTimeoutMs !== null &&
-      (elapsed >= effectiveTimeoutMs * RETRY_BUDGET_FRACTION || (remaining !== null && remaining <= 0))
-    ) {
+    if (effectiveTimeoutMs !== null && Date.now() - started >= effectiveTimeoutMs * RETRY_BUDGET_FRACTION) {
       throw err;
     }
 
@@ -350,8 +359,8 @@ async function chatCompletionReal(
     const wait = retryBackoffMs();
     await waitForRetry(wait, options?.sleep ?? sleep, options?.signal);
 
-    // The retry must not exceed the original budget.
-    return await chatCompletionAttempt(config, messages, options, remaining);
+    // The retry spends what is left of the original budget.
+    return await chatCompletionAttempt(config, messages, options, budget);
   }
 }
 
@@ -452,7 +461,7 @@ async function chatCompletionAttempt(
   config: ChatCompletionConfig,
   messages: ChatMessage[],
   options: ChatCompletionOptions | undefined,
-  timeoutMs: number | null,
+  budget: () => number | null,
   includeThinking = sendsThinkingFields(config, options) && !isThinkingControlKnownRejected(config),
 ): Promise<string> {
   const wantsSchema = Boolean(options?.responseSchema) && !isJsonSchemaKnownUnsupported(config);
@@ -464,11 +473,11 @@ async function chatCompletionAttempt(
     if (held?.record) emitLlmUsage(held.record);
   };
   try {
-    return await chatCompletionAttemptOnce(config, messages, options, timeoutMs, wantsSchema, includeThinking, held);
+    return await chatCompletionAttemptOnce(config, messages, options, budget(), wantsSchema, includeThinking, held);
   } catch (err) {
     // A 5xx that names the response format is answered like the 4xx rejection below (#1150).
     if (wantsSchema && err instanceof LlmCallError && err.namesResponseFormat) {
-      return retryWithoutSchema(config, messages, options, timeoutMs, includeThinking, err);
+      return retryWithoutSchema(config, messages, options, budget, includeThinking, err);
     }
     if (!isRejectedRequest(err)) {
       flushHeld();
@@ -479,7 +488,7 @@ async function chatCompletionAttempt(
       flushHeld();
       warnVerbose(`[akm] LLM rejected temperature (${err.statusCode}); retrying once without it: ${err.message}`);
       temperatureRejectedConnections.add(key);
-      return chatCompletionAttempt(config, messages, options, timeoutMs, includeThinking);
+      return chatCompletionAttempt(config, messages, options, budget, includeThinking);
     }
     if (MAX_TOKENS_REPLACED.test(err.message) && !maxCompletionTokensConnections.has(key)) {
       flushHeld();
@@ -487,19 +496,19 @@ async function chatCompletionAttempt(
         `[akm] LLM rejected max_tokens (${err.statusCode}); retrying once with max_completion_tokens: ${err.message}`,
       );
       maxCompletionTokensConnections.add(key);
-      return chatCompletionAttempt(config, messages, options, timeoutMs, includeThinking);
+      return chatCompletionAttempt(config, messages, options, budget, includeThinking);
     }
     if (includeThinking && THINKING_FIELD_NAMED.test(err.message)) {
       flushHeld();
       warnVerbose(
         `[akm] LLM rejected chat_template_kwargs/enable_thinking (${err.statusCode}); retrying once without them: ${err.message}`,
       );
-      const fallback = await chatCompletionAttempt(config, messages, options, timeoutMs, false);
+      const fallback = await chatCompletionAttempt(config, messages, options, budget, false);
       thinkingControlRejectedConnections.add(connectionKey(config));
       return fallback;
     }
     if (!wantsSchema) throw err;
-    return retryWithoutSchema(config, messages, options, timeoutMs, includeThinking, err);
+    return retryWithoutSchema(config, messages, options, budget, includeThinking, err);
   }
 }
 
@@ -510,14 +519,14 @@ async function retryWithoutSchema(
   config: ChatCompletionConfig,
   messages: ChatMessage[],
   options: ChatCompletionOptions | undefined,
-  timeoutMs: number | null,
+  budget: () => number | null,
   includeThinking: boolean,
   err: LlmCallError,
 ): Promise<string> {
   warnVerbose(
     `[akm] LLM rejected response_format:json_schema (${err.statusCode}); retrying once without it: ${err.message}`,
   );
-  const fallback = await chatCompletionAttemptOnce(config, messages, options, timeoutMs, false, includeThinking);
+  const fallback = await chatCompletionAttemptOnce(config, messages, options, budget(), false, includeThinking);
   jsonSchemaUnsupportedConnections.add(connectionKey(config));
   return fallback;
 }

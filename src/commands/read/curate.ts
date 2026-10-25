@@ -35,7 +35,6 @@ import {
 } from "../../indexer/search/search-attribution";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { estimateTokenCount } from "../../llm/embedders/remote";
-import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 import { rerankDocuments } from "../../llm/rerank-client";
 import { truncateDescription } from "../../output/shapes/helpers";
 import type {
@@ -506,7 +505,7 @@ function buildCurateSummary(query: string, items: CuratedItem[]): string {
 
 /** How many fused candidates curate fetches for the reranker; 0 when reranking is off. */
 function rerankTopN(config: ReturnType<typeof loadConfig>): number {
-  if (!isLlmFeatureEnabled(config, "curate_rerank")) return 0;
+  if (!config.search?.curateRerank?.enabled) return 0;
   return config.search?.curateRerank?.topN ?? DEFAULT_CURATE_RERANK_TOP_N;
 }
 
@@ -523,21 +522,18 @@ async function maybeRerankCuratedStashHits(query: string, hits: SourceSearchHit[
   if (hits.length <= 1) return hits;
   const config = loadConfig();
   const rerankConfig = config.search?.curateRerank;
-  return tryLlmFeature(
-    "curate_rerank",
-    config,
-    async () => {
-      const head = hits.slice(0, rerankTopN(config));
-      const tail = hits.slice(head.length);
-      const ranked = await rerankDocuments(rerankConfig ?? {}, query, rerankDocumentTexts(head));
-      const rerankedHead = ranked
-        .map(({ index }) => head[index])
-        .filter((hit): hit is SourceSearchHit => hit !== undefined);
-      return [...rerankedHead, ...tail];
-    },
-    hits,
-    { timeoutMs: rerankConfig?.timeoutMs ?? null },
-  );
+  if (!rerankConfig?.enabled) return hits;
+  try {
+    const head = hits.slice(0, rerankTopN(config));
+    const tail = hits.slice(head.length);
+    const ranked = await rerankDocuments(rerankConfig, query, rerankDocumentTexts(head));
+    const rerankedHead = ranked
+      .map(({ index }) => head[index])
+      .filter((hit): hit is SourceSearchHit => hit !== undefined);
+    return [...rerankedHead, ...tail];
+  } catch {
+    return hits;
+  }
 }
 
 /**

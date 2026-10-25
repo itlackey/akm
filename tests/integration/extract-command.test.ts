@@ -2114,7 +2114,8 @@ describe("akmExtract — engine + strategy config resolution", () => {
     const stash = makeStashDir();
     const config = configWithStrategy(stash, { enabled: false, maxTotalChars: 4321 });
     const plan = resolveStandaloneExtractPlan(config, { strategy: "extract" });
-    expect(plan).toMatchObject({ strategy: "extract", enabled: true, timeoutMs: 600_000 });
+    expect(plan).toMatchObject({ strategy: "extract", enabled: true });
+    expect(plan.runner?.timeoutMs).toBe(600_000);
     expect(plan.process.enabled).toBe(false);
     expect(plan.process.maxTotalChars).toBe(4321);
   });
@@ -2124,7 +2125,6 @@ describe("akmExtract — engine + strategy config resolution", () => {
     const config = configWithStrategy(stash, { timeoutMs: null });
     const plan = resolveStandaloneExtractPlan(config, { strategy: "extract" });
 
-    expect(plan.timeoutMs).toBeNull();
     expect(plan.runner?.timeoutMs).toBeNull();
   });
 
@@ -2186,7 +2186,8 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(Object.isFrozen(plan)).toBe(true);
     expect(Object.isFrozen(plan.process)).toBe(true);
     expect(Object.isFrozen(plan.process.triage)).toBe(true);
-    expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special", timeoutMs: 55_000 });
+    expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special" });
+    expect(plan.runner?.timeoutMs).toBe(55_000);
     expect(asLlmRunner(plan.runner)).toMatchObject({
       endpoint: "http://192.168.0.205:1234/v1/chat/completions",
       model: "process-model",
@@ -2199,7 +2200,6 @@ describe("akmExtract — engine + strategy config resolution", () => {
       engine: "extract-special",
       timeoutMs: 45_000,
     });
-    expect(timeoutOverridePlan.timeoutMs).toBe(45_000);
     expect(timeoutOverridePlan.runner?.timeoutMs).toBe(45_000);
     expect(asLlmRunner(timeoutOverridePlan.runner).model).toBe("process-model");
 
@@ -2329,17 +2329,18 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(receivedTimeout).toBe(45_000);
   });
 
-  test("explicit options.timeoutMs overrides the process config", async () => {
+  test("an explicit --timeout-ms overrides the process config", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_to2", Date.now() - 60_000);
+    const config = configWithStrategy(stash, { connection: "extract-special", timeoutMs: 45_000 });
     let receivedTimeout = 0;
     await akmExtract({
       type: "claude",
       sessionId: "ses_to2",
       stashDir: stash,
-      config: configWithStrategy(stash, { connection: "extract-special", timeoutMs: 45_000 }),
+      config,
+      resolvedPlan: resolveStandaloneExtractPlan(config, { timeoutMs: 30_000 }),
       harnesses: [makeFakeHarness([session])],
-      timeoutMs: 30_000,
       chat: async (_cfg, _msgs, opts) => {
         receivedTimeout = opts?.timeoutMs ?? 0;
         return JSON.stringify({ candidates: [] });

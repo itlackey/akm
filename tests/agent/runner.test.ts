@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { resolveProcessEnabled } from "../../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../../src/core/config/config";
 import { type ConnectionRunner, decodeFrozenRunnerSpec } from "../../src/integrations/agent/runner";
-import { isProcessEnabled } from "../../src/llm/feature-gate";
 
 const lab: ConnectionRunner = {
   kind: "connection",
@@ -60,26 +59,11 @@ function makeConfig(): AkmConfig {
   } as AkmConfig;
 }
 
-describe("isProcessEnabled", () => {
+describe("resolveProcessEnabled", () => {
   test("reflects the configured enabled flag on improve strategy processes", () => {
     const strategy = makeConfig().improve?.strategies?.default ?? {};
     expect(resolveProcessEnabled("reflect", strategy)).toBe(true);
     expect(resolveProcessEnabled("consolidate", strategy)).toBe(false);
     expect(resolveProcessEnabled("distill", strategy)).toBe(true);
-  });
-
-  test("reflects the configured enabled flag on improve processes", () => {
-    const config = makeConfig();
-    expect(isProcessEnabled("index", "memoryInference", config)).toBe(true);
-    const off: AkmConfig = { ...config, index: { memory: { enabled: false } } };
-    expect(isProcessEnabled("index", "memoryInference", off)).toBe(false);
-  });
-
-  // 0.9.17-alpha.9: the LLM entity-graph extraction pass this once gated is
-  // retired — graphExtraction/graph_extraction are no longer recognized names.
-  test("graphExtraction is no longer a recognized isProcessEnabled process name (retired 0.9.17-alpha.9)", () => {
-    const config = makeConfig();
-    expect(isProcessEnabled("index", "graphExtraction", config)).toBe(false);
-    expect(isProcessEnabled("index", "graph_extraction", config)).toBe(false);
   });
 });

@@ -1223,6 +1223,47 @@ describe("chatCompletion single bounded retry", () => {
     expect(calls).toBe(1);
   });
 
+  // The call's retries and fallbacks share its one timeout: the attempt after a slow rejection is given
+  // what is left, and the error says so.
+  test.each([
+    ["a transient 5xx retry", new Response("boom", { status: 500 }), undefined],
+    ["a response_format fallback", Response.json({ error: "unsupported" }, { status: 400 }), { type: "object" }],
+  ])("%s spends what is left of the timeout, not a fresh one", async (_name, firstResponse, responseSchema) => {
+    _resetEndpointSupportTrackersForTests();
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) {
+        // The first answer arrives 300ms into a 500ms budget.
+        setSystemTime(new Date(Date.now() + 300));
+        return firstResponse;
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+          once: true,
+        });
+      });
+    }) as unknown as typeof fetch;
+    let caught: LlmCallError | undefined;
+    try {
+      await chatCompletion({ ...baseConfig, timeoutMs: 500 }, [{ role: "user", content: "hi" }], {
+        sleep: fastSleep,
+        ...(responseSchema ? { responseSchema } : {}),
+      } as RetryTestOptions);
+    } catch (err) {
+      caught = err as LlmCallError;
+    } finally {
+      globalThis.fetch = originalFetch;
+      setSystemTime();
+    }
+    expect(calls).toBe(2);
+    expect(caught?.code).toBe("timeout");
+    const allowed = Number(/timed out after (\d+)ms/.exec(caught?.message ?? "")?.[1]);
+    expect(allowed).toBeGreaterThan(0);
+    expect(allowed).toBeLessThanOrEqual(200);
+  });
+
   test("backoff jitter stays within the 200-800ms window", async () => {
     const originalFetch = globalThis.fetch;
     const { fetch: stub } = queuedFetch([new Response("boom", { status: 500 }), jsonOk("recovered")]);

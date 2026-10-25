@@ -16,7 +16,6 @@ import { getRunLogDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { clearLogFile, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
-import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import { defaultWhich } from "../../integrations/agent/detect";
 import { materializeConnection } from "../../integrations/agent/runner-dispatch";
 import { type ChatCompletionConfig, probeLlmReachable } from "../../llm/client";
@@ -97,7 +96,7 @@ function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngine
  * hung endpoint (#957) long before a run's own multi-minute calls would.
  */
 export function requiredEngineProbeTimeoutMs(connection: ChatCompletionConfig): number {
-  return Math.min(connection.timeoutMs ?? DEFAULT_LLM_TIMEOUT_MS, REQUIRED_ENGINE_PROBE_MAX_MS);
+  return Math.min(connection.timeoutMs ?? REQUIRED_ENGINE_PROBE_MAX_MS, REQUIRED_ENGINE_PROBE_MAX_MS);
 }
 
 const REQUIRED_ENGINE_PROBE_MAX_MS = 120_000;

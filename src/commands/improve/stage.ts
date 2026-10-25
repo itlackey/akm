@@ -20,16 +20,9 @@ import type { LoweringNotice } from "../../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import type { RejectedProposalContext } from "../../integrations/agent/prompts";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import type { AgentRunResult } from "../../integrations/agent/spawn";
 import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../../llm/client";
-import type { LlmFeatureKey } from "../../llm/feature-gate";
 import { structuredLoop } from "../../llm/structured";
-import {
-  type CallStructuredRequest,
-  callStructured,
-  dispatchFailureReason,
-  dispatchFailureResult,
-} from "../../llm/structured-call";
+import { type CallStructuredRequest, callStructured, type StructuredOutcome } from "../../llm/structured-call";
 import { currentLlmStage, withLlmStage } from "../../llm/usage-telemetry";
 import { isProceduralRejection } from "../proposal/proposal-types";
 import {
@@ -81,18 +74,7 @@ export function stageRunner(
   return resolved?.runner;
 }
 
-export type StageLlmOutcome =
-  | { ok: true; raw: string }
-  | {
-      ok: false;
-      reason: "disabled" | "timeout" | "aborted" | "error";
-      error?: string;
-      /** The failed dispatch's own result (an agent's exit code and stderr, say), when the call reached a transport. */
-      result?: AgentRunResult;
-    };
-
 export interface StageLlmCall {
-  feature: LlmFeatureKey;
   runner: RunnerSpec;
   prompt: string;
   system?: string;
@@ -104,25 +86,22 @@ export interface StageLlmCall {
   /** Additional exact invocation fields for this call (the child environment of an agent, say). */
   current?: UnresolvedExecutionDefaults;
   onNotices?: NoticeSink;
-  /** Gate the call on the feature flag, with the stage's resolved enablement. */
-  gate?: { config: AkmConfig; enabled?: boolean };
 }
 
 /** A dispatch that came back `{ ok: false }`, carried out of the structured loop. */
 class StageFailed extends Error {
-  constructor(readonly outcome: Extract<StageLlmOutcome, { ok: false }>) {
+  constructor(readonly outcome: Extract<StructuredOutcome, { ok: false }>) {
     super(outcome.error ?? outcome.reason);
   }
 }
 
 /**
- * One model call. Provider trouble (transport error, timeout, abort, a
- * disabled feature) comes back as `{ ok: false }`; only a configuration
- * failure throws. A reply to a call with `request.responseSchema` that the
+ * One model call. Provider trouble (transport error, timeout, abort) comes back
+ * as `{ ok: false }`; only a configuration failure throws. A reply to a call with `request.responseSchema` that the
  * stage's own `parse` rejects gets one corrective retry (the structured loop);
  * the last reply comes back either way, and the caller parses it again.
  */
-export async function callStage(call: StageLlmCall): Promise<StageLlmOutcome> {
+export async function callStage(call: StageLlmCall): Promise<StructuredOutcome> {
   if (!call.request?.responseSchema) return callStageOnce(call);
   const parse = call.parse ?? parseEmbeddedJsonResponse;
   try {
@@ -144,60 +123,28 @@ export async function callStage(call: StageLlmCall): Promise<StageLlmOutcome> {
   }
 }
 
-/** Timeout and abort come from the dispatch's own reason, whatever the runner's kind. */
-function failureReason(err: unknown): "timeout" | "aborted" | "error" {
-  const reason = dispatchFailureReason(err);
-  return reason === "timeout" || reason === "aborted" ? reason : "error";
-}
-
-/** A failed call: its reason and message, and the dispatch's own result when it reached a transport. */
-function failedCall(err: unknown): Extract<StageLlmOutcome, { ok: false }> {
-  const result = dispatchFailureResult(err);
-  return { ok: false, reason: failureReason(err), error: errMessage(err), ...(result ? { result } : {}) };
-}
-
 /**
  * One dispatch with no validation, for a caller that parses and repairs the
  * reply itself (reflect's repair turn, extract's own structured loop).
  */
-export async function callStageOnce(call: StageLlmCall): Promise<StageLlmOutcome> {
+export async function callStageOnce(call: StageLlmCall): Promise<StructuredOutcome> {
   const messages: ChatMessage[] = [
     ...(call.system ? [{ role: "system" as const, content: call.system }] : []),
     ...(call.history ?? []),
     { role: "user", content: call.prompt },
   ];
-  let failure: Extract<StageLlmOutcome, { ok: false }> | undefined;
-  try {
-    const dispatch = () =>
-      callStructured<string | undefined>({
-        feature: call.feature,
-        ...(call.gate
-          ? { akmConfig: call.gate.config, ...(call.gate.enabled !== undefined ? { enabled: call.gate.enabled } : {}) }
-          : {}),
-        runner: call.runner,
-        messages,
-        ...(call.request ? { request: call.request } : {}),
-        ...(call.current ? { current: call.current } : {}),
-        ...(call.onNotices ? { onNotices: call.onNotices } : {}),
-        parse: (r) => r ?? "",
-        onError: (_cls, err) => {
-          failure = failedCall(err);
-          return undefined;
-        },
-        fallback: undefined,
-        onFallback: (event) => {
-          failure ??= { ok: false, reason: event.reason, ...(event.error ? { error: event.error.message } : {}) };
-        },
-      });
-    // Usage is credited to the engine that serves the call, which for a gate's own judge
-    // (#1011) is not the stage's planned engine.
-    const stage = currentLlmStage();
-    const raw = await (stage === undefined ? dispatch() : withLlmStage(stage, dispatch, { engine: call.runner.name }));
-    return raw === undefined ? (failure ?? { ok: false, reason: "error" }) : { ok: true, raw };
-  } catch (err) {
-    if (err instanceof ConfigError) throw err;
-    return failedCall(err);
-  }
+  const dispatch = () =>
+    callStructured({
+      runner: call.runner,
+      messages,
+      ...(call.request ? { request: call.request } : {}),
+      ...(call.current ? { current: call.current } : {}),
+      ...(call.onNotices ? { onNotices: call.onNotices } : {}),
+    });
+  // Usage is credited to the engine that serves the call, which for a gate's own judge
+  // (#1011) is not the stage's planned engine.
+  const stage = currentLlmStage();
+  return stage === undefined ? dispatch() : withLlmStage(stage, dispatch, { engine: call.runner.name });
 }
 
 /** Attribute a stage's LLM calls to its process and planned engine (the usage report). */
@@ -615,7 +562,7 @@ export function judgeResponseSchema(keys: readonly string[]): Record<string, unk
  * score a point apart, so the routing rules are chosen with that margin in mind.
  */
 async function runQualityJudge(
-  feature: LlmFeatureKey,
+  feature: "lesson_quality_gate" | "proposal_quality_gate",
   config: AkmConfig,
   prompt: string,
   keys: readonly string[],
@@ -636,7 +583,6 @@ async function runQualityJudge(
       reviewNeeded: true,
     };
   const outcome = await callStage({
-    feature,
     runner,
     system: "Return only valid JSON. No prose.",
     prompt,

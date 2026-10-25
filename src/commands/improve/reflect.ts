@@ -528,7 +528,6 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
   // Reflect parses and repairs its own reply (the repair turn below), so one dispatch, unvalidated.
   const call = async (callMessages: ChatMessage[], repairTimeoutMs?: number): Promise<string> => {
     const outcome = await callStageOnce({
-      feature: "reflect_proposal",
       runner: opts.runner,
       prompt: callMessages.at(-1)?.content ?? "",
       history: callMessages.slice(0, -1),

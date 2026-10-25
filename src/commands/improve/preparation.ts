@@ -363,7 +363,6 @@ async function runSessionExtractPass(
     enabled: true,
     process: resolvedPlan.processes.extract.config,
     runner,
-    timeoutMs: runner.timeoutMs,
     embeddingConfig: Object.freeze(structuredClone(config.embedding)),
     ...(resolvedPlan.processes.extract.notices?.length ? { notices: resolvedPlan.processes.extract.notices } : {}),
   });

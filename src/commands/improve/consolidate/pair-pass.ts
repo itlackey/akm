@@ -699,15 +699,12 @@ function checkSection(label: string, side: PairSide): string {
  */
 async function confirmNothingLost(ctx: PairPassContext, retired: PairSide, successor: PairSide): Promise<boolean> {
   const outcome = await callStage({
-    feature: "memory_consolidation",
     runner: ctx.llmRunner,
     system: consolidatePairCheckPrompt,
     prompt: `${checkSection("X (to delete)", retired)}\n${checkSection("Y (kept)", successor)}\n${termHints([`Tokens only in X: ${exclusiveTerms(retired, successor)}`])}${Date.parse(retired.createdIso) === Date.parse(successor.createdIso) ? `\n${consolidatePairSameAge}` : ""}`,
-    gate: { config: ctx.config, enabled: true },
     request: {
       responseSchema: PAIR_CHECK_JSON_SCHEMA,
       enableThinking: false,
-      ...(Object.hasOwn(ctx.llmRunner, "timeoutMs") ? { timeoutMs: ctx.llmRunner.timeoutMs } : {}),
       signal: ctx.opts.signal,
       ...(ctx.chat ? { chat: ctx.chat } : {}),
     },
@@ -754,15 +751,12 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   const { older, newer } = orderByAge(initiatorSide, otherSide);
 
   const outcome = await callStage({
-    feature: "memory_consolidation",
     runner: ctx.llmRunner,
     system: consolidatePairPrompt,
     prompt: buildPairUserPrompt(older, newer),
-    gate: { config: ctx.config, enabled: true },
     request: {
       responseSchema: PAIR_JUDGE_JSON_SCHEMA,
       enableThinking: false,
-      ...(Object.hasOwn(ctx.llmRunner, "timeoutMs") ? { timeoutMs: ctx.llmRunner.timeoutMs } : {}),
       signal: ctx.opts.signal,
       ...(ctx.chat ? { chat: ctx.chat } : {}),
     },

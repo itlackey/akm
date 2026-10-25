@@ -648,14 +648,13 @@ const ABORT_FAILURE_RATE = 0.5;
 async function judgeConsolidationChunks(args: {
   chunks: MemoryEntry[][];
   opts: AkmConsolidateOptions;
-  config: AkmConfig;
   sourceName: string;
   bodyTruncation: number;
   pendingProposalBodyHashes: Set<string>;
   warnings: string[];
   acc: ConsolidateAccounting;
 }): Promise<ConsolidatePromoteOp[][]> {
-  const { chunks, opts, config, warnings, acc } = args;
+  const { chunks, opts, warnings, acc } = args;
   const llmRunner = opts.llmRunner ?? undefined;
   const memRef = (m: MemoryEntry) => conceptIdFromTypeName("memory", m.name);
   const failChunk = (message: string, chunk: MemoryEntry[]) => {
@@ -697,7 +696,6 @@ async function judgeConsolidationChunks(args: {
     }
     // The transport already retries once; a failed chunk is not retried here.
     const outcome = await callStage({
-      feature: "memory_consolidation",
       runner: llmRunner,
       system: consolidateSystemPrompt,
       prompt: buildChunkPrompt(
@@ -708,11 +706,9 @@ async function judgeConsolidationChunks(args: {
         args.bodyTruncation,
         args.pendingProposalBodyHashes,
       ),
-      gate: { config, enabled: true },
       request: {
         responseSchema: CONSOLIDATE_PLAN_JSON_SCHEMA,
         enableThinking: false,
-        ...(Object.hasOwn(llmRunner, "timeoutMs") ? { timeoutMs: llmRunner.timeoutMs } : {}),
         signal: opts.signal,
       },
       parse: parsePlan,
@@ -806,7 +802,6 @@ async function planConsolidation(
   const planned = await judgeConsolidationChunks({
     chunks,
     opts,
-    config,
     sourceName,
     bodyTruncation,
     pendingProposalBodyHashes,

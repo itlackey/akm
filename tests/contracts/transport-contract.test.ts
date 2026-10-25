@@ -317,7 +317,6 @@ describe("C2: structured output", () => {
       fs.rmSync(path.join(bins.dir, "repair.count"), { force: true });
       chatBodies.length = 0;
       const outcome = await callStage({
-        feature: "distill",
         runner: runnerFor(transport, "repair"),
         prompt: "Reply with a verdict.",
         request: { responseSchema: schema },
@@ -351,7 +350,6 @@ describe("C4: failures and timeouts", () => {
   // A stage call branches on the dispatch's reason, never on the runner's kind.
   test.each(STAGE_TRANSPORTS)("%s: a stage call reports a timeout as timeout", async (_name, transport) => {
     const outcome = await callStage({
-      feature: "distill",
       runner: runnerFor(transport, "hang"),
       prompt: "Reply with the single word: pong",
       request: { timeoutMs: 300 },
@@ -362,7 +360,6 @@ describe("C4: failures and timeouts", () => {
 
   test.each(STAGE_TRANSPORTS)("%s: a stage call reports an abort as aborted", async (_name, transport) => {
     const outcome = await callStage({
-      feature: "distill",
       runner: runnerFor(transport, "hang"),
       prompt: "Reply with the single word: pong",
       request: { signal: AbortSignal.abort() },
@@ -374,7 +371,6 @@ describe("C4: failures and timeouts", () => {
   // A caller that reports a failure the way the transport did (an agent's exit code and stderr) reads the dispatch's own result.
   test.each(STAGE_TRANSPORTS)("%s: a failed stage call keeps the dispatch's own result", async (_name, transport) => {
     const outcome = await callStage({
-      feature: "distill",
       runner: runnerFor(transport, transport === CHAT ? "http-500" : "exit-1"),
       prompt: "Reply with the single word: pong",
     });

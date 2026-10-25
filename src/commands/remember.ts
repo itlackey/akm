@@ -303,7 +303,7 @@ export function parseEnrichObserved(parsed: Record<string, unknown>): string | u
   return undefined;
 }
 
-/** Hard timeout for the `--enrich` LLM call. Write-path must not block on a misbehaving endpoint. */
+/** Timeout for the `--enrich` LLM call, in place of the engine's own. */
 const LLM_ENRICH_TIMEOUT_MS = 10_000;
 
 /**
@@ -336,39 +336,26 @@ ${body.slice(0, 2000)}
 Return ONLY the JSON object, no prose, no markdown fences.`;
 
   try {
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-    const result = await (async () => {
-      try {
-        return await Promise.race([
-          withLlmStage("remember", () =>
-            callStructured<string>({
-              feature: "remember_enrich",
-              runner,
-              messages: [
-                { role: "system", content: "Return only valid JSON. No prose." },
-                { role: "user", content: prompt },
-              ],
-              request: { maxTokens: 256, temperature: 0.1 },
-              onNotices: (value) => {
-                for (const notice of value) noticesByKey.set(JSON.stringify(notice), notice);
-              },
-              parse: (raw) => raw ?? "",
-              onError: () => "",
-              fallback: "",
-            }),
-          ),
-          new Promise<never>((_, reject) => {
-            timeoutHandle = setTimeout(() => reject(new Error("LLM enrichment timed out")), LLM_ENRICH_TIMEOUT_MS);
-          }),
-        ]);
-      } finally {
-        if (timeoutHandle !== undefined) {
-          clearTimeout(timeoutHandle);
-        }
-      }
-    })();
+    const outcome = await withLlmStage("remember", () =>
+      callStructured({
+        runner,
+        messages: [
+          { role: "system", content: "Return only valid JSON. No prose." },
+          { role: "user", content: prompt },
+        ],
+        // The write path must not block on a misbehaving endpoint.
+        request: { maxTokens: 256, temperature: 0.1, timeoutMs: LLM_ENRICH_TIMEOUT_MS },
+        onNotices: (value) => {
+          for (const notice of value) noticesByKey.set(JSON.stringify(notice), notice);
+        },
+      }),
+    );
+    if (!outcome.ok) {
+      warn(`Warning: --enrich failed (${outcome.error}). Writing memory without enrichment.`);
+      return { tags: [], ...noticeFields() };
+    }
 
-    const parsed = parseEmbeddedJsonResponse<Record<string, unknown>>(result);
+    const parsed = parseEmbeddedJsonResponse<Record<string, unknown>>(outcome.raw);
     if (!parsed) {
       warn("Warning: --enrich received invalid JSON from the LLM. Writing memory without enrichment.");
       return { tags: [], ...noticeFields() };

@@ -575,7 +575,7 @@ describe("runMemoryInferencePass — enabled", () => {
       sources: sources(),
       options: {
         compressMemoryToDerivedMemory: async (...args) => {
-          args[7]?.([perCallNotice, perCallNotice]);
+          args[5]?.([perCallNotice, perCallNotice]);
           return sampleDraft();
         },
       },

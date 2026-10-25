@@ -306,7 +306,7 @@ describe("memory inference uses the configured temperature", () => {
         headers: { "content-type": "application/json" },
       });
     }) as unknown as typeof fetch;
-    await compressMemoryToDerivedMemory(runner, "A memory body long enough to infer from.", undefined, cfg);
+    await compressMemoryToDerivedMemory(runner, "A memory body long enough to infer from.");
     return body?.temperature;
   }
 

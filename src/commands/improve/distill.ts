@@ -551,11 +551,9 @@ async function distill(
   const { system, prompt } = await buildDistillMessages(run, feedback, kind, outputRef);
   const call = run.runner
     ? await callStage({
-        feature: "distill",
         runner: run.runner,
         system,
         prompt,
-        gate: { config: run.config, enabled: true },
         // NONE is an answer: a parser that rejected it would ask for a lesson again.
         parse: (raw) => (answeredNone(raw) ? raw : parseEmbeddedJsonResponse(raw)),
         // The injected test transport never sees the schema.
@@ -854,11 +852,9 @@ async function proposeLessonUpdate(
   if (candidates.length === 0) return undefined;
 
   const call = await callStage({
-    feature: "distill",
     runner: run.runner,
     system: "Return only valid JSON. No prose.",
     prompt: buildLessonUpdatePrompt(memory, feedback, candidates),
-    gate: { config: run.config, enabled: true },
     request: {
       ...(run.options.chat === undefined
         ? { responseSchema: DISTILL_LESSON_UPDATE_JSON_SCHEMA }
@@ -1111,7 +1107,6 @@ async function promoteToKnowledge(run: DistillRun, plan: PromotionPlan): Promise
   let content = plan.content;
   if (plan.existing && run.runner) {
     const merged = await callStage({
-      feature: "distill",
       runner: run.runner,
       system: "Return only valid JSON. No prose.",
       prompt: [

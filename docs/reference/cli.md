@@ -3077,7 +3077,7 @@ akm proposal extract --type claude --location /custom/path --session-id <id>
 | `--auto` | Iterate every available harness with the default `--since`. Mutually exclusive with `--type`. |
 | `--dry-run` | Show candidates without queuing proposals. |
 | `--force` | Re-process sessions even if they were already extracted and have no new events. Default: skip already-seen sessions. |
-| `--timeout-ms <ms>` | Per-session LLM timeout in ms (default `600000`). |
+| `--timeout-ms <ms>` | Per-session LLM timeout in ms. Default: the engine's own timeout. |
 | `--engine <name>` | Named engine for this invocation: an LLM engine, or a `claude` or `opencode-sdk` agent engine. Mutually exclusive with `--strategy`. |
 | `--strategy <name>` | Improve strategy supplying extract behavior and engine. Mutually exclusive with `--engine`. |
 

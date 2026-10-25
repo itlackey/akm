@@ -3,72 +3,27 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `callStructured<T>()` — the shared model-call-and-classify seam.
+ * `callStructured()` — one model call on any runner kind.
  *
- * Centralizes the scaffold replicated across ~20 in-tree model call sites:
+ * It resolves the call once (the runner's target, model and timeout, the call's
+ * own settings), lowers it for the runner's transport, dispatches it, and
+ * returns the reply text or the failure. A provider's failure (transport error,
+ * timeout, abort, a harness that exits non-zero) is a failed outcome, the same
+ * for every caller; only a configuration failure throws, because it is not the
+ * provider's and no fallback can repair it.
  *
- *   tryLlmFeature(feature, akmConfig, …)
- *     -> resolved request -> engine lowering -> dispatch on any runner kind
- *     -> classify(error) into one of EXACTLY three buckets
- *          (context_limit | html | other)
- *     -> parse(raw) / onError(cls, err)
- *     -> fallback
- *
- * What this seam OWNS (the dedup):
- *   - the `tryLlmFeature` wrap (gated path) and the gated-vs-ungated branch
- *   - the single resolved/lowered dispatch + request-option marshalling
- *   - the try/catch and the ONE classify ladder, computed ONCE via the
- *     EXISTING `isContextSizeError` + `LlmCallError.code === "provider_html_error"`
- *
- * What stays per-caller (passed in):
- *   - `parse(raw)`  — owns the `!raw` case, JSON extraction, validation, the
- *     success-path warns/telemetry, and returns the caller's fallback itself
- *     on bad/empty data.
- *   - `onError(cls, err)` — owns the per-caller error→fallback mapping
- *     (the warn() variants and telemetry bumps for each error class).
- *
- * Gating:
- *   - `akmConfig` present  → GATED: run through `tryLlmFeature`; a throw inside
- *     is classified and routed to `onError`, and the wrapper returns the
- *     caller's fallback on disablement/timeout.
- *   - `akmConfig === undefined` → UNGATED: run the chat+parse directly with no
- *     error funnel — errors PROPAGATE to the caller (pre-gate behaviour used by
- *     direct callers such as `splitMemoryIntoAtomicFacts`).
+ * What stays per-caller: reading the reply (the structured loop, `llm/structured.ts`),
+ * and what a failed outcome means for that caller.
  */
 
-import type { AkmConfig } from "../core/config/config";
 import { ConfigError } from "../core/errors";
 import type { LoweringNotice, ResolvedConversationMessage } from "../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../execution/source";
 import { buildExecution, currentLayer, resolveExecution } from "../integrations/agent/execution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 import { runExecution } from "../integrations/agent/runner-dispatch";
-import type { AgentFailureReason, AgentRunResult } from "../integrations/agent/spawn";
-import { type ChatCompletionConfig, type ChatMessage, isContextSizeError, LlmCallError } from "./client";
-import {
-  isLlmFeatureEnabled,
-  type LlmFeatureKey,
-  type TryLlmFeatureFallbackEvent,
-  tryLlmFeature,
-} from "./feature-gate";
-
-/**
- * The three — and only three — error classes the centralized ladder produces.
- * Matches exactly what `classifyLlmError` returns; no speculative 4th variant.
- */
-export type LlmErrorClass = "context_limit" | "html" | "other";
-
-/**
- * Classify a thrown LLM error into one of the three buckets. This is the single
- * home for the `isContextSizeError -> html -> other` ladder that was previously
- * inlined at every call site.
- */
-export function classifyLlmError(err: unknown): LlmErrorClass {
-  const message = err instanceof Error ? err.message : String(err);
-  if (isContextSizeError(message)) return "context_limit";
-  if (err instanceof LlmCallError && err.code === "provider_html_error") return "html";
-  return "other";
-}
+import type { AgentRunResult } from "../integrations/agent/spawn";
+import type { ChatCompletionConfig, ChatMessage } from "./client";
 
 /**
  * Per-call request shape. Mirrors the subset of direct-LLM options the
@@ -76,14 +31,12 @@ export function classifyLlmError(err: unknown): LlmErrorClass {
  * replace the transport without a network call. Production transport selection
  * stays inside the engine-owned lowered dispatch seam.
  *
- * KEY-PRESENCE SEMANTICS (`timeoutMs`): both the feature-gate wrapper and the
- * transport are tri-state — an ABSENT `timeoutMs` key means "use the default"
- * (600 s wrapper; the runner's own timeout, else 600 s on every runner kind),
- * while a PRESENT key set to `undefined`/`null` means "timeout explicitly
- * disabled". `callStructured` therefore forwards each option key only when it
- * is present on `request` (`Object.hasOwn`), so callers that omit the key keep
- * the defaults and callers that set it — even to `undefined` — keep the
- * explicit override.
+ * KEY-PRESENCE SEMANTICS (`timeoutMs`): an ABSENT `timeoutMs` key means "the
+ * runner's own timeout" (the resolver's), while a PRESENT key set to
+ * `undefined`/`null` means "timeout explicitly disabled". `callStructured`
+ * therefore forwards each option key only when it is present on `request`
+ * (`Object.hasOwn`), so callers that omit the key keep the runner's timeout and
+ * callers that set it — even to `undefined` — keep the explicit override.
  */
 export interface CallStructuredRequest {
   temperature?: number;
@@ -113,27 +66,9 @@ export interface CallStructuredRequest {
   ) => Promise<string>;
 }
 
-export interface CallStructuredOptions<T> {
-  /** Feature-gate key, passed straight to `tryLlmFeature` on the gated path. */
-  feature: LlmFeatureKey;
-  /**
-   * When present, the call is GATED through `tryLlmFeature`. When `undefined`
-   * the gate is bypassed and errors propagate to the caller.
-   */
-  akmConfig?: AkmConfig;
-  /**
-   * Enablement already resolved by the owning command, forwarded to
-   * `tryLlmFeature`. REQUIRED for gated features without a `FEATURE_LOCATION`
-   * resolver (`distill`, `memory_consolidation`, the quality gates): for those keys
-   * `isLlmFeatureEnabled` returns `false` unless this override is passed, so
-   * omitting it hard-disables the feature. Ignored on the ungated path.
-   */
-  enabled?: boolean;
-  /**
-   * Already-resolved symbolic runner, of any kind. Production callers use this
-   * path so lowering precedes credential lookup and aliases are never re-run.
-   */
-  runner?: RunnerSpec;
+export interface CallStructuredOptions {
+  /** Already-resolved symbolic runner, of any kind. Lowering precedes credential lookup and aliases are never re-run. */
+  runner: RunnerSpec;
   /** Additional exact invocation fields for the current call. */
   current?: UnresolvedExecutionDefaults;
   /** Receives the stable, secret-free notices emitted by the selected lowerer. */
@@ -142,22 +77,18 @@ export interface CallStructuredOptions<T> {
   messages: ChatMessage[];
   /** Per-call request options (temperature/timeout/signal/schema/retry/chat). */
   request?: CallStructuredRequest;
-  /**
-   * Owns the raw response: the `!raw` case, JSON extraction, validation, the
-   * success-path warns/telemetry, and returns the caller's fallback itself on
-   * bad/empty data.
-   */
-  parse: (raw: string | undefined) => T;
-  /**
-   * Owns the per-caller error→fallback mapping. Called ONLY on the gated path,
-   * with the centralized error class computed once.
-   */
-  onError: (cls: LlmErrorClass, err: unknown) => T;
-  /** Value handed to `tryLlmFeature` as its fallback (disabled/timeout path). */
-  fallback: T;
-  /** Forwarded to `tryLlmFeature` so callers keep their fallback telemetry. */
-  onFallback?: (event: TryLlmFeatureFallbackEvent) => void;
 }
+
+/** The reply text, or why there is none: the failed dispatch's own result is carried when it reached a transport. */
+export type StructuredOutcome =
+  | { ok: true; raw: string }
+  | {
+      ok: false;
+      reason: "timeout" | "aborted" | "error";
+      error: string;
+      /** The failed dispatch's own result (an agent's exit code and stderr, say). */
+      result?: AgentRunResult;
+    };
 
 function own(value: object | undefined, key: PropertyKey): boolean {
   return value !== undefined && Object.hasOwn(value, key);
@@ -206,44 +137,22 @@ function requireTerminalUserMessage(messages: readonly ChatMessage[]): {
   };
 }
 
-function dispatchFailure(result: AgentRunResult): Error & { reason?: AgentFailureReason; result: AgentRunResult } {
-  const message = result.error ?? result.stderr ?? result.reason ?? "dispatch failed";
-  const error = result.llmErrorCode ? new LlmCallError(message, result.llmErrorCode) : new Error(message);
-  return Object.assign(error, { reason: result.reason, result });
+/** Timeout and abort come from the dispatch's own reason, whatever the runner's kind. */
+function failed(error: string, result?: AgentRunResult): Extract<StructuredOutcome, { ok: false }> {
+  const reason = result?.reason;
+  return {
+    ok: false,
+    reason: reason === "timeout" || reason === "aborted" ? reason : "error",
+    error,
+    ...(result ? { result } : {}),
+  };
 }
 
-/** The runner's failure reason (`timeout`, `aborted`, …) a failed dispatch threw with, whatever its kind. */
-export function dispatchFailureReason(err: unknown): AgentFailureReason | undefined {
-  return err instanceof Error ? (err as { reason?: AgentFailureReason }).reason : undefined;
-}
-
-/** The failed dispatch's own result (an agent's exit code and stderr, say), whatever its kind. */
-export function dispatchFailureResult(err: unknown): AgentRunResult | undefined {
-  return err instanceof Error ? (err as { result?: AgentRunResult }).result : undefined;
-}
-
-export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise<T> {
-  const { feature, akmConfig, enabled, messages, request, parse, onError, fallback, onFallback } = opts;
-
-  // A disabled feature owns a true no-work path: it does not need a runner,
-  // messages, authorization, lowering, or provider state. Some commands keep
-  // their runner optional precisely because a disabled feature must fall back
-  // before execution planning begins.
-  if (akmConfig !== undefined && !isLlmFeatureEnabled(akmConfig, feature, enabled)) {
-    return tryLlmFeature(feature, akmConfig, async () => fallback, fallback, {
-      ...(own(request, "timeoutMs") ? { timeoutMs: request?.timeoutMs } : {}),
-      ...(enabled !== undefined ? { enabled } : {}),
-      onFallback,
-    });
-  }
-
-  const runner = opts.runner;
-  if (!runner) throw new TypeError("callStructured requires a resolved runner");
-  const terminal = requireTerminalUserMessage(messages);
-
-  // `gateSignal` aborts when the feature gate's timeout fires, so the dispatch stops with it.
-  // Every structured call is unattended model work, so it runs under the model-work tool policy.
-  const prepareInvocation = (): ((gateSignal?: AbortSignal) => Promise<T>) => {
+export async function callStructured(opts: CallStructuredOptions): Promise<StructuredOutcome> {
+  const { runner, messages, request } = opts;
+  try {
+    const terminal = requireTerminalUserMessage(messages);
+    // Every structured call is unattended model work, so it runs under the model-work tool policy.
     const prepared = resolveExecution({
       content: terminal.content,
       conversation: terminal.conversation,
@@ -253,54 +162,16 @@ export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise
     });
     const lowered = buildExecution(prepared.request, prepared.runner);
     opts.onNotices?.(lowered.notices);
-    return async (gateSignal) => {
-      const signal =
-        request?.signal && gateSignal ? AbortSignal.any([request.signal, gateSignal]) : (request?.signal ?? gateSignal);
-      const result = await runExecution(lowered, {
-        ...(request?.chat ? { chat: request.chat } : {}),
-        ...(request?.onRetryAttempt ? { onRetryAttempt: request.onRetryAttempt } : {}),
-        ...(signal ? { signal } : {}),
-      });
-      if (!result.ok) throw dispatchFailure(result);
-      return parse(result.stdout);
-    };
-  };
-
-  // UNGATED: run the chat+parse directly. Errors propagate — no `onError`
-  // funnel — matching the pre-gate behaviour of direct callers.
-  if (akmConfig === undefined) {
-    return prepareInvocation()();
+    const result = await runExecution(lowered, {
+      ...(request?.chat ? { chat: request.chat } : {}),
+      ...(request?.onRetryAttempt ? { onRetryAttempt: request.onRetryAttempt } : {}),
+      ...(request?.signal ? { signal: request.signal } : {}),
+    });
+    return result.ok
+      ? { ok: true, raw: result.stdout }
+      : failed(result.error ?? result.stderr ?? result.reason ?? "dispatch failed", result);
+  } catch (err) {
+    if (err instanceof ConfigError) throw err;
+    return failed(err instanceof Error ? err.message : String(err));
   }
-
-  // On an enabled path, preparation/lowering happen OUTSIDE tryLlmFeature so
-  // invalid-config failures remain hard failures instead of
-  // being mistaken for provider fallbacks.
-  const invoke = prepareInvocation();
-
-  // GATED: run through `tryLlmFeature`. A throw inside is classified ONCE and
-  // routed to `onError`; `tryLlmFeature` returns `fallback` on disablement/timeout.
-  const outcome = await tryLlmFeature<{ kind: "value"; value: T } | { kind: "config-error"; error: ConfigError }>(
-    feature,
-    akmConfig,
-    async (gateSignal) => {
-      try {
-        return { kind: "value", value: await invoke(gateSignal) };
-      } catch (err) {
-        // Credential materialization remains dispatch-owned, so a missing
-        // required symbolic credential can surface here. Preserve config
-        // failures as hard pre-provider errors instead of sending them through
-        // a leaf's provider/runtime fallback policy.
-        if (err instanceof ConfigError) return { kind: "config-error", error: err };
-        return { kind: "value", value: onError(classifyLlmError(err), err) };
-      }
-    },
-    { kind: "value", value: fallback },
-    {
-      ...(own(request, "timeoutMs") ? { timeoutMs: request?.timeoutMs } : {}),
-      ...(enabled !== undefined ? { enabled } : {}),
-      onFallback,
-    },
-  );
-  if (outcome.kind === "config-error") throw outcome.error;
-  return outcome.value;
 }

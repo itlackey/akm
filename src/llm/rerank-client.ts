@@ -67,10 +67,8 @@ interface RerankResponseBody {
  * didn't return a score for keeps its original relative order, appended
  * after every scored document (never dropped).
  *
- * Throws {@link RerankCallError} on any transport/parse failure — callers
- * that want a graceful fallback should use `tryLlmFeature("curate_rerank", ...)`
- * (`llm/feature-gate.ts`), matching every other bounded in-tree LLM/rerank
- * call site.
+ * Throws {@link RerankCallError} on any transport/parse failure — a caller
+ * that wants a graceful fallback catches it.
  */
 export async function rerankDocuments(
   config: CurateRerankConfig,

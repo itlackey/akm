@@ -1121,7 +1121,7 @@ describe("akmExtract — R4 transient outcomes stay retryable (null content_hash
       config: configEnabled(stash),
       harnesses: [makeHarness([session])],
       stateDb: db,
-      // A throwing chat drives tryLlmFeature onto its fallback path → the
+      // A throwing chat is a failed call → the
       // session is skipped with skipReason "llm_unavailable".
       chat: async () => {
         throw new Error("llm endpoint unreachable");

@@ -183,8 +183,6 @@ export interface AkmExtractOptions {
   sourceRun?: string;
   /** The active improve profile (its extract toggle gates extract as an improve stage only). */
   improveProfile?: ImproveProfileConfig;
-  /** Per-call LLM timeout (ms); null disables it. */
-  timeoutMs?: number | null;
   signal?: AbortSignal;
   /** Re-process sessions state.db says were already extracted. */
   force?: boolean;
@@ -204,7 +202,6 @@ export interface ResolvedExtractPlan {
   enabled: boolean;
   process: Readonly<ImproveProcessConfig>;
   runner: Readonly<RunnerSpec> | null;
-  timeoutMs: number | null;
   embeddingConfig: Readonly<AkmConfig["embedding"]>;
   notices?: readonly Readonly<LoweringNotice>[];
 }
@@ -242,7 +239,6 @@ export function resolveStandaloneExtractPlan(
     enabled: true,
     process,
     runner: cloneAndFreeze(runner),
-    timeoutMs: runner.timeoutMs,
     embeddingConfig: cloneAndFreeze(config.embedding),
     ...(resolved.notices.length > 0 ? { notices: cloneAndFreeze(resolved.notices) } : {}),
   });
@@ -552,7 +548,6 @@ interface ExtractRun {
   notices: ReturnType<typeof noticeSet>;
   sourceRun: string;
   dryRun: boolean;
-  timeoutMs: number | null;
   gates: SessionGateOptions;
   maxSessionsPerRun: number;
   effectiveSince: string | undefined;
@@ -579,12 +574,9 @@ async function extractFromSession(run: ExtractRun, prompt: string): Promise<Sess
       dispatch: async (correction) => {
         // This loop parses and repairs the reply itself, so each attempt is one unvalidated dispatch.
         const outcome = await callStageOnce({
-          feature: "session_extraction",
           runner: llmRunner,
           prompt: correction ? `${prompt}\n\n## Corrective output instruction\n\n${correction.text}` : prompt,
-          gate: { config: run.config },
           request: {
-            timeoutMs: run.timeoutMs,
             responseSchema: EXTRACT_JSON_SCHEMA,
             ...(run.options.signal ? { signal: run.options.signal } : {}),
             ...(run.options.chat ? { chat: run.options.chat } : {}),
@@ -1036,21 +1028,13 @@ function resolveExtractRun(
     );
   }
   const runner = llmRunner;
-  const timeoutMs = options.resolvedPlan
-    ? options.resolvedPlan.timeoutMs
-    : Object.hasOwn(options, "timeoutMs")
-      ? (options.timeoutMs ?? null)
-      : runner.timeoutMs;
   const triage = (process as { triage?: { enabled?: boolean; minScore?: number } } | undefined)?.triage;
   // The default summary generator fails open: no summary, no session asset.
   const generate: SessionSummaryGenerator = async (data) => {
     const outcome = await callStage({
-      feature: "session_extraction",
       runner,
       prompt: buildSessionSummaryPrompt(data),
-      gate: { config },
       request: {
-        timeoutMs,
         responseSchema: SESSION_SUMMARY_JSON_SCHEMA,
         ...(options.signal ? { signal: options.signal } : {}),
         ...(options.chat ? { chat: options.chat } : {}),
@@ -1063,7 +1047,6 @@ function resolveExtractRun(
   return {
     llmRunner: runner,
     notices,
-    timeoutMs,
     gates: {
       maxTotalChars: typeof process?.maxTotalChars === "number" ? process.maxTotalChars : undefined,
       minContentChars:
