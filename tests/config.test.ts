@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setConfigValue } from "../src/commands/config-cli";
+import { resolveImproveExecution } from "../src/commands/improve/execution";
 import {
   DEFAULT_CONFIG,
   defaultConnection,
@@ -23,6 +24,7 @@ import { EmbeddingConnectionConfigSchema } from "../src/core/config/config-schem
 import { ConfigError } from "../src/core/errors";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+import { resolveIndexPassExecution } from "../src/llm/index-passes";
 import { schedulerEnabledRefs } from "../src/tasks/activation-config";
 import {
   type Cleanup,
@@ -977,6 +979,40 @@ describe("0.9 config shape parsing", () => {
     expect(defaultConnection(loaded)?.name).toBe("default");
     expect(defaultHarness(loaded)).toBeUndefined();
     expect(loaded.improve?.strategy).toBe("my-custom-strategy");
+  });
+
+  // A pointer to a connection or harness is a plain string: a miscased or unknown name warns once where it is
+  // resolved and the default runs, and the config still loads. Only the entry's own name is held to the rule.
+  test.each([
+    ["improve.connection", { improve: { connection: "Anthropic" } }],
+    ["improve.harness", { improve: { harness: "Anthropic" } }],
+    ["improve.processes.<process>.connection", { improve: { processes: { triage: { connection: "Anthropic" } } } }],
+    ["improve.processes.<process>.harness", { improve: { processes: { triage: { harness: "Anthropic" } } } }],
+    ["improve.qualityGate.connection", { improve: { qualityGate: { connection: "Anthropic" } } }],
+    ["index.connection", { index: { connection: "Anthropic" } }],
+    ["index.<pass>.connection", { index: { graph: { connection: "Anthropic" } } }],
+  ])("a miscased name at %s warns once at resolution and uses the default", (_where, pointer) => {
+    writeCurrentConfig({
+      connections: { default: { endpoint: "http://lab:1/v1", models: { fast: "m" } } },
+      ...pointer,
+    });
+    const warnings = captureWarnings(() => {
+      const loaded = loadConfig();
+      for (let round = 0; round < 2; round += 1) {
+        const improve = resolveImproveExecution({ config: loaded, processName: "triage", alias: "fast" });
+        const gate = resolveImproveExecution({
+          config: loaded,
+          processName: "reflect-quality-judge",
+          alias: "fast",
+          ...(loaded.improve?.qualityGate ? { current: loaded.improve.qualityGate } : {}),
+        });
+        const index = resolveIndexPassExecution("graph", loaded);
+        expect(improve?.runner).toMatchObject({ kind: "connection", name: "default" });
+        expect(gate?.runner).toMatchObject({ kind: "connection", name: "default" });
+        expect(index.runner).toMatchObject({ kind: "connection", name: "default" });
+      }
+    });
+    expect(warnings.filter((w) => w.includes('"Anthropic"'))).toHaveLength(1);
   });
 
   test("the lone connection, and the lone harness, are the defaults whatever they are called", () => {

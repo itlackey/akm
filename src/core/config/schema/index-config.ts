@@ -6,7 +6,7 @@
  * `index` config: the index-wide model-work settings + arbitrary per-pass entries.
  */
 import { z } from "zod";
-import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt } from "./primitives";
+import { LlmInvocationOverridesSchema, nonEmptyString, positiveInt } from "./primitives";
 
 // ── Index / per-pass ────────────────────────────────────────────────────────
 
@@ -17,7 +17,7 @@ import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt }
  */
 export const IndexPassConfigSchema = z
   .object({
-    connection: engineName.optional(),
+    connection: nonEmptyString.optional(),
     model: nonEmptyString.optional(),
     timeoutMs: z.union([positiveInt, z.null()]).optional(),
     enabled: z.boolean().optional(),
@@ -75,7 +75,7 @@ const IndexConfigRuntimeSchema = z.preprocess(
   },
   z
     .object({
-      connection: engineName.optional(),
+      connection: nonEmptyString.optional(),
       model: nonEmptyString.optional(),
       timeoutMs: z.union([positiveInt, z.null()]).optional(),
       llm: LlmInvocationOverridesSchema.optional(),

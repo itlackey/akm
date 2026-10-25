@@ -227,8 +227,7 @@
       "properties": {
         "connection": {
           "type": "string",
-          "maxLength": 63,
-          "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          "minLength": 1
         },
         "model": {
           "type": "string",
@@ -275,8 +274,7 @@
         "properties": {
           "connection": {
             "type": "string",
-            "maxLength": 63,
-            "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+            "minLength": 1
           },
           "model": {
             "type": "string",
@@ -540,13 +538,11 @@
         },
         "connection": {
           "type": "string",
-          "maxLength": 63,
-          "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          "minLength": 1
         },
         "harness": {
           "type": "string",
-          "maxLength": 63,
-          "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          "minLength": 1
         },
         "processes": {
           "type": "object",
@@ -556,13 +552,11 @@
               "properties": {
                 "connection": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "harness": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "model": {
                   "type": "string",
@@ -611,13 +605,11 @@
               "properties": {
                 "connection": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "harness": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "model": {
                   "type": "string",
@@ -666,13 +658,11 @@
               "properties": {
                 "connection": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "harness": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "model": {
                   "type": "string",
@@ -721,13 +711,11 @@
               "properties": {
                 "connection": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "harness": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "model": {
                   "type": "string",
@@ -776,13 +764,11 @@
               "properties": {
                 "connection": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "harness": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "model": {
                   "type": "string",
@@ -831,13 +817,11 @@
               "properties": {
                 "connection": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "harness": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "model": {
                   "type": "string",
@@ -886,13 +870,11 @@
               "properties": {
                 "connection": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "harness": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "model": {
                   "type": "string",
@@ -944,13 +926,11 @@
           "properties": {
             "connection": {
               "type": "string",
-              "maxLength": 63,
-              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              "minLength": 1
             },
             "harness": {
               "type": "string",
-              "maxLength": 63,
-              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              "minLength": 1
             },
             "model": {
               "type": "string",
@@ -1600,8 +1580,7 @@
           "properties": {
             "connection": {
               "type": "string",
-              "maxLength": 63,
-              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              "minLength": 1
             },
             "model": {
               "type": "string",
@@ -1648,8 +1627,7 @@
             "properties": {
               "connection": {
                 "type": "string",
-                "maxLength": 63,
-                "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                "minLength": 1
               },
               "model": {
                 "type": "string",
@@ -1913,13 +1891,11 @@
             },
             "connection": {
               "type": "string",
-              "maxLength": 63,
-              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              "minLength": 1
             },
             "harness": {
               "type": "string",
-              "maxLength": 63,
-              "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              "minLength": 1
             },
             "processes": {
               "type": "object",
@@ -1929,13 +1905,11 @@
                   "properties": {
                     "connection": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "harness": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "model": {
                       "type": "string",
@@ -1984,13 +1958,11 @@
                   "properties": {
                     "connection": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "harness": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "model": {
                       "type": "string",
@@ -2039,13 +2011,11 @@
                   "properties": {
                     "connection": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "harness": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "model": {
                       "type": "string",
@@ -2094,13 +2064,11 @@
                   "properties": {
                     "connection": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "harness": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "model": {
                       "type": "string",
@@ -2149,13 +2117,11 @@
                   "properties": {
                     "connection": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "harness": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "model": {
                       "type": "string",
@@ -2204,13 +2170,11 @@
                   "properties": {
                     "connection": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "harness": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "model": {
                       "type": "string",
@@ -2259,13 +2223,11 @@
                   "properties": {
                     "connection": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "harness": {
                       "type": "string",
-                      "maxLength": 63,
-                      "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      "minLength": 1
                     },
                     "model": {
                       "type": "string",
@@ -2317,13 +2279,11 @@
               "properties": {
                 "connection": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "harness": {
                   "type": "string",
-                  "maxLength": 63,
-                  "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  "minLength": 1
                 },
                 "model": {
                   "type": "string",

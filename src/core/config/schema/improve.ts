@@ -39,8 +39,8 @@ const ImproveStateGcSchema = z
  */
 export const ImproveWhereSchema = z
   .object({
-    connection: engineName.optional(),
-    harness: engineName.optional(),
+    connection: nonEmptyString.optional(),
+    harness: nonEmptyString.optional(),
     model: nonEmptyString.optional(),
     llm: LlmInvocationOverridesSchema.optional(),
     timeoutMs: z.union([positiveInt, z.null()]).optional(),
@@ -65,8 +65,8 @@ export const ImproveConfigSchema = z
     /** The strategy `akm improve` runs when `--strategy` names none. */
     strategy: engineName.optional(),
     /** Where improve's model work runs: a connection, or a harness, over the default. */
-    connection: engineName.optional(),
-    harness: engineName.optional(),
+    connection: nonEmptyString.optional(),
+    harness: nonEmptyString.optional(),
     /** Where each improve process runs, over `connection` / `harness` above. */
     processes: ImproveProcessesSchema.optional(),
     /** Where the judge of the reflect and distill quality gates runs, over `connection` / `harness` above (not over the process's own settings, which are the writer's). */
