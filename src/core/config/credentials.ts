@@ -24,49 +24,59 @@ function storePath(): string {
   return path.join(getConfigDir(), "credentials.json");
 }
 
-/** The stored keys; an absent file is empty and one that is not a JSON object is `undefined`. */
-function readStore(): Record<string, string> | undefined {
+/** What is wrong with the store, if anything: it cannot be read, or it is not a JSON object of keys. */
+type StoreRead = { readonly entries: Record<string, unknown> } | { readonly problem: string };
+
+/** The stored entries; an absent file holds none. */
+function readStore(): StoreRead {
   let text: string;
   try {
     text = fs.readFileSync(storePath(), "utf8");
   } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "ENOENT" ? {} : undefined;
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === "ENOENT"
+      ? { entries: {} }
+      : { problem: `${storePath()} cannot be read (${code ?? "unknown error"})` };
   }
   try {
     const parsed: unknown = JSON.parse(text);
-    return isRecord(parsed) ? (parsed as Record<string, string>) : undefined;
+    if (isRecord(parsed)) return { entries: parsed };
   } catch {
-    return undefined;
+    // Falls through: not JSON is not a JSON object of keys.
   }
+  return { problem: `${storePath()} is not a JSON object of keys` };
 }
 
-function writeStore(store: Record<string, string>): void {
+function writeStore(entries: Record<string, unknown>): void {
   fs.mkdirSync(path.dirname(storePath()), { recursive: true, mode: 0o700 });
-  writeFileAtomic(storePath(), `${JSON.stringify(store, null, 2)}\n`, 0o600);
+  writeFileAtomic(storePath(), `${JSON.stringify(entries, null, 2)}\n`, 0o600);
 }
 
-/** The key stored under `name`, if any. */
+/** The key stored under `name`, if any. A store that cannot be used, or an entry that is not a string, is named once and ignored. */
 export function readCredential(name: string): string | undefined {
   const store = readStore();
-  if (store === undefined) {
-    warnOnce(`credentials:unreadable:${storePath()}`, `${storePath()} is not a JSON object of keys; ignoring it.`);
+  if ("problem" in store) {
+    warnOnce(`credentials:unusable:${storePath()}`, `${store.problem}; ignoring it.`);
     return undefined;
   }
-  return store[name] || undefined;
-}
-
-function writableStore(): Record<string, string> {
-  const store = readStore();
-  if (store === undefined) {
-    throw new ConfigError(
-      `${storePath()} is not a JSON object of keys; refusing to overwrite it.`,
-      "INVALID_CONFIG_FILE",
+  const value = store.entries[name];
+  if (value !== undefined && typeof value !== "string") {
+    warnOnce(
+      `credentials:not-a-string:${storePath()}:${name}`,
+      `${storePath()}: the entry "${name}" is not a string; ignoring it.`,
     );
+    return undefined;
   }
-  return store;
+  return value || undefined;
 }
 
-/** Store `value` under `name`, keeping every other key. */
+function writableStore(): Record<string, unknown> {
+  const store = readStore();
+  if ("problem" in store) throw new ConfigError(`${store.problem}; refusing to overwrite it.`, "INVALID_CONFIG_FILE");
+  return store.entries;
+}
+
+/** Store `value` under `name`, keeping every other entry as it is. */
 export function writeCredential(name: string, value: string): void {
   writeStore({ ...writableStore(), [name]: value });
 }

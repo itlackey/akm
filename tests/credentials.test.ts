@@ -21,7 +21,7 @@ import { getConfigDir } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 
 const storePath = () => path.join(getConfigDir(), "credentials.json");
-const readStoreFile = () => JSON.parse(fs.readFileSync(storePath(), "utf8")) as Record<string, string>;
+const readStoreFile = () => JSON.parse(fs.readFileSync(storePath(), "utf8")) as Record<string, unknown>;
 const mode = (target: string) => fs.statSync(target).mode & 0o777;
 
 let warnings: string[] = [];
@@ -85,11 +85,42 @@ describe("the store", () => {
       fs.writeFileSync(storePath(), corrupt);
       expect(readCredential("lab")).toBeUndefined();
       expect(readCredential("lab")).toBeUndefined();
-      expect(warnings.filter((w) => w.includes("credentials.json"))).toHaveLength(1);
-      expect(() => writeCredential("lab", "new")).toThrow(/refusing to overwrite/);
+      expect(warnings.filter((w) => w.includes("is not a JSON object of keys"))).toHaveLength(1);
+      expect(() => writeCredential("lab", "new")).toThrow(/is not a JSON object of keys; refusing to overwrite/);
       expect(() => deleteCredential("lab")).toThrow(/refusing to overwrite/);
       expect(fs.readFileSync(storePath(), "utf8")).toBe(corrupt);
     }
+  });
+
+  test("a store that cannot be read says so, in its own words, and is never overwritten", () => {
+    // A directory where the file belongs reads as an error that is not "absent".
+    fs.mkdirSync(storePath(), { recursive: true });
+    try {
+      expect(readCredential("lab")).toBeUndefined();
+      expect(readCredential("lab")).toBeUndefined();
+      const unreadable = warnings.filter((w) => w.includes("cannot be read"));
+      expect(unreadable).toHaveLength(1);
+      expect(unreadable[0]).toContain("EISDIR");
+      expect(unreadable[0]).not.toContain("not a JSON object");
+      expect(() => writeCredential("lab", "new")).toThrow(/cannot be read \(EISDIR\); refusing to overwrite/);
+    } finally {
+      fs.rmSync(storePath(), { recursive: true, force: true });
+    }
+  });
+
+  test("an entry that is not a string is named once and ignored, and a write keeps it as it is", () => {
+    fs.mkdirSync(path.dirname(storePath()), { recursive: true });
+    fs.writeFileSync(storePath(), JSON.stringify({ lab: { token: "x" }, other: "key-other", count: 3 }));
+    expect(readCredential("lab")).toBeUndefined();
+    expect(readCredential("lab")).toBeUndefined();
+    expect(readCredential("count")).toBeUndefined();
+    expect(readCredential("other")).toBe("key-other");
+    expect(warnings.filter((w) => w.includes('the entry "lab" is not a string'))).toHaveLength(1);
+    expect(warnings.filter((w) => w.includes('the entry "count" is not a string'))).toHaveLength(1);
+    expect(warnings.join("\n")).not.toContain("token");
+
+    writeCredential("embedding", "key-embedding");
+    expect(readStoreFile()).toEqual({ lab: { token: "x" }, other: "key-other", count: 3, embedding: "key-embedding" });
   });
 });
 
