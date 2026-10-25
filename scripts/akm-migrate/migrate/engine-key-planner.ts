@@ -136,7 +136,14 @@ function planYaml(
   const splices: Splice[] = [];
   const rewrites: EngineKeyRewrite[] = [];
   const notes: string[] = [];
-  for (const { at, map } of enginePlaces(document.contents, role)) {
+  const places = enginePlaces(document.contents, role);
+  // A task source older than v4 still on disk is one the task step left blocked: renaming a key in it would keep the
+  // task step from converting it once the blocker is fixed.
+  const version = pairOf(document.contents, "version")?.value;
+  if (role === "task" && places.some(({ map }) => pairOf(map, "engine")) && !(isScalar(version) && version.value === 4)) {
+    return { problem: "it is not task source v4; convert it to v4 first, then run this step again" };
+  }
+  for (const { at, map } of places) {
     const pair = pairOf(map, "engine");
     if (!pair) continue;
     const where = at === "" ? "engine" : `${at}.engine`;

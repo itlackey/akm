@@ -80,6 +80,20 @@ describe("planEngineKeyFile", () => {
     ).toBe("unchanged");
   });
 
+  test("a task source older than v4 is left for the task step and reported, with its bytes untouched", () => {
+    for (const text of [
+      "version: 2\nrun: echo\nengine: claude\n",
+      "version: 3\nrun: echo\nengine: claude\n",
+      "run: echo\nengine: claude\n",
+    ]) {
+      const outcome = plan("task", text);
+      expect(outcome).toMatchObject({ status: "skipped" });
+      expect((outcome as { reason: string }).reason).toContain("convert it to v4 first");
+    }
+    // A v2 file with no engine key is no concern of this step.
+    expect(plan("task", "version: 2\nrun: echo\n").status).toBe("unchanged");
+  });
+
   test("leaves an engine that does not name one, and a place that also names a connection or a harness, as written", () => {
     expect(plan("command", "---\nengine: null\n---\n").status).toBe("skipped");
     const both = plan("command", "---\nengine: lab\nconnection: other\n---\n");
@@ -201,6 +215,18 @@ describe("the step", () => {
       ]);
     }
     expect(fs.readFileSync(path.join(stash(), FILES.command[0]), "utf8")).toBe(FILES.command[1]);
+  });
+
+  test("a v2 task source still on disk is listed as skipped and left as written", async () => {
+    configure();
+    const file = write("tasks/old.yml", "version: 2\nrun: echo hi\nengine: lab\n");
+
+    const plan = await runMigration({ apply: false });
+
+    expect(plan.assetEngineKeys).toMatchObject({ changed: 0, skipped: 1 });
+    expect(plan.assetEngineKeys?.files[0]).toMatchObject({ filePath: file });
+    expect(plan.assetEngineKeys?.files[0]?.reason).toContain("convert it to v4 first");
+    expect(fs.readFileSync(file, "utf8")).toBe("version: 2\nrun: echo hi\nengine: lab\n");
   });
 
   test("a name that is neither a connection nor a harness becomes harness: with a note", async () => {
