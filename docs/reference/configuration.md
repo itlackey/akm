@@ -206,7 +206,7 @@ An entry sets any of:
 | Key | Meaning |
 | --- | --- |
 | `platform` | One of the platforms above. Absent, the entry's name must be one. |
-| `bin` | The program to run. Default: the platform's binary above, looked up on `PATH`. |
+| `bin` | The program to run. Default: the platform's binary above, looked up on `PATH`. Set it when that is not the one you mean, for example `opencode2` when OpenCode 2 installed it beside an older `opencode` that comes first on your `PATH`. |
 | `args` | Arguments placed before the ones akm adds. |
 | `workspace` | The directory agent work runs in. Default: the directory akm was started in. |
 | `agent` | The harness's native agent to run when a request names none (`claude` and `opencode` only). A request's own agent wins, an agent asset's persona is kept, and model work runs no native agent. |

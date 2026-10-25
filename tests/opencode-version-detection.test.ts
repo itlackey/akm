@@ -5,18 +5,14 @@
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import path from "node:path";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { resolveTarget } from "../src/integrations/agent/resolution";
-import { getHarness } from "../src/integrations/harnesses";
 import {
   _setOpencodeVersionProbeForTests,
   detectOpencodeMajor,
   parseOpencodeMajor,
   resolveOpencodeBin,
 } from "../src/integrations/harnesses/opencode/version";
-import { makeSandboxDir, withEnv } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
 let warnings: string[];
@@ -127,28 +123,7 @@ describe("the opencode harness's binary", () => {
     const plain = resolveTarget({ config, layers: [{ harness: "plain" }] });
     const pinned = resolveTarget({ config, layers: [{ harness: "pinned" }] });
     if (plain.kind !== "harness" || pinned.kind !== "harness") throw new Error("expected harness runners");
-    expect(getHarness("opencode")?.profile.bin).toBe(plain.bin);
+    expect(plain.bin).toBe("opencode");
     expect(pinned.bin).toBe("/opt/oc1/opencode");
-  });
-
-  test("a harness with no bin runs opencode2 when it sits beside an opencode on PATH, as plugin upgrade does", async () => {
-    const bins = makeSandboxDir("akm-fake-opencode-pair");
-    const install = (...names: string[]) => {
-      for (const name of names) fs.writeFileSync(path.join(bins.dir, name), "#!/bin/sh\n", { mode: 0o755 });
-    };
-    const harnessBin = () => {
-      // The PATH lookup is remembered for the process; forget it to look again.
-      _setOpencodeVersionProbeForTests(undefined);
-      return withEnv({ PATH: bins.dir }, () => getHarness("opencode")?.profile.bin);
-    };
-    try {
-      install("opencode", "opencode2");
-      expect(await harnessBin()).toBe("opencode2");
-      fs.rmSync(path.join(bins.dir, "opencode2"));
-      expect(await harnessBin()).toBe("opencode");
-    } finally {
-      _setOpencodeVersionProbeForTests(undefined);
-      bins.cleanup();
-    }
   });
 });
