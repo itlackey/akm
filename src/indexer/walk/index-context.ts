@@ -29,6 +29,24 @@ export interface IndexVerification {
   embeddingCount: number;
 }
 
+/** The `index_meta` key holding the last index run's {@link SemanticSearchRecord}. */
+export const SEMANTIC_SEARCH_META_KEY = "semanticSearch";
+
+/**
+ * What the last index run found about semantic search, kept beside `hasEmbeddings`
+ * for `akm health`'s `semantic-search` check. A record, not a gate: search never
+ * reads it (#873). `unavailable` is a `blocked` run whose local embedding runtime
+ * could not load on this machine.
+ */
+export interface SemanticSearchRecord {
+  status: IndexVerification["semanticStatus"] | "unavailable";
+  provider: IndexVerification["embeddingProvider"];
+  /** The runtime the local embedder embedded with in that run; absent when it embedded nothing. */
+  runtime?: string;
+  /** Why semantic search is blocked or unavailable. */
+  reason?: string;
+}
+
 /** Canonical configured owner that disappeared or moved since the last complete scan. */
 export interface RemovedIndexSource {
   bundleId: string;

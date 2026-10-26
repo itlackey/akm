@@ -95,7 +95,12 @@ import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
 import type { FileContext } from "./walk/file-context";
-import type { IndexVerification, RemovedIndexSource } from "./walk/index-context";
+import {
+  type IndexVerification,
+  type RemovedIndexSource,
+  SEMANTIC_SEARCH_META_KEY,
+  type SemanticSearchRecord,
+} from "./walk/index-context";
 import { walkStashFlatWithStatus } from "./walk/walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -306,7 +311,7 @@ export interface EmbeddingPassResult {
 /**
  * The embedding phase (#954): generate and store vectors for every entry
  * missing one, then compute the `hasEmbeddings` fact and the semantic-search
- * verification off the result. `db` must have no ambient transaction open —
+ * verification off the result, and record it for `akm health`. `db` must have no ambient transaction open —
  * each per-batch commit is its own durable write.
  */
 export async function runEmbeddingPass(params: {
@@ -324,6 +329,16 @@ export async function runEmbeddingPass(params: {
   const semanticEntryCount = getEmbeddableEntryCount(db);
   onProgress({ phase: "finalize", message: "Verifying semantic search state." });
   const verification = verifyIndexState(db, config, semanticEntryCount, embeddingResult);
+  const record: SemanticSearchRecord = {
+    status:
+      verification.semanticStatus === "blocked" && embeddingResult.runtimeUnavailable
+        ? "unavailable"
+        : verification.semanticStatus,
+    provider: verification.embeddingProvider,
+    ...(verification.embeddingRuntime ? { runtime: verification.embeddingRuntime } : {}),
+    ...(verification.ok ? {} : { reason: verification.message }),
+  };
+  setMeta(db, SEMANTIC_SEARCH_META_KEY, JSON.stringify(record));
   onProgress({ phase: "verify", message: verification.message });
   return { embeddingResult, verification };
 }
