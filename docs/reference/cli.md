@@ -191,8 +191,8 @@ akm setup --endpoint http://localhost:11434/v1 --yes   # no prompts
 The wizard asks, in order:
 
 1. **Agent programs.** Which installed agent programs (Claude Code, Codex,
-   OpenCode, ...) akm may use; each is shown with whether akm can run it
-   read-only for its own model calls. With several, you pick the default. When a
+   OpenCode, ...) akm may use; each is shown with whether akm can limit it to
+   reading and searching for its own model calls. With several, you pick the default. When a
    harness that cannot be restricted is enabled for akm's model calls, setup says
    "Model work on `<name>` cannot be restricted: it can edit files and run
    commands." where you choose, and in its summary line.
@@ -235,7 +235,7 @@ unless `--yes` or `--from` is given.
 
 The detected defaults are: when no agent program is configured yet, every one
 found on `PATH` is enabled and the first found is the default. If no connection
-exists, model calls go to that program when it can run read-only; otherwise a
+exists, model calls go to that program when akm can limit it to reading and searching; otherwise a
 local OpenAI-compatible server (Ollama on 11434, LM Studio on 1234, or a server
 on 8080), when one answers, becomes the connection `default`. Each alias takes
 the connection's current pick, else the first model the endpoint lists that is

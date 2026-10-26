@@ -57,7 +57,7 @@ describe("stepHarnesses", () => {
     ...over,
   });
 
-  test("interactive: offers what is installed, preselected, each saying whether model calls run read-only", async () => {
+  test("interactive: offers what is installed, preselected, each saying whether model calls are limited to reading and searching", async () => {
     prompts.answers.multiselect.push(["claude"]);
     prompts.answers.confirm.push(true);
 
@@ -66,7 +66,7 @@ describe("stepHarnesses", () => {
     const [asked] = prompts.of("multiselect");
     expect(asked?.options.map((o) => o.value)).toEqual(["claude", "gemini"]);
     expect(asked?.initialValues).toEqual(["claude", "gemini"]);
-    expect(asked?.options[0]?.hint).toContain("model calls run read-only");
+    expect(asked?.options[0]?.hint).toContain("model calls are limited to reading and searching");
     expect(asked?.options[1]?.hint).toContain("cannot be restricted to read-only");
     expect(result).toEqual({
       answer: { platforms: ["claude"], default: "claude" },
@@ -103,7 +103,7 @@ describe("stepHarnesses", () => {
     const before = warned().length;
     await stepHarnesses(input());
     expect(warned()).toHaveLength(before);
-    expect(prompts.of("confirm")[1]?.message).toContain("Model calls run read-only.");
+    expect(prompts.of("confirm")[1]?.message).toContain("Model calls are limited to reading and searching.");
   });
 
   test("OpenCode 1 cannot be restricted, whatever the platform table says: the hint, the question, the note beside the answer and --yes all say so", async () => {
@@ -117,7 +117,7 @@ describe("stepHarnesses", () => {
       expect(prompts.of("confirm")[0]?.message).toContain(
         "Model work on opencode cannot be restricted: it can edit files and run commands.",
       );
-      expect(prompts.of("confirm")[0]?.message).not.toContain("Model calls run read-only.");
+      expect(prompts.of("confirm")[0]?.message).not.toContain("Model calls are limited to reading and searching.");
       expect(prompts.output).toContain(
         "Model work on opencode cannot be restricted: it can edit files and run commands.",
       );
@@ -137,15 +137,17 @@ describe("stepHarnesses", () => {
     });
   });
 
-  test("OpenCode 2 can: the hint and the question say read-only, no note is added, and --yes hands it model calls", async () => {
+  test("OpenCode 2 can: the hint and the question say its tools are limited, no note is added, and --yes hands it model calls", async () => {
     await withOpencodeOnPath(2, async () => {
       prompts.answers.multiselect.push(["opencode"]);
       prompts.answers.confirm.push(true);
 
       const result = await stepHarnesses(input({ installed: installed("opencode") }));
 
-      expect(prompts.of("multiselect")[0]?.options[0]?.hint).toContain("model calls run read-only");
-      expect(prompts.of("confirm")[0]?.message).toContain("Model calls run read-only.");
+      expect(prompts.of("multiselect")[0]?.options[0]?.hint).toContain(
+        "model calls are limited to reading and searching",
+      );
+      expect(prompts.of("confirm")[0]?.message).toContain("Model calls are limited to reading and searching.");
       expect(prompts.output.filter((line) => line.includes("cannot be restricted"))).toEqual([]);
       expect(result.modelWork).toBe(true);
 
@@ -210,7 +212,7 @@ describe("stepHarnesses", () => {
     expect(prompts.output.join("\n")).toContain("No agent programs found on PATH");
   });
 
-  test("--yes: every detected harness, the first the default, used for model calls only when it can run read-only", async () => {
+  test("--yes: every detected harness, the first the default, used for model calls only when it can be restricted", async () => {
     const readOnly = await stepHarnesses(input({ interactive: false }));
     expect(readOnly).toEqual({
       answer: { platforms: ["claude", "gemini"], default: "claude" },

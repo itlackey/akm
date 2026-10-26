@@ -29,7 +29,7 @@ export interface LowerTarget {
   readonly systemPrompt: boolean;
   /** Can run a named agent of its own (`opencode run --agent`, `claude --agent`). */
   readonly nativeAgent: boolean;
-  /** akm can run model work read-only on it. Otherwise model work runs unrestricted, with a notice. */
+  /** akm can run model work on it with its tools limited to reading and searching. Otherwise model work runs unrestricted, with a notice. */
   readonly confinable: boolean;
   /** Inference keys it carries; any other key is reported untranslated. Absent: none. */
   readonly inference?: readonly string[];
@@ -93,8 +93,8 @@ export interface AkmHarness extends LowerTarget {
   readonly setupDetectionDir?: string;
   readonly profile: HarnessProfileDefaults;
   /**
-   * Whether the program `bin` can run model work read-only, for a harness whose `confinable` depends on the install
-   * (OpenCode: only version 2). Setup asks it; absent, `confinable` is the answer.
+   * Whether the program `bin` can run model work with its tools limited to reading and searching, for a harness whose
+   * `confinable` depends on the install (OpenCode: only version 2). Setup asks it; absent, `confinable` is the answer.
    */
   readonly confinableInstalled?: (bin: string) => boolean;
   /**

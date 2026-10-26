@@ -269,9 +269,9 @@ describe("akm setup --yes defaults", () => {
 
     expect(written().harnesses).toEqual({ default: { platform: "claude" }, codex: {} });
     expect(summary.runs.agentWork).toContain('harness "default"');
-    // Claude can run read-only, so it takes the model calls and no connection is looked for.
+    // Claude can be restricted, so it takes the model calls and no connection is looked for.
     expect(summary.runs.modelCalls).toContain('harness "default"');
-    expect(summary.runs.modelCalls).toContain("read-only");
+    expect(summary.runs.modelCalls).toContain("limited to reading and searching");
     expect("connections" in written()).toBe(false);
   });
 
@@ -330,16 +330,16 @@ describe("akm setup --yes defaults", () => {
     expect(written().harnesses).toEqual({ opencode: { modelWork: false } });
     expect(summary.runs.modelCalls).toContain('harness "opencode" is set not to take model calls');
     expect(summary.runs.agentWork).toContain('harness "opencode"');
-    expect(summary.runs.agentWork).not.toContain("read-only");
+    expect(summary.runs.agentWork).not.toContain("limited to reading and searching");
   });
 
-  test("OpenCode 2 can be restricted: it takes the model calls, read-only, and is not marked", async () => {
+  test("OpenCode 2 can be restricted: it takes the model calls, its tools limited, and is not marked", async () => {
     installed("opencode");
 
     const summary = await withOpencodeOnPath(2, () => run());
 
     expect(written().harnesses).toEqual({ opencode: {} });
-    expect(summary.runs.modelCalls).toBe('harness "opencode", read-only');
+    expect(summary.runs.modelCalls).toBe('harness "opencode", limited to reading and searching');
   });
 
   test("a second run over that config changes nothing, and the hand-written setting is kept", async () => {
@@ -376,7 +376,7 @@ describe("akm setup --yes defaults", () => {
     expect((written().connections as Record<string, unknown>).default).toBeDefined();
   });
 
-  test("a harness that can run read-only takes the model calls and is not marked; a mark from an earlier run is cleared", async () => {
+  test("a harness that can be restricted takes the model calls and is not marked; a mark from an earlier run is cleared", async () => {
     installed("claude");
     writeSandboxConfig({ semanticSearchMode: "off", harnesses: { claude: { modelWork: false } } });
     resetConfigCache();

@@ -499,7 +499,7 @@ What runs where follows from the kind of work:
 
 - **Model work** (the improve processes, judges, index passes, extraction,
   `remember --enrich`) runs on the default connection as a direct request to its
-  endpoint; with no connection, on the default harness, confined to read-only
+  endpoint; with no connection, on the default harness, with its tools restricted
   where the harness can be.
 - **Agent work** (`akm agent`, `command run`, `proposal new`, agent tasks,
   workflow agent steps) runs on the default harness; with no harness, on **akm's

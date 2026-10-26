@@ -141,12 +141,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   yours, and its runs are in your OpenCode history, which improve reads.
   OpenCode 2 runs `--standalone` (one process that ends with the run, not a
   background service) with `--title akm`. Model work sets
-  `OPENCODE_DISABLE_FREE_MODELS=1`, which OpenCode 2.1 and later honor: a call
+  `OPENCODE_DISABLE_FREE_MODELS=1`, which OpenCode 2.1.2 and later honor: a call
   with no usable provider fails instead of sending the prompt to OpenCode's
   hosted free model. Agent work leaves your OpenCode's models as they are. An
   interactive `akm agent` still hands the terminal to the CLI.
-  - Model work runs read-only on OpenCode 2 (below) and unrestricted on
-    OpenCode 1, with one warning, in a scratch directory.
+  - Model work on OpenCode 2 runs with its tools limited to reading and
+    searching (below) and is unrestricted on OpenCode 1, with one warning, in a
+    scratch directory.
 - A config in the old form (`engines`, `defaults.engine`, `defaults.llmEngine`,
   `defaults.improveStrategy`, `workflow.judgeEngine`, a strategy's `engine`,
   `model`, `llm` and `timeoutMs`) still loads: it is read as the new form in
@@ -210,12 +211,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Model work runs on any harness. Where a harness can be restricted it is: Claude
   Code runs with its settings files ignored, only `Read` and `akm search`, `akm
   show` and `akm curate`, no MCP servers and no saved transcript, Codex with
-  `--sandbox read-only`, and OpenCode 2 as a read-only agent passed inline for
-  the run, with its tools that edit files, run commands, fetch from the web or
-  start subagents denied. Where it cannot (the other platforms, and
-  OpenCode 1), the call runs unrestricted, with a notice. A config that names an
-  `opencode` harness for model work loads, and a native agent named for model
-  work is ignored with a notice.
+  `--sandbox read-only`, and OpenCode 2 as an agent passed inline for the run
+  with every tool denied except `read`, `glob` and `grep` (and `akm_search`,
+  `akm_show` and `akm_curate` when the akm plugin is installed), so a tool a
+  plugin adds is denied too; a plugin's own hooks still run. Where it cannot
+  (the other platforms, and OpenCode 1), the call runs unrestricted, with a
+  notice. A config that names an `opencode` harness for model work loads, and a
+  native agent named for model work is ignored with a notice.
 - Harnesses are thin shells. akm writes only the arguments a program needs to run
   without a person, hands it the prompt and takes its standard output as the
   reply, as written: it no longer asks for JSON output or reads a result or a

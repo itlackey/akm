@@ -406,7 +406,7 @@ describe("runSetupWizard", () => {
     expect(readSavedConfig().harnesses).toEqual({ opencode: { modelWork: false } });
   });
 
-  test("OpenCode 2 asked about model calls: the question and the summary say read-only", async () => {
+  test("OpenCode 2 asked about model calls: the question and the summary say its tools are limited to reading and searching", async () => {
     installSetupSeams();
     installHarness("opencode");
 
@@ -418,11 +418,11 @@ describe("runSetupWizard", () => {
     await withOpencodeOnPath(2, () => runSetupWizard());
 
     const question = promptState.trace.find((line) => line.startsWith("[confirm] Use opencode")) ?? "";
-    expect(question).toContain("Model calls run read-only.");
+    expect(question).toContain("Model calls are limited to reading and searching.");
     expect(question).not.toContain("cannot be restricted");
     expect(readSavedConfig().harnesses).toEqual({ opencode: {} });
     const summary = promptState.notes.find((note) => note.startsWith("Configuration Summary")) ?? "";
-    expect(summary).toContain('Model calls:      harness "opencode", read-only');
+    expect(summary).toContain('Model calls:      harness "opencode", limited to reading and searching');
   });
 
   test("a harness and a connection with a typed key: the key lands in credentials.json and nowhere else", async () => {
@@ -476,7 +476,7 @@ describe("runSetupWizard", () => {
     expect("connections" in saved).toBe(false);
     expect(promptState.trace.some((line) => line.includes("Endpoint URL"))).toBe(false);
     const summary = promptState.notes.find((note) => note.startsWith("Configuration Summary")) ?? "";
-    expect(summary).toMatch(/Model calls: +harness "claude" \(.*\), read-only/);
+    expect(summary).toMatch(/Model calls: +harness "claude" \(.*\), limited to reading and searching/);
   });
 
   test("a rerun with the same answers keeps the alias picks the connection already has", async () => {

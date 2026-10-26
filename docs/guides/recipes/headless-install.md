@@ -45,8 +45,8 @@ after Node starts the package launcher.
 
 **Setup.** `akm setup --yes` takes the detected default for every question:
 each agent program found on `PATH` is enabled and the first is the default. When
-that program can run read-only it takes akm's own model calls too; otherwise a
-local model server setup finds becomes the connection. To give akm an endpoint
+akm can limit that program to reading and searching it takes akm's own model
+calls too; otherwise a local model server setup finds becomes the connection. To give akm an endpoint
 yourself, answer the question with a flag; the key is named by the environment variable that holds
 it and never appears on the command line:
 

@@ -39,7 +39,9 @@ export interface HarnessStepInput {
 }
 
 function readOnlyNote(platform: string): string {
-  return runsReadOnly(platform) ? "model calls run read-only" : "model calls cannot be restricted to read-only";
+  return runsReadOnly(platform)
+    ? "model calls are limited to reading and searching"
+    : "model calls cannot be restricted to read-only";
 }
 
 function configuredPlatforms(current: AkmConfig): string[] {
@@ -91,7 +93,7 @@ export async function stepHarnesses(input: HarnessStepInput): Promise<HarnessSte
   const readOnly = runsReadOnly(defaultPlatform);
   const yes = await prompt(() =>
     p.confirm({
-      message: `Use ${defaultPlatform} for akm's own model calls too (improve, judging, extraction)? ${readOnly ? "Model calls run read-only." : unrestrictedModelWorkNote(defaultPlatform)}`,
+      message: `Use ${defaultPlatform} for akm's own model calls too (improve, judging, extraction)? ${readOnly ? "Model calls are limited to reading and searching." : unrestrictedModelWorkNote(defaultPlatform)}`,
       initialValue: true,
     }),
   );

@@ -5,14 +5,15 @@
 // Integration: spawns a program for each harness.
 //
 // Setup tells the user which harnesses can have model work restricted, and the
-// dispatcher runs model work on those with the restriction applied. This is the
-// check that the claim is true: for every harness the registry advertises as
-// `confinable`, model work that tries to change a file outside its scratch
-// directory changes nothing, whatever the harness's authored args say. A stub
-// program stands for each CLI and does what the real one does with the flags it
-// is handed: it edits outside its working directory unless the harness's own
-// restriction is on its command line. The same stub, run as agent work, does edit,
-// so a pass is the restriction and not a stub that never writes.
+// dispatcher runs model work on those with the restriction applied. This checks
+// the command line: for every harness the registry advertises as `confinable`,
+// model work is started in a scratch directory with the harness's own restriction
+// on its command line, whatever the harness's authored args say. A stub program
+// stands for each CLI and edits outside its working directory unless that
+// restriction is on the command line it is handed. The same stub, run as agent
+// work, does edit, so a pass is the restriction and not a stub that never writes.
+// It says nothing of what the real program then permits: for OpenCode 2 that is
+// `opencode-cli-compat.test.ts`, which runs the real CLI when one is named.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -103,7 +104,7 @@ const stubbed = Object.keys(RESTRICTION);
 describe("model work on a CLI harness advertised as confinable", () => {
   for (const platform of stubbed) {
     describe(platform, () => {
-      test("changes nothing outside its scratch directory, whatever its authored args say", async () => {
+      test("is started in a scratch directory with the restriction on its command line, whatever its authored args say", async () => {
         const stub = stubFor(platform);
         const result = await run(stub.runner, true);
         expect(result.ok).toBe(true);

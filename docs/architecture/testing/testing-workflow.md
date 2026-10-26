@@ -287,7 +287,27 @@ The Docker smoke test in `tests/docker/smoke-test.sh` verifies:
 - `akm bundle list`
 - incremental re-index after adding a new asset
 
-### 4. Benchmark (agent utility)
+### 4. OpenCode 2 CLI compatibility
+
+The unit tests build the `opencode run` command line and the stub-program tests
+check that it reaches a program; only a real OpenCode 2 says what its flags, its
+permission map, its environment and a signal do to it. The compatibility suite
+runs the real CLI when a binary is named, and is one skipped test otherwise (the
+CI workflow does not set the gate):
+
+```sh
+AKM_TEST_OPENCODE2_BIN=/path/to/opencode bun test --timeout=120000 tests/integration/opencode-cli-compat.test.ts
+```
+
+Every run of the binary is sandboxed: its `HOME`, XDG and OpenCode directories
+are temporary directories, its only provider is a loopback fake model reached
+through the `@ai-sdk/openai-compatible` package installed with akm (nothing is
+downloaded), and no real OpenCode file, login or key is opened. The suite covers
+what akm relies on at that boundary: model work offers only its reading tools.
+Run it when changing the OpenCode builder, its environment list or the
+subprocess kill ladder, and against a new OpenCode 2 release.
+
+### 5. Benchmark (agent utility)
 
 The LLM-provider-driven, multi-seed agent-utility benchmark (`akm-bench`) now
 lives in the standalone repo **[itlackey/akm-bench](https://github.com/itlackey/akm-bench)**.

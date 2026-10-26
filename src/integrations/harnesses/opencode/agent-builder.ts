@@ -13,8 +13,8 @@
  * a flag; stdin is read verbatim. akm closes it after the write, which the CLI
  * needs: with stdin open it waits for more input.
  *
- * Model work sets `OPENCODE_DISABLE_FREE_MODELS` (OpenCode 2.1 and later; the
- * variable first appears in the 2.1.2 CLI). With no usable provider, OpenCode 2
+ * Model work sets `OPENCODE_DISABLE_FREE_MODELS` (OpenCode 2.1.2 and later, where
+ * the variable first appears). With no usable provider, OpenCode 2
  * would otherwise send akm's data to its hosted free model. The variable deletes
  * every zero-cost model of the `opencode` and `opencode-go` providers, so on agent
  * work it would override a model the user chose.
@@ -27,9 +27,9 @@
  *
  * Model work drops the config's `args`, keeping the model they name, as the
  * Claude and Codex shells do. On OpenCode 2 it runs as {@link MODEL_WORK_AGENT},
- * an agent defined inline for the run with the tools that change files or reach
- * out denied, so nothing is written to the user's files; OpenCode 1 cannot be
- * restricted and runs it unrestricted, with a one-line warning.
+ * an agent defined inline for the run whose tools are limited to reading and
+ * searching; OpenCode 1 cannot be restricted and runs it unrestricted, with a
+ * one-line warning.
  */
 
 import { warnOnce } from "../../../core/warn";
@@ -44,30 +44,28 @@ import {
 } from "../harness";
 import { isOpencode2 } from "./version";
 
-/** The read-only agent OpenCode 2 runs akm's model work as; the name also marks those sessions in the user's history (`./session-log-v2.ts`). */
+/** The agent OpenCode 2 runs akm's model work as, limited to reading and searching; the name also marks those sessions in the user's history (`./session-log-v2.ts`). */
 export const MODEL_WORK_AGENT = "akm-model-work";
 
 /**
- * The agent's definition, passed inline so it merges over the user's config and is never written anywhere. Measured
- * on OpenCode 2.1.2: it leaves `glob`, `grep`, `read` and `skill`. `execute` must be denied, or code could fetch and
- * call OpenCode's worktree and session tools. An entry named for a plugin's tool denies it, so the akm plugin's two
- * tools that write (`akm_feedback`, `akm_remember`) are denied and its `akm_search`, `akm_show` and `akm_curate` stay.
+ * The agent's definition, passed inline so it merges over the user's config and is never written anywhere. Its
+ * permission map is default-deny with the reading tools allowed after it (the last matching entry wins; measured on
+ * OpenCode 2.1.2): `"*": "deny"` removes every tool, one a plugin registers that akm has never heard of included, and
+ * the allows give back `read`, `glob` and `grep` and, when the akm plugin is installed, `akm_search`, `akm_show` and
+ * `akm_curate`. Nothing else is allowed. This limits the tools; a plugin's own `setup` and hooks still run.
  */
 const MODEL_WORK_CONFIG = JSON.stringify({
   agent: {
     [MODEL_WORK_AGENT]: {
       mode: "primary",
       permission: {
-        edit: "deny",
-        write: "deny",
-        bash: "deny",
-        task: "deny",
-        webfetch: "deny",
-        execute: "deny",
-        websearch: "deny",
-        question: "deny",
-        akm_feedback: "deny",
-        akm_remember: "deny",
+        "*": "deny",
+        read: "allow",
+        glob: "allow",
+        grep: "allow",
+        akm_search: "allow",
+        akm_show: "allow",
+        akm_curate: "allow",
       },
     },
   },
@@ -91,7 +89,7 @@ export const opencodeBuilder: HarnessBuilder = {
       if (!oc2) {
         warnOnce(
           "opencode-1-model-work",
-          "OpenCode 1 cannot restrict its tools, so model work on it runs unrestricted, in a scratch directory. OpenCode 2 runs it read-only.",
+          "OpenCode 1 cannot restrict its tools, so model work on it runs unrestricted, in a scratch directory. OpenCode 2 limits its tools to reading and searching.",
         );
       }
       const named = req.model ?? modelFromArgs(args);

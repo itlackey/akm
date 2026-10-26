@@ -313,7 +313,7 @@ describe("opencode by major", () => {
     });
   });
 
-  test("OpenCode 2 model work runs as the read-only agent defined inline, never the config's args or agent", async () => {
+  test("OpenCode 2 model work runs as the tool-limited agent defined inline, never the config's args or agent", async () => {
     await withOpencodeOnPath(2, async () => {
       const authored = ["run", "--agent", "build", "--attach", "http://elsewhere", "--model", "from-args"];
       const built = build("opencode", { prompt: PROMPT, modelWork: true }, authored);
@@ -329,25 +329,25 @@ describe("opencode by major", () => {
       expect(built.stdin).toBe(PROMPT);
       expect(built.env).toMatchObject(NO_FREE_MODELS);
       // The agent is passed with the run and merges over the user's config; it is written nowhere.
-      expect(JSON.parse(built.env?.OPENCODE_CONFIG_CONTENT ?? "")).toEqual({
+      // Default-deny, then the reading tools: the last matching entry wins, so the order is the policy.
+      const content = JSON.parse(built.env?.OPENCODE_CONFIG_CONTENT ?? "");
+      expect(content).toEqual({
         agent: {
           "akm-model-work": {
             mode: "primary",
             permission: {
-              edit: "deny",
-              write: "deny",
-              bash: "deny",
-              task: "deny",
-              webfetch: "deny",
-              execute: "deny",
-              websearch: "deny",
-              question: "deny",
-              akm_feedback: "deny",
-              akm_remember: "deny",
+              "*": "deny",
+              read: "allow",
+              glob: "allow",
+              grep: "allow",
+              akm_search: "allow",
+              akm_show: "allow",
+              akm_curate: "allow",
             },
           },
         },
       });
+      expect(Object.entries(content.agent["akm-model-work"].permission)[0]).toEqual(["*", "deny"]);
       expect(build("opencode", { prompt: PROMPT, modelWork: true, model: "m-1" }, authored).argv).toEqual([
         "opencode",
         "run",

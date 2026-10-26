@@ -198,8 +198,8 @@ Reflect changes only an asset's `description`, `when_to_use` and title. The mode
 5. Dispatch the frozen `RunnerSpec` through `callStageOnce` under the
    model-work tool policy
    ([Where each process runs](../../reference/configuration.md#where-each-process-runs)).
-   The runner may be a connection or a harness (read-only where the harness can
-   be), and both run the same iteration (`runReflectIteration`). The JSON Schema
+   The runner may be a connection or a harness (with its tools restricted where
+   the harness can be), and both run the same iteration (`runReflectIteration`). The JSON Schema
    of the reply (`REFLECT_JSON_SCHEMA`, or the unscoped schema when no ref was
    given) is the request's output schema: `response_format` for a connection, the
    shared schema instruction at the end of the prompt for a harness. A harness
@@ -219,7 +219,7 @@ Reflect changes only an asset's `description`, `when_to_use` and title. The mode
 
 ### distill (akmDistill)
 
-`akmDistill` is a bounded single-call subprocess: one model call through `callStage` on the resolved runner, a direct chat completion on a connection or a read-only run on a harness. Past the process gate it emits a `distill_invoked` event carrying the outcome.
+`akmDistill` is a bounded single-call subprocess: one model call through `callStage` on the resolved runner, a direct chat completion on a connection or a restricted run on a harness. Past the process gate it emits a `distill_invoked` event carrying the outcome.
 
 **Internal steps:**
 
@@ -645,8 +645,8 @@ An explicit ref scope bypasses every gate. Consolidation, extract and schema rep
 
 Improve process selection is resolved once by `resolveImprovePlan`; the plan
 contains every process's frozen enablement, process config, and resolved runner.
-A process runs on a connection, or on a harness: one that cannot be confined to
-read-only runs unrestricted in a scratch directory, with a notice. A process
+A process runs on a connection, or on a harness: one whose tools cannot be restricted
+runs unrestricted in a scratch directory, with a notice. A process
 with no connection or harness is skipped and reported in `skippedProcesses`.
 
 ## Output shape

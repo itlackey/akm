@@ -19,7 +19,7 @@ export interface SetupRuns {
 }
 
 /**
- * Whether akm can run this platform's program read-only for model calls, which keeps them from changing anything:
+ * Whether akm can run this platform's program with its tools limited to reading and searching for model calls:
  * `bin` when the harness sets one, else the platform's own.
  */
 export function runsReadOnly(platform: string, bin?: string): boolean {
@@ -47,7 +47,7 @@ function describeWork(row: ProcessRow, rows: readonly TargetRow[], modelWork: bo
     const restriction =
       modelWork && platform?.type === "harness"
         ? runsReadOnly(platform.platform, platform.bin)
-          ? ", read-only"
+          ? ", limited to reading and searching"
           : `. ${unrestrictedModelWorkNote(`"${row.target}"`)}`
         : "";
     return `harness "${row.target}"${modelSuffix(row)}${restriction}`;

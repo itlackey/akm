@@ -38,11 +38,11 @@ describe("describeRuns", () => {
     expect(runs.agentWork).toBe('akm\'s own runtime over connection "default" (mid)');
   });
 
-  test("a harness: agent work on it, model calls on it with the read-only note", () => {
+  test("a harness: agent work on it, model calls on it with the restriction note", () => {
     const runs = describeRuns(cfg({ harnesses: { default: { platform: "claude" }, codex: {} } }));
     expect(runs.agentWork).toContain('harness "default"');
     expect(runs.modelCalls).toContain('harness "default"');
-    expect(runs.modelCalls).toContain("read-only");
+    expect(runs.modelCalls).toContain("limited to reading and searching");
     // codex is confinable since step 3 (`--sandbox read-only`); gemini is not.
     const gemini = describeRuns(cfg({ harnesses: { gemini: {} } }));
     expect(gemini.modelCalls).toContain(
@@ -50,11 +50,11 @@ describe("describeRuns", () => {
     );
   });
 
-  test("an OpenCode harness is read-only by the major of its configured bin, not of the opencode on PATH", () => {
+  test("an OpenCode harness is restricted by the major of its configured bin, not of the opencode on PATH", () => {
     // Every binary but the harness's own is OpenCode 1, as the one on PATH is.
     fakeOpencodeMajor((bin) => (bin === "/opt/oc2/opencode" ? "opencode v2.0.26" : "1.18.34"));
     expect(describeRuns(cfg({ harnesses: { opencode: { bin: "/opt/oc2/opencode" } } })).modelCalls).toContain(
-      ", read-only",
+      ", limited to reading and searching",
     );
     expect(describeRuns(cfg({ harnesses: { opencode: {} } })).modelCalls).toContain(
       'Model work on "opencode" cannot be restricted',

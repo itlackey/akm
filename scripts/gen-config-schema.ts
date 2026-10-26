@@ -88,7 +88,7 @@ export function renderHarnessTable(): string {
       `| \`${h.id}\` | ${h.displayName} | \`${h.profile.bin}\` | ${yes(h.sessionLogProvider !== undefined)} | ${yes(h.confinable)} | ${yes(h.nativeAgent)} |`,
   );
   return [
-    "| `platform` | Harness | Binary | Session logs | Read-only model work | Native `agent` |",
+    "| `platform` | Harness | Binary | Session logs | Restricted model work | Native `agent` |",
     "| --- | --- | --- | --- | --- | --- |",
     ...rows,
   ].join("\n");
