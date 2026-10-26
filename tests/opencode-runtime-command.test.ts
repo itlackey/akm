@@ -32,7 +32,7 @@ const where: RuntimeLocations = {
   binary: "/akm/cache/opencode/2.1.4/opencode",
   directory: "/akm/data/opencode-runtime",
   pluginDirectory: PLUGIN,
-  akm: "/usr/local/bin/akm",
+  akm: ["/usr/local/bin/node", "/usr/local/lib/node_modules/akm-cli/dist/akm"],
 };
 
 type Provider = {
@@ -153,11 +153,14 @@ describe("the environment", () => {
     expect(Object.keys(shellEnv).sort()).toEqual(Object.keys(env).sort());
   });
 
-  test("the config goes in OPENCODE_CONFIG_CONTENT, and the akm executable the plugin calls in AKM_OPENCODE_CLI", () => {
+  test("the config goes in OPENCODE_CONFIG_CONTENT, and the argv that runs akm, for the plugin, in AKM_OPENCODE_CLI", () => {
     expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT as string)).toEqual(
       runtimeConfig(connection({ apiKey: "sk-secret" }), PLUGIN),
     );
-    expect(env.AKM_OPENCODE_CLI).toBe("/usr/local/bin/akm");
+    expect(JSON.parse(env.AKM_OPENCODE_CLI as string)).toEqual([
+      "/usr/local/bin/node",
+      "/usr/local/lib/node_modules/akm-cli/dist/akm",
+    ]);
   });
 });
 

@@ -44,12 +44,6 @@ const runtimeLowerer: LowerTarget = {
 /** How long preparing the database may take: it is a few milliseconds of work and a process start. */
 const PREPARE_TIMEOUT_MS = 60_000;
 
-/** The executable the plugin's tools call: the compiled binary itself, else the launcher or entry file that started akm. */
-function akmExecutable(): string {
-  const [executable, entry] = resolveAkmInvocation().argv;
-  return entry ?? (executable as string);
-}
-
 /** Write the plugin where OpenCode loads it from (a directory, whose `index.mjs` is the module), when it is not already there. */
 function installPlugin(directory: string): string {
   const pluginDirectory = path.join(directory, "config", "akm-plugin");
@@ -103,7 +97,7 @@ export const opencodeRuntime: AgentRuntime = {
         binary,
         directory,
         pluginDirectory: installPlugin(directory),
-        akm: akmExecutable(),
+        akm: resolveAkmInvocation().argv,
       };
       // The user's own OPENCODE_* variables configure their OpenCode, not this one.
       const ambient = Object.fromEntries(

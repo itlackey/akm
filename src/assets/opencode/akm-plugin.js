@@ -6,9 +6,11 @@
 // it in the inline config's `plugins` list (src/integrations/harnesses/opencode/runtime/). It runs inside OpenCode, so
 // it imports no package: only Node's own child_process, to call back into akm.
 //
-//   - akm's three read tools, each a call of the akm executable `AKM_OPENCODE_CLI` names, with `--detail agent
-//     --format json`. The run's environment is the call's, so a stamped run's reads (`AKM_EVENT_SOURCE`) are recorded
-//     as that run's.
+//   - akm's three read tools, each a run of the akm that started OpenCode, with `--detail agent --format json`. akm
+//     passes the argv that runs it in `AKM_OPENCODE_CLI`, a JSON array: the executable alone for a compiled akm, the
+//     runtime and the script for one run as a script (Node and `dist/akm`, say), so no shebang or shell is needed on
+//     any platform. The run's environment is the call's, so a stamped run's reads (`AKM_EVENT_SOURCE`) are recorded as
+//     that run's.
 //   - The environment of the commands the agent runs: the variables akm set for the OpenCode process (its roots, its
 //     config, which holds the connection's key) are put back to what akm runs in, or removed, so the agent's shell sees
 //     the environment a harness's child would.
@@ -82,11 +84,22 @@ function cliArguments(tool, input) {
   ];
 }
 
-function runAkm(cli, args) {
+/** The argv in `AKM_OPENCODE_CLI`; throws unless it is a JSON array of strings with at least the executable. */
+function akmArgv() {
+  const raw = process.env.AKM_OPENCODE_CLI;
+  if (!raw) throw new Error("AKM_OPENCODE_CLI is not set");
+  const argv = JSON.parse(raw);
+  if (!Array.isArray(argv) || argv.length === 0 || !argv.every((part) => typeof part === "string")) {
+    throw new Error("AKM_OPENCODE_CLI is not a JSON array of strings");
+  }
+  return argv;
+}
+
+function runAkm([executable, ...prefix], args) {
   return new Promise((resolve, reject) => {
     execFile(
-      cli,
-      args,
+      executable,
+      [...prefix, ...args],
       { encoding: "utf8", maxBuffer: OUTPUT_LIMIT_BYTES, env: process.env },
       (error, stdout, stderr) => {
         if (error) reject(new Error((stderr || error.message).trim()));
@@ -120,9 +133,7 @@ export default {
           execute: async (input) => {
             try {
               const args = cliArguments(tool, input);
-              const cli = process.env.AKM_OPENCODE_CLI;
-              if (!cli) throw new Error("AKM_OPENCODE_CLI is not set");
-              return { content: await runAkm(cli, args) };
+              return { content: await runAkm(akmArgv(), args) };
             } catch (error) {
               return { content: `${tool.name} failed: ${error instanceof Error ? error.message : String(error)}` };
             }

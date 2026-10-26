@@ -50,8 +50,8 @@ export interface RuntimeLocations {
   readonly directory: string;
   /** The directory holding akm's plugin, which OpenCode loads. */
   readonly pluginDirectory: string;
-  /** The akm executable the plugin's tools call. */
-  readonly akm: string;
+  /** The argv that runs this akm (`resolveAkmInvocation`), which the plugin's tools call with their arguments appended. */
+  readonly akm: readonly string[];
 }
 
 const positiveInteger = (value: unknown): number | undefined =>
@@ -134,7 +134,7 @@ export function runtimeEnv(config: Record<string, unknown>, where: RuntimeLocati
     OPENCODE_DISABLE_PROJECT_CONFIG: "1",
     OPENCODE_DISABLE_CLAUDE_CODE: "1",
     OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-    AKM_OPENCODE_CLI: where.akm,
+    AKM_OPENCODE_CLI: JSON.stringify(where.akm),
   };
 }
 

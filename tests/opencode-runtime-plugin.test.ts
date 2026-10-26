@@ -4,7 +4,7 @@
 
 /**
  * The plugin akm's own runtime gives OpenCode (`src/assets/opencode/akm-plugin.js`):
- * akm's three read tools, which call the akm executable `AKM_OPENCODE_CLI` names, and
+ * akm's three read tools, which run the argv `AKM_OPENCODE_CLI` holds (the akm that started OpenCode), and
  * the connection's request fields laid over each model request. The plugin is loaded
  * here from its shipped text, as akm writes it for OpenCode, against a stand-in for
  * OpenCode's plugin context; OpenCode itself loads it in
@@ -64,13 +64,17 @@ async function load(options?: Record<string, unknown>) {
   return { plugin, tools, request: hooks.get("http.request") as RequestHook, shell: shellHooks.get("create.before") };
 }
 
-/** A stand-in for the akm executable that prints the arguments it was called with, or fails. */
-function installAkm(
-  body = "console.log(JSON.stringify({ argv: process.argv.slice(2), source: process.env.AKM_EVENT_SOURCE ?? null }));",
-): string {
+const REPORT_ARGS =
+  "console.log(JSON.stringify({ argv: process.argv.slice(2), source: process.env.AKM_EVENT_SOURCE ?? null }));";
+
+/**
+ * A stand-in for a compiled akm: one executable that prints the arguments it was called with, or fails. The value of
+ * `AKM_OPENCODE_CLI` that runs it is the executable alone.
+ */
+function installAkm(body = REPORT_ARGS): string {
   const file = path.join(scratch.dir, "akm");
   fs.writeFileSync(file, `#!${process.execPath}\n${body}\n`, { mode: 0o755 });
-  return file;
+  return JSON.stringify([file]);
 }
 
 describe("the plugin's identity", () => {
@@ -118,6 +122,22 @@ describe.skipIf(process.platform === "win32")("akm's read tools", () => {
     });
   });
 
+  test("akm run as a script is the runtime and the script, which needs neither a shebang nor the executable bit", async () => {
+    const { tools } = await load();
+    const script = path.join(scratch.dir, "akm.js");
+    fs.writeFileSync(script, REPORT_ARGS, { mode: 0o644 });
+
+    const result = await withEnv(
+      { AKM_OPENCODE_CLI: JSON.stringify([process.execPath, script]), AKM_EVENT_SOURCE: undefined },
+      () => tools.get("akm_show")?.execute({ ref: "knowledge/deploy" }),
+    );
+
+    expect(JSON.parse(result?.content as string)).toEqual({
+      argv: ["show", "knowledge/deploy", "--detail", "agent", "--format", "json"],
+      source: null,
+    });
+  });
+
   test("a call without its required argument fails in words, and starts nothing", async () => {
     const { tools } = await load();
     const akm = installAkm('require("node:fs").writeFileSync(process.env.MARKER, "ran");');
@@ -151,6 +171,16 @@ describe.skipIf(process.platform === "win32")("akm's read tools", () => {
     );
 
     expect(result?.content).toBe("akm_search failed: AKM_OPENCODE_CLI is not set");
+  });
+
+  test("an AKM_OPENCODE_CLI that is not an argv is refused in words", async () => {
+    const { tools } = await load();
+
+    const result = await withEnv({ AKM_OPENCODE_CLI: '"/usr/bin/akm"' }, () =>
+      tools.get("akm_search")?.execute({ query: "x" }),
+    );
+
+    expect(result?.content).toBe("akm_search failed: AKM_OPENCODE_CLI is not a JSON array of strings");
   });
 });
 

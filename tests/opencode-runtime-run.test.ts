@@ -20,6 +20,7 @@ import type { AgentRunResult, RunAgentOptions } from "../src/integrations/agent/
 import { opencodeRuntime } from "../src/integrations/harnesses/opencode/runtime";
 import { runtimeBinaryPath } from "../src/integrations/harnesses/opencode/runtime/binary";
 import type { ChatCompletionConfig } from "../src/llm/client";
+import { resolveAkmInvocation } from "../src/tasks/resolve-akm-bin";
 import { useRealOpencodeRuntime } from "./_helpers/fake-opencode-runtime";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, withMockedFetch } from "./_helpers/sandbox";
 
@@ -107,7 +108,9 @@ describe.skipIf(process.platform === "win32")("a run on akm's runtime", () => {
     expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT as string)).not.toHaveProperty("model");
     expect(env.AKM_EVENT_SOURCE).toBe("task");
     expect(env.AKM_DATA_DIR).toBe(getDataDir());
-    expect(path.basename(env.AKM_OPENCODE_CLI as string)).toBe("cli.ts");
+    // The argv that runs this akm: here the runtime and the source entry.
+    expect(JSON.parse(env.AKM_OPENCODE_CLI as string)).toEqual(resolveAkmInvocation().argv);
+    expect(path.basename(resolveAkmInvocation().argv.at(-1) as string)).toBe("cli.ts");
     for (const name of ["config", "data", "cache", "state", "tmp"]) {
       expect(fs.statSync(path.join(directory, name)).isDirectory()).toBe(true);
     }
