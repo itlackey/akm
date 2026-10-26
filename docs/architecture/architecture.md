@@ -658,9 +658,11 @@ Agent programs are reachable by two execution paths, both behind
   killed session.
 - The process loads akm's plugin (`src/assets/opencode/akm-plugin.js`, written
   to the runtime's config directory): `akm_search`, `akm_show` and `akm_curate`
-  call the akm executable that started the run (`AKM_OPENCODE_CLI`), and the
+  call the akm executable that started the run (`AKM_OPENCODE_CLI`), the
   connection's request fields are laid over each model request, with OpenCode's
-  own output cap taken off.
+  own output cap taken off, and the variables akm set for the process (its
+  directories, and the config that holds the connection's key) are put back to
+  akm's own, or removed, in the environment of the commands the agent runs.
 - Agent work runs OpenCode's default agent with its normal tools. The runtime can
   also run a request as model work, as the read-only `akm-model-work` agent
   (reading and searching, and akm's three tools), but model work on a connection

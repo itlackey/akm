@@ -140,9 +140,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     otherwise, as on chat. A persona goes in the prompt.
   - The commands the agent runs get the environment a CLI harness's child gets:
     akm's own, with its directories (`AKM_CONFIG_DIR` and the rest) and the run's
-    variables (workflow and task `env:`, `AKM_EVENT_SOURCE`) set over it, except
-    that `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME`
-    and `TMPDIR` are the runtime's.
+    variables (workflow and task `env:`, `AKM_EVENT_SOURCE`) set over it. What
+    akm sets for the OpenCode process itself (its directories, and the inline
+    config that holds the connection's key) is put back to what akm runs in, or
+    removed, for each command, so the key is never in an agent's shell.
   - Sessions are stored in the runtime's own OpenCode database,
     `<akm data dir>/opencode-runtime/data/opencode/opencode.db`; akm reads your
     OpenCode 2 database read-only, for OpenCode 2 history (below).

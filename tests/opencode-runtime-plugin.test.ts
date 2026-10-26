@@ -48,15 +48,20 @@ async function load(options?: Record<string, unknown>) {
   const plugin = ((await import(pathToFileURL(file).href)) as { default: Plugin }).default;
   const tools = new Map<string, ToolDefinition>();
   const hooks = new Map<string, RequestHook>();
+  const shellHooks = new Map<string, (event: { env: Record<string, string | undefined> }) => Promise<void>>();
   await plugin.setup({
     options,
+    shell: {
+      hook: async (name: string, callback: (event: { env: Record<string, string | undefined> }) => Promise<void>) =>
+        void shellHooks.set(name, callback),
+    },
     tool: {
       transform: async (edit: (editor: { add(tool: ToolDefinition): void }) => void) =>
         edit({ add: (tool) => void tools.set(tool.name, tool) }),
     },
     session: { hook: async (name: string, callback: RequestHook) => void hooks.set(name, callback) },
   });
-  return { plugin, tools, request: hooks.get("http.request") as RequestHook };
+  return { plugin, tools, request: hooks.get("http.request") as RequestHook, shell: shellHooks.get("create.before") };
 }
 
 /** A stand-in for the akm executable that prints the arguments it was called with, or fails. */
@@ -146,6 +151,28 @@ describe.skipIf(process.platform === "win32")("akm's read tools", () => {
     );
 
     expect(result?.content).toBe("akm_search failed: AKM_OPENCODE_CLI is not set");
+  });
+});
+
+describe("the shell hook", () => {
+  test("puts back what akm runs in for the variables the run set, and removes the rest", async () => {
+    const { shell } = await load({
+      shellEnv: { XDG_DATA_HOME: "/home/me/.local/share", XDG_CACHE_HOME: null, OPENCODE_CONFIG_CONTENT: null },
+    });
+    const env: Record<string, string | undefined> = {
+      XDG_DATA_HOME: "/akm/opencode-runtime/data",
+      XDG_CACHE_HOME: "/akm/opencode-runtime/cache",
+      OPENCODE_CONFIG_CONTENT: '{"provider":{"akm":{"options":{"apiKey":"sk-secret"}}}}',
+      PATH: "/usr/bin",
+    };
+
+    await shell?.({ env });
+
+    expect(env).toEqual({ XDG_DATA_HOME: "/home/me/.local/share", PATH: "/usr/bin" });
+  });
+
+  test("is not registered when the plugin is given nothing to put back", async () => {
+    expect((await load({ requestFields: {} })).shell).toBeUndefined();
   });
 });
 

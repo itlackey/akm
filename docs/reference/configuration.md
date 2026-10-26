@@ -292,9 +292,10 @@ default connection. The npm package and the standalone binary do the same.
   and all of its files under `<akm data dir>/opencode-runtime/`. Nothing is
   written under `~/.local/share/opencode`.
 - The commands the agent runs get the environment akm runs in, with the
-  directories this akm resolved and the run's variables set over it, except that
-  `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` and
-  `TMPDIR` are the runtime's own, and `OPENCODE_*` variables are not passed.
+  directories this akm resolved and the run's variables set over it. What akm sets
+  for the OpenCode process itself (its directories, and the config that holds the
+  connection's key) is not in it: akm's plugin puts those variables back to what
+  akm runs in, or removes them, for each command.
 - A run reports no token usage: the OpenCode process prints only the reply.
 
 ## Credentials

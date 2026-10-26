@@ -9,6 +9,9 @@
 //   - akm's three read tools, each a call of the akm executable `AKM_OPENCODE_CLI` names, with `--detail agent
 //     --format json`. The run's environment is the call's, so a stamped run's reads (`AKM_EVENT_SOURCE`) are recorded
 //     as that run's.
+//   - The environment of the commands the agent runs: the variables akm set for the OpenCode process (its roots, its
+//     config, which holds the connection's key) are put back to what akm runs in, or removed, so the agent's shell sees
+//     the environment a harness's child would.
 //   - The connection's request fields, laid over each model request in the endpoint's own field names, as the chat
 //     transport sends them. OpenCode sizes every request's output cap from the model's limit and sends it as
 //     `max_tokens` or `max_completion_tokens`; that is its own accounting, not a cap anyone asked for, so it is
@@ -127,6 +130,16 @@ export default {
         });
       }
     });
+
+    const shellEnv = ctx.options?.shellEnv;
+    if (isObject(shellEnv)) {
+      await ctx.shell.hook("create.before", async (event) => {
+        for (const [name, value] of Object.entries(shellEnv)) {
+          if (typeof value === "string") event.env[name] = value;
+          else delete event.env[name];
+        }
+      });
+    }
 
     const fields = ctx.options?.requestFields;
     await ctx.session.hook("http.request", async (event) => {

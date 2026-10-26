@@ -116,6 +116,25 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     expect(first?.params).not.toHaveProperty("max_completion_tokens");
   });
 
+  test("the agent's commands get the environment akm runs in, not the runtime's: no key, no runtime roots", async () => {
+    const ambient = {
+      XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+      XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
+      TMPDIR: process.env.TMPDIR ?? "unset",
+    };
+    const result = await run("runtime", {
+      connection: connection({ apiKey: "sk-never-in-a-command" }),
+      env: { AKM_EVENT_SOURCE: "task" },
+    });
+
+    expect(result.ok, `${result.stdout}\n${result.stderr}`).toBe(true);
+    // What the shell tool printed: the runtime's own settings are not there, akm's environment and the run's variables are.
+    expect(result.stdout).toContain(
+      `CONFIG=unset DATA=${ambient.XDG_DATA_HOME} CACHE=${ambient.XDG_CACHE_HOME} TMP=${ambient.TMPDIR} CLI=unset FREE=unset SOURCE=task DIR=${getDataDir()}`,
+    );
+    expect(result.stdout).not.toContain("sk-never-in-a-command");
+  });
+
   test("the cap a connection writes is the cap the request carries", async () => {
     const result = await run("answer", { connection: connection({ request: { max_tokens: 777 } }) });
 

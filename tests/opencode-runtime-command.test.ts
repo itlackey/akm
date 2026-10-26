@@ -91,6 +91,7 @@ describe("the inline config", () => {
       {
         package: PLUGIN,
         options: {
+          shellEnv: expect.any(Object),
           requestFields: expect.objectContaining({
             top_p: 0.9,
             temperature: 0.2,
@@ -156,6 +157,22 @@ describe("the environment", () => {
       OPENCODE_DISABLE_MODELS_FETCH: "1",
       OPENCODE_DISABLE_PROJECT_CONFIG: "1",
     });
+  });
+
+  test("the plugin is told, for each variable the run sets, what the agent's commands get: akm's value, or none", () => {
+    const config = runtimeConfig(connection(), false, PLUGIN, {
+      XDG_DATA_HOME: "/home/me/.local/share",
+      TMPDIR: "/tmp",
+    });
+
+    const [entry] = config.plugins as Array<{ options: { shellEnv: Record<string, string | null> } }>;
+    const { shellEnv } = entry?.options ?? { shellEnv: {} };
+    expect(shellEnv.XDG_DATA_HOME).toBe("/home/me/.local/share");
+    expect(shellEnv.TMPDIR).toBe("/tmp");
+    expect(shellEnv.XDG_CACHE_HOME).toBeNull();
+    expect(shellEnv.OPENCODE_CONFIG_CONTENT).toBeNull();
+    // Every variable runtimeEnv sets is covered, so the key in the config never reaches a command.
+    expect(Object.keys(shellEnv).sort()).toEqual(Object.keys(env).sort());
   });
 
   test("the config goes in OPENCODE_CONFIG_CONTENT, and the akm executable the plugin calls in AKM_OPENCODE_CLI", () => {

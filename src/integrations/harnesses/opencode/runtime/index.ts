@@ -79,14 +79,16 @@ export const opencodeRuntime: AgentRuntime = {
         pluginDirectory: installPlugin(directory),
         akm: akmExecutable(),
       };
-      const config = runtimeConfig(connection, dispatch.modelWork === true, where.pluginDirectory);
       // The user's own OPENCODE_* variables configure their OpenCode, not this one.
-      const inherited = Object.entries(buildChildEnv(opts)).filter(([name]) => !name.startsWith("OPENCODE_"));
+      const ambient = Object.fromEntries(
+        Object.entries(buildChildEnv(opts)).filter(([name]) => !name.startsWith("OPENCODE_")),
+      );
+      const config = runtimeConfig(connection, dispatch.modelWork === true, where.pluginDirectory, ambient);
       return await runBuiltCommand(
         label,
         {
           argv: runtimeArgv(connection, dispatch, binary),
-          env: { ...Object.fromEntries(inherited), ...runtimeEnv(config, where) },
+          env: { ...ambient, ...runtimeEnv(config, where) },
           stdin: dispatch.prompt,
         },
         opts,

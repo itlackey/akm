@@ -22,6 +22,10 @@
  *     OpenCode's service), and no project config (`AGENTS.md`, `opencode.json`).
  *   - **The resume sweep is off** because `--standalone` keeps the run to one
  *     process that ends with it and replays nobody's killed sessions.
+ *   - **The agent's commands do not see any of this.** The process's environment
+ *     holds the connection's key (in the inline config), so the plugin puts the
+ *     variables this module sets back to what akm runs in, or removes them, in
+ *     the environment of the commands the agent runs.
  *
  * Model work runs as the read-only agent of `../agent-builder.ts`; agent work as
  * OpenCode's default agent (or the native agent the request names) with its normal
@@ -57,11 +61,15 @@ const positiveInteger = (value: unknown): number | undefined =>
 /** What OpenCode assumes of a model that states no limit. It refuses a model whose limit states only one of the two. */
 const DEFAULT_LIMIT = { context: 200_000, output: 32_000 };
 
-/** The inline OpenCode config of a run. */
+/**
+ * The inline OpenCode config of a run. `ambient` is the environment the process is started over: the plugin gives the
+ * commands the agent runs these values back for the variables the run sets, and removes them where there is none.
+ */
 export function runtimeConfig(
   connection: ChatCompletionConfig,
   modelWork: boolean,
   pluginDirectory: string,
+  ambient: Readonly<Record<string, string>> = {},
 ): Record<string, unknown> {
   const requestFields = effectiveRequestFields(connection.request, connection.inference);
   const context = positiveInteger(connection.contextLength);
@@ -71,7 +79,15 @@ export function runtimeConfig(
       ? undefined
       : { context: context ?? DEFAULT_LIMIT.context, output: output ?? DEFAULT_LIMIT.output };
   return {
-    plugins: [{ package: pluginDirectory, options: { requestFields } }],
+    plugins: [
+      {
+        package: pluginDirectory,
+        options: {
+          requestFields,
+          shellEnv: Object.fromEntries(RUNTIME_VARIABLES.map((name) => [name, ambient[name] ?? null])),
+        },
+      },
+    ],
     provider: {
       [PROVIDER]: {
         npm: "@ai-sdk/openai-compatible",
@@ -91,6 +107,20 @@ export function runtimeConfig(
     ...(modelWork ? { agents: { [MODEL_WORK_AGENT]: MODEL_WORK_AGENT_DEFINITION } } : {}),
   };
 }
+
+/** The variables {@link runtimeEnv} sets, which the commands the agent runs must not see as set. */
+const RUNTIME_VARIABLES = [
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_STATE_HOME",
+  "TMPDIR",
+  "OPENCODE_DISABLE_FREE_MODELS",
+  "OPENCODE_DISABLE_MODELS_FETCH",
+  "OPENCODE_DISABLE_PROJECT_CONFIG",
+  "OPENCODE_CONFIG_CONTENT",
+  "AKM_OPENCODE_CLI",
+] as const;
 
 /** What a run sets in the process's environment, over the one akm and the caller give every child. */
 export function runtimeEnv(config: Record<string, unknown>, where: RuntimeLocations): Record<string, string> {

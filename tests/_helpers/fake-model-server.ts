@@ -10,6 +10,7 @@
  *   question  call the `question` tool, then reply "Q-DONE"
  *   shell     call `shell`, then reply with the tool result
  *   env       call `shell` to print $AKM_PROBE, $AKM_AMBIENT, $HOME and $AKM_CONFIG_DIR, then reply with the tool result
+ *   runtime   call `shell` to print the variables akm's own runtime sets for the OpenCode process, then reply with the tool result
  *   hang      accept the request and never answer it
  *   subagent  call `subagent`, whose prompt asks the child for MODE:env, then reply with its result
  *   write     call `write`, then reply with the tool result
@@ -51,6 +52,20 @@ export interface FakeModelServer {
   readonly requests: FakeModelRequest[];
   stop(): void;
 }
+
+/** A shell command that prints the variables akm's own runtime sets for the OpenCode process, each as `LABEL=value` or `LABEL=unset`. */
+const RUNTIME_PROBE = `echo "${Object.entries({
+  CONFIG: "OPENCODE_CONFIG_CONTENT",
+  DATA: "XDG_DATA_HOME",
+  CACHE: "XDG_CACHE_HOME",
+  TMP: "TMPDIR",
+  CLI: "AKM_OPENCODE_CLI",
+  FREE: "OPENCODE_DISABLE_FREE_MODELS",
+  SOURCE: "AKM_EVENT_SOURCE",
+  DIR: "AKM_DATA_DIR",
+})
+  .map(([label, name]) => `${label}=$(printenv ${name} || echo unset)`)
+  .join(" ")}"`;
 
 export function startFakeModel(): FakeModelServer {
   const requests: FakeModelRequest[] = [];
@@ -122,6 +137,10 @@ export function startFakeModel(): FakeModelServer {
                 },
               },
             };
+      else if (mode === "runtime")
+        reply = afterTool
+          ? { content: `RUNTIME:${result}` }
+          : { tool: { name: "shell", args: { command: RUNTIME_PROBE, description: "probe" } } };
       else if (mode === "subagent")
         reply = afterTool
           ? { content: `SUB:${result}` }
