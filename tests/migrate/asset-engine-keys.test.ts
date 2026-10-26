@@ -27,7 +27,7 @@ import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
 import { rememberedEngineTargets } from "../../src/core/config/retired-engines";
 import { executionDefaultsOf } from "../../src/execution/source";
 import { resolveTarget } from "../../src/integrations/agent/resolution";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 /** The text between the `---` fences at the top of a Markdown file. */
 const frontmatterBlock = (text: string): string => /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? "";
@@ -549,6 +549,24 @@ describe("the step", () => {
     expect(plan.failedSteps?.some((failure) => failure.step === "configFile")).toBe(true);
     expect(plan.assetEngineKeys).toBeUndefined();
     expect(fs.readFileSync(file, "utf8")).toContain("engine: lab");
+  });
+
+  test("the default stash is rewritten too when neither a bundle nor AKM_BUNDLE_DIR names it", async () => {
+    // The runtime reads `~/akm` in this case, so an `engine:` there must not outlive the retired-name map.
+    const home = path.join(storage.root, "home");
+    const file = path.join(home, "akm", FILES.command[0]);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, FILES.command[1]);
+    writeSandboxConfig({
+      connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
+      harnesses: { claude: {} },
+    });
+
+    const plan = await withEnv({ HOME: home, AKM_BUNDLE_DIR: undefined }, () => runMigration({ apply: true }));
+
+    expect(plan.failedSteps).toBeUndefined();
+    expect(plan.assetEngineKeys).toMatchObject({ changed: 1, applied: 1 });
+    expect(fs.readFileSync(file, "utf8")).toBe("---\nname: review\nakm:\n  connection: lab\n---\nReview it.\n");
   });
 
   test("a bundle with no engine keys is current, and a config with no bundle is no error", async () => {
