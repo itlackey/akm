@@ -48,7 +48,10 @@ const UNKNOWN_FLAG_TOLERANT_COMMANDS: ReadonlySet<string> = new Set(["info"]);
 
 /** The structural subset of a citty command this module reads. */
 export interface FlagScanCommand {
-  readonly args?: Record<string, { readonly type?: string; readonly alias?: string | readonly string[] }>;
+  readonly args?: Record<
+    string,
+    { readonly type?: string; readonly alias?: string | readonly string[]; readonly hidden?: boolean }
+  >;
   readonly subCommands?: Record<string, FlagScanCommand> | undefined;
 }
 
@@ -62,7 +65,7 @@ interface KnownArgs {
   readonly valueFlags: ReadonlySet<string>;
   /** Comparable names of boolean flags — the only ones `--no-` may negate. */
   readonly booleanFlags: ReadonlySet<string>;
-  /** Human-readable spellings, for the did-you-mean suggestion. */
+  /** Human-readable spellings, for the did-you-mean suggestion. Hidden flags are accepted but never suggested. */
   readonly displayNames: readonly string[];
   /** Resolved command path tokens (e.g. ["proposal", "accept"]). */
   readonly path: readonly string[];
@@ -99,7 +102,7 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
       // Shared args (GLOBAL_OUTPUT_ARGS) recur at every level; suggest each once.
       if (!names.has(comparable)) {
         names.add(comparable);
-        displayNames.push(`--${key}`);
+        if (def.hidden !== true) displayNames.push(`--${key}`);
       }
       if (def.type === "string" || def.type === "enum") valueFlags.add(comparable);
       if (def.type === "boolean") booleanFlags.add(comparable);

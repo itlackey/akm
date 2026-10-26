@@ -148,7 +148,10 @@ notice while the call goes on.
 
 akm sends no `max_tokens` unless one is written, on a connection, on a model
 entry or by the call: the model and its endpoint know their own limits, and a
-default cap would truncate replies silently.
+default cap would truncate replies silently. A direct chat call (model work on a
+connection) does send `temperature: 0.3` when nothing writes one; the
+connection's, a model entry's or the call's own `temperature` wins. akm's own
+runtime sends none and leaves it to the endpoint.
 
 `enableThinking: false` turns thinking off and `reasoningEffort` takes a value
 such as `"none"`, `"low"` or `"high"`. akm sends **both** thinking fields,
@@ -989,8 +992,10 @@ akm config unset connections.old
 
 Object values passed to `config set` deep-merge with their current value.
 Arrays replace, `null` is only valid for nullable fields, and `config unset` is
-the only deletion operation. `configVersion` cannot be set or unset with the
-generic walker.
+the only deletion operation. It removes the named key and nothing else: a
+parent object left empty stays, because `harnesses.opencode: {}` is how a
+harness is enabled. `configVersion` cannot be set or unset with the generic
+walker.
 
 `config get <key> --show-source` wraps the (redacted) value as
 `{ value, source }`, where `source` is `"local"` when the local file's own
@@ -1138,7 +1143,7 @@ asset keys move as the table says.
 | `defaults.improveStrategy` | `improve.strategy`. |
 | `models.json` | Folded into the `models` of the connections and harnesses it names; what it cannot place is listed in the notes. The file moves to `config-backups/` in the cache directory. |
 | `apiKeyFile`, a literal `apiKey`, a `${secrets/...}` `apiKey` | The key moves to `credentials.json` for the connection and its endpoint; a note names where it was, never its value. A key that cannot be read stays on the connection as it was (`apiKey`, or `apiKeyFile` for a key file), with a note that it is still to do; a later run moves it once it can be read. |
-| `AKM_ENGINE_<NAME>_API_KEY` or `AKM_LLM_API_KEY` set in the environment | `apiKey: "$AKM_ENGINE_<NAME>_API_KEY"` (or `$AKM_LLM_API_KEY`) on that connection. |
+| `AKM_ENGINE_<NAME>_API_KEY` or `AKM_LLM_API_KEY` set in the environment | `apiKey: "$AKM_ENGINE_<NAME>_API_KEY"` (or `$AKM_LLM_API_KEY`) on that connection. Set in no variable, an engine that names no key gets none, and a note names the variables 0.9 read. |
 | `improve.strategies.<name>.engine`, `model`, `llm`, `timeoutMs` | Dropped, with a note: a strategy says which processes run, not where. |
 | `engine`, `model`, `llm`, `timeoutMs` on a strategy's process, its `qualityGate` or its `triage.judgment` | Moved to `improve.processes.<process>` or `improve.qualityGate`, with `engine` becoming `connection` or `harness` by what it named. When that place already says, the first one is kept, with a note. |
 | `index.defaults.*`, `index.<pass>.engine` | `index.*`, and `connection`. An index pass cannot name a harness, so an engine that named one is dropped, with a note; a pass that names nothing runs where model work does: on the default connection, else the default harness. |
@@ -1155,8 +1160,10 @@ akm's data directory (`migrate/engine-targets.json`), and the key (and a retired
 every `engine:` key it can reach; an asset in a read-only bundle, or a block it
 could not splice, is rewritten under the same names by a later run. Then the
 names are forgotten and `engine:` names a connection by that name, else a
-harness. A script or scheduled command that passes `--engine` is not one the
-migrator can reach: change it to `--connection` or `--harness`. A remembered
+harness; the run that forgets them prints one note listing each renamed engine
+and the flag that replaces it. A script or scheduled command that passes
+`--engine` is not one the migrator can reach: change it to `--connection` or
+`--harness`. A remembered
 name whose connection is no longer configured fails like any selection of an
 unconfigured name.
 

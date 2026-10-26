@@ -100,6 +100,23 @@ describe("akm config set --silent", () => {
   });
 });
 
+describe("akm config unset on the last key of a harness", () => {
+  test("keeps the harness enabled as {}", async () => {
+    const config = await withEnv(freshEnv(), async () => {
+      const file = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(
+        file,
+        JSON.stringify({ configVersion: "0.9.0", harnesses: { opencode: { timeoutMs: 120000 } } }),
+      );
+      const result = await runCliCapture(["config", "unset", "harnesses.opencode.timeoutMs"]);
+      expect(result.code).toBe(0);
+      return JSON.parse(fs.readFileSync(file, "utf8")) as { harnesses?: unknown };
+    });
+    expect(config.harnesses).toEqual({ opencode: {} });
+  });
+});
+
 describe("akm config unset on an entry the reader drops", () => {
   test("is refused, naming the entry and why it is ignored, and leaves the file as it was", async () => {
     const draft = { models: { fast: "m" } };

@@ -38,7 +38,7 @@
     "@ai-sdk/openai-compatible@2.0.87": "Exact pin: the version OpenCode installs for @ai-sdk/openai-compatible@ai-v6 when this was pinned. akm's runtime gives OpenCode this installed copy by file URL (src/integrations/harnesses/opencode/embedded/runner-models.ts), so OpenCode downloads nothing; re-check the tag when bumping @opencode/sdk.",
     "@huggingface/transformers@4.2.0": "Exact semantic-search dependency pin. Re-run the real-model semantic gate before changing it.",
     "effect@4.0.1": "Exact pin, the version @opencode/sdk depends on. akm hands the embedded OpenCode Layers and Effects it builds with effect (src/integrations/harnesses/opencode/embedded/), and OpenCode runs them: both must be the one copy of effect the SDK loads. A range could install a second copy beside the SDK's, so this moves together with @opencode/sdk.",
-    "@opencode/sdk@2.1.4": "Exact pin, and the same for @opencode/core and @opencode/util. OpenCode 2 embedded in akm's process (OpenCode.create, no binary, no server). Only src/integrations/harnesses/opencode/embedded/ imports them, lazily; akm imports core and util directly (the layers it hands the embedded OpenCode replace nodes they define), and the SDK pins both at its own version, so the three move together. A bump migrates akm's own OpenCode database forward."
+    "@opencode/sdk@2.1.4": "Exact pin, and the same for @opencode/core, @opencode/util and (a devDependency, for the `import type` of `Plugin`) @opencode/plugin. OpenCode 2 embedded in akm's process (OpenCode.create, no binary, no server). Only src/integrations/harnesses/opencode/embedded/ imports them, lazily; akm imports core and util directly (the layers it hands the embedded OpenCode replace nodes they define), and the SDK pins both at its own version, so the three move together. A bump migrates akm's own OpenCode database forward."
   },
   "files": [
     "dist",
@@ -99,6 +99,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.14",
+    "@opencode/plugin": "2.1.4",
     "@types/node": "^22.19.17",
     "@types/semver": "^7.5.8",
     "@types/turndown": "^5.0.6",

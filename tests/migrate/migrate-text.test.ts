@@ -21,3 +21,13 @@ test("the plain plan names the keys filed in credentials.json, the config notes 
   expect(text).toContain("config notes:");
   expect(text).toContain('engines.lab.apiKeyFile: its key moves to credentials.json as "default".');
 });
+
+test("the plain plan lists the notes of the run that forgot the old engine names", () => {
+  const text = formatMigratePlain({
+    status: "current",
+    assetEngineKeys: { changed: 0, skipped: 0, notes: ["--engine lab is now --connection default"] },
+  });
+
+  expect(text).toContain("engine name notes:");
+  expect(text).toContain("  - --engine lab is now --connection default");
+});

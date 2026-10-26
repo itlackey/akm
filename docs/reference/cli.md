@@ -407,11 +407,11 @@ akm health --report --window-compare 7d --format html
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `targets` reachability probes and harness `--version` runs, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
+| `--no-probe` | Skip the `connections-and-harnesses` reachability probes and harness `--version` runs, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
-configured connections and harnesses (the `targets` table), and summarizes recent `improve_*` events. Unless
+configured connections and harnesses (the `connections-and-harnesses` table), and summarizes recent `improve_*` events. Unless
 `--no-probe` is given, it also sends a bounded (3s timeout) reachability probe
 to each connection's endpoint, one probe per distinct endpoint, checks the
 installed akm-cli version against the latest GitHub release (`cli-version`),
@@ -423,7 +423,7 @@ Primary result fields:
 | Field | Description |
 | --- | --- |
 | `status` | Overall health verdict: `pass`, `warn`, or `fail` |
-| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `active-runs`, and `targets` |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `active-runs`, and `connections-and-harnesses` |
 | `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), and `scheduler-binary` |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
@@ -441,7 +441,7 @@ It `fail`s only when a pending migration could not be applied — naming it and
 pointing at `akm migrate apply` — rather than the command crashing. Read this
 check's `status` instead of grepping akm's error text.
 
-`targets` is one table: a row for each configured connection (endpoint, whether
+`connections-and-harnesses` is one table: a row for each configured connection (endpoint, whether
 its key is held, whether the endpoint answers) and harness (platform, whether
 its binary is found, and with a probe its `--version`), then a row for each kind of work
 (`improve`, `judges`, `agents`, `extract`, `enrich`, `index`, `embedding`,
@@ -2144,7 +2144,11 @@ in order:
    convert unambiguously is reported `blocked` and left alone;
 4. the retired `engine:` key on commands, agents, workflows and task sources
    rewritten to `connection:` or `harness:` by what the name is now
-   (`assetEngineKeys`), under one backup directory per run;
+   (`assetEngineKeys`), under one backup directory per run. The run that has
+   rewritten every such key it can reach forgets the old engine names and adds one
+   note to `assetEngineKeys.notes`: each renamed engine with the flag that
+   replaces `--engine <old name>` (`--connection` or `--harness`), which reaches
+   only a connection or harness of that name from then on;
 5. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
    the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
    version-stamp files older releases kept under `$DATA`, `$STATE` and

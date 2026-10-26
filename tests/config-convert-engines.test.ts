@@ -106,11 +106,12 @@ describe("engines.<n> kind llm → connections.<n>", () => {
     const { config, notes } = convert({
       engines: {
         lab: llm({
+          apiKey: "$LAB_KEY",
           temperature: 0.2,
           maxTokens: 4096,
           extraParams: { temperature: 0.9, maxTokens: 1, top_p: 0.5 },
         }),
-        other: llm({ extraParams: { temperature: 0.9 } }),
+        other: llm({ apiKey: "$OTHER_KEY", extraParams: { temperature: 0.9 } }),
       },
     });
     expect((config.connections as Dict).lab).toMatchObject({ temperature: 0.2, max_tokens: 4096, top_p: 0.5 });
@@ -185,6 +186,23 @@ describe("engines.<n> kind llm → connections.<n>", () => {
     expect(((explicit.config.connections as Dict).default as Dict).apiKey).toBe("$OTHER");
     expect(((convert({ engines, defaults }, { env: {} }).config.connections as Dict).default as Dict).apiKey).toBe(
       undefined,
+    );
+  });
+
+  test("an engine with no key, whose implicit variables are not set when it converts, gets one note naming them", () => {
+    const engines = { lab: llm(), other: llm(), keyed: llm({ apiKeyFile: "/run/key" }) };
+    const defaults = { llmEngine: "lab" };
+    const keyNotes = (env: NodeJS.ProcessEnv) =>
+      convert({ engines, defaults }, { env }).notes.filter((note) => note.includes("it names no key"));
+
+    const unset = keyNotes({});
+    expect(unset).toHaveLength(2);
+    expect(unset[0]).toContain("engines.lab: it names no key, and AKM_ENGINE_LAB_API_KEY or AKM_LLM_API_KEY");
+    expect(unset[0]).toContain("akm setup --api-key-env <VARIABLE>");
+    expect(unset[1]).toContain("engines.other: it names no key, and AKM_ENGINE_OTHER_API_KEY,");
+    // Set at migrate time, the variable is carried instead; a file key has its own note.
+    expect(keyNotes({ AKM_LLM_API_KEY: "secret", AKM_ENGINE_OTHER_API_KEY: "secret" } as NodeJS.ProcessEnv)).toEqual(
+      [],
     );
   });
 

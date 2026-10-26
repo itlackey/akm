@@ -284,8 +284,10 @@ function isTriageJudgmentPath(path: Path): boolean {
 }
 
 /**
- * Unset the value at the dotted path. Removes the leaf key (and prunes empty
- * parent objects if they become empty). Returns a new config object.
+ * Unset the value at the dotted path. Removes the leaf key and leaves its
+ * parent objects in place, even when they become empty: `{}` is a value here
+ * (`harnesses.opencode: {}` is how a harness is enabled). Returns a new config
+ * object.
  */
 export function configUnset(config: Record<string, unknown>, dotted: string): Record<string, unknown> {
   const path = parsePath(dotted);
@@ -487,12 +489,7 @@ function unsetPath(config: Record<string, unknown>, path: Path): Record<string, 
   if (typeof existing !== "object" || existing === null || Array.isArray(existing)) {
     return next; // nothing to unset
   }
-  const updated = unsetPath(existing as Record<string, unknown>, rest);
-  if (Object.keys(updated).length === 0) {
-    delete next[head];
-  } else {
-    next[head] = updated;
-  }
+  next[head] = unsetPath(existing as Record<string, unknown>, rest);
   return next;
 }
 

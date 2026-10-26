@@ -99,15 +99,13 @@ const AGENT_ENGINE_KEYS = new Set([
 const CARRIED = ["endpoint", "contextLength", "timeoutMs", "concurrency"] as const;
 
 /**
- * The environment variable an engine's key used to be read from without being
- * named in config, when it is set: `AKM_ENGINE_<NAME>_API_KEY` for any engine,
- * and `AKM_LLM_API_KEY` for the engine `defaults.llmEngine` named.
+ * The environment variables an engine's key used to be read from without being
+ * named in config: `AKM_ENGINE_<NAME>_API_KEY` for any engine, and
+ * `AKM_LLM_API_KEY` for the engine `defaults.llmEngine` named.
  */
-function implicitKeyVariable(name: string, defaults: Dict, env: NodeJS.ProcessEnv | undefined): string | undefined {
+function implicitKeyVariables(name: string, defaults: Dict): string[] {
   const own = `AKM_ENGINE_${name.toUpperCase().replaceAll("-", "_")}_API_KEY`;
-  if (env?.[own]?.trim()) return own;
-  if (name === str(defaults.llmEngine) && env?.AKM_LLM_API_KEY?.trim()) return "AKM_LLM_API_KEY";
-  return undefined;
+  return name === str(defaults.llmEngine) ? [own, "AKM_LLM_API_KEY"] : [own];
 }
 
 /** The connections and harnesses the engines became, under the names they had, and what the later steps need of them. */
@@ -161,7 +159,8 @@ function agentEngineToHarness(name: string, engine: Dict, converted: Converted):
 
 /**
  * The key of an engine, on its connection: a `$VAR` is kept; a file, a literal or a secret reference cannot be
- * (the key belongs in `credentials.json`); and with none written, the variable it used to be read from implicitly.
+ * (the key belongs in `credentials.json`); and with none written, the variable it used to be read from implicitly,
+ * when that one is set. When none is, the connection has no key, and a note says which variables 0.9 read.
  */
 function carryEngineKey(
   name: string,
@@ -170,14 +169,21 @@ function carryEngineKey(
   defaults: Dict,
   env: NodeJS.ProcessEnv | undefined,
   converted: Converted,
+  conversion: Conversion,
 ): void {
   const apiKey = str(engine.apiKey);
   if (apiKey !== undefined && isEnvReference(apiKey)) connection.apiKey = apiKey;
   else if (apiKey !== undefined || engine.apiKeyFile !== undefined) {
     converted.keyHolders.push({ engine: name, field: engine.apiKeyFile !== undefined ? "apiKeyFile" : "apiKey" });
   } else {
-    const variable = implicitKeyVariable(name, defaults, env);
+    const variables = implicitKeyVariables(name, defaults);
+    const variable = variables.find((candidate) => env?.[candidate]?.trim());
     if (variable !== undefined) connection.apiKey = `$${variable}`;
+    else {
+      conversion.notes.push(
+        `engines.${name}: it names no key, and ${variables.join(" or ")}, which it used to read when set, is not set here, so the connection has no key. If the endpoint needs one, set the variable and run \`akm setup --api-key-env <VARIABLE>\`, or store the key with \`akm setup\`.`,
+      );
+    }
   }
 }
 
@@ -192,7 +198,7 @@ function llmEngineToConnection(
 ): void {
   const connection: Dict = {};
   for (const key of CARRIED) if (engine[key] !== undefined) connection[key] = engine[key];
-  carryEngineKey(name, engine, connection, defaults, env, converted);
+  carryEngineKey(name, engine, connection, defaults, env, converted, conversion);
   const model = str(engine.model);
   if (model !== undefined) converted.ownModelOf.push({ kind: "connections", engine: name, model });
   if (engine.provider !== undefined) {

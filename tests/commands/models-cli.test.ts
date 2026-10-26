@@ -127,7 +127,7 @@ describe("akm models", () => {
     expect(stderr).toContain("Could not list models from http://localhost:11434/v1 (HTTP 401)");
   });
 
-  test("--format text shows the picks beside the available models", async () => {
+  test("--format text shows the picks, then the available models as a list of their own", async () => {
     configure({ default: LOCAL });
 
     const { stdout } = await endpoint("http://localhost:11434/v1").serve(() =>
@@ -136,10 +136,29 @@ describe("akm models", () => {
 
     expect(stdout.trimEnd().split("\n")).toEqual([
       "Connection default",
-      "ALIAS      MODEL      AVAILABLE",
-      "fast       qwen3-8b   qwen3-8b",
-      "balanced   qwen3-32b  qwen3-32b",
-      "reasoning  qwen3-32b  glm-5",
+      "ALIAS      MODEL",
+      "fast       qwen3-8b",
+      "balanced   qwen3-32b",
+      "reasoning  qwen3-32b",
+      "",
+      "AVAILABLE",
+      "  qwen3-8b",
+      "  qwen3-32b",
+      "  glm-5",
+    ]);
+  });
+
+  test("--format text with no models listed shows the picks alone", async () => {
+    configure({ default: LOCAL });
+
+    const { stdout } = await runCliCapture(["models", "--no-probe", "--format", "text"]);
+
+    expect(stdout.trimEnd().split("\n")).toEqual([
+      "Connection default",
+      "ALIAS      MODEL",
+      "fast       qwen3-8b",
+      "balanced   qwen3-32b",
+      "reasoning  qwen3-32b",
     ]);
   });
 

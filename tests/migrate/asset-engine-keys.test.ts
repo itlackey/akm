@@ -27,7 +27,7 @@ import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
 import { rememberedEngineTargets } from "../../src/core/config/retired-engines";
 import { executionDefaultsOf } from "../../src/execution/source";
 import { resolveTarget } from "../../src/integrations/agent/resolution";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 /** The text between the `---` fences at the top of a Markdown file. */
 const frontmatterBlock = (text: string): string => /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? "";
@@ -377,6 +377,38 @@ describe("the step", () => {
     expect(fs.readFileSync(path.join(stash(), "commands/c.md"), "utf8")).toContain("harness: claude");
   });
 
+  test("the run that forgets the old names says which flag now reaches each renamed engine, and only then", async () => {
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: {
+        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
+      },
+      engines: {
+        lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "qwen3-32b" },
+        default: { kind: "llm", endpoint: "http://old:8080/v1/chat/completions", model: "old-model" },
+        claude: { kind: "agent", platform: "claude" },
+      },
+      defaults: { llmEngine: "lab" },
+    });
+    write("commands/a.md", "---\nname: a\nakm:\n  engine: lab\n---\nA.\n");
+    // A block scalar the splice cannot write keeps `lab` remembered, so this run forgets nothing.
+    const skipped = write("commands/b.md", "---\nname: b\nakm:\n  engine: >-\n    lab\n---\nB.\n");
+
+    const first = await runMigration({ apply: true });
+    expect(first.assetEngineKeys?.notes).toBeUndefined();
+
+    fs.writeFileSync(skipped, "---\nname: b\nakm:\n  connection: default\n---\nB.\n");
+    const second = await runMigration({ apply: true });
+    const notes = second.assetEngineKeys?.notes ?? [];
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("--engine lab is now --connection default");
+    expect(notes[0]).toContain("--engine default is now --connection legacy-default");
+    expect(notes[0]).not.toContain("--engine claude");
+
+    const third = await runMigration({ apply: true });
+    expect(third.assetEngineKeys?.notes).toBeUndefined();
+  });
+
   test("the old names are kept while a file is skipped, so a retry after the config was rewritten writes the same names", async () => {
     // `lab` becomes `default` and the engine called `default` becomes `legacy-default`; the bundle is read-only at first.
     writeSandboxConfig({
@@ -549,6 +581,24 @@ describe("the step", () => {
     expect(plan.failedSteps?.some((failure) => failure.step === "configFile")).toBe(true);
     expect(plan.assetEngineKeys).toBeUndefined();
     expect(fs.readFileSync(file, "utf8")).toContain("engine: lab");
+  });
+
+  test("the default stash is rewritten too when neither a bundle nor AKM_BUNDLE_DIR names it", async () => {
+    // The runtime reads `~/akm` in this case, so an `engine:` there must not outlive the retired-name map.
+    const home = path.join(storage.root, "home");
+    const file = path.join(home, "akm", FILES.command[0]);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, FILES.command[1]);
+    writeSandboxConfig({
+      connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
+      harnesses: { claude: {} },
+    });
+
+    const plan = await withEnv({ HOME: home, AKM_BUNDLE_DIR: undefined }, () => runMigration({ apply: true }));
+
+    expect(plan.failedSteps).toBeUndefined();
+    expect(plan.assetEngineKeys).toMatchObject({ changed: 1, applied: 1 });
+    expect(fs.readFileSync(file, "utf8")).toBe("---\nname: review\nakm:\n  connection: lab\n---\nReview it.\n");
   });
 
   test("a bundle with no engine keys is current, and a config with no bundle is no error", async () => {

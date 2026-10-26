@@ -43,6 +43,19 @@ export interface SearchSource {
 // ── Resolution ──────────────────────────────────────────────────────────────
 
 /**
+ * The working stash read besides the configured bundles: an explicit argument,
+ * else `AKM_BUNDLE_DIR`, else the platform default stash when no `defaultBundle`
+ * is configured. With a `defaultBundle` and no override there is none, because
+ * the configured bundle is the working stash. Throws as `resolveStashDir` does
+ * when the directory is missing.
+ */
+export function implicitStashDir(config: AkmConfig, overrideStashDir?: string): string | undefined {
+  if (overrideStashDir !== undefined) return path.resolve(overrideStashDir);
+  if (process.env.AKM_BUNDLE_DIR?.trim()) return resolveStashDir();
+  return config.defaultBundle ? undefined : resolveStashDir();
+}
+
+/**
  * Build the ordered list of stash sources, walking every configured stash
  * once. Iteration order:
  *
@@ -58,17 +71,9 @@ export interface SearchSource {
 export function resolveSourceEntries(overrideStashDir?: string, existingConfig?: AkmConfig): SearchSource[] {
   const config = existingConfig ?? loadConfig();
   const configuredEntries = bundlesToSourceEntries(config) ?? [];
-  const envOverride = process.env.AKM_BUNDLE_DIR?.trim();
-  const implicitStashDir =
-    overrideStashDir !== undefined
-      ? path.resolve(overrideStashDir)
-      : envOverride
-        ? resolveStashDir()
-        : config.defaultBundle
-          ? undefined
-          : resolveStashDir();
+  const implicitStash = implicitStashDir(config, overrideStashDir);
 
-  const implicitConfiguredBundle = implicitStashDir ? bundleKeyForContentRoot(config, implicitStashDir) : undefined;
+  const implicitConfiguredBundle = implicitStash ? bundleKeyForContentRoot(config, implicitStash) : undefined;
   if (implicitConfiguredBundle && !isBundleEnabled(config, implicitConfiguredBundle)) {
     throw new ConfigError(
       `The requested working source is disabled as bundle ${JSON.stringify(implicitConfiguredBundle)}.`,
@@ -78,8 +83,8 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
 
   // Explicit and environment overrides stay first. Without either override,
   // the configured default enters through the validated loop below.
-  const sources: SearchSource[] = implicitStashDir
-    ? [{ path: implicitStashDir, writable: true, isDefault: true, type: "filesystem" }]
+  const sources: SearchSource[] = implicitStash
+    ? [{ path: implicitStash, writable: true, isDefault: true, type: "filesystem" }]
     : [];
   const sourceIdentity = (dir: string): string => {
     const resolved = path.resolve(dir);
@@ -89,7 +94,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       return resolved;
     }
   };
-  const seen = new Set<string>(implicitStashDir ? [sourceIdentity(implicitStashDir)] : []);
+  const seen = new Set<string>(implicitStash ? [sourceIdentity(implicitStash)] : []);
 
   const addSource = (
     dir: string,
@@ -145,7 +150,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     const contentRoot = resolveEntryContentDir(entry);
     if (contentRoot == null) {
       const unresolvedPath = path.join(
-        getUnresolvedSourcesDir(implicitStashDir ?? process.cwd()),
+        getUnresolvedSourcesDir(implicitStash ?? process.cwd()),
         entry.name ?? entry.type,
       );
       addSource(

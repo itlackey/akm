@@ -7,7 +7,9 @@
  * through it: a stash with every asset type, a second filesystem bundle, a
  * git bundle (with an in-bundle symlink at the bundle root), a website
  * bundle, an npm bundle, a scheduled/enabled task pair plus one that stays
- * ungranted, and a synced native (fake) crontab.
+ * ungranted, a synced native (fake) crontab, and the 0.9 `engines` form (an llm
+ * engine with an `apiKeyFile`, an agent engine, a `models.json`, and a command
+ * and a task that name an engine).
  */
 
 import { spawnSync } from "node:child_process";
@@ -74,7 +76,20 @@ export interface UpgradeHome {
   readonly bundles: UpgradeHomeBundles;
   readonly searchTerm: string;
   readonly rememberedTerm: string;
+  readonly engines: UpgradeHomeEngines;
   readonly deviations: readonly string[];
+}
+
+/** What the 0.9 `engines` form left in the home, for the candidate-side checks. */
+export interface UpgradeHomeEngines {
+  /** The llm engine's `apiKeyFile`, and the (fake) key it holds. */
+  readonly keyFile: string;
+  readonly key: string;
+  /** The asset files that name an engine (`engine: lab`). */
+  readonly commandFile: string;
+  readonly taskFile: string;
+  /** The user's `models.json`, which `akm models copy-defaults` wrote. */
+  readonly modelsFile: string;
 }
 
 /** A single installed scheduled task, with no full-suite bundle/index/search fixture around it. */
@@ -248,6 +263,42 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
   await runStep("task enable scheduled-b", oldLauncher, ["task", "enable", `stash//tasks/${taskIds.b}`], env);
   await runStep("task sync", oldLauncher, ["task", "sync"], env);
 
+  // ── 7b. The 0.9 `engines` form, written by the previous release itself ───
+  // (Before the git bundle's symlink for the same reason as the sync above: `task add` reconciles too.)
+  // An llm engine with an `apiKeyFile`, an agent engine, the default llm engine, a
+  // `models.json`, a command and a task source that name an engine: what the
+  // candidate converts (config, key, models file, assets) in `migrate apply`.
+  // Nothing calls the endpoint: the home builds no embedding and runs no model call.
+  const keyFile = path.join(root, "lab.key");
+  const key = "upgrade-rehearsal-not-a-real-key";
+  fs.writeFileSync(keyFile, key, { mode: 0o600 });
+  const engines = {
+    lab: { kind: "llm", endpoint: "http://127.0.0.1:9/v1/chat/completions", model: "qwen3-8b", apiKeyFile: keyFile },
+    claude: { kind: "agent", platform: "claude" },
+  };
+  for (const [name, engine] of Object.entries(engines)) {
+    await runStep(
+      `config set engines.${name}`,
+      oldLauncher,
+      ["config", "set", `engines.${name}`, JSON.stringify(engine)],
+      env,
+    );
+  }
+  await runStep("config set defaults.llmEngine", oldLauncher, ["config", "set", "defaults.llmEngine", "lab"], env);
+  await runStep("models copy-defaults", oldLauncher, ["models", "copy-defaults"], env);
+  const commandFile = path.join(stashDir, "commands", "rehearsal-review.md");
+  fs.mkdirSync(path.dirname(commandFile), { recursive: true });
+  fs.writeFileSync(
+    commandFile,
+    "---\ndescription: Upgrade rehearsal command\nengine: lab\n---\n\nReview the change.\n",
+  );
+  await runStep(
+    "task add (engine: lab)",
+    oldLauncher,
+    ["task", "add", "engine-task", "--schedule", "0 7 * * *", "--prompt", "say hi", "--engine", "lab", "--disabled"],
+    env,
+  );
+
   // ── 3. A second filesystem bundle ─────────────────────────────────────────
   const secondFsDir = path.join(root, "second-bundle");
   fs.mkdirSync(path.join(secondFsDir, "skills", "second-bundle-skill"), { recursive: true });
@@ -385,6 +436,13 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
     bundles: { stash: "stash", secondFs: "second-fs", git: "git-bundle", website: "site", npm: npmBundleName },
     searchTerm,
     rememberedTerm,
+    engines: {
+      keyFile,
+      key,
+      commandFile,
+      taskFile: path.join(stashDir, "tasks", "engine-task.yml"),
+      modelsFile: path.join(configHome, "akm", "models.json"),
+    },
     deviations: HOME_DEVIATIONS,
   };
 }

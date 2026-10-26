@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "../src/commands/config-cli";
 import type { AkmConfig } from "../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+import { resolveTarget } from "../src/integrations/agent/resolution";
 
 function captureWarnings(fn: () => void): string[] {
   const warnings: string[] = [];
@@ -192,6 +193,19 @@ describe("config CLI helpers", () => {
 
     const noLlm = unsetConfigValue(base, "connections.default");
     expect(noLlm.connections?.default).toBeUndefined();
+  });
+
+  test("unsetConfigValue leaves a parent object in place when its last key goes: {} is how a harness is enabled", () => {
+    const base: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "auto",
+      harnesses: { opencode: { modelWork: false } },
+    };
+    const unset = unsetConfigValue(base, "harnesses.opencode.modelWork");
+    expect(unset.harnesses).toEqual({ opencode: {} });
+    const target = resolveTarget({ config: unset, layers: [] });
+    expect(target.kind).toBe("harness");
+    expect(target.name).toBe("opencode");
   });
 
   test("setConfigValue merges output format and detail", () => {

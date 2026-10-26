@@ -16,6 +16,7 @@ import { bundleComponentConfig, bundlesToSourceEntries } from "../../src/core/co
 import { ConfigError } from "../../src/core/errors";
 import { getDataDir } from "../../src/core/paths";
 import { resolveWritable } from "../../src/core/write-source";
+import { implicitStashDir } from "../../src/indexer/search/search-source";
 import { lockContentRootFor } from "../../src/integrations/lockfile";
 import type { TaskToV4MigrationPlan } from "./migrate/task-to-v4";
 import { applyTaskFilesPlan, inspectTaskFiles, planTaskFilesMigration, type TaskFileRoot } from "./migrate/task-files";
@@ -84,6 +85,16 @@ function reconcileDuplicateRoot(existing: TaskFileRoot, candidate: TaskFileRoot,
   );
 }
 
+/** The runtime's working stash, or none when there is no such directory yet. */
+function workingStash(config: AkmConfig): string | undefined {
+  try {
+    return implicitStashDir(config);
+  } catch (cause) {
+    if (cause instanceof ConfigError) return undefined;
+    throw cause;
+  }
+}
+
 export function taskRoots(config: AkmConfig, resolutionBase = process.cwd()): TaskFileRoot[] {
   const sources = new Map((bundlesToSourceEntries(config) ?? []).map((source) => [source.name, source]));
   const rootsByPath = new Map<string, TaskFileRoot>();
@@ -121,17 +132,14 @@ export function taskRoots(config: AkmConfig, resolutionBase = process.cwd()): Ta
     rootsByPath.set(componentRoot, candidate);
   }
 
-  // The working stash `AKM_BUNDLE_DIR` selects when no bundle names it: the
-  // runtime reads its tasks too, so its v2/v3 files must convert here.
-  const envStash = process.env.AKM_BUNDLE_DIR?.trim();
-  if (envStash && existingDirectory(envStash)) {
-    const stashRoot = path.resolve(envStash);
-    if (!rootsByPath.has(stashRoot)) {
-      const bundleId = deriveBundleId(undefined, stashRoot, new Set(Object.keys(config.bundles ?? {})));
-      // The runtime reads this stash with the adapter it detects, or `akm`.
-      const candidate = taskRoot(bundleId, stashRoot, stashRoot, detectAdapterId(stashRoot), () => true);
-      if (candidate) rootsByPath.set(stashRoot, candidate);
-    }
+  // The working stash the runtime reads besides the bundles (`AKM_BUNDLE_DIR`, else the default stash): its v2/v3
+  // task files and `engine:` keys must convert here too.
+  const stashRoot = workingStash(config);
+  if (stashRoot && !rootsByPath.has(stashRoot)) {
+    const bundleId = deriveBundleId(undefined, stashRoot, new Set(Object.keys(config.bundles ?? {})));
+    // The runtime reads this stash with the adapter it detects, or `akm`.
+    const candidate = taskRoot(bundleId, stashRoot, stashRoot, detectAdapterId(stashRoot), () => true);
+    if (candidate) rootsByPath.set(stashRoot, candidate);
   }
   return [...rootsByPath.values()];
 }

@@ -40,7 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   holding the name and request fields of its own; a harness's `models` maps an
   alias to the harness's own model name, over the map akm ships for its platform
   (Claude Code has one). An alias a connection does not map answers with its
-  first model. `akm models` lists a connection's aliases beside the models its
+  first model. `akm models` lists a connection's aliases, then the models its
   endpoint lists, and `akm models set <alias> <model>` changes one, keeping the
   request fields of an alias that has them and warning when the endpoint does not
   list the model. `--connection` picks another connection and `--no-probe` skips
@@ -182,7 +182,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     slot) stays on the
     connection as `apiKey`, with a note. One note per key names it, never its
     value. `AKM_ENGINE_<NAME>_API_KEY` and `AKM_LLM_API_KEY`, when set, become
-    `apiKey: "$VAR"`.
+    `apiKey: "$VAR"`. An engine that names no key, with none of those variables
+    set, gets none, and a note names the variables.
   - A key in `credentials.json`'s older flat `{ "<name>": "<key>" }` form is
     filed under the endpoint the config gives its block, after the file is copied
     to `<cache dir>/config-backups/credentials.json.<timestamp>`. A block that
@@ -193,7 +194,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - The old engine names are kept in the data directory (`migrate/engine-targets.json`)
     until no `engine:` key that names one is left in a file the migration can
     reach, so an asset in a read-only bundle, or a block it could not rewrite,
-    keeps its meaning in the meantime, as does a retired `--engine` flag.
+    keeps its meaning in the meantime, as does a retired `--engine` flag. The run
+    that forgets them adds one note, `assetEngineKeys.notes`, listing each
+    renamed engine with the flag that replaces `--engine <old name>`
+    (`--connection` or `--harness`).
   - The user `models.json` is folded into the models of the connections and
     harnesses it names, then moved to
     `<cache dir>/config-backups/models.json.<timestamp>`. A connection's own
@@ -204,6 +208,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     sources becomes `connection:` or `harness:` by what the name is now, under
     one backup directory per run (a name that is neither is written as
     `harness:`, with a note). `akm migrate status` and `--dry-run` list the files.
+    The step reads the roots the runtime reads, the default stash (`~/akm`)
+    included when no bundle or `AKM_BUNDLE_DIR` names it.
   - A connection or harness the loader ignores stays in the file, with a note
     on what to fix; `akm migrate apply` never deletes one.
 
@@ -306,7 +312,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tables.
 - The npm package requires Node.js 24 or later (was 22): `@opencode/sdk` needs
   it. CI tests Node 24 and 26. `effect` 4.0.1, `@opencode/core` 2.1.4 and
-  `@opencode/util` 2.1.4 are dependencies, each at the version `@opencode/sdk`
+  `@opencode/util` 2.1.4 are dependencies, and `@opencode/plugin` 2.1.4 a
+  devDependency (its `Plugin` type), each at the version `@opencode/sdk`
   depends on.
 - Standalone binaries are built by `scripts/build-standalone.ts`, which stubs
   the embedded OpenCode's persistent-terminal helper and native file finder
@@ -360,6 +367,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm health` and `akm info` compare an override's kind as well as its name
   and model, so a connection and a harness that share a name no longer hide a
   per-process pin; each override row carries `kind`.
+- `akm config unset` removes the named key and leaves a parent object that
+  becomes empty. It used to delete the parent too, so unsetting a harness's only
+  key removed the harness and `akm agent` then exited 78 (`{}` is how a harness
+  is enabled).
+- A did-you-mean for an unknown flag never offers a hidden flag.
 
 ### Removed
 

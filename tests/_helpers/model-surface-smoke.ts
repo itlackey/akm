@@ -42,7 +42,7 @@ interface TargetRow {
   key?: string;
 }
 
-/** The rows of the `targets` check `akm health` reports. */
+/** The rows of the `connections-and-harnesses` check `akm health` reports. */
 function healthRows(result: SmokeResult): TargetRow[] {
   const checks = (json(result, "health").hardChecks ?? []) as Array<{
     name: string;
