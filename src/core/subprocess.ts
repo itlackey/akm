@@ -147,8 +147,8 @@ function groupRunning(proc: SpawnedSubprocess): boolean {
 }
 
 /**
- * SIGINT→SIGTERM→SIGKILL kill ladder shared by the timeout and abort paths (§4.6
- * dedup, H3). No-op when the child has already exited; otherwise runs `onKill`
+ * SIGINT→SIGTERM→SIGKILL kill ladder shared by the timeout and abort paths.
+ * No-op when the child has already exited; otherwise runs `onKill`
  * (the caller's reason flag — `timedOut` / `aborted` — set BEFORE the first
  * signal, exactly as the inlined copies did) and interrupts the process group.
  * SIGTERM follows when `graceMs` runs out or as soon as the leader exits,
@@ -484,7 +484,7 @@ export interface RunManagedSubprocessOptions {
    * {@link StreamReadResult.overflowed} flag says which pipe crossed it.
    */
   maxOutputBytes?: number;
-  /** Cooperative cancellation. Aborting runs the same TERM→KILL ladder. */
+  /** Cooperative cancellation. Aborting runs the same SIGINT→SIGTERM→SIGKILL ladder. */
   signal?: AbortSignal;
   /** Grace period (ms) after SIGINT, and again after SIGTERM, before the next signal. Defaults to 5000. */
   graceMs?: number;
