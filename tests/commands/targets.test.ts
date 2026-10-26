@@ -219,7 +219,7 @@ describe("work rows", () => {
     expect(work(all, "improve")).toMatchObject({
       target: "default",
       model: "small",
-      overrides: [{ name: "distill", target: "cloud", model: "c-small" }],
+      overrides: [{ name: "distill", kind: "connection", target: "cloud", model: "c-small" }],
     });
   });
 
@@ -233,7 +233,39 @@ describe("work rows", () => {
         improve: { processes: { distill: { connection: "cloud" } } },
       }),
     );
-    expect(renderTargetsTable(all).join("\n")).toContain("distill → cloud (c-small)");
+    expect(renderTargetsTable(all).join("\n")).toContain("distill → connection cloud (c-small)");
+  });
+
+  test("a connection and a harness may share a name and a model: a process pinned to the harness is still an override", () => {
+    const models = { fast: "same", balanced: "same", reasoning: "same" };
+    const all = rows(
+      cfg({
+        connections: { default: { endpoint: "http://a/v1", models } },
+        harnesses: { default: { platform: "claude", models } },
+        improve: { processes: { distill: { harness: "default" } } },
+      }),
+    );
+
+    expect(work(all, "improve")).toMatchObject({
+      kind: "connection",
+      target: "default",
+      model: "same",
+      overrides: [{ name: "distill", kind: "harness", target: "default", model: "same" }],
+    });
+    expect(renderTargetsTable(all).join("\n")).toContain("distill → harness default (same)");
+  });
+
+  test("a process that resolves to the row's own connection or harness, model and all, is not an override", () => {
+    const models = { fast: "same", balanced: "same", reasoning: "same" };
+    const all = rows(
+      cfg({
+        connections: { default: { endpoint: "http://a/v1", models } },
+        harnesses: { default: { platform: "claude", models } },
+        improve: { processes: { distill: { connection: "default" } } },
+      }),
+    );
+
+    expect(work(all, "improve").overrides).toBeUndefined();
   });
 
   test("the quality gate and the triage judgment may judge elsewhere", () => {
@@ -250,8 +282,8 @@ describe("work rows", () => {
       target: "default",
       model: "mid",
       overrides: [
-        { name: "triage judgment", target: "cloud", model: "c-mid" },
-        { name: "quality gate", target: "cloud", model: "c-mid" },
+        { name: "triage judgment", kind: "connection", target: "cloud", model: "c-mid" },
+        { name: "quality gate", kind: "connection", target: "cloud", model: "c-mid" },
       ],
     });
   });

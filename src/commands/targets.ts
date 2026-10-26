@@ -68,6 +68,8 @@ export interface HarnessRow {
 export interface ProcessOverride {
   /** Which part: an improve process such as `distill`, `triage judgment`, `quality gate`. */
   readonly name: string;
+  /** Whether `target` names a connection or a harness (the two namespaces both allow `default`); `null` when it does not run. */
+  readonly kind: "connection" | "harness" | null;
   /** The connection or harness it runs on; `null` when it does not run. */
   readonly target: string | null;
   readonly model: string | null;
@@ -180,7 +182,7 @@ function attempt(resolve: () => RunnerSpec | null | undefined): Resolution {
 }
 
 const sameTarget = (a: Resolution, b: Resolution): boolean =>
-  a.runner?.name === b.runner?.name && a.runner?.model === b.runner?.model;
+  a.runner?.kind === b.runner?.kind && a.runner?.name === b.runner?.name && a.runner?.model === b.runner?.model;
 
 /** A work row from its base resolution and the variants that may resolve somewhere else. */
 function runnerRow(
@@ -193,6 +195,7 @@ function runnerRow(
     .filter(([, variant]) => !sameTarget(variant, base))
     .map(([name, variant]) => ({
       name,
+      kind: variant.runner?.kind ?? null,
       target: variant.runner?.name ?? null,
       model: variant.runner?.model ?? null,
     }));
