@@ -105,7 +105,6 @@ Everything in the cache is regenerable. It is safe to delete the entire cache di
 | `config-backups/config.latest.json` | Latest backup alias (owner-only `0600`) | Yes |
 | `registry/` | Downloaded registry tarballs (bundle packages from npm, GitHub, etc.) | Yes — re-downloaded on next `akm bundle add` or `akm bundle update` |
 | `registry-index/` | Legacy per-URL JSON cache (v0.7 artifact) | Yes — fully replaced by `index.db` in 0.8.0 |
-| `semantic-status.json` | Semantic index build status marker | Yes |
 | `bin/` | Downloaded AKM binary cache (used by `akm upgrade`) | Yes |
 | `tasks/logs/` | Scheduled task log files. Written at your umask; they hold captured command/agent output, so tighten the directory yourself if the machine is shared | Yes — ephemeral logs |
 | `tasks/history/` | Legacy task history JSONL (v0.7 migration artifact) | Yes |

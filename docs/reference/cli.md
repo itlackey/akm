@@ -1391,9 +1391,7 @@ is running.
 The index and its update-owned state maintenance share one deferred SQLite
 transaction. WAL readers continue to see the last committed generation while a
 full update index pass runs, and competing writers wait for that pass to commit
-or roll back. The semantic-status JSON file is a recomputable advisory: failure
-to refresh it after the database commit warns but does not undo a committed
-bundle update.
+or roll back.
 
 This boundary guarantees rollback for handled process faults (throws and
 SQLite commit failures); it is not an abrupt-termination or cross-database

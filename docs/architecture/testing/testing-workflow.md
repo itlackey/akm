@@ -548,7 +548,6 @@ test plan.
 - `tests/integration/commands/search-cli-envelope.test.ts`
 - `tests/integration/commands/show.test.ts`
 - `tests/integration/vector-search.test.ts`
-- `tests/integration/semantic-status.test.ts`
 - `tests/setup-wizard.test.ts`, `tests/setup-scheduled-tasks.test.ts`
 - `tests/integration/info-command.test.ts`
 - `tests/integration/docker-install.test.ts`
