@@ -495,8 +495,10 @@ throws naming the fix instead. Env overrides:
 Fetched previous-release tarballs are cached under
 `${TMPDIR:-/tmp}/akm-upgrade-rehearsal/previous-release/<version>/` so repeat
 runs do not re-hit the network. It is wired into CI as the `upgrade-rehearsal`
-job (`.github/workflows/ci.yml`) and into `tests/release-check.sh` right
-after packing the release candidate.
+job (`.github/workflows/ci.yml`), which runs on pushes to `main` and release
+branches, on manual runs and on every commit of a pull request that is ready
+for review (a draft pull request skips it until it is marked ready), and into
+`tests/release-check.sh` right after packing the release candidate.
 
 ## Coverage Gap Guide
 

@@ -59,6 +59,13 @@ what each target holds and where a new test goes.
 bun run lint:fix   # Biome with --write; read git diff afterwards
 bun run lint       # what CI runs: Biome, the secret-resolver and shipped-assets lints, the doc-example lint
 ```
+What CI runs depends on the event. Every pull-request commit runs `check` (lint,
+types, the unit and integration suites, the build) and one Node smoke; marking
+the pull request ready for review, and every commit after that, adds the second
+Node version and the two upgrade rehearsals, which also run on every push to
+`main` and a release branch and on a manual run. Push a draft in batches that
+you have verified locally with `bun run check`: each push is a CI run.
+
 
 ### Building
 
