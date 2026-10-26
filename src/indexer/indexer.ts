@@ -329,11 +329,10 @@ export async function runEmbeddingPass(params: {
   const semanticEntryCount = getEmbeddableEntryCount(db);
   onProgress({ phase: "finalize", message: "Verifying semantic search state." });
   const verification = verifyIndexState(db, config, semanticEntryCount, embeddingResult);
+  const unavailable = verification.semanticStatus === "blocked" ? embeddingResult.runtimeUnavailable : undefined;
   const record: SemanticSearchRecord = {
-    status:
-      verification.semanticStatus === "blocked" && embeddingResult.runtimeUnavailable
-        ? "unavailable"
-        : verification.semanticStatus,
+    status: unavailable ? "unavailable" : verification.semanticStatus,
+    ...(unavailable ? { unavailable } : {}),
     provider: verification.embeddingProvider,
     ...(verification.embeddingRuntime ? { runtime: verification.embeddingRuntime } : {}),
     ...(verification.ok ? {} : { reason: verification.message }),

@@ -226,17 +226,16 @@ export interface SemSearchStatus {
 function readSemSearch(hardChecks: HealthCheckResult[]): SemSearchStatus {
   const check = hardChecks.find((c) => c.name === "semantic-search");
   if (!check) return { label: "UNKNOWN", status: "unknown", detail: "" };
-  const recorded = check.evidence?.status;
   const label =
-    check.status === "fail"
-      ? recorded === "unavailable"
-        ? "UNAVAILABLE"
-        : "BLOCKED"
-      : check.status === "unknown"
-        ? "UNKNOWN"
-        : check.evidence?.mode === "off"
-          ? "OFF"
-          : "OK";
+    check.evidence?.status === "unavailable"
+      ? "UNAVAILABLE"
+      : check.status === "fail"
+        ? "BLOCKED"
+        : check.status === "unknown"
+          ? "UNKNOWN"
+          : check.evidence?.mode === "off"
+            ? "OFF"
+            : "OK";
   return { label, status: check.status, detail: check.message };
 }
 

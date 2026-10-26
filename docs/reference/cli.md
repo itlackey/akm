@@ -463,14 +463,18 @@ nothing is configured.
 search, with the index's entry and vector counts read now. It loads no model and
 sends no request. It `pass`es when every entry has a vector (and a local model
 embedded on `onnxruntime-node`) or `semanticSearchMode` is `off`; `warn`s when
-vectors lag the entries (`akm index` embeds the rest) or local embeddings ran on
-another runtime; `fail`s when the last index found semantic search `blocked` (an
-embedding endpoint or model download failed) or `unavailable` (the local
-embedding runtime cannot load on this machine), with the recorded reason; and is
-`unknown` before the first index. Search never reads this record: a query still
+vectors lag the entries (`akm index` embeds the rest), local embeddings ran on
+another runtime, or this platform has no native ONNX Runtime library
+(Alpine/musl, Intel macOS: keyword search is all there is, so the message says to
+set `semanticSearchMode` to `off` or `embedding.endpoint` to a remote service);
+`fail`s, with the recorded reason, when the last index found semantic search
+`blocked` (an embedding endpoint or model download failed) or `unavailable` for
+a cause that can be fixed (the library is there but did not load: a missing
+package or addon, a `noexec` temp or cache directory); and is `unknown` before
+the first index. Search never reads this record: a query still
 tries semantic search and falls back to keyword search on its own. A fix shows
 here after the next `akm index`. `evidence` carries the recorded `status`,
-`provider`, `runtime`, `reason`, the index's `builtAt`, `entryCount` and
+`unavailable` (`platform` or `load`), `provider`, `runtime`, `reason`, the index's `builtAt`, `entryCount` and
 `embeddingCount`. `akm health --report --format html` shows it as the Semantic
 Search line: `OK`, `OFF`, `BLOCKED`, `UNAVAILABLE` or `UNKNOWN`.
 

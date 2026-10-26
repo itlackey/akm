@@ -524,7 +524,7 @@ describe("local embedder", () => {
 
   test("checkEmbeddingAvailability names a runtime that cannot load, not a model download", async () => {
     overrideSeam(_setLocalPipelineLoaderForTests, async () => {
-      throw new LocalRuntimeUnavailableError("no native library");
+      throw new LocalRuntimeUnavailableError("no native library", "platform");
     });
     expect(await checkEmbeddingAvailability()).toEqual({
       available: false,

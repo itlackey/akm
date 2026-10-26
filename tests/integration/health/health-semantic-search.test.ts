@@ -66,23 +66,48 @@ describe("semantic-search health check, end to end", () => {
     expect(reportFor(result).vm.sem).toEqual({ label: "OK", status: "pass", detail: check?.message ?? "" });
   });
 
-  test("a local runtime that cannot load fails as unavailable, and the report says UNAVAILABLE with the reason", async () => {
+  test("a native library that does not load fails as unavailable, and the report says UNAVAILABLE in red with the reason", async () => {
     overrideSeam(_setLocalPipelineLoaderForTests, async () => {
-      throw new LocalRuntimeUnavailableError("no native library is available for this platform");
+      throw new LocalRuntimeUnavailableError("libonnxruntime.so.1: failed to map segment from shared object", "load");
     });
     const { result, check } = await indexAndCheck({ semanticSearchMode: "auto" });
 
     expect(check?.status).toBe("fail");
-    expect(check?.evidence).toMatchObject({ status: "unavailable", entryCount: 2, embeddingCount: 0 });
-    expect(check?.message).toContain("no native library is available for this platform");
+    expect(check?.evidence).toMatchObject({
+      status: "unavailable",
+      unavailable: "load",
+      entryCount: 2,
+      embeddingCount: 0,
+    });
+    expect(check?.message).toContain("failed to map segment from shared object");
     expect(result.status).toBe("fail");
 
     const { vm, html } = reportFor(result);
     expect(vm.sem.label).toBe("UNAVAILABLE");
     expect(html["%%KPI_CARDS_HTML%%"]).toMatch(
-      /<div class="kpi-card red">\s*<div class="label">Semantic Search<\/div>\s*<div class="value"[^>]*>UNAVAILABLE<\/div>\s*<div class="sub">Semantic search was unavailable on this machine[^<]*no native library is available for this platform/,
+      /<div class="kpi-card red">\s*<div class="label">Semantic Search<\/div>\s*<div class="value"[^>]*>UNAVAILABLE<\/div>\s*<div class="sub">Semantic search was unavailable on this machine[^<]*failed to map segment/,
     );
     expect(html["%%ACTION_ITEMS_HTML%%"]).toContain("Semantic search unavailable");
+  });
+
+  test("a platform with no native library warns, and the report says UNAVAILABLE in yellow with no action item", async () => {
+    overrideSeam(_setLocalPipelineLoaderForTests, async () => {
+      throw new LocalRuntimeUnavailableError("no native library is available for this platform", "platform");
+    });
+    const { result, check } = await indexAndCheck({ semanticSearchMode: "auto" });
+
+    expect(check?.status).toBe("warn");
+    expect(check?.evidence).toMatchObject({ status: "unavailable", unavailable: "platform" });
+    expect(check?.message).toContain("unavailable on this platform");
+    expect(check?.message).toContain('Set semanticSearchMode to "off"');
+    expect(result.status).toBe("warn");
+
+    const { vm, html } = reportFor(result);
+    expect(vm.sem).toMatchObject({ label: "UNAVAILABLE", status: "warn" });
+    expect(html["%%KPI_CARDS_HTML%%"]).toMatch(
+      /<div class="kpi-card yellow">\s*<div class="label">Semantic Search<\/div>\s*<div class="value"[^>]*>UNAVAILABLE<\/div>/,
+    );
+    expect(html["%%ACTION_ITEMS_HTML%%"]).not.toContain("Semantic search");
   });
 
   test("an unreachable embedding endpoint fails as blocked, with the recorded reason", async () => {

@@ -52,14 +52,43 @@ describe("semantic-search check", () => {
     );
   });
 
-  test("fails when unavailable on this machine, with the recorded reason", () => {
+  test("fails when a native library this platform has did not load, with the recorded reason", () => {
     const r = semanticSearchCheck(
-      indexed({ status: "unavailable", provider: "local", reason: "no native library is available" }, 3, 0),
+      indexed(
+        {
+          status: "unavailable",
+          unavailable: "load",
+          provider: "local",
+          reason: "failed to map segment from shared object",
+        },
+        3,
+        0,
+      ),
     );
     expect(r.status).toBe("fail");
     expect(r.message).toContain("unavailable on this machine");
-    expect(r.message).toContain("no native library is available");
-    expect(r.evidence?.status).toBe("unavailable");
+    expect(r.message).toContain("failed to map segment from shared object");
+    expect(r.evidence).toMatchObject({ status: "unavailable", unavailable: "load" });
+  });
+
+  test("warns when this platform has no native library, with the reason and the two ways out", () => {
+    const r = semanticSearchCheck(
+      indexed(
+        {
+          status: "unavailable",
+          unavailable: "platform",
+          provider: "local",
+          reason: "no native library is available.",
+        },
+        3,
+        0,
+      ),
+    );
+    expect(r.status).toBe("warn");
+    expect(r.message).toBe(
+      'Semantic search is unavailable on this platform: no native library is available. Set semanticSearchMode to "off", or embedding.endpoint to a remote embedding service.',
+    );
+    expect(r.evidence).toMatchObject({ status: "unavailable", unavailable: "platform" });
   });
 
   test("passes when the config turns semantic search off, whatever the last index recorded", () => {

@@ -76,8 +76,8 @@ export interface EmbeddingProgressEvent {
 export interface EmbeddingGenerationResult {
   success: boolean;
   message?: string;
-  /** The local embedding runtime could not load on this machine. */
-  runtimeUnavailable?: true;
+  /** The local embedding runtime could not load on this machine, and why (see {@link LocalRuntimeUnavailableError}). */
+  runtimeUnavailable?: LocalRuntimeUnavailableError["kind"];
 }
 
 export interface GenerateEmbeddingsOptions {
@@ -515,7 +515,7 @@ export async function generateEmbeddingsForDb(
     return {
       success: false,
       message: `Semantic search verification failed: ${message}`,
-      ...(error instanceof LocalRuntimeUnavailableError ? { runtimeUnavailable: true as const } : {}),
+      ...(error instanceof LocalRuntimeUnavailableError ? { runtimeUnavailable: error.kind } : {}),
     };
   }
 }
