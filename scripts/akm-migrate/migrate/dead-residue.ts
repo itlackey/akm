@@ -45,7 +45,7 @@ const DEAD_RESIDUE_PATHS: readonly DeadResiduePath[] = [
 
 /** One resolved dead-residue path found on disk, with its computed size. */
 export interface DeadResidueEntry {
-  /** Path relative to the stash root (e.g. `.akm/proposals`). */
+  /** A stash path relative to the stash root (e.g. `.akm/proposals`); a host path as it is. */
   relativePath: string;
   absolutePath: string;
   sizeBytes: number;
@@ -80,10 +80,6 @@ function sizeOf(target: string): number {
   return st.isDirectory() ? dirSizeBytes(target) : st.size;
 }
 
-/**
- * Find every Tier-1 dead-residue path that actually exists under
- * `$STASH/.akm`, with its computed size. Read-only — never deletes.
- */
 /**
  * Files older releases kept under $DATA/$STATE/$CONFIG for machinery that no
  * longer exists: transaction journals, the maintenance barrier and its
@@ -155,6 +151,11 @@ function findSidecars(root: string, depth: number, skip: ReadonlySet<string>): s
   return found;
 }
 
+/**
+ * Find every Tier-1 dead-residue path that actually exists, with its computed
+ * size: the host's ({@link hostResidue}) and, given a stash, those under
+ * `$STASH/.akm`. Read-only — never deletes.
+ */
 export function findDeadResidueEntries(stashDir: string | undefined): DeadResidueEntry[] {
   const host = hostResidue();
   if (stashDir === undefined) return host;
@@ -193,10 +194,10 @@ export interface DeadResidueRemoval {
 }
 
 /**
- * Delete every Tier-1 dead-residue path found under `$STASH/.akm`. Only
- * invoked when the caller has explicitly opted in (`akm health
- * --clean-dead-residue`) — never as a side effect of a plain `akm health`
- * read. Best-effort per-path: one failure does not abort the rest.
+ * Delete every Tier-1 dead-residue path {@link findDeadResidueEntries} finds.
+ * Called only by `runMigration`, on `akm migrate apply`; `akm migrate status`
+ * and `--dry-run` list the paths instead. Best-effort per-path: one failure
+ * does not abort the rest.
  */
 export function removeDeadResidue(stashDir: string | undefined): DeadResidueRemoval[] {
   const entries = findDeadResidueEntries(stashDir);

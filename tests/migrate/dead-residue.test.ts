@@ -3,10 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * itlackey/akm#889: the `stash-dead-residue` health advisory must name every
- * Tier-1 dead pre-0.9.0 `.akm/*` path that still exists on disk, with its
- * size, and never delete anything itself. `removeDeadResidue` is the
- * separate opt-in action (`akm health --clean-dead-residue`).
+ * itlackey/akm#889: `findDeadResidueEntries` (`akm migrate status`) must name
+ * every Tier-1 dead pre-0.9.0 `.akm/*` path that still exists on disk, with its
+ * size, and never delete anything itself. `removeDeadResidue` is what
+ * `akm migrate apply` runs to delete them.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
