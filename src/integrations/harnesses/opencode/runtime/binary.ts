@@ -30,8 +30,8 @@ import { extractTarGzMember } from "./tar";
  * The OpenCode release akm's own runtime runs. It is pinned because the runtime depends on things no OpenCode release
  * promises: the inline config's shape, the `--standalone` flag, the plugin API, the text `run` prints, and the
  * `opencode.db` tables that `../session-log-v2.ts` reads. To move it, change this version and `PACKAGES` if the release
- * adds or drops a platform package, then run `tests/integration/opencode-runtime.test.ts` against the new binary
- * (it fetches it) and read `docs/reference/configuration.md` ("akm's own runtime") for what the version changes.
+ * adds or drops a platform package, then run `tests/integration/opencode-runtime-sessions.test.ts` against the new
+ * binary (it fetches it) and read `docs/reference/configuration.md` ("Without a harness") for what the version changes.
  */
 export const OPENCODE_RUNTIME_VERSION = "2.1.4";
 
@@ -191,7 +191,8 @@ async function fetchBinary(name: string, binary: string): Promise<void> {
       await response.body?.cancel().catch(() => undefined);
       throw new Error(`${tarball} answered HTTP ${response.status}`);
     }
-    await writeResponseToFileCapped(download, response);
+    // No overall deadline for a 114 MB file on a slow link: only 60 s without bytes fails it.
+    await writeResponseToFileCapped(download, response, { stallTimeoutMs: 60_000 });
     await verifyIntegrity(download, integrity);
     const size = await extractTarGzMember(download, `package/bin/${path.basename(binary)}`, partial);
     fs.chmodSync(partial, 0o755);
