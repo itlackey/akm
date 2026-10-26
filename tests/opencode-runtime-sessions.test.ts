@@ -137,15 +137,17 @@ describe("a session on the runtime", () => {
   });
 
   // OpenCode gives a session's commands its environment in place of the process's, so the session is always given
-  // one, built as a CLI harness's child gets its own: akm's directories, the allowlist, then the run's variables.
-  test("gives the commands an environment of the allowlist and akm's directories, never the whole process's", async () => {
+  // one, built as a CLI harness's child gets its own: akm's environment, akm's directories, then the run's variables.
+  test("gives the commands the environment akm runs in, with akm's directories set", async () => {
     const { calls } = installFakeOpencodeHost({ reply: () => "ok" });
-    await withEnv({ AKM_AMBIENT: "ambient", OPENAI_API_KEY: "sk-other-vendor" }, () => run("p"));
+    await withEnv({ AKM_AMBIENT: "ambient" }, () => run("p"));
     const environment = calls[0]?.environment ?? {};
-    expect(environment).toMatchObject({ HOME: process.env.HOME, AKM_CONFIG_DIR: getConfigDir() });
+    expect(environment).toMatchObject({
+      HOME: process.env.HOME,
+      AKM_CONFIG_DIR: getConfigDir(),
+      AKM_AMBIENT: "ambient",
+    });
     expect(environment.PATH).toBeTruthy();
-    expect(environment).not.toHaveProperty("AKM_AMBIENT");
-    expect(environment).not.toHaveProperty("OPENAI_API_KEY");
   });
 });
 

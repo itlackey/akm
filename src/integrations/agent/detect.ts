@@ -18,6 +18,7 @@ import childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../../core/config/config";
+import { childProcessEnv } from "../../core/paths";
 import { type AgentProfile, getBuiltinAgentProfile, listBuiltinAgentProfiles } from "./profiles";
 
 /** Function signature for a binary lookup probe. */
@@ -83,6 +84,8 @@ export function probeVersion(
     stdio: "pipe",
     timeout: timeoutMs,
     killSignal: "SIGKILL",
+    // Passed explicitly: Bun 1.3 gives a child the process's environment as it was at startup otherwise.
+    env: childProcessEnv(),
   });
   if (result.error || result.status !== 0) return undefined;
   return String(result.stdout ?? "").trim();
