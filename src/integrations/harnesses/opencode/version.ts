@@ -11,9 +11,8 @@
  * {@link detectOpencodeMajor} runs `<bin> --version` once per binary per process.
  */
 
-import childProcess from "node:child_process";
 import { warnOnce } from "../../../core/warn";
-import { defaultWhich } from "../../agent/detect";
+import { defaultWhich, probeVersion } from "../../agent/detect";
 
 /**
  * The OpenCode CLI binary: the opencode harness runs it and asks it for its major,
@@ -23,10 +22,10 @@ import { defaultWhich } from "../../agent/detect";
 export const OPENCODE_BIN = "opencode";
 
 /** OpenCode 2's own alias for its binary; it can sit next to an OpenCode 1 `opencode` on PATH. */
-export const OPENCODE2_BIN = "opencode2";
+const OPENCODE2_BIN = "opencode2";
 const VERSION_TIMEOUT_MS = 30_000;
 
-export interface OpencodeVersionInfo {
+interface OpencodeVersionInfo {
   /** The major the binary reported, when it reported an OpenCode version. */
   readonly reportedMajor?: number;
   /** Trimmed `--version` output; empty when the binary could not be run. */
@@ -38,16 +37,7 @@ export interface OpencodeVersionInfo {
 /** Runs `<bin> --version`; the trimmed stdout, or undefined when the binary could not be run. */
 type OpencodeVersionProbe = (bin: string) => string | undefined;
 
-const defaultProbe: OpencodeVersionProbe = (bin) => {
-  const result = childProcess.spawnSync(bin, ["--version"], {
-    encoding: "utf8",
-    stdio: "pipe",
-    timeout: VERSION_TIMEOUT_MS,
-    killSignal: "SIGKILL",
-  });
-  if (result.error || result.status !== 0) return undefined;
-  return (result.stdout ?? "").trim();
-};
+const defaultProbe: OpencodeVersionProbe = (bin) => probeVersion(bin, VERSION_TIMEOUT_MS);
 
 let probeOverride: OpencodeVersionProbe | undefined;
 const detected = new Map<string, OpencodeVersionInfo>();
@@ -71,7 +61,7 @@ function lookup(bin: string): string | undefined {
  * undefined when the output is not an OpenCode version (another program's
  * `--version`, such as `true (GNU coreutils) 9.7`).
  */
-export function parseOpencodeMajor(versionOutput: string): number | undefined {
+function parseOpencodeMajor(versionOutput: string): number | undefined {
   const match = versionOutput.trim().match(/^(?:opencode\s+)?v?(\d+)\.\d+(?:\.\d+)?(?:[-+.\w]*)$/im);
   return match ? Number(match[1]) : undefined;
 }

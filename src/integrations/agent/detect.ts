@@ -6,14 +6,15 @@
  * Setup-time agent CLI detection.
  *
  * Probes every known/configured agent profile by checking `which <bin>` on
- * PATH. We do **not** call `<bin> --version` — that would execute the
- * binary at setup time, which is unnecessarily side-effectful for
- * detection. The presence of the binary on PATH is sufficient signal; the
- * spawn wrapper handles failures at run-time.
+ * PATH. Detection does **not** call `<bin> --version` — that would execute the
+ * binary, which is unnecessarily side-effectful for detection. The presence of
+ * the binary on PATH is sufficient signal; the spawn wrapper handles failures
+ * at run-time. A program's version is asked separately, by {@link probeVersion}.
  *
  * Tests inject a fake `whichFn` so detection branches can be exercised
  * without poking at the real PATH.
  */
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../../core/config/config";
@@ -65,6 +66,26 @@ export function defaultWhich(bin: string, envSource: NodeJS.ProcessEnv = process
     }
   }
   return undefined;
+}
+
+/**
+ * `<bin> --version`: its trimmed standard output, or undefined when it could not be run or did not
+ * exit 0. The one version probe: OpenCode's major detection and `akm health` both ask it, and like
+ * any program akm starts it gets the environment akm runs in.
+ */
+export function probeVersion(
+  bin: string,
+  timeoutMs: number,
+  spawn: typeof childProcess.spawnSync = childProcess.spawnSync,
+): string | undefined {
+  const result = spawn(bin, ["--version"], {
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: timeoutMs,
+    killSignal: "SIGKILL",
+  });
+  if (result.error || result.status !== 0) return undefined;
+  return String(result.stdout ?? "").trim();
 }
 
 /** Windows PATHEXT default, used when the env carries no explicit list. */

@@ -12,7 +12,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { type AkmConfig, ambiguousDefaultAdvice, loadConfig } from "../../core/config/config";
-import { defaultWhich, type WhichFn } from "../../integrations/agent/detect";
+import { defaultWhich, probeVersion, type WhichFn } from "../../integrations/agent/detect";
 import { resolveTarget } from "../../integrations/agent/resolution";
 import { type ChatCompletionConfig, probeEndpointOnce } from "../../llm/client";
 import { type TargetRow, targetRows } from "../targets";
@@ -53,11 +53,8 @@ function harnessVersions(config: AkmConfig, which: WhichFn, spawn: typeof spawnS
     try {
       const target = resolveTarget({ config, layers: [{ harness: name }] });
       if (target.kind !== "harness" || !which(target.bin)) continue;
-      const result = spawn(target.bin, ["--version"], {
-        encoding: "utf8",
-        timeout: VERSION_TIMEOUT_MS,
-      });
-      if ((result.status ?? 1) === 0) versions.set(name, String(result.stdout).trim().split("\n")[0] || undefined);
+      const version = probeVersion(target.bin, VERSION_TIMEOUT_MS, spawn);
+      if (version !== undefined) versions.set(name, version.split("\n")[0] || undefined);
     } catch {
       // A harness that cannot be resolved or run has no version to report.
     }

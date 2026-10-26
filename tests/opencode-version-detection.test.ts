@@ -1,5 +1,5 @@
 /**
- * Which OpenCode major an installed binary is: parsing `--version`, choosing
+ * Which OpenCode major an installed binary is: reading `--version`, choosing
  * the binary, the environment the probe gets, and the once-per-binary warning.
  * Fake binaries on PATH stand in for the program; the probe itself is real.
  */
@@ -12,7 +12,6 @@ import { resolveTarget } from "../src/integrations/agent/resolution";
 import {
   _setOpencodeVersionProbeForTests,
   detectOpencodeMajor,
-  parseOpencodeMajor,
   resolveOpencodeBin,
 } from "../src/integrations/harnesses/opencode/version";
 import { withOpencodeOnPath } from "./_helpers/opencode-version";
@@ -39,20 +38,25 @@ beforeEach(() => {
   });
 });
 
-describe("parseOpencodeMajor", () => {
+describe("the major in --version output", () => {
+  const majorOf = (output: string): number | undefined => {
+    fakeBinaries({ "fake-opencode": output });
+    return detectOpencodeMajor("fake-opencode").reportedMajor;
+  };
+
   test("reads both real output shapes", () => {
-    expect(parseOpencodeMajor("1.18.34")).toBe(1);
-    expect(parseOpencodeMajor("opencode v2.0.26")).toBe(2);
-    expect(parseOpencodeMajor("opencode v3.1.0")).toBe(3);
+    expect(majorOf("1.18.34")).toBe(1);
+    expect(majorOf("opencode v2.0.26")).toBe(2);
+    expect(majorOf("opencode v3.1.0")).toBe(3);
   });
 
   test("is undefined when there is no version", () => {
-    expect(parseOpencodeMajor("")).toBeUndefined();
-    expect(parseOpencodeMajor("no version here")).toBeUndefined();
+    expect(majorOf("")).toBeUndefined();
+    expect(majorOf("no version here")).toBeUndefined();
   });
 
   test("is undefined for another program's --version", () => {
-    expect(parseOpencodeMajor("true (GNU coreutils) 9.7\nPackaged by Ubuntu (9.7-3ubuntu2.1)")).toBeUndefined();
+    expect(majorOf("true (GNU coreutils) 9.7\nPackaged by Ubuntu (9.7-3ubuntu2.1)")).toBeUndefined();
   });
 });
 
@@ -118,16 +122,16 @@ describe("detectOpencodeMajor", () => {
     );
   });
 
-  test("the probe gets the allowlisted environment, not akm's whole one", async () => {
+  test("the probe gets the environment akm runs in", async () => {
     const bin = makeSandboxDir("akm-version-env");
     try {
-      // Reports OpenCode 2 only when it has a HOME and none of akm's other variables.
+      // Reports OpenCode 2 only when it sees a variable akm itself does not know of.
       fs.writeFileSync(
         path.join(bin.dir, "opencode"),
-        `#!${process.execPath}\nconsole.log(process.env.HOME && !process.env.AKM_PROBE_SECRET ? "opencode v2.0.26" : "leaked");\n`,
+        `#!${process.execPath}\nconsole.log(process.env.AKM_PROBE_VAR === "synthetic" ? "opencode v2.0.26" : "not inherited");\n`,
         { mode: 0o755 },
       );
-      await withEnv({ PATH: bin.dir, AKM_PROBE_SECRET: "synthetic" }, async () => {
+      await withEnv({ PATH: bin.dir, AKM_PROBE_VAR: "synthetic" }, async () => {
         _setOpencodeVersionProbeForTests(undefined);
         expect(detectOpencodeMajor("opencode")).toMatchObject({ reportedMajor: 2, version: "opencode v2.0.26" });
       });
