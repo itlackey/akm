@@ -163,6 +163,31 @@ describe("extracting the one member of a package tarball", () => {
 
     await expect(extractTarGzMember(cut, "package/bin/opencode", path.join(scratch.dir, "out"))).rejects.toThrow();
   });
+
+  test.skipIf(process.platform !== "linux")(
+    "the archive is closed once the member is written, though more follows it",
+    async () => {
+      const root = path.join(scratch.dir, "after");
+      fs.mkdirSync(path.join(root, "package", "bin"), { recursive: true });
+      fs.writeFileSync(path.join(root, "package", "bin", "opencode"), randomBytes(1_000));
+      fs.writeFileSync(path.join(root, "package", "zz-after"), randomBytes(4_000_000));
+      const archive = path.join(scratch.dir, "after.tgz");
+      spawnSync("tar", ["-czf", archive, "-C", root, "package/bin/opencode", "package/zz-after"]);
+      const openOnArchive = () =>
+        fs.readdirSync("/proc/self/fd").filter((fd) => {
+          try {
+            return fs.readlinkSync(`/proc/self/fd/${fd}`) === archive;
+          } catch {
+            return false;
+          }
+        });
+
+      await extractTarGzMember(archive, "package/bin/opencode", path.join(scratch.dir, "out"));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(openOnArchive()).toEqual([]);
+    },
+  );
 });
 
 describe("the first-use fetch", () => {

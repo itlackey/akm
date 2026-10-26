@@ -65,13 +65,23 @@ const field = (header: Buffer, start: number, end: number): string => {
 
 /**
  * Write the regular file `member` of the `.tgz` at `archive` to `destination` (mode 0755) and return its size. Entries
- * are matched by the header's name field, which holds a name of up to 100 bytes in every tar format; extended headers
- * are skipped like any other entry that is not the member.
+ * are matched by the header's name field alone, which holds up to 100 bytes; a longer name, which tar keeps in the
+ * ustar prefix field or a PAX `path` record, is not read, so such a member is never found. The one member akm reads,
+ * `package/bin/opencode`, is short. Extended headers are skipped like any other entry that is not the member.
  */
 export async function extractTarGzMember(archive: string, member: string, destination: string): Promise<number> {
   const gunzip = zlib.createGunzip();
   pipeline(fs.createReadStream(archive), gunzip, () => {});
   const reader = new ByteReader(gunzip);
+  try {
+    return await extractFrom(reader, archive, member, destination);
+  } finally {
+    // The rest of the archive is not read: close it now rather than when the stream is collected.
+    gunzip.destroy();
+  }
+}
+
+async function extractFrom(reader: ByteReader, archive: string, member: string, destination: string): Promise<number> {
   for (;;) {
     const header = await reader.exact(BLOCK_BYTES);
     if (header.every((byte) => byte === 0)) throw new Error(`${archive} has no ${member}`);
