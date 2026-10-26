@@ -4,11 +4,10 @@
 
 /**
  * OpenAI Codex CLI (`codex`). Headless is the `exec` subcommand, which prints the
- * final message on stdout and its progress on stderr. `exec` defaults to a
- * read-only sandbox that silently blocks writes, so agent work gets
- * `workspace-write` unless the config pins its own `--sandbox`, and model work
- * gets `read-only` whatever the config says. `--skip-git-repo-check` lets it run
- * outside a git repository.
+ * final message on stdout and its progress on stderr. Agent work runs with the
+ * sandbox the user's Codex configuration sets (or the `--sandbox` their `args`
+ * name); model work gets `read-only` whatever the config says.
+ * `--skip-git-repo-check` lets it run outside a git repository.
  */
 
 import type { SessionLogHarness } from "../../session-logs/types";
@@ -24,10 +23,6 @@ import {
 import { CodexProvider } from "./session-log";
 
 export { CodexProvider } from "./session-log";
-
-function pinsSandbox(args: readonly string[]): boolean {
-  return args.some((arg) => arg === "--sandbox" || arg === "-s" || arg.startsWith("--sandbox="));
-}
 
 export class CodexHarness implements AkmHarness {
   readonly id = "codex" as const;
@@ -50,11 +45,7 @@ export class CodexHarness implements AkmHarness {
     const model = req.model ?? (req.modelWork ? modelFromArgs(authored) : undefined);
     const modelFlag = model ? ["--model", model] : [];
     if (req.prompt === undefined) return { argv: [bin, ...extra, ...modelFlag] };
-    const sandbox = req.modelWork
-      ? ["--sandbox", "read-only"]
-      : pinsSandbox(extra)
-        ? []
-        : ["--sandbox", "workspace-write"];
+    const sandbox = req.modelWork ? ["--sandbox", "read-only"] : [];
     return { argv: [bin, "exec", ...extra, ...sandbox, "--skip-git-repo-check", ...modelFlag, "--", req.prompt] };
   }
 }

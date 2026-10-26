@@ -257,7 +257,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   task log also scrubs the values its `redact:` list names, and a workflow
   journal the `secrets/` values substituted into a binding.
   `env run --clean` keeps its own list. Agent work on OpenCode adds nothing to the
-  invocation.
+  invocation; Codex agent work no longer sets `--sandbox workspace-write` and
+  Aider no longer gets `--no-auto-commits`, so each runs with the settings its
+  own configuration gives it (model work on Codex still runs `--sandbox
+  read-only`).
 - Stopping a child process (a timeout, an abort, or a signal to akm) sends its
   process group SIGINT first, then SIGTERM and SIGKILL, each after a 5 second
   grace for as long as it still runs, where it sent SIGTERM and then SIGKILL.

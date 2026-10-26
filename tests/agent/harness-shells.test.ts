@@ -47,11 +47,11 @@ const SHELLS: Record<string, Shell> = {
   },
   codex: {
     headless: {
-      argv: ["codex", "exec", "--sandbox", "workspace-write", "--skip-git-repo-check", "--", PROMPT],
+      argv: ["codex", "exec", "--skip-git-repo-check", "--", PROMPT],
     },
     interactive: { argv: ["codex"] },
     model: {
-      argv: ["codex", "exec", "--sandbox", "workspace-write", "--skip-git-repo-check", "--model", "m-1", "--", PROMPT],
+      argv: ["codex", "exec", "--skip-git-repo-check", "--model", "m-1", "--", PROMPT],
     },
     modelFlag: true,
   },
@@ -74,10 +74,10 @@ const SHELLS: Record<string, Shell> = {
     modelFlag: true,
   },
   aider: {
-    headless: { argv: ["aider", "--no-auto-commits", "--yes-always", "--no-pretty", `--message=${PROMPT}`] },
-    interactive: { argv: ["aider", "--no-auto-commits"] },
+    headless: { argv: ["aider", "--yes-always", "--no-pretty", `--message=${PROMPT}`] },
+    interactive: { argv: ["aider"] },
     model: {
-      argv: ["aider", "--no-auto-commits", "--model", "m-1", "--yes-always", "--no-pretty", `--message=${PROMPT}`],
+      argv: ["aider", "--model", "m-1", "--yes-always", "--no-pretty", `--message=${PROMPT}`],
     },
     modelFlag: true,
   },

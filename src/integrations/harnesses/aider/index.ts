@@ -21,7 +21,7 @@ import {
 export class AiderHarness implements AkmHarness {
   readonly id = "aider" as const;
   readonly displayName = "Aider";
-  readonly profile = { bin: "aider", args: ["--no-auto-commits"] };
+  readonly profile = { bin: "aider", args: [] };
   readonly systemPrompt = false;
   readonly nativeAgent = false;
   readonly confinable = false;
