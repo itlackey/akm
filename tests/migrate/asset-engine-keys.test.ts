@@ -377,6 +377,38 @@ describe("the step", () => {
     expect(fs.readFileSync(path.join(stash(), "commands/c.md"), "utf8")).toContain("harness: claude");
   });
 
+  test("the run that forgets the old names says which flag now reaches each renamed engine, and only then", async () => {
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: {
+        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
+      },
+      engines: {
+        lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "qwen3-32b" },
+        default: { kind: "llm", endpoint: "http://old:8080/v1/chat/completions", model: "old-model" },
+        claude: { kind: "agent", platform: "claude" },
+      },
+      defaults: { llmEngine: "lab" },
+    });
+    write("commands/a.md", "---\nname: a\nakm:\n  engine: lab\n---\nA.\n");
+    // A block scalar the splice cannot write keeps `lab` remembered, so this run forgets nothing.
+    const skipped = write("commands/b.md", "---\nname: b\nakm:\n  engine: >-\n    lab\n---\nB.\n");
+
+    const first = await runMigration({ apply: true });
+    expect(first.assetEngineKeys?.notes).toBeUndefined();
+
+    fs.writeFileSync(skipped, "---\nname: b\nakm:\n  connection: default\n---\nB.\n");
+    const second = await runMigration({ apply: true });
+    const notes = second.assetEngineKeys?.notes ?? [];
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("--engine lab is now --connection default");
+    expect(notes[0]).toContain("--engine default is now --connection legacy-default");
+    expect(notes[0]).not.toContain("--engine claude");
+
+    const third = await runMigration({ apply: true });
+    expect(third.assetEngineKeys?.notes).toBeUndefined();
+  });
+
   test("the old names are kept while a file is skipped, so a retry after the config was rewritten writes the same names", async () => {
     // `lab` becomes `default` and the engine called `default` becomes `legacy-default`; the bundle is read-only at first.
     writeSandboxConfig({

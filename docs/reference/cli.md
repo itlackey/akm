@@ -2143,7 +2143,11 @@ in order:
    convert unambiguously is reported `blocked` and left alone;
 4. the retired `engine:` key on commands, agents, workflows and task sources
    rewritten to `connection:` or `harness:` by what the name is now
-   (`assetEngineKeys`), under one backup directory per run;
+   (`assetEngineKeys`), under one backup directory per run. The run that has
+   rewritten every such key it can reach forgets the old engine names and adds one
+   note to `assetEngineKeys.notes`: each renamed engine with the flag that
+   replaces `--engine <old name>` (`--connection` or `--harness`), which reaches
+   only a connection or harness of that name from then on;
 5. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
    the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
    version-stamp files older releases kept under `$DATA`, `$STATE` and

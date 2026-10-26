@@ -52,6 +52,8 @@ export interface EngineKeysSummary {
   backupPath?: string;
   /** Present with `backupPath`: how many files were rewritten. */
   applied?: number;
+  /** Present on the run that forgets the old engine names: which flag now reaches each one that was renamed. */
+  notes?: readonly string[];
 }
 
 export interface EngineKeysMigrationStatus {
@@ -105,11 +107,34 @@ function summarize(files: readonly EngineKeyOutcome[]): EngineKeysSummary {
   };
 }
 
+/** The old engine names in play: this run's conversion, else the live config's, else the ones an earlier run remembered. */
+function knownTargets(targets?: EngineTargets): EngineTargets {
+  return targets && Object.keys(targets).length > 0 ? targets : retiredEngineTargets();
+}
+
 function plan(targets?: EngineTargets) {
   resetConfigCache();
   const config = loadConfig();
-  const known = targets && Object.keys(targets).length > 0 ? targets : retiredEngineTargets();
-  return planEngineKeys(inspectEngineKeyFiles(taskRoots(config)), resolverFor(config, known));
+  return planEngineKeys(inspectEngineKeyFiles(taskRoots(config)), resolverFor(config, knownTargets(targets)));
+}
+
+/**
+ * Forget the old engine names, which nothing reads once no `engine:` key names one. From then on `--engine <old name>`
+ * reaches only a connection or harness of that name, so a script that passes a renamed engine must change: one note
+ * says which flag now reaches each.
+ */
+function forgetOldNames(known: EngineTargets): readonly string[] {
+  forgetEngineTargets();
+  const renamed = Object.entries(known).flatMap(([engine, target]) => {
+    const name = "connection" in target ? target.connection : target.harness;
+    const flag = "connection" in target ? "--connection" : "--harness";
+    return name === engine ? [] : [`--engine ${engine} is now ${flag} ${name}`];
+  });
+  return renamed.length === 0
+    ? []
+    : [
+        `--engine no longer reaches an engine by its old name, only a connection or harness of that name. A script or scheduled command that passes one of these must change: ${renamed.join("; ")}.`,
+      ];
 }
 
 function statusOf(summary: EngineKeysSummary): EngineKeysMigrationStatus {
@@ -127,8 +152,8 @@ export function applyEngineKeysMigration(targets?: EngineTargets): EngineKeysMig
     const before = plan(targets);
     const summary = summarize(before.files);
     if (summary.changed === 0) {
-      if (pendingEngineKeys(before) === 0) forgetEngineTargets();
-      return statusOf(summary);
+      const notes = pendingEngineKeys(before) === 0 ? forgetOldNames(knownTargets(targets)) : [];
+      return statusOf(notes.length > 0 ? { ...summary, notes } : summary);
     }
     const backupPath = path.join(getDataDir(), "backups", "asset-engine-keys", `${Date.now()}-${randomUUID()}`);
     const { rewritten, conflicts } = applyEngineKeysPlan(before, { backupRoot: backupPath });
@@ -146,7 +171,7 @@ export function applyEngineKeysMigration(targets?: EngineTargets): EngineKeysMig
     const left = files.filter((file) => file.status === "skipped").length;
     // The old names go only when the files, read again, no longer have an `engine:` key that names one: a file
     // rewritten in part (a block scalar the splice cannot write) or changed since it was planned still does.
-    if (pendingEngineKeys(plan(targets)) === 0) forgetEngineTargets();
+    const notes = pendingEngineKeys(plan(targets)) === 0 ? forgetOldNames(knownTargets(targets)) : [];
     // The report keeps what was rewritten, notes included.
     return {
       schemaVersion: 1,
@@ -158,6 +183,7 @@ export function applyEngineKeysMigration(targets?: EngineTargets): EngineKeysMig
         skipped: left,
         backupPath,
         applied: rewritten.length,
+        ...(notes.length > 0 ? { notes } : {}),
       },
     };
   });

@@ -1143,8 +1143,10 @@ akm's data directory (`migrate/engine-targets.json`), and the key (and a retired
 every `engine:` key it can reach; an asset in a read-only bundle, or a block it
 could not splice, is rewritten under the same names by a later run. Then the
 names are forgotten and `engine:` names a connection by that name, else a
-harness. A script or scheduled command that passes `--engine` is not one the
-migrator can reach: change it to `--connection` or `--harness`. A remembered
+harness; the run that forgets them prints one note listing each renamed engine
+and the flag that replaces it. A script or scheduled command that passes
+`--engine` is not one the migrator can reach: change it to `--connection` or
+`--harness`. A remembered
 name whose connection is no longer configured fails like any selection of an
 unconfigured name.
 

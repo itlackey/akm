@@ -36,15 +36,28 @@ spelling is in the CHANGELOG entry and the CLI reference.
 **Connections and harnesses (0.10, #1244).** `engines` and `defaults` are
 replaced by `connections` and `harnesses`. A config in the old form still loads
 (converted in memory, with a warning that names `akm migrate apply`), and `akm
-migrate apply` converts it. These are unknown flags or commands (exit 2) from
-0.10, with no alias:
+migrate apply` converts it.
+
+`--engine <name>` (on `agent`, `command run`, `task add`, `proposal new` and
+`proposal extract`) and `--require-engines` (on `improve`) are hidden from
+`--help` and still run, with one warning, through 0.10. `--engine NAME` names a
+connection by that name, else a harness; the old name of an engine that `akm
+migrate apply` renamed reaches it only until that command has rewritten every
+`engine:` key it can reach, and the run that finishes the job prints a note with
+the flag that replaces each such name. `--require-engines` does nothing. Change
+a script to `--connection <name>` or `--harness <name>`, and `--model
+<alias|name>`.
+
+`AKM_ENGINE_<NAME>_API_KEY`, `AKM_LLM_API_KEY` and `AKM_EMBED_API_KEY` are no
+longer read implicitly: put `"apiKey": "$VAR"` on the connection, or the key in
+`credentials.json`.
+
+These are unknown flags or commands (exit 2) from 0.10, with no alias:
 
 | Gone | Use |
 | --- | --- |
-| `--engine <name>` on `agent`, `command run`, `improve`, `proposal new`, `proposal extract`, `task add` | `--connection <name>` or `--harness <name>`, and `--model <alias\|name>` |
 | `akm setup --config <json>` and `--probe` | `akm setup --endpoint <url> --yes` and the other answer flags; `--no-probe` for an offline run (probing is the default) |
 | `akm models list`, `akm models copy-defaults` | `akm models`, `akm models set <alias> <model>` |
-| `AKM_ENGINE_<NAME>_API_KEY`, `AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY` | `"apiKey": "$VAR"` on the connection, or `credentials.json` |
 
 **Version numbers (0.10 onward, #1089).** A 0.10 release is numbered
 `0.10.YYMMNN`: `YY` the UTC year, `MM` the month (`01` to `12`) and `NN` the

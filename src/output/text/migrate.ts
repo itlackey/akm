@@ -15,7 +15,7 @@ interface MigrationPlanResult {
   blockers?: string[];
   configFile?: { credentials?: string[]; notes?: string[] };
   taskFiles?: { changed: number; skipped: number; blocked: number };
-  assetEngineKeys?: { changed: number; skipped: number };
+  assetEngineKeys?: { changed: number; skipped: number; notes?: string[] };
   backupPath?: string;
   applied?: number;
 }
@@ -57,6 +57,10 @@ export function formatMigratePlain(result: unknown): string | null {
   }
   if (plan.configFile?.notes?.length) {
     lines.push("", "config notes:", ...plan.configFile.notes.map((note) => `  - ${note}`));
+  }
+
+  if (plan.assetEngineKeys?.notes?.length) {
+    lines.push("", "engine name notes:", ...plan.assetEngineKeys.notes.map((note) => `  - ${note}`));
   }
 
   if (plan.backupPath) {
