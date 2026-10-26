@@ -152,7 +152,7 @@ enumeration of the whole `proposal` noun group.
 | `akm log` | Evolving | |
 | `akm agent` | Evolving | |
 | `akm command run` | Evolving | Runs stored command templates through the same agent dispatch as `akm agent`. |
-| `akm models` | Evolving | The alias picks of a connection beside the models its endpoint lists, and `set` to change one. |
+| `akm models` | Evolving | The alias picks of a connection, then the models its endpoint lists, and `set` to change one. |
 | `akm lint` | Evolving | |
 | `akm improve` | Evolving | Review-first by default; mutating lanes require `experimental.improveAutonomy` — see below. |
 | `akm improve report` | Evolving | Subcommand since 0.10 (was a magic `scope` value); owns `--run` and `--since`. |

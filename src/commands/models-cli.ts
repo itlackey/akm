@@ -6,7 +6,7 @@
  * `akm models` — the one place to see and change which model answers each alias
  * (`fast`, `balanced`, `reasoning`, and any the user adds) on a connection.
  *
- *   akm models [--connection NAME]                      the picks, beside what the endpoint lists
+ *   akm models [--connection NAME]                      the picks, then what the endpoint lists
  *   akm models set <alias> <model> [--connection NAME]  change one
  *
  * Connections only: a harness's alias map is `harnesses.<name>.models`, edited
@@ -74,7 +74,7 @@ export const modelsCommand = defineGroupCommand({
   meta: {
     name: "models",
     description:
-      "Show which model answers each alias on a connection, beside the models its endpoint lists; `models set` changes one",
+      "Show which model answers each alias on a connection, then the models its endpoint lists; `models set` changes one",
   },
   // The group runs the list itself, so it declares the output flags a leaf command would get from `defineJsonCommand`.
   args: { ...GLOBAL_OUTPUT_ARGS, ...CONNECTION_ARG, ...PROBE_ARG },

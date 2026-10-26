@@ -306,7 +306,7 @@ akm config list                               # Show current config
 akm config get <key>                          # Read a value
 akm config set <key> <value>                  # Set a value
 akm config unset <key>                        # Remove a key
-akm models                                    # Which model answers each alias, beside what the endpoint lists
+akm models                                    # Which model answers each alias, then what the endpoint lists
 akm models set <alias> <model>                # Change one (--connection <name> for another connection)
 ```
 
