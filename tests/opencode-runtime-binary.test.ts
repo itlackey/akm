@@ -10,7 +10,7 @@
  * fetch is exercised by tests/integration/opencode-runtime-sessions.test.ts.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -215,6 +215,39 @@ describe("the first-use fetch", () => {
 
     expect(both[0]).toBe(both[1] as string);
     expect(requests).toHaveLength(2);
+  });
+
+  test("a rename that loses to another process's finished file leaves that file in use", async () => {
+    const { serve } = registry(packageTarball(BINARY));
+    const binary = runtimeBinaryPath();
+    // The other process finishes while this one downloads, and where a file in place cannot be replaced the rename fails.
+    const otherFinishes = (url: string): Response => {
+      if (url.endsWith("/-/package-2.1.4.tgz")) {
+        fs.mkdirSync(path.dirname(binary), { recursive: true });
+        fs.writeFileSync(binary, BINARY, { mode: 0o755 });
+      }
+      return serve(url);
+    };
+    spyOn(fs, "renameSync").mockImplementation(() => {
+      throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
+    });
+
+    await expect(withMockedFetch(() => ensureRuntimeBinary(), otherFinishes)).resolves.toBe(binary);
+
+    expect(fs.readFileSync(binary).equals(BINARY)).toBe(true);
+    expect(leftovers()).toEqual([]);
+  });
+
+  test("a rename that fails with nothing in place is a failed fetch, not a binary that is not there", async () => {
+    const { serve } = registry(packageTarball(BINARY));
+    spyOn(fs, "renameSync").mockImplementation(() => {
+      throw Object.assign(new Error("EACCES: permission denied, rename"), { code: "EACCES" });
+    });
+
+    await expect(withMockedFetch(() => ensureRuntimeBinary(), serve)).rejects.toThrow(/EACCES/);
+
+    expect(fs.existsSync(runtimeBinaryPath())).toBe(false);
+    expect(leftovers()).toEqual([]);
   });
 
   test("a tarball that does not match the registry's integrity is refused before anything is kept", async () => {
