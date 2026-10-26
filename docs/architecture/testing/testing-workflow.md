@@ -300,15 +300,20 @@ AKM_TEST_OPENCODE2_BIN=/path/to/opencode bun test --timeout=120000 tests/integra
 ```
 
 Every run of the binary is sandboxed: its `HOME`, XDG and OpenCode directories
-are temporary directories, its only provider is a loopback fake model reached
-through the `@ai-sdk/openai-compatible` package installed with akm (nothing is
+are temporary directories, every other `OPENCODE_*` variable the developer has
+exported is blanked, its only provider is a loopback fake model reached through
+the `@ai-sdk/openai-compatible` package installed with akm (nothing is
 downloaded), and no real OpenCode file, login or key is opened. The suite covers
-what akm relies on at that boundary: model work offers only its reading tools,
-and an abort or a timeout, during a model request or a tool call, releases
-OpenCode's claim on the session and leaves no process behind, and a provider
-defined only in the user's `OPENCODE_CONFIG_CONTENT` works for agent work and
-model work alike. Run it when changing the OpenCode builder, its environment list or the
-subprocess kill ladder, and against a new OpenCode 2 release.
+what akm relies on at that boundary. Model work, which runs standalone, offers
+only its reading tools, and an abort or a timeout, during a model request or a
+tool call, releases OpenCode's claim on the session and leaves no process
+behind. Agent work is the plain invocation, which OpenCode 2 runs through a
+background service on one port for every `HOME`: those cases end the service
+they start, skip when something else holds the port, and record that a stop ends
+the `opencode` command and not the service's turn. A provider defined only in the
+user's `OPENCODE_CONFIG_CONTENT` works for agent work and model work alike. Run
+it when changing the OpenCode builder or the subprocess kill ladder, and against
+a new OpenCode 2 release.
 
 ### 5. Benchmark (agent utility)
 

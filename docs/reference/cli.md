@@ -192,18 +192,23 @@ The wizard asks, in order:
 
 1. **Agent programs.** Which installed agent programs (Claude Code, Codex,
    OpenCode, ...) akm may use; each is shown with whether akm can limit it to
-   reading and searching for its own model calls. With several, you pick the default. When a
-   harness that cannot be restricted is enabled for akm's model calls, setup says
-   "Model work on `<name>` cannot be restricted: it can edit files and run
-   commands." where you choose, and in its summary line.
+   reading and searching for its own model calls. With several, you pick the
+   default. For OpenCode, setup asks the program the harness will run (its `bin`,
+   else `opencode` on `PATH`) for `--version` and treats a version it cannot read
+   as OpenCode 1. When a harness that cannot be restricted is enabled for akm's
+   model calls, setup says "Model work on `<name>` cannot be restricted: it can
+   edit files and run commands." where you choose, and in its summary line.
 2. **Model calls.** Whether the default agent program also takes akm's own
    model calls (improve, judging, extraction). It is asked only when a harness is
-   enabled and there is no connection yet and no `--endpoint`, because a connection
-   always takes model calls; answering no leads to a connection. A no that no
-   connection follows is saved as `modelWork: false` on that harness, so model
-   calls stay off (the summary says so and points at `akm setup --endpoint`) rather
-   than falling back to it. With `--yes` the answer is yes only for a harness akm
-   can limit to reading and searching for its own model calls and whose `modelWork: false` is not already saved.
+   enabled and there is no connection yet and no `--endpoint`, because a
+   connection always takes model calls; answering no leads to a connection. A no
+   that no connection follows is saved as `modelWork: false` on that harness, so
+   model calls stay off (the summary says so and points at `akm setup
+   --endpoint`) rather than falling back to it. A `modelWork: false` already
+   saved is the question's default and stays through `--yes`; only a yes clears
+   it. With `--yes` the answer is yes only for a harness akm can limit to reading
+   and searching for its own model calls, and whose `modelWork: false` is not
+   already saved.
 3. **Connection.** An OpenAI-compatible endpoint, its API key (typed at a masked
    prompt and stored in `credentials.json`, never in `config.json`), and one model
    per alias (`fast`, `balanced`, `reasoning`) picked from the models the
@@ -2146,9 +2151,8 @@ in order:
    rewritten to `connection:` or `harness:` by what the name is now
    (`assetEngineKeys`), under one backup directory per run. The run that has
    rewritten every such key it can reach forgets the old engine names and adds one
-   note to `assetEngineKeys.notes`: each renamed engine with the flag that
-   replaces `--engine <old name>` (`--connection` or `--harness`), which reaches
-   only a connection or harness of that name from then on;
+   note to `assetEngineKeys.notes` listing each renamed engine and the flag that
+   replaces it (see [The `engines` form](configuration.md#the-engines-form));
 5. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
    the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
    version-stamp files older releases kept under `$DATA`, `$STATE` and
@@ -2711,6 +2715,8 @@ akm agent [<agent-ref>] [--connection <name> | --harness <name>] [--prompt <text
 | `--cwd <path>` | Working directory for the run (defaults to the current directory) |
 
 With a prompt the agent runs the task, and its reply is the result's `stdout`.
+On a harness the program runs as you would run it by hand ([How akm runs a
+harness](configuration.md#how-akm-runs-a-harness)).
 When `<agent-ref>` is provided, akm resolves the bundle agent's persona and model
 default; `--model` wins over the asset. An alias is looked up on the selected
 connection or harness (see [Aliases](configuration.md#aliases)): `--harness
@@ -3137,7 +3143,8 @@ The `codex` harness reads Codex's rollout files under `$CODEX_HOME/sessions`
 (`~/.codex/sessions` by default; `--location` points at another rollout
 directory). It lists a person's sessions, `codex exec` runs included, and
 leaves out the rollouts Codex writes for subagents and its other internal agents:
-those are not sessions of their own.
+those are not sessions of their own. akm's own Codex model-work runs are among
+the sessions it lists; Codex gives them no marker.
 
 The `opencode` harness reads two SQLite files, read-only and without starting
 OpenCode: OpenCode's own `opencode.db` (under `$XDG_DATA_HOME/opencode`, which is

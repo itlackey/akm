@@ -583,7 +583,7 @@ full.
 | **Argv** | Spawned directly, never shell-interpreted. A `${ref}` token in an entry is replaced at dispatch. |
 | **Environment** | [akm's own](#the-childs-environment), with the directories this akm resolved set over it, then the unit's `env:` bindings, then the engine's `AKM_*` [context](#context-reaching-the-command). |
 | **`${ref}` tokens** | In argv, `cwd` and env-asset values. `${secrets/name}` becomes the secret's value, any other asset ref the asset's absolute path. A ref no bundle owns fails the unit before it spawns. Prompts are not substituted. |
-| **Redaction** | Only values substituted from `secrets/` refs and connection keys are scrubbed from stdout, stderr, diagnostics and the journal. Configuration, such as a URL bound through an env asset, is not, and neither is a value the command inherited. |
+| **Redaction** | Only values akm knows are secret are scrubbed from stdout, stderr, diagnostics and the journal: values substituted from `secrets/` refs, secret-shaped run params and connection keys. Configuration, such as a URL bound through an env asset, is not, and neither is a value the command inherited. |
 
 #### What is frozen, and what is found at dispatch
 
@@ -700,7 +700,8 @@ failure is recorded in the step's evidence and the completion gate decides.
 On timeout or cancellation the child's whole **process group** gets a
 SIGINT→SIGTERM→SIGKILL ladder (each signal after a grace period of 5 seconds, for
 a command still running), so a command that spawned its own children does not
-leave them orphaned.
+leave them orphaned. Windows has no process group; there the first signal ends
+the command itself.
 
 ### Output limits
 
@@ -842,13 +843,14 @@ The directories are `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and
 `AKM_STATE_DIR`, set to the ones the akm that started the command resolved (from
 `AKM_*_DIR`, `XDG_*_HOME` or the platform default), and `AKM_BUNDLE_DIR` when that
 akm had one. A step that runs `akm` therefore uses the same bundle, config, data,
-cache and state. Binding one of them in `env:` overrides it. `AKM_EVENT_SOURCE`
-is set when the environment has none, so a command that calls `akm` records
-machine traffic, not user demand.
+cache and state. Binding one of them in `env:` overrides it. When a scheduled
+task runs the workflow, `AKM_EVENT_SOURCE` is set (when the environment has
+none), so a command that calls `akm` records machine traffic, not user demand; a
+direct `akm workflow run` leaves it as it found it.
 
-Reach a fixed value or a secret with an exact named `env:` binding: only values
-substituted from a `${secrets/name}` ref are redacted from what the command
-prints.
+Reach a fixed value or a secret with an exact named `env:` binding; what is
+redacted from what the command prints is in the Redaction row of [the exec
+contract](#the-exec-contract).
 
 #### `pass_env:` — frozen, and it selects nothing
 

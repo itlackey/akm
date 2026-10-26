@@ -233,7 +233,9 @@ Enforced by: `tests/contracts/api-surface.test.ts` (the export list),
 akm is simple, lightweight tooling for agents and automated processes. A
 harness such as OpenCode (pi or another later) is an internal detail akm
 uses to enable agentic work. It sits behind one thin seam, is not woven into
-akm core, and can be replaced without touching the rest of akm.
+akm core, and can be replaced without touching the rest of akm. What akm adds
+to a harness run, for agent work and for model work, is stated once in
+[Configuration](../reference/configuration.md#how-akm-runs-a-harness).
 
 Why: heavy machinery and tight coupling are the opposite of akm's goals.
 

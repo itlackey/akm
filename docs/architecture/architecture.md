@@ -551,9 +551,13 @@ Credentials stay symbolic (a `$VAR` reference, or the connection's name for its
 `credentials.json` entry) in everything `resolveExecution` returns, so a request
 and runner can be journaled. `runExecution()` materializes the current value at
 each dispatch (`src/core/config/credentials.ts`: the variable's value, else the
-key stored for that connection and the endpoint it was frozen with) and scrubs it,
-with every other secret-looking value the child could see, from the result. Two
-things are therefore different at resume: workflow resume calls
+key stored for that connection and the endpoint it was frozen with) and scrubs it
+from the result, together with the values of credential-named variables in the
+environment the child inherited (names such as `*_API_KEY`, `*_TOKEN`, `*_SECRET`
+and `*_PASSWORD`, eight characters or more: `collectInferredSecretValues`,
+`src/core/redaction.ts`, the rule a task log uses). A harness has no key of akm's,
+so a harness reply is scrubbed of the inherited values alone. Two things are
+therefore different at resume: workflow resume calls
 `buildExecutionFromWire()` on the journaled `{ request, runner }` and reads no
 config, so a config edit after the freeze cannot change a resumed unit's
 endpoint, model or settings; but the key is read again at dispatch (a stored key is used only for a
@@ -620,7 +624,8 @@ Agent programs are reachable by two execution paths, both behind
   `opencode run` with the prompt on stdin
   (`src/integrations/harnesses/opencode/agent-builder.ts`). Their OpenCode owns
   its configuration, logins and sessions; akm embeds, copies and reads none of it
-  to run.
+  to run. Agent work runs it as the user would; model work is akm's own process
+  ([How akm runs a harness](../reference/configuration.md#how-akm-runs-a-harness)).
 - The `AgentRunResult` envelope carries `{ ok, exitCode, stdout, stderr,
   durationMs, reason?, error?, ... }` where `reason` is a typed code such as
   `"timeout"`, `"spawn_failed"`, `"non_zero_exit"` or `"parse_error"`. Callers

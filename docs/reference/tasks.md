@@ -138,8 +138,10 @@ contains environment variable names, never secret values.
 
 `timeout:` (milliseconds) means a different mechanism depending on the
 target. For `run:` (native shell/script) and `workflows/<name>` targets it is
-an outer supervisory deadline: the runner kills the child process, or aborts
-the workflow run at its next step boundary, when it fires. For `uses:
+an outer supervisory deadline: the runner stops the child process (SIGINT, then
+SIGTERM, then SIGKILL; see [How akm runs a
+harness](configuration.md#how-akm-runs-a-harness)), or aborts the workflow run at
+its next step boundary, when it fires. For `uses:
 akm/command`, `commands/<name>`, and any other agent/LLM dispatch target
 there is no outer process kill — `timeout:` instead resolves through the
 execution cascade (config/persona/command/task layers) into the dispatch's

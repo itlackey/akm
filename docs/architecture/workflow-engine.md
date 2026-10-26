@@ -46,7 +46,6 @@ Everything else is live, found again at dispatch through the one ref lookup
 | argv, `exec.cwd` and `pass_env` names as authored | the owner root of the run's workflow, which every exec unit and agent works in (`exec.cwd` joins it once) |
 | `env:` refs, bundle-qualified | the env file, its keys and every `${ref}` in it, and the secrets they name |
 | `${ref}` tokens in argv and `cwd`, as authored | the secret value or asset path each one names |
-| literal env bindings | pass-through bindings, read from the current process |
 
 The executable a unit runs is resolved at dispatch too, so upgrading a CLI (say,
 `claude`) never strands a run, and a `bundle update` that moves a bundle to a

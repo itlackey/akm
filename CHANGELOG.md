@@ -75,8 +75,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   harness that share a name do not hide a per-process pin; each override row
   carries `kind`. `akm info` contacts nothing, and neither does `akm health
   --no-probe`.
-- `akm setup` asks which installed agent programs to enable (saying whether each
-  is limited to reading and searching for akm's own model calls, judged on the
+- `akm setup` asks which installed agent programs to enable (saying whether akm
+  can limit each to reading and searching for its own model calls, judged on the
   program the harness will run: `harnesses.<name>.bin`, else the platform's
   binary on `PATH`), whether the default one also
   takes akm's model calls (a no with no connection after it is saved as
@@ -144,21 +144,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `platform: "opencode"` is your OpenCode, whichever major is installed, run
   through its CLI: `opencode run` with the prompt on stdin, a model only when akm
   names one, an agent only when the asset names one, and your `args` as written.
-  Agent work adds nothing else. Your OpenCode owns its
-  configuration, logins and sessions; akm reads, copies and embeds nothing of
-  yours, and its runs are in your OpenCode history, which improve reads. Model
-  work is akm's own process: it adds its agent to your inline config and keeps
-  the rest of it, and on OpenCode 2 runs `--standalone` (one process that ends
-  with the run, not a background service) with `--title akm`. A run akm stops
-  (timeout, abort) is interrupted first, which OpenCode records as interrupted
-  and releases (on Windows a SIGINT is a forced kill); only a run that had to be
-  terminated or killed after the grace stays suspended in your OpenCode history,
-  where your own OpenCode's background service may resume it (up to ten
-  attempts, OpenCode's own policy). Model work sets
-  `OPENCODE_DISABLE_FREE_MODELS=1`, which OpenCode 2.1.2 and later honor: a call
+  Agent work adds nothing else. Your OpenCode owns its configuration, logins and
+  sessions; akm reads, copies and embeds nothing of yours, and its runs are in
+  your OpenCode history, which improve reads. An interactive `akm agent` still
+  hands the terminal to the CLI. Model work is akm's own process: it adds its
+  agent to your inline config and keeps the rest of it, sets
+  `OPENCODE_DISABLE_FREE_MODELS=1` (OpenCode 2.1.2 and later honor it: a call
   with no usable provider fails instead of sending the prompt to OpenCode's
-  hosted free model. Agent work leaves your OpenCode's models as they are. An
-  interactive `akm agent` still hands the terminal to the CLI.
+  hosted free model), and on OpenCode 2 runs `--standalone` (one process that
+  ends with the run, not a background service) with `--title akm`.
 - A config in the old form (`engines`, `defaults.engine`, `defaults.llmEngine`,
   `defaults.improveStrategy`, `workflow.judgeEngine`, a strategy's `engine`,
   `model`, `llm` and `timeoutMs`) still loads: it is read as the new form in
@@ -234,7 +228,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   plugin adds is denied too; a plugin's own hooks still run. Where it cannot
   (the other platforms, and OpenCode 1, which warns once), the call runs
   unrestricted, in a scratch directory, with a notice. A config that names an `opencode` harness for model work loads, and a
-  native agent named for model work is ignored with a notice.
+  native agent named for model work is ignored with a notice. Agent work is not
+  restricted: it runs the program as you would.
 - The `opencode` CLI dispatch path is no longer deprecated (0.10.261001 deprecated
   it in favour of an `opencode-sdk` engine, which is gone): `platform:
   "opencode"` is the `opencode` harness, your own OpenCode of either major run
@@ -246,9 +241,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The environment allowlist, the Windows floor, the `PATH` supplement for
   scheduler contexts, each harness's passthrough names and the passthrough
   redaction policy are gone, and a frozen `pass_env` still parses and selects
-  nothing. Captured output is scrubbed of the values akm knows are secret (a
-  connection's key, a `secrets/` value substituted into a binding, and in a task
-  log the values its `redact:` list names and credential-named variables).
+  nothing. A dispatch reply from any runner is scrubbed of the connection's key
+  and of the values of credential-named variables in the environment the child
+  inherited (names such as `*_API_KEY`, `*_TOKEN`, `*_SECRET` and `*_PASSWORD`,
+  eight characters or more), the same rule a task log uses; a task log also
+  scrubs the values its `redact:` list names, and a workflow journal the
+  `secrets/` values substituted into a binding.
   `env run --clean` keeps its own list. Agent work on OpenCode adds nothing to the
   invocation.
 - Stopping a child process (a timeout, an abort, or a signal to akm) sends its
@@ -256,17 +254,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   grace for as long as it still runs, where it sent SIGTERM and then SIGKILL.
   SIGTERM also follows at once when the leader exits and leaves members of its
   group behind. This covers agent programs, workflow `exec` units and task
-  commands.
+  commands. A program that records how a run ended acts on the SIGINT: OpenCode 2
+  marks its session interrupted and releases it, and only a run that had to be
+  terminated or killed stays suspended in your OpenCode history, where your own
+  OpenCode's background service may resume it (up to ten attempts, OpenCode's own
+  policy). On Windows there is no process group and a signal ends the program at
+  once.
 - Harnesses are thin shells. akm writes only the arguments a program needs to run
   without a person, hands it the prompt and takes its standard output as the
   reply, as written: it no longer asks for JSON output or reads a result or a
   session id out of it. A reply that must have a shape is parsed once by the
   caller, from the schema instruction already in the prompt. Claude Code and pi
   take the prompt on stdin, and their persona goes to `--append-system-prompt`
-  (appended to pi's own prompt). A harness's child gets
-  `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR` (and
-  `AKM_BUNDLE_DIR` when akm has one), so a program that runs `akm` uses the same
-  installation.
+  (appended to pi's own prompt).
 - `akm agent` with no `--prompt` starts the harness for a person, with the
   terminal and the harness's model; a connection has nothing to start, and the
   command says so, naming `--prompt` and a harness.

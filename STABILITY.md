@@ -40,13 +40,10 @@ migrate apply` converts it.
 
 `--engine <name>` (on `agent`, `command run`, `task add`, `proposal new` and
 `proposal extract`) and `--require-engines` (on `improve`) are hidden from
-`--help` and still run, with one warning, through 0.10. `--engine NAME` names a
-connection by that name, else a harness; the old name of an engine that `akm
-migrate apply` renamed reaches it only until that command has rewritten every
-`engine:` key it can reach, and the run that finishes the job prints a note with
-the flag that replaces each such name. `--require-engines` does nothing. Change
-a script to `--connection <name>` or `--harness <name>`, and `--model
-<alias|name>`.
+`--help` and still run, with one warning, through 0.10. `--require-engines`
+does nothing. Change a script to `--connection <name>` or `--harness <name>`,
+and `--model <alias|name>`; how an old engine name resolves is under
+[The `engines` form](docs/reference/configuration.md#the-engines-form).
 
 `AKM_ENGINE_<NAME>_API_KEY`, `AKM_LLM_API_KEY` and `AKM_EMBED_API_KEY` are no
 longer read implicitly: put `"apiKey": "$VAR"` on the connection, or the key in
@@ -386,8 +383,10 @@ CHANGELOG with a migration note.
   and for the legacy OpenCode 1, which keeps working with no removal date),
   `copilot`, `pi`, `gemini`, `aider`, `amazonq` and `openhands`. Every harness is Evolving: a harness is a thin shell that turns a
   request into a command, and the set is easy to add to, remove from and update.
-  The set will grow. With no harness configured, agent work runs on akm's own
-  runtime over a connection, which is Evolving too.
+  The set will grow. A harness runs with your environment as it is
+  ([Configuration](docs/reference/configuration.md#how-akm-runs-a-harness)). With
+  no harness configured, agent work runs on akm's own runtime over a connection,
+  which is Evolving too.
 - **Model aliases** — `akm models` and `akm models set`, and the intent-alias
   picks a connection holds.
 - **Proposal queue** — quality classifications (`accepted`, `pending`,

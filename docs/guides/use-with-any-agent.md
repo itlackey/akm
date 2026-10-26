@@ -104,7 +104,8 @@ than replacing either.
   resolved on whichever you select. See
   [Configuration](../reference/configuration.md#aliases) for the aliases and
   [Architecture](../architecture/architecture.md#connections-and-harnesses)
-  for how dispatch reaches each harness.
+  for how dispatch reaches each harness. The harness runs as you would run it by
+  hand ([how](../reference/configuration.md#how-akm-runs-a-harness)).
 - **Install refs vs. asset refs.** `npm:@scope/pkg` and `github:owner/repo`
   are install refs, accepted only by `akm bundle add`/`akm clone`, and are a
   different grammar from the `[bundle//]conceptId` refs `show`/`search` use.
