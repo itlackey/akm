@@ -139,6 +139,14 @@ export function runtimeEnv(config: Record<string, unknown>, where: RuntimeLocati
   };
 }
 
+/**
+ * A command that makes and migrates OpenCode's database and does nothing else (it lists the sessions, with no model and
+ * no background service), for the first start of a database.
+ */
+export function runtimePrepareArgv(binary: string): string[] {
+  return [binary, "session", "list", "--standalone"];
+}
+
 /** The command line of a run; the prompt is not on it, it goes on stdin. */
 export function runtimeArgv(
   connection: ChatCompletionConfig,

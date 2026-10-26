@@ -655,7 +655,10 @@ Agent programs are reachable by two execution paths, both behind
   `~/.agents` and its system config), its free models and model-catalog fetch
   are off, and the `OPENCODE_*` variables akm runs with are not passed to it.
   `--standalone` keeps a run to one process that ends with it, and replays no
-  killed session.
+  killed session. OpenCode makes and migrates its database at start and two
+  processes doing that to one empty database break each other, so the first start
+  of the database is a run of its own (`session list`, no model) and runs that
+  start with it wait for it.
 - The process loads akm's plugin (`src/assets/opencode/akm-plugin.js`, written
   to the runtime's config directory): `akm_search`, `akm_show` and `akm_curate`
   call the akm executable that started the run (`AKM_OPENCODE_CLI`), the

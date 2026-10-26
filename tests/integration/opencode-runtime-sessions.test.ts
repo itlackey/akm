@@ -220,6 +220,16 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     expect(fs.existsSync(path.join(getDataDir(), "opencode-runtime", "config", "akm-plugin", "index.mjs"))).toBe(true);
   });
 
+  test("runs that start together on a fresh runtime directory all finish, and all leave a session", async () => {
+    const results = await Promise.all(Array.from({ length: 6 }, () => run("answer")));
+
+    expect(
+      results.map((result) => result.ok || `${result.stderr}${result.error}`),
+      "every run finishes",
+    ).toEqual(Array(6).fill(true));
+    expect(await new OpenCodeProvider().listSessions()).toHaveLength(6);
+  }, 120_000);
+
   test("a run that timed out is not replayed by the next one", async () => {
     const hung = await run("hang", { timeoutMs: 3_000 });
     expect(hung.reason).toBe("timeout");

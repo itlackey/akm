@@ -17,6 +17,7 @@ import {
   runtimeArgv,
   runtimeConfig,
   runtimeEnv,
+  runtimePrepareArgv,
 } from "../src/integrations/harnesses/opencode/runtime/command";
 import type { ChatCompletionConfig } from "../src/llm/client";
 
@@ -206,6 +207,10 @@ describe("the command line", () => {
 
     expect(argv.join(" ")).toContain("--agent akm-model-work");
     expect(argv).not.toContain("plan");
+  });
+
+  test("the database is prepared by a command that runs no model and starts no background service", () => {
+    expect(runtimePrepareArgv(where.binary)).toEqual([where.binary, "session", "list", "--standalone"]);
   });
 
   test("neither the prompt nor the key is on the command line", () => {

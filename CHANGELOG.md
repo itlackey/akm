@@ -128,7 +128,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `--standalone` keeps a run to one process that ends with it, and another
     run's unfinished turns are never resumed (OpenCode's background service
     resumes every top-level session whose turn did not finish, whichever process
-    owns it).
+    owns it). OpenCode makes and migrates its database at start, and two
+    processes doing that to one empty database break each other, so the first
+    start of the runtime's database is a run of its own (`session list`, no model)
+    and runs that start with it, as a workflow's parallel units do, wait for it.
   - A plugin akm writes to the runtime's config directory gives the agent akm's
     read tools (`akm_search`, `akm_show`, `akm_curate`), which call the `akm` that
     started the run with `--detail agent --format json` and the run's

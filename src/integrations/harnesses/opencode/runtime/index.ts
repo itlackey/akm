@@ -21,11 +21,11 @@ import { toErrorMessage } from "../../../../core/common";
 import { PORTABLE_INFERENCE_KEYS } from "../../../../core/llm-inference";
 import { resolveAkmInvocation } from "../../../../tasks/resolve-akm-bin";
 import type { AgentRuntime } from "../../../agent/runtime-port";
-import { buildChildEnv, runBuiltCommand } from "../../../agent/spawn";
+import { buildChildEnv, type ReadyCommand, type RunAgentOptions, runBuiltCommand } from "../../../agent/spawn";
 import type { LowerTarget } from "../../harness";
-import { akmRuntimeDir } from "../roots";
+import { akmOpencodeDatabasePath, akmRuntimeDir } from "../roots";
 import { ensureRuntimeBinary } from "./binary";
-import { type RuntimeLocations, runtimeArgv, runtimeConfig, runtimeEnv } from "./command";
+import { type RuntimeLocations, runtimeArgv, runtimeConfig, runtimeEnv, runtimePrepareArgv } from "./command";
 
 /**
  * What a request is lowered for when it runs here. The persona goes in the prompt, as for the opencode harness
@@ -40,6 +40,9 @@ const runtimeLowerer: LowerTarget = {
   confinable: true,
   inference: PORTABLE_INFERENCE_KEYS,
 };
+
+/** How long preparing the database may take: it is a few milliseconds of work and a process start. */
+const PREPARE_TIMEOUT_MS = 60_000;
 
 /** The executable the plugin's tools call: the compiled binary itself, else the launcher or entry file that started akm. */
 function akmExecutable(): string {
@@ -58,6 +61,29 @@ function installPlugin(directory: string): string {
     fs.renameSync(partial, file);
   }
   return pluginDirectory;
+}
+
+/** The databases being prepared, by path. */
+const preparing = new Map<string, Promise<unknown>>();
+
+/**
+ * OpenCode makes and migrates its database when a process starts, and two processes doing that to one empty database
+ * break each other (one fails with "Standalone server exited before reporting readiness"). So the first start of a
+ * database is a run of its own, and runs that come with it, as a workflow's parallel units do, wait for it. A run that
+ * finds the database already there starts at once. The run itself reports anything this does not.
+ */
+function prepareDatabase(command: ReadyCommand, opts: RunAgentOptions): Promise<unknown> {
+  const database = akmOpencodeDatabasePath();
+  const running = preparing.get(database);
+  if (running) return running;
+  if (fs.existsSync(database)) return Promise.resolve();
+  const prepare = runBuiltCommand("akm's runtime preparing its database", command, {
+    ...(opts.cwd ? { cwd: opts.cwd } : {}),
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    timeoutMs: PREPARE_TIMEOUT_MS,
+  }).finally(() => preparing.delete(database));
+  preparing.set(database, prepare);
+  return prepare;
 }
 
 export const opencodeRuntime: AgentRuntime = {
@@ -84,13 +110,11 @@ export const opencodeRuntime: AgentRuntime = {
         Object.entries(buildChildEnv(opts)).filter(([name]) => !name.startsWith("OPENCODE_")),
       );
       const config = runtimeConfig(connection, dispatch.modelWork === true, where.pluginDirectory, ambient);
+      const env = { ...ambient, ...runtimeEnv(config, where) };
+      await prepareDatabase({ argv: runtimePrepareArgv(binary), env }, opts);
       return await runBuiltCommand(
         label,
-        {
-          argv: runtimeArgv(connection, dispatch, binary),
-          env: { ...ambient, ...runtimeEnv(config, where) },
-          stdin: dispatch.prompt,
-        },
+        { argv: runtimeArgv(connection, dispatch, binary), env, stdin: dispatch.prompt },
         opts,
         "captured",
       );

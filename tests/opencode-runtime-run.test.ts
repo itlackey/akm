@@ -41,11 +41,16 @@ const connection: ChatCompletionConfig = {
   apiKey: "sk-secret",
 };
 
-/** Put a program where akm keeps the OpenCode binary. */
+/**
+ * Put a program where akm keeps the OpenCode binary. A first run on a fresh runtime directory prepares OpenCode's
+ * database with `session list`, which the stand-in answers by exiting; everything else is `body`.
+ */
 function installBinary(body: string): void {
   const binary = runtimeBinaryPath();
   fs.mkdirSync(path.dirname(binary), { recursive: true });
-  fs.writeFileSync(binary, `#!${process.execPath}\n${body}\n`, { mode: 0o755 });
+  fs.writeFileSync(binary, `#!${process.execPath}\nif (process.argv[2] === "session") process.exit(0);\n${body}\n`, {
+    mode: 0o755,
+  });
 }
 
 /** A binary that prints what it was started with, as JSON. */
@@ -130,6 +135,36 @@ describe.skipIf(process.platform === "win32")("a run on akm's runtime", () => {
     expect(argv.join(" ")).toContain("--agent akm-model-work");
     expect(Object.keys((JSON.parse(env.OPENCODE_CONFIG_CONTENT as string) as { agents: object }).agents)).toEqual([
       "akm-model-work",
+    ]);
+  });
+
+  test("runs that start together on a fresh runtime directory wait for the one that prepares OpenCode's database", async () => {
+    const log = path.join(storage.root, "starts.log");
+    const binary = runtimeBinaryPath();
+    fs.mkdirSync(path.dirname(binary), { recursive: true });
+    // Logs how it was started; the run that prepares the database (`session list`) exits at once.
+    fs.writeFileSync(
+      binary,
+      [
+        `#!${process.execPath}`,
+        `require("node:fs").appendFileSync(${JSON.stringify(log)}, process.argv.slice(2, 4).join(" ") + "\\n");`,
+        'if (process.argv[2] === "session") process.exit(0);',
+        'require("node:fs").readFileSync(0, "utf8");',
+        'console.log("done");',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const results = await Promise.all([run(), run(), run()]);
+
+    expect(results.map((result) => result.ok)).toEqual([true, true, true]);
+    // One preparing run first, then the three runs: none started beside the preparing one.
+    expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+      "session list",
+      "run --standalone",
+      "run --standalone",
+      "run --standalone",
     ]);
   });
 
