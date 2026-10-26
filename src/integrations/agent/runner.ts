@@ -22,6 +22,11 @@ export interface ConnectionRunner {
   /** The portable settings the layers that chose this runner set; the client translates them over `request` when it sends. */
   readonly inference?: LlmInference;
   readonly apiKey?: string;
+  /**
+   * `false`: only an `extends` base defines this connection, so its endpoint is the base's and it never uses a key
+   * stored on this host. Decided once, by `resolveTarget`; absent means it may (a runner frozen before this field).
+   */
+  readonly storedKey?: boolean;
   readonly contextLength?: number;
   readonly concurrency?: number;
   /** `null` runs unbounded. */

@@ -35,9 +35,10 @@ function runsOn(row: Row): string {
   return row.kind === "local" ? "built-in embedder" : `${text(row.kind)} ${text(row.target)}`;
 }
 
-/** `triage judgment → second (qwen3-8b)`: a part of the work that runs elsewhere, and where. */
+/** `triage judgment → connection second (qwen3-8b)`: a part of the work that runs elsewhere, and where. */
 function override(entry: Row): string {
-  const where = entry.target === null || entry.target === undefined ? "off" : text(entry.target);
+  const where =
+    entry.target === null || entry.target === undefined ? "off" : `${text(entry.kind)} ${text(entry.target)}`;
   return `${text(entry.name)} → ${where}${entry.model ? ` (${text(entry.model)})` : ""}`;
 }
 

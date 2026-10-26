@@ -29,6 +29,7 @@ import {
   ambiguousDefaultAdvice,
   defaultConnection,
   defaultHarness,
+  isInheritedConnection,
   retiredEngineTargets,
   unusableEntryAt,
 } from "../../core/config/config";
@@ -334,6 +335,7 @@ function connectionRunner(
     request: mergeRequestFields(connectionFields, entryFields),
     ...(inference && Object.keys(inference).length > 0 ? { inference } : {}),
     ...(apiKeyReference(connection.apiKey) !== undefined ? { apiKey: connection.apiKey } : {}),
+    ...(isInheritedConnection(name) ? { storedKey: false } : {}),
     ...(connection.contextLength !== undefined ? { contextLength: connection.contextLength } : {}),
     ...(connection.concurrency !== undefined ? { concurrency: connection.concurrency } : {}),
     timeoutMs: firstTimeout(layerTimeout(layers), connection.timeoutMs, defaultTimeout(modelWork)),

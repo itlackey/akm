@@ -342,6 +342,28 @@ describe("akm setup --yes defaults", () => {
     expect(summary.runs.modelCalls).toBe('harness "opencode", limited to reading and searching');
   });
 
+  test("the configured bin decides, not the opencode on PATH: OpenCode 1 there is saved as off for model calls, OpenCode 2 there takes them", async () => {
+    installed("opencode");
+    const pathHas = (major: 1 | 2, configured: 1 | 2) =>
+      fakeOpencodeMajor((bin) =>
+        (bin === "/opt/opencode-configured" ? configured : major) === 1 ? "1.19.4" : "opencode v2.1.4",
+      );
+
+    pathHas(2, 1);
+    writeSandboxConfig({ semanticSearchMode: "off", harnesses: { opencode: { bin: "/opt/opencode-configured" } } });
+    resetConfigCache();
+    const unrestricted = await run();
+    expect(written().harnesses).toEqual({ opencode: { bin: "/opt/opencode-configured", modelWork: false } });
+    expect(unrestricted.runs.modelCalls).toContain('harness "opencode" is set not to take model calls');
+
+    pathHas(1, 2);
+    writeSandboxConfig({ semanticSearchMode: "off", harnesses: { opencode: { bin: "/opt/opencode-configured" } } });
+    resetConfigCache();
+    const restricted = await run();
+    expect(written().harnesses).toEqual({ opencode: { bin: "/opt/opencode-configured" } });
+    expect(restricted.runs.modelCalls).toBe('harness "opencode", limited to reading and searching');
+  });
+
   test("a second run over that config changes nothing, and the hand-written setting is kept", async () => {
     installed("gemini");
     await run();
@@ -376,10 +398,22 @@ describe("akm setup --yes defaults", () => {
     expect((written().connections as Record<string, unknown>).default).toBeDefined();
   });
 
-  test("a harness that can be restricted takes the model calls and is not marked; a mark from an earlier run is cleared", async () => {
+  test("a saved modelWork: false is kept by --yes, whether the harness can run read-only (Claude, OpenCode 2) or not", async () => {
+    fakeOpencodeMajor(2);
+    for (const platform of ["claude", "opencode"]) {
+      installed(platform);
+      writeSandboxConfig({ semanticSearchMode: "off", harnesses: { [platform]: { modelWork: false } } });
+      resetConfigCache();
+
+      const summary = await run();
+
+      expect(written().harnesses).toEqual({ [platform]: { modelWork: false } });
+      expect(summary.runs.modelCalls).toContain(`harness "${platform}" is set not to take model calls`);
+    }
+  });
+
+  test("a harness that can run read-only and has no saved choice takes the model calls and is not marked", async () => {
     installed("claude");
-    writeSandboxConfig({ semanticSearchMode: "off", harnesses: { claude: { modelWork: false } } });
-    resetConfigCache();
 
     const summary = await run();
 

@@ -15,7 +15,7 @@ import { getHarness } from "../../integrations/harnesses";
 import type { InstalledHarness } from "../detect";
 import { prompt } from "../prompt";
 import type { SetupFlags } from "../setup-flags";
-import type { HarnessAnswer } from "../setup-plan";
+import { type HarnessAnswer, harnessEntries } from "../setup-plan";
 import { runsReadOnly, unrestrictedModelWorkNote } from "../summary";
 
 export interface HarnessStepResult {
@@ -38,8 +38,8 @@ export interface HarnessStepInput {
   interactive: boolean;
 }
 
-function readOnlyNote(platform: string): string {
-  return runsReadOnly(platform)
+function readOnlyNote(platform: string, bin?: string): string {
+  return runsReadOnly(platform, bin)
     ? "model calls are limited to reading and searching"
     : "model calls cannot be restricted to read-only";
 }
@@ -52,6 +52,18 @@ function configuredPlatforms(current: AkmConfig): string[] {
 function currentDefaultPlatform(current: AkmConfig): string | undefined {
   const found = defaultHarness(current);
   return found ? (found.harness.platform ?? found.name) : undefined;
+}
+
+/** The `bin` the config sets for the first entry of `platform`, if it sets one: the program setup will judge. */
+function configuredBin(current: AkmConfig, platform: string): string | undefined {
+  return Object.entries(current.harnesses ?? {}).find(([name, harness]) => (harness.platform ?? name) === platform)?.[1]
+    .bin;
+}
+
+/** The harness agent work runs on once `answer` is applied: the entry the config will hold, with its own `bin`. */
+function selectedHarness(current: AkmConfig, answer: HarnessAnswer | undefined) {
+  const harnesses = answer ? harnessEntries(current.harnesses, answer.platforms, answer.default) : current.harnesses;
+  return defaultHarness({ harnesses } as AkmConfig);
 }
 
 export async function stepHarnesses(input: HarnessStepInput): Promise<HarnessStepResult> {
@@ -82,19 +94,19 @@ export async function stepHarnesses(input: HarnessStepInput): Promise<HarnessSte
   });
 
   // Model calls can go to a harness only when one is enabled and no connection exists or is being added.
-  const defaultPlatform = answer ? answer.default : currentDefaultPlatform(current);
-  if (defaultPlatform === undefined || defaultConnection(current) !== undefined || flags.endpoint !== undefined) {
+  const selected = selectedHarness(current, answer);
+  if (selected === undefined || defaultConnection(current) !== undefined || flags.endpoint !== undefined) {
     return result(false);
   }
-  if (!input.interactive) {
-    const readOnly = runsReadOnly(defaultPlatform);
-    return result(readOnly, readOnly);
-  }
-  const readOnly = runsReadOnly(defaultPlatform);
+  const defaultPlatform = selected.harness.platform ?? selected.name;
+  const readOnly = runsReadOnly(defaultPlatform, selected.harness.bin);
+  // A saved `modelWork: false` is the user's choice: only the question's "yes" changes it, never a default.
+  const declined = selected.harness.modelWork === false;
+  if (!input.interactive) return declined ? result(false, false) : result(readOnly, readOnly);
   const yes = await prompt(() =>
     p.confirm({
       message: `Use ${defaultPlatform} for akm's own model calls too (improve, judging, extraction)? ${readOnly ? "Model calls are limited to reading and searching." : unrestrictedModelWorkNote(defaultPlatform)}`,
-      initialValue: true,
+      initialValue: !declined,
     }),
   );
   // Said again once it is chosen, so it stays in the transcript beside the answer.
@@ -122,7 +134,7 @@ async function askHarnesses(
       options: candidates.map((platform) => ({
         value: platform,
         label: getHarness(platform)?.displayName ?? platform,
-        hint: `${installed.find((harness) => harness.platform === platform)?.path ?? "not found on PATH"}; ${readOnlyNote(platform)}`,
+        hint: `${installed.find((harness) => harness.platform === platform)?.path ?? "not found on PATH"}; ${readOnlyNote(platform, configuredBin(current, platform))}`,
       })),
       initialValues: configured.length > 0 ? [...configured] : installedPlatforms,
       required: false,
