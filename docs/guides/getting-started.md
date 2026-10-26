@@ -44,8 +44,9 @@ platform; `akm info` prints the cache directory), and loads it from there. Two
 limits follow:
 
 - A standalone binary writes its native addon to the system temp directory and
-  loads it from there, so a temp directory mounted `noexec` stops it. Set
-  `TMPDIR` to a writable, executable directory. The cache directory must be on
+  loads it from there, so a temp directory mounted `noexec` blocks semantic
+  search (`akm index` reports it `blocked`; keyword search works). Set `TMPDIR`
+  to a writable, executable directory. The cache directory must be on
   an executable mount too.
 - Alpine/musl and Intel macOS have no native ONNX Runtime library. Semantic
   search is unavailable there: `akm index` reports it `blocked` with the reason

@@ -225,7 +225,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   library for its platform and, the first time it embeds, copies it once into
   `<cache dir>/onnxruntime/<version>-<platform>-<arch>/` (18 to 34 MB) and loads
   it from there. A binary writes its native addon to the system temp directory,
-  so a `noexec` temp directory stops it: set `TMPDIR` to an executable one.
+  so a `noexec` temp directory blocks semantic search (keyword search works): set
+  `TMPDIR` to an executable one.
   Alpine/musl and Intel macOS have no native ONNX Runtime library: the index
   reports semantic search `blocked` with the reason, and keyword search works.
 - `akm index --format json` reports `verification.embeddingRuntime`, the runtime
