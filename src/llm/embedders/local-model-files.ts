@@ -31,7 +31,8 @@ async function downloadFile(url: string, target: string): Promise<void> {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const partial = `${target}.${process.pid}.tmp`;
   try {
-    await writeResponseToFileCapped(partial, response);
+    // No overall deadline for a 127 MB file on a slow link (Transformers.js had none): only 60 s without bytes fails it.
+    await writeResponseToFileCapped(partial, response, { stallTimeoutMs: 60_000 });
     fs.renameSync(partial, target);
   } catch (error) {
     fs.rmSync(partial, { force: true });

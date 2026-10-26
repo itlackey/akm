@@ -248,7 +248,8 @@ function endWriteStream(out: WriteStream): Promise<void> {
 
 /**
  * Stream a `Response` body to `filePath` enforcing an explicit max-bytes cap
- * and an overall body-read deadline.
+ * and an overall body-read deadline, or with `stallTimeoutMs` a limit on the
+ * time without bytes instead (a slow body finishes, a stopped one fails).
  *
  * Refuses before reading when `Content-Length` exceeds the cap; otherwise
  * streams chunk-by-chunk, aborting with {@link ResponseTooLargeError} the
@@ -261,7 +262,7 @@ function endWriteStream(out: WriteStream): Promise<void> {
 export async function writeResponseToFileCapped(
   filePath: string,
   res: Response,
-  options?: { maxBytes?: number; bodyTimeoutMs?: number; signal?: AbortSignal },
+  options?: { maxBytes?: number; bodyTimeoutMs?: number; stallTimeoutMs?: number; signal?: AbortSignal },
 ): Promise<void> {
   const maxBytes = options?.maxBytes ?? MAX_STREAMED_DOWNLOAD_BYTES;
   const bodyTimeoutMs = options?.bodyTimeoutMs ?? STREAMED_DOWNLOAD_BODY_TIMEOUT_MS;
@@ -287,7 +288,10 @@ export async function writeResponseToFileCapped(
   let total = 0;
   try {
     while (true) {
-      const { done, value } = await readChunkWithDeadline(reader, deadlineAt, options?.signal, url, bodyTimeoutMs);
+      // With `stallTimeoutMs` the deadline moves with every read: the body may take as long as bytes keep coming.
+      const readBy = options?.stallTimeoutMs ? Date.now() + options.stallTimeoutMs : deadlineAt;
+      const limitMs = options?.stallTimeoutMs ?? bodyTimeoutMs;
+      const { done, value } = await readChunkWithDeadline(reader, readBy, options?.signal, url, limitMs);
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
