@@ -12,7 +12,14 @@
  */
 
 import { resolveStashDir } from "../../src/core/common";
-import { type ConfigFileNormalization, normalizeConfigFile, resetConfigCache } from "../../src/core/config/config";
+import {
+  bundleKeyForContentRoot,
+  type ConfigFileNormalization,
+  isBundleEnabled,
+  loadConfig,
+  normalizeConfigFile,
+  resetConfigCache,
+} from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
@@ -126,10 +133,16 @@ export async function migrationStep<T>(
   }
 }
 
-/** No configured bundle is an empty domain, not an error: migrate works before `akm bundle create`. */
+/**
+ * The stash the residue sweep runs under. No configured bundle is an empty domain, not an error: migrate works
+ * before `akm bundle create`. A stash a disabled bundle owns is left as written, as the task and asset steps leave it.
+ */
 function stashDirIfConfigured(): string | undefined {
   try {
-    return resolveStashDir();
+    const stashDir = resolveStashDir();
+    const config = loadConfig();
+    const owner = bundleKeyForContentRoot(config, stashDir);
+    return owner !== undefined && !isBundleEnabled(config, owner) ? undefined : stashDir;
   } catch (error) {
     if (error instanceof ConfigError && error.code === "STASH_DIR_NOT_FOUND") return undefined;
     throw error;

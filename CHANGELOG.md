@@ -215,6 +215,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     included, under any spelling of its path.
   - A connection or harness the loader ignores stays in the file, with a note
     on what to fix; `akm migrate apply` never deletes one.
+  - The residue sweep leaves the `.akm/` of a stash a disabled bundle owns as
+    written, as the task and asset steps do.
 
 ### Changed
 
