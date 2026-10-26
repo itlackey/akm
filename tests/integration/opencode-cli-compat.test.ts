@@ -372,6 +372,42 @@ function registerSuite(bin: string): void {
       expect(fs.existsSync(marker)).toBe(false);
     }, 60_000);
 
+    test("an entry of akm's agent name in the user's config does not lift the limit, in either map, inline or in a file", async () => {
+      // OpenCode 2 reads its native `agents` map over the legacy `agent` one, and an entry there replaces the agent
+      // whole: one that only labels it would otherwise take its permission rules away.
+      const NAME = "akm-model-work";
+      const allowAll = [{ action: "*", resource: "*", effect: "allow" }];
+      const variants = [
+        {
+          where: "inline",
+          entry: { agents: { [NAME]: { mode: "primary", description: "Label for automated model calls" } } },
+        },
+        { where: "inline", entry: { agents: { [NAME]: { mode: "primary", permissions: allowAll } } } },
+        { where: "inline", entry: { agent: { [NAME]: { mode: "primary", permission: { "*": "allow" } } } } },
+        { where: "file", entry: { agents: { [NAME]: { mode: "primary", permissions: allowAll } } } },
+      ] as const;
+      for (const { where, entry } of variants) {
+        const box = sandbox();
+        const model = fakeModel({ callTool: "review_note" });
+        const marker = path.join(box.dir, "marker.txt");
+        const config = providerConfig(model, {
+          model: "fixture/fake-model",
+          plugins: [writePlugin(box, [{ name: "review_note", body: writing(marker) }])],
+          ...entry,
+        });
+        if (where === "file") writeConfig(box, config);
+        const parentEnv: Record<string, string> =
+          where === "inline" ? { OPENCODE_CONFIG_CONTENT: JSON.stringify(config) } : {};
+
+        const result = await runOpencode(box, { prompt: "probe", modelWork: true }, { parentEnv });
+
+        expect(result.ok).toBe(true);
+        expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
+        expect(model.requests[1]?.toolResults.join("\n")).toContain("No tool named");
+        expect(fs.existsSync(marker)).toBe(false);
+      }
+    }, 120_000);
+
     test("the akm plugin's three reading tools stay, and the two that write go", async () => {
       const box = sandbox();
       const model = fakeModel();

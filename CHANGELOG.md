@@ -225,10 +225,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Model work runs on any harness. Where a harness can be restricted it is: Claude
   Code runs with its settings files ignored, only `Read` and `akm search`, `akm
   show` and `akm curate`, no MCP servers and no saved transcript, Codex with
-  `--sandbox read-only`, and OpenCode 2 as an agent passed inline for the run
-  with every tool denied except `read`, `glob` and `grep` (and `akm_search`,
-  `akm_show` and `akm_curate` when the akm plugin is installed), so a tool a
-  plugin adds is denied too; a plugin's own hooks still run. Where it cannot
+  `--sandbox read-only`, and OpenCode 2 as an agent passed inline for the run,
+  in OpenCode 2's native `agents` map so that an entry of its name in your
+  config cannot replace it, with every tool denied except `read`, `glob` and
+  `grep` (and `akm_search`, `akm_show` and `akm_curate` when the akm plugin is
+  installed), so a tool a plugin adds is denied too; a plugin's own hooks still
+  run. Where it cannot
   (the other platforms, and OpenCode 1, which warns once), the call runs
   unrestricted, in a scratch directory, with a notice. A config that names an `opencode` harness for model work loads, and a
   native agent named for model work is ignored with a notice. Agent work is not

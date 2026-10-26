@@ -322,26 +322,26 @@ describe("opencode by major", () => {
       ]);
       expect(built.stdin).toBe(PROMPT);
       expect(built.env).toMatchObject(NO_FREE_MODELS);
-      // The agent is passed with the run and merges over the user's config; it is written nowhere.
-      // Default-deny, then the reading tools: the last matching entry wins, so the order is the policy.
+      // The agent is passed with the run, in OpenCode 2's native `agents` map, and merges over the user's config; it
+      // is written nowhere. Default-deny, then the reading tools: the last matching rule wins, so the order is the policy.
       const content = JSON.parse(built.env?.OPENCODE_CONFIG_CONTENT ?? "");
+      const allow = (action: string) => ({ action, resource: "*", effect: "allow" });
       expect(content).toEqual({
-        agent: {
+        agents: {
           "akm-model-work": {
             mode: "primary",
-            permission: {
-              "*": "deny",
-              read: "allow",
-              glob: "allow",
-              grep: "allow",
-              akm_search: "allow",
-              akm_show: "allow",
-              akm_curate: "allow",
-            },
+            permissions: [
+              { action: "*", resource: "*", effect: "deny" },
+              allow("read"),
+              allow("glob"),
+              allow("grep"),
+              allow("akm_search"),
+              allow("akm_show"),
+              allow("akm_curate"),
+            ],
           },
         },
       });
-      expect(Object.entries(content.agent["akm-model-work"].permission)[0]).toEqual(["*", "deny"]);
       expect(build("opencode", { prompt: PROMPT, modelWork: true, model: "m-1" }, authored).argv).toEqual([
         "opencode",
         "run",
@@ -358,12 +358,11 @@ describe("opencode by major", () => {
     const INLINE = {
       model: "mine/fast",
       provider: { mine: { options: { baseURL: "http://127.0.0.1:1/v1", apiKey: "SYNTHETIC_KEY" } } },
-      agent: {
-        reviewer: { mode: "subagent" },
-        "akm-model-work": { mode: "primary", permission: { "*": "allow" } },
-      },
     };
-    type Inline = typeof INLINE;
+    type Inline = typeof INLINE & {
+      agent?: Record<string, unknown>;
+      agents: Record<string, unknown>;
+    };
     const inlineConfig = (content: string | undefined): Promise<Inline> =>
       withOpencodeOnPath(2, async () =>
         JSON.parse(
@@ -372,14 +371,35 @@ describe("opencode by major", () => {
           ).env?.OPENCODE_CONFIG_CONTENT ?? "",
         ),
       );
+    /** A same-named entry that only labels the agent, and one that would allow every tool, in each shape. */
+    const DESCRIBED = { mode: "primary", description: "Label for automated model calls" };
+    const PERMISSIVE = {
+      legacy: { mode: "primary", permission: { "*": "allow" } },
+      native: { mode: "primary", permissions: [{ action: "*", resource: "*", effect: "allow" }] },
+    };
 
-    test("model work keeps all of it and sets its own agent on the one key, which it wins", async () => {
-      const merged = await inlineConfig(JSON.stringify(INLINE));
-      expect(merged.model).toBe("mine/fast");
-      expect(merged.provider).toEqual(INLINE.provider);
-      expect(merged.agent.reviewer).toEqual({ mode: "subagent" });
-      expect(merged.agent["akm-model-work"]).toEqual((await inlineConfig(undefined)).agent["akm-model-work"]);
-      expect(Object.entries(merged.agent["akm-model-work"].permission)[0]).toEqual(["*", "deny"]);
+    test("model work keeps all of it and sets its own agent in the native map, over a same-named entry in either map", async () => {
+      const own = (await inlineConfig(undefined)).agents["akm-model-work"];
+      const cases = [
+        { agent: { "akm-model-work": PERMISSIVE.legacy }, agents: { "akm-model-work": DESCRIBED } },
+        { agent: { "akm-model-work": DESCRIBED }, agents: { "akm-model-work": PERMISSIVE.native } },
+        { agent: { "akm-model-work": PERMISSIVE.legacy } },
+        { agents: { "akm-model-work": DESCRIBED } },
+      ];
+      for (const entries of cases) {
+        const user = {
+          ...INLINE,
+          ...entries,
+          agent: { reviewer: { mode: "subagent" }, ...entries.agent },
+          agents: { planner: { mode: "subagent" }, ...entries.agents },
+        };
+        const merged = await inlineConfig(JSON.stringify(user));
+        expect(merged.model).toBe("mine/fast");
+        expect(merged.provider).toEqual(INLINE.provider);
+        // OpenCode 2 reads the native map over the legacy one: akm's agent is there, and nowhere else.
+        expect(merged.agents).toEqual({ planner: { mode: "subagent" }, "akm-model-work": own });
+        expect(merged.agent).toEqual({ reviewer: { mode: "subagent" } });
+      }
     });
 
     test("content that is not a JSON object is left out, with one warning that names the variable", async () => {

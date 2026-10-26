@@ -53,32 +53,33 @@ import { detectOpencodeMajor, isOpencode2 } from "./version";
 export const MODEL_WORK_AGENT = "akm-model-work";
 
 /**
- * The agent's definition, passed inline so it merges over the user's config and is never written anywhere. Its
- * permission map is default-deny with the reading tools allowed after it (the last matching entry wins; measured on
- * OpenCode 2.1.2): `"*": "deny"` removes every tool, one a plugin registers that akm has never heard of included, and
- * the allows give back `read`, `glob` and `grep` and, when the akm plugin is installed, `akm_search`, `akm_show` and
- * `akm_curate`. Nothing else is allowed. This limits the tools; a plugin's own `setup` and hooks still run.
+ * The agent's definition, in OpenCode 2's native shape, passed inline so it merges over the user's config and is
+ * never written anywhere. Its permission rules are default-deny with the reading tools allowed after it (the last
+ * matching rule wins; measured on OpenCode 2.1.2): `*` denied removes every tool, one a plugin registers that akm has
+ * never heard of included, and the allows give back `read`, `glob` and `grep` and, when the akm plugin is installed,
+ * `akm_search`, `akm_show` and `akm_curate`. Nothing else is allowed. This limits the tools; a plugin's own `setup`
+ * and hooks still run.
  */
 const MODEL_WORK_AGENT_DEFINITION = {
   mode: "primary",
-  permission: {
-    "*": "deny",
-    read: "allow",
-    glob: "allow",
-    grep: "allow",
-    akm_search: "allow",
-    akm_show: "allow",
-    akm_curate: "allow",
-  },
+  permissions: [
+    { action: "*", resource: "*", effect: "deny" },
+    ...["read", "glob", "grep", "akm_search", "akm_show", "akm_curate"].map((action) => ({
+      action,
+      resource: "*",
+      effect: "allow",
+    })),
+  ],
 };
 
 const CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
 
 /**
  * The inline config model work runs with: the user's own `OPENCODE_CONFIG_CONTENT` as it is, with akm's agent set on
- * `agent.akm-model-work`, the one key akm's definition wins. The child's value is built from the parent's, so a
- * provider, model or key the user keeps only there stays. Content that is not a JSON object is left out, with one
- * warning.
+ * `agents.akm-model-work`, the one key akm's definition wins. OpenCode 2 reads that native `agents` map over the
+ * legacy `agent` one, so a same-named entry the user keeps in `agent` is left out rather than left to conflict. The
+ * child's value is built from the parent's, so a provider, model or key the user keeps only there stays. Content that
+ * is not a JSON object is left out, with one warning.
  */
 function modelWorkConfig(): string {
   const content = process.env[CONFIG_CONTENT_ENV]?.trim();
@@ -89,10 +90,16 @@ function modelWorkConfig(): string {
       `${CONFIG_CONTENT_ENV} is not a JSON object, so OpenCode model work runs without it.`,
     );
   }
-  return JSON.stringify({
+  const config: Record<string, unknown> = {
     ...user,
-    agent: { ...asRecord(user?.agent), [MODEL_WORK_AGENT]: MODEL_WORK_AGENT_DEFINITION },
-  });
+    agents: { ...asRecord(user?.agents), [MODEL_WORK_AGENT]: MODEL_WORK_AGENT_DEFINITION },
+  };
+  const legacy = asRecord(user?.agent);
+  if (legacy && Object.hasOwn(legacy, MODEL_WORK_AGENT)) {
+    const { [MODEL_WORK_AGENT]: _replaced, ...others } = legacy;
+    config.agent = others;
+  }
+  return JSON.stringify(config);
 }
 
 const NO_FREE_MODELS = { OPENCODE_DISABLE_FREE_MODELS: "1" };
