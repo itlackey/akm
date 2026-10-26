@@ -102,8 +102,6 @@ let cachedConfig:
       path: string;
       mtime: number;
       size: number;
-      /** The connections only an `extends` base defines: this file names none of them. */
-      inheritedConnections: ReadonlySet<string>;
     }
   | undefined;
 
@@ -111,14 +109,25 @@ export function resetConfigCache(): void {
   cachedConfig = undefined;
 }
 
+const INHERITED_CONNECTIONS = Symbol("inheritedConnections");
+
 /**
- * Whether this host's config has `name` only from an `extends` base. A base chooses such a connection's
- * endpoint, so it never uses a key stored on this host: keys are for the connections this host's own
- * config file defines. The answer is the file's as it is now, loaded here when the cache holds nothing.
+ * The connections only an `extends` base defines in `config`: this host's file names none of them. A base
+ * chooses such a connection's endpoint, so it never uses a key stored on this host: keys are for the
+ * connections this host's own config file defines. The loader attaches the set to the config it returns
+ * (not enumerable, so a copy made with spread has none), and a config that did not come from the loader
+ * has none inherited.
+ */
+export function inheritedConnectionsOf(config: AkmConfig): ReadonlySet<string> {
+  return (config as { [INHERITED_CONNECTIONS]?: ReadonlySet<string> })[INHERITED_CONNECTIONS] ?? new Set();
+}
+
+/**
+ * {@link inheritedConnectionsOf} the config as it is now on this host, loaded here when the cache holds
+ * nothing: for a caller with no config in hand.
  */
 export function isInheritedConnection(name: string): boolean {
-  loadUserConfig();
-  return cachedConfig?.inheritedConnections.has(name) ?? false;
+  return inheritedConnectionsOf(loadUserConfig()).has(name);
 }
 
 export function loadUserConfig(): AkmConfig {
@@ -178,12 +187,12 @@ export function loadUserConfig(): AkmConfig {
   } catch {
     // Stat failed — use original stat for cache; no harm done.
   }
+  Object.defineProperty(finalConfig, INHERITED_CONNECTIONS, { value: inheritedConnections });
   cachedConfig = {
     config: finalConfig,
     path: configPath,
     mtime: finalStat.mtimeMs,
     size: finalStat.size,
-    inheritedConnections,
   };
   return finalConfig;
 }

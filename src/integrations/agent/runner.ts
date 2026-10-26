@@ -24,7 +24,7 @@ export interface ConnectionRunner {
   readonly apiKey?: string;
   /**
    * `false`: only an `extends` base defines this connection, so its endpoint is the base's and it never uses a key
-   * stored on this host. Decided once, by `resolveTarget`; absent means it may (a runner frozen before this field).
+   * stored on this host. Decided once, by `resolveTarget`; absent means it may.
    */
   readonly storedKey?: boolean;
   readonly contextLength?: number;

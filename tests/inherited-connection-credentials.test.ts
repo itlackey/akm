@@ -17,7 +17,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { loadUserConfig, resetConfigCache } from "../src/core/config/config";
+import { isInheritedConnection, loadUserConfig, resetConfigCache } from "../src/core/config/config";
 import { writeCredential } from "../src/core/config/credentials";
 import { getConfigDir, getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
@@ -99,6 +99,28 @@ describe("an inherited connection", () => {
     expect(await keySent()).toBeUndefined();
     writeCredential({ connection: "default" }, "host-key-for-shared", SHARED);
     expect(await keySent()).toBe("host-key-for-shared");
+  });
+
+  describe("resolveTarget decides from the config it is given", () => {
+    const storedKeyOf = (config: ReturnType<typeof loadUserConfig>): unknown =>
+      (resolveTarget({ config, modelWork: true, layers: [] }) as ConnectionRunner).storedKey;
+
+    test("the loaded config names the inherited connection; one built from it by hand names none", () => {
+      const loaded = loadUserConfig();
+      expect(storedKeyOf(loaded)).toBe(false);
+      expect(storedKeyOf({ ...loaded })).toBeUndefined();
+    });
+
+    test("the file on disk is not asked: a config loaded before it changed keeps its answer", () => {
+      const loaded = loadUserConfig();
+      fs.writeFileSync(
+        getConfigPath(),
+        JSON.stringify({ configVersion: "0.9.0", connections: { default: { endpoint: OWN, models: { fast: "m" } } } }),
+      );
+      resetConfigCache();
+      expect(isInheritedConnection("default")).toBe(false);
+      expect(storedKeyOf(loaded)).toBe(false);
+    });
   });
 
   describe("a runner frozen from it", () => {
