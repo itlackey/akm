@@ -121,7 +121,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - The process is akm's own. OpenCode's config, data, cache, state and temp
     directories are under `<akm data dir>/opencode-runtime/`, no `OPENCODE_*`
     variable of akm's environment reaches it, and it has no user or project
-    OpenCode config, no model catalog fetch and no hosted free models. It still
+    OpenCode config, no Claude Code skills, no model catalog fetch and no hosted
+    free models. It still
     loads what OpenCode reads from outside its config directories: `~/.agents`,
     and OpenCode's system config (`/etc/opencode`, or macOS managed
     preferences).

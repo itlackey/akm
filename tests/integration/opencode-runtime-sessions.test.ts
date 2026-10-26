@@ -173,6 +173,30 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     expect(model.requests[0]?.system).not.toContain("PROJECT-RULE-XYZ");
   });
 
+  test("the user's Claude Code skills are not loaded, while the ones OpenCode reads from ~/.agents still are", async () => {
+    const home = process.env.HOME ?? "";
+    expect(home.startsWith(os.tmpdir()), "the test's home is its sandbox").toBe(true);
+    for (const [root, name] of [
+      [".claude", "claude-only-skill"],
+      [".agents", "agents-only-skill"],
+    ] as const) {
+      const skill = path.join(home, root, "skills", name);
+      fs.mkdirSync(skill, { recursive: true });
+      fs.writeFileSync(path.join(skill, "SKILL.md"), `---\nname: ${name}\ndescription: probe ${name}\n---\nbody\n`);
+    }
+    try {
+      const result = await run("answer");
+
+      expect(result.ok).toBe(true);
+      const seen = `${model.requests[0]?.system}${JSON.stringify(model.requests[0]?.params)}`;
+      expect(seen).toContain("agents-only-skill");
+      expect(seen).not.toContain("claude-only-skill");
+    } finally {
+      for (const root of [".claude", ".agents"])
+        fs.rmSync(path.join(home, root, "skills"), { recursive: true, force: true });
+    }
+  });
+
   test("the sessions are listed by the history reader: the agent's, never the model work's, with their tool calls", async () => {
     await run("akm");
     await run("akm", { modelWork: true });

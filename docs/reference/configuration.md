@@ -278,8 +278,9 @@ default connection. The npm package and the standalone binary do the same.
   `<akm data dir>/opencode-runtime/`, so none of your plugins, MCP servers or
   agents load, and no `OPENCODE_*` variable of your environment reaches it.
   OpenCode still reads `~/.agents` and its system config (`/etc/opencode`, or
-  macOS managed preferences); a project's `AGENTS.md` and `opencode.json` are not
-  read; OpenCode's free models and its model-catalog fetch are off.
+  macOS managed preferences); a project's `AGENTS.md` and `opencode.json` and
+  your Claude Code skills (`~/.claude/skills`) are not read; OpenCode's free
+  models and its model-catalog fetch are off.
 - It has OpenCode's default agent and tools, editing files and running commands
   included, and akm's `akm_search`, `akm_show` and `akm_curate`, which run the
   `akm` that started the run. A request's `persona` goes in the prompt, as for

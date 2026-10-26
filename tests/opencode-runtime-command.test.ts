@@ -152,11 +152,12 @@ describe("the environment", () => {
     });
   });
 
-  test("no hosted free models, no model catalog fetch, no project config", () => {
+  test("no hosted free models, no model catalog fetch, no project config, no Claude Code files", () => {
     expect(env).toMatchObject({
       OPENCODE_DISABLE_FREE_MODELS: "1",
       OPENCODE_DISABLE_MODELS_FETCH: "1",
       OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+      OPENCODE_DISABLE_CLAUDE_CODE: "1",
     });
   });
 

@@ -19,7 +19,8 @@
  *     inherited `OPENCODE_*` variables are dropped for the same reason.
  *   - **Nothing from outside.** No hosted free models and no model catalog fetch
  *     (a run with no usable provider fails instead of sending its prompt to
- *     OpenCode's service), and no project config (`AGENTS.md`, `opencode.json`).
+ *     OpenCode's service), no project config (`AGENTS.md`, `opencode.json`) and no
+ *     Claude Code files (`~/.claude/skills`).
  *   - **The resume sweep is off** because `--standalone` keeps the run to one
  *     process that ends with it and replays nobody's killed sessions.
  *   - **The agent's commands do not see any of this.** The process's environment
@@ -118,6 +119,7 @@ const RUNTIME_VARIABLES = [
   "OPENCODE_DISABLE_FREE_MODELS",
   "OPENCODE_DISABLE_MODELS_FETCH",
   "OPENCODE_DISABLE_PROJECT_CONFIG",
+  "OPENCODE_DISABLE_CLAUDE_CODE",
   "OPENCODE_CONFIG_CONTENT",
   "AKM_OPENCODE_CLI",
 ] as const;
@@ -134,6 +136,7 @@ export function runtimeEnv(config: Record<string, unknown>, where: RuntimeLocati
     OPENCODE_DISABLE_FREE_MODELS: "1",
     OPENCODE_DISABLE_MODELS_FETCH: "1",
     OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+    OPENCODE_DISABLE_CLAUDE_CODE: "1",
     OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
     AKM_OPENCODE_CLI: where.akm,
   };

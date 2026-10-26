@@ -652,8 +652,8 @@ Agent programs are reachable by two execution paths, both behind
   froze them, never from the live config); its config, data, cache, state and
   temp directories are `<akm data dir>/opencode-runtime/{config,data,cache,state,tmp}`;
   no user or project OpenCode configuration is read (OpenCode still reads
-  `~/.agents` and its system config), its free models and model-catalog fetch
-  are off, and the `OPENCODE_*` variables akm runs with are not passed to it.
+  `~/.agents` and its system config), nor are your Claude Code skills, its free
+  models and model-catalog fetch are off, and the `OPENCODE_*` variables akm runs with are not passed to it.
   `--standalone` keeps a run to one process that ends with it, and replays no
   killed session. OpenCode makes and migrates its database at start and two
   processes doing that to one empty database break each other, so the first start
