@@ -8,8 +8,8 @@
  *
  *   bun scripts/build-standalone.ts --outfile <path> [--target <bun-target>] [--version <v>]
  *
- * Three differences from a plain `bun build --compile`, all for the embedded
- * OpenCode (`@opencode/sdk`, #1244):
+ * Differences from a plain `bun build --compile`. The first three are for the
+ * embedded OpenCode (`@opencode/sdk`, #1244):
  *   - `@ai-sdk/openai-compatible`, the package OpenCode reaches an
  *     OpenAI-compatible endpoint with, is embedded as a second entry
  *     (`scripts/ai-sdk-openai-compatible.ts`) and loaded by file URL at run
@@ -24,6 +24,11 @@
  *     platform, which is not installed when cross-compiling. It is resolved to
  *     "not available" (null), which its loader already handles; grep and glob
  *     run through ripgrep, not the file finder.
+ *   - Local semantic search needs the shared library `onnxruntime-node`'s addon
+ *     links, which a Bun executable does not extract beside the addon. The
+ *     library for the target is embedded by one of the `src/standalone/native/`
+ *     modules, chosen here by the `AKM_STANDALONE_NATIVE_MODULE` define; the
+ *     other modules are never bundled. See `src/standalone/onnxruntime-library.ts`.
  */
 
 import { parseArgs } from "node:util";
@@ -36,10 +41,27 @@ if (!values.outfile) {
   process.exit(2);
 }
 
+/** The `src/standalone/native/` module for a build target (default: this machine); `none` where onnxruntime-node ships no library. */
+function nativeModule(target: string | undefined): string {
+  const [os, arch, ...variants] = target
+    ? target.replace(/^bun-/, "").split("-")
+    : [process.platform === "win32" ? "windows" : process.platform, process.arch];
+  const module = `${os}-${arch}`;
+  return !variants.includes("musl") && ["linux-x64", "linux-arm64", "darwin-arm64", "windows-x64"].includes(module)
+    ? module
+    : "none";
+}
+
+const onnxruntimeVersion = (await Bun.file("./node_modules/onnxruntime-node/package.json").json()).version as string;
+
 const result = await Bun.build({
   entrypoints: ["./scripts/akm-standalone.ts", "./scripts/ai-sdk-openai-compatible.ts"],
   compile: { outfile: values.outfile, ...(values.target ? { target: values.target as never } : {}) },
-  ...(values.version ? { define: { AKM_VERSION: JSON.stringify(values.version) } } : {}),
+  define: {
+    AKM_STANDALONE_NATIVE_MODULE: JSON.stringify(`./native/${nativeModule(values.target)}`),
+    AKM_ONNXRUNTIME_VERSION: JSON.stringify(onnxruntimeVersion),
+    ...(values.version ? { AKM_VERSION: JSON.stringify(values.version) } : {}),
+  },
   plugins: [
     {
       name: "embedded-opencode-natives",

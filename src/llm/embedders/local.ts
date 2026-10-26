@@ -15,6 +15,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { preloadOnnxRuntimeLibrary } from "../../standalone/onnxruntime-library";
 import { ensureLocalModelFiles } from "./local-model-files";
 import type { Embedder, EmbeddingVector } from "./types";
 
@@ -64,8 +65,19 @@ function resolveLocalModelName(overrideModel?: string): string {
   return overrideModel || DEFAULT_LOCAL_MODEL;
 }
 
+/**
+ * A standalone binary built for a target with no native library (`none`) must not
+ * bundle the package: its addon for that platform does not exist. The bundler
+ * drops only the branch a build constant rules out, so the import sits in an
+ * `else`, not after the `throw`.
+ */
 async function importOnnxRuntime(): Promise<typeof import("onnxruntime-node")> {
-  return import("onnxruntime-node");
+  if (typeof AKM_STANDALONE_NATIVE_MODULE !== "undefined" && AKM_STANDALONE_NATIVE_MODULE === "./native/none") {
+    throw new Error("no native library is available for this platform");
+  } else {
+    await preloadOnnxRuntimeLibrary();
+    return import("onnxruntime-node");
+  }
 }
 
 async function loadOnnxRuntime(): Promise<typeof import("onnxruntime-node")> {
