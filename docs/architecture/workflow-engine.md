@@ -54,7 +54,7 @@ new revision directory in the middle of a run is harmless: the next step runs
 from the new directory. Plans
 frozen as irVersion 5 or 6 also carry a `cwdIdentity` and env owner paths; the
 decoder drops them and such a run dispatches by ref. Durable plans never store
-secret values or enable whole-process `inheritEnv`.
+secret values.
 
 **A run executes the plan compiled at creation; edits to source need a new
 run.** Resuming a run re-reads its workflow source only to warn, once, when

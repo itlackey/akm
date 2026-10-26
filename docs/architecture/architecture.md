@@ -614,8 +614,8 @@ Agent programs are reachable by two execution paths, both behind
 
 - `runAgent(profile, options)` is the single shell-out entry point. It owns
   process spawn, captured/interactive stdio, hard timeout, and structured
-  failure reasons. The child's environment is an allowlist plus the directories
-  this akm resolved and the harness's own pass-through names.
+  failure reasons. The child's environment is the one akm runs in, with the
+  directories this akm resolved and the call's own variables set over it.
 - The `opencode` harness is the user's installed OpenCode, both majors, through
   `opencode run` with the prompt on stdin
   (`src/integrations/harnesses/opencode/agent-builder.ts`). Their OpenCode owns

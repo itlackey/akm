@@ -225,6 +225,20 @@ akm runs the program without a person at the terminal, gives it the prompt and
 takes its standard output as the reply. `akm agent` with no `--prompt` starts the
 program interactively instead.
 
+**Environment.** A harness that an agent, a task or a workflow uses runs with
+your environment, configuration and plugins as they are, plus akm's own `AKM_*`
+variables for the run: `AKM_EVENT_SOURCE` (so akm commands it runs count as
+machine use, not yours) and the directories this akm resolved (`AKM_CONFIG_DIR`,
+`AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR`, and `AKM_BUNDLE_DIR` when you
+set one), with a workflow unit's own `env:` bindings set over them. Nothing is
+filtered, and nothing is added beyond the prompt and the model or agent the asset
+names. Model work (improve's processes) is akm's own internal process, so it adds
+its per-run settings, one harness at a time: Claude Code the flags below and no
+variable; Codex `--sandbox read-only` and no variable; OpenCode
+`OPENCODE_DISABLE_FREE_MODELS=1` (OpenCode 2.1.2 and later honor it) and, on
+OpenCode 2, `--standalone`, `--title akm`, `--agent akm-model-work` and that
+agent merged into your `OPENCODE_CONFIG_CONTENT`.
+
 **Model work on a harness.** Model work (see [Where each process
 runs](#where-each-process-runs)) on a harness program runs in a scratch
 directory that akm creates for the call and removes after it. The table's
@@ -240,6 +254,9 @@ program's tools restricted on that platform (OpenCode: on version 2):
   and `grep`, and `akm_search`, `akm_show` and `akm_curate` when you have the akm
   OpenCode plugin installed. A tool that a plugin of yours adds is denied too. The
   limit is on tools: your plugins' own setup and hooks still run in the session.
+  The run is `--standalone`, one process that ends with it, with no background
+  service left behind, and `--title akm`, which names the session and spares the
+  second model request that would generate a title.
 - On those three, `args` do not apply to model work, except a `--model` they
   name.
 - Every other platform, and OpenCode 1, cannot be restricted: the run is
@@ -268,13 +285,14 @@ and, with no connection, the summary says model calls are off and points at
 **OpenCode.** The `opencode` platform runs your installed OpenCode, either major
 version, as `opencode run` with the prompt on stdin; the reply is its standard
 output. Your OpenCode owns its configuration, logins, token refresh and
-sessions: akm reads, copies and embeds nothing of yours. A run is its own
-`opencode` process, with no background service left behind.
-- The program gets akm's allowlisted environment plus the OpenCode variables
-  `OPENCODE_API_KEY`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`,
-  `OPENCODE_CONFIG_CONTENT` and the XDG directories; a provider key that your
-  OpenCode config references as `{env:VAR}` is not forwarded today. Model work
-  adds its agent to your `OPENCODE_CONFIG_CONTENT` and keeps the rest of it.
+sessions: akm reads, copies and embeds nothing of yours. Agent work is
+`opencode run` as you would run it by hand, with the prompt on stdin, your
+`args` as written, `--model` when akm names a model and `--agent` when the asset
+names an agent; OpenCode 2 runs it the way it does for you, through its own
+background service, which stays up after the command. Add `--standalone` to the
+harness's `args` for a run that is one process. Model work runs standalone.
+- Model work adds its agent to your `OPENCODE_CONFIG_CONTENT` and keeps the rest
+  of it; agent work leaves it as it is.
 - A model name is OpenCode's `provider/model`, from the request, else the
   `--model` in the harness's `args`; without one, your OpenCode's default decides.
 - Model work sets `OPENCODE_DISABLE_FREE_MODELS=1`, which OpenCode 2.1.2 and later
@@ -282,18 +300,15 @@ sessions: akm reads, copies and embeds nothing of yours. A run is its own
   OpenCode's hosted free model, and so does a call whose model (named, or your
   OpenCode's default) is one of its free ones. Agent work does not set it: your
   OpenCode's models are as you would get running it by hand.
-- `--server` is not supported on this harness: akm runs OpenCode 2 with
-  `--standalone` so that a stop ends the run and nothing is shared with, or
-  replayed from, a background service, and OpenCode refuses the two together. An
-  `args` entry that names `--server` is a configuration error (exit 78) naming
-  `harnesses.<name>.args`; an authored `--standalone` is kept once.
-- OpenCode 2 also gets `--standalone` and `--title akm`. A run akm stops
-  (timeout, abort) is interrupted first, as Ctrl-C would, which OpenCode records
-  as interrupted and releases. One that does not stop within 5 seconds is
-  terminated, and killed 5 seconds after that; only a run killed or terminated
-  this way stays suspended in your OpenCode history, where your own OpenCode's
-  background service may resume it when it next starts (up to ten attempts,
-  OpenCode's own policy).
+- A run akm stops (timeout, abort) is interrupted first, as Ctrl-C would, which
+  OpenCode records as interrupted and releases. One that does not stop within 5
+  seconds is terminated, and killed 5 seconds after that; only a run killed or
+  terminated this way stays suspended in your OpenCode history, where your own
+  OpenCode's background service may resume it when it next starts (up to ten
+  attempts, OpenCode's own policy). On Windows a SIGINT is a forced kill, so every
+  run akm stops there stays suspended. Through OpenCode 2's service (2.1.2) the
+  interrupt ends the `opencode` command and not the service's turn, which carries
+  on until it finishes.
 - Its sessions are in your OpenCode history, and `akm proposal extract` and
   improve read them there. On OpenCode 2 they leave out the sessions of akm's
   model work, which ran as the `akm-model-work` agent; OpenCode 1 keeps no such
@@ -416,7 +431,7 @@ processes, the index passes, extraction and `akm remember --enrich` ask for
 `fast`; the quality and triage judges and a workflow gate ask for `balanced`;
 agent work asks for `balanced`.
 
-`akm models` lists a connection's aliases beside the models its endpoint lists,
+`akm models` lists a connection's aliases, then the models its endpoint lists,
 and `akm models set <alias> <model>` changes one; see the [CLI
 reference](cli.md#models). A harness's `models` is edited with `akm config set`.
 

@@ -63,7 +63,9 @@ destinations branch on source kind only in `src/core/write-source.ts`.
 Fan-out widths are decided once in `src/workflows/concurrency-policy.ts`.
 A call's timeout is resolved once in `src/integrations/agent/resolution.ts`,
 and no other layer adds one.
-Child-process environment allowlists come from `src/core/spawn-env.ts`.
+A child process's environment is built in `childProcessEnv`
+(`src/core/paths.ts`): akm's own, with the directories this akm resolved set
+over it.
 Every agent harness registers once in `HARNESS_REGISTRY`
 (`src/integrations/harnesses/index.ts`) and core imports the registry, not
 a harness. Runtime-specific APIs (`bun:sqlite`, `Bun.*`) are reached only

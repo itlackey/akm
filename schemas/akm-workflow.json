@@ -217,7 +217,7 @@
     },
     "exec": {
       "type": "object",
-      "description": "Run a shell command as this unit instead of dispatching to an engine. `command` is an ARGV ARRAY and there is no shell-string form: the child is spawned directly, so shell metacharacters (`;` `|` `&&` `$(…)` `>` `*`) are inert literal argument bytes — the quoting/injection class simply does not exist. Write the interpreter explicitly (e.g. [\"bash\", \"-lc\", \"a | b\"]) when a pipeline is really wanted. stdout is the promoted step artifact with trailing newlines stripped (like shell `$(…)`); when the unit declares an `output` schema, stdout must instead be exactly one JSON value, which is validated against it. A non-zero exit fails the unit with failure reason `non_zero_exit`, honoring `retry:` and `on_error:` like any other unit. The child's environment is an ALLOWLIST by default (PATH, HOME, locale/temp vars, the Windows process-creation essentials) — widen it only with named `env:` environment bindings or `pass_env`.",
+      "description": "Run a shell command as this unit instead of dispatching to an engine. `command` is an ARGV ARRAY and there is no shell-string form: the child is spawned directly, so shell metacharacters (`;` `|` `&&` `$(…)` `>` `*`) are inert literal argument bytes — the quoting/injection class simply does not exist. Write the interpreter explicitly (e.g. [\"bash\", \"-lc\", \"a | b\"]) when a pipeline is really wanted. stdout is the promoted step artifact with trailing newlines stripped (like shell `$(…)`); when the unit declares an `output` schema, stdout must instead be exactly one JSON value, which is validated against it. A non-zero exit fails the unit with failure reason `non_zero_exit`, honoring `retry:` and `on_error:` like any other unit. The child inherits the environment akm runs in, with the directories akm resolved and the unit's `env:` environment bindings set over it.",
       "required": ["command"],
       "additionalProperties": false,
       "properties": {
@@ -238,7 +238,7 @@
         },
         "pass_env": {
           "type": "array",
-          "description": "Extra environment variable NAMES copied through from akm's own environment on top of the default allowlist — for a per-machine toolchain variable (e.g. CARGO_HOME) that no committed `env:` asset could carry. NAMES ONLY: values never appear in a workflow, and unlike `env:` bindings these values are NOT redacted from the command's output, so never list a credential here.",
+          "description": "Environment variable NAMES kept for workflows written when the child started from an empty environment. It selects nothing: the command inherits akm's environment. NAMES ONLY: values never appear in a workflow.",
           "minItems": 1,
           "uniqueItems": true,
           "items": {

@@ -581,9 +581,9 @@ full.
 | --- | --- |
 | **Working directory** | The owner root of the run's workflow, found at each step's dispatch. `cwd` joins it once and may be absolute. |
 | **Argv** | Spawned directly, never shell-interpreted. A `${ref}` token in an entry is replaced at dispatch. |
-| **Environment** | Starts empty: the [default allowlist](#the-childs-environment-is-an-allowlist) plus `pass_env`, then the unit's `env:` bindings, then the engine's `AKM_*` [context](#context-reaching-the-command). |
+| **Environment** | [akm's own](#the-childs-environment), with the directories this akm resolved set over it, then the unit's `env:` bindings, then the engine's `AKM_*` [context](#context-reaching-the-command). |
 | **`${ref}` tokens** | In argv, `cwd` and env-asset values. `${secrets/name}` becomes the secret's value, any other asset ref the asset's absolute path. A ref no bundle owns fails the unit before it spawns. Prompts are not substituted. |
-| **Redaction** | Only values substituted from `secrets/` refs, connection keys and unsafe passthrough values are scrubbed from stdout, stderr, diagnostics and the journal. Configuration, such as a URL bound through an env asset, is not. |
+| **Redaction** | Only values substituted from `secrets/` refs and connection keys are scrubbed from stdout, stderr, diagnostics and the journal. Configuration, such as a URL bound through an env asset, is not, and neither is a value the command inherited. |
 
 #### What is frozen, and what is found at dispatch
 
@@ -782,7 +782,7 @@ Where those numbers come from:
 - **macOS** has no per-string cap; its binding constraint is `ARG_MAX`
   (262 144 bytes) over `argv` + `environ` *combined*. The 128 KiB total keeps
   akm's own contribution to half of that, leaving the rest for the argv, the
-  environment allowlist and your `env:` bindings.
+  rest of the environment and your `env:` bindings.
 - **Windows** caps a single user-defined environment variable at 32 767
   characters (`SetEnvironmentVariable`), and the environment block has limits of
   the same order.
@@ -826,50 +826,31 @@ command would have to handle both shapes, and the spill file would have to be
 placed and cleaned up. A stable contract plus
 an explicit error is the smaller, more predictable surface.
 
-### The child's environment is an allowlist
+### The child's environment
 
-An exec unit's command does **not** inherit akm's environment. The child starts
-from an **empty** environment and is built in three layers, in this order:
+An exec unit's command inherits the environment akm runs in, as a command typed in
+your shell would, and nothing is filtered out of it: `PATH`, `HOME`, locale and
+toolchain variables, and any credential or proxy setting of the process that ran
+`akm workflow run` reach the command. It is built in three layers, in this order:
 
-1. akm's own directories and the **default allowlist** below, copied through
-   from akm's own environment (plus any names the unit adds with `pass_env:`);
+1. akm's own environment, with the directories this akm resolved set over it;
 2. the unit's resolved **`env:` bindings**;
 3. the engine-authored **`AKM_*` context** — last, so a binding can never
    shadow it.
 
-The default allowlist is exactly these names (a name absent from akm's own
-environment is simply absent from the child):
-
-| Group | Names | Why |
-| --- | --- | --- |
-| Command resolution | `PATH` | without it only an absolute `command[0]` can be spawned |
-| Home | `HOME` | the config/cache root git, npm, bun, cargo and ssh all read |
-| Identity | `USER`, `LOGNAME`, `SHELL` | read by git/ssh and by tools that re-exec a login shell |
-| Locale | `LANG`, `LC_ALL`, `LC_CTYPE` | without a locale, non-ASCII stdout — *which is this unit's artifact* — gets mangled |
-| Terminal / clock | `TERM`, `TZ` | some CLIs abort with no `TERM`; `TZ` keeps printed timestamps stable |
-| Scratch space | `TMPDIR`, `TEMP`, `TMP` | POSIX and Windows temp roots |
-| Windows essentials | `SystemRoot`, `SystemDrive`, `WINDIR`, `COMSPEC`, `PATHEXT` | Windows **process creation itself** fails with an empty environment; `PATHEXT` is what makes `bun.exe`/`bun.cmd` resolvable at all |
-| Windows home/config | `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `ProgramData`, `ProgramFiles` | the Windows analogues of `HOME` and the machine-wide install roots toolchain shims resolve against |
-| akm provenance | `AKM_EVENT_SOURCE` | a command that calls `akm` records machine traffic, not user demand |
-
-`PATH` is additionally supplemented with well-known user binary directories
-when akm is running in a scheduler context (cron/launchd/Task Scheduler) that
-stripped it — the same treatment an agent-harness child gets.
-
-The child also gets akm's own directories, whatever the parent found them
-through: `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR` are
-set to the directories the akm that started it resolved (from `AKM_*_DIR`,
-`XDG_*_HOME` or the platform default), and `AKM_BUNDLE_DIR` is passed when that
+The directories are `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and
+`AKM_STATE_DIR`, set to the ones the akm that started the command resolved (from
+`AKM_*_DIR`, `XDG_*_HOME` or the platform default), and `AKM_BUNDLE_DIR` when that
 akm had one. A step that runs `akm` therefore uses the same bundle, config, data,
-cache and state, with no `pass_env:`. Naming one of these in `pass_env:` or
-binding it in `env:` overrides it.
+cache and state. Binding one of them in `env:` overrides it. `AKM_EVENT_SOURCE`
+is set when the environment has none, so a command that calls `akm` records
+machine traffic, not user demand.
 
-Deliberately **not** on the list: credentials of any kind, cloud/CI variables,
-and the proxy family (`HTTP_PROXY` and friends — proxy URLs routinely embed
-credentials). Reach a required value with an exact named `env:` binding, or
-name a non-secret per-machine variable with `pass_env:`.
+Reach a fixed value or a secret with an exact named `env:` binding: only values
+substituted from a `${secrets/name}` ref are redacted from what the command
+prints.
 
-#### `pass_env:` — widen the allowlist by name
+#### `pass_env:` — frozen, and it selects nothing
 
 ```yaml
     unit:
@@ -878,13 +859,11 @@ name a non-secret per-machine variable with `pass_env:`.
         pass_env: [CARGO_HOME, SCCACHE_DIR]
 ```
 
-Names only, 1–32 of them, matching `^[A-Za-z_][A-Za-z0-9_]*$`. Use it for a
-**per-machine** variable an `env:` binding cannot express — an env asset stores
-a committed *value*, so it cannot carry "whatever this build agent's
-`CARGO_HOME` happens to be".
-
-Values passed through this way are **not** redacted from the command's output
-the way a secret bound through `env:` is, so never list a credential here.
+`pass_env:` was the list of variable names an earlier release copied into a child
+that started empty. A workflow that has it keeps loading, and the names are kept
+in the frozen plan and in the unit's input hash, but they select nothing now: the
+command already has the environment. Names only, matching
+`^[A-Za-z_][A-Za-z0-9_]*$`.
 
 #### Binding a secret to a unit
 
@@ -942,10 +921,9 @@ env asset:
 Every new workflow start freezes the durable plan v4 family's current
 executable format (`irVersion: 8`; a plan frozen earlier decodes when it holds no
 model step). It rejects
-`inherit_env: true` and any other request for whole-process inheritance; use
-exact named environment bindings and `pass_env:` instead. Both mechanisms are
-dispatch-significant, keep the visible environment surface bounded, and form
-part of the unit's input hash.
+`inherit_env: true`, which is not needed: the command inherits akm's
+environment. Exact named `env:` bindings are dispatch-significant and form part
+of the unit's input hash.
 
 The historical `inherit_env` spelling is unsupported.
 
@@ -982,8 +960,8 @@ happens. Field presence is the discriminator, the same way `fanOut` marks a
   step's output. Every byte is already visible in the workflow file (and stored
   verbatim in `plan_json`) — which is also why you never inline a secret there.
 - `cwd` and `passEnv` appear only when the unit declares them. `passEnv` is a
-  list of variable **names**; no value is ever projected. New v4 plans never
-  carry `inheritEnv`.
+  list of variable **names** that select nothing; no value is ever projected. New
+  v4 plans never carry `inheritEnv`.
 - `timeoutMs` is still reported, because an exec unit really does inherit
   `defaults.timeout` — that number is true for it.
 
@@ -996,21 +974,12 @@ Exec units sit inside the existing workflow trust model — see
 [Security: workflow sources are executed code](https://github.com/itlackey/akm/blob/main/docs/guides/run-workflows.md#security-workflow-sources-are-executed-code).
 They do not widen it, and they do not narrow it:
 
-- **The child's environment is an allowlist, not an inheritance.** Be clear
-  about what that does and does not buy. It does *not* stop a determined
-  attacker: a command that runs at all can read the same credentials off disk
-  that the environment would have handed it, and a workflow source is executed
-  code either way. What it does buy is real but narrower — it bounds
-  **accidental** exposure (the shell or CI job that invoked `akm` routinely
-  exports tokens for unrelated services, and a third-party step that merely
-  prints its environment, or a tool that ships one in a crash report, should
-  not get them for free), it makes the environment surface **explicit and
-  reviewable** (this list plus lines in the frontmatter diff, rather than
-  "whatever the invoking shell happened to export"), and it **matches the
-  convention akm already applies to spawned children** — agent-harness children
-  have always been built from `envPassthrough` this way, and exec units now use
-  the same mechanism rather than a second one. Operators who need a harder
-  boundary still scope the *akm process* (dedicated account, ephemeral working
+- **The child inherits akm's environment.** The command runs with your
+  environment, as if you had typed it in your shell, so a credential the shell or
+  CI job exported reaches it, and a value it inherited is not redacted from what
+  it prints. That is the same trust a workflow source already has: a command that
+  runs at all can read the same credentials off disk. Operators who need a
+  boundary scope the *akm process* (dedicated account, ephemeral working
   directory, external network/filesystem policy); that is the boundary that
   actually holds.
 - **Secrets come from `env:` bindings by name.** The frozen plan carries only

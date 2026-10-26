@@ -237,11 +237,10 @@ Workflow steps that include shell commands run with **the full filesystem and
 network access of the user invoking `akm workflow run`** — same as if the user
 had typed those commands in their shell. There is no sandbox and no separation
 between trusted and untrusted workflows. An `exec` unit's *environment* is
-narrowed to an allowlist by default
-([Workflow Schema](../reference/workflow-schema.md#the-childs-environment-is-an-allowlist)),
-which bounds accidental exposure of unrelated credentials — but a command that
-runs at all can still read those credentials off disk, so it is a hygiene
-boundary, not a containment one. AKM
+yours
+([Workflow Schema](../reference/workflow-schema.md#the-childs-environment)):
+every variable of the process that ran `akm workflow run` reaches the command,
+credentials included. AKM
 directly orchestrates workflows as a defined execution surface — it does not
 blindly execute arbitrary indexed content — but that orchestration still runs
 the workflow's own declared shell commands with your full access once you
@@ -260,9 +259,7 @@ treat package dependencies**:
   workflow file first (`akm show workflows/<name>`) before running it.
 - **Audit before run** for any workflow that touches secrets, deploys to
   production, or writes outside the project tree. Read the `env:` bindings a
-  workflow declares, and read its `exec.pass_env` lines.
-  The durable v4 family (`irVersion: 8`) rejects `inherit_env`. Authors must
-  use exact named bindings and `pass_env` names.
+  workflow declares.
 - **Pin known-good versions** when adding workflow sources from a registry
   or git remote (`akm bundle add github:owner/repo#v1.2.3`), and update
   deliberately rather than via `akm bundle update --all`. A trusted workflow

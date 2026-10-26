@@ -203,7 +203,7 @@ The wizard asks, in order:
    connection follows is saved as `modelWork: false` on that harness, so model
    calls stay off (the summary says so and points at `akm setup --endpoint`) rather
    than falling back to it. With `--yes` the answer is yes only for a harness akm
-   can run read-only and whose `modelWork: false` is not already saved.
+   can limit to reading and searching for its own model calls and whose `modelWork: false` is not already saved.
 3. **Connection.** An OpenAI-compatible endpoint, its API key (typed at a masked
    prompt and stored in `credentials.json`, never in `config.json`), and one model
    per alias (`fast`, `balanced`, `reasoning`) picked from the models the
@@ -2234,7 +2234,7 @@ See [configuration.md](configuration.md) for details.
 ### models
 
 Show which model answers each alias (`fast`, `balanced`, `reasoning`, and any
-you add) on a connection, beside the models its endpoint lists, and change one.
+you add) on a connection, then the models its endpoint lists, and change one.
 Connections only: a harness's alias map is `harnesses.<name>.models`, edited
 with `akm config set`. Run `akm models --help` for the options.
 
@@ -2391,8 +2391,8 @@ However, the child process controls its own stdout/stderr: if it prints its
 environment, those values will appear in your terminal or agent transcript.
 `--only` / `--except` (comma-separated key names, mutually exclusive) restrict
 which env-file keys are injected. `--clean` starts from a minimal inherited
-environment (PATH/HOME/locale/terminal basics) instead of inheriting the full
-parent environment; use `--inherit KEY1,KEY2` to pass specific parent vars
+environment (PATH/HOME/locale/terminal basics, and the names Windows needs to
+start a process) instead of inheriting the full parent environment; use `--inherit KEY1,KEY2` to pass specific parent vars
 through in clean mode. Installing a bundle is the trust decision, so `env run`
 injects what the env file defines whichever bundle it comes from, including keys
 such as `PATH` or `LD_PRELOAD`; it does not warn or block. `--allow-dangerous-env-keys`
@@ -3721,8 +3721,7 @@ akm looks each name up in the environment the run is given; a name that is unset
 contributes nothing. **Names only.** A literal secret in a task file would leak
 far more widely than the redaction closes: task files are indexed into the search
 database, can be sent to an embedding provider, are printed verbatim by `akm
-show`, and ship inside bundles over git and npm. This is the same rule exec
-units' `pass_env:` follows.
+show`, and ship inside bundles over git and npm.
 
 A workflow-target task executes the same native orchestration as `akm workflow
 run`; it does not stop after creating a run. Completion maps to task
