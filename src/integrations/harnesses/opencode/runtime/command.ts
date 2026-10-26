@@ -24,9 +24,11 @@
  *   - **The resume sweep is off** because `--standalone` keeps the run to one
  *     process that ends with it and replays nobody's killed sessions.
  *   - **The agent's commands do not see any of this.** The process's environment
- *     holds the connection's key (in the inline config), so the plugin puts the
- *     variables this module sets back to what akm runs in, or removes them, in
- *     the environment of the commands the agent runs.
+ *     holds the connection's key (in the inline config: OpenCode 2.1.4 does not
+ *     take a key for this provider from `<XDG_DATA_HOME>/opencode/auth.json`,
+ *     measured), so the plugin puts the variables this module sets back to what
+ *     akm runs in, or removes them, in the environment of the commands the agent
+ *     runs.
  *
  * The run is OpenCode's default agent (or the native agent the request names) with
  * its normal tools, akm's three read tools and the connection's request fields
