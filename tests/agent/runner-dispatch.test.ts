@@ -184,11 +184,13 @@ describe("runExecution routes each runner kind to its transport", () => {
 });
 
 describe("collectDispatchSensitiveValues", () => {
-  test("the key of the connection a dispatch runs on counts; a harness has none of akm's", () => {
+  test("the key of the connection a dispatch runs on counts, and so does a credential-named variable the child inherits", () => {
     expect(collectDispatchSensitiveValues({ ...lab, apiKey: "$LAB_KEY" }, { LAB_KEY: "ENGINE-CREDENTIAL" })).toEqual([
       "ENGINE-CREDENTIAL",
     ]);
-    expect(collectDispatchSensitiveValues(claudeHarness, { ANTHROPIC_API_KEY: "THE-USERS-OWN-KEY" })).toEqual([]);
+    expect(
+      collectDispatchSensitiveValues(claudeHarness, { ANTHROPIC_API_KEY: "THE-USERS-OWN-KEY", EDITOR: "vi" }),
+    ).toEqual(["THE-USERS-OWN-KEY"]);
   });
 
   test("a connection's stored key counts too, and reading it for redaction does not warn", () => {
@@ -210,12 +212,13 @@ describe("runExecution redacts the key of the connection it ran on", () => {
     expect(result.stdout.match(/\[REDACTED\]/g)).toHaveLength(1);
   });
 
-  test("a harness's output is returned as the program wrote it", async () => {
+  test("a harness's output keeps what the program wrote, except a credential the child inherited", async () => {
     const echoed = "THE-USERS-OWN-KEY | /their/claude/config";
     const result = await withEnv({ ANTHROPIC_API_KEY: "THE-USERS-OWN-KEY" }, () =>
       runExecution(built(claudeHarness), { runAgent: async () => okResult(echoed) }),
     );
-    expect(result.stdout).toBe(echoed);
+    expect(result.stdout).not.toContain("THE-USERS-OWN-KEY");
+    expect(result.stdout).toContain("/their/claude/config");
   });
 });
 

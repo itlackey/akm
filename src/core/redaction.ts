@@ -157,6 +157,59 @@ function inspectCredentialBearingUrl(value: string, values?: Set<string>): boole
   }
 }
 
+/**
+ * Shortest value an INFERRED (name-heuristic) match may contribute as a
+ * redaction needle. Declared secrets bypass this entirely.
+ *
+ * Redaction replaces substrings, so a short needle is not merely useless — it
+ * corrupts unrelated output. Below 8 the noise tier is fully intact (`1`, `0`,
+ * `/`, `80`, `true`, `xhigh`, `31999`); at 8 a chance collision with ordinary
+ * log vocabulary is negligible, and every credential format in real use is far
+ * longer. It also matches the conventional minimum password length, so a
+ * secret shorter than this is already outside normal policy.
+ */
+export const MIN_INFERRED_SECRET_LENGTH = 8;
+
+/**
+ * Environment names whose VALUE is treated as a credential on shape alone.
+ *
+ * The keyword must be a whole `_`-delimited word. Anchoring on only one side
+ * would drag in ordinary configuration from whichever side is left open:
+ * a leading anchor alone matches `KEYBOARD_LAYOUT` and `AUTHOR`, a trailing one
+ * matches `MONKEY` and `BYPASS`. Whole-word matching gets `GH_TOKEN`,
+ * `NPM_AUTH_TOKEN`, `MY_API_KEY`, `DB_PASS` and `AWS_SECRET_ACCESS_KEY` right.
+ */
+const INFERRED_SECRET_NAME = /(?:^|_)(?:API_?KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|CREDENTIALS?|AUTH)(?:_|$)/i;
+
+/**
+ * Credential variables whose name is a single glued word, which no
+ * word-boundary rule can see. Enumerated rather than matched: loosening the
+ * pattern enough to catch `PGPASSWORD` also catches `MONKEY`.
+ *
+ * `PWD` cannot be a keyword above for the same reason it appears here as part
+ * of `MYSQL_PWD` — on its own it is the working directory.
+ */
+const KNOWN_SECRET_NAMES = new Set(["PGPASSWORD", "MYSQL_PWD"]);
+
+/** True when the NAME alone marks this variable as holding a credential. */
+export function isInferredSecretName(name: string): boolean {
+  return KNOWN_SECRET_NAMES.has(name.toUpperCase()) || INFERRED_SECRET_NAME.test(name);
+}
+
+/**
+ * The values in `env` whose variable NAME marks them as credentials ({@link isInferredSecretName}), at or above
+ * {@link MIN_INFERRED_SECRET_LENGTH}. Every process akm starts inherits akm's environment, so a reply or a log that
+ * echoes one of these must be scrubbed of it; this is the one place that rule lives (task logs and dispatch replies).
+ */
+export function collectInferredSecretValues(env: NodeJS.ProcessEnv): string[] {
+  const values: string[] = [];
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined || value.length < MIN_INFERRED_SECRET_LENGTH) continue;
+    if (isInferredSecretName(name)) values.push(value);
+  }
+  return values;
+}
+
 /** Collect exact secrets plus decoded values embedded in credential-bearing URLs. */
 export function collectSensitiveValues(rawValues: Iterable<string | undefined>): string[] {
   const values = new Set<string>();

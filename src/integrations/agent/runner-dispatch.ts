@@ -17,7 +17,7 @@ import type { AkmConfig } from "../../core/config/config";
 import { resolveApiKey } from "../../core/config/credentials";
 import { UsageError } from "../../core/errors";
 import type { LlmInference } from "../../core/llm-inference";
-import { collectSensitiveValues, redactSensitiveText } from "../../core/redaction";
+import { collectInferredSecretValues, collectSensitiveValues, redactSensitiveText } from "../../core/redaction";
 import type { ExecutionJsonObject } from "../../execution/json";
 import { type ChatCompletionConfig, chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
@@ -58,7 +58,10 @@ export function collectDispatchSensitiveValues(
   runner: RunnerSpec,
   envSource: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  if (runner.kind !== "connection") return [];
+  // The child inherits akm's environment, so a reply that echoes a credential-named variable's value is scrubbed
+  // of it, as the connection's own key is.
+  const inherited = collectInferredSecretValues(envSource);
+  if (runner.kind !== "connection") return collectSensitiveValues(inherited);
   return collectSensitiveValues([
     resolveApiKey(
       runner.apiKey,
@@ -68,6 +71,7 @@ export function collectDispatchSensitiveValues(
       true,
       runner.storedKey !== false,
     ),
+    ...inherited,
   ]);
 }
 
