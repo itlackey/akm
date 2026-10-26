@@ -416,11 +416,15 @@ install --global` into a throwaway prefix — see `scripts/package-install.ts`)
 under the label `live`, drives it to build a realistic home — a filesystem
 bundle, a git bundle (with an in-bundle symlink at its root), a website
 bundle, an npm bundle, three scheduled tasks (two granted, one left
-ungranted) plus a manual task, and a synced native (fake) crontab — then
+ungranted) plus a manual task, a synced native (fake) crontab, and the 0.9
+`engines` form the previous release itself writes (an llm engine with an
+`apiKeyFile`, an agent engine, a `models.json`, a command and a task source
+that name an engine) — then
 installs the CANDIDATE build OVER `live`, in the SAME prefix: an in-place
 swap, the same thing a real `npm i -g akm-cli@…`/`bun add -g` upgrade does,
 not a side-by-side install. It then runs the CANDIDATE against that home
-(`migrate status`/`apply`, `bundle list` with every bundle confirmed enabled,
+(`migrate status`/`apply`, which converts the `engines` form, files its key
+and rewrites the `engine:` keys, `bundle list` with every bundle confirmed enabled,
 `search`/`show`, `task sync` dry-run and real — plain, no `--rebind`, as an
 upgrading user actually runs it — executing the generated cron command and
 confirming it ran the candidate, `task run`, `health`, `improve --dry-run`), and
