@@ -2,8 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { WIN32_SPAWN_ENV_FLOOR } from "../../core/spawn-env";
-
+/**
+ * What `env run --clean` / `secret run --clean` keeps of the parent environment. The user typed
+ * the flag to get a minimal one; without the last eight names Windows cannot create the process.
+ */
 const CLEAN_ENV_ALLOWLIST = [
   "HOME",
   "PATH",
@@ -33,6 +35,14 @@ const CLEAN_ENV_ALLOWLIST = [
   "TZ",
   "NO_COLOR",
   "COLORTERM",
+  "SystemRoot",
+  "SystemDrive",
+  "WINDIR",
+  "COMSPEC",
+  "PATHEXT",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
 ] as const;
 
 export interface ChildEnvOptions {
@@ -49,18 +59,6 @@ export function buildChildEnv(
   if (options.clean) {
     for (const key of CLEAN_ENV_ALLOWLIST) {
       if (parentEnv[key] !== undefined) base[key] = parentEnv[key];
-    }
-    // The allowlist above is POSIX-shaped. On Windows a child started without
-    // SystemRoot/COMSPEC/PATHEXT and friends frequently cannot start at all —
-    // which is why every other spawn path in the codebase applies this floor
-    // (see spawnEnvNamesFor). `env run --clean` / `secret run --clean` did not,
-    // so clean-mode injection was unusable there. The floor is names the OS
-    // requires of any child, not user configuration, so it does not weaken what
-    // "clean" means about inherited secrets.
-    if (process.platform === "win32") {
-      for (const key of WIN32_SPAWN_ENV_FLOOR) {
-        if (parentEnv[key] !== undefined) base[key] = parentEnv[key];
-      }
     }
   }
 
