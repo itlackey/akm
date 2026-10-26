@@ -975,8 +975,10 @@ akm config unset connections.old
 
 Object values passed to `config set` deep-merge with their current value.
 Arrays replace, `null` is only valid for nullable fields, and `config unset` is
-the only deletion operation. `configVersion` cannot be set or unset with the
-generic walker.
+the only deletion operation. It removes the named key and nothing else: a
+parent object left empty stays, because `harnesses.opencode: {}` is how a
+harness is enabled. `configVersion` cannot be set or unset with the generic
+walker.
 
 `config get <key> --show-source` wraps the (redacted) value as
 `{ value, source }`, where `source` is `"local"` when the local file's own
