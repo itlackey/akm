@@ -11,7 +11,7 @@
 //
 // R-067 (PKG-8): `emitJsonError` no longer calls `process.exit()` — it sets
 // `process.exitCode` and returns, so a caller's pending `finally` blocks
-// (cleanup, e.g. `disposeDispatchResources()` in src/cli.ts) actually run
+// (cleanup, e.g. `disposeLlmUsageSink()` in src/cli.ts) actually run
 // instead of being skipped by a synchronous process-terminating call. This
 // helper now reads `process.exitCode` after the (non-throwing) call instead
 // of stubbing `process.exit` to catch a sentinel throw — `emitJsonError`

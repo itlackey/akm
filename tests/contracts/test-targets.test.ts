@@ -4,9 +4,9 @@
 
 /**
  * The unit target is every test outside `tests/integration/`.
- * A test that runs the real embedded OpenCode (its own SQLite database and shell
+ * A test that runs the real OpenCode binary (its own SQLite database and shell
  * tools) or serves a loopback fake model belongs in the integration target, so
- * the unit target stays the fast one. The fake host (`tests/_helpers/fake-opencode-host.ts`)
+ * the unit target stays the fast one. The fake runtime (`tests/_helpers/fake-opencode-runtime.ts`)
  * is what unit tests use in their place.
  */
 import { describe, expect, test } from "bun:test";
@@ -15,8 +15,8 @@ import path from "node:path";
 
 const testsRoot = path.resolve(import.meta.dir, "..");
 
-/** What a test imports or calls when it runs the real SDK or serves the loopback fake model. */
-const REAL_RESOURCES = /@opencode\/(?:sdk|core)|\bcreateSdkHost\b|\bstartFakeModel\b/;
+/** What a test imports or calls when it runs the real OpenCode binary or serves the loopback fake model. */
+const REAL_RESOURCES = /\bfetchSharedOpencode\b|\bstartFakeModel\b/;
 
 function testFiles(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -29,7 +29,7 @@ function testFiles(dir: string, out: string[] = []): string[] {
 }
 
 describe("the unit test target", () => {
-  test("holds no test that runs the real embedded OpenCode or serves a loopback fake model", () => {
+  test("holds no test that runs the real OpenCode binary or serves a loopback fake model", () => {
     const offenders = testFiles(testsRoot)
       .filter((file) => REAL_RESOURCES.test(fs.readFileSync(file, "utf8").replace(/^\s*(?:\/\/|\*).*$/gm, "")))
       .map((file) => path.relative(testsRoot, file));

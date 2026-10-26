@@ -8,7 +8,7 @@
  * its pathname is edited here; a query string (an `api-version`, say) stays
  * where it is, after the pathname, and a fragment, which is never sent, goes.
  * Every consumer of an endpoint (the chat client, model listing, health probes,
- * setup, the stored-key binding, the embedded runtime) reads it through this
+ * setup, the stored-key binding, akm's own runtime) reads it through this
  * one module.
  */
 

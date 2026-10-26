@@ -39,12 +39,21 @@ export function databaseIn(directory: string): string {
   return path.join(directory, "opencode.db");
 }
 
+/**
+ * Everything akm's own OpenCode runtime keeps, under akm's data directory: the
+ * four XDG roots it is started with (`config`, `data`, `cache`, `state`) and its
+ * `tmp`. Nothing of the user's OpenCode is in it.
+ */
+export function akmRuntimeDir(): string {
+  return path.join(getDataDir(), "opencode-runtime");
+}
+
 /** The user's OpenCode database. */
 export function opencodeDatabasePath(env: NodeJS.ProcessEnv = process.env): string {
   return databaseIn(opencodeDataDir(env));
 }
 
-/** Where akm keeps its OpenCode sessions: `<akm data dir>/opencode.db`. */
+/** Where akm's own runtime keeps its sessions: the `opencode/opencode.db` OpenCode makes under the runtime's `XDG_DATA_HOME`. */
 export function akmOpencodeDatabasePath(): string {
-  return databaseIn(getDataDir());
+  return databaseIn(path.join(akmRuntimeDir(), "data", "opencode"));
 }

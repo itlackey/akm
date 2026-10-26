@@ -22,7 +22,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { runCliStatus as runCli } from "../_helpers/cli";
-import { installFakeOpencodeHost } from "../_helpers/fake-opencode-host";
+import { installFakeOpencodeRuntime } from "../_helpers/fake-opencode-runtime";
 import { type Cleanup, sandboxStashDir, withEnv, writeSandboxConfig } from "../_helpers/sandbox";
 
 let stashCleanup: Cleanup = () => {};
@@ -52,7 +52,7 @@ describe("akm contribution cluster — JSON envelope snapshot (WS6)", () => {
       semanticSearchMode: "off",
       connections: { lab: { endpoint: "http://127.0.0.1:1/v1", models: { fast: "fixture" } } },
     });
-    const host = installFakeOpencodeHost({ reply: () => "hello" });
+    const host = installFakeOpencodeRuntime({ reply: () => "hello" });
     const { stderr, status } = await withEnv({ PATH: "" }, () => runCli(["agent"]));
     expect(status).toBe(2);
     const env = JSON.parse(stderr);
@@ -67,7 +67,7 @@ describe("akm contribution cluster — JSON envelope snapshot (WS6)", () => {
       semanticSearchMode: "off",
       connections: { lab: { endpoint: "http://127.0.0.1:1/v1", models: { fast: "fixture" } } },
     });
-    const host = installFakeOpencodeHost({ reply: () => "hello" });
+    const host = installFakeOpencodeRuntime({ reply: () => "hello" });
     const { stdout, status } = await withEnv({ PATH: "" }, () => runCli(["agent", "--prompt", "say hello"]));
     expect(status).toBe(0);
     const env = JSON.parse(stdout);

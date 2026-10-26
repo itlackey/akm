@@ -100,7 +100,7 @@ export interface RunAgentOptions {
  * Best-effort token accounting for one agent run. Harness-neutral shape;
  * fields are only set when the harness actually reported them (0 is a real
  * value, absent means unknown). The CLI spawn path has no usage contract
- * yet, so today this is populated only by the OpenCode SDK runner.
+ * yet, so today no runner populates it.
  */
 export interface AgentTokenUsage {
   inputTokens?: number;
@@ -116,13 +116,13 @@ export interface AgentRunResult {
   stderr: string;
   durationMs: number;
   reason?: AgentFailureReason;
-  /** Safe typed discriminator for a caught direct-LLM transport error; absent for agent/SDK and generic failures. */
+  /** Safe typed discriminator for a caught direct-LLM transport error; absent for agent and generic failures. */
   llmErrorCode?: Exclude<import("../../llm/usage-telemetry").LlmUsageErrorCode, "unknown_error">;
   /** Human-readable error message paired with `reason`. */
   error?: string;
-  /** Token accounting, when the harness reported it (SDK path today). */
+  /** Token accounting, when the harness reported it. */
   usage?: AgentTokenUsage;
-  /** The harness's own session id, when it exposes one (SDK path today). */
+  /** The harness's own session id, when it exposes one. */
   sessionId?: string;
 }
 
@@ -142,15 +142,11 @@ export function buildChildEnv(options: Pick<RunAgentOptions, "env">): Record<str
  * ({@link streamCaptureFailure} in `core/subprocess.ts`). The classification
  * lives in the primitive so the agent path and the workflow `exec` path cannot
  * drift apart on what "the capture did not complete" means; only the sentence
- * naming the profile is local.
+ * naming what ran is local.
  */
-function streamFailureMessage(
-  profileName: string,
-  stdout: StreamReadResult,
-  stderr: StreamReadResult,
-): string | undefined {
+function streamFailureMessage(label: string, stdout: StreamReadResult, stderr: StreamReadResult): string | undefined {
   const failures = streamCaptureFailure(stdout, stderr);
-  return failures === undefined ? undefined : `agent CLI "${profileName}" output capture failed: ${failures}`;
+  return failures === undefined ? undefined : `${label} output capture failed: ${failures}`;
 }
 
 function failed(reason: AgentFailureReason, error: string, rest: Partial<AgentRunResult> = {}): AgentRunResult {
@@ -171,10 +167,6 @@ function failed(reason: AgentFailureReason, error: string, rest: Partial<AgentRu
  * `ok === true` requires exit code 0.
  */
 export async function runAgent(profile: AgentProfile, options: RunAgentOptions = {}): Promise<AgentRunResult> {
-  const stdioMode = options.stdio ?? profile.stdio;
-  // null = explicitly disabled (no kill timer). undefined = runtime default.
-  const timeoutMs: number | null = options.timeoutMs !== undefined ? options.timeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
-
   const platform = profile.platform ?? profile.name;
   const harness = getHarness(platform);
   if (!harness) {
@@ -185,24 +177,49 @@ export async function runAgent(profile: AgentProfile, options: RunAgentOptions =
     );
   }
   const built = harness.build(profile, options.dispatch ?? {});
+  const command = { argv: built.argv, env: { ...buildChildEnv(options), ...built.env }, stdin: built.stdin };
+  return runBuiltCommand(`agent CLI "${profile.name}"`, command, options, options.stdio ?? profile.stdio);
+}
+
+/** A command ready to run: its argv, the child's whole environment, and what goes on its stdin. */
+export interface ReadyCommand {
+  readonly argv: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+  readonly stdin?: string | undefined;
+}
+
+/**
+ * Run a command that is already built and return a structured result: the part
+ * of {@link runAgent} that does not depend on which harness built the command,
+ * which akm's own runtime (`harnesses/opencode/runtime/`) shares. `label` names
+ * what ran in the failure messages.
+ */
+export async function runBuiltCommand(
+  label: string,
+  { argv, env, stdin }: ReadyCommand,
+  options: RunAgentOptions,
+  stdioMode: AgentStdioMode = options.stdio ?? "captured",
+): Promise<AgentRunResult> {
+  // null = explicitly disabled (no kill timer). undefined = runtime default.
+  const timeoutMs: number | null = options.timeoutMs !== undefined ? options.timeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
 
   // Cooperative cancel: refuse to spawn at all when the caller's signal is
   // already aborted (e.g. the run's budget was exhausted before this unit).
   if (options.signal?.aborted) {
-    return failed("aborted", `agent CLI "${profile.name}" not started: caller signal already aborted`);
+    return failed("aborted", `${label} not started: caller signal already aborted`);
   }
 
   // Spawn/timeout/abort/capture are owned by the managed-subprocess primitive
   // (src/core/subprocess.ts): process-GROUP spawn (detached in captured mode),
   // the SIGINT→SIGTERM→SIGKILL kill ladder on timeout/abort, bounded output capture,
-  // and the optional stdin payload. runAgent keeps its agent-specific surface:
+  // and the optional stdin payload. This keeps the agent-specific surface:
   // the failure taxonomy.
   const start = Date.now();
-  const result = await runManagedSubprocess([...built.argv], {
+  const result = await runManagedSubprocess([...argv], {
     capture: stdioMode === "captured",
-    env: { ...buildChildEnv(options), ...built.env },
+    env: { ...env },
     ...(options.cwd ? { cwd: options.cwd } : {}),
-    ...(built.stdin !== undefined ? { stdin: built.stdin } : {}),
+    ...(stdin !== undefined ? { stdin } : {}),
     timeoutMs,
     ...(options.signal ? { signal: options.signal } : {}),
   });
@@ -213,15 +230,15 @@ export async function runAgent(profile: AgentProfile, options: RunAgentOptions =
   const { exitCode, stdout, stderr } = result;
   const output = { exitCode, stdout, stderr, durationMs };
   if (result.aborted) {
-    return failed("aborted", `agent CLI "${profile.name}" aborted by caller signal`, output);
+    return failed("aborted", `${label} aborted by caller signal`, output);
   }
   if (result.timedOut) {
-    return failed("timeout", `agent CLI "${profile.name}" timed out after ${timeoutMs ?? 0}ms`, output);
+    return failed("timeout", `${label} timed out after ${timeoutMs ?? 0}ms`, output);
   }
-  const captureFailure = streamFailureMessage(profile.name, result.stdoutRead, result.stderrRead);
+  const captureFailure = streamFailureMessage(label, result.stdoutRead, result.stderrRead);
   if (captureFailure) return failed("spawn_failed", captureFailure, output);
   if (exitCode !== 0) {
-    return failed("non_zero_exit", `agent CLI "${profile.name}" exited with code ${exitCode}`, output);
+    return failed("non_zero_exit", `${label} exited with code ${exitCode}`, output);
   }
   return { ok: true, ...output };
 }

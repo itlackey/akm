@@ -12,7 +12,7 @@
 // Every run of the binary is sandboxed. akm's spawn path hands the child the environment akm runs in, so the suite sets
 // HOME, the XDG directories and the OpenCode variables itself, all under a temporary directory, and blanks every other
 // OPENCODE_* the developer has exported; the provider is a loopback fake that the `@ai-sdk/openai-compatible` package
-// already installed for akm reaches, so nothing is downloaded and no real account, key or OpenCode file is opened.
+// bundled in the binary reaches, so nothing is downloaded and no real account, key or OpenCode file is opened.
 //
 // Model work runs standalone (one process that ends with the run), so its cases need nothing more. Agent work is the
 // plain `opencode run`, which OpenCode 2 runs through a background service on one port for every HOME: those cases end
@@ -22,7 +22,6 @@ import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { harnessProfile } from "../../src/integrations/agent/profiles";
 import { type AgentRunResult, runAgent } from "../../src/integrations/agent/spawn";
 import type { AgentDispatchRequest } from "../../src/integrations/harnesses/harness";
@@ -32,11 +31,6 @@ import { makeSandboxDir, withEnv } from "../_helpers/sandbox";
 
 const GATE = "AKM_TEST_OPENCODE2_BIN";
 const BIN = process.env[GATE];
-
-/** The package that reaches the fake provider; installed with akm, so OpenCode downloads nothing. */
-const PROVIDER_PACKAGE = pathToFileURL(
-  path.resolve(import.meta.dir, "../../node_modules/@ai-sdk/openai-compatible/dist/index.mjs"),
-).href;
 
 /**
  * Set on every run, as the user's own configuration of their OpenCode would: no model catalog fetch, no project config,
@@ -77,8 +71,6 @@ interface ModelRequest {
 interface FakeModel {
   readonly url: string;
   readonly requests: ModelRequest[];
-  /** How many requests the client gave up on (closed the connection before an answer). */
-  readonly abandoned: () => number;
 }
 
 const cleanups: Array<() => void> = [];
@@ -120,7 +112,6 @@ function sandbox(): Box {
 /** An OpenAI-compatible endpoint on loopback. It answers `PROBE_OK`, asks for `callTool` first, or never answers. */
 function fakeModel(behaviour: { callTool?: string; stall?: boolean } = {}): FakeModel {
   const requests: ModelRequest[] = [];
-  let abandoned = 0;
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -140,9 +131,6 @@ function fakeModel(behaviour: { callTool?: string; stall?: boolean } = {}): Fake
         toolResults,
       });
       if (behaviour.stall) {
-        req.signal.addEventListener("abort", () => {
-          abandoned += 1;
-        });
         return new Response(new ReadableStream({ start() {} }), sse);
       }
       const calling = behaviour.callTool !== undefined && toolResults.length === 0;
@@ -172,7 +160,7 @@ function fakeModel(behaviour: { callTool?: string; stall?: boolean } = {}): Fake
     },
   });
   cleanups.push(() => server.stop(true));
-  return { url: `http://127.0.0.1:${server.port}/v1`, requests, abandoned: () => abandoned };
+  return { url: `http://127.0.0.1:${server.port}/v1`, requests };
 }
 
 const sse = { headers: { "content-type": "text/event-stream" } };
@@ -183,7 +171,7 @@ function providerConfig(model: FakeModel, extra: Record<string, unknown> = {}): 
     disabled_providers: ["opencode", "opencode-go"],
     provider: {
       fixture: {
-        npm: PROVIDER_PACKAGE,
+        npm: "@ai-sdk/openai-compatible",
         options: { baseURL: model.url, apiKey: "SYNTHETIC_KEY" },
         models: { "fake-model": {}, second: {} },
       },
@@ -597,9 +585,11 @@ function registerSuite(bin: string): void {
       });
     }, 60_000);
 
-    // Recorded on OpenCode 2.1.2: the stop reaches the CLI and nothing else. The CLI is interrupted and exits 130, but
-    // the turn belongs to the service, which stays up with its model requests still open. A run that must end when it
-    // is stopped is a standalone run, which is what akm's own model work is.
+    // Recorded on OpenCode 2.1.2 and 2.1.4: the stop reaches the CLI. The CLI is interrupted and exits 130, but the
+    // turn belongs to the service, which stays up. Whether the service's model request stays open depends on the
+    // provider (with the package named, as here, 2.1.4 abandons it; with the same package loaded by file URL it did
+    // not), so that is not asserted. A run that must end when it is stopped is a standalone run, which is what akm's
+    // own model work is.
     test("a stop ends the opencode command, not the service's turn", async () => {
       await leavingNoService(async () => {
         const box = sandbox();
@@ -618,7 +608,6 @@ function registerSuite(bin: string): void {
         expect(result.exitCode).toBe(130);
         expect(opencodeProcesses()).toEqual([]);
         expect(serviceProcesses()).toEqual(services);
-        expect(model.abandoned()).toBe(0);
       });
     }, 60_000);
   });

@@ -15,10 +15,11 @@ import { hasV2Tables, listV2Sessions, readV2Session } from "./session-log-v2";
 
 /**
  * OpenCode session history, from two SQLite files: the user's
- * `<opencode data dir>/opencode.db`, and akm's own `<akm data dir>/opencode.db`,
- * where the embedded OpenCode stores akm's runtime runs. This reader opens them
- * read-only, with SQLite alone, and starts no OpenCode on them; the embedded
- * OpenCode writes akm's file. The file's layout decides the reader:
+ * `<opencode data dir>/opencode.db`, and akm's own
+ * `<akm data dir>/opencode-runtime/data/opencode/opencode.db`, where the OpenCode
+ * process of akm's runtime stores its runs. This reader opens them read-only, with
+ * SQLite alone, and starts no OpenCode on them; the runtime's process writes akm's
+ * file. The file's layout decides the reader:
  *
  *   - OpenCode 2 (`session_v2` and `session_message`): `session-log-v2.ts`.
  *     Only top-level sessions; akm's model-work sessions are left out.

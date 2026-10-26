@@ -15,8 +15,8 @@
  *   - each CLI harness: a fake binary per scenario is the harness's `bin`, so the
  *     real argv builder and runAgent run. A harness reports a provider error by
  *     exiting non-zero.
- *   - internal runtime: agent work on a connection runs akm's embedded OpenCode,
- *     scripted here (`installFakeOpencodeHost`).
+ *   - internal runtime: agent work on a connection runs akm's own OpenCode
+ *     process, scripted here (`installFakeOpencodeRuntime`).
  *
  * The contract:
  *   C1  Success means the transport succeeded: a provider or harness error is
@@ -42,10 +42,13 @@ import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../src/integrations/agent/spawn";
 import { HARNESS_CONFIG_PLATFORMS } from "../../src/integrations/harnesses";
-import { closeOpencodeSdk } from "../../src/integrations/harnesses/opencode/embedded/host";
 import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink, withLlmStage } from "../../src/llm/usage-telemetry";
 import { serveLlmStub } from "../_helpers/engine-stubs";
-import { type FakeOpencodeCall, type FakeOpencodeReply, installFakeOpencodeHost } from "../_helpers/fake-opencode-host";
+import {
+  type FakeRuntimeCall,
+  type FakeRuntimeReply,
+  installFakeOpencodeRuntime,
+} from "../_helpers/fake-opencode-runtime";
 import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
 
@@ -94,21 +97,19 @@ const CLI_SCRIPTS: Record<string, string> = {
 };
 
 /** What the scripted OpenCode answers, per scenario; a function gets the call's number. A promise that never settles hangs. */
-const RUNTIME_REPLIES: Record<string, FakeOpencodeReply | ((call: number) => FakeOpencodeReply | Promise<never>)> = {
-  reply: { text: REPLY, tokens: { input: 3, output: 5 } },
+const RUNTIME_REPLIES: Record<string, FakeRuntimeReply | ((call: number) => FakeRuntimeReply | Promise<never>)> = {
+  reply: { text: REPLY },
   valid: { text: REPLY },
   repair: (call) => ({ text: call === 1 ? "not json" : REPLY }),
   hang: () => new Promise<never>(() => {}),
   // A provider rejection on the assistant message.
   "assistant-error": { error: { type: "provider.api", message: PROVIDER_MESSAGE } },
-  // A failure OpenCode reports on the turn.
-  "turn-error": { error: { type: "provider.api", message: PROVIDER_MESSAGE }, onTurn: true },
 };
 
 /** The request bodies the chat stub received, and the prompts the scripted OpenCode did, in order. */
 const { server: chatStub, bodies: chatBodies } = serveLlmStub(CHAT_REPLIES);
 let bins: SandboxedDir;
-let runtimeCalls: FakeOpencodeCall[] = [];
+let runtimeCalls: FakeRuntimeCall[] = [];
 
 beforeAll(() => {
   bins = makeSandboxDir("akm-transport-contract-bin");
@@ -122,8 +123,7 @@ afterAll(() => {
   bins.cleanup();
 });
 
-afterEach(async () => {
-  await closeOpencodeSdk();
+afterEach(() => {
   chatBodies.length = 0;
   runtimeCalls = [];
 });
@@ -192,13 +192,13 @@ const RUNTIME: Transport = {
   }),
   arrange: (scenario) => {
     const reply = RUNTIME_REPLIES[scenario];
-    runtimeCalls = installFakeOpencodeHost({
+    runtimeCalls = installFakeOpencodeRuntime({
       reply: () => (typeof reply === "function" ? reply(runtimeCalls.length) : (reply ?? REPLY)),
     }).calls;
   },
   delivered: () => {
-    const call = runtimeCalls.at(-1) as FakeOpencodeCall;
-    return { prompt: [call.system ?? "", call.prompt].join("\n") };
+    const call = runtimeCalls.at(-1) as FakeRuntimeCall;
+    return { prompt: call.prompt };
   },
 };
 
@@ -273,7 +273,6 @@ describe("C1: a provider or harness error is ok:false, never ok with empty outpu
     [CHAT.name, "http-200-error-body", CHAT],
     ...CLI_HARNESSES.map((harness): [string, string, Transport] => [harness.name, "exit-1", harness]),
     [RUNTIME.name, "assistant-error", RUNTIME],
-    [RUNTIME.name, "turn-error", RUNTIME],
   ];
 
   test.each(rows)("%s: %s", async (_name, scenario, transport) => {
@@ -452,11 +451,11 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
 
 describe("C6: usage", () => {
   const reported = { promptTokens: 3, completionTokens: 5, totalTokens: 8 };
-  // The chat path records each HTTP attempt; an agent or runtime path records the dispatch.
+  // The chat path records each HTTP attempt; an agent or runtime path records the dispatch, with no tokens: the OpenCode process reports none.
   const rows: [string, Transport, Partial<LlmUsageRecord>][] = [
     [CHAT.name, CHAT, reported],
     ...CLI_HARNESSES.map((harness): [string, Transport, Partial<LlmUsageRecord>] => [harness.name, harness, {}]),
-    [RUNTIME.name, RUNTIME, reported],
+    [RUNTIME.name, RUNTIME, {}],
   ];
 
   test.each(rows)("%s: one usage record per dispatch, attributed to its engine", async (_name, transport, tokens) => {

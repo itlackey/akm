@@ -53,7 +53,6 @@ export interface ChildWorkflowDriveOptions {
   readonly maxConcurrency?: number;
   readonly eventSource?: string;
   readonly bundleRootOverride?: string;
-  readonly disposeDispatchResources?: () => void | Promise<void>;
 }
 
 /** The real engine, via a dynamic import (see the module doc). The caller re-reads the child row afterward. */
@@ -218,8 +217,6 @@ async function driveChildRun(
     ...(ctx.maxConcurrency !== undefined ? { maxConcurrency: ctx.maxConcurrency } : {}),
     ...(ctx.eventSource !== undefined ? { eventSource: ctx.eventSource } : {}),
     ...(ctx.bundleRootOverride !== undefined ? { bundleRootOverride: ctx.bundleRootOverride } : {}),
-    // The parent's own `finally` owns the process-lifecycle drain; no maxSteps/maxRetries.
-    disposeDispatchResources: () => {},
   };
   try {
     // The re-read stays inside this try: an escaped throw would skip the

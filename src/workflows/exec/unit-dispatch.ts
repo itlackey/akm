@@ -41,7 +41,7 @@ export interface UnitDispatchRequest {
   env?: Record<string, string>;
   /** Exact values that must be removed before output reaches the journal. */
   sensitiveValues?: readonly string[];
-  /** Working directory for the unit's child process or SDK session: the owner root of the run's workflow. */
+  /** Working directory for the unit's child process: the owner root of the run's workflow. */
   cwd?: string;
   signal?: AbortSignal;
   /** The task runner's provenance event source (`AKM_EVENT_SOURCE`); an authored `env:` binding wins. */

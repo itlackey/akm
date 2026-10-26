@@ -293,8 +293,8 @@ describe("env run", () => {
 
   // R-067 regression: `runEnvInjected` (src/commands/env/env-cli.ts) used to
   // `process.exit(result.status ?? 0)` unconditionally after the child ran —
-  // including on success — which skips the `finally { await
-  // disposeDispatchResources(); }` cleanup in src/cli.ts's `runCommand`. The
+  // including on success — which skips the `finally { disposeLlmUsageSink(); }`
+  // cleanup in src/cli.ts's `runCommand`. The
   // fix (`process.exitCode = result.status ?? 0; return;`) must still
   // propagate the child's exact exit status, non-zero included. Assert that
   // invariant end-to-end through a real subprocess.
@@ -338,7 +338,7 @@ describe("secret run", () => {
 
   // R-067 regression: `secretRunCommand`'s `run` (src/commands/env/secret-cli.ts)
   // used to `process.exit(result.status ?? 0)` unconditionally, skipping
-  // src/cli.ts's `finally { await disposeDispatchResources(); }`. The fix
+  // src/cli.ts's `finally { disposeLlmUsageSink(); }`. The fix
   // (`process.exitCode = result.status ?? 0; return;`) must still propagate
   // the child's exact exit status, non-zero included.
   test("propagates a non-zero child exit code", () => {

@@ -99,7 +99,7 @@ function extractHint(error: unknown): string | undefined {
  * R-067: this used to call `process.exit(exitCode)` directly, which
  * terminates the process synchronously and skips every pending `finally`
  * block up the call stack — including `src/cli.ts`'s own
- * `disposeDispatchResources()` cleanup and citty's per-command `cleanup`
+ * `disposeLlmUsageSink()` cleanup and citty's per-command `cleanup`
  * hooks. `process.exitCode = exitCode; return;` is equivalent for every
  * caller here: Node/Bun exits with that code once the event loop drains
  * naturally, but cleanup on the way there still runs.

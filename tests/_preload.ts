@@ -40,7 +40,7 @@
  * mutate inside the per-test window and restore before the tripwire fires.
  */
 
-import { afterAll, afterEach, beforeEach, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -50,10 +50,7 @@ import { _resetParsedInvocationForTests } from "../src/cli/invocation";
 import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-writer-lock";
-import {
-  _setOpencodeHostFactoryForTests,
-  closeOpencodeSdk,
-} from "../src/integrations/harnesses/opencode/embedded/host";
+import { agentRuntime } from "../src/integrations/agent/runtime";
 import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { resetAllSeams } from "./_helpers/seams";
@@ -172,17 +169,16 @@ function installSuiteWideSandbox(): void {
 installSuiteWideSandbox();
 
 /**
- * The embedded OpenCode with no fake would reach a real provider (OpenCode's own
- * free tier at opencode.ai) and the developer's OpenCode data. Refuse it, always:
- * a test installs `installFakeOpencodeHost` (tests/_helpers/fake-opencode-host.ts)
- * or a loopback model through `overrideSeam`, which replaces this refusal for the
- * test, and the refusal is back as soon as the test's seams are reset, so no
- * hook or `afterAll` between tests can start a real one.
+ * akm's own runtime with no fake would fetch a 114 MB OpenCode binary and run it
+ * against whatever endpoint the test configured. Refuse it, always: a test installs
+ * `installFakeOpencodeRuntime` (tests/_helpers/fake-opencode-runtime.ts) or, to run
+ * the real binary, `useRealOpencodeRuntime()`, and the refusal is back as soon as the
+ * test's mocks are restored, so no hook or `afterAll` between tests can start a real one.
  */
 function refuseRealOpencode(): void {
-  _setOpencodeHostFactoryForTests(async () => {
+  spyOn(agentRuntime, "run").mockImplementation(async () => {
     throw new Error(
-      "[harness-safety] this test reached the real embedded OpenCode; install installFakeOpencodeHost (tests/_helpers/fake-opencode-host.ts) or a loopback model",
+      "[harness-safety] this test reached akm's real OpenCode runtime; install installFakeOpencodeRuntime (tests/_helpers/fake-opencode-runtime.ts) or call useRealOpencodeRuntime()",
     );
   });
 }
@@ -443,10 +439,8 @@ afterEach(() => {
 });
 
 // `bun test` does not emit `process.on("exit")` when a run ends normally (bun
-// 1.4.1). Close the embedded OpenCode hosts a test opened through the real
-// runner, then remove the suite sandbox they use as HOME: the `exit` listener
+// 1.4.1). Remove the suite sandbox the tests use as HOME: the `exit` listener
 // above never removes it at the end of a normal run.
-afterAll(async () => {
-  await closeOpencodeSdk();
+afterAll(() => {
   removeSuiteRoot();
 });

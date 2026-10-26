@@ -51,6 +51,12 @@ declare module "*.yml" {
   export default content;
 }
 
+/** Bun text import of the plugin akm's own OpenCode runtime loads: `import plugin from "./akm-plugin.js" with { type: "text" }` */
+declare module "*/assets/opencode/akm-plugin.js" {
+  const content: string;
+  export default content;
+}
+
 /** Bun text imports of the `akm ui` client modules: `import js from "./app.js" with { type: "text" }` (one declaration each: a pattern may hold only one `*`) */
 declare module "*/assets/ui/app.js" {
   const content: string;

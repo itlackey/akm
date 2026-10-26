@@ -7,6 +7,7 @@ import path from "node:path";
 import { getDataDir } from "../src/core/paths";
 import {
   akmOpencodeDatabasePath,
+  akmRuntimeDir,
   databaseIn,
   opencodeCacheDir,
   opencodeConfigDir,
@@ -45,6 +46,11 @@ describe("OpenCode's roots", () => {
     expect(opencodeDatabasePath({ XDG_DATA_HOME: "/x/data", HOME: "/h" })).toBe(
       path.join("/x/data", "opencode", "opencode.db"),
     );
-    expect(akmOpencodeDatabasePath()).toBe(path.join(getDataDir(), "opencode.db"));
+  });
+
+  test("akm's runtime keeps everything under one directory of akm's data directory, and its database where OpenCode makes it", () => {
+    expect(akmRuntimeDir()).toBe(path.join(getDataDir(), "opencode-runtime"));
+    // The runtime's XDG_DATA_HOME is <runtime>/data, and OpenCode keeps opencode.db in an opencode folder of it.
+    expect(akmOpencodeDatabasePath()).toBe(path.join(akmRuntimeDir(), "data", "opencode", "opencode.db"));
   });
 });

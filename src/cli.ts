@@ -10,8 +10,7 @@
 // `dist/cli-node.mjs` wrapper, which registers the text-import loader hook
 // before this module graph loads; running `node dist/cli.js` directly still
 // works for code paths that touch no embedded text asset, but the wrapper is
-// the supported entry. The hard floor is Node 24: the embedded OpenCode
-// (`@opencode/sdk`) uses `await using`.
+// the supported entry. The hard floor is Node 24 (`engines.node`).
 {
   const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
   if (!isBun) {
@@ -127,7 +126,6 @@ import { getConfigPath } from "./core/paths";
 import { DURATION_UNITS, parseDuration } from "./core/time";
 import { plainize } from "./core/tty";
 import { info, isQuiet, setQuiet, setVerbose, warn } from "./core/warn";
-import { disposeDispatchResources } from "./integrations/agent/runner-dispatch";
 import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
 import { getOutputMode, initOutputMode, parseDetailLevel } from "./output/context";
@@ -1224,7 +1222,6 @@ export async function runCli(): Promise<void> {
     emitJsonError(error);
   } finally {
     disposeLlmUsageSink();
-    await disposeDispatchResources();
   }
 }
 

@@ -6,7 +6,7 @@
  * Run a built execution: the one place credentials are read. Model work on a
  * connection goes to `chatCompletion`, a harness to `runAgent` (the harness
  * builder turns the request into argv), and agent work on a connection to
- * `runOpencodeSdk`, akm's own runtime. The key of the connection a run used is
+ * akm's own runtime (`agentRuntime`). The key of the connection a run used is
  * redacted from its result.
  */
 
@@ -42,7 +42,7 @@ export interface RunExecutionOptions {
     opts: RunAgentOptions,
     connection: ChatCompletionConfig,
   ) => Promise<AgentRunResult>;
-  /** Cancels the dispatch: a child gets SIGINT, then SIGTERM and SIGKILL if it stays, a chat or runtime session is interrupted. */
+  /** Cancels the dispatch: a child, a harness's or the runtime's, gets SIGINT, then SIGTERM and SIGKILL if it stays; a chat is aborted. */
   readonly signal?: AbortSignal;
   /** Stamped into the child env as `AKM_EVENT_SOURCE` (usage-event provenance). */
   readonly eventSource?: string;
@@ -352,13 +352,4 @@ export async function executeInteractiveAgentInvocation(
     dispatch: { ...(runner.model ? { model: runner.model } : {}), ...(runner.agent ? { agent: runner.agent } : {}) },
   };
   return { engine: runner.name, result: await dispatchRunner({ runner }, opts, seams) };
-}
-
-/**
- * Close the embedded OpenCode this process started (akm's own runtime). An open
- * one holds the event loop open, so the CLI and workflow engine call this in
- * `finally` blocks. A no-op when none was started.
- */
-export async function disposeDispatchResources(): Promise<void> {
-  await agentRuntime.dispose();
 }

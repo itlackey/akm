@@ -24,8 +24,8 @@
  *      owner's actual task shape), executed by the task runner as a REAL
  *      subprocess against a real `akm` on PATH.
  *
- * Unit dispatch goes through akm's internal runtime against a fake embedded
- * OpenCode (`installFakeOpencodeHost`); the gate judge is model work, a direct
+ * Unit dispatch goes through akm's internal runtime against a scripted stand-in
+ * for it (`installFakeOpencodeRuntime`); the gate judge is model work, a direct
  * chat to a loopback endpoint. Both record the model they were asked for, so
  * each assertion can say WHICH connection served a call: `defaults.connection`
  * for the units, the default connection for the gate.
@@ -37,7 +37,7 @@ import path from "node:path";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { listWorkflowRuns } from "../../../src/workflows/runtime/runs";
 import { runCliCapture } from "../../_helpers/cli";
-import { installFakeOpencodeHost } from "../../_helpers/fake-opencode-host";
+import { installFakeOpencodeRuntime } from "../../_helpers/fake-opencode-runtime";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const UNIT_MODEL = "fixture/unit-model";
@@ -87,7 +87,7 @@ afterEach(() => {
   storage.cleanup();
 });
 
-// ── the fakes: the embedded OpenCode and the judge's endpoint ───────────────
+// ── the fakes: akm's own runtime and the judge's endpoint ───────────────
 
 interface SdkCall {
   /** Which transport served it: the internal runtime, or a direct chat. */
@@ -107,9 +107,9 @@ let recordedCalls: SdkCall[] = [];
 function installFakeSdk(reply: Reply): SdkCall[] {
   currentReply = reply;
   recordedCalls = [];
-  installFakeOpencodeHost({
+  installFakeOpencodeRuntime({
     reply: (call) => {
-      const sdkCall: SdkCall = { via: "sdk", model: call.model?.id, prompt: call.prompt, system: call.system };
+      const sdkCall: SdkCall = { via: "sdk", model: call.model, prompt: call.prompt, system: undefined };
       recordedCalls.push(sdkCall);
       return reply(sdkCall);
     },

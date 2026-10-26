@@ -7,8 +7,7 @@
  * execute path. akm walks the frozen plan (read from `plan_json`, never live
  * source) and dispatches every unit itself; every step advances through
  * `completeWorkflowStep`; one O_EXCL lock file per run keeps a second driver
- * off (a dead holder's lock is reclaimed); gate loops are bounded; and the
- * SDK dispatch registry is drained on every exit so the process can exit.
+ * off (a dead holder's lock is reclaimed); and gate loops are bounded.
  */
 
 import { createHash } from "node:crypto";
@@ -19,7 +18,6 @@ import { type LockOwnership, probeLock, releaseLock } from "../../core/file-lock
 import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
 import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { disposeDispatchResources } from "../../integrations/agent/runner-dispatch";
 import type { WorkflowRunStepState, WorkflowRunSummary } from "../../sources/types";
 import { resolveStorageLocations } from "../../storage/locations";
 import { withWorkflowRunsConnection, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
@@ -87,12 +85,6 @@ export interface RunWorkflowOptions {
    * step. Injected primarily for tests.
    */
   summaryJudge?: SummaryJudge | null;
-  /**
-   * Closes the embedded OpenCode instances on every exit path — an open one
-   * keeps the event loop open and would hang the CLI. Defaults to
-   * {@link disposeDispatchResources}; injected by tests.
-   */
-  disposeDispatchResources?: () => void | Promise<void>;
   /**
    * The task runner's provenance event source, stamped as `AKM_EVENT_SOURCE`
    * into every unit's and the gate judge's child environment (an authored
@@ -273,19 +265,7 @@ async function runWorkflowAttempt(
       ...(warnings.length > 0 ? { warnings } : {}),
     };
   } finally {
-    try {
-      if (lock) releaseLock(lock);
-    } finally {
-      // Process-lifecycle drain (owner finding 4): release any cached SDK server
-      // child processes so a one-shot CLI invocation exits cleanly instead of
-      // hanging on the leaked handle. Runs even if the lock release itself
-      // fails; a teardown-time error must not skip dispatch cleanup.
-      try {
-        await (options.disposeDispatchResources ?? disposeDispatchResources)();
-      } catch {
-        /* disposal is best-effort; never let cleanup mask the run outcome */
-      }
-    }
+    if (lock) releaseLock(lock);
   }
 }
 

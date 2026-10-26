@@ -342,8 +342,10 @@ describe("common command invocation preparation", () => {
       request: {},
       timeoutMs: 0,
     });
-    expect(capture.prompt).toBe("Review the target.");
-    expect(capture.options?.dispatch).toMatchObject({ systemPrompt: "You are exact." });
+    // OpenCode's `run` has no system prompt, so the persona goes in the prompt, as for the opencode harness.
+    expect(capture.prompt).toContain("You are exact.");
+    expect(capture.prompt).toEndWith("Review the target.");
+    expect(capture.options?.dispatch).not.toHaveProperty("systemPrompt");
   });
 
   test("the dispatch envelope carries the harness session id when the run reports one", async () => {

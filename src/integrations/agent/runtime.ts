@@ -8,7 +8,7 @@
  * runtime is a change to this line and the folder it names.
  */
 
-import { embeddedOpencodeRuntime } from "../harnesses/opencode/embedded/runtime";
+import { opencodeRuntime } from "../harnesses/opencode/runtime";
 import type { AgentRuntime } from "./runtime-port";
 
-export const agentRuntime: AgentRuntime = embeddedOpencodeRuntime;
+export const agentRuntime: AgentRuntime = opencodeRuntime;

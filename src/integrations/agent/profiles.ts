@@ -88,7 +88,7 @@ export function harnessProfile(runner: HarnessRunner): AgentProfile {
   };
 }
 
-/** The profile of akm's own runtime, the embedded OpenCode that runs agent work over a connection. It spawns nothing. */
+/** The profile of akm's own runtime, the pinned OpenCode process that runs agent work over a connection. It names the connection; the program is fetched and started by `harnesses/opencode/runtime/`. */
 export function runtimeProfile(connection: ConnectionRunner): AgentProfile {
   return {
     name: connection.name,

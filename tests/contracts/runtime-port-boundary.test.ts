@@ -16,7 +16,7 @@ import path from "node:path";
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
 const SRC = path.join(repoRoot, "src");
 
-const IMPLEMENTATION = "src/integrations/harnesses/opencode/embedded/";
+const IMPLEMENTATION = "src/integrations/harnesses/opencode/runtime/";
 const COMPOSITION = "src/integrations/agent/runtime.ts";
 const CONFIG_MODULES = ["src/core/config/config.ts", "src/core/config/config-types.ts"];
 
@@ -85,27 +85,27 @@ describe("the agent runtime port", () => {
 
   test("a module that reaches around the port, or an implementation that reads config, is reported", () => {
     const synthetic = new Map<string, string>([
-      ["src/integrations/agent/execution.ts", 'import { run } from "../harnesses/opencode/embedded/run";\n'],
+      ["src/integrations/agent/execution.ts", 'import { run } from "../harnesses/opencode/runtime/command";\n'],
       [
         "src/commands/improve/other.ts",
-        'const run = await import("../../integrations/harnesses/opencode/embedded/host");\n',
+        'const run = await import("../../integrations/harnesses/opencode/runtime/binary");\n',
       ],
       [
-        "src/integrations/harnesses/opencode/embedded/run.ts",
+        "src/integrations/harnesses/opencode/runtime/command.ts",
         'import { loadConfig } from "../../../../core/config/config";\n',
       ],
-      ["src/integrations/agent/runtime.ts", 'import { runtime } from "../harnesses/opencode/embedded/runtime";\n'],
-      ["src/integrations/harnesses/opencode/index.ts", 'import("./embedded/run");\n'],
+      ["src/integrations/agent/runtime.ts", 'import { runtime } from "../harnesses/opencode/runtime";\n'],
+      ["src/integrations/harnesses/opencode/index.ts", 'import("./runtime/command");\n'],
       [
         "src/commands/health/plugin-staleness.ts",
         'import { opencodeCacheDir } from "../../integrations/harnesses/opencode/roots";\n',
       ],
     ]);
     expect(violations(synthetic)).toEqual([
-      "src/integrations/agent/execution.ts imports src/integrations/harnesses/opencode/embedded/run: only src/integrations/agent/runtime.ts may name the runtime's implementation",
-      "src/commands/improve/other.ts imports src/integrations/harnesses/opencode/embedded/host: only src/integrations/agent/runtime.ts may name the runtime's implementation",
-      "src/integrations/harnesses/opencode/embedded/run.ts imports src/core/config/config: the runtime implementation is given resolved input and reads no config",
-      "src/integrations/harnesses/opencode/index.ts imports src/integrations/harnesses/opencode/embedded/run: only src/integrations/agent/runtime.ts may name the runtime's implementation",
+      "src/integrations/agent/execution.ts imports src/integrations/harnesses/opencode/runtime/command: only src/integrations/agent/runtime.ts may name the runtime's implementation",
+      "src/commands/improve/other.ts imports src/integrations/harnesses/opencode/runtime/binary: only src/integrations/agent/runtime.ts may name the runtime's implementation",
+      "src/integrations/harnesses/opencode/runtime/command.ts imports src/core/config/config: the runtime implementation is given resolved input and reads no config",
+      "src/integrations/harnesses/opencode/index.ts imports src/integrations/harnesses/opencode/runtime/command: only src/integrations/agent/runtime.ts may name the runtime's implementation",
     ]);
   });
 });

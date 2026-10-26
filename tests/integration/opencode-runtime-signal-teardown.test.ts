@@ -4,20 +4,25 @@
 
 /**
  * Killing a dispatching `akm` command must end it by the signal, however busy
- * the embedded OpenCode is. A command with no SIGINT/SIGTERM handler of its
- * own dies on the signal without running `exit` hooks, so an embedded host
- * that was never closed must not keep the command alive or change how it ends.
- * This runs the real CLI (`akm agent --prompt`) on the real SDK against a
- * loopback model that never answers, signals the CLI while it is blocked in
- * dispatch, and proves it still ended by the signal itself.
+ * its OpenCode process is, and must not leave that process behind. A command with
+ * no SIGINT/SIGTERM handler of its own dies on the signal without running `exit`
+ * hooks, so akm's runtime (a child process group) is ended by the spawn path's own
+ * signal guard (`src/core/subprocess.ts`), not by anything the runtime closes.
+ * This runs the real CLI (`akm agent --prompt`) on the real OpenCode binary against
+ * a loopback model that never answers, signals the CLI while it is blocked in
+ * dispatch, and proves it still ended by the signal itself and that no OpenCode
+ * process of its run is left. The suite is skipped, with a message, when the
+ * binary cannot be fetched.
  *
  * Integration-scoped (ORG-03/06): spawns the real CLI.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { getCacheDir } from "../../src/core/paths";
+import { fetchSharedOpencode, linkSharedOpencode } from "../_helpers/opencode-binary";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -28,12 +33,17 @@ import {
 
 const REPO_ROOT = path.resolve(import.meta.dir, "../..");
 
+const unavailable = await fetchSharedOpencode();
+if (unavailable)
+  console.warn(`[opencode-runtime-signal-teardown] skipped: the OpenCode binary is not available: ${unavailable}`);
+
 let storage: IsolatedAkmStorage;
 let fakeDir: SandboxedDir;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
-  fakeDir = makeSandboxDir("akm-sdk-signal");
+  linkSharedOpencode(getCacheDir());
+  fakeDir = makeSandboxDir("akm-runtime-signal");
 });
 
 afterEach(() => {
@@ -50,8 +60,8 @@ async function waitFor(what: string, check: () => boolean | Promise<boolean>, ti
 }
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
-  test.skipIf(process.platform === "win32")(
-    `a dispatching command killed by ${signal} ends by the signal with its embedded OpenCode open`,
+  test.skipIf(process.platform === "win32" || unavailable !== undefined)(
+    `a dispatching command killed by ${signal} ends by the signal and leaves no OpenCode process`,
     async () => {
       // A model that accepts a request and never answers, so the CLI stays blocked in dispatch until it is signalled.
       let requested = false;
@@ -64,7 +74,7 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
           return new Promise<Response>(() => {});
         },
       });
-      // The CLI as `bun src/cli.ts` runs it, on the real embedded OpenCode (which fetches no model catalog).
+      // The CLI as `bun src/cli.ts` runs it, on the real OpenCode binary (which fetches no model catalog).
       const entry = path.join(fakeDir.dir, "entry.ts");
       fs.writeFileSync(
         entry,
@@ -101,13 +111,18 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
           30_000,
         );
 
+        // The processes of this run are the ones started from this test's own cache directory.
+        const survivors = (): string => spawnSync("pgrep", ["-f", getCacheDir()], { encoding: "utf8" }).stdout.trim();
+        expect(survivors()).not.toBe("");
         cli.kill(signal);
         const outcome = await Promise.race([
           ended,
           new Promise((resolve) => setTimeout(() => resolve("still running"), 10_000)),
         ]);
-        // The open host must not change how the command ends: it still dies by the signal itself.
+        // The open OpenCode process must not change how the command ends: it still dies by the signal itself.
         expect(outcome).toBe(signal);
+        // And its run's OpenCode processes (the run, and the server it started) are gone.
+        await waitFor("the run's OpenCode processes to end", () => survivors() === "", 20_000);
       } finally {
         if (cli.exitCode === null && cli.signalCode === null) cli.kill("SIGKILL");
         model.stop(true);

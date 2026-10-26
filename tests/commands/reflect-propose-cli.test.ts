@@ -21,7 +21,7 @@ import { akmPropose } from "../../src/commands/proposal/propose";
 import { durableItemRef } from "../_helpers/durable-ref";
 import { type FakeHarnessOptions, harnessCalls, writeFakeHarness } from "../_helpers/engine-stubs";
 import { quietQualityGateConfig, reflectReply } from "../_helpers/factories";
-import { installFakeOpencodeHost } from "../_helpers/fake-opencode-host";
+import { installFakeOpencodeRuntime } from "../_helpers/fake-opencode-runtime";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 const fixtureDirs: string[] = [];
@@ -202,7 +202,7 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
 
   test("nothing configured → refused as not configured, pointing at setup, with no engine call", async () => {
     const stash = makeStashDir();
-    const host = installFakeOpencodeHost({ reply: () => VALID_LESSON_PAYLOAD });
+    const host = installFakeOpencodeRuntime({ reply: () => VALID_LESSON_PAYLOAD });
     const failure = await akmReflect({
       ref: "lessons/rg-over-grep",
       stashDir: stash,
@@ -246,7 +246,7 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
 
   test("nothing configured → refused as not configured, pointing at setup, with no engine call", async () => {
     const stash = makeStashDir();
-    const host = installFakeOpencodeHost({ reply: () => VALID_SKILL_PAYLOAD });
+    const host = installFakeOpencodeRuntime({ reply: () => VALID_SKILL_PAYLOAD });
     const failure = await akmPropose({
       type: "skill",
       name: "hello",

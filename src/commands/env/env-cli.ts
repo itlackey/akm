@@ -279,8 +279,8 @@ async function runEnvInjected(
     throw err;
   }
   // R-067: was `process.exit(result.status ?? 0)`, which terminates the
-  // process synchronously and skips the `finally { await
-  // disposeDispatchResources(); }` block in src/cli.ts's `runCommand` — even
+  // process synchronously and skips the `finally { disposeLlmUsageSink(); }`
+  // block in src/cli.ts's `runCommand` — even
   // on the success path, since this call was unconditional. Setting
   // `process.exitCode` and returning lets cleanup run while still exiting
   // with the child's exact status once the event loop drains, matching the

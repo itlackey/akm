@@ -1,0 +1,224 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * The plugin akm's own runtime gives OpenCode (`src/assets/opencode/akm-plugin.js`):
+ * akm's three read tools, which call the akm executable `AKM_OPENCODE_CLI` names, and
+ * the connection's request fields laid over each model request. The plugin is loaded
+ * here from its shipped text, as akm writes it for OpenCode, against a stand-in for
+ * OpenCode's plugin context; OpenCode itself loads it in
+ * tests/integration/opencode-runtime-sessions.test.ts.
+ */
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import akmPlugin from "../src/assets/opencode/akm-plugin.js" with { type: "text" };
+import { makeSandboxDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
+
+interface ToolDefinition {
+  name: string;
+  description: string;
+  input: { properties: Record<string, unknown>; required?: string[] };
+  options: { codemode: boolean };
+  execute(input: unknown): Promise<{ content: string }>;
+}
+type RequestHook = (event: { request: Request }) => Promise<void>;
+interface Plugin {
+  id: string;
+  setup(context: unknown): Promise<void>;
+}
+
+let scratch: SandboxedDir;
+
+beforeEach(() => {
+  scratch = makeSandboxDir("akm-runtime-plugin");
+});
+
+afterEach(() => {
+  scratch.cleanup();
+});
+
+/** The plugin as OpenCode would load it (a module file), set up against a context that keeps what it registers. */
+async function load(options?: Record<string, unknown>) {
+  const file = path.join(scratch.dir, "index.mjs");
+  fs.writeFileSync(file, akmPlugin);
+  const plugin = ((await import(pathToFileURL(file).href)) as { default: Plugin }).default;
+  const tools = new Map<string, ToolDefinition>();
+  const hooks = new Map<string, RequestHook>();
+  await plugin.setup({
+    options,
+    tool: {
+      transform: async (edit: (editor: { add(tool: ToolDefinition): void }) => void) =>
+        edit({ add: (tool) => void tools.set(tool.name, tool) }),
+    },
+    session: { hook: async (name: string, callback: RequestHook) => void hooks.set(name, callback) },
+  });
+  return { plugin, tools, request: hooks.get("http.request") as RequestHook };
+}
+
+/** A stand-in for the akm executable that prints the arguments it was called with, or fails. */
+function installAkm(
+  body = "console.log(JSON.stringify({ argv: process.argv.slice(2), source: process.env.AKM_EVENT_SOURCE ?? null }));",
+): string {
+  const file = path.join(scratch.dir, "akm");
+  fs.writeFileSync(file, `#!${process.execPath}\n${body}\n`, { mode: 0o755 });
+  return file;
+}
+
+describe("the plugin's identity", () => {
+  test("is an OpenCode 2 plugin: a default export with an id and a setup", async () => {
+    const { plugin } = await load();
+
+    expect(plugin.id).toBe("akm");
+    expect(typeof plugin.setup).toBe("function");
+  });
+});
+
+describe.skipIf(process.platform === "win32")("akm's read tools", () => {
+  test("are exactly akm_curate, akm_search and akm_show, each with a described input", async () => {
+    const { tools } = await load();
+
+    expect([...tools.keys()].sort()).toEqual(["akm_curate", "akm_search", "akm_show"]);
+    for (const tool of tools.values()) {
+      expect(tool.description.length).toBeGreaterThan(10);
+      expect(tool.options).toEqual({ codemode: false });
+    }
+    expect(tools.get("akm_show")?.input.required).toEqual(["ref"]);
+    expect(tools.get("akm_search")?.input.required).toEqual(["query"]);
+  });
+
+  test.each([
+    [
+      "akm_search",
+      { query: "backup", type: "skill", limit: 3 },
+      ["search", "backup", "--type", "skill", "--limit", "3"],
+    ],
+    ["akm_curate", { query: "deploy a service" }, ["curate", "deploy a service"]],
+    ["akm_show", { ref: "knowledge/deploy#Rollback", type: "ignored" }, ["show", "knowledge/deploy#Rollback"]],
+  ])("%s calls akm with the agent detail and JSON, and returns what it printed", async (name, input, args) => {
+    const { tools } = await load();
+    const akm = installAkm();
+
+    const result = await withEnv({ AKM_OPENCODE_CLI: akm, AKM_EVENT_SOURCE: "improve" }, () =>
+      tools.get(name)?.execute(input),
+    );
+
+    expect(JSON.parse(result?.content as string)).toEqual({
+      argv: [...args, "--detail", "agent", "--format", "json"],
+      // The run's environment is the call's: its provenance reaches akm.
+      source: "improve",
+    });
+  });
+
+  test("a call without its required argument fails in words, and starts nothing", async () => {
+    const { tools } = await load();
+    const akm = installAkm('require("node:fs").writeFileSync(process.env.MARKER, "ran");');
+    const marker = path.join(scratch.dir, "marker");
+
+    const result = await withEnv({ AKM_OPENCODE_CLI: akm, MARKER: marker }, () =>
+      tools.get("akm_search")?.execute({ query: " " }),
+    );
+
+    expect(result?.content).toBe('akm_search failed: "query" is required');
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  test("akm failing is reported with its own message", async () => {
+    const { tools } = await load();
+    const akm = installAkm('console.error("No such asset"); process.exit(4);');
+
+    const result = await withEnv({ AKM_OPENCODE_CLI: akm }, () =>
+      tools.get("akm_show")?.execute({ ref: "knowledge/none" }),
+    );
+
+    expect(result?.content).toContain("akm_show failed:");
+    expect(result?.content).toContain("No such asset");
+  });
+
+  test("without the akm executable named, the tool says so", async () => {
+    const { tools } = await load();
+
+    const result = await withEnv({ AKM_OPENCODE_CLI: undefined }, () =>
+      tools.get("akm_search")?.execute({ query: "x" }),
+    );
+
+    expect(result?.content).toBe("akm_search failed: AKM_OPENCODE_CLI is not set");
+  });
+});
+
+describe("the request hook", () => {
+  const post = (body: unknown, headers: Record<string, string> = {}): Request =>
+    new Request("http://llm.example/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": "9999", authorization: "Bearer k", ...headers },
+      body: JSON.stringify(body),
+    });
+
+  /** The body a request carries after the hook ran over it. */
+  async function after(options: Record<string, unknown> | undefined, request: Request) {
+    const { request: hook } = await load(options);
+    const event = { request };
+    await hook(event);
+    return { event, body: (await event.request.json()) as Record<string, unknown> };
+  }
+
+  test("drops OpenCode's own output cap, whichever name it uses, and keeps the rest", async () => {
+    for (const cap of ["max_tokens", "max_completion_tokens"]) {
+      const { body } = await after(
+        { requestFields: {} },
+        post({ model: "m", messages: [{ role: "user" }], [cap]: 32000, stream: true }),
+      );
+
+      expect(body).toEqual({ model: "m", messages: [{ role: "user" }], stream: true });
+    }
+  });
+
+  test("lays the connection's fields over the request, and the cap it writes is the cap sent", async () => {
+    const { body } = await after(
+      { requestFields: { reasoning_effort: "high", top_p: 0.9, max_tokens: 2048 } },
+      post({ model: "m", max_completion_tokens: 32000, temperature: 0.7 }),
+    );
+
+    expect(body).toEqual({ model: "m", temperature: 0.7, reasoning_effort: "high", top_p: 0.9, max_tokens: 2048 });
+  });
+
+  test("a field that is an object on both sides is merged one level, anything else is replaced", async () => {
+    const { body } = await after(
+      { requestFields: { chat_template_kwargs: { enable_thinking: false }, stop: ["a"] } },
+      post({ model: "m", chat_template_kwargs: { keep: 1, enable_thinking: true }, stop: ["b", "c"] }),
+    );
+
+    expect(body).toEqual({ model: "m", chat_template_kwargs: { keep: 1, enable_thinking: false }, stop: ["a"] });
+  });
+
+  test("keeps the request's destination, method and headers, and drops the stale length", async () => {
+    const { event } = await after({ requestFields: { top_p: 1 } }, post({ model: "m" }));
+
+    expect(event.request.url).toBe("http://llm.example/v1/chat/completions");
+    expect(event.request.method).toBe("POST");
+    expect(event.request.headers.get("authorization")).toBe("Bearer k");
+    expect(event.request.headers.get("content-length")).toBeNull();
+  });
+
+  test("without request fields the cap is still dropped", async () => {
+    const { body } = await after(undefined, post({ model: "m", max_tokens: 5 }));
+
+    expect(body).toEqual({ model: "m" });
+  });
+
+  test("a request that is not a JSON object is left as it was", async () => {
+    const { request: hook } = await load({ requestFields: { top_p: 1 } });
+    for (const request of [
+      new Request("http://llm.example/v1/models"),
+      new Request("http://llm.example/v1/x", { method: "POST", body: "not json" }),
+      new Request("http://llm.example/v1/x", { method: "POST", body: "[1,2]" }),
+    ]) {
+      const event = { request };
+      await hook(event);
+      expect(event.request).toBe(request);
+    }
+  });
+});

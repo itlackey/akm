@@ -7,9 +7,8 @@
  * model entry writes tuning fields (`top_p`, `reasoning_effort`, provider
  * options), and akm owns the model, the conversation, the tools, streaming and
  * the response format. `effectiveRequestFields` is where both transports take the
- * user's fields from; the chat client's body is checked here, the embedded
- * runtime's in tests/opencode-runtime-sessions.test.ts and
- * tests/integration/opencode-sdk-runner.test.ts.
+ * user's fields from; the chat client's body is checked here, the runtime's
+ * requests in tests/integration/opencode-runtime-sessions.test.ts.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

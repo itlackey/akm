@@ -32,8 +32,8 @@ export interface AkmAgentDispatchOptions {
   agentConfig?: AkmConfig;
   timeoutMs?: number;
   /**
-   * Working directory resolved into the canonical execution runtime. The SDK
-   * forwards it as its per-session directory query.
+   * Working directory resolved into the canonical execution runtime: the
+   * directory the run's process starts in.
    */
   cwd?: string;
   /** Current invocation-layer selections consumed by the execution cascade. */

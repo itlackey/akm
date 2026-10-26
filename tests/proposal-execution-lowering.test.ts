@@ -7,7 +7,7 @@ import { type AkmProposeOptions, akmPropose } from "../src/commands/proposal/pro
 import { listProposals } from "../src/commands/proposal/repository";
 import type { AkmConfig } from "../src/core/config/config";
 import { buildProposePrompt, PROPOSAL_JSON_SCHEMA } from "../src/integrations/agent/prompts";
-import { installFakeOpencodeHost } from "./_helpers/fake-opencode-host";
+import { installFakeOpencodeRuntime } from "./_helpers/fake-opencode-runtime";
 import { fakeOpencodeMajor } from "./_helpers/opencode-version";
 import { makeStashDir, mutateScopedEnv, type SandboxedDir, withEnv } from "./_helpers/sandbox";
 
@@ -51,7 +51,7 @@ const proposalReply = (ref: string, description: string, body: string): string =
 describe("proposal new on a connection runs akm's own runtime", () => {
   test("it sends the connection's exact model and request fields, and the proposal prompt", async () => {
     const stashDir = proposalStash();
-    const host = installFakeOpencodeHost({
+    const host = installFakeOpencodeRuntime({
       reply: () => proposalReply("skills/lowered", "Exercises resolved proposal lowering", "Use the shared boundary."),
     });
 
@@ -69,10 +69,7 @@ describe("proposal new on a connection runs akm's own runtime", () => {
     expect(result.engine).toBe("direct");
     expect(host.calls).toHaveLength(1);
     const call = host.calls[0];
-    expect(call?.model).toEqual({
-      providerID: expect.stringMatching(/^akm-[0-9a-f]{16}$/),
-      id: "provider/exact-proposal-092",
-    });
+    expect(call?.model).toBe("provider/exact-proposal-092");
     expect(call?.requestBody).toMatchObject({ temperature: 0.17, max_tokens: 222 });
     expect(call?.prompt).toContain(
       buildProposePrompt({ type: "skill", name: "lowered", task: "AUTHORING-CONTENT-MUST-NOT-ENTER-NOTICES" }),
@@ -85,7 +82,7 @@ describe("proposal new on a connection runs akm's own runtime", () => {
   test("a failure returns the centrally redacted envelope", async () => {
     const stashDir = proposalStash();
     const secret = "proposal-consumer-secret";
-    installFakeOpencodeHost({
+    installFakeOpencodeRuntime({
       reply: () => ({ error: { type: "provider.unknown", message: `provider body echoed ${secret}` } }),
     });
     const result = await withEnv({ PROPOSAL_TEST_KEY: secret }, () =>
@@ -108,7 +105,7 @@ describe("proposal new on a connection runs akm's own runtime", () => {
     const secret = "proposal-lease-original-092";
     const replacement = "proposal-lease-replacement-092";
     let dispatchReady = false;
-    const host = installFakeOpencodeHost({
+    const host = installFakeOpencodeRuntime({
       reply: () => proposalReply("skills/lease-bound", "Lease-bound proposal", "Use the operation snapshot."),
     });
     const options = {
@@ -127,7 +124,7 @@ describe("proposal new on a connection runs akm's own runtime", () => {
     const result = await withEnv({ PROPOSAL_LEASE_KEY: secret }, () => akmPropose(options));
 
     expect(dispatchReady).toBe(true);
-    expect(host.calls[0]?.requestHeaders.authorization).toBe(`Bearer ${replacement}`);
+    expect(host.calls[0]?.authorization).toBe(`Bearer ${replacement}`);
     expect(result.ok).toBe(true);
     expect(JSON.stringify(result)).not.toContain(secret);
     expect(JSON.stringify(result)).not.toContain(replacement);
@@ -141,7 +138,7 @@ describe("proposal new on a connection runs akm's own runtime", () => {
     const stashDir = proposalStash();
     const secret = "proposal-envsource-only-092";
     const body = echo ? `The provider echoed ${secret}.` : "Use the caller's environment.";
-    const host = installFakeOpencodeHost({
+    const host = installFakeOpencodeRuntime({
       reply: () => proposalReply("skills/envsource-bound", "Proposal bound to the caller's environment", body),
     });
     const result = await withEnv({ PROPOSAL_ENVSOURCE_KEY: secret }, () =>
@@ -155,7 +152,7 @@ describe("proposal new on a connection runs akm's own runtime", () => {
       }),
     );
 
-    expect(host.calls[0]?.requestHeaders.authorization).toBe(`Bearer ${secret}`);
+    expect(host.calls[0]?.authorization).toBe(`Bearer ${secret}`);
     expect(JSON.stringify(result)).not.toContain(secret);
     if (echo) {
       expect(result).toMatchObject({ ok: false, reason: "parse_error", engine: "direct" });

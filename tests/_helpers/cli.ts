@@ -66,7 +66,6 @@ import { assertKnownFlags, type FlagScanCommand } from "../../src/cli/unknown-fl
 import { DEFAULT_CONFIG, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { AkmError } from "../../src/core/errors";
 import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
-import { disposeDispatchResources } from "../../src/integrations/agent/runner-dispatch";
 import { resetLocalEmbedder } from "../../src/llm/embedder";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import { initOutputMode, resetOutputMode } from "../../src/output/context";
@@ -306,7 +305,6 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
       }
     }
   } finally {
-    await disposeDispatchResources();
     // If the command set process.exitCode without calling process.exit() (deferred
     // exit pattern used to allow stdout flush before terminating), pick it up here
     // so the captured code reflects the intended exit status. Only act when the
