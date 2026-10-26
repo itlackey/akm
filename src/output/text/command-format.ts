@@ -453,7 +453,7 @@ export function formatListPlain(r: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
-/** Render `akm models`'s `{ connection, aliases, available }`: each alias's model, beside the models the endpoint lists. */
+/** Render `akm models`'s `{ connection, aliases, available }`: each alias's model, then the models the endpoint lists. */
 export function formatModelsPlain(r: Record<string, unknown>): string {
   const aliases =
     r.aliases && typeof r.aliases === "object" ? Object.entries(r.aliases as Record<string, unknown>) : [];
@@ -462,19 +462,17 @@ export function formatModelsPlain(r: Record<string, unknown>): string {
   if (aliases.length === 0 && available.length === 0) {
     return `${title} has no model aliases. Set one with \`akm models set <alias> <model>\`.`;
   }
-  const headers = ["ALIAS", "MODEL", "AVAILABLE"] as const;
-  const cells: string[][] = Array.from({ length: Math.max(aliases.length, available.length) }, (_, i) => [
-    aliases[i]?.[0] ?? "",
-    aliases[i] ? String(aliases[i]?.[1]) : "",
-    available[i] ?? "",
-  ]);
-  const widths = headers.map((header, i) => Math.max(header.length, ...cells.map((cols) => cols[i]?.length ?? 0)));
-  const renderRow = (cols: readonly string[]): string =>
-    cols
-      .map((cell, i) => cell.padEnd(widths[i] ?? cell.length))
-      .join("  ")
-      .trimEnd();
-  return [title, renderRow(headers), ...cells.map(renderRow)].join("\n");
+  const lines = [title];
+  if (aliases.length > 0) {
+    const width = Math.max("ALIAS".length, ...aliases.map(([alias]) => alias.length));
+    lines.push(
+      `${"ALIAS".padEnd(width)}  MODEL`,
+      ...aliases.map(([alias, model]) => `${alias.padEnd(width)}  ${String(model)}`),
+    );
+  }
+  if (available.length > 0)
+    lines.push(...(aliases.length > 0 ? [""] : []), "AVAILABLE", ...available.map((model) => `  ${model}`));
+  return lines.join("\n");
 }
 
 /** Render `akm models set`'s result. */
