@@ -13,21 +13,21 @@
  * a flag; stdin is read verbatim. akm closes it after the write, which the CLI
  * needs: with stdin open it waits for more input.
  *
- * Model work sets `OPENCODE_DISABLE_FREE_MODELS` (OpenCode 2.1.2 and later, where
- * the variable first appears). With no usable provider, OpenCode 2
- * would otherwise send akm's data to its hosted free model. The variable deletes
- * every zero-cost model of the `opencode` and `opencode-go` providers, so on agent
- * work it would override a model the user chose.
+ * Agent work adds nothing: `opencode run`, the authored args as written, `--model` when akm
+ * names one, `--agent` when the asset names one, and the prompt on stdin. The run is the
+ * user's own, on their OpenCode as they have it set up.
  *
- * OpenCode 2 only: `--standalone` keeps the run to one process that ends with it
- * (the default attaches to a background service that outlives the CLI, is shared
- * across users on one port, ignores inline config and replays killed sessions at
- * every start), and `--title` names the session and spares the second model
- * request that would otherwise generate a title. The CLI refuses `--server` with
- * `--standalone`, so agent work whose authored args name `--server` is a
- * configuration error; an authored `--standalone` is kept once.
+ * Model work is akm's own process. It sets `OPENCODE_DISABLE_FREE_MODELS` (OpenCode 2.1.2 and
+ * later, where the variable first appears): with no usable provider, OpenCode 2 would
+ * otherwise send akm's data to its hosted free model. The variable deletes every zero-cost
+ * model of the `opencode` and `opencode-go` providers, so it has no place on agent work,
+ * where it would override a model the user chose. On OpenCode 2 model work also gets
+ * `--standalone`, which keeps the run to one process that ends with it (the default attaches
+ * to a background service that outlives the CLI, is shared across users on one port, ignores
+ * inline config and replays killed sessions at every start), and `--title`, which names the
+ * session and spares the second model request that would otherwise generate a title.
  *
- * A binary whose version cannot be read runs as OpenCode 1, with one warning that says so.
+ * A binary whose version cannot be read runs model work as OpenCode 1, with one warning that says so.
  *
  * Model work drops the config's `args`, keeping the model they name, as the
  * Claude and Codex shells do. On OpenCode 2 it runs as {@link MODEL_WORK_AGENT},
@@ -37,7 +37,6 @@
  */
 
 import { asRecord, tryParseJson } from "../../../core/common";
-import { ConfigError } from "../../../core/errors";
 import { warnOnce } from "../../../core/warn";
 import {
   type AgentDispatchRequest,
@@ -98,19 +97,6 @@ function modelWorkConfig(): string {
 
 const NO_FREE_MODELS = { OPENCODE_DISABLE_FREE_MODELS: "1" };
 
-/** What OpenCode 2 agent work gets besides its authored args: one process that ends with it, and a named session. */
-function agentWorkFlags(args: readonly string[]): string[] {
-  const server = args.find((arg) => arg === "--server" || arg.startsWith("--server="));
-  if (server !== undefined) {
-    throw new ConfigError(
-      `harnesses.<name>.args names ${server.split("=")[0]}, which the opencode harness does not support: akm runs OpenCode 2 with --standalone so that a stop ends the run and nothing is shared with, or replayed from, a background service, and OpenCode refuses the two together.`,
-      "INVALID_CONFIG_FILE",
-      "Remove --server from harnesses.<name>.args.",
-    );
-  }
-  return [...(args.includes("--standalone") ? [] : ["--standalone"]), "--title", "akm"];
-}
-
 export const opencodeBuilder: HarnessBuilder = {
   build({ bin, args }: HarnessSpawn, req: AgentDispatchRequest): BuiltCommand {
     const agent = req.agent ? ["--agent", req.agent] : [];
@@ -121,42 +107,32 @@ export const opencodeBuilder: HarnessBuilder = {
       return { argv: [bin, ...(req.model ? withoutModelFlag(authored) : authored), ...agent, ...model] };
     }
 
+    if (!req.modelWork) {
+      return { argv: [bin, ...(req.model ? withoutModelFlag(args) : args), ...agent, ...model], stdin: req.prompt };
+    }
+
     const oc2 = isOpencode2(bin);
     if (!oc2 && detectOpencodeMajor(bin).reportedMajor === undefined) {
       warnOnce(
         `opencode-version-unreadable:${bin}`,
-        `Could not read the version of ${bin}, so akm runs it as OpenCode 1: no --standalone (an OpenCode 2 would attach to its shared background service), and model work unrestricted. Check \`${bin} --version\`.`,
+        `Could not read the version of ${bin}, so akm runs its model work as OpenCode 1: no --standalone (an OpenCode 2 would attach to its shared background service) and unrestricted. Check \`${bin} --version\`.`,
       );
     }
-    const oc2Flags = oc2 ? ["--standalone", "--title", "akm"] : [];
-    if (req.modelWork) {
-      if (!oc2) {
-        warnOnce(
-          "opencode-1-model-work",
-          "OpenCode 1 cannot restrict its tools, so model work on it runs unrestricted, in a scratch directory. OpenCode 2 limits its tools to reading and searching.",
-        );
-      }
-      const named = req.model ?? modelFromArgs(args);
-      return {
-        argv: [
-          bin,
-          "run",
-          ...oc2Flags,
-          ...(oc2 ? ["--agent", MODEL_WORK_AGENT] : []),
-          ...(named ? ["--model", named] : []),
-        ],
-        env: { ...NO_FREE_MODELS, ...(oc2 ? { [CONFIG_CONTENT_ENV]: modelWorkConfig() } : {}) },
-        stdin: req.prompt,
-      };
+    if (!oc2) {
+      warnOnce(
+        "opencode-1-model-work",
+        "OpenCode 1 cannot restrict its tools, so model work on it runs unrestricted, in a scratch directory. OpenCode 2 limits its tools to reading and searching.",
+      );
     }
+    const named = req.model ?? modelFromArgs(args);
     return {
       argv: [
         bin,
-        ...(req.model ? withoutModelFlag(args) : args),
-        ...(oc2 ? agentWorkFlags(args) : []),
-        ...agent,
-        ...model,
+        "run",
+        ...(oc2 ? ["--standalone", "--title", "akm", "--agent", MODEL_WORK_AGENT] : []),
+        ...(named ? ["--model", named] : []),
       ],
+      env: { ...NO_FREE_MODELS, ...(oc2 ? { [CONFIG_CONTENT_ENV]: modelWorkConfig() } : {}) },
       stdin: req.prompt,
     };
   },

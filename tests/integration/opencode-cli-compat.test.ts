@@ -13,6 +13,10 @@
 // HOME, the XDG directories and the OpenCode variables itself, all under a temporary directory, and blanks every other
 // OPENCODE_* the developer has exported; the provider is a loopback fake that the `@ai-sdk/openai-compatible` package
 // already installed for akm reaches, so nothing is downloaded and no real account, key or OpenCode file is opened.
+//
+// Model work runs standalone (one process that ends with the run), so its cases need nothing more. Agent work is the
+// plain `opencode run`, which OpenCode 2 runs through a background service on one port for every HOME: those cases end
+// the service they start, and skip when something else already holds the port.
 
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -73,6 +77,8 @@ interface ModelRequest {
 interface FakeModel {
   readonly url: string;
   readonly requests: ModelRequest[];
+  /** How many requests the client gave up on (closed the connection before an answer). */
+  readonly abandoned: () => number;
 }
 
 const cleanups: Array<() => void> = [];
@@ -114,6 +120,7 @@ function sandbox(): Box {
 /** An OpenAI-compatible endpoint on loopback. It answers `PROBE_OK`, asks for `callTool` first, or never answers. */
 function fakeModel(behaviour: { callTool?: string; stall?: boolean } = {}): FakeModel {
   const requests: ModelRequest[] = [];
+  let abandoned = 0;
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -132,7 +139,12 @@ function fakeModel(behaviour: { callTool?: string; stall?: boolean } = {}): Fake
         tools: (body.tools ?? []).map((tool) => tool.function?.name ?? ""),
         toolResults,
       });
-      if (behaviour.stall) return new Response(new ReadableStream({ start() {} }), sse);
+      if (behaviour.stall) {
+        req.signal.addEventListener("abort", () => {
+          abandoned += 1;
+        });
+        return new Response(new ReadableStream({ start() {} }), sse);
+      }
       const calling = behaviour.callTool !== undefined && toolResults.length === 0;
       const delta = calling
         ? {
@@ -160,7 +172,7 @@ function fakeModel(behaviour: { callTool?: string; stall?: boolean } = {}): Fake
     },
   });
   cleanups.push(() => server.stop(true));
-  return { url: `http://127.0.0.1:${server.port}/v1`, requests };
+  return { url: `http://127.0.0.1:${server.port}/v1`, requests, abandoned: () => abandoned };
 }
 
 const sse = { headers: { "content-type": "text/event-stream" } };
@@ -249,14 +261,24 @@ function sessions(box: Box): Array<{ time_suspended: number | null }> {
   }
 }
 
-/** The pids of the OpenCode processes this process started, the run's server child included. */
-function opencodeProcesses(): number[] {
+interface ProcessRow {
+  readonly pid: number;
+  readonly ppid: number;
+  readonly command: string;
+}
+
+function listProcesses(): ProcessRow[] {
   const listing = spawnSync("ps", ["-A", "-o", "pid=,ppid=,command="], { encoding: "utf8" }).stdout;
-  const rows = listing
+  return listing
     .split("\n")
     .map((line) => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line))
     .filter((match): match is RegExpExecArray => match !== null)
     .map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] ?? "" }));
+}
+
+/** The pids of the OpenCode processes this process started, the run's server child included. */
+function opencodeProcesses(): number[] {
+  const rows = listProcesses();
   const descendants = new Set<number>([process.pid]);
   for (let grew = true; grew; ) {
     grew = false;
@@ -280,6 +302,40 @@ const alive = (pid: number): boolean => {
     return false;
   }
 };
+
+/** The port OpenCode 2's background service listens on. It is one for every HOME on the machine. */
+const SERVICE_PORT = 49374;
+
+/** Whether nothing listens on {@link SERVICE_PORT} (a service the suite did not start is never touched, so the cases that need it skip). */
+function servicePortFree(): boolean {
+  try {
+    Bun.listen({ hostname: "127.0.0.1", port: SERVICE_PORT, socket: { data() {} } }).stop(true);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const serviceProcesses = (): number[] =>
+  listProcesses()
+    .filter((row) => row.command.startsWith(`${BIN} serve --service`))
+    .map((row) => row.pid);
+
+/** Run `run`, then end the background service(s) it started and wait for the port: the service outlives the CLI. */
+async function leavingNoService(run: () => Promise<void>): Promise<void> {
+  const before = new Set(serviceProcesses());
+  try {
+    await run();
+  } finally {
+    const started = serviceProcesses().filter((pid) => !before.has(pid));
+    for (const pid of started) process.kill(pid, "SIGTERM");
+    await waitFor(() => started.every((pid) => !alive(pid)) && servicePortFree(), 15_000, "the service to end").catch(
+      () => {
+        for (const pid of started) if (alive(pid)) process.kill(pid, "SIGKILL");
+      },
+    );
+  }
+}
 
 function registerSuite(bin: string): void {
   beforeAll(() => {
@@ -345,42 +401,27 @@ function registerSuite(bin: string): void {
         "read",
       ]);
     }, 60_000);
-
-    test("agent work, not model work, still offers and runs the plugin's tool", async () => {
-      const box = sandbox();
-      const model = fakeModel({ callTool: "review_note" });
-      const marker = path.join(box.dir, "marker.txt");
-      writeConfig(
-        box,
-        providerConfig(model, {
-          model: "fixture/fake-model",
-          plugins: [writePlugin(box, [{ name: "review_note", body: writing(marker) }])],
-        }),
-      );
-
-      const result = await runOpencode(box, { prompt: "probe" });
-
-      expect(result.ok).toBe(true);
-      expect(model.requests[0]?.tools).toContain("review_note");
-      expect(fs.existsSync(marker)).toBe(true);
-    }, 60_000);
   });
 
-  describe("a stop releases OpenCode's claim on the session", () => {
+  describe("a stop releases OpenCode's claim on the session (model work, which runs standalone)", () => {
     /** Start a run that stays in flight (in a model request, or in a plugin tool call), then stop it. */
     async function stopDuring(inFlight: "model request" | "tool call", how: "abort" | "timeout"): Promise<void> {
       const box = sandbox();
       const started = path.join(box.dir, "tool-started");
-      const model = fakeModel(inFlight === "model request" ? { stall: true } : { callTool: "slow_tool" });
+      // `akm_search` is one of the three tools model work keeps, so the call is made.
+      const model = fakeModel(inFlight === "model request" ? { stall: true } : { callTool: "akm_search" });
       const plugin = writePlugin(box, [
-        { name: "slow_tool", body: `${writing(started)}; await new Promise((resolve) => setTimeout(resolve, 120000))` },
+        {
+          name: "akm_search",
+          body: `${writing(started)}; await new Promise((resolve) => setTimeout(resolve, 120000))`,
+        },
       ]);
       writeConfig(box, providerConfig(model, { model: "fixture/fake-model", plugins: [plugin] }));
 
       const controller = new AbortController();
       const running = runOpencode(
         box,
-        { prompt: "probe" },
+        { prompt: "probe", modelWork: true },
         how === "abort" ? { signal: controller.signal } : { timeoutMs: 5000 },
       );
       await waitFor(
@@ -409,23 +450,12 @@ function registerSuite(bin: string): void {
     }
   });
 
-  describe("the user's OPENCODE_CONFIG_CONTENT reaches the run", () => {
-    // The provider is defined only there: no file in the config directory.
-    const inline = (model: FakeModel): Record<string, string> => ({
-      OPENCODE_CONFIG_CONTENT: JSON.stringify(providerConfig(model, { model: "fixture/second" })),
-    });
+  // The provider is defined only in the inline config: no file in the config directory.
+  const inline = (model: FakeModel): Record<string, string> => ({
+    OPENCODE_CONFIG_CONTENT: JSON.stringify(providerConfig(model, { model: "fixture/second" })),
+  });
 
-    test("agent work runs on the provider and the model it names", async () => {
-      const box = sandbox();
-      const model = fakeModel();
-
-      const result = await runOpencode(box, { prompt: "probe" }, { parentEnv: inline(model) });
-
-      expect(result.ok).toBe(true);
-      expect(result.stdout).toContain("PROBE_OK");
-      expect(model.requests.map((request) => request.model)).toEqual(["second"]);
-    }, 60_000);
-
+  describe("the user's OPENCODE_CONFIG_CONTENT reaches model work", () => {
     test("model work keeps its provider and its model, and adds its own agent", async () => {
       const box = sandbox();
       const model = fakeModel();
@@ -439,7 +469,71 @@ function registerSuite(bin: string): void {
     }, 60_000);
   });
 
-  test("an authored --standalone runs once, as the CLI takes it", async () => {
+  // Agent work is the plain `opencode run`. OpenCode 2 runs that through its background service, which listens on one
+  // port for every HOME and outlives the CLI, so each case ends the service it started, and the group skips when
+  // something else already holds the port (a service the suite did not start is never touched).
+  describe.skipIf(!servicePortFree())("agent work is the plain invocation, through OpenCode 2's own service", () => {
+    test("it runs on the provider and the model the inherited OPENCODE_CONFIG_CONTENT names", async () => {
+      await leavingNoService(async () => {
+        const box = sandbox();
+        const model = fakeModel();
+
+        const result = await runOpencode(box, { prompt: "probe" }, { parentEnv: inline(model) });
+
+        expect(result.ok).toBe(true);
+        expect(result.stdout).toContain("PROBE_OK");
+        expect(model.requests.map((request) => request.model)).toEqual(["second", "second"]);
+      });
+    }, 60_000);
+
+    test("it offers and runs the plugin's tool: nothing limits it", async () => {
+      await leavingNoService(async () => {
+        const box = sandbox();
+        const model = fakeModel({ callTool: "review_note" });
+        const marker = path.join(box.dir, "marker.txt");
+        writeConfig(
+          box,
+          providerConfig(model, {
+            model: "fixture/fake-model",
+            plugins: [writePlugin(box, [{ name: "review_note", body: writing(marker) }])],
+          }),
+        );
+
+        const result = await runOpencode(box, { prompt: "probe" });
+
+        expect(result.ok).toBe(true);
+        expect(model.requests.some((request) => request.tools.includes("review_note"))).toBe(true);
+        expect(fs.existsSync(marker)).toBe(true);
+      });
+    }, 60_000);
+
+    // Recorded on OpenCode 2.1.2: the stop reaches the CLI and nothing else. The CLI is interrupted and exits 130, but
+    // the turn belongs to the service, which stays up with its model requests still open. A run that must end when it
+    // is stopped is a standalone run, which is what akm's own model work is.
+    test("a stop ends the opencode command, not the service's turn", async () => {
+      await leavingNoService(async () => {
+        const box = sandbox();
+        const model = fakeModel({ stall: true });
+        writeConfig(box, providerConfig(model, { model: "fixture/fake-model" }));
+        const controller = new AbortController();
+        const running = runOpencode(box, { prompt: "probe" }, { signal: controller.signal });
+        await waitFor(() => model.requests.length > 0, 30_000, "the run to be in a model request");
+        const services = serviceProcesses();
+
+        controller.abort();
+        const result = await running;
+        await sleep(3000);
+
+        expect(result.reason).toBe("aborted");
+        expect(result.exitCode).toBe(130);
+        expect(opencodeProcesses()).toEqual([]);
+        expect(serviceProcesses()).toEqual(services);
+        expect(model.abandoned()).toBe(0);
+      });
+    }, 60_000);
+  });
+
+  test("an authored --standalone is passed as written, and the run is one process", async () => {
     const box = sandbox();
     const model = fakeModel();
     writeConfig(box, providerConfig(model, { model: "fixture/fake-model" }));

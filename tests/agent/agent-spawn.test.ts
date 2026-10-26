@@ -230,6 +230,26 @@ describe("runAgent — the child's environment", () => {
   });
 });
 
+describe("runAgent — OpenCode agent work", () => {
+  test("is the plain invocation: the user's OPENCODE_CONFIG_CONTENT and free-models setting reach it as they are", async () => {
+    const inline = JSON.stringify({
+      model: "mine/fast",
+      provider: { mine: { options: { baseURL: "http://127.0.0.1:1/v1" } } },
+    });
+    const seen = await withEnv(
+      { OPENCODE_CONFIG_CONTENT: inline, OPENCODE_DISABLE_FREE_MODELS: undefined },
+      async () => {
+        const result = await runAgent(profileFor("probe", { platform: "opencode" }), { dispatch: { prompt: "go" } });
+        return probed(result.stdout);
+      },
+    );
+    expect(seen.argv).toEqual([]);
+    expect(seen.env.OPENCODE_CONFIG_CONTENT).toBe(inline);
+    expect(seen.env.OPENCODE_DISABLE_FREE_MODELS).toBeUndefined();
+    expect(seen.stdin).toBe("go");
+  });
+});
+
 describe("runAgent — cwd authority", () => {
   test("does not invent a cwd when options.cwd is absent", async () => {
     const result = await runAgent(profileFor("probe"), { dispatch: { prompt: "go" } });

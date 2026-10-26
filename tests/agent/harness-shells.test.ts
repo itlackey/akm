@@ -5,11 +5,10 @@
 /**
  * What each harness shell hands its program, one table for all of them: argv,
  * stdin and env for a prompt, an interactive launch, a model, a persona and model
- * work; the env names it passes through; and the authored args it tolerates. No
- * real binary runs: `build` only turns a request into a command.
+ * work, and the authored args it tolerates. No real binary runs: `build` only turns
+ * a request into a command.
  */
 import { beforeEach, describe, expect, test } from "bun:test";
-import { ConfigError } from "../../src/core/errors";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { getHarness, HARNESS_REGISTRY } from "../../src/integrations/harnesses";
 import type { AgentDispatchRequest, BuiltCommand } from "../../src/integrations/harnesses/harness";
@@ -19,8 +18,8 @@ import { overrideSeam } from "../_helpers/seams";
 
 const PROMPT = "do work";
 
-// The opencode shell asks the binary's major which flags to pass. OpenCode 1 is pinned for the table below; OpenCode 2
-// has its own cases further down, through a fake `opencode` on PATH.
+// The opencode shell asks the binary's major only for model work, which flags it takes. OpenCode 1 is the baseline here,
+// so no test reaches a real `opencode`; the cases that depend on the major run through a fake `opencode` on PATH.
 beforeEach(() => fakeOpencodeMajor(1));
 
 /** Set on opencode model work only: on agent work it would override the user's chosen free model. */
@@ -93,7 +92,7 @@ const SHELLS: Record<string, Shell> = {
     interactive: { argv: ["openhands"] },
     model: { argv: ["openhands", "--headless", `--task=${PROMPT}`], env: { LLM_MODEL: "m-1" } },
   },
-  // OpenCode 1's command (pinned above); OpenCode 2's flags are under "opencode by major".
+  // Agent work adds nothing on either major; model work is under "opencode by major".
   opencode: {
     headless: { argv: ["opencode", "run"], stdin: PROMPT },
     interactive: { argv: ["opencode"] },
@@ -253,21 +252,23 @@ describe("model work", () => {
     ]);
   });
 
-  test("opencode on OpenCode 1: unrestricted, in the scratch directory dispatch makes, with one warning; the config's args left out, their model kept", () => {
+  test("opencode on OpenCode 1: unrestricted, in the scratch directory dispatch makes, with one warning; the config's args left out, their model kept", async () => {
     _resetWarnOnceForTests();
     const warnings: string[] = [];
     overrideSeam(_setWarnSinkForTests, (level, args) => {
       if (level === "warn") warnings.push(args.map(String).join(" "));
     });
     const authored = ["run", "--agent", "build", "--attach", "http://elsewhere", "--model", "from-args"];
-    const built = build("opencode", { prompt: PROMPT, modelWork: true }, authored);
-    expect(built).toEqual({ argv: ["opencode", "run", "--model", "from-args"], env: NO_FREE_MODELS, stdin: PROMPT });
-    expect(build("opencode", { prompt: PROMPT, modelWork: true, model: "m-1" }, authored).argv).toEqual([
-      "opencode",
-      "run",
-      "--model",
-      "m-1",
-    ]);
+    await withOpencodeOnPath(1, async () => {
+      const built = build("opencode", { prompt: PROMPT, modelWork: true }, authored);
+      expect(built).toEqual({ argv: ["opencode", "run", "--model", "from-args"], env: NO_FREE_MODELS, stdin: PROMPT });
+      expect(build("opencode", { prompt: PROMPT, modelWork: true, model: "m-1" }, authored).argv).toEqual([
+        "opencode",
+        "run",
+        "--model",
+        "m-1",
+      ]);
+    });
     expect(warnings.filter((line) => line.includes("OpenCode 1 cannot restrict"))).toHaveLength(1);
   });
 
@@ -281,18 +282,29 @@ describe("opencode by major", () => {
   // Through a fake `opencode` on PATH that reports the major, so the real version probe decides.
   const STANDALONE = ["--standalone", "--title", "akm"];
 
-  test("OpenCode 2 runs one process, titled, with the prompt on stdin", async () => {
-    await withOpencodeOnPath(2, async () => {
-      expect(build("opencode", { prompt: PROMPT })).toEqual({
-        argv: ["opencode", "run", ...STANDALONE],
-        stdin: PROMPT,
+  test("agent work adds nothing on either major: the authored args as written, the prompt on stdin, no environment", async () => {
+    for (const major of [1, 2] as const) {
+      await withOpencodeOnPath(major, async () => {
+        expect(build("opencode", { prompt: PROMPT })).toEqual({ argv: ["opencode", "run"], stdin: PROMPT });
+        const named = build("opencode", { prompt: PROMPT, agent: "reviewer", model: "p/m" }, ["run", "--model", "old"]);
+        expect(named).toEqual({
+          argv: ["opencode", "run", "--agent", "reviewer", "--model", "p/m"],
+          stdin: PROMPT,
+        });
       });
-      const named = build("opencode", { prompt: PROMPT, agent: "reviewer", model: "p/m" }, ["run", "--model", "old"]);
-      expect(named).toEqual({
-        argv: ["opencode", "run", ...STANDALONE, "--agent", "reviewer", "--model", "p/m"],
-        stdin: PROMPT,
+    }
+  });
+
+  test("agent work passes an authored --server, --standalone or --title as written", async () => {
+    const authored = ["run", "--server", "http://elsewhere", "--standalone", "--title=mine", "--print-logs"];
+    for (const major of [1, 2] as const) {
+      await withOpencodeOnPath(major, async () => {
+        expect(build("opencode", { prompt: PROMPT }, authored)).toEqual({
+          argv: ["opencode", ...authored],
+          stdin: PROMPT,
+        });
       });
-    });
+    }
   });
 
   test("OpenCode 2 model work runs as the tool-limited agent defined inline, never the config's args or agent", async () => {
@@ -339,53 +351,6 @@ describe("opencode by major", () => {
         "--model",
         "m-1",
       ]);
-    });
-  });
-
-  describe("an authored --server or --standalone", () => {
-    test("--server is a configuration error that names the setting, the argument and why, in either spelling", async () => {
-      await withOpencodeOnPath(2, async () => {
-        for (const authored of [
-          ["run", "--server", "http://elsewhere"],
-          ["run", "--server=http://elsewhere"],
-        ]) {
-          let thrown: unknown;
-          try {
-            build("opencode", { prompt: PROMPT }, authored);
-          } catch (error) {
-            thrown = error;
-          }
-          expect(thrown).toBeInstanceOf(ConfigError);
-          const error = thrown as ConfigError;
-          expect(error.code).toBe("INVALID_CONFIG_FILE");
-          expect(error.message).toContain("harnesses.<name>.args");
-          expect(error.message).toContain("--server");
-          expect(error.message).toContain("--standalone");
-          expect(error.message).toContain("a stop ends the run");
-          expect(error.hint()).toContain("Remove --server");
-        }
-      });
-    });
-
-    test("--server is no conflict where akm adds no --standalone: model work, an interactive launch, OpenCode 1", async () => {
-      const authored = ["run", "--server", "http://elsewhere"];
-      await withOpencodeOnPath(2, async () => {
-        expect(build("opencode", { prompt: PROMPT, modelWork: true }, authored).argv).not.toContain("--server");
-        expect(build("opencode", {}, authored).argv).toEqual(["opencode", "--server", "http://elsewhere"]);
-      });
-      expect(build("opencode", { prompt: PROMPT }, authored).argv).toEqual([
-        "opencode",
-        "run",
-        "--server",
-        "http://elsewhere",
-      ]);
-    });
-
-    test("an authored --standalone is kept once, not doubled", async () => {
-      await withOpencodeOnPath(2, async () => {
-        const argv = build("opencode", { prompt: PROMPT }, ["run", "--standalone", "--print-logs"]).argv;
-        expect(argv).toEqual(["opencode", "run", "--standalone", "--print-logs", "--title", "akm"]);
-      });
     });
   });
 
@@ -440,7 +405,7 @@ describe("opencode by major", () => {
     });
   });
 
-  test("a binary whose version cannot be read gets OpenCode 1's command, with one warning that says so", async () => {
+  test("model work on a binary whose version cannot be read gets OpenCode 1's command, with one warning that says so", async () => {
     _resetWarnOnceForTests();
     const warnings: string[] = [];
     overrideSeam(_setWarnSinkForTests, (level, args) => {
@@ -449,10 +414,11 @@ describe("opencode by major", () => {
     await withOpencodeOnPath(
       "unreadable",
       async () => {
+        // Agent work and an interactive launch take no flag that depends on the version, so neither reads it.
         expect(build("opencode", { prompt: PROMPT }).argv).toEqual(["opencode", "run"]);
-        expect(build("opencode", { prompt: PROMPT, modelWork: true }).argv).toEqual(["opencode", "run"]);
-        // An interactive launch needs no flags, so there is nothing to say.
         build("opencode", {});
+        expect(warnings.filter((line) => line.includes("Could not read the version"))).toHaveLength(0);
+        expect(build("opencode", { prompt: PROMPT, modelWork: true }).argv).toEqual(["opencode", "run"]);
       },
       { exclusive: true },
     );
@@ -460,7 +426,7 @@ describe("opencode by major", () => {
     expect(unreadable).toHaveLength(1);
     expect(unreadable[0]).toContain("OpenCode 1");
     expect(unreadable[0]).toContain("no --standalone");
-    expect(unreadable[0]).toContain("model work unrestricted");
+    expect(unreadable[0]).toContain("unrestricted");
     expect(unreadable[0]).toContain("`opencode --version`");
   });
 });
