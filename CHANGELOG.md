@@ -411,9 +411,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- `bun.lock` resolved `onnxruntime-node` to `onnxruntime-web`, so every checkout,
-  CI run and release binary embedded on WebAssembly, about eight times slower
-  than the native runtime. It resolves to the real package.
+- `bun.lock` resolved `onnxruntime-node` to `onnxruntime-web`, so every checkout
+  and CI run embedded on WebAssembly, about eight times slower than the native
+  runtime. It resolves to the real package. (npm installs do not read `bun.lock`;
+  the release binaries could not embed at all, see Added.)
 
 ### Removed
 
