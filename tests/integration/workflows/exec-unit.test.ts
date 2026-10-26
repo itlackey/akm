@@ -40,7 +40,7 @@ import {
   WORKFLOW_MAX_EXEC_OUTPUT_BYTES,
 } from "../../../src/workflows/resource-limits";
 import { getWorkflowStatus } from "../../../src/workflows/runtime/runs";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 import {
   freezeWorkflow,
   parseErrors,
@@ -411,6 +411,78 @@ describe("exec unit — the child environment is akm's own", () => {
       if (prior !== undefined) process.env.AKM_BUNDLE_DIR = prior;
     }
   });
+});
+
+describe("exec unit — a credential the command inherits never reaches the journal", () => {
+  /** Credential-named, so its value is scrubbed; the second is ordinary configuration and stays as it is. */
+  const AMBIENT = {
+    EXEC_UNIT_REVIEW_API_KEY: "SYNTHETIC_AMBIENT_CREDENTIAL_123456",
+    EXEC_UNIT_REVIEW_REGION: "eu-ordinary-region",
+  };
+  const KEY = AMBIENT.EXEC_UNIT_REVIEW_API_KEY;
+  const REGION = AMBIENT.EXEC_UNIT_REVIEW_REGION;
+
+  /** Run a one-step exec workflow with no `env:` binding, under akm's environment carrying {@link AMBIENT}. */
+  function runInheriting(code: string, unitLines: string[] = []): Promise<StepExecutionResult> {
+    seedRun(["work"]);
+    const plan = execPlan([
+      "    unit:",
+      "      exec:",
+      `        command: ${JSON.stringify(bunArgv(code))}`,
+      ...unitLines,
+    ]);
+    storePlan(plan);
+    return withEnv(AMBIENT, () => run(plan));
+  }
+
+  test("plain output is scrubbed of the inherited value in the evidence and the unit row; an ordinary variable stays", async () => {
+    const result = await runInheriting(
+      "process.stdout.write(process.env.EXEC_UNIT_REVIEW_API_KEY + ' ' + process.env.EXEC_UNIT_REVIEW_REGION)",
+    );
+    expect(result.ok).toBe(true);
+    expect(result.evidence.output).toBe(`[REDACTED] ${REGION}`);
+    const rows = await unitRows();
+    expect(rows[0]!.status).toBe("completed");
+    expect(rows[0]!.result_json).not.toContain(KEY);
+    expect(JSON.parse(rows[0]!.result_json!)).toBe(`[REDACTED] ${REGION}`);
+  }, 30_000);
+
+  test("parsed JSON under a declared schema is scrubbed of it too", async () => {
+    const result = await runInheriting(
+      "process.stdout.write(JSON.stringify({key: process.env.EXEC_UNIT_REVIEW_API_KEY, region: process.env.EXEC_UNIT_REVIEW_REGION}))",
+      [
+        "      output:",
+        "        type: object",
+        "        required: [key, region]",
+        "        properties:",
+        "          key: { type: string }",
+        "          region: { type: string }",
+      ],
+    );
+    expect(result.ok).toBe(true);
+    expect(result.evidence.output).toEqual({ key: "[REDACTED]", region: REGION });
+    const rows = await unitRows();
+    expect(rows[0]!.result_json).not.toContain(KEY);
+    expect(JSON.parse(rows[0]!.result_json!)).toEqual({ key: "[REDACTED]", region: REGION });
+  }, 30_000);
+
+  test("a failure diagnostic that prints it is scrubbed in the outcome, the summary, the unit row and `status --units`", async () => {
+    const result = await runInheriting(
+      "process.stderr.write('auth failed with ' + process.env.EXEC_UNIT_REVIEW_API_KEY + ' in ' + process.env.EXEC_UNIT_REVIEW_REGION + '\\n'); process.exit(7)",
+    );
+    expect(result.ok).toBe(false);
+    expect(result.units[0]!.failureReason).toBe("non_zero_exit");
+    expect(result.units[0]!.error).toContain(`auth failed with [REDACTED] in ${REGION}`);
+    expect(result.summary).not.toContain(KEY);
+    const rows = await unitRows();
+    expect(rows[0]!.status).toBe("failed");
+    expect(rows[0]!.result_json).toContain("[REDACTED]");
+    expect(rows[0]!.result_json).not.toContain(KEY);
+    const detail = await getWorkflowStatus(RUN_ID, { includeUnits: true });
+    const unit = (detail.units ?? []).find((u) => u.unitId === "work:solo");
+    expect(unit?.diagnostic ?? "").toContain(`auth failed with [REDACTED] in ${REGION}`);
+    expect(JSON.stringify(detail)).not.toContain(KEY);
+  }, 30_000);
 });
 
 describe("exec unit — typed artifacts", () => {

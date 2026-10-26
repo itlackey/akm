@@ -583,7 +583,7 @@ full.
 | **Argv** | Spawned directly, never shell-interpreted. A `${ref}` token in an entry is replaced at dispatch. |
 | **Environment** | [akm's own](#the-childs-environment), with the directories this akm resolved set over it, then the unit's `env:` bindings, then the engine's `AKM_*` [context](#context-reaching-the-command). |
 | **`${ref}` tokens** | In argv, `cwd` and env-asset values. `${secrets/name}` becomes the secret's value, any other asset ref the asset's absolute path. A ref no bundle owns fails the unit before it spawns. Prompts are not substituted. |
-| **Redaction** | Only values akm knows are secret are scrubbed from stdout, stderr, diagnostics and the journal: values substituted from `secrets/` refs, secret-shaped run params and connection keys. Configuration, such as a URL bound through an env asset, is not, and neither is a value the command inherited. |
+| **Redaction** | Only values akm knows are secret are scrubbed from stdout, stderr, diagnostics and the journal: values substituted from `secrets/` refs, secret-shaped run params, connection keys, and the values of credential-named variables the command inherited from akm's environment (names such as `*_API_KEY`, `*_TOKEN`, `*_SECRET` and `*_PASSWORD`, eight characters or more). Configuration, such as a URL bound through an env asset or an ordinary inherited variable, is not. |
 
 #### What is frozen, and what is found at dispatch
 

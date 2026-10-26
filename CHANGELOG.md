@@ -241,12 +241,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The environment allowlist, the Windows floor, the `PATH` supplement for
   scheduler contexts, each harness's passthrough names and the passthrough
   redaction policy are gone, and a frozen `pass_env` still parses and selects
-  nothing. A dispatch reply from any runner is scrubbed of the connection's key
-  and of the values of credential-named variables in the environment the child
-  inherited (names such as `*_API_KEY`, `*_TOKEN`, `*_SECRET` and `*_PASSWORD`,
-  eight characters or more), the same rule a task log uses; a task log also
-  scrubs the values its `redact:` list names, and a workflow journal the
-  `secrets/` values substituted into a binding.
+  nothing. A dispatch reply from any runner is scrubbed of the connection's key.
+  It, and the output and diagnostics a workflow `exec` unit journals, are
+  scrubbed of the values of credential-named variables in the environment the
+  child inherited (names such as `*_API_KEY`, `*_TOKEN`, `*_SECRET` and
+  `*_PASSWORD`, eight characters or more), the same rule a task log uses; a
+  task log also scrubs the values its `redact:` list names, and a workflow
+  journal the `secrets/` values substituted into a binding.
   `env run --clean` keeps its own list. Agent work on OpenCode adds nothing to the
   invocation.
 - Stopping a child process (a timeout, an abort, or a signal to akm) sends its

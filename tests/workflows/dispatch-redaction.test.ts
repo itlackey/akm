@@ -45,14 +45,15 @@ describe("collectWorkflowDispatchSensitiveValues", () => {
     timeoutMs: null,
   };
 
-  test("a connection's key is read from this process's environment, and a credential-named variable the child inherits counts for every runner", async () => {
+  test("a connection's key is read from this process's environment, and a credential-named variable the child inherits counts for every unit, a shell command's included", async () => {
     await withEnv({ ANTHROPIC_API_KEY: "the-users-own-key", DISPATCH_REDACTION_KEY: "connection-secret" }, () => {
       expect(collectWorkflowDispatchSensitiveValues({ runner: connection })).toContain("connection-secret");
       expect(collectWorkflowDispatchSensitiveValues({ runner: harness })).toContain("the-users-own-key");
+      expect(collectWorkflowDispatchSensitiveValues({})).toContain("the-users-own-key");
     });
   });
 
   test("the values the unit's environment bindings substituted are included", () => {
-    expect(collectWorkflowDispatchSensitiveValues({ sensitiveValues: ["bound-secret"] })).toEqual(["bound-secret"]);
+    expect(collectWorkflowDispatchSensitiveValues({ sensitiveValues: ["bound-secret"] })).toContain("bound-secret");
   });
 });

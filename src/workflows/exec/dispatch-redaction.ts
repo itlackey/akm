@@ -5,10 +5,11 @@
 /**
  * What a frozen-workflow unit's outcome is scrubbed of before it reaches
  * durable state: the secrets its environment bindings substituted, on top of
- * what the dispatch itself already redacted (the runner's connection key).
+ * what the dispatch itself already redacted (the runner's connection key), and
+ * the credential-named variables of the environment every unit's process inherits.
  */
 
-import { collectSensitiveValues, redactSensitiveValue } from "../../core/redaction";
+import { collectInferredSecretValues, collectSensitiveValues, redactSensitiveValue } from "../../core/redaction";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { collectDispatchSensitiveValues } from "../../integrations/agent/runner-dispatch";
 
@@ -22,13 +23,17 @@ export interface DispatchSecretSources {
 /**
  * Every exact value that must never reach the journal from one dispatch: the
  * secrets substituted into the unit's env bindings (`dispatch.sensitiveValues`;
- * the rest of an env asset is configuration and reaches the journal as is) and
- * the runner's connection key. Read at call time, so collect no earlier than the
- * dispatch being scrubbed.
+ * the rest of an env asset is configuration and reaches the journal as is), the
+ * runner's connection key, and the credential-named variables of akm's
+ * environment, which a shell command inherits as a runner does. Read at call
+ * time, so collect no earlier than the dispatch being scrubbed.
  */
 export function collectWorkflowDispatchSensitiveValues(dispatch: DispatchSecretSources): string[] {
   const values = new Set<string>(dispatch.sensitiveValues ?? []);
-  for (const value of dispatch.runner ? collectDispatchSensitiveValues(dispatch.runner) : []) values.add(value);
+  const dispatchValues = dispatch.runner
+    ? collectDispatchSensitiveValues(dispatch.runner)
+    : collectInferredSecretValues(process.env);
+  for (const value of dispatchValues) values.add(value);
   return collectSensitiveValues(values);
 }
 
