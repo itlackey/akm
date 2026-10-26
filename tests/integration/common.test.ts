@@ -9,6 +9,7 @@ import {
   hasErrnoCode,
   isWithin,
   jsonWithByteCap,
+  parseJsonc,
   ResponseTooLargeError,
   readBodyWithByteCap,
   resolveStashDir,
@@ -148,6 +149,36 @@ describe("resolveStashDir", () => {
       fs.rmSync(envDir, { recursive: true, force: true });
       fs.rmSync(configDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ── parseJsonc ───────────────────────────────────────────────────────────────
+
+describe("parseJsonc", () => {
+  test("plain JSON parses as JSON does", () => {
+    const text = '{"a": [1, 2, {"b": "c,}"}], "d": null}';
+    expect(parseJsonc(text)).toEqual(JSON.parse(text));
+  });
+
+  test("a line comment and a block comment are dropped", () => {
+    expect(parseJsonc('// head\n{"a": 1, /* mid */ "b": 2 // tail\n}')).toEqual({ a: 1, b: 2 });
+  });
+
+  test("a trailing comma before } and before ] is dropped, past whitespace and comments", () => {
+    expect(parseJsonc('{"a": [1, 2,\n  ],\n "b": {"c": 3, /* last */ },\n}')).toEqual({ a: [1, 2], b: { c: 3 } });
+  });
+
+  test("a string value keeps a comma-then-brace or comma-then-bracket as written", () => {
+    expect(parseJsonc('{"a": "x,}", "b": "y,]", "c": "z , \\" ,]",}')).toEqual({ a: "x,}", b: "y,]", c: 'z , " ,]' });
+  });
+
+  test("a string value keeps // and /* as written", () => {
+    expect(parseJsonc('{"url": "http://x/*y*/", "list": [1,],}')).toEqual({ url: "http://x/*y*/", list: [1] });
+  });
+
+  test("an unterminated block comment fails instead of closing the document or hanging", () => {
+    expect(() => parseJsonc('{"a": 1, /* never closed }')).toThrow();
+    expect(() => parseJsonc('{"a": [1,], /*')).toThrow();
   });
 });
 

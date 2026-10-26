@@ -943,6 +943,29 @@ export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
 
+/** Drop each comma that is followed, past whitespace, by `}` or `]`, outside string literals. */
+function stripTrailingCommas(text: string): string {
+  let result = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i] as string;
+    if (inString) {
+      result += char;
+      if (char === "\\") result += text[++i] ?? "";
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === ",") {
+      let next = i + 1;
+      while (next < text.length && /\s/.test(text[next] as string)) next++;
+      if (text[next] === "}" || text[next] === "]") continue;
+    }
+    result += char;
+  }
+  return result;
+}
+
 /**
  * Parse JSONC: comments stripped by {@link stripJsonComments}, and trailing
  * commas (`[a, b,]`, `{"k": 1,}`) tolerated, as OpenCode's own `.jsonc` reader does.
@@ -952,7 +975,7 @@ export function parseJsonc(text: string): unknown {
   try {
     return JSON.parse(stripped) as unknown;
   } catch {
-    return JSON.parse(stripped.replace(/,(\s*[}\]])/g, "$1")) as unknown;
+    return JSON.parse(stripTrailingCommas(stripped)) as unknown;
   }
 }
 
