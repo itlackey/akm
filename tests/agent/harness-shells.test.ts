@@ -363,10 +363,10 @@ describe("opencode by major", () => {
       agent?: Record<string, unknown>;
       agents: Record<string, unknown>;
     };
-    const inlineConfig = (content: string | undefined): Promise<Inline> =>
+    const inlineConfig = (content: string | undefined, env: Record<string, string | undefined> = {}): Promise<Inline> =>
       withOpencodeOnPath(2, async () =>
         JSON.parse(
-          withEnvSync({ OPENCODE_CONFIG_CONTENT: content }, () =>
+          withEnvSync({ OPENCODE_CONFIG_CONTENT: content, ...env }, () =>
             build("opencode", { prompt: PROMPT, modelWork: true }),
           ).env?.OPENCODE_CONFIG_CONTENT ?? "",
         ),
@@ -419,6 +419,55 @@ describe("opencode by major", () => {
       expect(merged.agents).toEqual({
         planner: { mode: "subagent" },
         "akm-model-work": (await inlineConfig(undefined)).agents["akm-model-work"],
+      });
+    });
+
+    describe("{env:NAME} references, which OpenCode replaces before it parses the content", () => {
+      /** The user's provider options, with `timeout` and `apiKey` written as given. */
+      const withOptions = (timeout: string, apiKey: string): string =>
+        `{"model": "mine/fast", "provider": {"mine": {"options": {"timeout": ${timeout}, "apiKey": ${apiKey}}}}}`;
+      const optionsOf = (inline: Inline): unknown => (inline.provider.mine as { options?: unknown }).options;
+
+      test("one written outside a string that names a number is read as that number, as OpenCode reads it", async () => {
+        const merged = await inlineConfig(withOptions("{env:AKM_TEST_OC_TIMEOUT}", '"{env:AKM_TEST_OC_KEY}"'), {
+          AKM_TEST_OC_TIMEOUT: "30000",
+          AKM_TEST_OC_KEY: "SYNTHETIC_KEY",
+        });
+        expect(merged.model).toBe("mine/fast");
+        // OpenCode replaces every reference in the content, so the one in a string is its value too.
+        expect(optionsOf(merged)).toEqual({ timeout: 30000, apiKey: "SYNTHETIC_KEY" });
+        expect(Object.keys(merged.agents)).toEqual(["akm-model-work"]);
+      });
+
+      test("content that reads as written keeps a quoted one unchanged, for the OpenCode akm runs to replace", async () => {
+        const merged = await inlineConfig(withOptions("30000", '"{env:AKM_TEST_OC_KEY}"'), {
+          AKM_TEST_OC_KEY: "SYNTHETIC_KEY",
+        });
+        expect(optionsOf(merged)).toEqual({ timeout: 30000, apiKey: "{env:AKM_TEST_OC_KEY}" });
+      });
+
+      test("an unset variable is replaced by nothing, as OpenCode does: in a string it is empty, outside one the content does not read", async () => {
+        _resetWarnOnceForTests();
+        const warnings: string[] = [];
+        overrideSeam(_setWarnSinkForTests, (level, args) => {
+          if (level === "warn") warnings.push(args.map(String).join(" "));
+        });
+        const unset = { AKM_TEST_OC_TIMEOUT: "30000", AKM_TEST_OC_KEY: undefined };
+        const quoted = await inlineConfig(withOptions("{env:AKM_TEST_OC_TIMEOUT}", '"{env:AKM_TEST_OC_KEY}"'), unset);
+        expect(optionsOf(quoted)).toEqual({ timeout: 30000, apiKey: "" });
+        expect(warnings).toEqual([]);
+
+        const own = await inlineConfig(undefined);
+        expect(await inlineConfig(withOptions("{env:AKM_TEST_OC_KEY}", '"x"'), unset)).toEqual(own);
+        expect(warnings.filter((line) => line.includes("OPENCODE_CONFIG_CONTENT is not valid JSONC"))).toHaveLength(1);
+      });
+
+      test("a value that would end its string early is escaped, as OpenCode escapes it when the content does not read", async () => {
+        const merged = await inlineConfig(withOptions("{env:AKM_TEST_OC_TIMEOUT}", '"{env:AKM_TEST_OC_KEY}"'), {
+          AKM_TEST_OC_TIMEOUT: "30000",
+          AKM_TEST_OC_KEY: 'SYN"THETIC\\KEY',
+        });
+        expect(optionsOf(merged)).toEqual({ timeout: 30000, apiKey: 'SYN"THETIC\\KEY' });
       });
     });
 

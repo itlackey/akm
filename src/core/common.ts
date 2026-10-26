@@ -97,8 +97,9 @@ export function readTextFile(filePath: string, label = "File"): string {
  */
 /**
  * Strip JavaScript-style comments from a JSON string (JSONC support).
- * Handles `//` line comments and `/* *​/` block comments while preserving
- * comment-like sequences inside quoted strings.
+ * Handles `//` line comments, which end at a line feed or a carriage return,
+ * and `/* *​/` block comments while preserving comment-like sequences inside
+ * quoted strings.
  */
 export function stripJsonComments(text: string): string {
   let result = "";
@@ -125,7 +126,7 @@ export function stripJsonComments(text: string): string {
       continue;
     }
     if (text[i] === "/" && text[i + 1] === "/") {
-      while (i < text.length && text[i] !== "\n") i++;
+      while (i < text.length && text[i] !== "\n" && text[i] !== "\r") i++;
       continue;
     }
     if (text[i] === "/" && text[i + 1] === "*") {

@@ -164,6 +164,13 @@ describe("parseJsonc", () => {
     expect(parseJsonc('// head\n{"a": 1, /* mid */ "b": 2 // tail\n}')).toEqual({ a: 1, b: 2 });
   });
 
+  test("a line comment ends at a carriage return as at a line feed, so a file with either line ending keeps what follows it", () => {
+    const lines = ["// head", "{", '  "a": 1, // first', '  "b": 2 // last', "}"];
+    for (const ending of ["\r", "\r\n"]) {
+      expect(parseJsonc(lines.join(ending))).toEqual({ a: 1, b: 2 });
+    }
+  });
+
   test("a trailing comma before } and before ] is dropped, past whitespace and comments", () => {
     expect(parseJsonc('{"a": [1, 2,\n  ],\n "b": {"c": 3, /* last */ },\n}')).toEqual({ a: [1, 2], b: { c: 3 } });
   });

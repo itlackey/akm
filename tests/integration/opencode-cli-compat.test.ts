@@ -504,16 +504,18 @@ function registerSuite(bin: string): void {
       expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
     }, 60_000);
 
-    test("content written as JSONC, which OpenCode accepts, keeps its provider and its model", async () => {
+    /**
+     * OpenCode itself runs on the inline content `write` gives, as an authored standalone run that akm passes as
+     * written; then model work runs on it, on its provider and its model, with its own agent.
+     */
+    async function modelWorkRunsAsOpencodeDoes(
+      write: (config: Record<string, unknown>) => string,
+      env: Record<string, string> = {},
+    ): Promise<void> {
       const box = sandbox();
       const model = fakeModel();
-      // A comment and a trailing comma, as a user may write it.
-      const jsonc = JSON.stringify(providerConfig(model, { model: "fixture/second" }), null, 2)
-        .replace("{", "{\n  // the user's own inline configuration")
-        .replace(/\n}$/, ",\n}");
-      const parentEnv = { OPENCODE_CONFIG_CONTENT: jsonc };
+      const parentEnv = { ...env, OPENCODE_CONFIG_CONTENT: write(providerConfig(model, { model: "fixture/second" })) };
 
-      // OpenCode itself runs on it, as an authored standalone run that akm passes as written.
       const direct = await runOpencode(box, { prompt: "probe" }, { args: ["run", "--standalone"], parentEnv });
       expect(direct.ok).toBe(true);
       expect(direct.stdout).toContain("PROBE_OK");
@@ -525,6 +527,35 @@ function registerSuite(bin: string): void {
       expect(result.stdout).toContain("PROBE_OK");
       expect(model.requests.slice(before).map((request) => request.model)).toEqual(["second"]);
       expect([...(model.requests[before]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
+    }
+
+    test("content written as JSONC, which OpenCode accepts, keeps its provider and its model", async () => {
+      // A comment and a trailing comma, as a user may write it.
+      await modelWorkRunsAsOpencodeDoes((config) =>
+        JSON.stringify(config, null, 2)
+          .replace("{", "{\n  // the user's own inline configuration")
+          .replace(/\n}$/, ",\n}"),
+      );
+    }, 60_000);
+
+    test("JSONC whose lines end in a carriage return alone, which OpenCode accepts, keeps its provider and its model", async () => {
+      await modelWorkRunsAsOpencodeDoes((config) =>
+        JSON.stringify(config, null, 2)
+          .replace("{", "{\n  // the user's own inline configuration")
+          .replaceAll("\n", "\r"),
+      );
+    }, 60_000);
+
+    test("a {env:NAME} written outside a string, which OpenCode replaces before it parses, keeps its provider and its model", async () => {
+      // The provider's timeout comes from the environment, written as a bare reference that names a number.
+      await modelWorkRunsAsOpencodeDoes(
+        (config) => {
+          const fixture = (config.provider as { fixture: { options: Record<string, unknown> } }).fixture;
+          fixture.options.timeout = "TIMEOUT_REFERENCE";
+          return JSON.stringify(config).replace('"TIMEOUT_REFERENCE"', "{env:COMPAT_PROVIDER_TIMEOUT}");
+        },
+        { COMPAT_PROVIDER_TIMEOUT: "30000" },
+      );
     }, 60_000);
   });
 

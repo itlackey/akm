@@ -79,8 +79,10 @@ const CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
  * `agents.akm-model-work`, the one key akm's definition wins. OpenCode 2 reads that native `agents` map over the
  * legacy `agent` one, so a same-named entry the user keeps in `agent` is left out rather than left to conflict. The
  * child's value is built from the parent's, so a provider, model or key the user keeps only there stays. It is read as
- * OpenCode reads it, as JSONC (comments and trailing commas), and written back as JSON. Content that is not valid JSONC
- * holding an object is left out, with one warning.
+ * OpenCode reads it, as JSONC (comments and trailing commas), and written back as JSON; content that reads only once
+ * its `{env:NAME}` references are replaced (one written outside a string) is read the way OpenCode replaces them
+ * ({@link withEnvReferences}). Content that is not valid JSONC holding an object either way is left out, with one
+ * warning.
  */
 function modelWorkConfig(): string {
   const content = process.env[CONFIG_CONTENT_ENV]?.trim();
@@ -104,10 +106,35 @@ function modelWorkConfig(): string {
 }
 
 function userConfig(content: string): Record<string, unknown> | undefined {
+  return jsoncObject(content) ?? jsoncObject(withEnvReferences(content));
+}
+
+function jsoncObject(content: string): Record<string, unknown> | undefined {
   try {
     return asRecord(parseJsonc(content));
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * `{env:NAME}` replaced as OpenCode replaces it in this variable before it parses it (`ConfigVariable.substitute`):
+ * by the variable's value, or nothing when it is unset or empty, as written where the result reads as JSONC, else
+ * escaped as the inside of a JSON string. A `{file:path}` is left for the OpenCode akm runs, which replaces it against
+ * its own directory, as it would in-process.
+ */
+function withEnvReferences(content: string): string {
+  const replaced = (escaped: boolean): string =>
+    content.replace(/\{env:([^}]+)\}/g, (_, name: string) => {
+      const value = process.env[name] || "";
+      return escaped ? JSON.stringify(value).slice(1, -1) : value;
+    });
+  const raw = replaced(false);
+  try {
+    parseJsonc(raw);
+    return raw;
+  } catch {
+    return replaced(true);
   }
 }
 
