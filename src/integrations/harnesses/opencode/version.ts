@@ -17,7 +17,7 @@ import { defaultWhich, probeVersion } from "../../agent/detect";
 /**
  * The OpenCode CLI binary: the opencode harness runs it and asks it for its major,
  * and plugin upgrades refresh OpenCode's plugin caches with it. akm's own runtime
- * is embedded and needs no binary.
+ * does not use it: it runs a binary of its own (`./runtime/binary.ts`).
  */
 export const OPENCODE_BIN = "opencode";
 

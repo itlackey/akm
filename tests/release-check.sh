@@ -159,7 +159,7 @@ run_step \
 		"Verify Node task migration bundle" \
 		node -e 'const { spawnSync } = require("node:child_process"); const result = spawnSync(process.execPath, ["./dist/scripts/akm-migrate-node.js", "--help"], { encoding: "utf8" }); if (result.error || result.status !== 0) { console.error(result.error?.message ?? result.stderr); process.exit(1); } if (!result.stdout.includes("Usage: akm-migrate <command>") || !result.stdout.includes("state.db")) { console.error("Packaged Node migrator does not expose the combined status/apply surface"); process.exit(1); }'
 run_step "Verify model surface" verify_model_surface
-# The compiled standalone binary's first model-backed run, offline: the AI SDK package is embedded in it.
+# The compiled standalone binary's first run of akm's own runtime, with the OpenCode binary it runs fetched once into a cache the test shares (the registry is the one step that needs the network) and nothing downloaded for the provider.
 run_step \
 	"Verify standalone binary first run" \
 	bun test --timeout=300000 tests/integration/standalone-first-run.test.ts

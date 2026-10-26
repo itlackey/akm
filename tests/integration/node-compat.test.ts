@@ -38,12 +38,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { BOUNDARY_MARKERS, NATIVE_CRASH_MARKER } from "../../scripts/node-runtime-markers";
+import { getCacheDir } from "../../src/core/paths";
 import { runCliCapture } from "../_helpers/cli";
 import { startFakeModel } from "../_helpers/fake-model-server";
 import { expectConnectionConfig, expectHarnessOnlyConfig, type SmokeRun } from "../_helpers/model-surface-smoke";
+import { fetchSharedOpencode, linkSharedOpencode } from "../_helpers/opencode-binary";
 import { withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const ENABLED = process.env.AKM_NODE_COMPAT_TESTS === "1";
+// akm's own runtime runs a pinned OpenCode binary it fetches on first use; the test shares one fetch (skipped, with a message, when the registry is unreachable).
+const OPENCODE_UNAVAILABLE = ENABLED ? await fetchSharedOpencode() : undefined;
+if (OPENCODE_UNAVAILABLE) console.warn(`[node-compat] the runtime test is skipped: ${OPENCODE_UNAVAILABLE}`);
 const REPO_ROOT = path.resolve(import.meta.dir, "../..");
 const CLI_ENTRY = path.join(REPO_ROOT, "dist", "cli-node.mjs");
 const NODE_BIN = process.env.AKM_SMOKE_NODE ?? "node";
@@ -805,10 +810,11 @@ describe("model surface parity", () => {
     expectHarnessOnlyConfig(onNode);
   });
 
-  test.skipIf(!ENABLED)(
+  test.skipIf(!ENABLED || OPENCODE_UNAVAILABLE !== undefined)(
     "agent work over a connection runs on akm's own runtime under Node",
     async () => {
       setupStorage();
+      linkSharedOpencode(getCacheDir());
       const model = startFakeModel();
       try {
         configureConnection("default", {
@@ -820,7 +826,7 @@ describe("model surface parity", () => {
         expect(run.status, `agent over a connection:\nstdout:\n${run.stdout}\nstderr:\n${run.stderr}`).toBe(0);
         const envelope = parseJson(run.stdout) as { ok?: boolean; engine?: string; stdout?: string } | undefined;
         expect(envelope).toMatchObject({ ok: true, engine: "default" });
-        expect(envelope?.stdout).toMatch(/^ANSWER-\d+$/);
+        expect(envelope?.stdout?.trim()).toMatch(/^ANSWER-\d+$/);
       } finally {
         model.stop();
       }

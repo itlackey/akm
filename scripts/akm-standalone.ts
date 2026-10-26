@@ -35,7 +35,7 @@ if (process.argv[2] === STANDALONE_FROZEN_SCRIPT_ARG) {
     throw new Error("Internal frozen-script target is not a no-follow regular file.");
   }
   // Present conventional Bun script argv (`binary`, `script`) to authored code
-  // and consume standalone startup markers before the embedded runtime import.
+  // and consume standalone startup markers before the CLI import.
   const executable = process.argv[0] ?? process.execPath;
   process.argv.splice(0, process.argv.length, executable, file);
   delete process.env.AKM_STANDALONE_ENTRY;

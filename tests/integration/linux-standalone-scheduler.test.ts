@@ -16,10 +16,15 @@ import path from "node:path";
 import { STANDALONE_FROZEN_SCRIPT_ARG } from "../../src/tasks/standalone-script-entry";
 import { startFakeModel } from "../_helpers/fake-model-server";
 import { expectConnectionConfig, expectHarnessOnlyConfig, type SmokeRun } from "../_helpers/model-surface-smoke";
+import { fetchSharedOpencode, linkSharedOpencode } from "../_helpers/opencode-binary";
 import { makeSandboxDir } from "../_helpers/sandbox";
 
 const REQUESTED = process.env.AKM_STANDALONE_SCHEDULER_TESTS === "1";
 const ENABLED = REQUESTED && process.platform === "linux";
+// akm's own runtime runs a pinned OpenCode binary it fetches on first use; the agent-work case below shares one fetch.
+const OPENCODE_UNAVAILABLE = ENABLED ? await fetchSharedOpencode() : undefined;
+if (OPENCODE_UNAVAILABLE)
+  console.warn(`[linux-standalone-scheduler] the agent-work case is skipped: ${OPENCODE_UNAVAILABLE}`);
 
 if (REQUESTED && !ENABLED) {
   throw new Error("AKM_STANDALONE_SCHEDULER_TESTS=1 requires a Linux runner");
@@ -321,7 +326,7 @@ function binarySandbox(binary: string): { env: NodeJS.ProcessEnv; run: SmokeRun;
   return { env, run: (args) => run([binary, ...args], env), cleanup: sandbox.cleanup };
 }
 
-test.skipIf(!ENABLED)(
+test.skipIf(!ENABLED || OPENCODE_UNAVAILABLE !== undefined)(
   "the compiled binary configures and reports models, and runs agent work over a connection",
   async () => {
     const candidateBinary = path.resolve(process.env.AKM_STANDALONE_TEST_BIN ?? "");
@@ -335,14 +340,15 @@ test.skipIf(!ENABLED)(
       expectConnectionConfig(connection.run);
       expectHarnessOnlyConfig(harnessOnly.run);
 
-      // Agent work with no harness runs on akm's own runtime: the embedded OpenCode inside the binary.
+      // Agent work with no harness runs on akm's own runtime: the pinned OpenCode binary, linked into the sandbox's cache.
+      linkSharedOpencode(path.join(agent.env.XDG_CACHE_HOME as string, "akm"));
       const setup = await runAsync([candidateBinary, "setup", "--yes", "--endpoint", model.url], agent.env);
       expectSuccess(setup, "setup against the fake model");
       const result = await runAsync([candidateBinary, "agent", "--prompt", "MODE:answer"], agent.env);
       expectSuccess(result, "agent work over the connection");
       const envelope = JSON.parse(result.stdout) as { ok: boolean; engine: string; stdout: string };
       expect(envelope).toMatchObject({ ok: true, engine: "default" });
-      expect(envelope.stdout).toMatch(/^ANSWER-\d+$/);
+      expect(envelope.stdout.trim()).toMatch(/^ANSWER-\d+$/);
     } finally {
       model.stop();
       connection.cleanup();

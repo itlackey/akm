@@ -2,7 +2,8 @@
 #
 # `npm install -g akm-cli` is the install path the docs put first. It must finish
 # on a machine with no compiler, python or make: a dependency whose install
-# script builds from source (tree-sitter-powershell under @opencode/core did)
+# script builds from source (tree-sitter-powershell, under the OpenCode libraries akm
+# used to embed, did)
 # fails there with `gyp ERR`. The install's exit code is the whole check, so a
 # failure stops this build; do not grep its output for "node-gyp", which
 # better-sqlite3's own install script text contains.

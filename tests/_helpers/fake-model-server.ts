@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * A loopback OpenAI-compatible model for driving the embedded OpenCode in
+ * A loopback OpenAI-compatible model for driving the real OpenCode binary in
  * tests. Its behaviour comes from the first user message: `MODE:<name>`.
  *
  *   answer    reply "ANSWER-<n>"

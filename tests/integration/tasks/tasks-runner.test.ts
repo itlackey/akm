@@ -1293,7 +1293,7 @@ describe("runTask — prompt target", () => {
   // #943: reproduces the issue's report verbatim — a command task authored
   // with its own `timeout:` field whose dispatched agent times out. Static
   // reading found every ok:false branch (including reason:"timeout" from
-  // embedded/run.ts/spawn.ts) already unconditionally mapped to status:"failed"
+  // spawn.ts) already unconditionally mapped to status:"failed"
   // with detail.reason preserved; this pins that so the mapping can't regress
   // silently, and reproduces the exact scenario (timeout: 50) rather than only
   // the pre-existing non_zero_exit case above.
