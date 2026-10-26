@@ -16,6 +16,7 @@
 import path from "node:path";
 import { assertNever } from "../../core/assert";
 import type { TaskLogLineInput } from "../../core/logs-db";
+import { childProcessEnv } from "../../core/paths";
 import { runManagedSubprocess, type SpawnFn, streamCaptureFailure } from "../../core/subprocess";
 import { cleanupFrozenScript, frozenScriptCommand, materializeFrozenScript } from "../frozen-script";
 import type { ExecutionProvenanceContext } from "../model/invocation";
@@ -207,7 +208,7 @@ export async function runNativeTask(input: {
       // A more specific stamp already in the environment (e.g. improve's
       // AKM_EVENT_SOURCE=improve on its child spawns) still wins in children.
       env: {
-        ...process.env,
+        ...childProcessEnv(),
         ...task.environment,
         AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE ?? provenance.eventSource,
       },

@@ -773,6 +773,24 @@ describe("runTask — command target", () => {
     expect(fs.readFileSync(result.log, "utf8")).toContain(`cwd=${bundleDir}`);
   });
 
+  test("the command sees akm's own environment and the directories this akm resolved", async () => {
+    writeTask(
+      "env-probe",
+      shellTask([
+        process.execPath,
+        "-e",
+        "console.log('probe=' + JSON.stringify([process.env.TASK_ENV_PROBE, process.env.AKM_STATE_DIR, process.env.AKM_EVENT_SOURCE]))",
+      ]),
+    );
+
+    const result = await withEnv({ TASK_ENV_PROBE: "bar", AKM_EVENT_SOURCE: undefined }, () =>
+      runTask("env-probe", { bundleDir, logDir }),
+    );
+
+    expect(result.status).toBe("completed");
+    expect(fs.readFileSync(result.log, "utf8")).toContain(`probe=${JSON.stringify(["bar", stateDir, "task"])}`);
+  });
+
   test("a command that ignores SIGINT and SIGTERM is SIGKILLed on timeout, logging timed_out + exit 143", async () => {
     writeTask("stubborn", shellTask("hang-forever", { timeout: 100 }));
 
