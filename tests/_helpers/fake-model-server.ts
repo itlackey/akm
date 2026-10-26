@@ -89,7 +89,8 @@ export function startFakeModel(): FakeModelServer {
         lastUser: users.at(-1) ?? "",
         ...(afterTool ? { toolResult: text(last?.content) } : {}),
       });
-      const result = text(last?.content).slice(0, 200);
+      // A tool result can carry paths under TMPDIR, so the cap has to clear any path a host can have.
+      const result = text(last?.content).slice(0, 4000);
       let reply: { content?: string; tool?: { name: string; args: unknown }; finish?: string; big?: boolean } = {
         content: `ANSWER-${n}`,
       };
