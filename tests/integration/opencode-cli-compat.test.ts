@@ -9,10 +9,10 @@
 // flags, the permission map, the environment and a signal do to it. The CI workflow does not set the gate, so this runs
 // where a binary is named (docs/architecture/testing/testing-workflow.md).
 //
-// Every run of the binary is sandboxed. akm's own spawn path builds the child's environment from its allowlist, so the
-// child sees only HOME, the XDG directories and the OpenCode variables set here, all under a temporary directory; the
-// provider is a loopback fake that the `@ai-sdk/openai-compatible` package already installed for akm reaches, so nothing
-// is downloaded and no real account, key or OpenCode file is opened.
+// Every run of the binary is sandboxed. akm's spawn path hands the child the environment akm runs in, so the suite sets
+// HOME, the XDG directories and the OpenCode variables itself, all under a temporary directory, and blanks every other
+// OPENCODE_* the developer has exported; the provider is a loopback fake that the `@ai-sdk/openai-compatible` package
+// already installed for akm reaches, so nothing is downloaded and no real account, key or OpenCode file is opened.
 
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -35,8 +35,8 @@ const PROVIDER_PACKAGE = pathToFileURL(
 ).href;
 
 /**
- * Set on every run, over what akm passes: no model catalog fetch, no project config, and no hosted free model. A run
- * with no usable provider would otherwise send its prompt to OpenCode's own service.
+ * Set on every run, as the user's own configuration of their OpenCode would: no model catalog fetch, no project config,
+ * and no hosted free model. A run with no usable provider would otherwise send its prompt to OpenCode's own service.
  */
 const SANDBOX_CHILD_ENV = {
   OPENCODE_DISABLE_MODELS_FETCH: "1",
@@ -99,11 +99,13 @@ function sandbox(): Box {
       XDG_DATA_HOME: dataHome,
       XDG_CACHE_HOME: at("cache"),
       XDG_STATE_HOME: at("state"),
+      // Whatever OpenCode variable the developer has exported, none of it reaches the run.
+      ...Object.fromEntries(
+        Object.keys(process.env)
+          .filter((name) => name.startsWith("OPENCODE_"))
+          .map((name) => [name, undefined]),
+      ),
       OPENCODE_CONFIG_DIR: at("opencode"),
-      // Whatever the developer has exported, none of it reaches the run.
-      OPENCODE_API_KEY: undefined,
-      OPENCODE_CONFIG: undefined,
-      OPENCODE_CONFIG_CONTENT: undefined,
     },
     database: path.join(dataHome, "opencode", "opencode.db"),
   };

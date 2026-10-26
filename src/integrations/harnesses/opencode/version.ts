@@ -12,10 +12,8 @@
  */
 
 import childProcess from "node:child_process";
-import { COMMON_SPAWN_ENV_PASSTHROUGH, collectAllowlistedEnv } from "../../../core/spawn-env";
 import { warnOnce } from "../../../core/warn";
 import { defaultWhich } from "../../agent/detect";
-import { OPENCODE_ENV_PASSTHROUGH } from "./env";
 
 /**
  * The OpenCode CLI binary: the opencode harness runs it and asks it for its major,
@@ -43,7 +41,6 @@ type OpencodeVersionProbe = (bin: string) => string | undefined;
 const defaultProbe: OpencodeVersionProbe = (bin) => {
   const result = childProcess.spawnSync(bin, ["--version"], {
     encoding: "utf8",
-    env: collectAllowlistedEnv([...COMMON_SPAWN_ENV_PASSTHROUGH, ...OPENCODE_ENV_PASSTHROUGH]),
     stdio: "pipe",
     timeout: VERSION_TIMEOUT_MS,
     killSignal: "SIGKILL",

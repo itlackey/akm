@@ -2,43 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-const ENV_PASSTHROUGH_REDACTION_POLICY = {
-  HOME: "path",
-  PATH: "path",
-  USER: "identifier",
-  LANG: "identifier",
-  LC_ALL: "identifier",
-  TERM: "identifier",
-  TMPDIR: "path",
-  SYSTEMROOT: "path",
-  COMSPEC: "path",
-  PATHEXT: "path",
-  WINDIR: "path",
-  TEMP: "path",
-  TMP: "path",
-  AKM_EVENT_SOURCE: "identifier",
-  OPENCODE_CONFIG: "path",
-  OPENCODE_CONFIG_DIR: "path",
-  CLAUDE_CONFIG_DIR: "path",
-  CODEX_HOME: "path",
-  XDG_CONFIG_HOME: "path",
-  XDG_DATA_HOME: "path",
-  XDG_CACHE_HOME: "path",
-  XDG_STATE_HOME: "path",
-  AWS_PROFILE: "identifier",
-  AWS_REGION: "identifier",
-  LLM_MODEL: "identifier",
-  LLM_BASE_URL: "url",
-} as const;
-
-type EnvPassthroughRedactionPolicy =
-  (typeof ENV_PASSTHROUGH_REDACTION_POLICY)[keyof typeof ENV_PASSTHROUGH_REDACTION_POLICY];
-
-/** Environment names whose ordinary values identify runtime configuration rather than credentials. */
-export const ENV_PASSTHROUGH_REDACTION_ALLOWLIST: ReadonlySet<string> = new Set(
-  Object.keys(ENV_PASSTHROUGH_REDACTION_POLICY),
-);
-
 const SIGNED_QUERY_KEYS = new Set([
   "accesskey",
   "accesskeyid",
@@ -204,28 +167,6 @@ export function collectSensitiveValues(rawValues: Iterable<string | undefined>):
     if (inspectCredentialBearingUrl(value, values) && trimmed) values.add(trimmed);
   }
   return [...values];
-}
-
-/**
- * Decide whether an allowlisted passthrough value may cross an output boundary.
- * The name allowlist never overrides value inspection: URL userinfo and signed
- * query credentials remain secret even under ordinarily non-secret names.
- */
-export function isEnvPassthroughValueSafeToExpose(name: string, value: string | undefined): boolean {
-  if (value === undefined) return true;
-  const policy = ENV_PASSTHROUGH_REDACTION_POLICY[name as keyof typeof ENV_PASSTHROUGH_REDACTION_POLICY];
-  if (!policy) return false;
-  const classifiedPolicy: EnvPassthroughRedactionPolicy = policy;
-  switch (classifiedPolicy) {
-    case "identifier":
-    case "path":
-    case "url":
-      return !inspectCredentialBearingUrl(value);
-    default: {
-      const exhaustive: never = classifiedPolicy;
-      return exhaustive;
-    }
-  }
 }
 
 interface NormalizedText {

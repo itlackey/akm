@@ -6,8 +6,8 @@
  * Run a built execution: the one place credentials are read. Model work on a
  * connection goes to `chatCompletion`, a harness to `runAgent` (the harness
  * builder turns the request into argv), and agent work on a connection to
- * `runOpencodeSdk`, akm's own runtime. Every credential and passthrough value
- * that could reach the child is redacted from the result.
+ * `runOpencodeSdk`, akm's own runtime. The key of the connection a run used is
+ * redacted from its result.
  */
 
 import fs from "node:fs";
@@ -17,7 +17,7 @@ import type { AkmConfig } from "../../core/config/config";
 import { resolveApiKey } from "../../core/config/credentials";
 import { UsageError } from "../../core/errors";
 import type { LlmInference } from "../../core/llm-inference";
-import { collectSensitiveValues, isEnvPassthroughValueSafeToExpose, redactSensitiveText } from "../../core/redaction";
+import { collectSensitiveValues, redactSensitiveText } from "../../core/redaction";
 import type { ExecutionJsonObject } from "../../execution/json";
 import { type ChatCompletionConfig, chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
@@ -49,31 +49,26 @@ export interface RunExecutionOptions {
 }
 
 /**
- * Every value that can reach one dispatch and must never be echoed back: credentials and unsafe passthrough env.
- * A request's own `env` is configuration; a caller's secret values are redacted through its own sensitive set.
+ * The value a dispatch must never echo back: the key of the connection it runs on.
+ * A harness is the user's own program and holds no key of akm's, so there is none.
+ * A request's own `env` is configuration; a caller's secret values are redacted
+ * through its own sensitive set.
  */
 export function collectDispatchSensitiveValues(
   runner: RunnerSpec,
   envSource: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  const values: (string | undefined)[] = [];
-  if (runner.kind === "connection") {
-    values.push(
-      resolveApiKey(
-        runner.apiKey,
-        { connection: runner.name },
-        runner.endpoint,
-        envSource,
-        true,
-        runner.storedKey !== false,
-      ),
-    );
-  } else {
-    for (const name of harnessProfile(runner).envPassthrough) {
-      if (!isEnvPassthroughValueSafeToExpose(name, envSource[name])) values.push(envSource[name]);
-    }
-  }
-  return collectSensitiveValues(values);
+  if (runner.kind !== "connection") return [];
+  return collectSensitiveValues([
+    resolveApiKey(
+      runner.apiKey,
+      { connection: runner.name },
+      runner.endpoint,
+      envSource,
+      true,
+      runner.storedKey !== false,
+    ),
+  ]);
 }
 
 function redactResult(result: AgentRunResult, sensitiveValues: readonly string[]): AgentRunResult {

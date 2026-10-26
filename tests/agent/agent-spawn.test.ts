@@ -13,7 +13,6 @@ import path from "node:path";
 import { ConfigError } from "../../src/core/errors";
 import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../src/core/paths";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
-import { getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { runAgent } from "../../src/integrations/agent/spawn";
 import { makeSandboxDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
 
@@ -60,7 +59,6 @@ function profileFor(name: string, overrides: Partial<AgentProfile> = {}): AgentP
     bin: program(name),
     args: [],
     stdio: "captured",
-    envPassthrough: ["PATH"],
     ...overrides,
   };
 }
@@ -189,17 +187,16 @@ describe("runAgent — the command", () => {
 });
 
 describe("runAgent — the child's environment", () => {
-  test("is the names the profile passes through, the directories akm resolved, and the call's env: nothing else", async () => {
-    const env = await withEnv({ KEEP_ME: "yes", DROP_ME: "no", AKM_BUNDLE_DIR: "/sandbox/bundle" }, async () => {
-      const result = await runAgent(profileFor("probe", { envPassthrough: ["PATH", "KEEP_ME"] }), {
+  test("is akm's own, the directories akm resolved, and the call's env", async () => {
+    const env = await withEnv({ FOO: "bar", AKM_BUNDLE_DIR: "/sandbox/bundle" }, async () => {
+      const result = await runAgent(profileFor("probe"), {
         dispatch: { prompt: "go" },
         env: { CALL_VAR: "2" },
       });
       return probed(result.stdout).env;
     });
-    expect(env.KEEP_ME).toBe("yes");
+    expect(env.FOO).toBe("bar");
     expect(env.CALL_VAR).toBe("2");
-    expect(env).not.toHaveProperty("DROP_ME");
     expect(env).toMatchObject({
       AKM_CONFIG_DIR: getConfigDir(),
       AKM_DATA_DIR: getDataDir(),
@@ -209,69 +206,27 @@ describe("runAgent — the child's environment", () => {
     });
   });
 
-  test("the call's env wins over what is passed through and over the resolved directories", async () => {
-    const env = await withEnv({ KEEP_ME: "ambient" }, async () => {
-      const result = await runAgent(profileFor("probe", { envPassthrough: ["PATH", "KEEP_ME"] }), {
+  test("the call's env wins over the ambient environment and over the resolved directories", async () => {
+    const env = await withEnv({ FOO: "ambient" }, async () => {
+      const result = await runAgent(profileFor("probe"), {
         dispatch: { prompt: "go" },
-        env: { KEEP_ME: "call", AKM_CONFIG_DIR: "/call/config" },
+        env: { FOO: "call", AKM_CONFIG_DIR: "/call/config" },
       });
       return probed(result.stdout).env;
     });
-    expect(env.KEEP_ME).toBe("call");
+    expect(env.FOO).toBe("call");
     expect(env.AKM_CONFIG_DIR).toBe("/call/config");
   });
 
   // Usage-event provenance (AKM_EVENT_SOURCE) must survive the agent boundary: a nested agent
   // inherits the source its parent stamped, so its own akm reads log as machine traffic, not
   // user demand.
-  test("built-in profiles pass AKM_EVENT_SOURCE through to the spawned agent", async () => {
-    const opencode = getBuiltinAgentProfile("opencode");
-    if (!opencode) throw new Error("opencode built-in profile missing");
-    expect(opencode.envPassthrough).toContain("AKM_EVENT_SOURCE");
-
+  test("AKM_EVENT_SOURCE reaches the spawned agent", async () => {
     const env = await withEnv({ AKM_EVENT_SOURCE: "task" }, async () => {
-      const result = await runAgent(
-        { ...opencode, bin: program("probe"), stdio: "captured" },
-        {
-          dispatch: { prompt: "go" },
-        },
-      );
+      const result = await runAgent(profileFor("probe", { platform: "opencode" }), { dispatch: { prompt: "go" } });
       return probed(result.stdout).env;
     });
     expect(env.AKM_EVENT_SOURCE).toBe("task");
-  });
-
-  // opencode finds its provider config, auth, package cache and state through the XDG base-directory
-  // variables, so an akm that runs under a custom XDG_CONFIG_HOME must hand it to the child, or the
-  // child reads $HOME's defaults instead.
-  test("the XDG base-directory variables reach an opencode child with the values akm was given", async () => {
-    const opencode = getBuiltinAgentProfile("opencode");
-    if (!opencode) throw new Error("opencode built-in profile missing");
-    const env = await withEnv(
-      {
-        XDG_CONFIG_HOME: "/sandbox/config",
-        XDG_DATA_HOME: "/sandbox/data",
-        XDG_CACHE_HOME: "/sandbox/cache",
-        XDG_STATE_HOME: "/sandbox/state",
-        AMBIENT_CLOUD_TOKEN: "must-not-leak",
-      },
-      async () => {
-        const result = await runAgent(
-          { ...opencode, bin: program("probe"), stdio: "captured" },
-          {
-            dispatch: { prompt: "go" },
-          },
-        );
-        return probed(result.stdout).env;
-      },
-    );
-    expect(env).toMatchObject({
-      XDG_CONFIG_HOME: "/sandbox/config",
-      XDG_DATA_HOME: "/sandbox/data",
-      XDG_CACHE_HOME: "/sandbox/cache",
-      XDG_STATE_HOME: "/sandbox/state",
-    });
-    expect(env).not.toHaveProperty("AMBIENT_CLOUD_TOKEN");
   });
 });
 

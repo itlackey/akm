@@ -18,7 +18,7 @@ import {
 export class GeminiHarness implements AkmHarness {
   readonly id = "gemini" as const;
   readonly displayName = "Gemini CLI";
-  readonly profile = { bin: "gemini", args: [], envPassthrough: ["GEMINI_API_KEY", "GOOGLE_API_KEY"] };
+  readonly profile = { bin: "gemini", args: [] };
   // GEMINI_CLI=1 is stamped only on processes Gemini CLI spawns, so it means "running under
   // gemini"; its value is a bare flag, not a session id.
   readonly presenceEnv = ["GEMINI_CLI"] as const;

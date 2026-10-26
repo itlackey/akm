@@ -169,7 +169,7 @@ export async function runOpencodeSdk(
       live();
       const eventSource = opts.env?.AKM_EVENT_SOURCE;
       // OpenCode gives a session's commands this environment in place of the process's, so it is the one a CLI harness's child gets.
-      const env = buildChildEnv(profile, opts);
+      const env = buildChildEnv(opts);
       sessions.set(created.id, { ...settings, ...(eventSource ? { eventSource } : {}), env });
       await host.sessions.environment({ sessionID: created.id, variables: env }, { signal: run.signal });
       live();

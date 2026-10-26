@@ -71,14 +71,12 @@ export interface BuiltCommand {
   readonly stdin?: string;
 }
 
-/** The program a harness runs, and the env names it needs beyond the common set. */
+/** The program a harness runs. */
 export interface HarnessProfileDefaults {
   /** Command looked up on PATH. */
   readonly bin: string;
   /** Base args prepended to the dispatch args. */
   readonly args: readonly string[];
-  /** Env var names passed through to the child on top of the common set. */
-  readonly envPassthrough: readonly string[];
 }
 
 export interface AkmHarness extends LowerTarget {

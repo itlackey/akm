@@ -55,7 +55,7 @@ export class ClaudeHarness implements AkmHarness {
   // Home-relative config dir scanned by `akm setup` (#567). Claude Code has a
   // session-log provider, so offering it as a stash source is functional.
   readonly setupDetectionDir = ".claude";
-  readonly profile = { bin: "claude", args: [], envPassthrough: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"] };
+  readonly profile = { bin: "claude", args: [] };
   readonly models = {
     fast: "claude-haiku-4-5-20251001",
     balanced: "claude-sonnet-4-6",

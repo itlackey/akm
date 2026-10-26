@@ -104,12 +104,11 @@ describe("a run on akm's internal runtime", () => {
     expect(result.stdout).toContain("PROBE=from-akm");
   });
 
-  test("the commands it runs get the allowlist, akm's directories and the run's variables, not the rest of the process environment", async () => {
+  test("the commands it runs get akm's own environment, akm's directories and the run's variables", async () => {
     const result = await withEnv({ AKM_AMBIENT: "ambient" }, () =>
       run("MODE:env go", { env: { AKM_PROBE: "from-akm" } }),
     );
-    expect(result.stdout).toContain(`PROBE=from-akm AMBIENT= HOME=${process.env.HOME} CONFIG=${getConfigDir()}`);
-    expect(result.stdout).not.toContain("ambient");
+    expect(result.stdout).toContain(`PROBE=from-akm AMBIENT=ambient HOME=${process.env.HOME} CONFIG=${getConfigDir()}`);
   });
 
   test("a question is cancelled with a message and the run carries on", async () => {

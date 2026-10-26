@@ -85,7 +85,6 @@ describe.each(HARNESS_REGISTRY.map((h) => [h.id, h] as const))("harness contract
     expect(typeof h.build).toBe("function");
     expect(h.profile.bin).toBeTruthy();
     expect(getBuiltinAgentProfile(id)?.bin).toBe(h.profile.bin);
-    expect(getBuiltinAgentProfile(id)?.envPassthrough).toContain("PATH");
     expect(getBuiltinAgentProfile(`${id}-headless`)).toBeUndefined();
   });
 

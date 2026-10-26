@@ -19,11 +19,7 @@ import {
 export class CopilotHarness implements AkmHarness {
   readonly id = "copilot" as const;
   readonly displayName = "GitHub Copilot CLI";
-  readonly profile = {
-    bin: "copilot",
-    args: [],
-    envPassthrough: ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"],
-  };
+  readonly profile = { bin: "copilot", args: [] };
   readonly systemPrompt = false;
   readonly nativeAgent = false;
   readonly confinable = false;

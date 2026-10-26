@@ -16,7 +16,7 @@ const MODEL_ENV = "LLM_MODEL";
 export class OpenhandsHarness implements AkmHarness {
   readonly id = "openhands" as const;
   readonly displayName = "OpenHands";
-  readonly profile = { bin: "openhands", args: [], envPassthrough: ["LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL"] };
+  readonly profile = { bin: "openhands", args: [] };
   readonly systemPrompt = false;
   readonly nativeAgent = false;
   readonly confinable = false;

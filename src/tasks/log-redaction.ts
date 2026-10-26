@@ -18,13 +18,10 @@
  *
  * # Why the obvious fix is wrong
  *
- * The issue proposed reusing {@link isEnvPassthroughValueSafeToExpose} — the
- * filter the prompt path uses — over the env handed to the child. That filter
- * fails CLOSED for any name outside a 22-entry allowlist, which is right where
- * it currently runs: the prompt path filters `envPassthrough`, a short list the
- * operator explicitly declared. A command task inherits the WHOLE ambient
- * environment, so the same rule classifies essentially everything as secret.
- * Measured on a developer machine: 127 of 132 variables, 25 of them with
+ * The issue proposed treating every value of the env handed to the child as
+ * secret unless its name is known to be harmless. A command task inherits the
+ * WHOLE ambient environment, so that rule classifies essentially everything as
+ * secret. Measured on a developer machine: 127 of 132 variables, 25 of them with
  * one-character values (`SHLVL=1`, `OLDPWD=/`, `GIT_TERMINAL_PROMPT=0`).
  * Redaction is substring replacement, so those become live needles:
  *
@@ -65,7 +62,7 @@
 
 import type { AkmConfig } from "../core/config/config-types";
 import { collectCredentialValues } from "../core/config/credentials";
-import { collectSensitiveValues, isEnvPassthroughValueSafeToExpose } from "../core/redaction";
+import { collectSensitiveValues } from "../core/redaction";
 
 /**
  * Shortest value an INFERRED (name-heuristic) match may contribute as a
@@ -142,13 +139,10 @@ export function collectTaskLogSensitiveValues(input: {
   for (const name of declaredNames ?? []) addDeclared(env[name]);
 
   // (3) Inferred from the name shape. The only guessing tier, so the only one
-  // with a length floor — and still subject to the value-level check that keeps
-  // an allowlisted name from being treated as secret.
+  // with a length floor.
   for (const [name, value] of Object.entries(env)) {
     if (value === undefined || value.length < MIN_INFERRED_SECRET_LENGTH) continue;
-    if (!isInferredSecretName(name)) continue;
-    if (isEnvPassthroughValueSafeToExpose(name, value)) continue;
-    values.add(value);
+    if (isInferredSecretName(name)) values.add(value);
   }
 
   // Expands credential-bearing URLs into their embedded components. Can yield

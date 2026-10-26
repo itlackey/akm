@@ -20,7 +20,7 @@ import {
 export class PiHarness implements AkmHarness {
   readonly id = "pi" as const;
   readonly displayName = "Pi";
-  readonly profile = { bin: "pi", args: [], envPassthrough: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"] };
+  readonly profile = { bin: "pi", args: [] };
   readonly systemPrompt = true;
   readonly nativeAgent = false;
   readonly confinable = false;

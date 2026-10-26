@@ -9,7 +9,7 @@ import { agentCommand } from "../../src/commands/agent/contribute-cli";
 import type { AkmConfig } from "../../src/core/config/config-types";
 import { executeInteractiveAgentInvocation } from "../../src/integrations/agent/runner-dispatch";
 import { harnessCalls, writeFakeHarness } from "../_helpers/engine-stubs";
-import { makeSandboxDir, withEnv } from "../_helpers/sandbox";
+import { makeSandboxDir } from "../_helpers/sandbox";
 
 describe("akm agent CLI help", () => {
   test("does not expose workflow flattening or tool policy", async () => {
@@ -22,36 +22,25 @@ describe("akm agent CLI help", () => {
 });
 
 describe("akmAgentDispatch engine capability", () => {
-  test("shared prompt-free lowering preserves native TTY options and redacts passthrough credentials", async () => {
-    const secret = "sk-interactive-boundary-secret-123456";
+  test("shared prompt-free lowering preserves native TTY options", async () => {
     const calls: unknown[] = [];
-    const execution = await withEnv({ ANTHROPIC_API_KEY: secret }, () =>
-      executeInteractiveAgentInvocation(
-        {
-          config: {
-            configVersion: "0.9.0",
-            semanticSearchMode: "off",
-            harnesses: { native: { platform: "claude", bin: "/bin/true" } },
-          },
-          harness: "native",
-          timeoutMs: 0,
-          cwd: "/fixture/workspace",
+    await executeInteractiveAgentInvocation(
+      {
+        config: {
+          configVersion: "0.9.0",
+          semanticSearchMode: "off",
+          harnesses: { native: { platform: "claude", bin: "/bin/true" } },
         },
-        {
-          runAgent: async (profile, options) => {
-            calls.push({ profile: profile.name, options });
-            return {
-              ok: false,
-              exitCode: 1,
-              stdout: `stdout ${secret}`,
-              stderr: `stderr ${secret}`,
-              error: `error ${secret}`,
-              reason: "non_zero_exit",
-              durationMs: 1,
-            };
-          },
+        harness: "native",
+        timeoutMs: 0,
+        cwd: "/fixture/workspace",
+      },
+      {
+        runAgent: async (profile, options) => {
+          calls.push({ profile: profile.name, options });
+          return { ok: true, exitCode: 0, stdout: "", stderr: "", durationMs: 1 };
         },
-      ),
+      },
     );
 
     expect(calls).toHaveLength(1);
@@ -68,9 +57,6 @@ describe("akmAgentDispatch engine capability", () => {
     expect(nativeOptions.dispatch).toEqual({});
     for (const field of ["env", "signal"]) {
       expect(Object.hasOwn(nativeOptions, field)).toBe(false);
-    }
-    for (const field of [execution.result.stdout, execution.result.stderr, execution.result.error]) {
-      expect(field).not.toContain(secret);
     }
   });
 

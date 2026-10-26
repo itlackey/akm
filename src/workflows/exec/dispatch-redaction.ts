@@ -5,8 +5,7 @@
 /**
  * What a frozen-workflow unit's outcome is scrubbed of before it reaches
  * durable state: the secrets its environment bindings substituted, on top of
- * what the dispatch itself already redacted (the runner's credential and
- * unsafe passthrough values).
+ * what the dispatch itself already redacted (the runner's connection key).
  */
 
 import { collectSensitiveValues, redactSensitiveValue } from "../../core/redaction";
@@ -23,9 +22,9 @@ export interface DispatchSecretSources {
 /**
  * Every exact value that must never reach the journal from one dispatch: the
  * secrets substituted into the unit's env bindings (`dispatch.sensitiveValues`;
- * the rest of an env asset is configuration and reaches the journal as is), the
- * runner's credential and unsafe passthrough values. Read at call time, so
- * collect no earlier than the dispatch being scrubbed.
+ * the rest of an env asset is configuration and reaches the journal as is) and
+ * the runner's connection key. Read at call time, so collect no earlier than the
+ * dispatch being scrubbed.
  */
 export function collectWorkflowDispatchSensitiveValues(dispatch: DispatchSecretSources): string[] {
   const values = new Set<string>(dispatch.sensitiveValues ?? []);

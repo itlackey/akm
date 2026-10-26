@@ -62,11 +62,7 @@ export type ScheduledRowEnvironment = Readonly<Partial<Record<ScheduledTaskConte
  */
 const EXPLICIT_CONTEXT_KEYS = ["AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"] as const;
 
-/**
- * The AKM directory context of the current process. Child environments that
- * are built from an allowlist must forward this closed set explicitly so
- * nested AKM commands stay in the same installation.
- */
+/** The AKM directory context of the current process, so nested AKM commands stay in the same installation. */
 export function scheduledTaskContextEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of SCHEDULED_TASK_CONTEXT_KEYS) {

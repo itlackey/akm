@@ -10,9 +10,7 @@
  */
 import { beforeEach, describe, expect, test } from "bun:test";
 import { ConfigError } from "../../src/core/errors";
-import { isEnvPassthroughValueSafeToExpose } from "../../src/core/redaction";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
-import { collectDispatchSensitiveValues } from "../../src/integrations/agent/runner-dispatch";
 import { getHarness, HARNESS_REGISTRY } from "../../src/integrations/harnesses";
 import type { AgentDispatchRequest, BuiltCommand } from "../../src/integrations/harnesses/harness";
 import { fakeOpencodeMajor, withOpencodeOnPath } from "../_helpers/opencode-version";
@@ -37,8 +35,6 @@ interface Shell {
   model: BuiltCommand;
   /** The args that follow the program in its built-in profile. */
   authored?: readonly string[];
-  /** The env names its profile passes through beyond the common set. */
-  passthrough: readonly string[];
   /** The flag its authored `--model` is dropped for, when the model is not carried by env. */
   modelFlag?: true;
 }
@@ -48,7 +44,6 @@ const SHELLS: Record<string, Shell> = {
     headless: { argv: ["claude", "-p"], stdin: PROMPT },
     interactive: { argv: ["claude"] },
     model: { argv: ["claude", "--model", "m-1", "-p"], stdin: PROMPT },
-    passthrough: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"],
     modelFlag: true,
   },
   codex: {
@@ -59,28 +54,24 @@ const SHELLS: Record<string, Shell> = {
     model: {
       argv: ["codex", "exec", "--sandbox", "workspace-write", "--skip-git-repo-check", "--model", "m-1", "--", PROMPT],
     },
-    passthrough: ["OPENAI_API_KEY", "CODEX_HOME"],
     modelFlag: true,
   },
   pi: {
     headless: { argv: ["pi", "-p"], stdin: PROMPT },
     interactive: { argv: ["pi"] },
     model: { argv: ["pi", "--model", "m-1", "-p"], stdin: PROMPT },
-    passthrough: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
     modelFlag: true,
   },
   copilot: {
     headless: { argv: ["copilot", "--allow-all-tools", "-p", PROMPT] },
     interactive: { argv: ["copilot"] },
     model: { argv: ["copilot", "--model", "m-1", "--allow-all-tools", "-p", PROMPT] },
-    passthrough: ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"],
     modelFlag: true,
   },
   gemini: {
     headless: { argv: ["gemini", "-p", PROMPT] },
     interactive: { argv: ["gemini"] },
     model: { argv: ["gemini", "--model", "m-1", "-p", PROMPT] },
-    passthrough: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
     modelFlag: true,
   },
   aider: {
@@ -89,35 +80,24 @@ const SHELLS: Record<string, Shell> = {
     model: {
       argv: ["aider", "--no-auto-commits", "--model", "m-1", "--yes-always", "--no-pretty", `--message=${PROMPT}`],
     },
-    passthrough: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
     modelFlag: true,
   },
   amazonq: {
     headless: { argv: ["q", "chat", "--no-interactive", "--trust-all-tools", "--", PROMPT] },
     interactive: { argv: ["q", "chat"] },
     model: { argv: ["q", "chat", "--no-interactive", "--trust-all-tools", "--model", "m-1", "--", PROMPT] },
-    passthrough: ["AWS_PROFILE", "AWS_REGION"],
     modelFlag: true,
   },
   openhands: {
     headless: { argv: ["openhands", "--headless", `--task=${PROMPT}`] },
     interactive: { argv: ["openhands"] },
     model: { argv: ["openhands", "--headless", `--task=${PROMPT}`], env: { LLM_MODEL: "m-1" } },
-    passthrough: ["LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL"],
   },
   // OpenCode 1's command (pinned above); OpenCode 2's flags are under "opencode by major".
   opencode: {
     headless: { argv: ["opencode", "run"], stdin: PROMPT },
     interactive: { argv: ["opencode"] },
     model: { argv: ["opencode", "run", "--model", "m-1"], stdin: PROMPT },
-    passthrough: [
-      "OPENCODE_API_KEY",
-      "OPENCODE_CONFIG",
-      "OPENCODE_CONFIG_DIR",
-      "OPENCODE_CONFIG_CONTENT",
-      "XDG_CONFIG_HOME",
-      "XDG_DATA_HOME",
-    ],
     modelFlag: true,
   },
 };
@@ -147,15 +127,6 @@ describe.each(Object.entries(SHELLS))("harness shell: %s", (id, shell) => {
 
   test("a model is passed once", () => {
     expect(build(id, { prompt: PROMPT, model: "m-1" })).toEqual(shell.model);
-  });
-
-  test("the profile passes through the env names the program reads", () => {
-    const harness = getHarness(id);
-    expect(harness?.profile.envPassthrough).toEqual(expect.arrayContaining([...shell.passthrough]));
-    // Names a program never reads are not passed: these were invented, not real.
-    for (const invented of ["CLAUDE_CONFIG", "CODEX_CONFIG", "PI_API_KEY"]) {
-      expect(harness?.profile.envPassthrough).not.toContain(invented);
-    }
   });
 
   if (shell.modelFlag) {
@@ -466,24 +437,6 @@ describe("opencode by major", () => {
         );
         expect(built.env).toBeUndefined();
       });
-    });
-
-    test("it is passed through to the program, and shown nowhere: it can hold an apiKey", () => {
-      const harness = getHarness("opencode");
-      expect(harness?.profile.envPassthrough).toContain("OPENCODE_CONFIG_CONTENT");
-      const content = JSON.stringify(INLINE);
-      expect(isEnvPassthroughValueSafeToExpose("OPENCODE_CONFIG_CONTENT", content)).toBe(false);
-      const runner = {
-        kind: "harness",
-        name: "opencode",
-        platform: "opencode",
-        bin: "opencode",
-        args: [],
-        timeoutMs: null,
-      } as const;
-      expect(collectDispatchSensitiveValues(runner, { OPENCODE_CONFIG_CONTENT: content })).toContain(content);
-      // A path-like name is not secret: the contrast that makes the line above mean something.
-      expect(collectDispatchSensitiveValues(runner, { OPENCODE_CONFIG_DIR: "/home/me/.config/opencode" })).toEqual([]);
     });
   });
 

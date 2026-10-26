@@ -24,7 +24,6 @@
 import type { SessionLogHarness } from "../../session-logs/types";
 import type { AkmHarness } from "../harness";
 import { opencodeBuilder } from "./agent-builder";
-import { OPENCODE_ENV_PASSTHROUGH } from "./env";
 import { OpenCodeProvider } from "./session-log";
 import { isOpencode2, OPENCODE_BIN } from "./version";
 
@@ -43,7 +42,7 @@ export class OpencodeHarness implements AkmHarness {
   // session-log provider, so offering it as a stash source is functional.
   readonly setupDetectionDir = ".config/opencode";
   readonly build = opencodeBuilder.build;
-  readonly profile = { bin: OPENCODE_BIN, args: ["run"], envPassthrough: OPENCODE_ENV_PASSTHROUGH };
+  readonly profile = { bin: OPENCODE_BIN, args: ["run"] };
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Session-id env marker for run attribution.
   readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;

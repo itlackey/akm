@@ -984,8 +984,8 @@ describe("runTask — command target", () => {
   });
 
   test("ordinary command output is left intact", async () => {
-    // The over-redaction guard. Treating every non-allowlisted env value as a
-    // secret — the fix #755 literally proposed — turns this log into confetti:
+    // The over-redaction guard. Treating every env value as a secret — the fix
+    // #755 literally proposed — turns this log into confetti:
     // `SHLVL=1` alone rewrites every "1" in the output.
     echoTask("clean-output", "Build finished in 12.4s | 3 tests passed, 0 failed | wrote dist/index.js (48 KB)");
 

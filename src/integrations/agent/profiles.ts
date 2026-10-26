@@ -9,7 +9,6 @@
  * coding-agent CLI. A harness lowers canonical harness metadata into this
  * intentionally small internal shape. The wrapper is in `./spawn.ts`.
  */
-import { COMMON_SPAWN_ENV_PASSTHROUGH } from "../../core/spawn-env";
 import { HARNESS_REGISTRY } from "../harnesses";
 import type { AkmHarness } from "../harnesses/harness";
 import type { ConnectionRunner, HarnessRunner } from "./runner";
@@ -31,13 +30,6 @@ export interface AgentProfile {
   readonly args: readonly string[];
   /** Default stdio mode. Callers may override per-call. */
   readonly stdio: AgentStdioMode;
-  /**
-   * Names of environment variables that should be passed through to the
-   * child even if the caller scrubs the env (e.g. for credential vars
-   * the agent CLI needs). Always-passed for built-in profiles; user
-   * overrides may extend the list.
-   */
-  readonly envPassthrough: readonly string[];
   /** Exact model selected for this dispatch. */
   readonly model?: string;
 }
@@ -62,10 +54,6 @@ function builtinProfiles(): Record<string, AgentProfile> {
       bin: harness.profile.bin,
       args: harness.profile.args,
       stdio: "interactive",
-      // AKM_EVENT_SOURCE (in the common set) carries usage-event provenance so akm
-      // invocations a spawned agent makes are recorded as machine traffic; it is a
-      // provenance tag, never a secret.
-      envPassthrough: [...COMMON_SPAWN_ENV_PASSTHROUGH, ...harness.profile.envPassthrough],
     };
   }
   return builtins;
@@ -96,19 +84,17 @@ export function harnessProfile(runner: HarnessRunner): AgentProfile {
     bin: runner.bin,
     args: runner.args,
     stdio: "captured",
-    envPassthrough: getBuiltinAgentProfile(runner.platform)?.envPassthrough ?? [],
     ...(runner.model ? { model: runner.model } : {}),
   };
 }
 
-/** The profile of akm's own runtime, the embedded OpenCode that runs agent work over a connection. It spawns nothing; its shell gets the common environment. */
+/** The profile of akm's own runtime, the embedded OpenCode that runs agent work over a connection. It spawns nothing. */
 export function runtimeProfile(connection: ConnectionRunner): AgentProfile {
   return {
     name: connection.name,
     bin: "",
     args: [],
     stdio: "captured",
-    envPassthrough: [...COMMON_SPAWN_ENV_PASSTHROUGH],
     model: connection.model,
   };
 }

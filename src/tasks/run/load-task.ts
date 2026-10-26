@@ -161,8 +161,7 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
     bundleName,
     bundleRoot: bundleDir,
     config,
-    // Agent profiles build child env from an allowlist, so freeze the closed
-    // AKM directory context the scheduled row set before command preparation.
+    // Freeze the AKM directory context the scheduled row set before command preparation.
     ...(options.scheduled ? { schedulerContext: scheduledTaskContextEnv() } : {}),
     resolveAsset: async ({ bundle, type, name }) => {
       if (bundle === bundleName) {

@@ -184,20 +184,11 @@ describe("runExecution routes each runner kind to its transport", () => {
 });
 
 describe("collectDispatchSensitiveValues", () => {
-  test("an agent unit's bound env is configuration; the credential and an unsafe passthrough value still count", () => {
-    const harnessValues = collectDispatchSensitiveValues(claudeHarness, {
-      PATH: "/safe/bin",
-      ANTHROPIC_API_KEY: "UNSAFE-PASSTHROUGH",
-    });
-    expect(harnessValues).toContain("UNSAFE-PASSTHROUGH");
-    expect(harnessValues).not.toContain("https://hooks.example.test/inbox/7");
-    expect(harnessValues).not.toContain("1234567890");
-
-    const connectionValues = collectDispatchSensitiveValues(
-      { ...lab, apiKey: "$LAB_KEY" },
-      { LAB_KEY: "ENGINE-CREDENTIAL" },
-    );
-    expect(connectionValues).toEqual(["ENGINE-CREDENTIAL"]);
+  test("the key of the connection a dispatch runs on counts; a harness has none of akm's", () => {
+    expect(collectDispatchSensitiveValues({ ...lab, apiKey: "$LAB_KEY" }, { LAB_KEY: "ENGINE-CREDENTIAL" })).toEqual([
+      "ENGINE-CREDENTIAL",
+    ]);
+    expect(collectDispatchSensitiveValues(claudeHarness, { ANTHROPIC_API_KEY: "THE-USERS-OWN-KEY" })).toEqual([]);
   });
 
   test("a connection's stored key counts too, and reading it for redaction does not warn", () => {
@@ -205,99 +196,26 @@ describe("collectDispatchSensitiveValues", () => {
   });
 });
 
-describe("runExecution redacts what the child could have seen", () => {
-  test("the connection's credential and non-allowlisted passthrough values, but not bound env", async () => {
-    const values = {
-      credential: "CREDENTIAL-ECHO-SENTINEL",
-      binding: "BINDING-ECHO-SENTINEL",
-      passthrough: "PASSTHROUGH-ECHO-SENTINEL",
-      safePath: "/safe/runtime/path",
-      safeClaudeConfig: "/safe/claude.json",
-      safeEventSource: "improve",
-    };
+describe("runExecution redacts the key of the connection it ran on", () => {
+  test("from every field of the result, and not the unit's bound env", async () => {
+    const values = { credential: "CREDENTIAL-ECHO-SENTINEL", binding: "BINDING-ECHO-SENTINEL" };
     const echoed = Object.values(values).join(" | ");
-    const result = await withEnv(
-      { ANTHROPIC_API_KEY: values.passthrough, CLAUDE_CONFIG_DIR: values.safeClaudeConfig },
-      () =>
-        runExecution(
-          built(claudeHarness, "p", {
-            environment: { BOUND_VALUE: values.binding, AKM_EVENT_SOURCE: values.safeEventSource },
-          }),
-          { runAgent: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed }) },
-        ),
-    );
-
-    expect(JSON.stringify(result)).not.toContain(values.passthrough);
-    for (const nonsecret of [values.binding, values.safePath, values.safeClaudeConfig, values.safeEventSource]) {
-      expect(JSON.stringify(result)).toContain(nonsecret);
-    }
-    expect(result.stdout.match(/\[REDACTED\]/g)).toHaveLength(1);
-
-    const viaConnection = await withEnv({ LAB_KEY: values.credential }, () =>
+    const result = await withEnv({ LAB_KEY: values.credential }, () =>
       runExecution(built({ ...lab, apiKey: "$LAB_KEY" }, "p", { environment: { BOUND_VALUE: values.binding } }), {
         runSdk: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed }),
       }),
     );
-    expect(JSON.stringify(viaConnection)).not.toContain(values.credential);
-    expect(JSON.stringify(viaConnection)).toContain(values.binding);
+    expect(JSON.stringify(result)).not.toContain(values.credential);
+    expect(JSON.stringify(result)).toContain(values.binding);
+    expect(result.stdout.match(/\[REDACTED\]/g)).toHaveLength(1);
   });
 
-  // The XDG directories and OPENCODE_CONFIG_DIR are paths, like HOME and TMPDIR: an opencode child that echoes the
-  // config directory it read (in an error, say) must not have it scrubbed to [REDACTED].
-  test("not the directories an opencode child was given", async () => {
-    const directories = {
-      OPENCODE_CONFIG_DIR: "/sandbox/opencode-config",
-      XDG_CONFIG_HOME: "/sandbox/xdg-config",
-      XDG_DATA_HOME: "/sandbox/xdg-data",
-      XDG_CACHE_HOME: "/sandbox/xdg-cache",
-      XDG_STATE_HOME: "/sandbox/xdg-state",
-    };
-    const echoed = Object.values(directories).join(" | ");
-    const result = await withEnv(directories, () =>
-      runExecution(built(opencodeHarness), {
-        runAgent: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed }),
-      }),
+  test("a harness's output is returned as the program wrote it", async () => {
+    const echoed = "THE-USERS-OWN-KEY | /their/claude/config";
+    const result = await withEnv({ ANTHROPIC_API_KEY: "THE-USERS-OWN-KEY" }, () =>
+      runExecution(built(claudeHarness), { runAgent: async () => okResult(echoed) }),
     );
-
     expect(result.stdout).toBe(echoed);
-    expect(result.stderr).toBe(echoed);
-    expect(result.error).toBe(echoed);
-    expect(result.stdout).not.toContain("[REDACTED]");
-  });
-
-  test("credential-bearing values even when their passthrough names are allowlisted", async () => {
-    const cases = [
-      // [platform, allowlisted name, value, the credential inside it]
-      ["openhands", "LLM_BASE_URL", "https://user:password@example.test/v1", "password"],
-      [
-        "amazonq",
-        "AWS_PROFILE",
-        "https://example.test/object?X-Amz-Credential=owner&X-Amz-Signature=signed-secret",
-        "signed-secret",
-      ],
-      [
-        "opencode",
-        "OPENCODE_CONFIG",
-        "https://example.test/token?client_assertion=RUNNER%2BASSERTION%2BSENTINEL",
-        "RUNNER+ASSERTION+SENTINEL",
-      ],
-      [
-        "claude",
-        "CLAUDE_CONFIG_DIR",
-        "https://example.test/#/oauth/callback?code_verifier=RUNNER%20PKCE%20SENTINEL",
-        "RUNNER PKCE SENTINEL",
-      ],
-    ] as const;
-    for (const [platform, name, value, secret] of cases) {
-      const runner: HarnessRunner = { ...opencodeHarness, platform, bin: platform, args: [] };
-      const echoed = `${value} | ${secret}`;
-      const result = await withEnv({ [name]: value }, () =>
-        runExecution(built(runner), { runAgent: async () => ({ ...okResult(echoed) }) }),
-      );
-      expect(JSON.stringify(result), `${platform} ${name}`).not.toContain(value);
-      expect(JSON.stringify(result), `${platform} ${name}`).not.toContain(secret);
-      expect(result.stdout).toBe("[REDACTED] | [REDACTED]");
-    }
   });
 });
 

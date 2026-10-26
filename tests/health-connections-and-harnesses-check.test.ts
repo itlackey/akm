@@ -17,7 +17,6 @@ import {
 } from "../src/commands/health/connections-and-harnesses-check";
 import type { HealthCheckResult } from "../src/commands/health/types";
 import type { AkmConfig } from "../src/core/config/config";
-import { withEnv } from "./_helpers/sandbox";
 
 const cfg = (partial: Partial<AkmConfig> = {}): AkmConfig => ({ semanticSearchMode: "off", ...partial });
 const MODELS = { fast: "small", balanced: "mid", reasoning: "big" };
@@ -75,27 +74,6 @@ describe("runConnectionsAndHarnessesCheck", () => {
     expect(rows[0]).toMatchObject({ reachable: true, key: "none", default: true });
     expect(rows[1]).toMatchObject({ installed: true, version: "2.1.0 (Claude Code)" });
     expect(probed).toEqual(["http://localhost:11434/v1"]);
-  });
-
-  test("a harness's --version runs with the allowlisted environment, not akm's whole one", async () => {
-    let given: NodeJS.ProcessEnv | undefined;
-    const spawn = ((_bin: string, _args: string[], options: { env?: NodeJS.ProcessEnv }) => {
-      given = options.env;
-      return { status: 0, stdout: "2.1.0\n", stderr: "" };
-    }) as unknown as typeof spawnSync;
-
-    await withEnv({ AKM_PROBE_SECRET: "synthetic", HOME: "/h" }, () =>
-      runConnectionsAndHarnessesCheck({
-        loadConfig: () => config,
-        probeReachable: async () => ({ reachable: true }),
-        which: onPath("claude"),
-        spawnSync: spawn,
-        env: {},
-      }),
-    );
-
-    expect(given?.HOME).toBe("/h");
-    expect(given?.AKM_PROBE_SECRET).toBeUndefined();
   });
 
   test("an endpoint that does not answer is a warning naming the connection and why", async () => {

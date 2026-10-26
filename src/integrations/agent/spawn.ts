@@ -16,8 +16,7 @@
  * touches a model. Agents are reachable only via shell-out.
  */
 import { ConfigError } from "../../core/errors";
-import { akmLocations } from "../../core/paths";
-import { collectAllowlistedEnv } from "../../core/spawn-env";
+import { childProcessEnv } from "../../core/paths";
 import { runManagedSubprocess, type StreamReadResult, streamCaptureFailure } from "../../core/subprocess";
 import { getHarness } from "../harnesses";
 import type { AgentDispatchRequest } from "../harnesses/harness";
@@ -82,7 +81,7 @@ export interface RunAgentOptions {
   stdio?: AgentStdioMode;
   /** Override the profile/global timeout (ms). null = no timeout (runs until the process exits). */
   timeoutMs?: number | null;
-  /** Extra env vars for the child, over what the profile passes through. */
+  /** Extra env vars for the child, over the environment akm runs in. */
   env?: Record<string, string>;
   /** Working directory for the child. */
   cwd?: string;
@@ -128,15 +127,14 @@ export interface AgentRunResult {
 }
 
 /**
- * The child's env, lowest precedence first: the directories this akm resolved, so
- * a child that runs `akm` uses the same installation; what the profile passes
- * through from this process (the allowlist also supplements PATH for scheduler
- * contexts where the inherited PATH is stripped); then the call's `env`. The one
+ * The child's env, lowest precedence first: the environment akm runs in with the
+ * directories this akm resolved set over it, so a child that runs `akm` uses the
+ * same installation ({@link childProcessEnv}); then the call's `env`. The one
  * environment policy for anything an agent run starts: a CLI harness's child, and
  * the shell of an embedded session.
  */
-export function buildChildEnv(profile: AgentProfile, options: Pick<RunAgentOptions, "env">): Record<string, string> {
-  return { ...akmLocations(), ...collectAllowlistedEnv(profile.envPassthrough), ...options.env };
+export function buildChildEnv(options: Pick<RunAgentOptions, "env">): Record<string, string> {
+  return { ...childProcessEnv(), ...options.env };
 }
 
 /**
@@ -202,7 +200,7 @@ export async function runAgent(profile: AgentProfile, options: RunAgentOptions =
   const start = Date.now();
   const result = await runManagedSubprocess([...built.argv], {
     capture: stdioMode === "captured",
-    env: { ...buildChildEnv(profile, options), ...built.env },
+    env: { ...buildChildEnv(options), ...built.env },
     ...(options.cwd ? { cwd: options.cwd } : {}),
     ...(built.stdin !== undefined ? { stdin: built.stdin } : {}),
     timeoutMs,

@@ -34,7 +34,7 @@ export class CodexHarness implements AkmHarness {
   readonly displayName = "OpenAI Codex CLI";
   // No `setupDetectionDir`: `~/.codex` holds credentials and session rollouts,
   // not assets, so `akm setup` must not offer it as a stash source.
-  readonly profile = { bin: "codex", args: [], envPassthrough: ["OPENAI_API_KEY", "CODEX_HOME"] };
+  readonly profile = { bin: "codex", args: [] };
   // CODEX_SANDBOX is stamped only on processes codex itself spawns inside its sandbox, so it
   // means "running under codex"; its value (e.g. "seatbelt") is a sandbox mode, not a session id.
   readonly presenceEnv = ["CODEX_SANDBOX"] as const;

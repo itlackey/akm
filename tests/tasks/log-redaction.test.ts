@@ -8,7 +8,7 @@
  *
  * The failure this guards against in BOTH directions: a configured secret
  * echoed by a scheduled command was persisted verbatim, and the obvious fix
- * (treat every non-allowlisted env value as secret) would have turned ordinary
+ * (treat every env value as secret) would have turned ordinary
  * build output into `[REDACTED]` confetti. The over-redaction cases below are
  * not padding — they are the reason the collector is shaped the way it is.
  */
@@ -124,12 +124,6 @@ describe("collectTaskLogSensitiveValues (#755)", () => {
       npm_config_registry: "https://registry.npmjs.org/",
     };
     expect(collectTaskLogSensitiveValues({ env })).toEqual([]);
-  });
-
-  test("an allowlisted name is not treated as secret even when its shape matches", () => {
-    // LLM_BASE_URL is policy-allowlisted; a plain URL there is configuration.
-    const values = collectTaskLogSensitiveValues({ env: { LLM_BASE_URL: "https://api.example.com/v1" } });
-    expect(values).not.toContain("https://api.example.com/v1");
   });
 
   test("end to end: the secret goes, the log survives", () => {

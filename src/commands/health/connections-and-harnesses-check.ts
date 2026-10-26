@@ -13,9 +13,7 @@
 import { spawnSync } from "node:child_process";
 import { type AkmConfig, ambiguousDefaultAdvice, loadConfig } from "../../core/config/config";
 import { defaultWhich, type WhichFn } from "../../integrations/agent/detect";
-import { harnessProfile } from "../../integrations/agent/profiles";
 import { resolveTarget } from "../../integrations/agent/resolution";
-import { buildChildEnv } from "../../integrations/agent/spawn";
 import { type ChatCompletionConfig, probeEndpointOnce } from "../../llm/client";
 import { type TargetRow, targetRows } from "../targets";
 import type { HealthCheckResult } from "./types";
@@ -58,7 +56,6 @@ function harnessVersions(config: AkmConfig, which: WhichFn, spawn: typeof spawnS
       const result = spawn(target.bin, ["--version"], {
         encoding: "utf8",
         timeout: VERSION_TIMEOUT_MS,
-        env: buildChildEnv(harnessProfile(target), {}),
       });
       if ((result.status ?? 1) === 0) versions.set(name, String(result.stdout).trim().split("\n")[0] || undefined);
     } catch {

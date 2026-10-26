@@ -20,7 +20,7 @@ import {
 export class AmazonqHarness implements AkmHarness {
   readonly id = "amazonq" as const;
   readonly displayName = "Amazon Q Developer CLI";
-  readonly profile = { bin: "q", args: [], envPassthrough: ["AWS_PROFILE", "AWS_REGION"] };
+  readonly profile = { bin: "q", args: [] };
   readonly systemPrompt = false;
   readonly nativeAgent = false;
   readonly confinable = false;

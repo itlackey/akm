@@ -19,7 +19,6 @@ describe("built-in agent harness profiles", () => {
     for (const name of expected) {
       const profile = getBuiltinAgentProfile(name);
       expect(profile?.bin).toBeTruthy();
-      expect(profile?.envPassthrough).toContain("PATH");
     }
   });
 

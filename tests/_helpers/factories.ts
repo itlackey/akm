@@ -99,7 +99,6 @@ export function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile
     bin: "fake-agent",
     args: [],
     stdio: "captured",
-    envPassthrough: ["PATH"],
     ...overrides,
   };
 }
