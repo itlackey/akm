@@ -30,9 +30,8 @@ export function materializeFrozenWorkflowEnvironment(
       values[descriptor.name] = descriptor.value;
       continue;
     }
-    // `pass_env` names reach the exec child through its allowlist
-    // (`execAllowlist`, exec-unit.ts), not as bindings. Their values are
-    // deliberately not redacted, so they are neither read nor marked sensitive here.
+    // `pass_env` names are recorded in the plan and select nothing: the exec child inherits
+    // akm's environment (exec-unit.ts), so they are neither read nor marked sensitive here.
     if (descriptor.kind === "pass-through") continue;
     const binding = resolveEnvBinding(descriptor.ref);
     Object.assign(values, binding.values);

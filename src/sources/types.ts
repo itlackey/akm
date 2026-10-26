@@ -164,8 +164,8 @@ export interface WorkflowStepOrchestrationSummary {
   /**
    * An exec (shell) unit's dispatch. `command` is the argv verbatim — the
    * words that will actually be spawned, never shell-parsed and never clipped,
-   * so what `show` prints is what runs. `passEnv`/`inheritEnv` describe the
-   * child's environment SCOPE by variable name; no value is ever projected.
+   * so what `show` prints is what runs. `passEnv` is the variable names the
+   * author listed; no value is ever projected.
    *
    * The SHARED projection shape (`WorkflowExec`, `workflows/plan.ts`), not a mirror
    * of it: a field added there must not be able to reach the frozen plan while

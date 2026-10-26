@@ -957,17 +957,19 @@ function parseExec(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Workf
 }
 
 /**
- * `pass_env:` — extra parent-process env var NAMES the child may see on top of
- * the default allowlist. NAMES ONLY: a value would be a plaintext secret in the
- * frozen plan, which is exactly what `env:` bindings exist to avoid.
+ * `pass_env:` — env var NAMES, recorded in the frozen plan. They select nothing:
+ * an exec child inherits akm's environment, so a workflow written before that
+ * still parses. NAMES ONLY: a value would be a plaintext secret in the frozen
+ * plan, which is exactly what `env:` bindings exist to avoid.
  */
 function parseExecPassEnv(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): string[] | undefined {
   if (raw === undefined) return undefined;
   if (!Array.isArray(raw) || raw.length === 0) {
     ctx.err(
       path,
-      `${stepLabel} "exec.pass_env" must be a non-empty list of environment variable NAMES to copy through from ` +
-        `akm's own environment, e.g. pass_env: [CARGO_HOME]. Values never appear here — use "env:" bindings for those.`,
+      `${stepLabel} "exec.pass_env" must be a non-empty list of environment variable NAMES, e.g. ` +
+        `pass_env: [CARGO_HOME]. It has no effect: the command inherits akm's environment. Values never appear ` +
+        `here — use "env:" bindings for those.`,
     );
     return undefined;
   }

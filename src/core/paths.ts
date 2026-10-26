@@ -414,6 +414,19 @@ export function akmLocations(): Record<string, string> {
   return locations;
 }
 
+/**
+ * The environment of a process akm starts for the user: akm's own, as the program
+ * has it when the user runs it from their shell, with {@link akmLocations} set over
+ * it. akm filters nothing.
+ */
+export function childProcessEnv(): Record<string, string> {
+  const inherited: Record<string, string> = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined) inherited[name] = value;
+  }
+  return { ...inherited, ...akmLocations() };
+}
+
 // ── Scheduled-task runtime directory (logs; run history lives in state.db) ───
 
 export function getTaskLogDir(): string {

@@ -24,7 +24,7 @@ import { readStream } from "../../../src/core/subprocess";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { formatWorkflowStatusPlain } from "../../../src/output/text/workflow-format";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { EXEC_DEFAULT_ENV_PASSTHROUGH, runExecUnit } from "../../../src/workflows/exec/exec-unit";
+import { runExecUnit } from "../../../src/workflows/exec/exec-unit";
 import {
   defaultUnitDispatcher,
   executeStepPlan as executeFrozenStepPlan,
@@ -337,12 +337,8 @@ describe("exec unit — timeout and abort really kill the process", () => {
   }, 30_000);
 });
 
-describe("exec unit — the child environment is an ALLOWLIST", () => {
-  /**
-   * A name that is NOT on {@link EXEC_DEFAULT_ENV_PASSTHROUGH} and is really
-   * present in this test process's environment — the stand-in for the unrelated
-   * credentials an interactive shell or a CI job routinely exports.
-   */
+describe("exec unit — the child environment is akm's own", () => {
+  /** A name nothing in akm lists, really present in this test process's environment. */
   const PROBE = "EXEC_UNIT_AMBIENT_PROBE";
   const PROBE_VALUE = "ambient-value-from-the-akm-process";
   let priorProbe: string | undefined;
@@ -356,64 +352,8 @@ describe("exec unit — the child environment is an ALLOWLIST", () => {
     else process.env[PROBE] = priorProbe;
   });
 
-  /** A child that reports the exact env names/values this assertion cares about. */
-  const REPORT = bunArgv(
-    "process.stdout.write(JSON.stringify({" +
-      "PATH: process.env.PATH ?? null, HOME: process.env.HOME ?? null, " +
-      "probe: process.env.EXEC_UNIT_AMBIENT_PROBE ? 'present' : null, " +
-      // Length, not the value: a resolved binding value is scrubbed out of the
-      // artifact by the redaction contract, which is exactly as intended.
-      "binding: process.env.DEPLOY_TOKEN ? 'len=' + process.env.DEPLOY_TOKEN.length : null, " +
-      "runId: process.env.AKM_RUN_ID ?? null, " +
-      'windows: ["SystemRoot", "SystemDrive", "WINDIR", "COMSPEC", "PATHEXT"]' +
-      ".filter((n) => process.env[n] !== undefined)}))",
-  );
-
-  async function report(unitLines: string[], ctx: Partial<StepExecutionContext> = {}) {
-    seedRun(["work"]);
-    const plan = execPlan(["    unit:", "      exec:", `        command: ${JSON.stringify(REPORT)}`, ...unitLines]);
-    storePlan(plan);
-    const result = await run(plan, ctx);
-    expect(result.ok).toBe(true);
-    return JSON.parse(String(result.evidence.output)) as {
-      PATH: string | null;
-      HOME: string | null;
-      probe: string | null;
-      binding: string | null;
-      runId: string | null;
-      windows: string[];
-    };
-  }
-
-  test("PATH and HOME (and, on Windows, the process-creation essentials) arrive by default", async () => {
-    const env = await report([]);
-    expect(env.PATH).toBeTruthy();
-    expect(env.HOME).toBe(process.env.HOME ?? null);
-    // Windows cannot even CREATE a process without these; the allowlist carries
-    // whichever of them the host actually defines, and on POSIX that is none.
-    const expectedWindows = ["SystemRoot", "SystemDrive", "WINDIR", "COMSPEC", "PATHEXT"].filter(
-      (name) => process.env[name] !== undefined,
-    );
-    expect(env.windows.sort()).toEqual(expectedWindows.sort());
-    if (process.platform === "win32") expect(env.windows).toContain("SystemRoot");
-  });
-
-  test("REGRESSION: a parent env var that is NOT on the allowlist is ABSENT from the child", async () => {
-    // The core of the model: `EXEC_UNIT_AMBIENT_PROBE` is genuinely set in this
-    // process, and the command still cannot see it.
-    expect(process.env[PROBE]).toBe(PROBE_VALUE);
-    expect((await report([])).probe).toBeNull();
-  });
-
-  test("`pass_env` widens the allowlist by NAME", async () => {
-    const env = await report([`        pass_env: [${PROBE}]`]);
-    expect(env.probe).toBe("present");
-    expect(env.PATH).toBeTruthy();
-  });
-
-  /** Run a child that reports the AKM location variables it sees. */
-  async function reportLocations(unitLines: string[] = []): Promise<Record<string, string | null>> {
-    const names = ["AKM_BUNDLE_DIR", "AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"];
+  /** Run a child that reports `names` from its environment, `null` for one it does not have. */
+  async function reportEnv(names: string[], unitLines: string[] = []): Promise<Record<string, string | null>> {
     seedRun(["work"]);
     const plan = execPlan([
       "    unit:",
@@ -431,12 +371,29 @@ describe("exec unit — the child environment is an ALLOWLIST", () => {
     return JSON.parse(String(result.evidence.output)) as Record<string, string | null>;
   }
 
+  test("a variable of akm's own environment reaches the command, as it would from the user's shell", async () => {
+    const env = await reportEnv([PROBE, "PATH", "HOME"]);
+    expect(env.EXEC_UNIT_AMBIENT_PROBE).toBe(PROBE_VALUE);
+    expect(env.PATH).toBe(process.env.PATH ?? null);
+    expect(env.HOME).toBe(process.env.HOME ?? null);
+  });
+
+  test("the engine's AKM_* context is set over it", async () => {
+    const env = await reportEnv(["AKM_RUN_ID", "AKM_STEP_ID", "AKM_UNIT_ID", "AKM_PARAMS"]);
+    expect(env.AKM_RUN_ID).toBe(RUN_ID);
+    expect(env.AKM_STEP_ID).toBe("work");
+    expect(env.AKM_UNIT_ID).toBeTruthy();
+    expect(env.AKM_PARAMS).toBe("{}");
+  });
+
   test("the child sees the parent's EFFECTIVE akm directories, including ones that come from XDG_*_HOME", async () => {
     // The sandbox sets XDG_*_HOME and no AKM_{CONFIG,DATA,CACHE,STATE}_DIR, as an operator using XDG does.
     expect(process.env.AKM_CONFIG_DIR).toBeUndefined();
     expect(process.env.XDG_CONFIG_HOME).toBeTruthy();
     expect(process.env.AKM_BUNDLE_DIR).toBeTruthy();
-    expect(await reportLocations()).toEqual({
+    expect(
+      await reportEnv(["AKM_BUNDLE_DIR", "AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"]),
+    ).toEqual({
       AKM_BUNDLE_DIR: process.env.AKM_BUNDLE_DIR as string,
       AKM_CONFIG_DIR: getConfigDir(),
       AKM_DATA_DIR: getDataDir(),
@@ -449,49 +406,10 @@ describe("exec unit — the child environment is an ALLOWLIST", () => {
     const prior = process.env.AKM_BUNDLE_DIR;
     delete process.env.AKM_BUNDLE_DIR;
     try {
-      expect((await reportLocations()).AKM_BUNDLE_DIR).toBeNull();
+      expect((await reportEnv(["AKM_BUNDLE_DIR"])).AKM_BUNDLE_DIR).toBeNull();
     } finally {
       if (prior !== undefined) process.env.AKM_BUNDLE_DIR = prior;
     }
-  });
-
-  test("an explicit `pass_env` of a location variable wins over the resolved directory", async () => {
-    process.env.AKM_CONFIG_DIR = "/explicit/config";
-    try {
-      expect((await reportLocations(["        pass_env: [AKM_CONFIG_DIR]"])).AKM_CONFIG_DIR).toBe("/explicit/config");
-    } finally {
-      delete process.env.AKM_CONFIG_DIR;
-    }
-  });
-
-  test("the exported default allowlist is the single definition the child is built from", async () => {
-    // Structural pin: no name reaches the child that is not on the allowlist,
-    // a binding, or the AKM_* context. `_`/`PWD`-style shell additions are not
-    // in play because the child env is replaced wholesale, not merged.
-    seedRun(["work"]);
-    const plan = execPlan([
-      "    unit:",
-      "      exec:",
-      `        command: ${JSON.stringify(bunArgv("process.stdout.write(Object.keys(process.env).join(','))"))}`,
-    ]);
-    storePlan(plan);
-    const names = String((await run(plan)).evidence.output)
-      .split(",")
-      .filter(Boolean);
-    const allowed = new Set<string>([
-      ...EXEC_DEFAULT_ENV_PASSTHROUGH,
-      "AKM_BUNDLE_DIR",
-      "AKM_CONFIG_DIR",
-      "AKM_DATA_DIR",
-      "AKM_CACHE_DIR",
-      "AKM_STATE_DIR",
-      "AKM_RUN_ID",
-      "AKM_STEP_ID",
-      "AKM_UNIT_ID",
-      "AKM_PARAMS",
-    ]);
-    expect(names.filter((name) => !allowed.has(name))).toEqual([]);
-    expect(names).toContain("PATH");
   });
 });
 

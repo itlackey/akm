@@ -5,15 +5,13 @@
 /**
  * The `exec` unit runner — the one place a frozen workflow spawns a command:
  * argv-only, detached with a SIGINT→SIGTERM→SIGKILL ladder against the process group,
- * bounded (timeout, output bytes, context size), with an allowlisted
- * environment ({@link childEnv}). The
- * caller redacts the outcome before anything is journaled.
+ * bounded (timeout, output bytes, context size), with the environment akm runs in
+ * ({@link childEnv}). The caller redacts the outcome before anything is journaled.
  */
 
 import fs from "node:fs";
 import path from "node:path";
-import { akmLocations } from "../../core/paths";
-import { COMMON_SPAWN_ENV_PASSTHROUGH, collectAllowlistedEnv, WIN32_SPAWN_ENV_FLOOR } from "../../core/spawn-env";
+import { childProcessEnv } from "../../core/paths";
 import {
   type ManagedSubprocessResult,
   runManagedSubprocess,
@@ -40,32 +38,6 @@ import type { UnitDispatchResult } from "./unit-dispatch";
  */
 const EXEC_STDERR_DIAGNOSTIC_CLIP = WORKFLOW_UNIT_DIAGNOSTIC_CLIP - 500;
 
-/**
- * The default environment allowlist for an exec unit's child (`exec.passEnv`
- * extends it): the agent-harness baseline plus names ordinary commands need
- * and `AKM_EVENT_SOURCE`. akm's own directories are not listed: {@link childEnv}
- * sets them from the parent's effective locations. Credentials, cloud/CI vars, and proxies reach a child only through
- * `pass_env` or `env:`.
- */
-export const EXEC_DEFAULT_ENV_PASSTHROUGH: readonly string[] = [
-  // PATH, HOME, USER, LANG, LC_ALL, TERM, TMPDIR, AKM_EVENT_SOURCE
-  ...COMMON_SPAWN_ENV_PASSTHROUGH,
-  // POSIX names a raw shell command needs beyond the agent baseline
-  "LOGNAME",
-  "SHELL",
-  "LC_CTYPE",
-  "TZ",
-  // SystemRoot, SystemDrive, WINDIR, COMSPEC, PATHEXT, USERPROFILE, HOMEDRIVE,
-  // HOMEPATH, TEMP, TMP. Named here as well as appended by `spawnEnvNamesFor`
-  // because this list is consumed on POSIX too, where nothing is appended.
-  ...WIN32_SPAWN_ENV_FLOOR,
-  // Windows toolchain roots, deliberately not part of the floor
-  "APPDATA",
-  "LOCALAPPDATA",
-  "ProgramData",
-  "ProgramFiles",
-];
-
 export interface RunExecUnitInput {
   /** Journal id of the attempt, for diagnostics. */
   unitId: string;
@@ -75,7 +47,7 @@ export interface RunExecUnitInput {
    * An absolute `exec.cwd` replaces it.
    */
   baseDir: string;
-  /** Resolved `env:` binding values, merged on top of the allowlisted base environment. */
+  /** Resolved `env:` binding values, merged on top of the inherited environment. */
   env?: Record<string, string>;
   /**
    * Engine-authored `AKM_*` context (ids, params, fan-out item + index,
@@ -118,7 +90,7 @@ export async function runExecUnit(input: RunExecUnitInput): Promise<UnitDispatch
   const result = await runManagedSubprocess([...input.exec.command], {
     capture: true,
     cwd: cwd.path,
-    env: childEnv(input.exec, input.env, input.context, input.eventSource),
+    env: childEnv(input.env, input.context, input.eventSource),
     timeoutMs: input.timeoutMs,
     // stdout is the artifact; retention is bounded (discarding past the cap, never killing).
     maxOutputBytes: WORKFLOW_MAX_EXEC_OUTPUT_BYTES,
@@ -337,17 +309,16 @@ async function isExistingDirectory(candidate: string): Promise<boolean> {
 }
 
 /**
- * The child's environment, in precedence order: the parent's effective akm
- * directories; the allowlist plus `exec.passEnv`; the resolved `env:` bindings;
- * then the engine's `AKM_*` context, last so a binding cannot shadow it.
+ * The child's environment, in precedence order: akm's own with the directories
+ * this akm resolved set over it ({@link childProcessEnv}); the resolved `env:`
+ * bindings; then the engine's `AKM_*` context, last so a binding cannot shadow it.
  */
 function childEnv(
-  exec: WorkflowExecSpec,
   bindings: Record<string, string> | undefined,
   context: Record<string, string> | undefined,
   eventSource: string | undefined,
 ): Record<string, string> {
-  const env = { ...akmLocations(), ...collectAllowlistedEnv(execAllowlist(exec)) };
+  const env = childProcessEnv();
   // Only when absent from the base, and before the overlays, so ambient and authored values win.
   if (eventSource !== undefined && env.AKM_EVENT_SOURCE === undefined) {
     env.AKM_EVENT_SOURCE = eventSource;
@@ -355,11 +326,6 @@ function childEnv(
   for (const [name, value] of Object.entries(bindings ?? {})) env[name] = value;
   for (const [name, value] of Object.entries(context ?? {})) env[name] = value;
   return env;
-}
-
-/** The unit's effective allowlist: the shared default plus its own `passEnv` names. */
-function execAllowlist(exec: WorkflowExecSpec): string[] {
-  return exec.passEnv ? [...EXEC_DEFAULT_ENV_PASSTHROUGH, ...exec.passEnv] : [...EXEC_DEFAULT_ENV_PASSTHROUGH];
 }
 
 /** `argv[0]` plus its argument count — never the full argv, which can carry values. */
