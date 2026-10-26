@@ -601,6 +601,83 @@ describe("the step", () => {
     expect(fs.readFileSync(file, "utf8")).toBe("---\nname: review\nakm:\n  connection: lab\n---\nReview it.\n");
   });
 
+  /** A sibling of the stash, configured as an enabled bundle, whose command must still be rewritten. */
+  function otherBundle(): { root: string; file: string } {
+    const root = path.join(storage.root, "other");
+    const file = path.join(root, FILES.command[0]);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, FILES.command[1]);
+    return { root, file };
+  }
+
+  test("a disabled bundle at the default stash is left as written, and the other bundles still migrate", async () => {
+    const home = path.join(storage.root, "home");
+    const file = path.join(home, "akm", FILES.command[0]);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, FILES.command[1]);
+    const other = otherBundle();
+    writeSandboxConfig({
+      bundles: {
+        dormant: { path: path.join(home, "akm"), enabled: false, components: { main: { root: ".", adapter: "akm" } } },
+        active: { path: other.root, components: { main: { root: ".", adapter: "akm" } } },
+      },
+      connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
+    });
+
+    const plan = await withEnv({ HOME: home, AKM_BUNDLE_DIR: undefined }, () => runMigration({ apply: true }));
+
+    expect(plan.failedSteps).toBeUndefined();
+    expect(plan.assetEngineKeys).toMatchObject({ changed: 1, applied: 1 });
+    expect(plan.assetEngineKeys?.files.map((row) => row.filePath)).toEqual([other.file]);
+    expect(fs.readFileSync(file, "utf8")).toBe(FILES.command[1]);
+    expect(fs.readFileSync(other.file, "utf8")).toContain("connection: lab");
+  });
+
+  test("a disabled bundle AKM_BUNDLE_DIR names, under any spelling of its path, is left as written", async () => {
+    const file = write(FILES.command[0], FILES.command[1]);
+    const other = otherBundle();
+    const alias = path.join(storage.root, "stash-alias");
+    fs.symlinkSync(stash(), alias, "dir");
+    writeSandboxConfig({
+      bundles: {
+        dormant: { path: stash(), enabled: false, components: { main: { root: ".", adapter: "akm" } } },
+        active: { path: other.root, components: { main: { root: ".", adapter: "akm" } } },
+      },
+      connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
+    });
+
+    for (const spelling of [stash(), alias]) {
+      const plan = await withEnv({ AKM_BUNDLE_DIR: spelling }, () => runMigration({ apply: false }));
+      expect(plan.failedSteps).toBeUndefined();
+      expect(plan.assetEngineKeys?.files.map((row) => row.filePath)).toEqual([other.file]);
+    }
+    const plan = await withEnv({ AKM_BUNDLE_DIR: alias }, () => runMigration({ apply: true }));
+    expect(plan.assetEngineKeys).toMatchObject({ changed: 1, applied: 1 });
+    expect(fs.readFileSync(file, "utf8")).toBe(FILES.command[1]);
+  });
+
+  test("a read-only bundle AKM_BUNDLE_DIR names under another spelling keeps its policy", async () => {
+    const file = write(FILES.command[0], FILES.command[1]);
+    const alias = path.join(storage.root, "stash-alias");
+    fs.symlinkSync(stash(), alias, "dir");
+    configure({
+      bundles: {
+        primary: {
+          path: stash(),
+          writable: false,
+          components: { main: { root: ".", adapter: "akm", writable: false } },
+        },
+      },
+    });
+
+    const plan = await withEnv({ AKM_BUNDLE_DIR: alias }, () => runMigration({ apply: true }));
+
+    expect(plan.failedSteps).toBeUndefined();
+    expect(plan.assetEngineKeys).toMatchObject({ changed: 0, skipped: 1 });
+    expect(plan.assetEngineKeys?.files[0]?.reason).toContain("read-only");
+    expect(fs.readFileSync(file, "utf8")).toBe(FILES.command[1]);
+  });
+
   test("a bundle with no engine keys is current, and a config with no bundle is no error", async () => {
     configure();
     write("commands/clean.md", "---\nname: clean\n---\nClean.\n");

@@ -208,7 +208,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     one backup directory per run (a name that is neither is written as
     `harness:`, with a note). `akm migrate status` and `--dry-run` list the files.
     The step reads the roots the runtime reads, the default stash (`~/akm`)
-    included when no bundle or `AKM_BUNDLE_DIR` names it.
+    included when no bundle or `AKM_BUNDLE_DIR` names it, and leaves a disabled
+    bundle as written, the default stash or the `AKM_BUNDLE_DIR` directory
+    included, under any spelling of its path.
   - A connection or harness the loader ignores stays in the file, with a note
     on what to fix; `akm migrate apply` never deletes one.
 

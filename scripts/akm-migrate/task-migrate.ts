@@ -12,7 +12,11 @@ import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
 import { deriveBundleId } from "../../src/core/bundle-id";
 import { type AkmConfig, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
-import { bundleComponentConfig, bundlesToSourceEntries } from "../../src/core/config/config-sources";
+import {
+  bundleComponentConfig,
+  bundleKeyForContentRoot,
+  bundlesToSourceEntries,
+} from "../../src/core/config/config-sources";
 import { ConfigError } from "../../src/core/errors";
 import { getDataDir } from "../../src/core/paths";
 import { resolveWritable } from "../../src/core/write-source";
@@ -133,9 +137,10 @@ export function taskRoots(config: AkmConfig, resolutionBase = process.cwd()): Ta
   }
 
   // The working stash the runtime reads besides the bundles (`AKM_BUNDLE_DIR`, else the default stash): its v2/v3
-  // task files and `engine:` keys must convert here too.
+  // task files and `engine:` keys must convert here too. A configured bundle at that directory, under any spelling,
+  // owns it as it does for the runtime: the loop above took it with that bundle's policy, or left it as disabled.
   const stashRoot = workingStash(config);
-  if (stashRoot && !rootsByPath.has(stashRoot)) {
+  if (stashRoot && !rootsByPath.has(stashRoot) && bundleKeyForContentRoot(config, stashRoot) === undefined) {
     const bundleId = deriveBundleId(undefined, stashRoot, new Set(Object.keys(config.bundles ?? {})));
     // The runtime reads this stash with the adapter it detects, or `akm`.
     const candidate = taskRoot(bundleId, stashRoot, stashRoot, detectAdapterId(stashRoot), () => true);
