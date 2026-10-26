@@ -162,8 +162,11 @@ const setupState = {
   detectAgentPlatformsResult: [] as Array<{ name: string; path: string }>,
   checkEmbeddingResult: { available: true } as
     | { available: true }
-    | { available: false; reason: "missing-package" | "model-download-failed" | "remote-unreachable"; message: string },
-  transformersAvailable: true,
+    | {
+        available: false;
+        reason: "runtime-unavailable" | "model-download-failed" | "remote-unreachable";
+        message: string;
+      },
   indexResult: makeIndexResult(),
   indexError: undefined as Error | undefined,
 };
@@ -190,7 +193,6 @@ function resetSetupState(): void {
   setupState.indexCalls.length = 0;
   setupState.detectAgentPlatformsResult = [];
   setupState.checkEmbeddingResult = { available: true };
-  setupState.transformersAvailable = true;
   setupState.indexResult = makeIndexResult();
   setupState.indexError = undefined;
 }
@@ -212,7 +214,6 @@ function installSetupSeams(): void {
     detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
   });
   overrideSeam(_setEmbedderForTests, {
-    isTransformersAvailable: () => setupState.transformersAvailable,
     checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
   });
   overrideSeam(_setAkmInitForTests, async (options?: { dir?: string }) => {
@@ -685,14 +686,14 @@ describe("runSetupWizard", () => {
     expect(saved.embedding).toEqual({ model: "nomic-embed-text" });
   });
 
-  test("warns specifically when the Transformers dependency is missing during setup prep", async () => {
+  test("warns specifically when the embedding runtime cannot load during setup prep", async () => {
     installSetupSeams();
     // The faked availability result exercises the warn-and-report path. Setup
     // must never mutate the package installation to add dependencies.
     setupState.checkEmbeddingResult = {
       available: false,
-      reason: "missing-package",
-      message: "The @huggingface/transformers dependency is unavailable.",
+      reason: "runtime-unavailable",
+      message: "Semantic search requires onnxruntime-node. Reinstall akm-cli.",
     };
 
     promptState.selects.push("default", "local", "done", "json", "brief");

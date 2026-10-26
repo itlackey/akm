@@ -36,7 +36,8 @@
   "pinNotes": {
     "better-sqlite3@12.11.1": "Exact pin (#790). This is the SQLite driver akm loads on Node (src/storage/database.ts); Bun never touches it. The pin is about PREBUILT BINARIES, not API surface. better-sqlite3 ships one prebuild per Node ABI as a GitHub release asset and its install script is `prebuild-install || node-gyp rebuild` \u2014 so any (version, Node ABI) pair with no prebuild silently COMPILES FROM SOURCE against the headers of whatever Node is on the machine that day. The 11.x line predates Node 24 and declares no `engines` at all: its newest release (11.10.0, 2025-05-08) publishes ABI 108/115/127/131 (Node 18/20/22/23) and nothing for ABI 137 (Node 24). Node 24.19.0 then changed the public `node_object_wrap.h` so `node::ObjectWrap`'s ctor/dtor register and unregister an environment cleanup hook; a from-source 11.x build against those headers aborts at teardown in `Statement::~Statement()` with `RemoveEnvironmentCleanupHook ... Assertion (env) != nullptr`, intermittently, depending on GC timing. 12.11.1 publishes ABI 127/137/141/147 (Node 22/24/25/26) and declares `engines: 20.x || 22.x || 23.x || 24.x || 25.x || 26.x`, so every Node akm supports installs a prebuilt binary and never compiles. Before bumping: confirm the target version publishes a prebuild for EVERY Node major in `engines` (probe https://github.com/WiseLibs/better-sqlite3/releases/download/vX.Y.Z/better-sqlite3-vX.Y.Z-node-vABI-linux-x64.tar.gz), not just that the version is newer. 13.x is the eventual destination \u2014 it moved to node-addon-api/N-API with prebuilds bundled in the npm tarball and no install script, which retires this failure mode entirely \u2014 but it is a fresh major rewrite of the binding, so it wants its own soak, not a patch release. The CI node-smoke job installs this exact string by reading it back out of this file (.github/workflows/ci.yml), so the two cannot drift.",
     "@ai-sdk/openai-compatible@2.0.87": "Exact pin: the version OpenCode installs for @ai-sdk/openai-compatible@ai-v6 when this was pinned. akm's runtime gives OpenCode this installed copy by file URL (src/integrations/harnesses/opencode/embedded/runner-models.ts), so OpenCode downloads nothing; re-check the tag when bumping @opencode/sdk.",
-    "@huggingface/transformers@4.2.0": "Exact semantic-search dependency pin. Re-run the real-model semantic gate before changing it.",
+    "@huggingface/tokenizers@0.1.3": "Exact pin: the tokenizer of the local embedding model (src/llm/embedders/local.ts). Pure JS with no dependencies. A different release can change the token ids and with them every stored vector, so re-run the real-model semantic gate (tests/integration/semantic-search-e2e.test.ts, which compares the vectors with tests/fixtures/embedder-reference-vectors.json) before changing it.",
+    "onnxruntime-node@1.24.3": "Exact pin: the local embedding runtime. The standalone binary embeds this version's native library from node_modules/onnxruntime-node/bin/napi-v6/ (src/standalone/native/) and its addon is bound to exactly that library, so a bump moves this pin, the library file names in src/standalone/native/ (the macOS one carries the version) and the real-model semantic gate together.",
     "effect@4.0.1": "Exact pin, the version @opencode/sdk depends on. akm hands the embedded OpenCode Layers and Effects it builds with effect (src/integrations/harnesses/opencode/embedded/), and OpenCode runs them: both must be the one copy of effect the SDK loads. A range could install a second copy beside the SDK's, so this moves together with @opencode/sdk.",
     "@opencode/sdk@2.1.4": "Exact pin, and the same for @opencode/core, @opencode/util and (a devDependency, for the `import type` of `Plugin`) @opencode/plugin. OpenCode 2 embedded in akm's process (OpenCode.create, no binary, no server). Only src/integrations/harnesses/opencode/embedded/ imports them, lazily; akm imports core and util directly (the layers it hands the embedded OpenCode replace nodes they define), and the SDK pins both at its own version, so the three move together. A bump migrates akm's own OpenCode database forward."
   },
@@ -119,7 +120,7 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "2.0.87",
     "@clack/prompts": "^1.3.0",
-    "@huggingface/transformers": "4.2.0",
+    "@huggingface/tokenizers": "0.1.3",
     "@opencode/core": "2.1.4",
     "@opencode/sdk": "2.1.4",
     "@opencode/util": "2.1.4",
@@ -129,6 +130,7 @@
     "fast-xml-parser": "^5.10.1",
     "marked": "^18.1.1",
     "node-html-parser": "^9.0.1",
+    "onnxruntime-node": "1.24.3",
     "semver": "^7.6.0",
     "turndown": "^7.2.4",
     "yaml": "^2.8.4",

@@ -23,6 +23,8 @@ export interface IndexVerification {
   semanticSearchMode: "off" | "auto";
   semanticStatus: "disabled" | SemanticSearchRuntimeStatus;
   embeddingProvider: "local" | "remote";
+  /** The runtime the local embedder embedded with in this run; absent for a remote provider or when nothing was embedded locally. */
+  embeddingRuntime?: "onnxruntime-node";
   entryCount: number;
   embeddingCount: number;
 }

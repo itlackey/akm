@@ -149,7 +149,6 @@ describe("setup's semantic-search preparation", () => {
   test("checks the endpoint of the connection that serves the embedding model, not the local model", async () => {
     let checked: unknown;
     _setEmbedderForTests({
-      isTransformersAvailable: () => false,
       checkEmbeddingAvailability: async (embedding) => {
         checked = embedding;
         return { available: true };

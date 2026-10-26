@@ -16,6 +16,7 @@ import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
+import { localEmbeddingRuntime } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 /**
@@ -1543,6 +1544,7 @@ function verifyIndexState(
 ): IndexVerification {
   const embeddingCount = getEmbeddingCount(db);
   const embeddingProvider = getEmbeddingProvider(effectiveEmbedding(config));
+  const embeddingRuntime = embeddingProvider === "local" ? localEmbeddingRuntime() : undefined;
   const verification = (
     ok: boolean,
     message: string,
@@ -1557,6 +1559,7 @@ function verifyIndexState(
     semanticSearchMode: config.semanticSearchMode,
     semanticStatus,
     embeddingProvider,
+    ...(embeddingRuntime !== undefined ? { embeddingRuntime } : {}),
     entryCount: embeddableEntries,
     embeddingCount,
   });

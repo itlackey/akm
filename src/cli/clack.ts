@@ -8,7 +8,7 @@
  * All src code imports the clack prompt API from this module (never from
  * `@clack/prompts` directly), so tests can swap the interactive surface via
  * `_setClackForTests` instead of `mock.module` — the same third-party seam
- * pattern as the `@huggingface/transformers` loader in
+ * pattern as the model loader in
  * `src/llm/embedders/local.ts`. Production behavior is byte-identical: every
  * export delegates to the real package unless a test installed a fake.
  *

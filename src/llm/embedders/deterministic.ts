@@ -8,7 +8,7 @@
  * Gated entirely behind the `AKM_EMBED_DETERMINISTIC=1` env var. When that is
  * set, the embedding facade (`../embedder.ts`) routes BOTH index-time and
  * query-time embedding through {@link deterministicEmbed} instead of the
- * @huggingface/transformers model. The result is a stable, model-free,
+ * local ONNX model. The result is a stable, model-free,
  * download-free embedding whose output is byte-identical across machines,
  * runtimes, and akm source versions.
  *

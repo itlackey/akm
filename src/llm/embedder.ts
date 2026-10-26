@@ -7,8 +7,7 @@
  *
  * The implementation has been split into:
  * - `./embedders/types`  — `EmbeddingVector`, `Embedder`, `EmbeddingCheckResult`
- * - `./embedders/local`  — `LocalEmbedder`, `DEFAULT_LOCAL_MODEL`,
- *                          `isTransformersAvailable`
+ * - `./embedders/local`  — `LocalEmbedder`, `DEFAULT_LOCAL_MODEL`
  * - `./embedders/remote` — `RemoteEmbedder`, `hasRemoteEndpoint`
  * - `./embedders/cache`  — LRU `embedCache`, `clearEmbeddingCache`,
  *                          `embedCacheKey`
@@ -27,11 +26,7 @@ import {
   deterministicEmbed,
   isDeterministicEmbedEnabled,
 } from "./embedders/deterministic";
-import {
-  DEFAULT_LOCAL_MODEL,
-  isTransformersAvailable as isTransformersAvailableReal,
-  LocalEmbedder,
-} from "./embedders/local";
+import { DEFAULT_LOCAL_MODEL, LocalEmbedder, LocalRuntimeUnavailableError } from "./embedders/local";
 import type { EmbeddingBatchCommit, EmbeddingSkipHandler } from "./embedders/remote";
 import { hasRemoteEndpoint, RemoteEmbedder } from "./embedders/remote";
 import type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
@@ -39,7 +34,7 @@ import type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 // ── Shared exports ──────────────────────────────────────────────────────────
 
 export { clearEmbeddingCache } from "./embedders/cache";
-export { _setTransformersLoaderForTests, DEFAULT_LOCAL_MODEL } from "./embedders/local";
+export { _setLocalPipelineLoaderForTests, DEFAULT_LOCAL_MODEL } from "./embedders/local";
 export type { EmbeddingBatchCommit, EmbeddingBatchSkip, EmbeddingSkipHandler } from "./embedders/remote";
 export type { EmbeddingCheckResult, EmbeddingVector } from "./embedders/types";
 
@@ -53,7 +48,6 @@ interface EmbedderOverridesForTests {
   embedBatch?: typeof embedBatch;
   resolveEmbeddingModelId?: typeof resolveEmbeddingModelId;
   checkEmbeddingAvailability?: typeof checkEmbeddingAvailability;
-  isTransformersAvailable?: () => boolean;
 }
 
 let embedderOverrides: EmbedderOverridesForTests | undefined;
@@ -63,21 +57,11 @@ export function _setEmbedderForTests(fakes?: EmbedderOverridesForTests): void {
   embedderOverrides = fakes;
 }
 
-/**
- * Check whether the external Transformers dependency is available.
- * Delegating wrapper around `./embedders/local`'s probe so tests can swap it
- * via {@link _setEmbedderForTests}.
- */
-export function isTransformersAvailable(): boolean {
-  if (embedderOverrides?.isTransformersAvailable) return embedderOverrides.isTransformersAvailable();
-  return isTransformersAvailableReal();
-}
-
 // ── Singleton local embedder ────────────────────────────────────────────────
 // `_localEmbedder` is an intentional module-level singleton but constructed
-// lazily on first use. The underlying Transformers.js pipeline is
-// expensive to initialise (model download + WASM compilation) and is safe to
-// share across calls because it is stateless once created. Deferring
+// lazily on first use. The loaded model is expensive to initialise (model
+// download, runtime and session load) and is safe to share across calls
+// because it is stateless once created. Deferring
 // construction to first call keeps the module side-effect-free at import time,
 // which matters for the test suite (single Bun process, ~120 test files).
 
@@ -98,12 +82,20 @@ export function resetLocalEmbedder(): void {
   getLocalEmbedder().reset();
 }
 
+/**
+ * The runtime the local embedder has embedded with in this process, or
+ * `undefined` when it has not loaded a model (nothing was embedded locally).
+ */
+export function localEmbeddingRuntime(): LocalEmbedder["runtime"] {
+  return _localEmbedder?.runtime;
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
  * Generate an embedding for the given text.
  * If embeddingConfig has a remote endpoint, uses the configured OpenAI-compatible endpoint.
- * Otherwise falls back to local Transformers.js using the model from
+ * Otherwise falls back to the local embedder using the model from
  * `embeddingConfig.localModel` or `DEFAULT_LOCAL_MODEL`.
  *
  * Results are cached in an LRU cache (max ~100 entries) keyed by query text
@@ -166,8 +158,8 @@ async function embedOnce(
  * sub-batch or oversized document that fails is skipped rather than
  * aborting the whole call — pass `onSkip` to learn which indices were
  * skipped and why; the result array holds `undefined` at those indices.
- * Uses the LocalEmbedder.embedBatch path for the local transformer pipeline,
- * which processes texts in chunks of 32 for genuine batched inference.
+ * Uses the LocalEmbedder.embedBatch path for the local model, which processes
+ * texts in chunks of 32 for genuine batched inference.
  *
  * `onBatch`, when given, fires once per provider/local batch as it completes
  * (#954) so a caller can commit each batch's rows durably as they land
@@ -203,7 +195,7 @@ export async function embedBatch(
     return new RemoteEmbedder(embeddingConfig).embedBatch(texts, signal, onSkip, onBatch);
   }
 
-  // Local transformer: use the batched path (chunks of 32 via LocalEmbedder).
+  // Local model: use the batched path (chunks of 32 via LocalEmbedder).
   // When a localModel override is set we cannot share the singleton (which uses
   // the default model), so fall back to per-text embedWithModel in that case.
   const localModel = embeddingConfig?.localModel;
@@ -226,7 +218,7 @@ export async function embedBatch(
 
 // `cosineSimilarity` was moved to `./embedders/types.ts` so importers
 // (notably `db.ts`) can pull the math function without dragging in this
-// module and its Transformers.js import chain.
+// module and the local embedder's import chain.
 export { cosineSimilarity } from "./embedders/types";
 
 // ── Model ID resolution ─────────────────────────────────────────────────────
@@ -238,7 +230,7 @@ export { cosineSimilarity } from "./embedders/types";
  *
  * Rules:
  *   - Remote endpoint: use `config.model` (the API-level model name).
- *   - Local transformers: use `config.localModel ?? DEFAULT_LOCAL_MODEL`.
+ *   - Local model: use `config.localModel ?? DEFAULT_LOCAL_MODEL`.
  *   - No config: use `DEFAULT_LOCAL_MODEL` (the shared singleton model).
  */
 export function resolveEmbeddingModelId(embeddingConfig?: EmbeddingConnectionConfig): string {
@@ -276,21 +268,13 @@ export async function checkEmbeddingAvailability(
       };
     }
   }
-  // Check if the package is importable before attempting the model download.
-  if (!isTransformersAvailable()) {
-    return {
-      available: false,
-      reason: "missing-package",
-      message: "The @huggingface/transformers dependency is unavailable.",
-    };
-  }
   try {
     await getLocalEmbedder().getPipeline(embeddingConfig?.localModel);
     return { available: true };
   } catch (err) {
     return {
       available: false,
-      reason: "model-download-failed",
+      reason: err instanceof LocalRuntimeUnavailableError ? "runtime-unavailable" : "model-download-failed",
       message: err instanceof Error ? err.message : String(err),
     };
   }

@@ -3,19 +3,19 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Semantic-search asset preparation for the setup wizard. Transformers.js is
- * a normal external package dependency; setup never mutates the installed CLI.
- * This module only prepares the model.
+ * Semantic-search asset preparation for the setup wizard. The embedding
+ * runtime (onnxruntime-node) is a normal package dependency; setup never
+ * mutates the installed CLI. This module only prepares the model.
  */
 
 import * as p from "../cli/clack";
 import { isHttpUrl } from "../core/common";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config/config";
-import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
+import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
 
 // Approximate first-download size of the default local model (DEFAULT_LOCAL_MODEL), used in the setup note.
-const LOCAL_MODEL_APPROX_SIZE_MB = 130;
+const LOCAL_MODEL_APPROX_SIZE_MB = 127;
 
 export function isRemoteEmbeddingConfig(embedding?: EmbeddingConnectionConfig): boolean {
   return isHttpUrl(embedding?.endpoint);
@@ -40,16 +40,6 @@ export async function prepareSemanticSearchAssets(
   const embedding = effectiveEmbedding(config);
   const remote = isRemoteEmbeddingConfig(embedding);
 
-  // Local embeddings require the declared Transformers dependency.
-  if (!remote) {
-    if (!isTransformersAvailable()) {
-      const message =
-        "The @huggingface/transformers dependency is unavailable. Reinstall akm-cli, then re-run `akm setup` or `akm index --full --verbose`.";
-      p.log.warn(message);
-      return { ok: false, reason: "missing-package", message };
-    }
-  }
-
   const spin = p.spinner();
   spin.start(
     remote
@@ -65,11 +55,9 @@ export async function prepareSemanticSearchAssets(
         "The remote embedding endpoint is not reachable. Check your endpoint and credentials, then retry `akm index --full --verbose`.",
       );
       return { ok: false, reason: "remote-network", message: "The remote embedding endpoint is not reachable." };
-    } else if (result.reason === "missing-package") {
-      p.log.warn(
-        "The @huggingface/transformers dependency is unavailable. Reinstall akm-cli, then re-run `akm setup` or `akm index --full --verbose`.",
-      );
-      return { ok: false, reason: "missing-package", message: "The local embedding runtime is unavailable." };
+    } else if (result.reason === "runtime-unavailable") {
+      p.log.warn(`${result.message}\nSet \`embedding.endpoint\` to use a remote embedding service instead.`);
+      return { ok: false, reason: "runtime-unavailable", message: result.message };
     } else {
       p.log.warn(
         `The local embedding model could not be downloaded: ${result.message}\n` +
