@@ -192,8 +192,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     by its shape.
   - The old engine names are kept in the data directory (`migrate/engine-targets.json`)
     until no `engine:` key that names one is left in a file the migration can
-    reach, so an asset in a read-only bundle, or a block it could not rewrite,
-    keeps its meaning in the meantime, as does a retired `--engine` flag. The run
+    reach, so an asset in a read-only bundle, a block it could not rewrite, or an
+    asset that is a symbolic link (read through, never rewritten) keeps its
+    meaning in the meantime, as does a retired `--engine` flag. The run
     that forgets them adds one note, `assetEngineKeys.notes`, listing each
     renamed engine with the flag that replaces `--engine <old name>`
     (`--connection` or `--harness`).

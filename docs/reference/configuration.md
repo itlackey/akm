@@ -1100,7 +1100,7 @@ asset keys move as the table says.
 | `engine`, `model`, `llm`, `timeoutMs` on a strategy's process, its `qualityGate` or its `triage.judgment` | Moved to `improve.processes.<process>` or `improve.qualityGate`, with `engine` becoming `connection` or `harness` by what it named. When that place already says, the first one is kept, with a note. |
 | `index.defaults.*`, `index.<pass>.engine` | `index.*`, and `connection`. An index pass cannot name a harness, so an engine that named one is dropped, with a note; a pass that names nothing runs where model work does: on the default connection, else the default harness. |
 | `workflow.judgeEngine` | Dropped, with a note. |
-| `engine:` in an asset's frontmatter, a workflow step or a task source | `connection:` or `harness:`, by what the configured target is; a name it cannot place becomes `harness:`, with a note. A bundle akm may not change is skipped. |
+| `engine:` in an asset's frontmatter, a workflow step or a task source | `connection:` or `harness:`, by what the configured target is; a name it cannot place becomes `harness:`, with a note. A bundle akm may not change, and an asset that is a symbolic link, are skipped. |
 
 An `engine:` key on an asset that has not been migrated is read the same way,
 with a one-time notice, and so is `--engine NAME` (hidden from `--help`): both
@@ -1112,7 +1112,9 @@ the engines had are kept in akm's data directory
 (`migrate/engine-targets.json`), and the key and the flag go on meaning the same
 engine until the migrator has rewritten every `engine:` key it can reach; an
 asset in a read-only bundle, or a block it could not splice, is rewritten under
-the same names by a later run. Then the names are forgotten, an old name that is
+the same names by a later run, and an asset that is a symbolic link is read but
+never rewritten, so it is listed as skipped and keeps the names until you change
+the file it leads to. Then the names are forgotten, an old name that is
 neither a connection nor a harness fails like any unconfigured name (exit 78),
 and the run that forgets them prints one note listing each renamed engine and
 the flag that replaces it. A script or scheduled command that passes `--engine`

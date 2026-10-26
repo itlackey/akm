@@ -66,7 +66,7 @@ function isWritable(filePath: string): boolean {
  * Visit every file ending in `extension` under `directory`, depth first in name
  * order, never leaving the root's own bundle. A symbolic link is not followed:
  * `onLink` says what it means (a task migration refuses one, an asset migration
- * leaves it alone).
+ * reads one that leads to a file and never rewrites it).
  */
 export function walkRootFiles(
   root: TaskFileRoot,

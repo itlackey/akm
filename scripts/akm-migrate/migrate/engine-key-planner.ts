@@ -22,7 +22,7 @@
  *     v4 is left whole for the task step.
  *
  * An `engine:` key that stays (a style the splice does not write, a read-only
- * bundle, a conflict) is counted in `pending`, apart from the file's outcome: the
+ * bundle, a symbolic link, a conflict) is counted in `pending`, apart from the file's outcome: the
  * old names are needed for as long as one is left, in a rewritten file too
  * ({@link pendingEngineKeys}).
  */
@@ -39,6 +39,8 @@ export interface EngineKeyFileInput {
   readonly role: EngineKeyRole;
   /** False for a bundle akm may not change (installed from a registry). */
   readonly writable: boolean;
+  /** A symbolic link, read through for its `engine:` keys and never rewritten: they stay pending. */
+  readonly link?: boolean;
 }
 
 /** What an `engine:` value now is: the key to write, and the name to write after it. */
@@ -252,6 +254,14 @@ export function planEngineKeyFile(input: EngineKeyFileInput, resolve: ResolveEng
     return planned.notes.length > 0
       ? { ...base, status: "skipped", reason: planned.notes.join(" "), pending: planned.references }
       : { ...base, status: "unchanged" };
+  }
+  if (input.link) {
+    return {
+      ...base,
+      status: "skipped",
+      reason: "it is a symbolic link, which this step does not rewrite; change the file it leads to",
+      pending: planned.references,
+    };
   }
   if (!input.writable) {
     return {

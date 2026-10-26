@@ -11,6 +11,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isFileOrFileSymlink } from "../../../src/indexer/walk/walker";
 import type { EngineKeyChange, EngineKeyFileInput, EngineKeyRole, EngineKeysPlan } from "./engine-key-planner";
 import { replaceFilesWithBackups, type TaskFileRoot, walkRootFiles } from "./task-files";
 
@@ -21,9 +22,6 @@ const STASH_DIRECTORIES: ReadonlyArray<{ dir: string; role: EngineKeyRole; exten
   { dir: "workflows", role: "workflow", extension: ".md" },
   { dir: "tasks", role: "task", extension: ".yml" },
 ];
-
-/** A file larger than this is not an asset; it is not read. */
-const MAX_ASSET_BYTES = 2 * 1024 * 1024;
 
 function collect(
   root: TaskFileRoot,
@@ -39,20 +37,32 @@ function collect(
     if ((cause as NodeJS.ErrnoException).code === "ENOENT") return;
     throw cause;
   }
-  // A link may lead anywhere; an asset behind one is the user's to rewrite.
-  if (!top.isDirectory()) return;
+  // A link to a directory in the root is not descended, as the runtime's walk does not descend one: it reads no asset
+  // behind it. The root itself is not skipped: `walkRootFiles` refuses one that is a link, as the task step does.
+  if (directory !== root.root && !top.isDirectory()) return;
   walkRootFiles(
     root,
     directory,
     extension,
-    () => undefined,
+    // A link to a file is an asset the runtime reads, so it is read through to find its `engine:` keys; it may lead
+    // anywhere, so it is never rewritten, and the planner reports it with those keys pending.
+    (link) => {
+      if (!link.endsWith(extension) || out.has(link) || !isFileOrFileSymlink(link)) return;
+      out.set(link, {
+        filePath: link,
+        bytes: fs.readFileSync(link),
+        mode: fs.statSync(link).mode & 0o777,
+        role,
+        writable: root.writable,
+        link: true,
+      });
+    },
     (candidate) => {
-      const stat = fs.lstatSync(candidate);
-      if (stat.size > MAX_ASSET_BYTES || out.has(candidate)) return;
+      if (out.has(candidate)) return;
       out.set(candidate, {
         filePath: candidate,
         bytes: fs.readFileSync(candidate),
-        mode: stat.mode & 0o777,
+        mode: fs.lstatSync(candidate).mode & 0o777,
         role,
         writable: root.writable,
       });

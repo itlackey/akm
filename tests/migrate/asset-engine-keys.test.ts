@@ -24,7 +24,7 @@ import { runMigration } from "../../scripts/akm-migrate/run-migrate";
 import { selectionFromArgs } from "../../src/cli/selection";
 import { executionDefaultsFromFrontmatter } from "../../src/core/adapter/execution-source";
 import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
-import { rememberedEngineTargets } from "../../src/core/config/retired-engines";
+import { rememberEngineTargets, rememberedEngineTargets } from "../../src/core/config/retired-engines";
 import { executionDefaultsOf } from "../../src/execution/source";
 import { resolveTarget } from "../../src/integrations/agent/resolution";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -561,6 +561,93 @@ describe("the step", () => {
     fs.writeFileSync(skipped, "---\nname: b\nakm:\n  connection: default\n---\nB.\n");
     await runMigration({ apply: true });
     expect(rememberedEngineTargets()).toEqual({});
+  });
+
+  /** A config already in the current shape, after an earlier run that remembered `lab` as the connection `default`. */
+  function rememberLabAsDefault(): void {
+    configure({ connections: { default: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } }, harnesses: {} });
+    rememberEngineTargets({ lab: { connection: "default" } });
+  }
+
+  /** The connection a command's own frontmatter selects. */
+  const commandSelects = (file: string): string => {
+    const frontmatter = parseYaml(frontmatterBlock(fs.readFileSync(file, "utf8"))) as Record<string, unknown>;
+    return resolveTarget({
+      config: loadUserConfig(),
+      layers: [executionDefaultsFromFrontmatter(frontmatter, { kind: "command" })],
+    }).name;
+  };
+
+  test("a command of any size is read and rewritten, so its selector keeps its meaning", async () => {
+    rememberLabAsDefault();
+    const file = write("commands/large.md", `---\nname: large\nengine: lab\n---\n${"text ".repeat(450_000)}`);
+    expect(fs.statSync(file).size).toBeGreaterThan(2 * 1024 * 1024);
+    expect(commandSelects(file)).toBe("default");
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.failedSteps).toBeUndefined();
+    expect(plan.assetEngineKeys).toMatchObject({ changed: 1, skipped: 0, applied: 1 });
+    expect(fs.readFileSync(file, "utf8")).toStartWith("---\nname: large\nconnection: default\n---\n");
+    expect(rememberedEngineTargets()).toEqual({});
+    expect(commandSelects(file)).toBe("default");
+  });
+
+  test("a command that is a symbolic link is read through, listed as skipped and keeps the old names until none is left", async () => {
+    rememberLabAsDefault();
+    const target = write("review-source.md", "---\nname: review\nengine: lab\n---\nReview.\n");
+    const link = path.join(stash(), "commands", "review.md");
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync("../review-source.md", link);
+    expect(commandSelects(link)).toBe("default");
+
+    const first = await runMigration({ apply: true });
+
+    expect(first.failedSteps).toBeUndefined();
+    expect(first.assetEngineKeys).toMatchObject({ changed: 0, skipped: 1 });
+    expect(first.assetEngineKeys?.files[0]).toMatchObject({ filePath: link, status: "skipped" });
+    expect(first.assetEngineKeys?.files[0]?.reason).toContain("symbolic link");
+    expect(first.assetEngineKeys?.notes).toBeUndefined();
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toContain("engine: lab");
+    expect(rememberedEngineTargets()).toEqual({ lab: { connection: "default" } });
+    expect(commandSelects(link)).toBe("default");
+
+    // The user rewrites the file the link leads to: a run that finds nothing pending forgets the old names.
+    fs.writeFileSync(target, "---\nname: review\nconnection: default\n---\nReview.\n");
+    const second = await runMigration({ apply: true });
+    expect(second.assetEngineKeys).toMatchObject({ changed: 0, skipped: 0 });
+    expect(second.assetEngineKeys?.notes?.[0]).toContain("--engine lab is now --connection default");
+    expect(rememberedEngineTargets()).toEqual({});
+    expect(commandSelects(link)).toBe("default");
+  });
+
+  test("a task bundle whose root is a symbolic link is refused, as the task step refuses it, and keeps the old names", async () => {
+    rememberLabAsDefault();
+    const real = path.join(storage.root, "task-bundle");
+    const alias = path.join(storage.root, "task-bundle-alias");
+    fs.mkdirSync(real);
+    fs.symlinkSync(real, alias, "dir");
+    const file = path.join(real, "daily.yml");
+    fs.writeFileSync(file, "version: 4\nrun: echo hi\nengine: lab\n");
+    configure({
+      bundles: {
+        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
+        tasks: { path: alias, components: { main: { root: ".", adapter: "akm-task" } } },
+      },
+      connections: { default: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
+      harnesses: {},
+    });
+
+    const plan = await runMigration({ apply: true });
+
+    const failed = (plan.failedSteps ?? []).filter((failure) => failure.step.startsWith("assetEngineKeys"));
+    expect(failed.map((failure) => failure.error)).toEqual([
+      expect.stringContaining("must be a real directory"),
+      expect.stringContaining("must be a real directory"),
+    ]);
+    expect(fs.readFileSync(file, "utf8")).toContain("engine: lab");
+    expect(rememberedEngineTargets()).toEqual({ lab: { connection: "default" } });
   });
 
   test("the assets wait when the config step failed: nothing is rewritten and the step is absent from the plan", async () => {
