@@ -16,6 +16,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  detectHost,
   ensureRuntimeBinary,
   type HostTraits,
   OPENCODE_RUNTIME_VERSION,
@@ -95,6 +96,18 @@ describe("which package a machine gets", () => {
     expect(() => opencodePackage({ platform: "freebsd" as never, arch: "x64", musl: false, avx2: true })).toThrow(
       /publishes no binary for freebsd x64/,
     );
+  });
+
+  test("an x64 process on Windows for ARM runs the arm64 build: the host CPU is named in PROCESSOR_IDENTIFIER", () => {
+    const arm = { PROCESSOR_IDENTIFIER: "ARMv8 (64-bit) Family 8 Model 1 Revision 0" };
+    expect(detectHost(arm, "win32", "x64")).toMatchObject({ platform: "windows", arch: "arm64" });
+    expect(detectHost({ PROCESSOR_IDENTIFIER: "Intel64 Family 6 Model 140" }, "win32", "x64")).toMatchObject({
+      platform: "windows",
+      arch: "x64",
+    });
+    // The rule is Windows's: an x64 Linux process on an ARM variable is x64.
+    expect(detectHost(arm, "linux", "x64")).toMatchObject({ platform: "linux", arch: "x64" });
+    expect(() => detectHost({}, "freebsd", "x64")).toThrow(/publishes no binary for freebsd x64/);
   });
 
   test("the binary is kept under the cache directory by version, with .exe on Windows", () => {

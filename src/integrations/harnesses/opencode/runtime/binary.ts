@@ -112,12 +112,16 @@ function isMusl(): boolean {
 }
 
 /** This machine, as the package choice sees it. */
-export function detectHost(env: NodeJS.ProcessEnv = process.env): HostTraits {
+export function detectHost(
+  env: NodeJS.ProcessEnv = process.env,
+  operatingSystem: NodeJS.Platform = process.platform,
+  processArch: string = process.arch,
+): HostTraits {
   const platform = ({ darwin: "darwin", linux: "linux", win32: "windows" } as const)[
-    process.platform as "darwin" | "linux" | "win32"
+    operatingSystem as "darwin" | "linux" | "win32"
   ];
-  const nodeArch = ({ x64: "x64", arm64: "arm64" } as const)[process.arch as "x64" | "arm64"];
-  if (!platform || !nodeArch) throw new Error(`OpenCode publishes no binary for ${process.platform} ${process.arch}.`);
+  const nodeArch = ({ x64: "x64", arm64: "arm64" } as const)[processArch as "x64" | "arm64"];
+  if (!platform || !nodeArch) throw new Error(`OpenCode publishes no binary for ${operatingSystem} ${processArch}.`);
   // An x64 process on Windows for ARM still names the host CPU in PROCESSOR_IDENTIFIER, and the arm64 build is the one to run.
   const arch =
     platform === "windows" && nodeArch === "x64" && env.PROCESSOR_IDENTIFIER?.startsWith("ARM") ? "arm64" : nodeArch;
