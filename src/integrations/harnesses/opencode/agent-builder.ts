@@ -28,10 +28,11 @@
  * Model work drops the config's `args`, keeping the model they name, as the
  * Claude and Codex shells do. On OpenCode 2 it runs as {@link MODEL_WORK_AGENT},
  * an agent defined inline for the run whose tools are limited to reading and
- * searching; OpenCode 1 cannot be restricted and runs it unrestricted, with a
- * one-line warning.
+ * searching, added to the user's own inline config; OpenCode 1 cannot be
+ * restricted and runs it unrestricted, with a one-line warning.
  */
 
+import { asRecord, tryParseJson } from "../../../core/common";
 import { warnOnce } from "../../../core/warn";
 import {
   type AgentDispatchRequest,
@@ -54,22 +55,41 @@ export const MODEL_WORK_AGENT = "akm-model-work";
  * the allows give back `read`, `glob` and `grep` and, when the akm plugin is installed, `akm_search`, `akm_show` and
  * `akm_curate`. Nothing else is allowed. This limits the tools; a plugin's own `setup` and hooks still run.
  */
-const MODEL_WORK_CONFIG = JSON.stringify({
-  agent: {
-    [MODEL_WORK_AGENT]: {
-      mode: "primary",
-      permission: {
-        "*": "deny",
-        read: "allow",
-        glob: "allow",
-        grep: "allow",
-        akm_search: "allow",
-        akm_show: "allow",
-        akm_curate: "allow",
-      },
-    },
+const MODEL_WORK_AGENT_DEFINITION = {
+  mode: "primary",
+  permission: {
+    "*": "deny",
+    read: "allow",
+    glob: "allow",
+    grep: "allow",
+    akm_search: "allow",
+    akm_show: "allow",
+    akm_curate: "allow",
   },
-});
+};
+
+const CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
+
+/**
+ * The inline config model work runs with: the user's own `OPENCODE_CONFIG_CONTENT` as it is, with akm's agent set on
+ * `agent.akm-model-work`, the one key akm's definition wins. The child's value is built from the parent's, so a
+ * provider, model or key the user keeps only there stays. Content that is not a JSON object is left out, with one
+ * warning.
+ */
+function modelWorkConfig(): string {
+  const content = process.env[CONFIG_CONTENT_ENV]?.trim();
+  const user = content ? asRecord(tryParseJson(content)) : undefined;
+  if (content && !user) {
+    warnOnce(
+      "opencode-config-content",
+      `${CONFIG_CONTENT_ENV} is not a JSON object, so OpenCode model work runs without it.`,
+    );
+  }
+  return JSON.stringify({
+    ...user,
+    agent: { ...asRecord(user?.agent), [MODEL_WORK_AGENT]: MODEL_WORK_AGENT_DEFINITION },
+  });
+}
 
 const NO_FREE_MODELS = { OPENCODE_DISABLE_FREE_MODELS: "1" };
 
@@ -101,7 +121,7 @@ export const opencodeBuilder: HarnessBuilder = {
           ...(oc2 ? ["--agent", MODEL_WORK_AGENT] : []),
           ...(named ? ["--model", named] : []),
         ],
-        env: { ...NO_FREE_MODELS, ...(oc2 ? { OPENCODE_CONFIG_CONTENT: MODEL_WORK_CONFIG } : {}) },
+        env: { ...NO_FREE_MODELS, ...(oc2 ? { [CONFIG_CONTENT_ENV]: modelWorkConfig() } : {}) },
         stdin: req.prompt,
       };
     }

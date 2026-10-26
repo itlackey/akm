@@ -136,7 +136,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     message, and the model carries on.
 - `platform: "opencode"` is your OpenCode, whichever major is installed, run
   through its CLI: `opencode run` with the prompt on stdin, a model only when akm
-  names one, and `OPENCODE_CONFIG_DIR` passed through. Your OpenCode owns its
+  names one, and `OPENCODE_API_KEY`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR` and
+  `OPENCODE_CONFIG_CONTENT` passed through (a provider key your config references
+  as `{env:VAR}` is not). Model work adds its agent to your inline config and
+  keeps the rest of it. Your OpenCode owns its
   configuration, logins and sessions; akm reads, copies and embeds nothing of
   yours, and its runs are in your OpenCode history, which improve reads.
   OpenCode 2 runs `--standalone` (one process that ends with the run, not a

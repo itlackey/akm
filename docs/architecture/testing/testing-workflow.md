@@ -305,7 +305,9 @@ through the `@ai-sdk/openai-compatible` package installed with akm (nothing is
 downloaded), and no real OpenCode file, login or key is opened. The suite covers
 what akm relies on at that boundary: model work offers only its reading tools,
 and an abort or a timeout, during a model request or a tool call, releases
-OpenCode's claim on the session and leaves no process behind. Run it when changing the OpenCode builder, its environment list or the
+OpenCode's claim on the session and leaves no process behind, and a provider
+defined only in the user's `OPENCODE_CONFIG_CONTENT` works for agent work and
+model work alike. Run it when changing the OpenCode builder, its environment list or the
 subprocess kill ladder, and against a new OpenCode 2 release.
 
 ### 5. Benchmark (agent utility)

@@ -263,9 +263,13 @@ and, with no connection, the summary says model calls are off and points at
 **OpenCode.** The `opencode` platform runs your installed OpenCode, either major
 version, as `opencode run` with the prompt on stdin; the reply is its standard
 output. Your OpenCode owns its configuration, logins, token refresh and
-sessions: akm reads, copies and embeds nothing of yours, and passes
-`OPENCODE_CONFIG_DIR` through. A run is its own `opencode` process, with no
-background service left behind.
+sessions: akm reads, copies and embeds nothing of yours. A run is its own
+`opencode` process, with no background service left behind.
+- The program gets akm's allowlisted environment plus the OpenCode variables
+  `OPENCODE_API_KEY`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`,
+  `OPENCODE_CONFIG_CONTENT` and the XDG directories; a provider key that your
+  OpenCode config references as `{env:VAR}` is not forwarded today. Model work
+  adds its agent to your `OPENCODE_CONFIG_CONTENT` and keeps the rest of it.
 - A model name is OpenCode's `provider/model`, from the request, else the
   `--model` in the harness's `args`; without one, your OpenCode's default decides.
 - Model work sets `OPENCODE_DISABLE_FREE_MODELS=1`, which OpenCode 2.1.2 and later

@@ -9,10 +9,13 @@
  * real binary runs: `build` only turns a request into a command.
  */
 import { beforeEach, describe, expect, test } from "bun:test";
+import { isEnvPassthroughValueSafeToExpose } from "../../src/core/redaction";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
+import { collectDispatchSensitiveValues } from "../../src/integrations/agent/runner-dispatch";
 import { getHarness, HARNESS_REGISTRY } from "../../src/integrations/harnesses";
 import type { AgentDispatchRequest, BuiltCommand } from "../../src/integrations/harnesses/harness";
 import { fakeOpencodeMajor, withOpencodeOnPath } from "../_helpers/opencode-version";
+import { withEnvSync } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
 
 const PROMPT = "do work";
@@ -106,7 +109,14 @@ const SHELLS: Record<string, Shell> = {
     headless: { argv: ["opencode", "run"], stdin: PROMPT },
     interactive: { argv: ["opencode"] },
     model: { argv: ["opencode", "run", "--model", "m-1"], stdin: PROMPT },
-    passthrough: ["OPENCODE_API_KEY", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME"],
+    passthrough: [
+      "OPENCODE_API_KEY",
+      "OPENCODE_CONFIG",
+      "OPENCODE_CONFIG_DIR",
+      "OPENCODE_CONFIG_CONTENT",
+      "XDG_CONFIG_HOME",
+      "XDG_DATA_HOME",
+    ],
     modelFlag: true,
   },
 };
@@ -357,6 +367,75 @@ describe("opencode by major", () => {
         "--model",
         "m-1",
       ]);
+    });
+  });
+
+  describe("the user's OPENCODE_CONFIG_CONTENT", () => {
+    const INLINE = {
+      model: "mine/fast",
+      provider: { mine: { options: { baseURL: "http://127.0.0.1:1/v1", apiKey: "SYNTHETIC_KEY" } } },
+      agent: {
+        reviewer: { mode: "subagent" },
+        "akm-model-work": { mode: "primary", permission: { "*": "allow" } },
+      },
+    };
+    type Inline = typeof INLINE;
+    const inlineConfig = (content: string | undefined): Promise<Inline> =>
+      withOpencodeOnPath(2, async () =>
+        JSON.parse(
+          withEnvSync({ OPENCODE_CONFIG_CONTENT: content }, () =>
+            build("opencode", { prompt: PROMPT, modelWork: true }),
+          ).env?.OPENCODE_CONFIG_CONTENT ?? "",
+        ),
+      );
+
+    test("model work keeps all of it and sets its own agent on the one key, which it wins", async () => {
+      const merged = await inlineConfig(JSON.stringify(INLINE));
+      expect(merged.model).toBe("mine/fast");
+      expect(merged.provider).toEqual(INLINE.provider);
+      expect(merged.agent.reviewer).toEqual({ mode: "subagent" });
+      expect(merged.agent["akm-model-work"]).toEqual((await inlineConfig(undefined)).agent["akm-model-work"]);
+      expect(Object.entries(merged.agent["akm-model-work"].permission)[0]).toEqual(["*", "deny"]);
+    });
+
+    test("content that is not a JSON object is left out, with one warning that names the variable", async () => {
+      _resetWarnOnceForTests();
+      const warnings: string[] = [];
+      overrideSeam(_setWarnSinkForTests, (level, args) => {
+        if (level === "warn") warnings.push(args.map(String).join(" "));
+      });
+      const own = await inlineConfig(undefined);
+      for (const content of ["{not json", "[1]", '"text"']) expect(await inlineConfig(content)).toEqual(own);
+      expect(warnings.filter((line) => line.includes("OPENCODE_CONFIG_CONTENT"))).toHaveLength(1);
+    });
+
+    test("a blank value is no content, and agent work never sets it", async () => {
+      const own = await inlineConfig(undefined);
+      expect(await inlineConfig("  ")).toEqual(own);
+      await withOpencodeOnPath(2, async () => {
+        const built = withEnvSync({ OPENCODE_CONFIG_CONTENT: JSON.stringify(INLINE) }, () =>
+          build("opencode", { prompt: PROMPT }),
+        );
+        expect(built.env).toBeUndefined();
+      });
+    });
+
+    test("it is passed through to the program, and shown nowhere: it can hold an apiKey", () => {
+      const harness = getHarness("opencode");
+      expect(harness?.profile.envPassthrough).toContain("OPENCODE_CONFIG_CONTENT");
+      const content = JSON.stringify(INLINE);
+      expect(isEnvPassthroughValueSafeToExpose("OPENCODE_CONFIG_CONTENT", content)).toBe(false);
+      const runner = {
+        kind: "harness",
+        name: "opencode",
+        platform: "opencode",
+        bin: "opencode",
+        args: [],
+        timeoutMs: null,
+      } as const;
+      expect(collectDispatchSensitiveValues(runner, { OPENCODE_CONFIG_CONTENT: content })).toContain(content);
+      // A path-like name is not secret: the contrast that makes the line above mean something.
+      expect(collectDispatchSensitiveValues(runner, { OPENCODE_CONFIG_DIR: "/home/me/.config/opencode" })).toEqual([]);
     });
   });
 

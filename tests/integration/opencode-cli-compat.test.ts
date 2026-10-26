@@ -406,6 +406,36 @@ function registerSuite(bin: string): void {
       }
     }
   });
+
+  describe("the user's OPENCODE_CONFIG_CONTENT reaches the run", () => {
+    // The provider is defined only there: no file in the config directory.
+    const inline = (model: FakeModel): Record<string, string> => ({
+      OPENCODE_CONFIG_CONTENT: JSON.stringify(providerConfig(model, { model: "fixture/second" })),
+    });
+
+    test("agent work runs on the provider and the model it names", async () => {
+      const box = sandbox();
+      const model = fakeModel();
+
+      const result = await runOpencode(box, { prompt: "probe" }, { parentEnv: inline(model) });
+
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain("PROBE_OK");
+      expect(model.requests.map((request) => request.model)).toEqual(["second"]);
+    }, 60_000);
+
+    test("model work keeps its provider and its model, and adds its own agent", async () => {
+      const box = sandbox();
+      const model = fakeModel();
+
+      const result = await runOpencode(box, { prompt: "probe", modelWork: true }, { parentEnv: inline(model) });
+
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain("PROBE_OK");
+      expect(model.requests.map((request) => request.model)).toEqual(["second"]);
+      expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
+    }, 60_000);
+  });
 }
 
 if (!BIN || process.platform === "win32") {
