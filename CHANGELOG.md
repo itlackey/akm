@@ -57,7 +57,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   endpoint: `{ "connections": { "<name>": { "key", "endpoint" } }, "services":
   { "embedding" | "curateRerank": { "key", "endpoint" } } }`. A key is read for
   that endpoint alone, and a connection called `embedding` and the embedding
-  service hold different keys. A literal `apiKey` in
+  service hold different keys. A connection only an `extends` base defines uses
+  no key stored on this host (the base chose its endpoint); its runner records
+  `storedKey: false`, so a journaled or resumed run withholds it whether or not
+  the config is loaded. A literal `apiKey` in
   `config.json` is kept, warned about once, and never read, sent or printed;
   `akm config get` masks it and the redactor treats it as a secret.
 - `akm health` has one `connections-and-harnesses` check, and `akm info` a
@@ -67,13 +70,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   binary is found and, when probing, its version) and each kind of work (improve,
   judges, agents, extract, enrich, index, embedding, curate rerank) naming the
   connection or harness and the model it resolves to. The rows are resolved by
-  the code the calls use, so the table cannot disagree with a dispatch. `akm
-  info` contacts nothing, and neither does `akm health --no-probe`.
+  the code the calls use, so the table cannot disagree with a dispatch. An
+  override is compared by kind as well as name and model, so a connection and a
+  harness that share a name do not hide a per-process pin; each override row
+  carries `kind`. `akm info` contacts nothing, and neither does `akm health
+  --no-probe`.
 - `akm setup` asks which installed agent programs to enable (saying whether each
-  can run read-only for akm's own model calls), whether the default one also
+  is limited to reading and searching for akm's own model calls, judged on the
+  program the harness will run: `harnesses.<name>.bin`, else the platform's
+  binary on `PATH`), whether the default one also
   takes akm's model calls (a no with no connection after it is saved as
-  `modelWork: false` on that harness, which keeps model calls off it by default),
-  an endpoint with its key at a masked prompt and one
+  `modelWork: false` on that harness, which keeps model calls off it by default;
+  a saved `modelWork: false` stays through `--yes` and is the question's default,
+  and only a yes clears it), an endpoint with its key at a masked prompt and one
   model for each alias, picked from the models the endpoint lists, and where
   embeddings come from. A key you type is stored in `credentials.json` for the
   connection and its endpoint. Each flag answers one question and `--yes` takes the
@@ -106,10 +115,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `extraParams` (translated as the direct chat path translates them), and the
     key read when the call is dispatched are laid over that session's requests.
   - The commands the agent runs get the environment a CLI harness's child gets:
-    akm's directories (`AKM_CONFIG_DIR` and the rest), the harness's
-    environment allowlist (`PATH`, `HOME`, its own provider keys) and the run's
-    variables (workflow and task `env:`, `AKM_EVENT_SOURCE`). Nothing else in
-    akm's environment reaches them.
+    akm's own, with its directories (`AKM_CONFIG_DIR` and the rest) and the run's
+    variables (workflow and task `env:`, `AKM_EVENT_SOURCE`) set over it.
   - An agent has akm's read tools (`akm_search`, `akm_show`, `akm_curate`) in
     process, with no shell. A subagent it starts runs with the run's key,
     request fields and environment.
@@ -136,20 +143,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     message, and the model carries on.
 - `platform: "opencode"` is your OpenCode, whichever major is installed, run
   through its CLI: `opencode run` with the prompt on stdin, a model only when akm
-  names one, and `OPENCODE_API_KEY`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR` and
-  `OPENCODE_CONFIG_CONTENT` passed through (a provider key your config references
-  as `{env:VAR}` is not). Model work adds its agent to your inline config and
-  keeps the rest of it. Your OpenCode owns its
+  names one, an agent only when the asset names one, and your `args` as written.
+  Agent work adds nothing else. Your OpenCode owns its
   configuration, logins and sessions; akm reads, copies and embeds nothing of
-  yours, and its runs are in your OpenCode history, which improve reads.
-  OpenCode 2 runs `--standalone` (one process that ends with the run, not a
-  background service) with `--title akm`; `--server` in the harness's `args` is a
-  configuration error (exit 78) that says why, since OpenCode refuses it with
-  `--standalone`, and an authored `--standalone` is kept once. A run akm stops (timeout, abort) is
-  interrupted first, which OpenCode records as interrupted and releases; only a
-  run that had to be terminated or killed after the grace stays suspended in your
-  OpenCode history, where your own OpenCode's background service may resume it
-  (up to ten attempts, OpenCode's own policy). Model work sets
+  yours, and its runs are in your OpenCode history, which improve reads. Model
+  work is akm's own process: it adds its agent to your inline config and keeps
+  the rest of it, and on OpenCode 2 runs `--standalone` (one process that ends
+  with the run, not a background service) with `--title akm`. A run akm stops
+  (timeout, abort) is interrupted first, which OpenCode records as interrupted
+  and releases (on Windows a SIGINT is a forced kill); only a run that had to be
+  terminated or killed after the grace stays suspended in your OpenCode history,
+  where your own OpenCode's background service may resume it (up to ten
+  attempts, OpenCode's own policy). Model work sets
   `OPENCODE_DISABLE_FREE_MODELS=1`, which OpenCode 2.1.2 and later honor: a call
   with no usable provider fails instead of sending the prompt to OpenCode's
   hosted free model. Agent work leaves your OpenCode's models as they are. An
@@ -234,6 +239,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it in favour of an `opencode-sdk` engine, which is gone): `platform:
   "opencode"` is the `opencode` harness, your own OpenCode of either major run
   through `opencode run`.
+- Every process akm starts inherits akm's environment: a harness's child, a
+  workflow `exec` unit's command, a task's command and the commands of an
+  embedded session get the environment akm runs in, with the directories this akm
+  resolved, the run's `AKM_EVENT_SOURCE` and a unit's `env:` bindings set over it.
+  The environment allowlist, the Windows floor, the `PATH` supplement for
+  scheduler contexts, each harness's passthrough names and the passthrough
+  redaction policy are gone, and a frozen `pass_env` still parses and selects
+  nothing. Captured output is scrubbed of the values akm knows are secret (a
+  connection's key, a `secrets/` value substituted into a binding, and in a task
+  log the values its `redact:` list names and credential-named variables).
+  `env run --clean` keeps its own list. Agent work on OpenCode adds nothing to the
+  invocation.
 - Stopping a child process (a timeout, an abort, or a signal to akm) sends its
   process group SIGINT first, then SIGTERM and SIGKILL, each after a 5 second
   grace for as long as it still runs, where it sent SIGTERM and then SIGKILL.
@@ -249,8 +266,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (appended to pi's own prompt). A harness's child gets
   `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR` (and
   `AKM_BUNDLE_DIR` when akm has one), so a program that runs `akm` uses the same
-  installation, and passes `CLAUDE_CONFIG_DIR` and `CODEX_HOME` through where it
-  passed `CLAUDE_CONFIG` and `CODEX_CONFIG`; `PI_API_KEY` is no longer passed.
+  installation.
 - `akm agent` with no `--prompt` starts the harness for a person, with the
   terminal and the harness's model; a connection has nothing to start, and the
   command says so, naming `--prompt` and a harness.
@@ -281,7 +297,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   process dispatches. Run `akm health` first instead (`akm health && akm
   improve`; it exits 4 on a warning): its `connections-and-harnesses` check names
   each connection that does not answer, each harness program that is not
-  installed and a missing default.
+  installed and a missing default. A did-you-mean for an unknown flag never
+  offers a hidden flag.
 - A workflow run frozen by an earlier release (plan irVersion 7 or lower) whose
   plan holds a command target is no longer resumed: it is abandoned (status
   `failed`) with a message naming `akm workflow run <ref>` to start afresh.
@@ -352,26 +369,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   frontmatter error from `akm distill` ("See v1 spec §13"), the two `agent-skills`
   lint details ("spec §4.5"), the bundle-identity-drift warning ("spec §11.5") and
   the unknown-`quality` warning ("v1 spec §4.2").
-- `akm setup` judges the binary the default harness will actually run
-  (`harnesses.<name>.bin`, else the platform's binary on `PATH`) when deciding
-  whether model calls can be limited to reading and searching and whether a
-  connection is still needed; before, it asked the `opencode` on `PATH` even when
-  the entry named another binary.
-- `akm setup --yes`, and the interactive default, keep a saved
-  `modelWork: false` on the default harness. Only answering yes to the
-  model-calls question clears it.
-- A connection runner records `storedKey: false` when only an `extends` base
-  defines the connection, so a journaled or resumed run withholds the
-  host-stored key whether or not the config is loaded. The current key is still
-  read at dispatch, for the frozen endpoint only.
-- `akm health` and `akm info` compare an override's kind as well as its name
-  and model, so a connection and a harness that share a name no longer hide a
-  per-process pin; each override row carries `kind`.
 - `akm config unset` removes the named key and leaves a parent object that
   becomes empty. It used to delete the parent too, so unsetting a harness's only
   key removed the harness and `akm agent` then exited 78 (`{}` is how a harness
   is enabled).
-- A did-you-mean for an unknown flag never offers a hidden flag.
 
 ### Removed
 
