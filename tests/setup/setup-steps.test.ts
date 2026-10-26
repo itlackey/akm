@@ -227,6 +227,59 @@ describe("stepHarnesses", () => {
     expect(prompts.of("confirm")[0]?.message).toContain("Model work on opencode cannot be restricted");
   });
 
+  test("a saved modelWork: false is not a default to reset: --yes keeps it, and the question starts at No", async () => {
+    fakeOpencodeMajor(2);
+    const current = cfg({ harnesses: { opencode: { modelWork: false } } });
+
+    const yes = await stepHarnesses(input({ interactive: false, current, installed: installed("opencode") }));
+    expect(yes).toEqual({ modelCallsOnHarness: false, modelWork: false });
+    expect(applySetupAnswers(current, { harnessModelWork: yes.modelWork }).patch).toEqual({});
+
+    prompts.answers.multiselect.push(["opencode"]);
+    prompts.answers.confirm.push(false);
+    const kept = await stepHarnesses(input({ current, installed: installed("opencode") }));
+    expect(prompts.of("confirm")[0]?.initialValue).toBe(false);
+    expect(kept).toEqual({
+      answer: { platforms: ["opencode"], default: "opencode" },
+      modelCallsOnHarness: false,
+      modelWork: false,
+    });
+    expect(
+      applySetupAnswers(current, { harnesses: kept.answer, harnessModelWork: kept.modelWork }).patch.harnesses,
+    ).toEqual({
+      opencode: { modelWork: false },
+    });
+  });
+
+  test("an explicit Yes to the question clears a saved modelWork: false", async () => {
+    fakeOpencodeMajor(2);
+    const current = cfg({ harnesses: { opencode: { modelWork: false } } });
+    prompts.answers.multiselect.push(["opencode"]);
+    prompts.answers.confirm.push(true);
+
+    const result = await stepHarnesses(input({ current, installed: installed("opencode") }));
+
+    expect(result.modelWork).toBe(true);
+    expect(applySetupAnswers(current, { harnessModelWork: result.modelWork }).patch.harnesses).toEqual({
+      opencode: {},
+    });
+  });
+
+  test("a harness the answer makes the default is judged by its own saved choice, not the previous default's", async () => {
+    const current = cfg({ harnesses: { opencode: { modelWork: false } } });
+
+    const yes = await stepHarnesses(
+      input({
+        interactive: false,
+        current,
+        installed: installed("claude"),
+        flags: parseSetupFlags({ harness: "claude" }),
+      }),
+    );
+
+    expect(yes).toMatchObject({ modelCallsOnHarness: true, modelWork: true });
+  });
+
   test("interactive: with several selected, asks which one is the default", async () => {
     prompts.answers.multiselect.push(["claude", "gemini"]);
     prompts.answers.select.push("gemini");

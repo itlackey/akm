@@ -203,7 +203,7 @@ The wizard asks, in order:
    connection follows is saved as `modelWork: false` on that harness, so model
    calls stay off (the summary says so and points at `akm setup --endpoint`) rather
    than falling back to it. With `--yes` the answer is yes only for a harness akm
-   can run read-only.
+   can run read-only and whose `modelWork: false` is not already saved.
 3. **Connection.** An OpenAI-compatible endpoint, its API key (typed at a masked
    prompt and stored in `credentials.json`, never in `config.json`), and one model
    per alias (`fast`, `balanced`, `reasoning`) picked from the models the

@@ -98,11 +98,13 @@ export async function stepHarnesses(input: HarnessStepInput): Promise<HarnessSte
   }
   const defaultPlatform = selected.harness.platform ?? selected.name;
   const readOnly = runsReadOnly(defaultPlatform, selected.harness.bin);
-  if (!input.interactive) return result(readOnly, readOnly);
+  // A saved `modelWork: false` is the user's choice: only the question's "yes" changes it, never a default.
+  const declined = selected.harness.modelWork === false;
+  if (!input.interactive) return declined ? result(false, false) : result(readOnly, readOnly);
   const yes = await prompt(() =>
     p.confirm({
       message: `Use ${defaultPlatform} for akm's own model calls too (improve, judging, extraction)? ${readOnly ? "Model calls run read-only." : unrestrictedModelWorkNote(defaultPlatform)}`,
-      initialValue: true,
+      initialValue: !declined,
     }),
   );
   // Said again once it is chosen, so it stays in the transcript beside the answer.

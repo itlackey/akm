@@ -398,10 +398,22 @@ describe("akm setup --yes defaults", () => {
     expect((written().connections as Record<string, unknown>).default).toBeDefined();
   });
 
-  test("a harness that can run read-only takes the model calls and is not marked; a mark from an earlier run is cleared", async () => {
+  test("a saved modelWork: false is kept by --yes, whether the harness can run read-only (Claude, OpenCode 2) or not", async () => {
+    fakeOpencodeMajor(2);
+    for (const platform of ["claude", "opencode"]) {
+      installed(platform);
+      writeSandboxConfig({ semanticSearchMode: "off", harnesses: { [platform]: { modelWork: false } } });
+      resetConfigCache();
+
+      const summary = await run();
+
+      expect(written().harnesses).toEqual({ [platform]: { modelWork: false } });
+      expect(summary.runs.modelCalls).toContain(`harness "${platform}" is set not to take model calls`);
+    }
+  });
+
+  test("a harness that can run read-only and has no saved choice takes the model calls and is not marked", async () => {
     installed("claude");
-    writeSandboxConfig({ semanticSearchMode: "off", harnesses: { claude: { modelWork: false } } });
-    resetConfigCache();
 
     const summary = await run();
 
