@@ -18,6 +18,7 @@ ALL_VARIANTS=(
 	ubuntu-binary
 	debian-bun
 	debian-binary
+	debian-npm
 	alpine-bun
 	fedora-bun
 	fedora-binary
