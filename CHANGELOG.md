@@ -345,6 +345,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   frontmatter error from `akm distill` ("See v1 spec §13"), the two `agent-skills`
   lint details ("spec §4.5"), the bundle-identity-drift warning ("spec §11.5") and
   the unknown-`quality` warning ("v1 spec §4.2").
+- `akm setup` judges the binary the default harness will actually run
+  (`harnesses.<name>.bin`, else the platform's binary on `PATH`) when deciding
+  whether model calls can be limited to reading and searching and whether a
+  connection is still needed; before, it asked the `opencode` on `PATH` even when
+  the entry named another binary.
+- `akm setup --yes`, and the interactive default, keep a saved
+  `modelWork: false` on the default harness. Only answering yes to the
+  model-calls question clears it.
+- A connection runner records `storedKey: false` when only an `extends` base
+  defines the connection, so a journaled or resumed run withholds the
+  host-stored key whether or not the config is loaded. The current key is still
+  read at dispatch, for the frozen endpoint only.
+- `akm health` and `akm info` compare an override's kind as well as its name
+  and model, so a connection and a harness that share a name no longer hide a
+  per-process pin; each override row carries `kind`.
 
 ### Removed
 
