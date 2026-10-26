@@ -192,8 +192,8 @@ describe("triage judgment config patch semantics (#814 remediation-1)", () => {
     expect(() => configSet(judgmentPatchBase(), judgmentPath, "")).toThrow("Invalid value");
   });
 
-  test("unsetting enabled removes the object it was the last key of, rather than reviving the judgment", () => {
+  test("unsetting enabled leaves the judgment object in place, off until enabled is set again", () => {
     const raw = configUnset(judgmentPatchBase(), `${judgmentPath}.enabled`);
-    expect(configGet(raw, judgmentPath)).toBeNull();
+    expect(configGet(raw, judgmentPath)).toEqual({});
   });
 });
