@@ -20,7 +20,7 @@ function xdgRoot(name: string, fallback: readonly string[], env: NodeJS.ProcessE
 }
 
 /** `$XDG_DATA_HOME/opencode`: the user's `opencode.db`. */
-export function opencodeDataDir(env: NodeJS.ProcessEnv = process.env): string {
+function opencodeDataDir(env: NodeJS.ProcessEnv = process.env): string {
   return xdgRoot("XDG_DATA_HOME", [".local", "share"], env);
 }
 

@@ -21,30 +21,15 @@
  * Claude Code's 'claude' vs 'claude'), so no alias bridge is needed.
  */
 
-import { XDG_BASE_DIR_ENV_PASSTHROUGH } from "../../../core/spawn-env";
 import type { SessionLogHarness } from "../../session-logs/types";
 import type { AkmHarness } from "../harness";
 import { opencodeBuilder } from "./agent-builder";
+import { OPENCODE_ENV_PASSTHROUGH } from "./env";
 import { OpenCodeProvider } from "./session-log";
-import { isOpencode2 } from "./version";
+import { isOpencode2, OPENCODE_BIN } from "./version";
 
 export { opencodeBuilder } from "./agent-builder";
 export { OpenCodeProvider } from "./session-log";
-
-/**
- * The names an `opencode` process reads beyond the common baseline: its API key
- * (OpenCode Go and Zen read `OPENCODE_API_KEY`), the config file, directory and
- * inline content it is pointed at, and the XDG base directories. The inline
- * content can hold a provider's `apiKey`, so it is left out of the names whose
- * values may be shown (`../../../core/redaction.ts`).
- */
-const OPENCODE_ENV_PASSTHROUGH = [
-  "OPENCODE_API_KEY",
-  "OPENCODE_CONFIG",
-  "OPENCODE_CONFIG_DIR",
-  "OPENCODE_CONFIG_CONTENT",
-  ...XDG_BASE_DIR_ENV_PASSTHROUGH,
-] as const;
 
 /**
  * OpenCode.
@@ -58,7 +43,7 @@ export class OpencodeHarness implements AkmHarness {
   // session-log provider, so offering it as a stash source is functional.
   readonly setupDetectionDir = ".config/opencode";
   readonly build = opencodeBuilder.build;
-  readonly profile = { bin: "opencode", args: ["run"], envPassthrough: OPENCODE_ENV_PASSTHROUGH };
+  readonly profile = { bin: OPENCODE_BIN, args: ["run"], envPassthrough: OPENCODE_ENV_PASSTHROUGH };
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Session-id env marker for run attribution.
   readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;

@@ -154,9 +154,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with no usable provider fails instead of sending the prompt to OpenCode's
   hosted free model. Agent work leaves your OpenCode's models as they are. An
   interactive `akm agent` still hands the terminal to the CLI.
-  - Model work on OpenCode 2 runs with its tools limited to reading and
-    searching (below) and is unrestricted on OpenCode 1, with one warning, in a
-    scratch directory.
 - A config in the old form (`engines`, `defaults.engine`, `defaults.llmEngine`,
   `defaults.improveStrategy`, `workflow.judgeEngine`, a strategy's `engine`,
   `model`, `llm` and `timeoutMs`) still loads: it is read as the new form in
@@ -224,9 +221,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with every tool denied except `read`, `glob` and `grep` (and `akm_search`,
   `akm_show` and `akm_curate` when the akm plugin is installed), so a tool a
   plugin adds is denied too; a plugin's own hooks still run. Where it cannot
-  (the other platforms, and OpenCode 1), the call runs unrestricted, with a
-  notice. A config that names an `opencode` harness for model work loads, and a
+  (the other platforms, and OpenCode 1, which warns once), the call runs
+  unrestricted, in a scratch directory, with a notice. A config that names an `opencode` harness for model work loads, and a
   native agent named for model work is ignored with a notice.
+- The `opencode` CLI dispatch path is no longer deprecated (0.10.261001 deprecated
+  it in favour of an `opencode-sdk` engine, which is gone): `platform:
+  "opencode"` is the `opencode` harness, your own OpenCode of either major run
+  through `opencode run`.
 - Stopping a child process (a timeout, an abort, or a signal to akm) sends its
   process group SIGINT first, then SIGTERM and SIGKILL, each after a 5 second
   grace for as long as it still runs, where it sent SIGTERM and then SIGKILL.
@@ -313,6 +314,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   package OpenCode reaches an OpenAI-compatible endpoint with, so the binary's
   first model-backed run downloads nothing and works with the npm registry
   unreachable.
+- Bundles are fetched when added and on `akm bundle update`. `akm index` no
+  longer re-fetches a git or website bundle after twelve hours, `--full` does
+  not force a fetch, and a failed forced refresh reports the failure instead of
+  serving the old copy for up to seven days (the previous copy stays on disk).
+  A configured npm bundle with no lock entry is skipped by `akm index` with one
+  warning naming `akm bundle update`, instead of hitting the npm registry on
+  every index run.
+- `akm search --assets` is removed. It asked registries for asset-level hits,
+  but `akm search` never put them in its output, so the flag printed nothing; the
+  registry providers' asset scoring and the `assetHits` response field go with it.
+- Registry hits from `akm search --from registry|all` carry `installRef` (the ref
+  for `akm bundle add`). The brief projection already listed it, but the hit was
+  built without it, so `--detail brief` showed only the name and score.
+- `akm search --detail normal` includes `ref` on local hits, as `brief` already
+  did. `normal` was the only level that showed a hit without the ref `akm show`
+  needs.
+- Env and secret files are indexed even when the bundle's `.gitignore` hides them
+  (`akm bundle create` ignores `env/` and `secrets/`), so `akm show env/<name>`
+  and `akm search --type env` work in a default bundle. The indexer lists the
+  git-ignored files under those two directories in addition to the tracked and
+  untracked ones; values still never reach the index.
+- `akm health --no-probe` also skips the `plugin-version` newest-tag lookup (a
+  `git ls-remote` against the plugin marketplace). With probing off the row
+  reports `unknown` ("not probed") instead of "up to date", and the local
+  version-range check still runs.
+- `akm task doctor` no longer reports `historyDir`. It named `$CACHE/tasks/history`,
+  which does not exist now that task run history lives in `state.db`.
+- Four user-facing messages no longer cite deleted spec sections: the lesson
+  frontmatter error from `akm distill` ("See v1 spec §13"), the two `agent-skills`
+  lint details ("spec §4.5"), the bundle-identity-drift warning ("spec §11.5") and
+  the unknown-`quality` warning ("v1 spec §4.2").
 
 ### Removed
 
@@ -348,8 +380,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm setup --probe` and `--config`, and the engine, Ollama and provider steps
   of the wizard.
 - The `opencode serve` server management, the OpenCode 1 and 2 HTTP adapters,
-  the 0.9 `akm-model-work` OpenCode agent definition, and the
-  `@opencode-ai/sdk` and `@opencode/client` dependencies. Agent work on a
+  and the `@opencode-ai/sdk` and `@opencode/client` dependencies. Agent work on a
   connection needs no OpenCode binary or client package, so `akm health` checks
   for neither.
 - Asset tool requests. An agent or command's `tools:` (or a Claude command's
@@ -360,37 +391,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `toolPolicy` in `akm show`, the harness builders' tool flags, and recognizing
   a file as an agent by its `tools:` key. Restrict an agent's tools in the
   harness's own agent definition and select it with the harness's `agent`.
-- Bundles are fetched when added and on `akm bundle update`. `akm index` no
-  longer re-fetches a git or website bundle after twelve hours, `--full` does
-  not force a fetch, and a failed forced refresh reports the failure instead of
-  serving the old copy for up to seven days (the previous copy stays on disk).
-  A configured npm bundle with no lock entry is skipped by `akm index` with one
-  warning naming `akm bundle update`, instead of hitting the npm registry on
-  every index run.
-- `akm search --assets` is removed. It asked registries for asset-level hits,
-  but `akm search` never put them in its output, so the flag printed nothing; the
-  registry providers' asset scoring and the `assetHits` response field go with it.
-- Registry hits from `akm search --from registry|all` carry `installRef` (the ref
-  for `akm bundle add`). The brief projection already listed it, but the hit was
-  built without it, so `--detail brief` showed only the name and score.
-- `akm search --detail normal` includes `ref` on local hits, as `brief` already
-  did. `normal` was the only level that showed a hit without the ref `akm show`
-  needs.
-- Env and secret files are indexed even when the bundle's `.gitignore` hides them
-  (`akm bundle create` ignores `env/` and `secrets/`), so `akm show env/<name>`
-  and `akm search --type env` work in a default bundle. The indexer lists the
-  git-ignored files under those two directories in addition to the tracked and
-  untracked ones; values still never reach the index.
-- `akm health --no-probe` also skips the `plugin-version` newest-tag lookup (a
-  `git ls-remote` against the plugin marketplace). With probing off the row
-  reports `unknown` ("not probed") instead of "up to date", and the local
-  version-range check still runs.
-- `akm task doctor` no longer reports `historyDir`. It named `$CACHE/tasks/history`,
-  which does not exist now that task run history lives in `state.db`.
-- Four user-facing messages no longer cite deleted spec sections: the lesson
-  frontmatter error from `akm distill` ("See v1 spec §13"), the two `agent-skills`
-  lint details ("spec §4.5"), the bundle-identity-drift warning ("spec §11.5") and
-  the unknown-`quality` warning ("v1 spec §4.2").
 
 ## [0.10.261013] - 2026-10-23
 

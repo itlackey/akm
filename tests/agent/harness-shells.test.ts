@@ -487,8 +487,27 @@ describe("opencode by major", () => {
     });
   });
 
-  test("a binary whose version cannot be read gets OpenCode 1's command", () => {
-    fakeOpencodeMajor(() => undefined);
-    expect(build("opencode", { prompt: PROMPT }).argv).toEqual(["opencode", "run"]);
+  test("a binary whose version cannot be read gets OpenCode 1's command, with one warning that says so", async () => {
+    _resetWarnOnceForTests();
+    const warnings: string[] = [];
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    await withOpencodeOnPath(
+      "unreadable",
+      async () => {
+        expect(build("opencode", { prompt: PROMPT }).argv).toEqual(["opencode", "run"]);
+        expect(build("opencode", { prompt: PROMPT, modelWork: true }).argv).toEqual(["opencode", "run"]);
+        // An interactive launch needs no flags, so there is nothing to say.
+        build("opencode", {});
+      },
+      { exclusive: true },
+    );
+    const unreadable = warnings.filter((line) => line.includes("Could not read the version of opencode"));
+    expect(unreadable).toHaveLength(1);
+    expect(unreadable[0]).toContain("OpenCode 1");
+    expect(unreadable[0]).toContain("no --standalone");
+    expect(unreadable[0]).toContain("model work unrestricted");
+    expect(unreadable[0]).toContain("`opencode --version`");
   });
 });

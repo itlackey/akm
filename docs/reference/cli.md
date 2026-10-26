@@ -1498,13 +1498,14 @@ stopping the CLI upgrade.
 | Claude Code | `claude` is on `PATH`, the `akm-plugins` marketplace is configured and `akm@akm-plugins` is installed | `claude plugin marketplace update akm-plugins`, then `claude plugin update akm@akm-plugins` |
 | Codex | `codex` is on `PATH` and `akm@akm-plugins` is installed from the `akm-plugins` marketplace | `codex plugin marketplace upgrade akm-plugins` (this also refreshes the installed plugin cache) |
 | OpenCode 1 | `akm-opencode` is cached at `$XDG_CACHE_HOME/opencode/packages/akm-opencode@latest` (default `~/.cache/opencode/...`) and `opencode` is on `PATH` | If npm's `akm-opencode@latest` differs from the cached version and no OpenCode process is running: the cache directory is moved to the trash (never deleted), then `opencode debug config` is run from a temporary directory to fetch the new version. While OpenCode runs the update is `deferred` to a later `akm upgrade`. |
-| OpenCode 2 | `akm-opencode-v2` is named under `"plugins"` in the global OpenCode config (`opencode.json` or `.jsonc`) and cached at `$XDG_CACHE_HOME/opencode/npm/akm-opencode-v2@latest/<build>/`, and the `opencode` on `PATH` is OpenCode 2 | If npm's `akm-opencode-v2@latest` differs from the cached version (the newest `<build>` folder): `opencode plugin update <spec>` is run from a temporary directory, with the spec as the config names it. OpenCode 2 installs the new build into a fresh `<build>` folder and the running service keeps the old one until it restarts, so nothing is moved to the trash and the update is not deferred while OpenCode runs. Listed only on a host that has the plugin, so an OpenCode 1 host reports exactly what it did before. |
+| OpenCode 2 | `akm-opencode-v2` is named under `"plugins"` in the global OpenCode config (`opencode.json` or `.jsonc`) and cached at `$XDG_CACHE_HOME/opencode/npm/akm-opencode-v2@latest/<build>/`, and the `opencode2` on `PATH` (else the `opencode`) is OpenCode 2 | If npm's `akm-opencode-v2@latest` differs from the cached version (the newest `<build>` folder): `opencode plugin update <spec>` is run from a temporary directory, with the spec as the config names it. OpenCode 2 installs the new build into a fresh `<build>` folder and the running service keeps the old one until it restarts, so nothing is moved to the trash and the update is not deferred while OpenCode runs. Listed only on a host that has the plugin, so an OpenCode 1 host reports exactly what it did before. |
 
 The two OpenCode plugins never touch each other: `akm-opencode` is only looked
 for in OpenCode 1's cache and `plugin` key, `akm-opencode-v2` only in OpenCode
-2's cache and `plugins` key. Before moving a cache, akm reads `opencode
---version` and skips the plugin when the `opencode` on `PATH` is the other
-major, since only the matching major can re-create that cache; akm never
+2's cache and `plugins` key. Before moving a cache, akm reads `--version` of the
+binary that owns it (`opencode` for OpenCode 1; for OpenCode 2 `opencode2` when
+it is on `PATH`, else `opencode`) and skips the plugin when that binary is the
+other major, since only the matching major can re-create that cache; akm never
 installs or replaces `opencode`. A spec that appears only under the legacy
 `plugin` key for OpenCode 2 is skipped with a note (move it to `plugins`). akm's
 own runtime does not depend on this step: it runs OpenCode embedded in akm (see

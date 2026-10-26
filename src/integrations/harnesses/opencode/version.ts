@@ -12,8 +12,10 @@
  */
 
 import childProcess from "node:child_process";
+import { COMMON_SPAWN_ENV_PASSTHROUGH, collectAllowlistedEnv } from "../../../core/spawn-env";
 import { warnOnce } from "../../../core/warn";
 import { defaultWhich } from "../../agent/detect";
+import { OPENCODE_ENV_PASSTHROUGH } from "./env";
 
 /**
  * The OpenCode CLI binary: the opencode harness runs it and asks it for its major,
@@ -35,22 +37,13 @@ export interface OpencodeVersionInfo {
   readonly runnable: boolean;
 }
 
-type Which = (command: string) => string | null | undefined;
-
 /** Runs `<bin> --version`; the trimmed stdout, or undefined when the binary could not be run. */
 type OpencodeVersionProbe = (bin: string) => string | undefined;
-
-interface DetectOptions {
-  /** PATH lookup; defaults to a memoized `defaultWhich` (works on Bun and Node). */
-  which?: Which;
-  /** Replaces the `--version` run for this call (health injects its own spawn). */
-  probe?: OpencodeVersionProbe;
-}
 
 const defaultProbe: OpencodeVersionProbe = (bin) => {
   const result = childProcess.spawnSync(bin, ["--version"], {
     encoding: "utf8",
-    env: process.env,
+    env: collectAllowlistedEnv([...COMMON_SPAWN_ENV_PASSTHROUGH, ...OPENCODE_ENV_PASSTHROUGH]),
     stdio: "pipe",
     timeout: VERSION_TIMEOUT_MS,
     killSignal: "SIGKILL",
@@ -70,9 +63,8 @@ export function _setOpencodeVersionProbeForTests(fake?: OpencodeVersionProbe): v
   onPath.clear();
 }
 
-/** `which`, memoized for the process when it is the default lookup. */
-function lookup(bin: string, which: Which | undefined): string | undefined {
-  if (which) return which(bin) ?? undefined;
+/** `which`, memoized for the process. */
+function lookup(bin: string): string | undefined {
   if (!onPath.has(bin)) onPath.set(bin, defaultWhich(bin));
   return onPath.get(bin);
 }
@@ -88,21 +80,20 @@ export function parseOpencodeMajor(versionOutput: string): number | undefined {
 }
 
 /**
- * The binary plugin upgrade refreshes OpenCode 2's plugin cache with: `explicitBin`,
- * else the most recent OpenCode on PATH (`opencode2` when present, else `opencode`).
- * The harness itself runs `opencode`, or the `bin` its config names.
+ * The binary plugin upgrade refreshes OpenCode 2's plugin cache with: the most
+ * recent OpenCode on PATH (`opencode2` when present, else `opencode`). The harness
+ * itself runs `opencode`, or the `bin` its config names.
  */
-export function resolveOpencodeBin(explicitBin?: string, which?: Which): string {
-  if (explicitBin) return explicitBin;
-  return lookup(OPENCODE2_BIN, which) ? OPENCODE2_BIN : OPENCODE_BIN;
+export function resolveOpencodeBin(): string {
+  return lookup(OPENCODE2_BIN) ? OPENCODE2_BIN : OPENCODE_BIN;
 }
 
 /** Detect the OpenCode major of `bin`: one `--version` run per binary per process. */
-export function detectOpencodeMajor(bin: string, options: DetectOptions = {}): OpencodeVersionInfo {
-  const path = lookup(bin, options.which) ?? bin;
+export function detectOpencodeMajor(bin: string): OpencodeVersionInfo {
+  const path = lookup(bin) ?? bin;
   const cached = detected.get(path);
   if (cached) return cached;
-  const raw = (options.probe ?? probeOverride ?? defaultProbe)(path);
+  const raw = (probeOverride ?? defaultProbe)(path);
   const version = raw ?? "";
   const reportedMajor = raw === undefined ? undefined : parseOpencodeMajor(raw);
   if (reportedMajor === 1) {

@@ -27,6 +27,8 @@
  * `--standalone`, so agent work whose authored args name `--server` is a
  * configuration error; an authored `--standalone` is kept once.
  *
+ * A binary whose version cannot be read runs as OpenCode 1, with one warning that says so.
+ *
  * Model work drops the config's `args`, keeping the model they name, as the
  * Claude and Codex shells do. On OpenCode 2 it runs as {@link MODEL_WORK_AGENT},
  * an agent defined inline for the run whose tools are limited to reading and
@@ -46,7 +48,7 @@ import {
   withoutLeading,
   withoutModelFlag,
 } from "../harness";
-import { isOpencode2 } from "./version";
+import { detectOpencodeMajor, isOpencode2 } from "./version";
 
 /** The agent OpenCode 2 runs akm's model work as, limited to reading and searching; the name also marks those sessions in the user's history (`./session-log-v2.ts`). */
 export const MODEL_WORK_AGENT = "akm-model-work";
@@ -120,6 +122,12 @@ export const opencodeBuilder: HarnessBuilder = {
     }
 
     const oc2 = isOpencode2(bin);
+    if (!oc2 && detectOpencodeMajor(bin).reportedMajor === undefined) {
+      warnOnce(
+        `opencode-version-unreadable:${bin}`,
+        `Could not read the version of ${bin}, so akm runs it as OpenCode 1: no --standalone (an OpenCode 2 would attach to its shared background service), and model work unrestricted. Check \`${bin} --version\`.`,
+      );
+    }
     const oc2Flags = oc2 ? ["--standalone", "--title", "akm"] : [];
     if (req.modelWork) {
       if (!oc2) {
