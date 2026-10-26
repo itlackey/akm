@@ -6,7 +6,6 @@ import { ConfigError } from "../../core/errors";
 import { canonicalResolvedExecutionRequest, type LoweringNotice } from "../../execution/resolved-request";
 import { type BuiltExecution, buildExecutionFromWire } from "../../integrations/agent/execution";
 import { runExecution } from "../../integrations/agent/runner-dispatch";
-import type { AgentTokenUsage } from "../../integrations/agent/spawn";
 import type { FrozenWorkflowTarget } from "../plan";
 
 /** Everything the dispatcher needs to run one frozen workflow unit. */
@@ -57,7 +56,8 @@ export interface UnitDispatchResult {
   /** Structured failure vocabulary used by workflow retry policies. */
   failureReason?: string;
   error?: string;
-  usage?: AgentTokenUsage;
+  /** Token accounting, when the dispatch reported it: what `budget.max_tokens` counts. */
+  usage?: { inputTokens?: number; outputTokens?: number; reasoningTokens?: number };
   /** Safe, structured diagnostics emitted by the common execution lowerer. */
   notices?: readonly Readonly<LoweringNotice>[];
   /**
@@ -169,10 +169,8 @@ export async function dispatchWorkflowExecution(
   return {
     ok: result.ok,
     text: result.stdout,
-    ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
     ...(result.reason ? { failureReason: result.reason } : {}),
     ...(result.error ? { error: result.error } : {}),
-    ...(result.usage ? { usage: result.usage } : {}),
     ...(notices ? { notices } : {}),
   };
 }

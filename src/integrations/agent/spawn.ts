@@ -96,18 +96,6 @@ export interface RunAgentOptions {
   dispatch?: AgentDispatchRequest;
 }
 
-/**
- * Best-effort token accounting for one agent run. Harness-neutral shape;
- * fields are only set when the harness actually reported them (0 is a real
- * value, absent means unknown). The CLI spawn path has no usage contract
- * yet, so today no runner populates it.
- */
-export interface AgentTokenUsage {
-  inputTokens?: number;
-  outputTokens?: number;
-  reasoningTokens?: number;
-}
-
 /** Result envelope. `ok=false` always carries a `reason`. */
 export interface AgentRunResult {
   ok: boolean;
@@ -120,10 +108,6 @@ export interface AgentRunResult {
   llmErrorCode?: Exclude<import("../../llm/usage-telemetry").LlmUsageErrorCode, "unknown_error">;
   /** Human-readable error message paired with `reason`. */
   error?: string;
-  /** Token accounting, when the harness reported it. */
-  usage?: AgentTokenUsage;
-  /** The harness's own session id, when it exposes one. */
-  sessionId?: string;
 }
 
 /**

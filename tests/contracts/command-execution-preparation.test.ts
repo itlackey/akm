@@ -348,21 +348,6 @@ describe("common command invocation preparation", () => {
     expect(capture.options?.dispatch).not.toHaveProperty("systemPrompt");
   });
 
-  test("the dispatch envelope carries the harness session id when the run reports one", async () => {
-    const prepared = await prepareCommandInvocation({
-      action: { ref: "fixture//commands/session-id" },
-      config: valueStateConfig,
-      sourceLoader: loaderFor(rendered("command", "fixture//commands/session-id", "Review this.")).loader,
-    });
-    const withId = await dispatchPreparedCommandInvocation(prepared, {
-      runAgent: async () => ({ ...OK, sessionId: "ses_abc" }),
-    });
-    const without = await dispatchPreparedCommandInvocation(prepared, { runAgent: async () => OK });
-
-    expect(withId.sessionId).toBe("ses_abc");
-    expect(without).not.toHaveProperty("sessionId");
-  });
-
   test("explicit null clears a harness's first configured model and its workspace", async () => {
     const configured: AkmConfig = {
       configVersion: "0.9.0",

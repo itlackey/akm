@@ -121,21 +121,15 @@ function dispatchedModel({ request, runner }: BuiltExecution): string | undefine
 /**
  * One usage record for an agent or runtime dispatch, through the same sink and
  * ambient `withLlmStage` attribution as the LLM transport's per-HTTP-attempt
- * records: the model it ran, and tokens when the runner reported them.
+ * records: the model it ran, its duration and outcome. No runner reports tokens.
  */
 function recordDispatchUsage(execution: BuiltExecution, result: AgentRunResult): void {
-  const { inputTokens, outputTokens, reasoningTokens } = result.usage ?? {};
-  const reported = [inputTokens, outputTokens, reasoningTokens].filter((count) => count !== undefined);
   const model = dispatchedModel(execution);
   emitLlmUsage({
     outcome: result.ok ? "success" : "error",
     modelSource: "configured",
     ...(model ? { model } : {}),
     durationMs: result.durationMs,
-    ...(inputTokens !== undefined ? { promptTokens: inputTokens } : {}),
-    ...(outputTokens !== undefined ? { completionTokens: outputTokens } : {}),
-    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
-    ...(reported.length > 0 ? { totalTokens: reported.reduce((sum, count) => sum + count, 0) } : {}),
     ...(result.ok ? {} : { errorCode: (result.reason && USAGE_ERROR_CODES[result.reason]) ?? "unknown_error" }),
   });
 }
