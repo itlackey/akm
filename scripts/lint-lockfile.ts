@@ -14,11 +14,15 @@
  *   - the resolved version satisfies the declared range or pin (specs that are
  *     not semver ranges, such as git URLs and dist-tags, are not judged).
  *
+ * And for every other entry, a dependency of a dependency: it resolves to the
+ * package of the name it is installed under, unless the package depending on it
+ * declares that name as an `npm:<other>@<range>` alias.
+ *
  * `bun install --frozen-lockfile` checks none of this when the lock key and the
  * requested version agree. `8055cd1e4` removed the `onnxruntime-node` ->
- * `onnxruntime-web` alias from package.json but not from the lock, so every
- * checkout, CI run and release binary ran ONNX on WASM until it was found by
- * hand.
+ * `onnxruntime-web` alias from package.json but not from the lock, where
+ * `@huggingface/transformers` then depended on it, so every checkout and CI run
+ * ran ONNX on WASM until it was found by hand.
  *
  * Exit codes:
  *   0 — the lock agrees with package.json
@@ -51,6 +55,12 @@ function splitAtVersion(specifier: string): { name: string; rest: string } {
   return at < 0 ? { name: specifier, rest: "" } : { name: specifier.slice(0, at), rest: specifier.slice(at + 1) };
 }
 
+/** The name a lock entry is installed under: the last package name of its key (`parent/child`, scoped names included). */
+function installedName(key: string): string {
+  const parts = key.split("/");
+  return parts.at(-2)?.startsWith("@") ? parts.slice(-2).join("/") : (parts.at(-1) as string);
+}
+
 /** The disagreements between a parsed `package.json` and the text of its `bun.lock`. */
 export function lintLockfile(pkg: PackageJson, lockText: string): string[] {
   const lock = parseJsonc(lockText) as BunLock;
@@ -81,6 +91,28 @@ export function lintLockfile(pkg: PackageJson, lockText: string): string[] {
         );
       }
     }
+  }
+
+  // The npm: aliases the packages in the lock declare for their own dependencies, as "<name> -> <package>".
+  const aliases = new Set<string>();
+  for (const entry of Object.values(lock.packages ?? {})) {
+    const meta = entry.find((part, i) => i > 0 && typeof part === "object" && part !== null) as
+      | Record<string, Record<string, string> | undefined>
+      | undefined;
+    for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
+      for (const [name, spec] of Object.entries(meta?.[field] ?? {})) {
+        if (spec.startsWith("npm:")) aliases.add(`${name} -> ${splitAtVersion(spec.slice("npm:".length)).name}`);
+      }
+    }
+  }
+  const direct = new Set(DEPENDENCY_FIELDS.flatMap((field) => Object.keys(pkg[field] ?? {})));
+  for (const [key, [resolved]] of Object.entries(lock.packages ?? {})) {
+    const name = installedName(key);
+    const lockedName = splitAtVersion(resolved).name;
+    if (direct.has(key) || lockedName === name || aliases.has(`${name} -> ${lockedName}`)) continue;
+    problems.push(
+      `bun.lock installs the package "${lockedName}" (${resolved}) as "${name}" (entry "${key}"), but no package declares "${name}" as "npm:${lockedName}@<range>": a stale alias; run \`bun update ${name}\`.`,
+    );
   }
   return problems;
 }

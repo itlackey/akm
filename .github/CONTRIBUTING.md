@@ -26,7 +26,9 @@ alias, and an alias lives in `package.json` as `npm:<package>@<range>`, nowhere
 else. `bun install --frozen-lockfile` accepts a lock whose entry names another
 package than `package.json` does; `bun run lint` does not, because it runs
 `scripts/lint-lockfile.ts`, which checks every direct dependency's lock entry for
-the package it names and for a version inside its range or pin.
+the package it names and for a version inside its range or pin, and every other
+entry for a package installed under another name that nothing declares as an
+`npm:` alias.
 
 Every exact pin (a version with no `^` or `~`) gets a line in `package.json`'s
 `pinNotes` saying why it is pinned and what to check before moving it.

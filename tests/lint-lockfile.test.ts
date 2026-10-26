@@ -8,10 +8,13 @@
 import { describe, expect, test } from "bun:test";
 import { lintLockfile } from "../scripts/lint-lockfile";
 
-/** A bun.lock (JSONC: trailing commas) holding the given `name -> [identifier]` entries. */
-function lockOf(entries: Record<string, string>): string {
+/** A bun.lock (JSONC: trailing commas) holding the given `name -> [identifier]` entries, with the dependencies given for some. */
+function lockOf(entries: Record<string, string>, dependencies: Record<string, Record<string, string>> = {}): string {
   const packages = Object.entries(entries)
-    .map(([name, resolved]) => `    ${JSON.stringify(name)}: [${JSON.stringify(resolved)}, "", {}, "sha512-x"],`)
+    .map(
+      ([name, resolved]) =>
+        `    ${JSON.stringify(name)}: [${JSON.stringify(resolved)}, "", ${JSON.stringify(dependencies[name] ? { dependencies: dependencies[name] } : {})}, "sha512-x"],`,
+    )
     .join("\n");
   return `{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "akm-cli" } },\n  "packages": {\n${packages}\n  }\n}\n`;
 }
@@ -44,6 +47,35 @@ describe("lintLockfile", () => {
     expect(problems[0]).toContain('"onnxruntime-node"');
     expect(problems[0]).toContain('"onnxruntime-web"');
     expect(problems[0]).toContain("bun update onnxruntime-node");
+  });
+
+  test("rejects the stale alias where it was: under @huggingface/transformers, which declares plain onnxruntime-node", () => {
+    const pkg = { dependencies: { "@huggingface/transformers": "4.2.0" } };
+    const lock = lockOf(
+      { "@huggingface/transformers": "@huggingface/transformers@4.2.0", "onnxruntime-node": "onnxruntime-web@1.24.3" },
+      { "@huggingface/transformers": { "onnxruntime-node": "1.24.3" } },
+    );
+
+    const problems = lintLockfile(pkg, lock);
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('"onnxruntime-web" (onnxruntime-web@1.24.3) as "onnxruntime-node"');
+    expect(problems[0]).toContain("bun update onnxruntime-node");
+  });
+
+  test("accepts an npm: alias a dependency declares for its own dependency, at any depth", () => {
+    const pkg = { dependencies: { "@isaacs/cliui": "^8.0.2" } };
+    const lock = lockOf(
+      {
+        "@isaacs/cliui": "@isaacs/cliui@8.0.2",
+        "string-width-cjs": "string-width@4.2.3",
+        "string-width-cjs/strip-ansi": "strip-ansi@6.0.1",
+        "@isaacs/cliui/@scope/wrap": "@scope/wrap@1.0.0",
+      },
+      { "@isaacs/cliui": { "string-width-cjs": "npm:string-width@^4.2.0" } },
+    );
+
+    expect(lintLockfile(pkg, lock)).toEqual([]);
   });
 
   test("an npm: alias in package.json must resolve to the package it names", () => {
