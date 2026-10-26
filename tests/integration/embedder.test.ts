@@ -5,10 +5,10 @@ import { writeCredential } from "../../src/core/config/credentials";
 import { setQuiet } from "../../src/core/warn";
 import {
   _setTransformersLoaderForTests,
+  checkEmbeddingAvailability,
   cosineSimilarity,
   embed,
   embedBatch,
-  isEmbeddingAvailable,
   resetLocalEmbedder,
 } from "../../src/llm/embedder";
 import { LocalEmbedder } from "../../src/llm/embedders/local";
@@ -205,23 +205,23 @@ describe("remote embed", () => {
     }
   });
 
-  test("isEmbeddingAvailable returns true for valid remote endpoint", async () => {
+  test("checkEmbeddingAvailability reports a valid remote endpoint available", async () => {
     const { url, server } = createMockEmbeddingServer([0.1, 0.2]);
     try {
       const config: EmbeddingConnectionConfig = { endpoint: url, model: "test-model" };
-      const available = await isEmbeddingAvailable(config);
+      const { available } = await checkEmbeddingAvailability(config);
       expect(available).toBe(true);
     } finally {
       server.stop(true);
     }
   });
 
-  test("isEmbeddingAvailable returns false for unreachable endpoint", async () => {
+  test("checkEmbeddingAvailability reports an unreachable endpoint unavailable", async () => {
     const config: EmbeddingConnectionConfig = {
       endpoint: "http://localhost:1",
       model: "test-model",
     };
-    const available = await isEmbeddingAvailable(config);
+    const { available } = await checkEmbeddingAvailability(config);
     expect(available).toBe(false);
   });
 

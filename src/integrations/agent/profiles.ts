@@ -20,7 +20,7 @@ export type AgentStdioMode = "captured" | "interactive";
  * resolved profiles (after merging user overrides) are also `Readonly`.
  */
 export interface AgentProfile {
-  /** Profile name (key in `agent.profiles`). */
+  /** The name it runs under: the configured harness's or connection's name, or the registry id of a built-in. */
   readonly name: string;
   /** Canonical harness platform. */
   readonly platform?: string;

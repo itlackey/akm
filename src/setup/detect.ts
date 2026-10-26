@@ -51,7 +51,7 @@ export function _setDetectForTests(fakes?: DetectOverridesForTests): void {
  * "detection trap" (sessions never reached the improve pipeline).
  *
  * The registry is now the single source of which harnesses are real stash
- * sources: a candidate must (a) have `capabilities.sessionLogs === true` AND
+ * sources: a candidate must (a) register a `sessionLogProvider` AND
  * (b) declare a `setupDetectionDir`. `SESSION_LOG_HARNESSES` already filters by
  * (a), so dropping the four dead options is automatic — they aren't even in the
  * registry. Adding a new session-log harness with a detection dir makes it

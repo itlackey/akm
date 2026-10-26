@@ -758,33 +758,6 @@ async function chatCompletionAttemptOnce(
 // ── Reachability probe ──────────────────────────────────────────────────────
 
 /**
- * Best-effort reachability check with an error message, for setup's optional
- * `--probe` connectivity verification. Deliberately does NOT probe or cache
- * `response_format: json_schema` support: that used to be persisted as
- * `capabilities.structuredOutput` and consulted on every later call, so a
- * config edit that changed the endpoint/model left a stale verdict in place
- * with no invalidation, and a stale `true` sent an unsupported request that
- * the retry policy explicitly does not retry (4xx). `chatCompletion` now
- * attempts the schema request fresh every time and falls back once per call
- * on a 4xx — see the in-memory tracker below.
- */
-export async function probeLlmReachable(
-  config: ChatCompletionConfig,
-  timeoutMs?: number,
-): Promise<{ reachable: boolean; error?: string }> {
-  try {
-    const raw = await chatCompletion(config, [{ role: "user", content: "Respond with just the word: ok" }], {
-      maxTokens: 16,
-      temperature: 0,
-      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    });
-    return raw.length > 0 ? { reachable: true } : { reachable: false, error: "empty response" };
-  } catch (err) {
-    return { reachable: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-/**
  * Reachability probe for `akm health` (#914): one GET against the
  * OpenAI-compatible `/models` route, bounded by `timeoutMs`. Any HTTP
  * response counts as reachable — the question is whether the endpoint

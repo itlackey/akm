@@ -295,8 +295,3 @@ export async function checkEmbeddingAvailability(
     };
   }
 }
-
-export async function isEmbeddingAvailable(embeddingConfig?: EmbeddingConnectionConfig): Promise<boolean> {
-  const result = await checkEmbeddingAvailability(embeddingConfig);
-  return result.available;
-}
