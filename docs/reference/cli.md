@@ -430,7 +430,7 @@ Primary result fields:
 | Field | Description |
 | --- | --- |
 | `status` | Overall health verdict: `pass`, `warn`, or `fail` |
-| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `active-runs`, and `connections-and-harnesses` |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `active-runs`, `connections-and-harnesses`, and `semantic-search` |
 | `advisories` | Non-fatal warnings including `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), and `scheduler-binary` |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
@@ -458,6 +458,21 @@ the text format always prints them. It is a `warn` when a key variable is unset,
 an endpoint does not answer (the probes, and the harness `--version` runs, are skipped by `--no-probe`), a harness is not
 installed, or the config leaves a kind of work unresolvable, and `unknown` when
 nothing is configured.
+
+`semantic-search` reports what the last `akm index` recorded about semantic
+search, with the index's entry and vector counts read now. It loads no model and
+sends no request. It `pass`es when every entry has a vector (and a local model
+embedded on `onnxruntime-node`) or `semanticSearchMode` is `off`; `warn`s when
+vectors lag the entries (`akm index` embeds the rest) or local embeddings ran on
+another runtime; `fail`s when the last index found semantic search `blocked` (an
+embedding endpoint or model download failed) or `unavailable` (the local
+embedding runtime cannot load on this machine), with the recorded reason; and is
+`unknown` before the first index. Search never reads this record: a query still
+tries semantic search and falls back to keyword search on its own. A fix shows
+here after the next `akm index`. `evidence` carries the recorded `status`,
+`provider`, `runtime`, `reason`, the index's `builtAt`, `entryCount` and
+`embeddingCount`. `akm health --report --format html` shows it as the Semantic
+Search line: `OK`, `OFF`, `BLOCKED`, `UNAVAILABLE` or `UNKNOWN`.
 
 `cli-version` compares the installed akm-cli version against the latest
 GitHub release — the same source `akm upgrade` trusts — and `warn`s with the

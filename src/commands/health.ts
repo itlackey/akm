@@ -41,6 +41,7 @@ import { emptyImproveMetrics, roundRate } from "./health/improve-metrics";
 import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usage";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
+import { readSemanticSearchState } from "./health/semantic-search-check";
 import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
 import {
@@ -333,6 +334,15 @@ function gatherTaskHistoryPhase(
 function gatherEgressConfigView(): EgressConfigView | undefined {
   try {
     return loadConfig() as EgressConfigView;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The configured `semanticSearchMode`; undefined when the config cannot load. */
+function gatherSemanticSearchMode(): string | undefined {
+  try {
+    return loadConfig().semanticSearchMode;
   } catch {
     return undefined;
   }
@@ -772,6 +782,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       sessionExtractionLedger,
       autoAccept: improveSummary.autoAccept,
       connectionsAndHarnesses,
+      semanticSearch: readSemanticSearchState(gatherSemanticSearchMode()),
       versionDrift,
       schedulerBinaryDrift,
     };
