@@ -18,13 +18,20 @@ import fs from "node:fs";
 import path from "node:path";
 import akmPlugin from "../../../../assets/opencode/akm-plugin.js" with { type: "text" };
 import { toErrorMessage } from "../../../../core/common";
+import {
+  createLockPayload,
+  probeLock,
+  reclaimStaleLock,
+  releaseLock,
+  tryAcquireLockSync,
+} from "../../../../core/file-lock";
 import { PORTABLE_INFERENCE_KEYS } from "../../../../core/llm-inference";
 import { resolveAkmInvocation } from "../../../../tasks/resolve-akm-bin";
 import type { AgentRuntime } from "../../../agent/runtime-port";
 import { buildChildEnv, type ReadyCommand, type RunAgentOptions, runBuiltCommand } from "../../../agent/spawn";
 import type { LowerTarget } from "../../harness";
 import { akmOpencodeDatabasePath, akmRuntimeDir } from "../roots";
-import { ensureRuntimeBinary } from "./binary";
+import { ensureRuntimeBinary, OPENCODE_RUNTIME_VERSION } from "./binary";
 import { type RuntimeLocations, runtimeArgv, runtimeConfig, runtimeEnv, runtimePrepareArgv } from "./command";
 
 /**
@@ -57,27 +64,42 @@ function installPlugin(directory: string): string {
   return pluginDirectory;
 }
 
-/** The databases being prepared, by path. */
-const preparing = new Map<string, Promise<unknown>>();
-
 /**
- * OpenCode makes and migrates its database when a process starts, and two processes doing that to one empty database
- * break each other (one fails with "Standalone server exited before reporting readiness"). So the first start of a
- * database is a run of its own, and runs that come with it, as a workflow's parallel units do, wait for it. A run that
- * finds the database already there starts at once. The run itself reports anything this does not.
+ * OpenCode makes and migrates its database when a process starts, and two processes doing that to one database break
+ * each other (one fails with "Standalone server exited before reporting readiness"; on 2.1.4 two runs started together
+ * on a fresh directory lose one of them every time). So the first start of this OpenCode version is a preparing run of
+ * its own, under a lock file in the runtime directory that every run, of this akm process or another, waits on, and it
+ * leaves a marker naming the version; a run that finds the marker and the database starts at once. A dead holder's
+ * lock is reclaimed. The run itself reports anything the preparation does not.
  */
-function prepareDatabase(command: ReadyCommand, opts: RunAgentOptions): Promise<unknown> {
-  const database = akmOpencodeDatabasePath();
-  const running = preparing.get(database);
-  if (running) return running;
-  if (fs.existsSync(database)) return Promise.resolve();
-  const prepare = runBuiltCommand("akm's runtime preparing its database", command, {
-    ...(opts.cwd ? { cwd: opts.cwd } : {}),
-    ...(opts.signal ? { signal: opts.signal } : {}),
-    timeoutMs: PREPARE_TIMEOUT_MS,
-  }).finally(() => preparing.delete(database));
-  preparing.set(database, prepare);
-  return prepare;
+async function prepareDatabase(directory: string, command: ReadyCommand, opts: RunAgentOptions): Promise<void> {
+  const marker = path.join(directory, `prepared-${OPENCODE_RUNTIME_VERSION}`);
+  const lock = path.join(directory, "prepare.lock");
+  const prepared = (): boolean => fs.existsSync(marker) && fs.existsSync(akmOpencodeDatabasePath());
+  const deadline = Date.now() + PREPARE_TIMEOUT_MS;
+  while (!prepared() && !opts.signal?.aborted) {
+    const ownership = tryAcquireLockSync(lock, createLockPayload());
+    if (ownership) {
+      try {
+        if (prepared()) return;
+        const result = await runBuiltCommand("akm's runtime preparing its database", command, {
+          ...(opts.cwd ? { cwd: opts.cwd } : {}),
+          ...(opts.signal ? { signal: opts.signal } : {}),
+          timeoutMs: PREPARE_TIMEOUT_MS,
+        });
+        if (result.ok) fs.writeFileSync(marker, "");
+        return;
+      } finally {
+        releaseLock(ownership);
+      }
+    }
+    const probe = probeLock(lock);
+    if (probe.state === "stale" && reclaimStaleLock(lock, probe)) continue;
+    if (Date.now() >= deadline) {
+      throw new Error(`Another akm process is still preparing the database of akm's runtime (lock ${lock}).`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 export const opencodeRuntime: AgentRuntime = {
@@ -105,7 +127,7 @@ export const opencodeRuntime: AgentRuntime = {
       );
       const config = runtimeConfig(connection, where.pluginDirectory, ambient);
       const env = { ...ambient, ...runtimeEnv(config, where) };
-      await prepareDatabase({ argv: runtimePrepareArgv(binary), env }, opts);
+      await prepareDatabase(directory, { argv: runtimePrepareArgv(binary), env }, opts);
       return await runBuiltCommand(
         label,
         { argv: runtimeArgv(connection, dispatch, binary), env, stdin: dispatch.prompt },

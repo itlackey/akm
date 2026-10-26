@@ -12,6 +12,7 @@
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -228,6 +229,34 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
       "every run finishes",
     ).toEqual(Array(6).fill(true));
     expect(await new OpenCodeProvider().listSessions()).toHaveLength(6);
+  }, 120_000);
+
+  test("two akm processes that start together on a fresh runtime directory both finish", async () => {
+    // Each child is an akm process of its own running one turn; the runtime's lock file is all they share.
+    const script = `
+      const { opencodeRuntime } = await import(${JSON.stringify(path.resolve(import.meta.dir, "../../src/integrations/harnesses/opencode/runtime/index.ts"))});
+      const result = await opencodeRuntime.run(
+        { name: "lab" },
+        { cwd: ${JSON.stringify(work)}, timeoutMs: 60000, dispatch: { prompt: "MODE:answer please" } },
+        { endpoint: ${JSON.stringify(model.url)}, model: "fake-model", timeoutMs: null },
+      );
+      console.log(JSON.stringify(result.ok || result.stderr + result.error));
+    `;
+    const child = () =>
+      new Promise<string>((resolve) => {
+        const started = spawn(process.execPath, ["-e", script], {
+          env: process.env,
+          stdio: ["ignore", "pipe", "inherit"],
+        });
+        let out = "";
+        started.stdout.on("data", (chunk) => (out += chunk));
+        started.on("close", () => resolve(out.trim()));
+      });
+
+    const outcomes = await Promise.all([child(), child()]);
+
+    expect(outcomes, "every process's run finishes").toEqual(["true", "true"]);
+    expect(await new OpenCodeProvider().listSessions()).toHaveLength(2);
   }, 120_000);
 
   test("a run that timed out is not replayed by the next one", async () => {

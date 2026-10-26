@@ -10,6 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import akmPlugin from "../src/assets/opencode/akm-plugin.js" with { type: "text" };
@@ -43,15 +44,30 @@ const connection: ChatCompletionConfig = {
 };
 
 /**
+ * What the stand-in does for `session list`, the command that prepares OpenCode's database: it makes the file, as
+ * OpenCode does before it migrates it. With `STARTS_LOG` set it logs its start and end and takes half a second
+ * between them, as a migration would.
+ */
+const PREPARE = `if (process.argv[2] === "session") {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const log = process.env.STARTS_LOG;
+  fs.mkdirSync(path.join(process.env.XDG_DATA_HOME, "opencode"), { recursive: true });
+  fs.writeFileSync(path.join(process.env.XDG_DATA_HOME, "opencode", "opencode.db"), "");
+  if (log) fs.appendFileSync(log, "prepare start\\n");
+  if (log) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  if (log) fs.appendFileSync(log, "prepare end\\n");
+  process.exit(0);
+}`;
+
+/**
  * Put a program where akm keeps the OpenCode binary. A first run on a fresh runtime directory prepares OpenCode's
- * database with `session list`, which the stand-in answers by exiting; everything else is `body`.
+ * database with `session list`, which the stand-in answers by making the file; everything else is `body`.
  */
 function installBinary(body: string): void {
   const binary = runtimeBinaryPath();
   fs.mkdirSync(path.dirname(binary), { recursive: true });
-  fs.writeFileSync(binary, `#!${process.execPath}\nif (process.argv[2] === "session") process.exit(0);\n${body}\n`, {
-    mode: 0o755,
-  });
+  fs.writeFileSync(binary, `#!${process.execPath}\n${PREPARE}\n${body}\n`, { mode: 0o755 });
 }
 
 /** A binary that prints what it was started with, as JSON. */
@@ -131,32 +147,60 @@ describe.skipIf(process.platform === "win32")("a run on akm's runtime", () => {
 
   test("runs that start together on a fresh runtime directory wait for the one that prepares OpenCode's database", async () => {
     const log = path.join(storage.root, "starts.log");
-    const binary = runtimeBinaryPath();
-    fs.mkdirSync(path.dirname(binary), { recursive: true });
-    // Logs how it was started; the run that prepares the database (`session list`) exits at once.
-    fs.writeFileSync(
-      binary,
-      [
-        `#!${process.execPath}`,
-        `require("node:fs").appendFileSync(${JSON.stringify(log)}, process.argv.slice(2, 4).join(" ") + "\\n");`,
-        'if (process.argv[2] === "session") process.exit(0);',
-        'require("node:fs").readFileSync(0, "utf8");',
-        'console.log("done");',
-        "",
-      ].join("\n"),
-      { mode: 0o755 },
+    installBinary(
+      'require("node:fs").readFileSync(0, "utf8"); require("node:fs").appendFileSync(process.env.STARTS_LOG, "run\\n");',
     );
+    const lines = () => fs.readFileSync(log, "utf8").trim().split("\n");
 
-    const results = await Promise.all([run(), run(), run()]);
+    const results = await Promise.all(Array.from({ length: 6 }, () => run({ env: { STARTS_LOG: log } })));
 
-    expect(results.map((result) => result.ok)).toEqual([true, true, true]);
-    // One preparing run first, then the three runs: none started beside the preparing one.
-    expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-      "session list",
-      "run --standalone",
-      "run --standalone",
-      "run --standalone",
-    ]);
+    expect(results.map((result) => result.ok)).toEqual(Array(6).fill(true));
+    // One preparing run, alone, then the six runs: none started while the database was being prepared.
+    expect(lines()).toEqual(["prepare start", "prepare end", ...Array(6).fill("run")]);
+    // The next run finds the database prepared and starts at once.
+    await run({ env: { STARTS_LOG: log } });
+    expect(lines().filter((line) => line.startsWith("prepare"))).toHaveLength(2);
+  });
+
+  test("two akm processes that start together prepare the database once, before either run starts", async () => {
+    const log = path.join(storage.root, "starts.log");
+    installBinary(
+      'require("node:fs").readFileSync(0, "utf8"); require("node:fs").appendFileSync(process.env.STARTS_LOG, "run\\n");',
+    );
+    const script = `
+      const { opencodeRuntime } = await import(${JSON.stringify(path.resolve(import.meta.dir, "../src/integrations/harnesses/opencode/runtime/index.ts"))});
+      const result = await opencodeRuntime.run(
+        { name: "lab" },
+        { timeoutMs: 20000, env: { STARTS_LOG: ${JSON.stringify(log)} }, dispatch: { prompt: "p" } },
+        { endpoint: "http://127.0.0.1:1/v1", model: "fake-model" },
+      );
+      console.log(JSON.stringify(result.ok || result.error));
+    `;
+    const child = () =>
+      new Promise<string>((resolve) => {
+        const started = spawn(process.execPath, ["-e", script], {
+          env: process.env,
+          stdio: ["ignore", "pipe", "inherit"],
+        });
+        let out = "";
+        started.stdout.on("data", (chunk) => (out += chunk));
+        started.on("close", () => resolve(out.trim()));
+      });
+
+    expect(await Promise.all([child(), child()])).toEqual(["true", "true"]);
+    expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual(["prepare start", "prepare end", "run", "run"]);
+  });
+
+  test("a lock its holder left behind when it died does not keep a run waiting", async () => {
+    installBinary(REPORTER);
+    const directory = path.join(getDataDir(), "opencode-runtime");
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, "prepare.lock"), JSON.stringify({ pid: 999_999_999, lockId: "gone" }));
+
+    const result = await run();
+
+    expect(result.ok, result.error).toBe(true);
+    expect(fs.existsSync(path.join(directory, "prepare.lock"))).toBe(false);
   });
 
   test("a failing process is a failed run, with its own output kept", async () => {
