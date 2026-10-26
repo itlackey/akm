@@ -274,8 +274,12 @@ background service left behind.
   OpenCode's default) is one of its free ones. Agent work does not set it: your
   OpenCode's models are as you would get running it by hand.
 - OpenCode 2 also gets `--standalone` and `--title akm`. A run akm stops
-  (timeout, abort) stays suspended in your OpenCode history, and your own
-  OpenCode's background service resumes it once when it next starts.
+  (timeout, abort) is interrupted first, as Ctrl-C would, which OpenCode records
+  as interrupted and releases. One that does not stop within 5 seconds is
+  terminated, and killed 5 seconds after that; only a run killed or terminated
+  this way stays suspended in your OpenCode history, where your own OpenCode's
+  background service may resume it when it next starts (up to ten attempts,
+  OpenCode's own policy).
 - Its sessions are in your OpenCode history, and `akm proposal extract` and
   improve read them there. On OpenCode 2 they leave out the sessions of akm's
   model work, which ran as the `akm-model-work` agent; OpenCode 1 keeps no such

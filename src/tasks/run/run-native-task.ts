@@ -178,7 +178,7 @@ export async function runNativeTask(input: {
   // above) — a timeout or SIGTERM to the direct child would reap the whole
   // group, but nothing tied THIS process's own termination to that same
   // ladder, so a signal to the runner left its child running as an orphan.
-  // Aborting `runManagedSubprocess` here runs its normal SIGTERM→SIGKILL
+  // Aborting `runManagedSubprocess` here runs its normal SIGINT→SIGTERM→SIGKILL
   // kill ladder against the child's process group.
   const abortController = new AbortController();
   const forwardTerminationSignal = (signal: NodeJS.Signals): void => {
@@ -195,8 +195,8 @@ export async function runNativeTask(input: {
       cmd = frozenScriptCommand(task, materialized.file);
     }
     // Managed spawn (src/core/subprocess.ts): process-GROUP kill so a timeout
-    // reaps the whole command tree (no orphans), and a SIGTERM→SIGKILL ladder
-    // so a child that ignores SIGTERM can't wedge the run forever. `signal`
+    // reaps the whole command tree (no orphans), and a SIGINT→SIGTERM→SIGKILL
+    // ladder so a child that ignores both can't wedge the run forever. `signal`
     // ties that same ladder to a termination signal received by this
     // process itself (#956), not only to the timeout.
     const result = await runManagedSubprocess(cmd, {

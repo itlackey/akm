@@ -140,7 +140,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   configuration, logins and sessions; akm reads, copies and embeds nothing of
   yours, and its runs are in your OpenCode history, which improve reads.
   OpenCode 2 runs `--standalone` (one process that ends with the run, not a
-  background service) with `--title akm`. Model work sets
+  background service) with `--title akm`. A run akm stops (timeout, abort) is
+  interrupted first, which OpenCode records as interrupted and releases; only a
+  run that had to be terminated or killed after the grace stays suspended in your
+  OpenCode history, where your own OpenCode's background service may resume it
+  (up to ten attempts, OpenCode's own policy). Model work sets
   `OPENCODE_DISABLE_FREE_MODELS=1`, which OpenCode 2.1.2 and later honor: a call
   with no usable provider fails instead of sending the prompt to OpenCode's
   hosted free model. Agent work leaves your OpenCode's models as they are. An
@@ -218,6 +222,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (the other platforms, and OpenCode 1), the call runs unrestricted, with a
   notice. A config that names an `opencode` harness for model work loads, and a
   native agent named for model work is ignored with a notice.
+- Stopping a child process (a timeout, an abort, or a signal to akm) sends its
+  process group SIGINT first, then SIGTERM and SIGKILL, each after a 5 second
+  grace for as long as it still runs, where it sent SIGTERM and then SIGKILL.
+  SIGTERM also follows at once when the leader exits and leaves members of its
+  group behind. This covers agent programs, workflow `exec` units and task
+  commands.
 - Harnesses are thin shells. akm writes only the arguments a program needs to run
   without a person, hands it the prompt and takes its standard output as the
   reply, as written: it no longer asks for JSON output or reads a result or a

@@ -42,7 +42,7 @@ export interface RunExecutionOptions {
     opts: RunAgentOptions,
     connection: ChatCompletionConfig,
   ) => Promise<AgentRunResult>;
-  /** Cancels the dispatch: a child gets SIGTERM then SIGKILL, a chat or runtime session is interrupted. */
+  /** Cancels the dispatch: a child gets SIGINT, then SIGTERM and SIGKILL if it stays, a chat or runtime session is interrupted. */
   readonly signal?: AbortSignal;
   /** Stamped into the child env as `AKM_EVENT_SOURCE` (usage-event provenance). */
   readonly eventSource?: string;

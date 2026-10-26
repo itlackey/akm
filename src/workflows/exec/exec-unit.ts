@@ -4,7 +4,7 @@
 
 /**
  * The `exec` unit runner — the one place a frozen workflow spawns a command:
- * argv-only, detached with a SIGTERM→SIGKILL ladder against the process group,
+ * argv-only, detached with a SIGINT→SIGTERM→SIGKILL ladder against the process group,
  * bounded (timeout, output bytes, context size), with an allowlisted
  * environment ({@link childEnv}). The
  * caller redacts the outcome before anything is journaled.

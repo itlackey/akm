@@ -15,6 +15,7 @@
 // is downloaded and no real account, key or OpenCode file is opened.
 
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -22,6 +23,7 @@ import { harnessProfile } from "../../src/integrations/agent/profiles";
 import { type AgentRunResult, runAgent } from "../../src/integrations/agent/spawn";
 import type { AgentDispatchRequest } from "../../src/integrations/harnesses/harness";
 import { _setOpencodeVersionProbeForTests, isOpencode2 } from "../../src/integrations/harnesses/opencode/version";
+import { openDatabase } from "../../src/storage/database";
 import { makeSandboxDir, withEnv } from "../_helpers/sandbox";
 
 const GATE = "AKM_TEST_OPENCODE2_BIN";
@@ -42,12 +44,24 @@ const SANDBOX_CHILD_ENV = {
   OPENCODE_DISABLE_FREE_MODELS: "1",
 };
 
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitFor(condition: () => boolean, ms: number, what: string): Promise<void> {
+  const until = Date.now() + ms;
+  while (!condition()) {
+    if (Date.now() > until) throw new Error(`timed out waiting for ${what}`);
+    await sleep(25);
+  }
+}
+
 interface Box {
   readonly dir: string;
   /** The directory the run starts in. */
   readonly work: string;
   /** The parent environment of the run: everything an OpenCode reads from it points inside `dir`. */
   readonly env: Record<string, string | undefined>;
+  /** OpenCode's own database, where a run's sessions are kept. */
+  readonly database: string;
 }
 
 interface ModelRequest {
@@ -75,13 +89,14 @@ function sandbox(): Box {
     fs.mkdirSync(dir, { recursive: true });
     return dir;
   };
+  const dataHome = at("data");
   return {
     dir: sb.dir,
     work: at("work"),
     env: {
       HOME: at("home"),
       XDG_CONFIG_HOME: at("config"),
-      XDG_DATA_HOME: at("data"),
+      XDG_DATA_HOME: dataHome,
       XDG_CACHE_HOME: at("cache"),
       XDG_STATE_HOME: at("state"),
       OPENCODE_CONFIG_DIR: at("opencode"),
@@ -90,6 +105,7 @@ function sandbox(): Box {
       OPENCODE_CONFIG: undefined,
       OPENCODE_CONFIG_CONTENT: undefined,
     },
+    database: path.join(dataHome, "opencode", "opencode.db"),
   };
 }
 
@@ -221,6 +237,48 @@ function runOpencode(
   );
 }
 
+/** The sessions the run left in OpenCode's database: `time_suspended` is set while a stopped run could still be resumed. */
+function sessions(box: Box): Array<{ time_suspended: number | null }> {
+  const db = openDatabase(box.database, { readonly: true, create: false });
+  try {
+    return db.prepare<{ time_suspended: number | null }>("select time_suspended from session_v2").all();
+  } finally {
+    db.close();
+  }
+}
+
+/** The pids of the OpenCode processes this process started, the run's server child included. */
+function opencodeProcesses(): number[] {
+  const listing = spawnSync("ps", ["-A", "-o", "pid=,ppid=,command="], { encoding: "utf8" }).stdout;
+  const rows = listing
+    .split("\n")
+    .map((line) => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line))
+    .filter((match): match is RegExpExecArray => match !== null)
+    .map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] ?? "" }));
+  const descendants = new Set<number>([process.pid]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const row of rows) {
+      if (descendants.has(row.ppid) && !descendants.has(row.pid)) {
+        descendants.add(row.pid);
+        grew = true;
+      }
+    }
+  }
+  return rows
+    .filter((row) => row.pid !== process.pid && descendants.has(row.pid) && row.command.includes(BIN ?? ""))
+    .map((row) => row.pid);
+}
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 function registerSuite(bin: string): void {
   beforeAll(() => {
     // Each test asks the binary its major afresh, inside the sandbox it runs in.
@@ -304,6 +362,49 @@ function registerSuite(bin: string): void {
       expect(model.requests[0]?.tools).toContain("review_note");
       expect(fs.existsSync(marker)).toBe(true);
     }, 60_000);
+  });
+
+  describe("a stop releases OpenCode's claim on the session", () => {
+    /** Start a run that stays in flight (in a model request, or in a plugin tool call), then stop it. */
+    async function stopDuring(inFlight: "model request" | "tool call", how: "abort" | "timeout"): Promise<void> {
+      const box = sandbox();
+      const started = path.join(box.dir, "tool-started");
+      const model = fakeModel(inFlight === "model request" ? { stall: true } : { callTool: "slow_tool" });
+      const plugin = writePlugin(box, [
+        { name: "slow_tool", body: `${writing(started)}; await new Promise((resolve) => setTimeout(resolve, 120000))` },
+      ]);
+      writeConfig(box, providerConfig(model, { model: "fixture/fake-model", plugins: [plugin] }));
+
+      const controller = new AbortController();
+      const running = runOpencode(
+        box,
+        { prompt: "probe" },
+        how === "abort" ? { signal: controller.signal } : { timeoutMs: 5000 },
+      );
+      await waitFor(
+        () => (inFlight === "model request" ? model.requests.length > 0 : fs.existsSync(started)),
+        30_000,
+        `the run to be in a ${inFlight}`,
+      );
+      const processes = opencodeProcesses();
+      expect(processes.length).toBeGreaterThan(0);
+      if (how === "abort") controller.abort();
+      const result = await running;
+
+      expect(result.reason).toBe(how === "abort" ? "aborted" : "timeout");
+      expect(result.exitCode).toBe(130);
+      expect(sessions(box)).toEqual([{ time_suspended: null }]);
+      await sleep(3000);
+      expect(processes.filter(alive)).toEqual([]);
+    }
+
+    for (const how of ["abort", "timeout"] as const) {
+      for (const inFlight of ["model request", "tool call"] as const) {
+        test(`${how} during a ${inFlight} leaves the session interrupted, not resumable, and no process behind`, async () => {
+          await stopDuring(inFlight, how);
+        }, 60_000);
+      }
+    }
   });
 }
 

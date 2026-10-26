@@ -698,7 +698,8 @@ is exactly what makes a `test` step a **gate**. With `on_error: continue` the
 failure is recorded in the step's evidence and the completion gate decides.
 
 On timeout or cancellation the child's whole **process group** gets a
-SIGTERM→SIGKILL ladder, so a command that spawned its own children does not
+SIGINT→SIGTERM→SIGKILL ladder (each signal after a grace period of 5 seconds, for
+a command still running), so a command that spawned its own children does not
 leave them orphaned.
 
 ### Output limits

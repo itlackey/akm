@@ -88,8 +88,8 @@ export interface RunAgentOptions {
   cwd?: string;
   /**
    * Cooperative cancellation. When the signal aborts, the child process
-   * group gets SIGTERM (then SIGKILL after 5 s) and the run resolves with
-   * `reason: "aborted"`. Lets a scheduler preempt a running agent at a
+   * group gets SIGINT (then SIGTERM and SIGKILL, each after 5 s if it is still
+   * running) and the run resolves with `reason: "aborted"`. Lets a scheduler preempt a running agent at a
    * budget ceiling instead of waiting out the timeout.
    */
   signal?: AbortSignal;
@@ -196,7 +196,7 @@ export async function runAgent(profile: AgentProfile, options: RunAgentOptions =
 
   // Spawn/timeout/abort/capture are owned by the managed-subprocess primitive
   // (src/core/subprocess.ts): process-GROUP spawn (detached in captured mode),
-  // the SIGTERM→SIGKILL kill ladder on timeout/abort, bounded output capture,
+  // the SIGINT→SIGTERM→SIGKILL kill ladder on timeout/abort, bounded output capture,
   // and the optional stdin payload. runAgent keeps its agent-specific surface:
   // the failure taxonomy.
   const start = Date.now();

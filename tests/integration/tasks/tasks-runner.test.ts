@@ -773,13 +773,13 @@ describe("runTask — command target", () => {
     expect(fs.readFileSync(result.log, "utf8")).toContain(`cwd=${bundleDir}`);
   });
 
-  test("a command that ignores SIGTERM is SIGKILLed on timeout, logging timed_out + exit 143", async () => {
+  test("a command that ignores SIGINT and SIGTERM is SIGKILLed on timeout, logging timed_out + exit 143", async () => {
     writeTask("stubborn", shellTask("hang-forever", { timeout: 100 }));
 
     const { timers, setTimeoutFn, clearTimeoutFn } = collectTimers();
     const signals: string[] = [];
-    // A child that swallows SIGTERM: only SIGKILL resolves its exit. Proves the
-    // runner now escalates (old inline path signalled SIGTERM once and hung).
+    // A child that swallows SIGINT and SIGTERM: only SIGKILL resolves its exit. Proves the
+    // runner escalates through the whole ladder (old inline path signalled SIGTERM once and hung).
     const spawnFn: SpawnFn = () => {
       let resolveExit: (code: number) => void = () => {};
       const exited = new Promise<number>((resolve) => {
@@ -794,7 +794,7 @@ describe("runTask — command target", () => {
         kill(signal?: number | string) {
           const name = String(signal);
           signals.push(name);
-          if (name === "SIGTERM") return; // ignored — force the SIGKILL rung
+          if (name !== "SIGKILL") return; // ignored — force the SIGKILL rung
           resolveExit(143);
         },
       };
@@ -802,11 +802,12 @@ describe("runTask — command target", () => {
     };
 
     const promise = runTask("stubborn", { bundleDir, logDir, spawnFn, setTimeoutFn, clearTimeoutFn });
-    await fireWhenRegistered(timers, 100); // deadline → SIGTERM (ignored)
+    await fireWhenRegistered(timers, 100); // deadline → SIGINT (ignored)
+    await fireWhenRegistered(timers, 5000); // grace → SIGTERM (ignored)
     await fireWhenRegistered(timers, 5000); // grace → SIGKILL → child exits 143
     const result = await promise;
 
-    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(signals).toEqual(["SIGINT", "SIGTERM", "SIGKILL"]);
     expect(result.status).toBe("failed");
     expect(result.detail?.exitCode).toBe(143);
     const log = fs.readFileSync(result.log, "utf8");
@@ -839,8 +840,8 @@ describe("runTask — command target", () => {
         stdin: null,
         kill(signal?: number | string) {
           signals.push(String(signal));
-          // Mirrors a real child's exit: stops scheduleKillLadder's SIGKILL
-          // follow-up timer (it no-ops once exitCode is set) rather than
+          // Mirrors a real child's exit: stops scheduleKillLadder's SIGTERM and
+          // SIGKILL follow-ups (they no-op once exitCode is set) rather than
           // leaving a dangling real 5s timer behind this test.
           proc.exitCode = 143;
           resolveExit(143);
@@ -867,7 +868,7 @@ describe("runTask — command target", () => {
 
     const result = await promise;
 
-    expect(signals).toEqual(["SIGTERM"]);
+    expect(signals).toEqual(["SIGINT"]);
     expect(result.status).toBe("failed");
     expect(result.detail?.exitCode).toBe(143);
   });
