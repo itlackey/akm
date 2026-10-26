@@ -17,8 +17,12 @@ import { hashSessionContent } from "../../src/commands/improve/extract";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { runtimeProfile } from "../../src/integrations/agent/profiles";
 import type { ConnectionRunner } from "../../src/integrations/agent/runner";
-import { akmOpencodeDatabasePath } from "../../src/integrations/harnesses/opencode/roots";
+import { buildChildEnv, runBuiltCommand } from "../../src/integrations/agent/spawn";
+import { opencodeBuilder } from "../../src/integrations/harnesses/opencode/agent-builder";
+import { akmOpencodeDatabasePath, akmRuntimeDir } from "../../src/integrations/harnesses/opencode/roots";
 import { opencodeRuntime } from "../../src/integrations/harnesses/opencode/runtime";
+import { runtimeBinaryPath } from "../../src/integrations/harnesses/opencode/runtime/binary";
+import { runtimeConfig, runtimeEnv } from "../../src/integrations/harnesses/opencode/runtime/command";
 import { OpenCodeProvider } from "../../src/integrations/harnesses/opencode/session-log";
 import { opencodeMessageEvents } from "../../src/integrations/harnesses/opencode/session-log-v2";
 import { openDatabase } from "../../src/storage/database";
@@ -85,7 +89,8 @@ interface OpenCode2Fixture {
 /**
  * An OpenCode 2 database written by OpenCode itself, through akm's runtime: sessions that ran a shell command, wrote a
  * file, were compacted mid-turn, were cut at the output limit and named an agent, one that started a subagent, then a
- * model-work session. The model-work session and the subagent's are not history.
+ * model-work session, run the way the opencode harness runs model work on a user's OpenCode 2. The model-work session
+ * and the subagent's are not history.
  */
 async function writeOpenCode2Store(): Promise<OpenCode2Fixture> {
   const root = makeBase();
@@ -107,7 +112,7 @@ async function writeOpenCode2Store(): Promise<OpenCode2Fixture> {
       useRealOpencodeRuntime();
       const directory = path.dirname(akmOpencodeDatabasePath());
       const ids: string[] = [];
-      const turn = async (mode: string, dispatch: { agent?: string; modelWork?: boolean } = {}): Promise<void> => {
+      const turn = async (mode: string, dispatch: { agent?: string } = {}): Promise<void> => {
         const result = await opencodeRuntime.run(
           profile,
           { cwd: work, timeoutMs: 90_000, dispatch: { prompt: `MODE:${mode} go`, ...dispatch } },
@@ -135,7 +140,26 @@ async function writeOpenCode2Store(): Promise<OpenCode2Fixture> {
       await turn("length");
       await turn("answer", { agent: "build" });
       await turn("subagent");
-      await turn("answer", { modelWork: true });
+      // The opencode harness's model work, on the same binary and database: its read-only agent, over the runtime's provider.
+      const locations = {
+        binary: runtimeBinaryPath(),
+        directory: akmRuntimeDir(),
+        pluginDirectory: path.join(akmRuntimeDir(), "config", "akm-plugin"),
+        akm: "akm",
+      };
+      const runtime = runtimeEnv(runtimeConfig(connection, locations.pluginDirectory), locations);
+      const modelWork = await withEnv(runtime, () =>
+        opencodeBuilder.build(
+          { bin: locations.binary, args: [] },
+          { prompt: "MODE:answer go", model: "akm/fake-model", modelWork: true },
+        ),
+      );
+      const result = await runBuiltCommand(
+        "model work",
+        { argv: modelWork.argv, env: { ...buildChildEnv({}), ...runtime, ...modelWork.env }, stdin: modelWork.stdin },
+        { cwd: work, timeoutMs: 90_000 },
+      );
+      if (!result.ok) throw new Error(`the fixture's model work failed: ${result.error}\n${result.stderr}`);
       for (const session of sessions())
         if (session.agent !== "akm-model-work" && session.parent_id === null) ids.push(session.id);
       return { directory, first, ids };

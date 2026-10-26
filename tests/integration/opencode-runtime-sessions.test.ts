@@ -4,9 +4,9 @@
 
 /**
  * akm's own runtime on the real OpenCode binary (`runtime/`), against a loopback
- * model. A turn of agent work and a turn of model work each go through the real
- * process, its plugin and akm's own CLI, and the sessions they leave are listed
- * and read back by the history reader. The binary is fetched once into a cache
+ * model. A turn of agent work goes through the real process, its plugin and akm's
+ * own CLI, and the sessions it leaves are listed and read back by the history
+ * reader. The binary is fetched once into a cache
  * the test runs share (`tests/_helpers/opencode-binary.ts`); the suite is skipped,
  * with a message, when the registry cannot be reached.
  */
@@ -70,7 +70,6 @@ const connection = (extra: Partial<ChatCompletionConfig> = {}): ChatCompletionCo
 function run(
   mode: string,
   options: {
-    modelWork?: boolean;
     connection?: ChatCompletionConfig;
     timeoutMs?: number;
     env?: Record<string, string>;
@@ -80,7 +79,7 @@ function run(
     cwd: work,
     timeoutMs: options.timeoutMs ?? 60_000,
     ...(options.env ? { env: options.env } : {}),
-    dispatch: { prompt: `MODE:${mode} please`, ...(options.modelWork ? { modelWork: true } : {}) },
+    dispatch: { prompt: `MODE:${mode} please` },
   };
   return opencodeRuntime.run(profile, opts, options.connection ?? connection());
 }
@@ -143,28 +142,6 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     expect(model.requests[0]?.params).not.toHaveProperty("max_completion_tokens");
   });
 
-  test("model work: reading and searching only, with akm's three tools", async () => {
-    const result = await run("akm", { modelWork: true });
-
-    expect(result.ok, `${result.stdout}\n${result.stderr}`).toBe(true);
-    expect(result.stdout).toMatch(/^AKM:\{[\s\S]*"hits"/);
-    expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual([
-      "akm_curate",
-      "akm_search",
-      "akm_show",
-      "glob",
-      "grep",
-      "read",
-    ]);
-  });
-
-  test("model work cannot write: a write call is refused and no file is made", async () => {
-    const result = await run("write", { modelWork: true });
-
-    expect(result.stdout).toContain("No tool named");
-    expect(fs.existsSync(path.join(work, "x.md"))).toBe(false);
-  });
-
   test("agent work in a project keeps the project's own files out of the model's instructions", async () => {
     fs.writeFileSync(path.join(work, "AGENTS.md"), "PROJECT-RULE-XYZ\n");
     const result = await run("answer");
@@ -197,9 +174,8 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     }
   });
 
-  test("the sessions are listed by the history reader: the agent's, never the model work's, with their tool calls", async () => {
+  test("the sessions are listed by the history reader, with their tool calls", async () => {
     await run("akm");
-    await run("akm", { modelWork: true });
 
     const database = akmOpencodeDatabasePath();
     expect(database).toBe(path.join(getDataDir(), "opencode-runtime", "data", "opencode", "opencode.db"));

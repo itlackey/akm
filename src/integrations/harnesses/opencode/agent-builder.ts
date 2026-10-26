@@ -60,7 +60,7 @@ export const MODEL_WORK_AGENT = "akm-model-work";
  * `akm_search`, `akm_show` and `akm_curate`. Nothing else is allowed. This limits the tools; a plugin's own `setup`
  * and hooks still run.
  */
-export const MODEL_WORK_AGENT_DEFINITION = {
+const MODEL_WORK_AGENT_DEFINITION = {
   mode: "primary",
   permissions: [
     { action: "*", resource: "*", effect: "deny" },

@@ -126,18 +126,6 @@ describe.skipIf(process.platform === "win32")("a run on akm's runtime", () => {
     expect(config.plugins[0]?.package).toBe(pluginDirectory);
   });
 
-  test("model work runs the read-only agent", async () => {
-    installBinary(REPORTER);
-
-    const result = await run({ dispatch: { prompt: "judge it", modelWork: true } });
-
-    const { argv, env } = reported(result);
-    expect(argv.join(" ")).toContain("--agent akm-model-work");
-    expect(Object.keys((JSON.parse(env.OPENCODE_CONFIG_CONTENT as string) as { agents: object }).agents)).toEqual([
-      "akm-model-work",
-    ]);
-  });
-
   test("runs that start together on a fresh runtime directory wait for the one that prepares OpenCode's database", async () => {
     const log = path.join(storage.root, "starts.log");
     const binary = runtimeBinaryPath();

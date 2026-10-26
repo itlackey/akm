@@ -4,14 +4,13 @@
 
 /**
  * The OpenCode process akm's own runtime starts for one run (`runtime/command.ts`):
- * its inline config, its environment and its command line, for agent work and for
- * model work. The connection is the only provider; akm's roots, the free-model and
- * catalog switches and the plugin are set; model work runs as the read-only agent.
+ * its inline config, its environment and its command line. The connection is the
+ * only provider; akm's roots, the free-model and catalog switches and the plugin
+ * are set.
  */
 
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import { MODEL_WORK_AGENT_DEFINITION } from "../src/integrations/harnesses/opencode/agent-builder";
 import {
   type RuntimeLocations,
   runtimeArgv,
@@ -46,7 +45,7 @@ const providerOf = (config: Record<string, unknown>): Provider => (config.provid
 
 describe("the inline config", () => {
   test("the connection is the only provider: the package OpenCode bundles, the endpoint's base URL, the one model", () => {
-    const config = runtimeConfig(connection(), false, PLUGIN);
+    const config = runtimeConfig(connection(), PLUGIN);
 
     expect(Object.keys(config.provider as object)).toEqual(["akm"]);
     expect(providerOf(config)).toEqual({
@@ -58,11 +57,11 @@ describe("the inline config", () => {
   });
 
   test("the key is the provider's, and only when the connection has one", () => {
-    expect(providerOf(runtimeConfig(connection({ apiKey: "sk-secret" }), false, PLUGIN)).options).toEqual({
+    expect(providerOf(runtimeConfig(connection({ apiKey: "sk-secret" }), PLUGIN)).options).toEqual({
       baseURL: "https://llm.example/v1",
       apiKey: "sk-secret",
     });
-    expect(providerOf(runtimeConfig(connection(), false, PLUGIN)).options).not.toHaveProperty("apiKey");
+    expect(providerOf(runtimeConfig(connection(), PLUGIN)).options).not.toHaveProperty("apiKey");
   });
 
   test.each([
@@ -72,7 +71,7 @@ describe("the inline config", () => {
     ["states both", { contextLength: 32_768, request: { max_tokens: 2_048 } }, { context: 32_768, output: 2_048 }],
     // OpenCode refuses a model whose limit states only one of the two, so the other is its own assumption.
   ] as const)("a connection that %s", (_name, extra, limit) => {
-    const model = providerOf(runtimeConfig(connection(extra as Partial<ChatCompletionConfig>), false, PLUGIN)).models[
+    const model = providerOf(runtimeConfig(connection(extra as Partial<ChatCompletionConfig>), PLUGIN)).models[
       "org/model:7b"
     ];
     expect(model?.limit).toEqual(limit);
@@ -84,7 +83,6 @@ describe("the inline config", () => {
         request: { top_p: 0.9, chat_template_kwargs: { thinking_budget: 100 } },
         inference: { temperature: 0.2, maxTokens: 4096, reasoningEffort: "high", enableThinking: false },
       }),
-      false,
       PLUGIN,
     );
 
@@ -106,41 +104,19 @@ describe("the inline config", () => {
   });
 
   test("the fields akm owns are not the connection's to send", () => {
-    const config = runtimeConfig(
-      connection({ request: { model: "other", messages: [], stream: false } }),
-      false,
-      PLUGIN,
-    );
+    const config = runtimeConfig(connection({ request: { model: "other", messages: [], stream: false } }), PLUGIN);
 
     const [entry] = config.plugins as Array<{ options: { requestFields: Record<string, unknown> } }>;
     expect(entry?.options.requestFields).toEqual({});
   });
 
-  test("agent work defines no agent: OpenCode's own default runs, with its normal tools", () => {
-    expect(runtimeConfig(connection(), false, PLUGIN)).not.toHaveProperty("agents");
-  });
-
-  test("model work defines the read-only agent: everything denied, then reading and akm's three tools allowed", () => {
-    const { agents } = runtimeConfig(connection(), true, PLUGIN) as {
-      agents: Record<string, typeof MODEL_WORK_AGENT_DEFINITION>;
-    };
-
-    expect(agents).toEqual({ "akm-model-work": MODEL_WORK_AGENT_DEFINITION });
-    expect(agents["akm-model-work"]?.mode).toBe("primary");
-    expect(agents["akm-model-work"]?.permissions.map((rule) => [rule.action, rule.effect])).toEqual([
-      ["*", "deny"],
-      ["read", "allow"],
-      ["glob", "allow"],
-      ["grep", "allow"],
-      ["akm_search", "allow"],
-      ["akm_show", "allow"],
-      ["akm_curate", "allow"],
-    ]);
+  test("it defines no agent: OpenCode's own default runs, with its normal tools", () => {
+    expect(runtimeConfig(connection(), PLUGIN)).not.toHaveProperty("agents");
   });
 });
 
 describe("the environment", () => {
-  const env = runtimeEnv(runtimeConfig(connection({ apiKey: "sk-secret" }), false, PLUGIN), where);
+  const env = runtimeEnv(runtimeConfig(connection({ apiKey: "sk-secret" }), PLUGIN), where);
 
   test("OpenCode's roots and its temp directory are akm's, under the runtime directory", () => {
     expect(env).toMatchObject({
@@ -162,7 +138,7 @@ describe("the environment", () => {
   });
 
   test("the plugin is told, for each variable the run sets, what the agent's commands get: akm's value, or none", () => {
-    const config = runtimeConfig(connection(), false, PLUGIN, {
+    const config = runtimeConfig(connection(), PLUGIN, {
       XDG_DATA_HOME: "/home/me/.local/share",
       TMPDIR: "/tmp",
     });
@@ -179,14 +155,14 @@ describe("the environment", () => {
 
   test("the config goes in OPENCODE_CONFIG_CONTENT, and the akm executable the plugin calls in AKM_OPENCODE_CLI", () => {
     expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT as string)).toEqual(
-      runtimeConfig(connection({ apiKey: "sk-secret" }), false, PLUGIN),
+      runtimeConfig(connection({ apiKey: "sk-secret" }), PLUGIN),
     );
     expect(env.AKM_OPENCODE_CLI).toBe("/usr/local/bin/akm");
   });
 });
 
 describe("the command line", () => {
-  test("agent work: a standalone run named akm, on the connection's model", () => {
+  test("a standalone run named akm, on the connection's model", () => {
     expect(runtimeArgv(connection(), { prompt: "p" }, where.binary)).toEqual([
       where.binary,
       "run",
@@ -201,13 +177,6 @@ describe("the command line", () => {
   test("a native agent the request names runs", () => {
     expect(runtimeArgv(connection(), { prompt: "p", agent: "plan" }, where.binary)).toContain("plan");
     expect(runtimeArgv(connection(), { prompt: "p", agent: "plan" }, where.binary).join(" ")).toContain("--agent plan");
-  });
-
-  test("model work runs as the read-only agent, whatever agent the request names", () => {
-    const argv = runtimeArgv(connection(), { prompt: "p", modelWork: true, agent: "plan" }, where.binary);
-
-    expect(argv.join(" ")).toContain("--agent akm-model-work");
-    expect(argv).not.toContain("plan");
   });
 
   test("the database is prepared by a command that runs no model and starts no background service", () => {

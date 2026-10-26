@@ -30,14 +30,14 @@ import { type RuntimeLocations, runtimeArgv, runtimeConfig, runtimeEnv, runtimeP
 /**
  * What a request is lowered for when it runs here. The persona goes in the prompt, as for the opencode harness
  * (`opencode run` has no system prompt flag); every portable setting is carried, as request fields the plugin lays over
- * the model requests. Model work can run here confined, with the read-only agent, though model work on a connection is
- * a chat call (`buildExecution`).
+ * the model requests.
  */
 const runtimeLowerer: LowerTarget = {
   id: "akm-runtime",
   systemPrompt: false,
   nativeAgent: true,
-  confinable: true,
+  // Model work on a connection is a chat call (`buildExecution`), so no run here is confined; if one were lowered here, say so.
+  confinable: false,
   inference: PORTABLE_INFERENCE_KEYS,
 };
 
@@ -109,7 +109,7 @@ export const opencodeRuntime: AgentRuntime = {
       const ambient = Object.fromEntries(
         Object.entries(buildChildEnv(opts)).filter(([name]) => !name.startsWith("OPENCODE_")),
       );
-      const config = runtimeConfig(connection, dispatch.modelWork === true, where.pluginDirectory, ambient);
+      const config = runtimeConfig(connection, where.pluginDirectory, ambient);
       const env = { ...ambient, ...runtimeEnv(config, where) };
       await prepareDatabase({ argv: runtimePrepareArgv(binary), env }, opts);
       return await runBuiltCommand(

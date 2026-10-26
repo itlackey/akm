@@ -28,10 +28,9 @@
  *     variables this module sets back to what akm runs in, or removes them, in
  *     the environment of the commands the agent runs.
  *
- * Model work runs as the read-only agent of `../agent-builder.ts`; agent work as
- * OpenCode's default agent (or the native agent the request names) with its normal
- * tools. Both get akm's three read tools and the connection's request fields from
- * the plugin (`../../../../assets/opencode/akm-plugin.js`).
+ * The run is OpenCode's default agent (or the native agent the request names) with
+ * its normal tools, akm's three read tools and the connection's request fields
+ * from the plugin (`../../../../assets/opencode/akm-plugin.js`).
  */
 
 import path from "node:path";
@@ -39,7 +38,6 @@ import { openAiBaseUrl } from "../../../../core/endpoint-url";
 import { effectiveRequestFields } from "../../../../core/llm-inference";
 import type { ChatCompletionConfig } from "../../../../llm/client";
 import type { AgentDispatchRequest } from "../../harness";
-import { MODEL_WORK_AGENT, MODEL_WORK_AGENT_DEFINITION } from "../agent-builder";
 
 /** The provider the connection is declared as; a process runs one connection, so the name is fixed. */
 const PROVIDER = "akm";
@@ -68,7 +66,6 @@ const DEFAULT_LIMIT = { context: 200_000, output: 32_000 };
  */
 export function runtimeConfig(
   connection: ChatCompletionConfig,
-  modelWork: boolean,
   pluginDirectory: string,
   ambient: Readonly<Record<string, string>> = {},
 ): Record<string, unknown> {
@@ -105,7 +102,6 @@ export function runtimeConfig(
         },
       },
     },
-    ...(modelWork ? { agents: { [MODEL_WORK_AGENT]: MODEL_WORK_AGENT_DEFINITION } } : {}),
   };
 }
 
@@ -156,14 +152,13 @@ export function runtimeArgv(
   dispatch: AgentDispatchRequest,
   binary: string,
 ): string[] {
-  const agent = dispatch.modelWork ? MODEL_WORK_AGENT : dispatch.agent;
   return [
     binary,
     "run",
     "--standalone",
     "--title",
     "akm",
-    ...(agent ? ["--agent", agent] : []),
+    ...(dispatch.agent ? ["--agent", dispatch.agent] : []),
     "--model",
     `${PROVIDER}/${connection.model}`,
   ];
