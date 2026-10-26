@@ -16,10 +16,12 @@
  * The keys, by what the file is:
  *   - a command or agent (`commands/`, `agents/`): `engine` at the top level and
  *     `akm.engine`;
- *   - a workflow (`workflows/`): `defaults.engine`, and `engine` on a step's
- *     `unit` and on the `unit` of its `map`;
- *   - a task source (`tasks/`, YAML): `engine` at the top level; one older than
- *     v4 is left whole for the task step.
+ *   - a Claude or OpenCode command or agent: `akm.engine` only, as the runtime
+ *     reads no other key there;
+ *   - a workflow (`workflows/`, or an `akm-workflow` bundle): `defaults.engine`,
+ *     and `engine` on a step's `unit` and on the `unit` of its `map`;
+ *   - a task source (`tasks/`, or an `akm-task` bundle; YAML): `engine` at the
+ *     top level; one older than v4 is left whole for the task step.
  *
  * An `engine:` key that stays (a style the splice does not write, a read-only
  * bundle, a symbolic link, a conflict) is counted in `pending`, apart from the file's outcome: the
@@ -30,7 +32,7 @@
 import crypto from "node:crypto";
 import { isMap, isScalar, isSeq, parseDocument, type Pair, type YAMLMap } from "yaml";
 
-export type EngineKeyRole = "command" | "workflow" | "task";
+export type EngineKeyRole = "command" | "tool-command" | "workflow" | "task";
 
 export interface EngineKeyFileInput {
   readonly filePath: string;
@@ -121,8 +123,8 @@ function enginePlaces(root: YAMLMap, role: EngineKeyRole): Array<{ at: string; m
       });
     }
   } else {
-    places.push({ at: "", map: root });
-    if (role === "command") places.push({ at: "akm", map: mapOf(root, "akm") });
+    if (role !== "tool-command") places.push({ at: "", map: root });
+    if (role !== "task") places.push({ at: "akm", map: mapOf(root, "akm") });
   }
   return places.flatMap(({ at, map }) => (map ? [{ at, map }] : []));
 }

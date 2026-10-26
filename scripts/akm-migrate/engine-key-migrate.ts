@@ -18,10 +18,12 @@
 
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
 import { type AkmConfig, loadConfig, resetConfigCache, retiredEngineTargets } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
 import { type EngineTargets, forgetEngineTargets } from "../../src/core/config/retired-engines";
 import { getDataDir } from "../../src/core/paths";
+import { bundleRoots } from "./bundle-roots";
 import {
   type EngineKeyOutcome,
   type EngineKeyResolution,
@@ -30,8 +32,7 @@ import {
   planEngineKeys,
   type ResolveEngineKey,
 } from "./migrate/engine-key-planner";
-import { applyEngineKeysPlan, inspectEngineKeyFiles } from "./migrate/engine-key-files";
-import { taskRoots } from "./task-migrate";
+import { applyEngineKeysPlan, type EngineKeyRoot, inspectEngineKeyFiles } from "./migrate/engine-key-files";
 
 export interface EngineKeyFileSummary {
   filePath: string;
@@ -112,10 +113,15 @@ function knownTargets(targets?: EngineTargets): EngineTargets {
   return targets && Object.keys(targets).length > 0 ? targets : retiredEngineTargets();
 }
 
+/** Every root the runtime reads assets from, with the adapter it reads each with: the configured one, else the detected one. */
+function assetRoots(config: AkmConfig): EngineKeyRoot[] {
+  return bundleRoots(config).map((root) => ({ ...root, adapter: root.adapter ?? detectAdapterId(root.root) }));
+}
+
 function plan(targets?: EngineTargets) {
   resetConfigCache();
   const config = loadConfig();
-  return planEngineKeys(inspectEngineKeyFiles(taskRoots(config)), resolverFor(config, knownTargets(targets)));
+  return planEngineKeys(inspectEngineKeyFiles(assetRoots(config)), resolverFor(config, knownTargets(targets)));
 }
 
 /**

@@ -209,7 +209,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     sources becomes `connection:` or `harness:` by what the name is now, under
     one backup directory per run (a name that is neither is written as
     `harness:`, with a note). `akm migrate status` and `--dry-run` list the files.
-    The step reads the roots the runtime reads, the default stash (`~/akm`)
+    The step reads the roots the runtime reads, by each bundle's adapter (an
+    `akm` stash's typed directories, an `akm-workflow` or `akm-task` bundle's
+    root, a Claude or OpenCode bundle's commands and agents, there for
+    `akm.engine` only), the default stash (`~/akm`)
     included when no bundle or `AKM_BUNDLE_DIR` names it, and leaves a disabled
     bundle as written, the default stash or the `AKM_BUNDLE_DIR` directory
     included, under any spelling of its path.

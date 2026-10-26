@@ -14,8 +14,8 @@
  *   1. Registration matches on the RESOLVED CONTENT ROOT
  *      (`path.resolve(entry.path, component.root ?? ".")`), not the bare
  *      configured `path` — `bundleKeyForContentRoot` / `withPrimaryBundle`.
- *   2. `akm migrate`'s file enumeration (`taskRoots` in
- *      scripts/akm-migrate/task-migrate.ts) reconciles two bundle ids that
+ *   2. `akm migrate`'s file enumeration (`bundleRoots` in
+ *      scripts/akm-migrate/bundle-roots.ts) reconciles two bundle ids that
  *      already resolve to the same directory instead of double-counting.
  *   3. A genuinely irreconcilable duplicate (conflicting settings) fails
  *      with a message naming both bundle ids and the shared path.

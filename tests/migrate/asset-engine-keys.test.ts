@@ -27,6 +27,8 @@ import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
 import { rememberEngineTargets, rememberedEngineTargets } from "../../src/core/config/retired-engines";
 import { executionDefaultsOf } from "../../src/execution/source";
 import { resolveTarget } from "../../src/integrations/agent/resolution";
+import { freezeWorkflow } from "../../src/workflows/freeze/freeze";
+import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 /** The text between the `---` fences at the top of a Markdown file. */
@@ -35,7 +37,7 @@ const frontmatterBlock = (text: string): string => /^---\r?\n([\s\S]*?)\r?\n---/
 describe("planEngineKeyFile", () => {
   const resolve: ResolveEngineKey = (engine) =>
     engine === "lab" ? { key: "connection", name: "default" } : { key: "harness", name: engine };
-  const plan = (role: "command" | "workflow" | "task", text: string) =>
+  const plan = (role: "command" | "tool-command" | "workflow" | "task", text: string) =>
     planEngineKeyFile({ filePath: "/x", bytes: Buffer.from(text), mode: 0o644, role, writable: true }, resolve);
   const after = (outcome: ReturnType<typeof plan>): string => {
     if (outcome.status !== "changed") throw new Error(`expected a change, got ${outcome.status}`);
@@ -83,6 +85,13 @@ describe("planEngineKeyFile", () => {
     expect(outcome).toMatchObject({
       rewrites: [{ at: "defaults.engine" }, { at: "steps[0].unit.engine" }, { at: "steps[1].map.unit.engine" }],
     });
+  });
+
+  test("a Claude or OpenCode command takes akm.engine only: the runtime reads no top-level key there", () => {
+    const outcome = plan("tool-command", "---\nengine: claude\nakm:\n  engine: lab\n---\nbody\n");
+    expect(after(outcome)).toBe("---\nengine: claude\nakm:\n  connection: default\n---\nbody\n");
+    expect(outcome).toMatchObject({ rewrites: [{ at: "akm.engine" }], pending: 0 });
+    expect(plan("tool-command", "---\nengine: claude\n---\nbody\n").status).toBe("unchanged");
   });
 
   test("a task source takes its top-level engine, and a markdown body or other key is never read as one", () => {
@@ -176,7 +185,7 @@ describe("applying a plan to files that changed since", () => {
       const file = path.join(root, "commands", "task.md");
       fs.writeFileSync(file, "---\nname: task\nengine: lab\n---\nold task\n");
       const planned = planEngineKeys(
-        inspectEngineKeyFiles([{ bundleId: "b", root, bundleRoot: root, writable: true, layout: "akm-stash" }]),
+        inspectEngineKeyFiles([{ bundleId: "b", root, bundleRoot: root, writable: true, adapter: "akm" }]),
         (engine) => ({ key: "connection", name: engine === "lab" ? "default" : engine }),
       );
       const edited = "---\nname: task\nengine: lab\n---\nuser concurrent edit\n";
@@ -569,12 +578,15 @@ describe("the step", () => {
     rememberEngineTargets({ lab: { connection: "default" } });
   }
 
-  /** The connection a command's own frontmatter selects. */
-  const commandSelects = (file: string): string => {
+  /**
+   * The connection a command's own frontmatter selects, read as its adapter reads it: an akm command's top-level key
+   * too, a Claude or OpenCode command's `akm.engine` only.
+   */
+  const commandSelects = (file: string, allowTopLevelEngine = true): string => {
     const frontmatter = parseYaml(frontmatterBlock(fs.readFileSync(file, "utf8"))) as Record<string, unknown>;
     return resolveTarget({
       config: loadUserConfig(),
-      layers: [executionDefaultsFromFrontmatter(frontmatter, { kind: "command" })],
+      layers: [executionDefaultsFromFrontmatter(frontmatter, { kind: "command", allowTopLevelEngine })],
     }).name;
   };
 
@@ -648,6 +660,112 @@ describe("the step", () => {
     ]);
     expect(fs.readFileSync(file, "utf8")).toContain("engine: lab");
     expect(rememberedEngineTargets()).toEqual({ lab: { connection: "default" } });
+  });
+
+  const STANDALONE_WORKFLOW =
+    "---\ntype: workflow\ndefaults:\n  engine: lab\nsteps:\n  - id: review\n---\n\n## review\n\nReview the code.\n";
+
+  /** A standalone workflow bundle (`akm-workflow`) beside the stash, its `review.md` at the root, after an earlier run remembered `lab` as `default`. */
+  function workflowBundle(writable: boolean): string {
+    const root = path.join(storage.root, "team-workflows");
+    const file = path.join(root, "review.md");
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(file, STANDALONE_WORKFLOW);
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      defaultBundle: "primary",
+      bundles: {
+        primary: { path: stash(), components: { main: { root: ".", adapter: "akm" } } },
+        team: { path: root, writable, components: { main: { root: ".", adapter: "akm-workflow", writable } } },
+      },
+      connections: {
+        default: { endpoint: "https://fixture.example.test/v1", models: { fast: "fixture", balanced: "fixture" } },
+      },
+    });
+    resetConfigCache();
+    rememberEngineTargets({ lab: { connection: "default" } });
+    return file;
+  }
+
+  /** The runner the workflow's step freezes to, through the runtime's own loader and freezer. */
+  const workflowRunsOn = async (): Promise<string | undefined> => {
+    resetConfigCache();
+    const frozen = await freezeWorkflow(await loadWorkflowAsset("team//review"), loadUserConfig());
+    const step = frozen.plan.steps[0]?.root;
+    const target = step?.kind === "unit" ? step.frozenTarget : undefined;
+    return target?.kind === "command" ? target.runner.name : undefined;
+  };
+
+  test("a standalone workflow bundle's workflow is rewritten under a backup, and still freezes to the connection it named", async () => {
+    const file = workflowBundle(true);
+    expect(await workflowRunsOn()).toBe("default");
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.failedSteps).toBeUndefined();
+    expect(plan.assetEngineKeys).toMatchObject({ changed: 1, skipped: 0, applied: 1 });
+    expect(plan.assetEngineKeys?.files.map((row) => row.filePath)).toEqual([file]);
+    expect(fs.readFileSync(file, "utf8")).toBe(
+      STANDALONE_WORKFLOW.replace("defaults:\n  engine: lab", "defaults:\n  connection: default"),
+    );
+    const backup = path.join(plan.assetEngineKeys?.backupPath as string, "files");
+    expect(fs.readdirSync(backup).map((name) => fs.readFileSync(path.join(backup, name), "utf8"))).toEqual([
+      STANDALONE_WORKFLOW,
+    ]);
+    expect(rememberedEngineTargets()).toEqual({});
+    expect(await workflowRunsOn()).toBe("default");
+  });
+
+  test("a read-only standalone workflow bundle is skipped and keeps the old names, so its workflow still freezes", async () => {
+    const file = workflowBundle(false);
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.failedSteps).toBeUndefined();
+    expect(plan.assetEngineKeys).toMatchObject({ changed: 0, skipped: 1 });
+    expect(plan.assetEngineKeys?.files[0]).toMatchObject({ filePath: file, status: "skipped" });
+    expect(plan.assetEngineKeys?.files[0]?.reason).toContain("read-only");
+    expect(plan.assetEngineKeys?.notes).toBeUndefined();
+    expect(fs.readFileSync(file, "utf8")).toBe(STANDALONE_WORKFLOW);
+    expect(rememberedEngineTargets()).toEqual({ lab: { connection: "default" } });
+    expect(await workflowRunsOn()).toBe("default");
+  });
+
+  test("a Claude or OpenCode bundle's command has its akm.engine rewritten, and a top-level key it does not read is left", async () => {
+    const command = "---\ndescription: review\nengine: lab\nakm:\n  engine: lab\n---\nReview.\n";
+    const files = ["claude", "opencode"].map((adapter) => {
+      const file = path.join(storage.root, adapter, "commands", "review.md");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, command);
+      return file;
+    });
+    configure({
+      bundles: {
+        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
+        claude: { path: path.join(storage.root, "claude"), components: { main: { root: ".", adapter: "claude" } } },
+        opencode: {
+          path: path.join(storage.root, "opencode"),
+          components: { main: { root: ".", adapter: "opencode" } },
+        },
+      },
+      connections: {
+        default: { endpoint: "http://default:8080/v1", models: { fast: "m" } },
+        gpu: { endpoint: "http://gpu:8080/v1", models: { fast: "m" } },
+      },
+      harnesses: {},
+    });
+    rememberEngineTargets({ lab: { connection: "gpu" } });
+    for (const file of files) expect(commandSelects(file, false)).toBe("gpu");
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.failedSteps).toBeUndefined();
+    expect(plan.assetEngineKeys).toMatchObject({ changed: 2, skipped: 0, applied: 2 });
+    for (const file of files) {
+      expect(fs.readFileSync(file, "utf8")).toBe(command.replace("akm:\n  engine: lab", "akm:\n  connection: gpu"));
+      expect(commandSelects(file, false)).toBe("gpu");
+    }
+    expect(rememberedEngineTargets()).toEqual({});
   });
 
   test("the assets wait when the config step failed: nothing is rewritten and the step is absent from the plan", async () => {

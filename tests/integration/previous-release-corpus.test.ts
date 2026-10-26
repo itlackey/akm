@@ -51,7 +51,7 @@
  *     (`src/storage/repositories/task-history-repository.ts`'s
  *     `decodeTaskHistoryMetadata`).
  *   - the `AKM_BUNDLE_DIR`-synthesized duplicate `stash` bundle entry
- *     (#870) — read via `scripts/akm-migrate/task-migrate.ts`'s `taskRoots`,
+ *     (#870) — read via `scripts/akm-migrate/bundle-roots.ts`'s `bundleRoots`,
  *     which reconciles two bundle ids resolving to the same content root
  *     instead of double-enumerating and throwing `duplicate task migration
  *     file path`.

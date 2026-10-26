@@ -4,9 +4,9 @@
 
 /**
  * Filesystem boundary for the `assetEngineKeys` step: the command, agent,
- * workflow and task-source files of each bundle root, as planner input
- * ({@link planEngineKeys}), and the planned rewrites written back under one
- * backup, the way `task-files.ts` does for task sources.
+ * workflow and task-source files of each bundle root, by the adapter that
+ * reads it, as planner input ({@link planEngineKeys}), and the planned rewrites
+ * written back under one backup, the way `task-files.ts` does for task sources.
  */
 
 import fs from "node:fs";
@@ -15,16 +15,41 @@ import { isFileOrFileSymlink } from "../../../src/indexer/walk/walker";
 import type { EngineKeyChange, EngineKeyFileInput, EngineKeyRole, EngineKeysPlan } from "./engine-key-planner";
 import { replaceFilesWithBackups, type TaskFileRoot, walkRootFiles } from "./task-files";
 
-/** Where a stash keeps the files that can name an engine; a task root is itself the task directory. */
-const STASH_DIRECTORIES: ReadonlyArray<{ dir: string; role: EngineKeyRole; extension: string }> = [
-  { dir: "commands", role: "command", extension: ".md" },
-  { dir: "agents", role: "command", extension: ".md" },
-  { dir: "workflows", role: "workflow", extension: ".md" },
-  { dir: "tasks", role: "task", extension: ".yml" },
+/** A bundle's component root, with the adapter the runtime reads it with. */
+export interface EngineKeyRoot extends Pick<TaskFileRoot, "bundleId" | "root" | "bundleRoot" | "writable"> {
+  readonly adapter: string;
+}
+
+type Place = { readonly dir: string; readonly role: EngineKeyRole; readonly extension: string };
+
+/** A Claude or OpenCode bundle's commands and agents, in which the runtime reads `akm.engine` only. */
+const TOOL_DIRECTORIES: readonly Place[] = [
+  { dir: "commands", role: "tool-command", extension: ".md" },
+  { dir: "agents", role: "tool-command", extension: ".md" },
 ];
 
+/**
+ * Where each adapter keeps the files that can name an engine, under its component root: an `akm` stash in its typed
+ * directories, an `akm-task` or `akm-workflow` bundle anywhere under the root. An adapter not here holds none.
+ */
+const LAYOUTS = new Map<string, readonly Place[]>([
+  [
+    "akm",
+    [
+      { dir: "commands", role: "command", extension: ".md" },
+      { dir: "agents", role: "command", extension: ".md" },
+      { dir: "workflows", role: "workflow", extension: ".md" },
+      { dir: "tasks", role: "task", extension: ".yml" },
+    ],
+  ],
+  ["akm-task", [{ dir: ".", role: "task", extension: ".yml" }]],
+  ["akm-workflow", [{ dir: ".", role: "workflow", extension: ".md" }]],
+  ["claude", TOOL_DIRECTORIES],
+  ["opencode", TOOL_DIRECTORIES],
+]);
+
 function collect(
-  root: TaskFileRoot,
+  root: EngineKeyRoot,
   directory: string,
   role: EngineKeyRole,
   extension: string,
@@ -71,14 +96,10 @@ function collect(
 }
 
 /** Every file under each root that can name an engine, as planner input. Read-only. */
-export function inspectEngineKeyFiles(roots: readonly TaskFileRoot[]): EngineKeyFileInput[] {
+export function inspectEngineKeyFiles(roots: readonly EngineKeyRoot[]): EngineKeyFileInput[] {
   const files = new Map<string, EngineKeyFileInput>();
   for (const root of [...roots].sort((a, b) => a.bundleId.localeCompare(b.bundleId))) {
-    if (root.layout === "akm-task") {
-      collect(root, root.root, "task", ".yml", files);
-      continue;
-    }
-    for (const { dir, role, extension } of STASH_DIRECTORIES) {
+    for (const { dir, role, extension } of LAYOUTS.get(root.adapter) ?? []) {
       collect(root, path.join(root.root, dir), role, extension, files);
     }
   }
