@@ -729,10 +729,11 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
     expect(unitDump).not.toContain(FAKE_SECRET);
   });
 
-  test("a `pass_env` value survives in the journaled exec output; a secret bound through an env asset is still redacted", async () => {
-    // #1096: pass-through values were added to the redaction set, so a
-    // pass-through `AKM_BUNDLE_DIR=/stash` turned `/stash/inbox/x` into
-    // `[REDACTED]/inbox/x`. The documented contract is that they are not redacted.
+  test("an inherited value survives in the journaled exec output, with or without a frozen `pass_env` naming it; a secret bound through an env asset is still redacted", async () => {
+    // #1096: inherited values were added to the redaction set, so an inherited
+    // `AKM_BUNDLE_DIR=/stash` turned `/stash/inbox/x` into `[REDACTED]/inbox/x`.
+    // The documented contract is that they are not redacted. `pass_env` still
+    // parses, selects nothing, and is kept here so a workflow that has it loads.
     const PASSED = "/pass-env-probe-stash";
     writeEnvAsset("leak", "FAKE_TOKEN=${secrets/fake}\n", { fake: FAKE_SECRET });
     const command = [
