@@ -88,6 +88,25 @@ describe("removeDeadResidue (#889)", () => {
 });
 
 describe("host residue left by machinery removed in 0.9.17", () => {
+  test("is listed with a stash present too, beside the stash's own dead paths", () => {
+    const state = sandboxXdgStateHome();
+    try {
+      const stateDir = path.join(state.dir, "akm");
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, "version-reconcile.json"), "{}");
+      fs.mkdirSync(path.join(stashDir, ".akm", "memory-cleanup"), { recursive: true });
+
+      const withEmptyAkm = findDeadResidueEntries(stashDir).map((entry) => entry.absolutePath);
+      expect(withEmptyAkm).toEqual([path.join(stateDir, "version-reconcile.json")]);
+
+      fs.rmSync(path.join(stashDir, ".akm"), { recursive: true });
+      const withoutAkm = findDeadResidueEntries(stashDir).map((entry) => entry.absolutePath);
+      expect(withoutAkm).toEqual([path.join(stateDir, "version-reconcile.json")]);
+    } finally {
+      state.cleanup();
+    }
+  });
+
   test("lists the $DATA activity registry once, plus each lock's mutex sidecar and the reconcile stamp", () => {
     const data = sandboxXdgDataHome();
     const state = sandboxXdgStateHome();

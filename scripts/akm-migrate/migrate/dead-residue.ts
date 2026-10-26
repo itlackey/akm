@@ -163,10 +163,10 @@ export function findDeadResidueEntries(stashDir: string | undefined): DeadResidu
   try {
     names = fs.readdirSync(akmDir);
   } catch {
-    return [];
+    return host;
   }
 
-  const found: DeadResidueEntry[] = [];
+  const found: DeadResidueEntry[] = [...host];
   for (const spec of DEAD_RESIDUE_PATHS) {
     const matches = spec.name !== undefined ? [spec.name] : names.filter((n) => n.startsWith(spec.prefix ?? "\0"));
     for (const name of matches) {
