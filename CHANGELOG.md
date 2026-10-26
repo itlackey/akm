@@ -148,7 +148,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   sessions; akm reads, copies and embeds nothing of yours, and its runs are in
   your OpenCode history, which improve reads. An interactive `akm agent` still
   hands the terminal to the CLI. Model work is akm's own process: it adds its
-  agent to your inline config and keeps the rest of it, sets
+  agent to your inline config, read as JSONC as OpenCode reads it, and keeps the
+  rest of it, sets
   `OPENCODE_DISABLE_FREE_MODELS=1` (OpenCode 2.1.2 and later honor it: a call
   with no usable provider fails instead of sending the prompt to OpenCode's
   hosted free model), and on OpenCode 2 runs `--standalone` (one process that

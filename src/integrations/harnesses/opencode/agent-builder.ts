@@ -36,7 +36,7 @@
  * restricted and runs it unrestricted, with a one-line warning.
  */
 
-import { asRecord, tryParseJson } from "../../../core/common";
+import { asRecord, parseJsonc } from "../../../core/common";
 import { warnOnce } from "../../../core/warn";
 import {
   type AgentDispatchRequest,
@@ -78,16 +78,17 @@ const CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
  * The inline config model work runs with: the user's own `OPENCODE_CONFIG_CONTENT` as it is, with akm's agent set on
  * `agents.akm-model-work`, the one key akm's definition wins. OpenCode 2 reads that native `agents` map over the
  * legacy `agent` one, so a same-named entry the user keeps in `agent` is left out rather than left to conflict. The
- * child's value is built from the parent's, so a provider, model or key the user keeps only there stays. Content that
- * is not a JSON object is left out, with one warning.
+ * child's value is built from the parent's, so a provider, model or key the user keeps only there stays. It is read as
+ * OpenCode reads it, as JSONC (comments and trailing commas), and written back as JSON. Content that is not valid JSONC
+ * holding an object is left out, with one warning.
  */
 function modelWorkConfig(): string {
   const content = process.env[CONFIG_CONTENT_ENV]?.trim();
-  const user = content ? asRecord(tryParseJson(content)) : undefined;
+  const user = content ? userConfig(content) : undefined;
   if (content && !user) {
     warnOnce(
       "opencode-config-content",
-      `${CONFIG_CONTENT_ENV} is not a JSON object, so OpenCode model work runs without it.`,
+      `${CONFIG_CONTENT_ENV} is not valid JSONC holding an object, so OpenCode model work runs without it.`,
     );
   }
   const config: Record<string, unknown> = {
@@ -100,6 +101,14 @@ function modelWorkConfig(): string {
     config.agent = others;
   }
   return JSON.stringify(config);
+}
+
+function userConfig(content: string): Record<string, unknown> | undefined {
+  try {
+    return asRecord(parseJsonc(content));
+  } catch {
+    return undefined;
+  }
 }
 
 const NO_FREE_MODELS = { OPENCODE_DISABLE_FREE_MODELS: "1" };

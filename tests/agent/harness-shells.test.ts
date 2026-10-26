@@ -402,15 +402,39 @@ describe("opencode by major", () => {
       }
     });
 
-    test("content that is not a JSON object is left out, with one warning that names the variable", async () => {
+    test("content written as JSONC, as OpenCode reads it, keeps all of it and is passed on as JSON", async () => {
+      // A comment, a `//` inside a string, a `{env:...}` placeholder and trailing commas.
+      const jsonc = `{
+        // the user's own provider
+        "model": "mine/fast",
+        "provider": { "mine": { "options": { "baseURL": "http://127.0.0.1:1/v1", "apiKey": "{env:MINE_KEY}", }, }, },
+        /* a block comment */
+        "agents": { "planner": { "mode": "subagent" }, },
+      }`;
+      const merged = await inlineConfig(jsonc);
+      expect(merged.model).toBe("mine/fast");
+      expect(merged.provider).toEqual({
+        mine: { options: { baseURL: "http://127.0.0.1:1/v1", apiKey: "{env:MINE_KEY}" } },
+      });
+      expect(merged.agents).toEqual({
+        planner: { mode: "subagent" },
+        "akm-model-work": (await inlineConfig(undefined)).agents["akm-model-work"],
+      });
+    });
+
+    test("content that is not valid JSONC holding an object is left out, with one warning that names the variable", async () => {
       _resetWarnOnceForTests();
       const warnings: string[] = [];
       overrideSeam(_setWarnSinkForTests, (level, args) => {
         if (level === "warn") warnings.push(args.map(String).join(" "));
       });
       const own = await inlineConfig(undefined);
-      for (const content of ["{not json", "[1]", '"text"']) expect(await inlineConfig(content)).toEqual(own);
-      expect(warnings.filter((line) => line.includes("OPENCODE_CONFIG_CONTENT"))).toHaveLength(1);
+      for (const content of ["{not json", '{"model": "a" // never closed', "[1]", '"text"']) {
+        expect(await inlineConfig(content)).toEqual(own);
+      }
+      const named = warnings.filter((line) => line.includes("OPENCODE_CONFIG_CONTENT"));
+      expect(named).toHaveLength(1);
+      expect(named[0]).toContain("not valid JSONC");
     });
 
     test("a blank value is no content, and agent work never sets it", async () => {

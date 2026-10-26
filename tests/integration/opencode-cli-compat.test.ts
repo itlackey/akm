@@ -503,6 +503,29 @@ function registerSuite(bin: string): void {
       expect(model.requests.map((request) => request.model)).toEqual(["second"]);
       expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
     }, 60_000);
+
+    test("content written as JSONC, which OpenCode accepts, keeps its provider and its model", async () => {
+      const box = sandbox();
+      const model = fakeModel();
+      // A comment and a trailing comma, as a user may write it.
+      const jsonc = JSON.stringify(providerConfig(model, { model: "fixture/second" }), null, 2)
+        .replace("{", "{\n  // the user's own inline configuration")
+        .replace(/\n}$/, ",\n}");
+      const parentEnv = { OPENCODE_CONFIG_CONTENT: jsonc };
+
+      // OpenCode itself runs on it, as an authored standalone run that akm passes as written.
+      const direct = await runOpencode(box, { prompt: "probe" }, { args: ["run", "--standalone"], parentEnv });
+      expect(direct.ok).toBe(true);
+      expect(direct.stdout).toContain("PROBE_OK");
+      const before = model.requests.length;
+
+      const result = await runOpencode(box, { prompt: "probe", modelWork: true }, { parentEnv });
+
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain("PROBE_OK");
+      expect(model.requests.slice(before).map((request) => request.model)).toEqual(["second"]);
+      expect([...(model.requests[before]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
+    }, 60_000);
   });
 
   // Agent work is the plain `opencode run`. OpenCode 2 runs that through its background service, which listens on one
