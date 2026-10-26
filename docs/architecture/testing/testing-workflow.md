@@ -249,8 +249,8 @@ compatibility architecture or copied semantic runtime to audit.
 gate) builds the host's standalone binary and indexes a small stash with it,
 asserting a ready status, a vector per entry and the native runtime. Gated CI
 runs it in the Semantic Search job (Linux) and in the Native Scheduler job on
-Linux, macOS and Windows, the only places the binary's preload of each platform's
-ONNX Runtime library runs.
+macOS and Windows, the only places the binary's preload of each platform's ONNX
+Runtime library runs.
 
 ### What to test explicitly
 
