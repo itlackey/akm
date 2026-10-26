@@ -214,20 +214,30 @@ function buildTrend(deltas: Record<string, DeltaEntry>): TrendBlock {
 
 // ── Semantic-search status ───────────────────────────────────────────────────
 
+/** The `semantic-search` health check as the report shows it. */
 export interface SemSearchStatus {
-  blocked: boolean;
+  /** OK, OFF, BLOCKED, UNAVAILABLE or UNKNOWN. */
+  label: string;
+  status: HealthCheckResult["status"];
+  /** The check's message. */
   detail: string;
 }
 
-function readSemSearch(advisories: HealthCheckResult[]): SemSearchStatus {
-  const check = advisories.find((a) => a.name === "semantic-search-runtime");
-  if (!check) return { blocked: false, detail: "" };
-  const evidence = check.evidence ?? {};
-  const status = String(evidence.status ?? "unknown");
-  const blocked = check.status !== "pass" || status.toLowerCase().includes("block");
-  const entries = typeof evidence.entryCount === "number" ? evidence.entryCount : 0;
-  const embeddings = typeof evidence.embeddingCount === "number" ? evidence.embeddingCount : 0;
-  return { blocked, detail: `${num(entries)} entries, ${num(embeddings)} embeddings` };
+function readSemSearch(hardChecks: HealthCheckResult[]): SemSearchStatus {
+  const check = hardChecks.find((c) => c.name === "semantic-search");
+  if (!check) return { label: "UNKNOWN", status: "unknown", detail: "" };
+  const recorded = check.evidence?.status;
+  const label =
+    check.status === "fail"
+      ? recorded === "unavailable"
+        ? "UNAVAILABLE"
+        : "BLOCKED"
+      : check.status === "unknown"
+        ? "UNKNOWN"
+        : check.evidence?.mode === "off"
+          ? "OFF"
+          : "OK";
+  return { label, status: check.status, detail: check.message };
 }
 
 // ── Report-window → time-slice candidates (data only; HTML wrapping is the
@@ -519,7 +529,7 @@ function buildVerdictPhase(
 
   const concerns: string[] = [];
   if (failedRuns > 0) concerns.push(`${failedRuns} failed run${failedRuns === 1 ? "" : "s"}`);
-  if (sem.blocked) concerns.push("semantic search blocked");
+  if (sem.status === "fail") concerns.push(`semantic search ${sem.label.toLowerCase()}`);
   if (proposals.length > 0) concerns.push(`${proposals.length} pending proposal${proposals.length === 1 ? "" : "s"}`);
   const trendClause =
     trend.overall === "improving"
@@ -631,7 +641,7 @@ export function buildHealthReportViewModel(
   const deltas = opts.deltas ?? {};
   const proposals = opts.proposals;
   const runsPhase = partitionRuns(result);
-  const sem = readSemSearch(result.advisories);
+  const sem = readSemSearch(result.hardChecks);
   const trend = buildTrend(deltas);
 
   const aggregates = buildAggregatesPhase(result, runsPhase);

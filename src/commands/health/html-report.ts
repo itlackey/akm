@@ -225,7 +225,7 @@ function renderExecSummary(vm: HealthReportViewModel): string {
       `<abbr title="Whole-stash recount of eligible assets at report time — not a per-run sum.">${num(vm.memorySummary.eligible)}</abbr>`,
     ),
     li("Pending proposals", String(vm.proposals.length)),
-    li("Semantic search", vm.sem.blocked ? "BLOCKED" : "OK"),
+    li("Semantic search", vm.sem.label),
   ].join("");
 
   const overallEmoji = vm.trend.overall === "improving" ? "📈" : vm.trend.overall === "degrading" ? "📉" : "↔️";
@@ -279,9 +279,8 @@ function renderExecSummary(vm: HealthReportViewModel): string {
  * last).
  */
 function renderKpiCards(vm: HealthReportViewModel): string {
-  const semValue = vm.sem.blocked ? "BLOCKED" : "OK";
-  const semColor = vm.sem.blocked ? "red" : "green";
-  const semStyle = vm.sem.blocked ? "font-size:18px;" : "";
+  const semColor = { pass: "green", warn: "yellow", fail: "red", unknown: "neutral" }[vm.sem.status];
+  const semStyle = vm.sem.label.length > 3 ? "font-size:18px;" : "";
   const completionColor = vm.completionPct >= 99 ? "green" : vm.completionPct >= 90 ? "yellow" : "red";
   const kpiCard = (color: string, label: string, value: string, sub: string, valueStyle = "") =>
     `<div class="kpi-card ${color}">
@@ -313,7 +312,7 @@ function renderKpiCards(vm: HealthReportViewModel): string {
       `${vm.llmTokensCompact} tok`,
       `${fmtMs(vm.llm.totalDurationMs)} · ${num(vm.llm.calls)} calls · ${compact(vm.llm.reasoningTokens)} reasoning`,
     ),
-    kpiCard(semColor, "Semantic Search", semValue, esc(vm.sem.detail), semStyle),
+    kpiCard(semColor, "Semantic Search", vm.sem.label, esc(vm.sem.detail), semStyle),
     kpiCard(
       vm.proposals.length > 0 ? "yellow" : "neutral",
       "Pending Proposals",
@@ -385,15 +384,15 @@ function renderActionItems(vm: HealthReportViewModel): string {
     });
   }
 
-  // Semantic search blocked.
-  if (vm.sem.blocked) {
+  // Semantic search blocked or unavailable.
+  if (vm.sem.status === "fail") {
     pushItem({
       key: "semantic-search-blocked",
       prio: "P2",
       cls: "warn",
-      title: "Semantic search blocked",
-      descHtml: `Embedding provider unreachable. ${esc(vm.sem.detail)}. Curate falls back to keyword search — relevance scoring degraded.`,
-      remedy: "akm config list",
+      title: `Semantic search ${vm.sem.label.toLowerCase()}`,
+      descHtml: `${esc(vm.sem.detail)} Curate falls back to keyword search — relevance scoring degraded.`,
+      remedy: "akm index --full --verbose",
     });
   }
 
