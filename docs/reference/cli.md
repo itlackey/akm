@@ -1515,8 +1515,8 @@ it is on `PATH`, else `opencode`) and skips the plugin when that binary is the
 other major, since only the matching major can re-create that cache; akm never
 installs or replaces `opencode`. A spec that appears only under the legacy
 `plugin` key for OpenCode 2 is skipped with a note (move it to `plugins`). akm's
-own runtime does not depend on this step: it runs OpenCode embedded in akm (see
-[Configuration](configuration.md#without-a-harness)).
+own runtime does not depend on this step: it runs its own pinned OpenCode binary,
+fetched by akm (see [Configuration](configuration.md#without-a-harness)).
 
 OpenCode 2 has its own updater, `opencode plugin check` and `opencode plugin update`,
 which akm uses for `akm-opencode-v2`. Two things to know when you run them by
@@ -2754,8 +2754,9 @@ akm agent --connection local --prompt "summarize recent changes"
 
 Returns `{ ok, engine, exitCode, stdout, stderr, durationMs, reason?, error?, sessionId? }`.
 `engine` is the name of the connection or harness the run used. `sessionId` is
-the run's session id when it has one: akm's own runtime reports one and keeps its
-sessions in `<akm data dir>/opencode.db`, so the run can be found there. On
+the run's session id when it has one: akm's own runtime reports none; it keeps its
+sessions in `<akm data dir>/opencode-runtime/data/opencode/opencode.db`, so the run
+can be found there. On
 failure, `reason` is a short code such as `timeout`, `spawn_failed`,
 `non_zero_exit` or `parse_error`. Captured dispatches render this final envelope
 using the selected akm format. Interactive child stdout/stderr remain inherited
@@ -3151,8 +3152,9 @@ the sessions it lists; Codex gives them no marker.
 The `opencode` harness reads two SQLite files, read-only and without starting
 OpenCode: OpenCode's own `opencode.db` (under `$XDG_DATA_HOME/opencode`, which is
 `~/.local/share/opencode` unless `XDG_DATA_HOME` says otherwise, on every
-platform) and akm's `<akm data dir>/opencode.db`, where akm's own runtime keeps
-its agent runs (`--location` points at a directory holding another
+platform) and akm's own runtime's `opencode.db` (under
+`<akm data dir>/opencode-runtime/data/opencode/`), where it keeps its agent runs
+(`--location` points at a directory holding another
 `opencode.db`). Runs of the `opencode` harness are in OpenCode's own file. It
 reads both OpenCode 2 and OpenCode 1 files. Of an OpenCode 2 file it lists only
 top-level sessions, leaving out subagent sessions and akm's own model work,

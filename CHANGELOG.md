@@ -94,53 +94,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   names one.
   - Non-interactively, with no harness yet configured, `akm setup` enables every
     agent program found on `PATH`, the first the default; with none, agent work
-    runs on the embedded OpenCode over the connection.
-- Agent work on a connection, with no harness, runs on akm's own runtime:
-  OpenCode 2 embedded in akm's process (`@opencode/sdk`, #1244), with no
-  `opencode` binary, no `opencode serve` and no port. It has no entry in config,
-  and `opencode-sdk` is not a harness platform.
-  - The runtime is driven by the connection a run was dispatched with, as the
-    run froze it: it is declared as a provider of its own (`akm-<hash>` of its
-    endpoint, model, context window and output cap) carrying the one model the
-    run names, so the endpoint receives the model name as written, as on chat,
-    and a connection edited or removed later cannot redirect the run. No user or
-    project OpenCode config, no model catalog fetch, and OpenCode's own
-    free-model provider switched off. It still loads what OpenCode reads from
-    outside its config directories: `~/.agents`, and OpenCode's system config
-    (`/etc/opencode`, or macOS managed preferences).
-  - One embedded OpenCode per process, started on first use, shared by every
-    run and closed when akm exits. The model, environment and persona are set on
-    the run's session, and the connection's request fields, the call's
-    `temperature`, `maxTokens`, `reasoningEffort`, `enableThinking` and
-    `extraParams` (translated as the direct chat path translates them), and the
-    key read when the call is dispatched are laid over that session's requests.
+    runs on akm's own runtime over the connection.
+- Agent work on a connection, with no harness, runs on akm's own runtime: a
+  pinned OpenCode 2 binary (2.1.4) that akm fetches and runs as a process, one
+  per run (#1244). It has no entry in config, and `opencode-sdk` is not a
+  harness platform.
+  - The first run fetches the binary: the one `@opencode/cli-<platform>` package
+    for the machine (its OS and CPU, musl, and the baseline build for an x64 CPU
+    without AVX2, chosen as OpenCode's own installer chooses), about 114 MB, from
+    the npm registry into `<akm cache dir>/opencode/2.1.4/`, checked against the
+    registry's sha512 integrity before anything is extracted. Two akm processes
+    fetching at once both finish. A failed fetch fails the run as not started and
+    names the package, its URL and the cache path; with no network for that step,
+    enable the `opencode` harness with an installed OpenCode 2. No setting points
+    the runtime at a binary of your own. On Alpine/musl the binary needs
+    `libstdc++` and `libgcc` (the Alpine Node image has them).
+  - The run is the command the `opencode` harness builds for OpenCode 2 model
+    work (`run --standalone --title akm`, the prompt on stdin), driven by the
+    connection a run was dispatched with, as the run froze it: the connection is
+    the process's only provider (`@ai-sdk/openai-compatible`, which the binary
+    bundles, so nothing is downloaded for it), at the connection's endpoint with
+    its key, carrying the one model the run names and the context window and
+    output cap the connection states, so the endpoint receives the model name as
+    written, as on chat, and a connection edited or removed later cannot redirect
+    the run.
+  - The process is akm's own. OpenCode's config, data, cache, state and temp
+    directories are under `<akm data dir>/opencode-runtime/`, no `OPENCODE_*`
+    variable of akm's environment reaches it, and it has no user or project
+    OpenCode config, no model catalog fetch and no hosted free models. It still
+    loads what OpenCode reads from outside its config directories: `~/.agents`,
+    and OpenCode's system config (`/etc/opencode`, or macOS managed
+    preferences).
+  - `--standalone` keeps a run to one process that ends with it, and another
+    run's unfinished turns are never resumed (OpenCode's background service
+    resumes every top-level session whose turn did not finish, whichever process
+    owns it).
+  - A plugin akm writes to the runtime's config directory gives the agent akm's
+    read tools (`akm_search`, `akm_show`, `akm_curate`), which call the `akm` that
+    started the run with `--detail agent --format json` and the run's
+    environment, so a stamped run's reads count as that run's. The same plugin lays
+    the connection's request fields, in the endpoint's own spelling, over each
+    model request, and takes off the output cap OpenCode adds to every request
+    (`max_completion_tokens: 32000` unless the model's limit says otherwise): a
+    request carries the cap the connection or the call writes, and none
+    otherwise, as on chat. A persona goes in the prompt.
   - The commands the agent runs get the environment a CLI harness's child gets:
     akm's own, with its directories (`AKM_CONFIG_DIR` and the rest) and the run's
-    variables (workflow and task `env:`, `AKM_EVENT_SOURCE`) set over it.
-  - An agent has akm's read tools (`akm_search`, `akm_show`, `akm_curate`) in
-    process, with no shell. A subagent it starts runs with the run's key,
-    request fields and environment.
-  - OpenCode's logs, repositories and binaries are kept under akm's data and
-    cache directories. Sessions are stored in akm's own OpenCode database,
-    `<akm data dir>/opencode.db`. The embedded OpenCode opens no other database;
-    akm reads your OpenCode 2 database read-only, for OpenCode 2 history
-    (below).
-  - Another process's unfinished turns are never resumed (OpenCode resumes
-    every top-level session whose turn did not finish, whichever process owns
-    it), and the interrupt a timeout or an abort sends is awaited, for up to 5
-    s, before the run is reported. A unit `timeout` therefore ends a turn in
-    about the timeout when the endpoint is down; OpenCode alone retries a
-    failing endpoint with backoff for over a minute and has no config setting
-    to shorten it (a plugin's `retry` hook could; akm's does not use it), so a
-    unit with no `timeout` waits that long.
-  - One deadline and one abort signal cover the whole run: starting the host,
-    declaring the connection, creating and setting up the session, and the turn.
-    A step that finishes after either has fired starts nothing more. Closing the
-    hosts (what a command does before it exits) asks a start still in flight to
-    stop and waits at most 5 s for it, and at most 5 s for a host to close; what
-    did not finish is named in a warning, not waited for.
-  - Questions are cancelled and permission requests rejected, each with a
-    message, and the model carries on.
+    variables (workflow and task `env:`, `AKM_EVENT_SOURCE`) set over it, except
+    that `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME`
+    and `TMPDIR` are the runtime's.
+  - Sessions are stored in the runtime's own OpenCode database,
+    `<akm data dir>/opencode-runtime/data/opencode/opencode.db`; akm reads your
+    OpenCode 2 database read-only, for OpenCode 2 history (below).
+  - A timeout or an abort ends the run's process group, SIGINT first and SIGTERM
+    and SIGKILL after 5 s each, as for every harness. A unit `timeout` therefore
+    ends a turn in about the timeout when the endpoint is down; OpenCode alone
+    retries a failing endpoint with backoff for over a minute and has no config
+    setting to shorten it, so a unit with no `timeout` waits that long.
+  - OpenCode's headless `run` cancels questions and rejects permission requests,
+    and the model carries on. A run reports its reply only: no token usage and no
+    session id.
+  - The runtime can also run a request as model work, as the read-only
+    `akm-model-work` agent the `opencode` harness uses (reading and searching, and
+    akm's three tools). Model work on a connection is still a direct request to its
+    endpoint, so nothing sends it there today.
 - `platform: "opencode"` is your OpenCode, whichever major is installed, run
   through its CLI: `opencode run` with the prompt on stdin, a model only when akm
   names one, an agent only when the asset names one, and your `args` as written.
@@ -257,8 +274,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   "opencode"` is the `opencode` harness, your own OpenCode of either major run
   through `opencode run`.
 - Every process akm starts inherits akm's environment: a harness's child, a
-  workflow `exec` unit's command, a task's command and the commands of an
-  embedded session get the environment akm runs in, with the directories this akm
+  workflow `exec` unit's command, a task's command and the commands of an agent
+  on akm's own runtime get the environment akm runs in, with the directories this akm
   resolved, the run's `AKM_EVENT_SOURCE` and a unit's `env:` bindings set over it.
   The environment allowlist, the Windows floor, the `PATH` supplement for
   scheduler contexts, each harness's passthrough names and the passthrough
@@ -353,17 +370,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `GET /api/config` lists `connections` and `harnesses`, each a list of named
   entries, where it listed `engines`, and the config page shows the two as
   tables.
-- The npm package requires Node.js 24 or later (was 22): `@opencode/sdk` needs
-  it. CI tests Node 24 and 26. `effect` 4.0.1, `@opencode/core` 2.1.4 and
-  `@opencode/util` 2.1.4 are dependencies, and `@opencode/plugin` 2.1.4 a
-  devDependency (its `Plugin` type), each at the version `@opencode/sdk`
-  depends on.
-- Standalone binaries are built by `scripts/build-standalone.ts`, which stubs
-  the embedded OpenCode's persistent-terminal helper and native file finder
-  (neither is used by akm runs) and embeds `@ai-sdk/openai-compatible`, the
-  package OpenCode reaches an OpenAI-compatible endpoint with, so the binary's
-  first model-backed run downloads nothing and works with the npm registry
-  unreachable.
+- The npm package requires Node.js 24 or later (was 22). CI tests Node 24 and 26.
+- The npm package depends on no OpenCode library: akm's own runtime fetches one
+  OpenCode binary on first use instead, so `npm install -g akm-cli` needs no
+  compiler (the OpenCode libraries it replaces pulled in a native addon that
+  built from source) and the installed package is smaller. Standalone binaries are
+  built by `scripts/build-standalone.ts` with no stubs for those libraries.
 - Bundles are fetched when added and on `akm bundle update`. `akm index` no
   longer re-fetches a git or website bundle after twelve hours, `--full` does
   not force a fetch, and a failed forced refresh reports the failure instead of
@@ -449,7 +461,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   of the wizard.
 - The `opencode serve` server management, the OpenCode 1 and 2 HTTP adapters,
   and the `@opencode-ai/sdk` and `@opencode/client` dependencies. Agent work on a
-  connection needs no OpenCode binary or client package, so `akm health` checks
+  connection needs no OpenCode of yours or client package, so `akm health` checks
   for neither.
 - Asset tool requests. An agent or command's `tools:` (or a Claude command's
   `allowed-tools:`) is no longer read, a task's `tools:` is ignored with a

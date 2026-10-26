@@ -51,6 +51,27 @@ limits follow:
   search is unavailable there: `akm index` reports it `blocked` with the reason
   and search stays keyword-only. A remote `embedding.endpoint` still works.
 
+### akm's own agent runtime
+
+With a connection and no harness, `akm agent` and the other agent work run on
+akm's own runtime, a pinned OpenCode 2 binary that akm runs as a process. This
+is the same for the npm package and the standalone binary: nothing of OpenCode
+is installed with akm, and the first time the runtime runs, akm downloads the
+OpenCode binary for your platform from the npm registry (one package, about
+114 MB, 240 MB on disk), checks it against the registry's integrity hash and
+keeps it in the cache directory under `opencode/<version>/`. It is fetched once.
+Three limits follow:
+
+- That step needs the npm registry. Without network access for it, enable the
+  `opencode` harness with an OpenCode 2 you have installed instead; no setting
+  points akm's runtime at a binary of your own.
+- Alpine/musl runs the musl build of that binary, which needs `libstdc++` and
+  `libgcc`. The Alpine Node image already has them; on a bare Alpine install them
+  with `apk add libstdc++ libgcc`.
+- The binary runs from the cache directory and unpacks its own native pieces
+  into `opencode-runtime/tmp/` in the data directory, so neither may be mounted
+  `noexec`.
+
 **Success check:**
 
 ```sh

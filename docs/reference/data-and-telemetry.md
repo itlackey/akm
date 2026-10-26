@@ -64,8 +64,7 @@ Override: set `AKM_CONFIG_DIR` or `XDG_CONFIG_HOME`.
 | `akm.lock` | Inter-process write lock | Yes — recreated automatically |
 | `backups/tasks/` | Copies of task files taken by `akm migrate apply` before it rewrites them, one timestamped directory per run that rewrote a file | Yes — once the migrated tasks are verified |
 | `akm.lock.lck` | Lock write sentinel | Yes — recreated automatically |
-| `opencode.db` | The sessions of akm's own agent runtime (an OpenCode database; `akm proposal extract --type opencode` reads it back, read-only) | Yes — it loses that session history |
-| `opencode/` | The embedded OpenCode's own working files for akm's runtime: logs, repositories, shell output and a config directory. akm creates a matching `opencode/` under the state and cache directories | Yes — recreated on next use |
+| `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --type opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces) | Yes — recreated on next use; deleting it loses the runtime's session history |
 
 Override: set `AKM_DATA_DIR` or `XDG_DATA_HOME`.
 
@@ -109,7 +108,7 @@ Everything in the cache is regenerable. It is safe to delete the entire cache di
 | `bin/` | Downloaded AKM binary cache (used by `akm upgrade`) | Yes |
 | `tasks/logs/` | Scheduled task log files. Written at your umask; they hold captured command/agent output, so tighten the directory yourself if the machine is shared | Yes — ephemeral logs |
 | `tasks/history/` | Legacy task history JSONL (v0.7 migration artifact) | Yes |
-| `opencode/bin/` | The embedded OpenCode's binaries | Yes |
+| `opencode/<version>/` | The OpenCode binary akm's own agent runtime runs (about 240 MB), fetched from the npm registry on the runtime's first use | Yes — fetched again on next use |
 
 Override: set `AKM_CACHE_DIR` or `XDG_CACHE_HOME`.
 

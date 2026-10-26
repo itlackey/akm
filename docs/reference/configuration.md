@@ -238,7 +238,7 @@ What asks for a harness decides how akm runs it.
 
 Where model work is restricted, its tools cannot change the library, so what it changes there reaches it only as a proposal, through the review queue. Where it cannot be restricted, nothing but its scratch working directory stands between the run and your files: the program keeps its own tools and runs with the file and command authority of the user running akm, in your environment, so it can edit files and run commands, in or outside the library, and akm does not check what it did. Any harness may be enabled for model calls; a connection is the way to keep them from touching anything. `akm setup` says so when you enable such a harness for akm's model calls, and saves `modelWork: false` on the harness when you decline ([setup](cli.md#setup)).
 
-**History.** A harness run leaves a session in the program's own history, and `akm proposal extract` and improve read that history like any other. The exceptions are the model-work sessions akm marked: Claude Code keeps no transcript of them, and OpenCode 2 records them under the `akm-model-work` agent, which the reader skips. Codex and OpenCode 1 cannot be marked, so their model-work sessions are read like any other. akm's own runtime (below) keeps its sessions in `<akm data dir>/opencode.db`, read the same way.
+**History.** A harness run leaves a session in the program's own history, and `akm proposal extract` and improve read that history like any other. The exceptions are the model-work sessions akm marked: Claude Code keeps no transcript of them, and OpenCode 2 records them under the `akm-model-work` agent, which the reader skips. Codex and OpenCode 1 cannot be marked, so their model-work sessions are read like any other. akm's own runtime (below) keeps its sessions in `<akm data dir>/opencode-runtime/data/opencode/opencode.db`, read the same way.
 
 **Stopping.** When akm stops a run (a timeout, an abort or a signal to akm) it sends the program's process group SIGINT, as Ctrl-C would. If anything in the group still runs after 5 seconds, or as soon as the program itself has exited and left members behind, it sends SIGTERM, and 5 seconds after that SIGKILL if anything still runs. Workflow `exec` units and task commands are stopped the same way. Windows has no process groups, and a signal sent to a process there ends it at once. A program that records how a run ended acts on the SIGINT: OpenCode 2 marks its session interrupted and releases it, and only a run that had to be terminated or killed stays suspended in your OpenCode history, where your own OpenCode's background service may resume it when it next starts (up to ten attempts, OpenCode's own policy). Through OpenCode 2's background service (2.1.2) the interrupt ends the `opencode` command and not the service's turn, which carries on until it finishes.
 
@@ -246,35 +246,56 @@ Where model work is restricted, its tools cannot change the library, so what it 
 - OpenCode 2 runs agent work through its own background service, which stays up after the command. Add `--standalone` to the harness's `args` for a run that is one process.
 - A model name is OpenCode's `provider/model`, from the request, else the `--model` in the harness's `args`; without one, your OpenCode's default decides.
 
-Nobody can answer an akm run. On akm's own runtime akm cancels every question and
-rejects every permission request, each with a message saying so, and the model
-carries on without it. The `opencode` harness runs your OpenCode as it behaves
-without a person at the terminal.
+Nobody can answer an akm run. OpenCode's headless `run` cancels every question
+and rejects every permission request that would ask, and the model carries on
+without it; that holds for akm's own runtime and for the `opencode` harness
+alike.
 
 ### Without a harness
 
-Agent work runs on akm's own runtime when no harness is configured: OpenCode
-embedded in akm's process, driven by the default connection. It needs nothing
-installed beyond akm and downloads nothing: OpenCode reaches the endpoint with
-the `@ai-sdk/openai-compatible` package installed with akm, and the standalone
-akm binary carries a copy inside it, so a first run needs no network access to
-npm.
+Agent work runs on akm's own runtime when no harness is configured: a pinned
+OpenCode 2 binary (2.1.4) that akm runs as a process for each run, driven by the
+default connection. The npm package and the standalone binary do the same.
 
-- It uses your connections. It loads no user or project OpenCode configuration
-  (so none of your plugins, MCP servers or agents), though OpenCode still reads
-  `~/.agents` and its system config (`/etc/opencode`, or macOS managed
-  preferences), and OpenCode's free models are off. The connection a run is
-  dispatched with (its endpoint, model and context window, as they were when the
-  run was planned) is declared as a provider of its own when the run starts, so
-  a connection edited or removed afterwards cannot redirect a run that was
-  already planned.
-- It has OpenCode's tools, editing files and running commands included, and
-  akm's `akm_search`, `akm_show` and `akm_curate`.
-- Its own files live under `opencode/` in akm's data, cache and state
-  directories, and its sessions in `<akm data dir>/opencode.db`. Nothing is
+- **The first run fetches OpenCode.** akm downloads the binary for your platform
+  from the npm registry, one package of about 114 MB (240 MB on disk), checks it
+  against the registry's integrity hash, and keeps it in
+  `<akm cache dir>/opencode/2.1.4/`; later runs, and later versions of akm that
+  pin the same OpenCode, fetch nothing. Nothing else is downloaded: the binary
+  carries the package it reaches the endpoint with. If the fetch fails the run
+  fails as not started, naming the package, its URL and the cache path. With no
+  network access for this step, enable the `opencode` harness with an installed
+  OpenCode 2 instead: no setting points akm's runtime at a binary of your own.
+  On Alpine (musl) the binary needs `libstdc++` and `libgcc`: the Alpine Node
+  image has them, a bare Alpine needs `apk add libstdc++ libgcc`. akm's cache
+  and data directories must not be mounted `noexec`: the binary runs from the
+  first and unpacks its own native pieces into the second.
+- It uses your connections. The connection a run is dispatched with (its
+  endpoint, key, model and context window, as they were when the run was planned)
+  is the process's only provider, so a connection edited or removed afterwards
+  cannot redirect a run that was already planned. Your OpenCode's configuration is
+  not read: its config, data, cache, state and temp directories are akm's, under
+  `<akm data dir>/opencode-runtime/`, so none of your plugins, MCP servers or
+  agents load, and no `OPENCODE_*` variable of your environment reaches it.
+  OpenCode still reads `~/.agents` and its system config (`/etc/opencode`, or
+  macOS managed preferences); a project's `AGENTS.md` and `opencode.json` are not
+  read; OpenCode's free models and its model-catalog fetch are off.
+- It has OpenCode's default agent and tools, editing files and running commands
+  included, and akm's `akm_search`, `akm_show` and `akm_curate`, which run the
+  `akm` that started the run. A request's `persona` goes in the prompt, as for
+  the `opencode` harness.
+- The connection's request fields (`reasoning_effort`, `top_p`, a `max_tokens`
+  and the rest) are sent with each model request as written. OpenCode's own
+  output cap is not: a request carries the cap the connection or the call writes,
+  and none otherwise, as a direct request does.
+- Its sessions are in `<akm data dir>/opencode-runtime/data/opencode/opencode.db`,
+  and all of its files under `<akm data dir>/opencode-runtime/`. Nothing is
   written under `~/.local/share/opencode`.
 - The commands the agent runs get the environment akm runs in, with the
-  directories this akm resolved and the run's variables set over it.
+  directories this akm resolved and the run's variables set over it, except that
+  `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` and
+  `TMPDIR` are the runtime's own, and `OPENCODE_*` variables are not passed.
+- A run reports no token usage: the OpenCode process prints only the reply.
 
 ## Credentials
 

@@ -157,8 +157,8 @@ warns when either plugin's bundled `akm-cli` differs from the running CLI.
 
 **Which OpenCode akm runs** does not depend on the plugin: the `opencode`
 harness runs your OpenCode through its CLI (OpenCode 1 and 2), and akm's own
-runtime embeds one with nothing installed (see
-[Configuration](../reference/configuration.md#harnesses)). Install the plugin for
+runtime fetches and runs its own pinned one (see
+[Configuration](../reference/configuration.md#without-a-harness)). Install the plugin for
 the OpenCode you use yourself.
 
 ## See also

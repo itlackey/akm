@@ -48,6 +48,12 @@ Alpine/musl and Intel macOS have no native ONNX Runtime, so semantic search is
 unavailable there and keyword search works. See
 [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/#standalone-binary-and-semantic-search).
 
+With a connection and no harness, agent work runs on akm's own runtime, a pinned
+OpenCode 2 binary. The first time it runs, akm downloads that binary from the npm
+registry (about 114 MB, once) into its cache; on Alpine/musl it needs `libstdc++`
+and `libgcc` (the Alpine Node image has them). See
+[Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/#akms-own-agent-runtime).
+
 ## Quick Start
 
 ```sh

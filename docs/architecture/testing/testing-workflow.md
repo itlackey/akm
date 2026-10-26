@@ -36,7 +36,7 @@ real database (`openIndexDatabase`, `openExistingDatabase`), touches the network
 `Bun.spawn`); `tests/integration/commands/sources/index-db-contention.test.ts`
 writes the reasoning out against a concrete file. Everything else, such as pure
 in-memory logic and mocked I/O, belongs under `tests/`, however deeply nested.
-The real embedded OpenCode (its own SQLite database and a shell tool) and the
+The real OpenCode binary (its own SQLite database and a shell tool) and the
 loopback fake model are integration resources, and
 `tests/contracts/test-targets.test.ts` fails on a unit-target test that uses
 either. A file that seems to qualify for `tests/integration/` on any other
@@ -156,7 +156,7 @@ owns the process state that crosses test boundaries:
   therefore uses the XDG variables or an override of its own, and a test can never
   rely on `HOME` alone. The preload points `CODEX_HOME` and `CLAUDE_CONFIG_DIR` at
   the sandbox for the Codex and Claude Code session readers, and
-  `OPENCODE_TEST_HOME` for the embedded OpenCode.
+  `OPENCODE_TEST_HOME` for OpenCode.
 - Before each test it snapshots the harnessed environment (`HARNESSED` in the
   preload: `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_TEST_HOME`, the
   four `XDG_*_HOME` variables, `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`,
@@ -170,15 +170,17 @@ owns the process state that crosses test boundaries:
 - A tripwire throws when a test leaks an `AKM_*`, `XDG_*` or `HOME` variable that
   was not there at preload time, leaves `process.cwd()` changed, or leaves
   `globalThis.fetch` replaced.
-- A global `afterAll` ends the run: it closes the embedded OpenCode instances
-  the SDK runner cached (`closeOpencodeSdk()`), then removes the suite sandbox
-  directory. `bun test` does not emit `process.on("exit")` when a run ends
-  normally, so neither the runner's exit backstop nor the preload's `exit`
-  listener fires there: a test that dispatched through the real runner left its
-  OpenCode open and every run left its `akm-test-suite-*` directory behind
-  (both pinned by `tests/integration/opencode-sdk-suite-teardown.test.ts`). The
-  `exit` and signal handlers still cover an explicit `process.exit()` and
-  signal-kills. Do not rely on `process.on("exit")` for test-process cleanup.
+- A global `afterAll` ends the run by removing the suite sandbox directory.
+  `bun test` does not emit `process.on("exit")` when a run ends normally, so the
+  preload's `exit` listener does not fire there and every run would leave its
+  `akm-test-suite-*` directory behind. The `exit` and signal handlers still cover
+  an explicit `process.exit()` and signal-kills. Do not rely on
+  `process.on("exit")` for test-process cleanup.
+- The preload refuses akm's real OpenCode runtime (`agentRuntime.run`): a test
+  that dispatches agent work on a connection installs
+  `installFakeOpencodeRuntime` (`tests/_helpers/fake-opencode-runtime.ts`), which
+  records what the run was asked and answers it, or calls
+  `useRealOpencodeRuntime()` to run the real binary.
 
 ### 2. End-to-end CLI validation
 
@@ -313,7 +315,7 @@ AKM_TEST_OPENCODE2_BIN=/path/to/opencode bun test --timeout=120000 tests/integra
 Every run of the binary is sandboxed: its `HOME`, XDG and OpenCode directories
 are temporary directories, every other `OPENCODE_*` variable the developer has
 exported is blanked, its only provider is a loopback fake model reached through
-the `@ai-sdk/openai-compatible` package installed with akm (nothing is
+the `@ai-sdk/openai-compatible` package bundled in the binary (nothing is
 downloaded), and no real OpenCode file, login or key is opened. The suite covers
 what akm relies on at that boundary. Model work, which runs standalone, offers
 only its reading tools, and an abort or a timeout, during a model request or a
@@ -325,6 +327,16 @@ the `opencode` command and not the service's turn. A provider defined only in th
 user's `OPENCODE_CONFIG_CONTENT` works for agent work and model work alike. Run
 it when changing the OpenCode builder or the subprocess kill ladder, and against
 a new OpenCode 2 release.
+
+The suites that run akm's own runtime on the real binary
+(`opencode-runtime-sessions`, `opencode-runtime-signal-teardown`,
+`opencode-session-store` and `standalone-first-run`, all under
+`tests/integration/`) need no gate: they fetch the pinned OpenCode once, through
+akm's own fetch path, into a cache every run shares (`$AKM_TEST_OPENCODE_CACHE`,
+else `node_modules/.cache/akm-test-opencode`), and link it into each test's
+sandboxed akm cache (`tests/_helpers/opencode-binary.ts`). When the registry
+cannot be reached they skip, with a message that says why. Run them against a new
+`OPENCODE_RUNTIME_VERSION` before moving it.
 
 ### 5. Benchmark (agent utility)
 

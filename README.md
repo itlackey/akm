@@ -55,6 +55,8 @@ The npm package always uses Node.js to bootstrap its cross-platform command. If 
 
 Local semantic search runs its embedding model on ONNX Runtime. A standalone binary carries the library for its platform and copies it once into akm's cache (18 to 34 MB); a `noexec` temp directory stops a standalone binary, so set `TMPDIR` to a writable, executable one. Alpine/musl and Intel macOS have no native ONNX Runtime, so semantic search is unavailable there and keyword search works. [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/#standalone-binary-and-semantic-search) has the details.
 
+With a connection and no harness, agent work runs on akm's own runtime, a pinned OpenCode 2 binary. The first time it runs, akm downloads that binary from the npm registry (about 114 MB, once) into its cache; on Alpine/musl it needs `libstdc++` and `libgcc` (the Alpine Node image has them). See [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/#akms-own-agent-runtime).
+
 ## First useful result
 
 ```sh

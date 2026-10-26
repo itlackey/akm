@@ -117,9 +117,7 @@ decoding the stored plan, taking that run's own lock, and walking its spine
 through `completeWorkflowStep` are identical to the top-level path. That
 reuse is what makes child run locks arbitrate two-parent contention with no
 new mechanism, and what makes a resumed parent skip a completed child step
-with zero dispatcher calls. The child drive passes a no-op
-`disposeDispatchResources` (the parent's `finally` remains the sole owner of
-the process-lifecycle drain for the whole process) and no `maxSteps` or
+with zero dispatcher calls. The child drive passes no `maxSteps` or
 `maxRetries` (the parent's own budgets count only its own spine steps). The
 lower-level `driveRun` that `runWorkflowSteps` wraps stays module-private —
 reaching for it directly, instead of the public entry point, would be
