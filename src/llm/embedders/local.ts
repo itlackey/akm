@@ -85,7 +85,9 @@ async function loadOnnxRuntime(): Promise<typeof import("onnxruntime-node")> {
     return await importOnnxRuntime();
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    if (/Cannot find (?:module|package)|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND|Cannot resolve/i.test(msg)) {
+    // Only the package itself missing calls for a reinstall; a platform it ships no addon for (Intel macOS) fails on
+    // `../bin/napi-v6/<platform>/<arch>/onnxruntime_binding.node` and is reported below.
+    if (/Cannot find (?:module|package) ['"]onnxruntime-node['"]/.test(msg)) {
       throw new LocalRuntimeUnavailableError("Semantic search requires onnxruntime-node. Reinstall akm-cli.");
     }
     throw new LocalRuntimeUnavailableError(

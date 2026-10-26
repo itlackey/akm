@@ -25,7 +25,7 @@ import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { embedBatch } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
 import { DETERMINISTIC_EMBED_MODEL_ID, isDeterministicEmbedEnabled } from "../llm/embedders/deterministic";
-import { DEFAULT_LOCAL_MODEL } from "../llm/embedders/local";
+import { DEFAULT_LOCAL_MODEL, LocalRuntimeUnavailableError } from "../llm/embedders/local";
 import { applyEmbeddingTemplate, documentTemplateFingerprint, resolveEmbeddingProfile } from "../llm/embedders/profile";
 import {
   capEmbeddingText,
@@ -76,6 +76,8 @@ export interface EmbeddingProgressEvent {
 export interface EmbeddingGenerationResult {
   success: boolean;
   message?: string;
+  /** The local embedding runtime could not load on this machine. */
+  runtimeUnavailable?: true;
 }
 
 export interface GenerateEmbeddingsOptions {
@@ -513,6 +515,7 @@ export async function generateEmbeddingsForDb(
     return {
       success: false,
       message: `Semantic search verification failed: ${message}`,
+      ...(error instanceof LocalRuntimeUnavailableError ? { runtimeUnavailable: true as const } : {}),
     };
   }
 }

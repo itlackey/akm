@@ -43,7 +43,8 @@ binaries are runtime-free.
 Local semantic search runs its embedding model on ONNX Runtime
 (`onnxruntime-node`). A standalone binary carries the library for its platform
 and copies it once into akm's cache (18 to 34 MB); a `noexec` temp directory
-stops a standalone binary, so set `TMPDIR` to a writable, executable one.
+blocks a standalone binary's semantic search (keyword search still works), so
+set `TMPDIR` to a writable, executable one.
 Alpine/musl and Intel macOS have no native ONNX Runtime, so semantic search is
 unavailable there and keyword search works. See
 [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/#standalone-binary-and-semantic-search).

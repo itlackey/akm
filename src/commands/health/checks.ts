@@ -10,6 +10,7 @@ import {
   type StateDbFreelistInfo,
   type StateDbIntegrityResult,
 } from "../../storage/state-db-integrity";
+import { type SemanticSearchState, semanticSearchCheck } from "./semantic-search-check";
 import { ACTIVE_RUN_WARN_MS, type HealthCheckResult, type ImproveHealthMetrics, TASK_FAIL_RATE_WARN } from "./types";
 
 /**
@@ -67,6 +68,8 @@ export interface HealthCheckContext {
   autoAccept: ImproveHealthMetrics["autoAccept"];
   /** The connections, harnesses and work table, collected once (`connections-and-harnesses-check.ts`). */
   connectionsAndHarnesses: HealthCheckResult;
+  /** The last index run's semantic-search record and the index's counts, read once (`semantic-search-check.ts`). */
+  semanticSearch: SemanticSearchState;
   /**
    * #950: the `cli-version` advisory, computed once in `health.ts` alongside
    * the endpoint-reachability probe (same `--probe`/`--no-probe` gate, same
@@ -321,6 +324,11 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     name: "connections-and-harnesses",
     channel: "hard",
     run: (ctx) => ctx.connectionsAndHarnesses,
+  },
+  {
+    name: "semantic-search",
+    channel: "hard",
+    run: (ctx) => semanticSearchCheck(ctx.semanticSearch),
   },
   {
     // C2 (13-bus-factor): the cron task-failure rate was computed and rendered

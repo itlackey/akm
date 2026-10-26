@@ -481,4 +481,50 @@ describe("writeResponseToFileCapped", () => {
       writeResponseToFileCapped(dest, new Response(stream), { maxBytes: 1024 * 1024, bodyTimeoutMs: 60 }),
     ).rejects.toBeInstanceOf(BodyReadTimeoutError);
   });
+
+  /** A server sending `chunks` pieces `gapMs` apart, then closing, or (with `stop`) holding the body open. */
+  function startDribblingServer(chunks: number, gapMs: number, stop = false): { url: string; stop: () => void } {
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        const stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            for (let i = 0; i < chunks; i++) {
+              if (i > 0) await new Promise((resolve) => setTimeout(resolve, gapMs));
+              controller.enqueue(new TextEncoder().encode(`chunk-${i};`));
+            }
+            if (!stop) controller.close();
+          },
+        });
+        return new Response(stream);
+      },
+    });
+    return { url: `http://127.0.0.1:${server.port}/`, stop: () => server.stop(true) };
+  }
+
+  test("with stallTimeoutMs, a server that stops sending fails once no bytes arrive for that long", async () => {
+    const server = startDribblingServer(2, 10, true);
+    try {
+      const dest = path.join(dir, "stopped.bin");
+      const response = await fetch(server.url);
+      await expect(writeResponseToFileCapped(dest, response, { stallTimeoutMs: 100 })).rejects.toBeInstanceOf(
+        BodyReadTimeoutError,
+      );
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("with stallTimeoutMs, a slow body that keeps sending finishes past the overall budget", async () => {
+    const server = startDribblingServer(6, 50);
+    try {
+      const dest = path.join(dir, "slow.bin");
+      const response = await fetch(server.url);
+      // About 250 ms in all, against an overall budget of 100 ms that the stall rule replaces.
+      await writeResponseToFileCapped(dest, response, { bodyTimeoutMs: 100, stallTimeoutMs: 1000 });
+      expect(fs.readFileSync(dest, "utf8")).toBe("chunk-0;chunk-1;chunk-2;chunk-3;chunk-4;chunk-5;");
+    } finally {
+      server.stop();
+    }
+  });
 });

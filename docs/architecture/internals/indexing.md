@@ -493,7 +493,6 @@ Utility scores are rebuilt from `usage_events`.
 
 When semantic search is enabled:
 
-- semantic readiness is tracked in `semantic-status.json`
 - provider fingerprints include model/dimension for remote configs, deliberately EXCLUDING the endpoint — moving the same model+dimension to a different host does not force a rebuild
 - fingerprint changes force semantic status back to pending until a rebuild
 - vector search is an exact cosine scan of `embeddings` in JavaScript; no extension is needed

@@ -721,7 +721,6 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 | `$CACHE/config-backups/config-<ISO-ts>.json` | Pre-save snapshot of `config.json`, written by `backupExistingConfig()` in `src/core/config/config-io.ts` before each config write. `config.latest.json` is a second copy (not a symlink) always overwritten with the newest snapshot. Dir created/chmod'd `0700`; both the timestamped file and `config.latest.json` are chmod'd `0600` (08-F4, mirroring the env-cli write-mode convention). This is the only live backup location — legacy `$DATA/config-backups/` and `$CONFIG/config-backups/` write paths have been removed. | Capped at `MAX_CONFIG_BACKUPS = 5` most-recent timestamped snapshots; `pruneOldBackups()` deletes the rest on every write |
 | `$CONFIG/akm.lock` | Legacy location. Removed in v0.8.0 — akm reads ONLY from `$DATA/akm.lock`. Run the migration script to copy this file to `$DATA/akm.lock` before upgrading. | Legacy |
 | `$DATA/akm.lock` | Installed bundle lockfile (moved from `$CONFIG`). Application-managed install state. Same format as `$CONFIG/akm.lock`. | Managed by `akm bundle add`/`akm bundle remove` |
-| `$CACHE/semantic-status.json` | Embedding provider health: `status` (pending/ready-js/ready-vec/blocked), `reason`, `providerFingerprint`, `lastCheckedAt`, `entryCount`, `embeddingCount`. Blocked status auto-expires after 24h. | Reset on `akm index --full` |
 | `$CACHE/registry-index/<slug>.json` | Removed in v0.8.0 — data now stored in `registry_index_cache` table in `$DATA/index.db`. Delete these files after running the migration script. | — |
 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | Skills.sh search result cache. Fresh 15min; stale 1d. Key = MD5 of `url + query + limit`. | TTL |
 | `$STASH/.akm/consolidate-journal.json` | Legacy consolidation journal; current advisory consolidation does not read or write it. | Dead residue (itlackey/akm#889); reported by `akm migrate status`, removed by `akm migrate apply` |
@@ -941,7 +940,6 @@ not affect ranking, salience, real-query labels, or GRR.
 | 6 | `$CACHE/config-backups/config-<ts>.json` | JSON | Config pre-save backups (0600 files / 0700 dir; capped at 5) |
 | 7 | `$DATA/akm.lock` | JSON | Installed bundle lockfile |
 | 8 | `$DATA/akm.lock.lck` | Text (PID) | Write-lock sentinel for lockfile |
-| 9 | `$CACHE/semantic-status.json` | JSON | Embedding provider health cache |
 | 10 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | JSON | Skills.sh query result cache |
 | 12 | `$DATA/state.db` (`proposals` table) | SQLite | Proposal queue; archival is a `status` change, not a separate directory |
 | 19 | `$STASH/.akm/consolidate-backup/<ts>/<name>.md` | Markdown | Legacy consolidation backups; no longer created |

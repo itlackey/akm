@@ -247,12 +247,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   library for its platform and, the first time it embeds, copies it once into
   `<cache dir>/onnxruntime/<version>-<platform>-<arch>/` (18 to 34 MB) and loads
   it from there. A binary writes its native addon to the system temp directory,
-  so a `noexec` temp directory stops it: set `TMPDIR` to an executable one.
+  so a `noexec` temp directory blocks semantic search (keyword search works): set
+  `TMPDIR` to an executable one.
   Alpine/musl and Intel macOS have no native ONNX Runtime library: the index
   reports semantic search `blocked` with the reason, and keyword search works.
 - `akm index --format json` reports `verification.embeddingRuntime`, the runtime
   the local embedder embedded with (`onnxruntime-node`); it is absent for a
   remote embedding provider and when nothing was embedded locally.
+- `akm health` has a `semantic-search` check again. `akm index` records the
+  semantic status it found (with the runtime and, when semantic search is
+  `blocked` or `unavailable` on this machine, the reason) beside its other
+  index facts, and the check reads that record with the index's current entry
+  and vector counts: `pass` when every entry has a vector on the native runtime,
+  `warn` when vectors lag or another runtime embedded, `fail` when blocked or
+  unavailable. It loads no model and sends no request, and search does not read
+  the record. The health report's Semantic Search line shows the check (`OK`,
+  `OFF`, `BLOCKED`, `UNAVAILABLE` or `UNKNOWN`); it used to say `OK` always.
 
 ### Changed
 
@@ -427,9 +437,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- `bun.lock` resolved `onnxruntime-node` to `onnxruntime-web`, so every checkout,
-  CI run and release binary embedded on WebAssembly, about eight times slower
-  than the native runtime. It resolves to the real package.
+- `bun.lock` resolved `onnxruntime-node` to `onnxruntime-web`, so every checkout
+  and CI run embedded on WebAssembly, about eight times slower than the native
+  runtime. It resolves to the real package. (npm installs do not read `bun.lock`;
+  the release binaries could not embed at all, see Added.)
 
 ### Removed
 

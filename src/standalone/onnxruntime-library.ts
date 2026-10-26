@@ -45,11 +45,18 @@ export async function preloadOnnxRuntimeLibrary(): Promise<void> {
     `${AKM_ONNXRUNTIME_VERSION}-${process.platform}-${process.arch}`,
   );
   const library = path.join(directory, fileName);
-  if (!fs.existsSync(library) || fs.statSync(library).size !== fs.statSync(embeddedPath).size) {
+  const size = fs.statSync(embeddedPath).size;
+  if (!fs.existsSync(library) || fs.statSync(library).size !== size) {
     fs.mkdirSync(directory, { recursive: true });
     const partial = `${library}.${process.pid}.tmp`;
     fs.writeFileSync(partial, fs.readFileSync(embeddedPath));
-    fs.renameSync(partial, library);
+    try {
+      fs.renameSync(partial, library);
+    } catch (error) {
+      // Another akm process copied it first and has it loaded, which Windows will not replace: use that copy.
+      fs.rmSync(partial, { force: true });
+      if (!fs.existsSync(library) || fs.statSync(library).size !== size) throw error;
+    }
   }
   const { dlopen } = await import("bun:ffi");
   dlopen(library, { OrtGetApiBase: { args: [], returns: "ptr" } });
