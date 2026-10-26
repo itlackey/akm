@@ -134,9 +134,14 @@ export function storedCredential(slot: CredentialSlot): StoredCredential | undef
 /**
  * The key stored for `slot` and `endpoint`. A key stored for another endpoint is
  * not read: it is named once, without its value, and the block goes without.
+ * `storedKey` is a connection's eligibility already decided (a runner carries it);
+ * absent, the config on this host decides now.
  */
-export function readCredential(slot: CredentialSlot, endpoint: string): string | undefined {
-  if ("connection" in slot && isInheritedConnection(slot.connection)) return undefined;
+export function readCredential(slot: CredentialSlot, endpoint: string, storedKey?: boolean): string | undefined {
+  if ("connection" in slot) {
+    const eligible = storedKey ?? !isInheritedConnection(slot.connection);
+    if (!eligible) return undefined;
+  }
   const held = storedCredential(slot);
   if (!held) return undefined;
   if (!sameEndpoint(held.endpoint, endpoint)) {
@@ -314,7 +319,8 @@ export function fileFlatCredentials(
  * The key of the block stored in `slot`, whose config `apiKey` is `apiKey` and
  * whose endpoint is `endpoint`: the variable it references, else the key stored
  * for that endpoint. An unset variable is named once and sends no key. `quiet`
- * is for callers that only collect values to redact.
+ * is for callers that only collect values to redact; `storedKey` is as for
+ * {@link readCredential}.
  */
 export function resolveApiKey(
   apiKey: string | undefined,
@@ -322,9 +328,10 @@ export function resolveApiKey(
   endpoint: string,
   env: NodeJS.ProcessEnv = process.env,
   quiet = false,
+  storedKey?: boolean,
 ): string | undefined {
   const variable = apiKey === undefined ? undefined : envReferenceName(apiKey);
-  if (variable === undefined) return readCredential(slot, endpoint);
+  if (variable === undefined) return readCredential(slot, endpoint, storedKey);
   const value = env[variable]?.trim();
   if (!value && !quiet) {
     warnOnce(

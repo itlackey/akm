@@ -112,11 +112,12 @@ export function resetConfigCache(): void {
 }
 
 /**
- * Whether the loaded config has `name` only from an `extends` base. A base chooses such a connection's
+ * Whether this host's config has `name` only from an `extends` base. A base chooses such a connection's
  * endpoint, so it never uses a key stored on this host: keys are for the connections this host's own
- * config file defines.
+ * config file defines. The answer is the file's as it is now, loaded here when the cache holds nothing.
  */
 export function isInheritedConnection(name: string): boolean {
+  loadUserConfig();
   return cachedConfig?.inheritedConnections.has(name) ?? false;
 }
 

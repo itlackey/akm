@@ -8,6 +8,10 @@
  * under its name and for whichever endpoint. The base's own `$VAR` never crosses
  * over either (it is stripped when the base is read). A connection this host's
  * own file also names is the host's, and uses a key stored for its endpoint.
+ *
+ * `resolveTarget` decides that once and the runner carries it (`storedKey`), so a
+ * runner journaled and read back answers the same whether or not the config is
+ * loaded when it is dispatched.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -17,8 +21,10 @@ import { loadUserConfig, resetConfigCache } from "../src/core/config/config";
 import { writeCredential } from "../src/core/config/credentials";
 import { getConfigDir, getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
-import { buildExecution, resolveExecution } from "../src/integrations/agent/execution";
-import { runExecution } from "../src/integrations/agent/runner-dispatch";
+import { buildExecution, buildExecutionFromWire, resolveExecution } from "../src/integrations/agent/execution";
+import { resolveTarget } from "../src/integrations/agent/resolution";
+import type { ConnectionRunner } from "../src/integrations/agent/runner";
+import { materializeConnection, runExecution } from "../src/integrations/agent/runner-dispatch";
 import type { ChatCompletionConfig } from "../src/llm/client";
 import { clearCredentials } from "./_helpers/credentials";
 import { withEnv } from "./_helpers/sandbox";
@@ -93,5 +99,76 @@ describe("an inherited connection", () => {
     expect(await keySent()).toBeUndefined();
     writeCredential({ connection: "default" }, "host-key-for-shared", SHARED);
     expect(await keySent()).toBe("host-key-for-shared");
+  });
+
+  describe("a runner frozen from it", () => {
+    const frozen = (): ConnectionRunner => {
+      const runner = resolveTarget({ config: loadUserConfig(), modelWork: true, layers: [] });
+      return JSON.parse(JSON.stringify(runner)) as ConnectionRunner;
+    };
+    const makeLocal = () => {
+      const local = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+      fs.writeFileSync(
+        getConfigPath(),
+        JSON.stringify({ ...local, connections: { default: { models: { fast: "m" } } } }),
+      );
+      resetConfigCache();
+    };
+
+    test("withholds a stored key before and after the config cache is dropped", () => {
+      writeCredential({ connection: "default" }, "host-key-for-shared", SHARED);
+      const runner = frozen();
+      expect(runner.storedKey).toBe(false);
+
+      expect(materializeConnection(runner).apiKey).toBeUndefined();
+      resetConfigCache();
+      expect(materializeConnection(runner).apiKey).toBeUndefined();
+    });
+
+    test("is dispatched the same from the journal, with no config loaded", async () => {
+      writeCredential({ connection: "default" }, "host-key-for-shared", SHARED);
+      const prepared = resolveExecution({ content: "x", config: loadUserConfig(), modelWork: true });
+      const wire = JSON.parse(JSON.stringify({ request: prepared.request, runner: prepared.runner }));
+      resetConfigCache();
+      const sent: Array<string | undefined> = [];
+      const chat = async (connection: ChatCompletionConfig) => {
+        sent.push(connection.apiKey);
+        return "ok";
+      };
+
+      await runExecution(buildExecutionFromWire(wire), { chat });
+
+      expect(sent).toEqual([undefined]);
+    });
+
+    test("of a connection this host's own file names is eligible, and reads the key now, in either cache state", () => {
+      makeLocal();
+      writeCredential({ connection: "default" }, "host-key-for-shared", SHARED);
+      const runner = frozen();
+      expect(runner).not.toHaveProperty("storedKey");
+
+      expect(materializeConnection(runner).apiKey).toBe("host-key-for-shared");
+      resetConfigCache();
+      expect(materializeConnection(runner).apiKey).toBe("host-key-for-shared");
+
+      // The secret is not frozen: a rotated key reaches the same runner, and a removed one is gone.
+      writeCredential({ connection: "default" }, "rotated-key", SHARED);
+      expect(materializeConnection(runner).apiKey).toBe("rotated-key");
+      clearCredentials();
+      expect(materializeConnection(runner).apiKey).toBeUndefined();
+    });
+
+    test("keeps the endpoint check: a key stored for another endpoint is not sent to the frozen one", () => {
+      makeLocal();
+      writeCredential({ connection: "default" }, "host-key-for-own-server", OWN);
+      expect(materializeConnection(frozen()).apiKey).toBeUndefined();
+    });
+
+    test("from before the field existed has no storedKey, and is eligible", () => {
+      writeCredential({ connection: "default" }, "host-key-for-shared", SHARED);
+      const { storedKey: _storedKey, ...older } = frozen();
+
+      expect(materializeConnection(older as ConnectionRunner).apiKey).toBe("host-key-for-shared");
+    });
   });
 });
