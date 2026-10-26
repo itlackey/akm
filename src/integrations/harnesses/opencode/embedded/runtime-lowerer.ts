@@ -18,6 +18,7 @@ export const runtimeLowerer: LowerTarget = {
   id: "akm-runtime",
   systemPrompt: true,
   nativeAgent: true,
-  confinable: true,
+  // Model work on a connection is a chat call (`buildExecution`), so no run here is confined; if one were lowered here, say so.
+  confinable: false,
   inference: PORTABLE_INFERENCE_KEYS,
 };
