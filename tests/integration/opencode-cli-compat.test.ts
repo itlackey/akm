@@ -436,6 +436,17 @@ function registerSuite(bin: string): void {
       expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
     }, 60_000);
   });
+
+  test("an authored --standalone runs once, as the CLI takes it", async () => {
+    const box = sandbox();
+    const model = fakeModel();
+    writeConfig(box, providerConfig(model, { model: "fixture/fake-model" }));
+
+    const result = await runOpencode(box, { prompt: "probe" }, { args: ["run", "--standalone"] });
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("PROBE_OK");
+  }, 60_000);
 }
 
 if (!BIN || process.platform === "win32") {

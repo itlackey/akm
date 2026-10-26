@@ -9,6 +9,7 @@
  * real binary runs: `build` only turns a request into a command.
  */
 import { beforeEach, describe, expect, test } from "bun:test";
+import { ConfigError } from "../../src/core/errors";
 import { isEnvPassthroughValueSafeToExpose } from "../../src/core/redaction";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { collectDispatchSensitiveValues } from "../../src/integrations/agent/runner-dispatch";
@@ -367,6 +368,53 @@ describe("opencode by major", () => {
         "--model",
         "m-1",
       ]);
+    });
+  });
+
+  describe("an authored --server or --standalone", () => {
+    test("--server is a configuration error that names the setting, the argument and why, in either spelling", async () => {
+      await withOpencodeOnPath(2, async () => {
+        for (const authored of [
+          ["run", "--server", "http://elsewhere"],
+          ["run", "--server=http://elsewhere"],
+        ]) {
+          let thrown: unknown;
+          try {
+            build("opencode", { prompt: PROMPT }, authored);
+          } catch (error) {
+            thrown = error;
+          }
+          expect(thrown).toBeInstanceOf(ConfigError);
+          const error = thrown as ConfigError;
+          expect(error.code).toBe("INVALID_CONFIG_FILE");
+          expect(error.message).toContain("harnesses.<name>.args");
+          expect(error.message).toContain("--server");
+          expect(error.message).toContain("--standalone");
+          expect(error.message).toContain("a stop ends the run");
+          expect(error.hint()).toContain("Remove --server");
+        }
+      });
+    });
+
+    test("--server is no conflict where akm adds no --standalone: model work, an interactive launch, OpenCode 1", async () => {
+      const authored = ["run", "--server", "http://elsewhere"];
+      await withOpencodeOnPath(2, async () => {
+        expect(build("opencode", { prompt: PROMPT, modelWork: true }, authored).argv).not.toContain("--server");
+        expect(build("opencode", {}, authored).argv).toEqual(["opencode", "--server", "http://elsewhere"]);
+      });
+      expect(build("opencode", { prompt: PROMPT }, authored).argv).toEqual([
+        "opencode",
+        "run",
+        "--server",
+        "http://elsewhere",
+      ]);
+    });
+
+    test("an authored --standalone is kept once, not doubled", async () => {
+      await withOpencodeOnPath(2, async () => {
+        const argv = build("opencode", { prompt: PROMPT }, ["run", "--standalone", "--print-logs"]).argv;
+        expect(argv).toEqual(["opencode", "run", "--standalone", "--print-logs", "--title", "akm"]);
+      });
     });
   });
 

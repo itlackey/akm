@@ -277,6 +277,11 @@ sessions: akm reads, copies and embeds nothing of yours. A run is its own
   OpenCode's hosted free model, and so does a call whose model (named, or your
   OpenCode's default) is one of its free ones. Agent work does not set it: your
   OpenCode's models are as you would get running it by hand.
+- `--server` is not supported on this harness: akm runs OpenCode 2 with
+  `--standalone` so that a stop ends the run and nothing is shared with, or
+  replayed from, a background service, and OpenCode refuses the two together. An
+  `args` entry that names `--server` is a configuration error (exit 78) naming
+  `harnesses.<name>.args`; an authored `--standalone` is kept once.
 - OpenCode 2 also gets `--standalone` and `--title akm`. A run akm stops
   (timeout, abort) is interrupted first, as Ctrl-C would, which OpenCode records
   as interrupted and releases. One that does not stop within 5 seconds is

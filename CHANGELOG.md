@@ -143,7 +143,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   configuration, logins and sessions; akm reads, copies and embeds nothing of
   yours, and its runs are in your OpenCode history, which improve reads.
   OpenCode 2 runs `--standalone` (one process that ends with the run, not a
-  background service) with `--title akm`. A run akm stops (timeout, abort) is
+  background service) with `--title akm`; `--server` in the harness's `args` is a
+  configuration error (exit 78) that says why, since OpenCode refuses it with
+  `--standalone`, and an authored `--standalone` is kept once. A run akm stops (timeout, abort) is
   interrupted first, which OpenCode records as interrupted and releases; only a
   run that had to be terminated or killed after the grace stays suspended in your
   OpenCode history, where your own OpenCode's background service may resume it
