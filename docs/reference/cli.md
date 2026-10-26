@@ -431,7 +431,7 @@ Primary result fields:
 | --- | --- |
 | `status` | Overall health verdict: `pass`, `warn`, or `fail` |
 | `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `active-runs`, and `connections-and-harnesses` |
-| `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), and `scheduler-binary` |
+| `advisories` | Non-fatal warnings including `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), and `scheduler-binary` |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
 
