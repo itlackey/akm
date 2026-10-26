@@ -657,11 +657,22 @@ This is distinct from `searchMode: "keyword"`, which is the normal result when
 semantic search is disabled or has not been built. A read-only sandbox that
 cannot record best-effort usage telemetry does not by itself mark search as
 degraded.
-The npm/Bun package declares `@huggingface/transformers` as a normal dependency.
-AKM imports that external package directly; it does not carry a copied runtime
-under `src/` or `dist/`. If the dependency is unavailable, reinstall `akm-cli`
-or configure a remote `embedding.endpoint`. Setup does not mutate a global
-installation to add runtime packages.
+The local embedder runs its model (`Xenova/bge-small-en-v1.5` unless
+`embedding.localModel` names another) on `onnxruntime-node`, with
+`@huggingface/tokenizers` for the token ids. Both are normal dependencies of the
+package, imported directly; AKM does not carry a copied runtime under `src/` or
+`dist/`. The model's four files (about 127 MB) are fetched from the Hugging Face
+Hub on first use into `$HF_HOME/<repo>/` (default `<cache dir>/models`), and
+`HF_HUB_OFFLINE=1` forbids the fetch. `akm index --format json` reports the
+runtime it embedded with as `verification.embeddingRuntime`.
+If the runtime cannot load, because the dependency is missing or the platform
+has no native ONNX Runtime library (Alpine/musl, Intel macOS), the index reports
+semantic search `blocked` with the reason and search stays keyword-only:
+reinstall `akm-cli` for a missing dependency, or configure a remote
+`embedding.endpoint`. A standalone binary copies the library it embeds once into
+`<cache dir>/onnxruntime/` (see
+[Getting Started](../guides/getting-started.md#standalone-binary-and-semantic-search)).
+Setup does not mutate a global installation to add runtime packages.
 The default is `"off"` so a bare or headless install (`akm bundle create`, `--yes`,
 `--config`) never silently downloads the local embedding model on first
 index. A config that has an `embedding` block and sets no `semanticSearchMode`

@@ -15,6 +15,22 @@ cd akm
 bun install
 ```
 
+## Changing Dependencies
+
+Change dependencies with Bun's own commands only: `bun add <package>`,
+`bun remove <package>` or `bun update <package>`. Never edit `bun.lock` by hand,
+and commit it in the same commit as the `package.json` change it belongs to.
+
+A dependency that should resolve to a different package than its name is an
+alias, and an alias lives in `package.json` as `npm:<package>@<range>`, nowhere
+else. `bun install --frozen-lockfile` accepts a lock whose entry names another
+package than `package.json` does; `bun run lint` does not, because it runs
+`scripts/lint-lockfile.ts`, which checks every direct dependency's lock entry for
+the package it names and for a version inside its range or pin.
+
+Every exact pin (a version with no `^` or `~`) gets a line in `package.json`'s
+`pinNotes` saying why it is pinned and what to check before moving it.
+
 ## Development Workflow
 
 Run the CLI from source during development:
@@ -57,7 +73,7 @@ what each target holds and where a new test goes.
 
 ```bash
 bun run lint:fix   # Biome with --write; read git diff afterwards
-bun run lint       # what CI runs: Biome, the secret-resolver and shipped-assets lints, the doc-example lint
+bun run lint       # what CI runs: Biome, the secret-resolver and shipped-assets lints, the doc-example lint, the lockfile lint
 ```
 What CI runs depends on the event. Every pull-request commit runs `check` (lint,
 types, the unit and integration suites, the build) and one Node smoke; marking
@@ -165,6 +181,9 @@ files at runtime from the release-notes directory.
 
 ## Gotchas
 
+- `bun add`, `bun remove` and `bun update` (Bun 1.4) re-encode the `\u2014`
+  escapes in `package.json` as literal characters. Put them back, so the diff
+  holds only the dependency change.
 - Biome 2.4.14 (the pinned version) intermittently parses a file with the wrong
   grammar (`.ts` as JSON, JSON as JS) and reports errors against correct text:
   re-run it; don't edit the file it names. A misparse under `--write` has

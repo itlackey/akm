@@ -34,6 +34,23 @@ Or download a standalone binary directly from the
 Hitting a PowerShell execution-policy error on Windows? See
 [Troubleshooting](#troubleshooting) at the end of this guide.
 
+### Standalone binary and semantic search
+
+Local semantic search (`semanticSearchMode: auto`) runs its embedding model on
+ONNX Runtime. A standalone binary carries the library for its platform. The
+first time it embeds, it copies that library once into akm's cache directory,
+under `onnxruntime/<version>-<platform>-<arch>/` (18 to 34 MB depending on the
+platform; `akm info` prints the cache directory), and loads it from there. Two
+limits follow:
+
+- A standalone binary writes its native addon to the system temp directory and
+  loads it from there, so a temp directory mounted `noexec` stops it. Set
+  `TMPDIR` to a writable, executable directory. The cache directory must be on
+  an executable mount too.
+- Alpine/musl and Intel macOS have no native ONNX Runtime library. Semantic
+  search is unavailable there: `akm index` reports it `blocked` with the reason
+  and search stays keyword-only. A remote `embedding.endpoint` still works.
+
 **Success check:**
 
 ```sh

@@ -53,6 +53,8 @@ Upgrade in place: `akm upgrade`
 
 The npm package always uses Node.js to bootstrap its cross-platform command. If a working [Bun](https://bun.sh) >= 1.0 is also on `PATH`, the launcher prefers Bun for execution; old, unusable, or absent Bun installations fall back to Node.js. Node.js remains required for the npm package. The standalone binaries are runtime-free.
 
+Local semantic search runs its embedding model on ONNX Runtime. A standalone binary carries the library for its platform and copies it once into akm's cache (18 to 34 MB); a `noexec` temp directory stops a standalone binary, so set `TMPDIR` to a writable, executable one. Alpine/musl and Intel macOS have no native ONNX Runtime, so semantic search is unavailable there and keyword search works. [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/#standalone-binary-and-semantic-search) has the details.
+
 ## First useful result
 
 ```sh

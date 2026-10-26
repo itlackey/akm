@@ -238,10 +238,19 @@ sets the same path and restores it from a model/source-identified Actions
 cache. Candidate tags and manual runs are restore-only; only the scheduled
 default-branch run may save a cache entry.
 
-The same gate runs real semantic index/search round-trips against the declared
-external dependency. Package acceptance separately verifies the ordinary npm
-package surface; there is no installed-consumer compatibility architecture or
-copied semantic runtime to audit.
+The same gate runs real semantic index/search round-trips on `onnxruntime-node`,
+asserts the `embeddingRuntime` the index reports, and compares the embedder's
+vectors with the Transformers.js reference in
+`tests/fixtures/embedder-reference-vectors.json`. Package acceptance separately
+verifies the ordinary npm package surface; there is no installed-consumer
+compatibility architecture or copied semantic runtime to audit.
+
+`tests/integration/standalone-semantic.test.ts` (the same `AKM_SEMANTIC_TESTS=1`
+gate) builds the host's standalone binary and indexes a small stash with it,
+asserting a ready status, a vector per entry and the native runtime. Gated CI
+runs it in the Semantic Search job (Linux) and in the Native Scheduler job on
+Linux, macOS and Windows, the only places the binary's preload of each platform's
+ONNX Runtime library runs.
 
 ### What to test explicitly
 
@@ -266,10 +275,12 @@ Or run the shell orchestrator directly:
 ./tests/docker/run-docker-tests.sh
 ```
 
-This validates two deployment methods across four Linux families:
+This validates three deployment methods across four Linux families:
 
 - bun-based install: Ubuntu, Debian, Alpine, Fedora
 - compiled binary install: Ubuntu, Debian, Fedora
+- npm install: Debian on `node:24-slim`, which has no compiler, python or make
+  (`npm install -g` of the packed package; the install's exit code is the check)
 
 Binary validation currently excludes Alpine. The compiled Linux binary used in
 this repo's Docker tests is not packaged for Alpine/musl compatibility, so the

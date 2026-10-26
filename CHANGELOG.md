@@ -221,6 +221,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     on what to fix; `akm migrate apply` never deletes one.
   - The residue sweep leaves the `.akm/` of a stash a disabled bundle owns as
     written, as the task and asset steps do.
+- The standalone binary does local semantic search. It carries the ONNX Runtime
+  library for its platform and, the first time it embeds, copies it once into
+  `<cache dir>/onnxruntime/<version>-<platform>-<arch>/` (18 to 34 MB) and loads
+  it from there. A binary writes its native addon to the system temp directory,
+  so a `noexec` temp directory stops it: set `TMPDIR` to an executable one.
+  Alpine/musl and Intel macOS have no native ONNX Runtime library: the index
+  reports semantic search `blocked` with the reason, and keyword search works.
+- `akm index --format json` reports `verification.embeddingRuntime`, the runtime
+  the local embedder embedded with (`onnxruntime-node`); it is absent for a
+  remote embedding provider and when nothing was embedded locally.
 
 ### Changed
 
@@ -389,6 +399,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   becomes empty. It used to delete the parent too, so unsetting a harness's only
   key removed the harness and `akm agent` then exited 78 (`{}` is how a harness
   is enabled).
+- The local embedder runs the model on `onnxruntime-node` with
+  `@huggingface/tokenizers`. `@huggingface/transformers` and the `sharp`,
+  `@huggingface/jinja` and `onnxruntime-web` packages it brought are no longer
+  installed. akm fetches the model's four files from the Hugging Face Hub itself,
+  into the same `$HF_HOME/<repo>/` layout as before (`HF_HUB_OFFLINE` still
+  forbids the fetch), so a model cache an earlier release filled is reused. The
+  vectors are the same to within 1e-6 of Transformers.js, so an index built
+  before stays valid.
+
+### Fixed
+
+- `bun.lock` resolved `onnxruntime-node` to `onnxruntime-web`, so every checkout,
+  CI run and release binary embedded on WebAssembly, about eight times slower
+  than the native runtime. It resolves to the real package.
 
 ### Removed
 

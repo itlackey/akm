@@ -270,7 +270,9 @@ Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
 breakdown in milliseconds. Use `--verbose` to print the indexing mode,
 semantic-search settings, and phase-by-phase progress to stderr while the
 index is being built. Malformed workflow assets are skipped with file-path
-warnings instead of aborting the full run.
+warnings instead of aborting the full run. `verification.embeddingRuntime` is
+`onnxruntime-node` when the local embedder embedded in this run; it is absent
+for a remote embedding provider and when nothing was embedded locally.
 
 **Progress in non-verbose JSON mode (default output format, #954):** even
 without `--verbose`, phase-start messages and the embedding heartbeat
