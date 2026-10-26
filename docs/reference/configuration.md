@@ -253,8 +253,9 @@ akm directories included), so it can edit files and run commands, in or outside
 the library, and akm does not check what it did. `akm setup` says so when you
 enable such a harness for akm's model calls ("Model work on `<name>` cannot be
 restricted: it can edit files and run commands."), and its summary repeats it.
-For OpenCode, setup asks the installed `opencode --version`, as a run does, and
-treats a version it cannot read as OpenCode 1. Any harness may be enabled for
+For OpenCode, setup asks the program the harness will run (its `bin`, else
+`opencode` on `PATH`) for `--version`, as a run does, and treats a version it
+cannot read as OpenCode 1. Any harness may be enabled for
 model calls; a connection is the way to keep them from touching anything. When
 setup asks whether the harness may take them and the answer is no (or `--yes`
 finds one that cannot be restricted), it saves `modelWork: false` on the harness

@@ -342,6 +342,28 @@ describe("akm setup --yes defaults", () => {
     expect(summary.runs.modelCalls).toBe('harness "opencode", read-only');
   });
 
+  test("the configured bin decides, not the opencode on PATH: OpenCode 1 there is saved as off for model calls, OpenCode 2 there takes them", async () => {
+    installed("opencode");
+    const pathHas = (major: 1 | 2, configured: 1 | 2) =>
+      fakeOpencodeMajor((bin) =>
+        (bin === "/opt/opencode-configured" ? configured : major) === 1 ? "1.19.4" : "opencode v2.1.4",
+      );
+
+    pathHas(2, 1);
+    writeSandboxConfig({ semanticSearchMode: "off", harnesses: { opencode: { bin: "/opt/opencode-configured" } } });
+    resetConfigCache();
+    const unrestricted = await run();
+    expect(written().harnesses).toEqual({ opencode: { bin: "/opt/opencode-configured", modelWork: false } });
+    expect(unrestricted.runs.modelCalls).toContain('harness "opencode" is set not to take model calls');
+
+    pathHas(1, 2);
+    writeSandboxConfig({ semanticSearchMode: "off", harnesses: { opencode: { bin: "/opt/opencode-configured" } } });
+    resetConfigCache();
+    const restricted = await run();
+    expect(written().harnesses).toEqual({ opencode: { bin: "/opt/opencode-configured" } });
+    expect(restricted.runs.modelCalls).toBe('harness "opencode", read-only');
+  });
+
   test("a second run over that config changes nothing, and the hand-written setting is kept", async () => {
     installed("gemini");
     await run();
