@@ -148,7 +148,10 @@ notice while the call goes on.
 
 akm sends no `max_tokens` unless one is written, on a connection, on a model
 entry or by the call: the model and its endpoint know their own limits, and a
-default cap would truncate replies silently.
+default cap would truncate replies silently. A direct chat call (model work on a
+connection) does send `temperature: 0.3` when nothing writes one; the
+connection's, a model entry's or the call's own `temperature` wins. akm's own
+runtime sends none and leaves it to the endpoint.
 
 `enableThinking: false` turns thinking off and `reasoningEffort` takes a value
 such as `"none"`, `"low"` or `"high"`. akm sends **both** thinking fields,
