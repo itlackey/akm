@@ -49,7 +49,11 @@ Cache materialisation runs through each source's `sync()` method
 
 The `content` column is intentionally lowest-weight. AKM-native Markdown body
 prose is normalized and bounded at the adapter boundary; secrets, env values,
-raw sessions, and session checkpoints never enter it. Longer structured
+raw sessions, and session checkpoints never enter it. Fenced code contributes
+only its identifiers, never its literal values (`fencedCodeIdentifiers`,
+akm#1260). The projection's version, `CONTENT_PROJECTION_VERSION`, is part of
+every directory's index fingerprint, so changing what the projection returns
+re-projects every directory once on the next `akm index`. Longer structured
 guidance such as `usage` and `intent` continues to feed `hints`.
 
 Lexical retrieval uses one central progressive plan: Unicode letter/number

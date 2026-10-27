@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `akm search` finds knowledge whose answer sits in fenced code (#1260). The
+  `content` search projection now keeps the identifiers of fenced code (names,
+  CLI flags, config keys, paths, dotted references such as `process.env.CI`)
+  and still drops their literal values (quoted strings, assignment values, URLs,
+  long token-like strings). On akm-eval's code-lookup set nDCG@10 rose from
+  0.530 to 0.764 (keyword) and 0.494 to 0.614 (semantic); the library set
+  improved slightly and the prose-only books set is unchanged. Search results
+  carry no `content`, so what search hands an agent is the same size. Fragments,
+  fragment ids and `akm show` are unchanged. The next `akm index` (including the
+  one `akm upgrade` runs) re-projects every directory once and re-embeds the
+  entries whose fenced code adds identifiers; no `--full` needed.
+
 ### Fixed
 
 - **`akm bundle rename` keeps the bundle's recorded feedback** (#1250). It rewrote

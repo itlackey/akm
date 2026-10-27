@@ -20,6 +20,7 @@ import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex, lookupBundleRef } from "../../src/indexer/indexer";
 import { computeDirFingerprint } from "../../src/indexer/passes/dir-staleness";
+import { CONTENT_PROJECTION_VERSION } from "../../src/indexer/passes/metadata";
 import { openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -114,7 +115,7 @@ test("an incremental index re-files an unchanged file the older matcher typed as
       n: 0,
     });
     const variants = check.prepare("SELECT DISTINCT index_variant AS v FROM index_dir_state").all() as { v: string }[];
-    expect(variants.map((v) => v.v)).toEqual([`akm@${akmAdapter.version}`]);
+    expect(variants.map((v) => v.v)).toEqual([`akm@${akmAdapter.version}+content${CONTENT_PROJECTION_VERSION}`]);
   } finally {
     check.close();
   }

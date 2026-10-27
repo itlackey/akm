@@ -152,7 +152,7 @@ describe("whole-document BM25 over any query word", () => {
 });
 
 describe("native Markdown content projection (#819)", () => {
-  test("keeps prose and inline identifiers but drops markup, URLs, comments, and fenced code", () => {
+  test("keeps prose and inline identifiers but drops markup, URLs, comments, and fenced literal values", () => {
     const projection = projectMarkdownContent(`
 # Rotation guide
 <!-- internal crawler note -->
@@ -170,32 +170,126 @@ The spectral quokka calibration nonce rotates every Thursday.
     expect(projection).toContain("rotateKey()");
     expect(projection).toContain("spectral quokka calibration nonce");
     expect(projection).not.toContain("example.test");
-    expect(projection).not.toContain("PRIVATE_TOKEN");
+    // Fenced code contributes its names (akm#1260), never its values.
+    expect(projection).toContain("PRIVATE_TOKEN");
+    expect(projection).not.toContain("never-index-this");
     expect(projection).not.toContain("crawler note");
   });
 
   test.each([
     {
+      name: "an environment assignment keeps the name, not the value",
+      line: "export PRIVATE_TOKEN=never-index-this",
+      kept: ["PRIVATE_TOKEN"],
+      dropped: ["never-index-this", "never"],
+    },
+    {
+      name: "a quoted API key is dropped",
+      line: 'const client = new OpenAI({ apiKey: "sk-proj-abc123def456ghi789jkl" })',
+      kept: ["OpenAI", "apiKey"],
+      dropped: ["sk-proj", "abc123"],
+    },
+    {
+      name: "an unquoted key-like token is dropped",
+      line: "TOKEN_VALUE sk-proj-abc123def456ghi789jkl0",
+      kept: ["TOKEN_VALUE"],
+      dropped: ["sk-proj", "abc123"],
+    },
+    {
+      name: "a JSON secret keeps its key, not its value",
+      line: '{ "password": "hunter2", "path": "/etc/akm/config.json" }',
+      kept: ["password", "config.json"],
+      dropped: ["hunter2"],
+    },
+    {
+      name: "a URL with credentials is dropped whole",
+      line: "curl https://deploy:p4ssw0rd@api.example.test/v1/models",
+      kept: ["curl"],
+      dropped: ["deploy", "p4ssw0rd", "example", "models"],
+    },
+    {
+      name: "a long token with digits is dropped",
+      line: "ghp_1234567890abcdefABCDEF1234567890",
+      kept: [],
+      dropped: ["ghp_", "1234567890"],
+    },
+    {
+      name: "a key body is dropped whole, not cut at its / and + into short pieces",
+      line: "FAKEkey0material+NOTreal/1234abcdEFGH+fakeFAKEfake0000/notAkey99",
+      kept: [],
+      dropped: ["FAKEkey0material", "NOTreal", "fakeFAKEfake0000", "notAkey99"],
+    },
+    {
+      name: "a base64 secret passed as an argument is dropped",
+      line: "aws configure set aws_secret_access_key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      kept: ["aws_secret_access_key"],
+      dropped: ["wJalrXUtnFEMI", "K7MDENG", "EXAMPLEKEY"],
+    },
+    {
+      name: "a quoted key keeps its name, not its unquoted value",
+      line: '"password": fakeplainvalue',
+      kept: ["password"],
+      dropped: ["fakeplainvalue"],
+    },
+    {
+      name: "a quoted key's dotted reference value stays",
+      line: '{"token": process.env.DEPLOY_TOKEN}',
+      kept: ["token", "process.env.DEPLOY_TOKEN"],
+      dropped: [],
+    },
+    {
+      name: "an Authorization header keeps its name, not its credential",
+      line: "Authorization: Basic ZmFrZTpmYWtl",
+      kept: ["Authorization"],
+      dropped: ["ZmFrZTpmYWtl"],
+    },
+    {
+      name: "a bearer token after its scheme is dropped",
+      line: "authorization: bearer fakebearervalue",
+      kept: ["authorization"],
+      dropped: ["fakebearervalue"],
+    },
+    {
+      name: "flags, calls and dotted references are names",
+      line: "if (process.env.CI) throw new ProviderInitError(code); akm index --full",
+      kept: ["process.env.CI", "ProviderInitError", "Provider", "--full"],
+      dropped: [],
+    },
+  ])("fenced code keeps names and drops literal values: $name", ({ line, kept, dropped }) => {
+    const projection = projectMarkdownContent(["Prose before.", "```sh", line, "```"].join("\n")) ?? "";
+    for (const text of kept) expect(projection).toContain(text);
+    for (const text of dropped) expect(projection).not.toContain(text);
+  });
+
+  test.each([
+    {
+      // Inside a fence a quoted value is dropped; misread as prose it would be kept, so the values prove fence state.
       name: "a shorter fence does not close a longer fence",
-      markdown: ["Before.", "````ts", "FOUR_FENCE_SECRET", "```", "STILL_INSIDE_LONG_FENCE", "````", "After."].join(
-        "\n",
-      ),
+      markdown: [
+        "Before.",
+        "````ts",
+        'KEY = "four-fence-secret-value"',
+        "```",
+        'KEY = "still-inside-long-fence-value"',
+        "````",
+        "After.",
+      ].join("\n"),
       retained: ["Before.", "After."],
-      excluded: ["FOUR_FENCE_SECRET", "STILL_INSIDE_LONG_FENCE"],
+      excluded: ["four-fence-secret-value", "still-inside-long-fence-value"],
     },
     {
       name: "a fence-shaped line with trailing text is not a closer",
       markdown: [
         "Before.",
         "```sh",
-        "FIRST_FENCE_SECRET",
+        'KEY = "first-fence-secret-value"',
         "```not-a-closer",
-        "STILL_INSIDE_TEXT_FENCE",
+        'KEY = "still-inside-text-fence-value"',
         "```",
         "After.",
       ].join("\n"),
       retained: ["Before.", "After."],
-      excluded: ["FIRST_FENCE_SECRET", "STILL_INSIDE_TEXT_FENCE"],
+      excluded: ["first-fence-secret-value", "still-inside-text-fence-value"],
     },
     {
       name: "multiline HTML comments can begin and end mid-line",
