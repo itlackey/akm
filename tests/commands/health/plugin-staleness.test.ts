@@ -14,6 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { collectPluginStalenessAdvisories, type ListRemoteTagsFn } from "../../../src/commands/health/plugin-staleness";
+import { withEnvSync } from "../../_helpers/sandbox";
 
 function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -429,6 +430,137 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       });
 
       expect(results.map((r) => r.name)).toEqual(["plugin-version", "opencode-plugin-version"]);
+    });
+  });
+
+  // OpenCode 1 caches each spec in its own folder, so the advisory reads the one spec the global OpenCode config
+  // names under `plugin` and no other cached spec (#1265).
+  describe("opencode-plugin-version reads the spec the OpenCode config names", () => {
+    function cacheSpec(cacheRoot: string, folder: string, version: string): void {
+      const pkgDir = path.join(cacheRoot, "packages", folder, "node_modules", "akm-cli");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: "akm-cli", version }));
+    }
+
+    /** Collect with `config` (or no config file) as the global OpenCode config. */
+    function collect(
+      config: { file: "opencode.json" | "opencode.jsonc"; text: string } | undefined,
+      cliVersion: string,
+      cacheRoot: string,
+    ) {
+      const pluginsRoot = makeTempDir("akm-plugin-opencode-spec-");
+      const configDir = path.join(pluginsRoot, "opencode-config");
+      fs.mkdirSync(configDir, { recursive: true });
+      if (config) fs.writeFileSync(path.join(configDir, config.file), config.text);
+      return withEnvSync({ OPENCODE_CONFIG_DIR: configDir, OPENCODE_CONFIG: undefined }, () =>
+        collectPluginStalenessAdvisories({ pluginsRoot, cliVersion, opencodeCacheRoot: cacheRoot }),
+      );
+    }
+
+    const cacheRootOf = () => path.join(makeTempDir("akm-plugin-opencode-spec-cache-"), "opencode");
+    const named = (spec: string) => ({ file: "opencode.json" as const, text: JSON.stringify({ plugin: [spec] }) });
+
+    test("@next: the next folder is read, against the running CLI, and no other cached spec is", () => {
+      const cacheRoot = cacheRootOf();
+      cacheSpec(cacheRoot, "akm-opencode@next", "0.10.261012-beta");
+      cacheSpec(cacheRoot, "akm-opencode@latest", "0.9.1");
+      cacheSpec(cacheRoot, "akm-opencode", "0.9.2");
+
+      const results = collect(named("akm-opencode@next"), "0.10.261013-beta", cacheRoot);
+
+      expect(results).toHaveLength(1);
+      expect(results[0]?.name).toBe("opencode-plugin-version");
+      expect(results[0]?.status).toBe("warn");
+      expect(results[0]?.message).toContain("(akm-opencode@next)");
+      expect(results[0]?.message).toContain("v0.10.261012-beta");
+      expect(results[0]?.evidence).toEqual({
+        bundledVersion: "0.10.261012-beta",
+        cliVersion: "0.10.261013-beta",
+        spec: "akm-opencode@next",
+      });
+    });
+
+    test("@next at the running version passes", () => {
+      const cacheRoot = cacheRootOf();
+      cacheSpec(cacheRoot, "akm-opencode@next", "0.10.261013-beta");
+
+      expect(collect(named("akm-opencode@next"), "0.10.261013-beta", cacheRoot).map((r) => r.status)).toEqual(["pass"]);
+    });
+
+    test("a bare name reads its @latest folder", () => {
+      const cacheRoot = cacheRootOf();
+      cacheSpec(cacheRoot, "akm-opencode@latest", "0.9.15");
+      cacheSpec(cacheRoot, "akm-opencode@next", "0.10.261013-beta");
+
+      const results = collect(named("akm-opencode"), "0.9.17", cacheRoot);
+
+      expect(results).toHaveLength(1);
+      expect(results[0]?.status).toBe("warn");
+      expect(results[0]?.evidence).toMatchObject({ bundledVersion: "0.9.15", spec: "akm-opencode@latest" });
+    });
+
+    test("a bare name, or none, with only the bare folder cached reads that folder, as before", () => {
+      const cacheRoot = cacheRootOf();
+      cacheSpec(cacheRoot, "akm-opencode", "0.9.15");
+
+      for (const config of [named("akm-opencode"), undefined]) {
+        const results = collect(config, "0.9.17", cacheRoot);
+        expect(results.map((r) => [r.name, r.status])).toEqual([["opencode-plugin-version", "warn"]]);
+        expect(results[0]?.evidence).toEqual({ bundledVersion: "0.9.15", cliVersion: "0.9.17" });
+      }
+    });
+
+    test("a config naming a spec with no cache folder falls back to the bare folder", () => {
+      const cacheRoot = cacheRootOf();
+      cacheSpec(cacheRoot, "akm-opencode", "0.9.17");
+
+      expect(collect(named("akm-opencode@next"), "0.9.17", cacheRoot).map((r) => r.status)).toEqual(["pass"]);
+    });
+
+    test("no config entry does not scan the other cached specs", () => {
+      const cacheRoot = cacheRootOf();
+      cacheSpec(cacheRoot, "akm-opencode@next", "0.10.261012-beta");
+
+      expect(collect(undefined, "0.10.261013-beta", cacheRoot)).toEqual([]);
+      expect(
+        collect({ file: "opencode.json", text: '{"plugin":["other-plugin"]}' }, "0.10.261013-beta", cacheRoot),
+      ).toEqual([]);
+    });
+
+    test("a version pin is reported as pinned with that version, with no staleness verdict", () => {
+      const cacheRoot = cacheRootOf();
+      cacheSpec(cacheRoot, "akm-opencode@0.10.261012-beta", "0.10.261012-beta");
+
+      const [adv, ...rest] = collect(named("akm-opencode@0.10.261012-beta"), "0.10.261015-beta", cacheRoot);
+
+      expect(rest).toEqual([]);
+      expect(adv?.name).toBe("opencode-plugin-version");
+      expect(adv?.status).toBe("pass");
+      expect(adv?.message).toContain("pinned to v0.10.261012-beta");
+      expect(adv?.message).toContain("(akm-opencode@0.10.261012-beta)");
+      expect(adv?.message).not.toContain("update the OpenCode plugin");
+      expect(adv?.evidence).toEqual({
+        bundledVersion: "0.10.261012-beta",
+        cliVersion: "0.10.261015-beta",
+        spec: "akm-opencode@0.10.261012-beta",
+        pinnedVersion: "0.10.261012-beta",
+      });
+    });
+
+    test("opencode.jsonc with comments and a trailing comma, the entry as a [spec, options] pair", () => {
+      const cacheRoot = cacheRootOf();
+      cacheSpec(cacheRoot, "akm-opencode@next", "0.10.261012-beta");
+      const text = `{
+        // plugins this host loads
+        "plugin": [
+          "some-other-plugin@1.2.3", /* not ours */
+          ["akm-opencode@next", { "debug": true }], // ours
+        ],
+      }`;
+
+      const results = collect({ file: "opencode.jsonc", text }, "0.10.261013-beta", cacheRoot);
+
+      expect(results.map((r) => [r.status, r.evidence?.spec])).toEqual([["warn", "akm-opencode@next"]]);
     });
   });
 

@@ -62,6 +62,7 @@ import {
 } from "../../integrations/harnesses/opencode/plugin-layout";
 import { opencodeCacheDir } from "../../integrations/harnesses/opencode/roots";
 import { highestVersion, isExactSemver, isPrerelease, isSemverRange, satisfiesRange } from "../../registry/semver";
+import { openCodeConfigSpec } from "../sources/plugin-upgrade";
 import type { HealthCheckResult } from "./types";
 
 /**
@@ -91,6 +92,8 @@ function defaultOpencodeCacheRoot(): string {
 interface BundledAkm {
   /** The plugin spec OpenCode cached it under, for a layout that has one folder per spec. */
   spec?: string;
+  /** The exact version the spec pins, when it does: a pinned plugin is reported, not compared (#1265). */
+  pinned?: string;
   version: string;
 }
 
@@ -107,17 +110,27 @@ interface OpencodePluginLocation {
   /** The update remedy the warning names. */
   remedy: string;
   /** The cache folders to read under the OpenCode cache root, with the spec each holds when the layout has one. */
-  folders: (cacheRoot: string) => { spec?: string; folder: string }[];
+  folders: (cacheRoot: string) => { spec?: string; pinned?: string; folder: string }[];
 }
 
 const OPENCODE_PLUGIN_LOCATIONS: readonly OpencodePluginLocation[] = [
   {
-    // OpenCode 1: <cache>/packages/akm-opencode/node_modules/akm-cli (the folder read since this check began).
+    // OpenCode 1: <cache>/packages/<spec>/node_modules/akm-cli, the one spec the global config names (#1265).
     flavor: OPENCODE_V1,
     advisory: "opencode-plugin-version",
     label: "OpenCode's",
     remedy: "update the OpenCode plugin",
-    folders: (cacheRoot) => [{ folder: path.join(cacheRoot, OPENCODE_V1.cacheFolder(OPENCODE_V1.pkg)) }],
+    folders: (cacheRoot) => {
+      // OpenCode caches each spec in its own folder, and a bare name is its `@latest`, as `akm upgrade` reads it. With
+      // no config entry, or no folder for the spec, the bare `packages/akm-opencode` is read, as this check always has.
+      const { pkg } = OPENCODE_V1;
+      const named = openCodeConfigSpec(OPENCODE_V1)?.spec ?? pkg;
+      const spec = named === pkg ? `${pkg}@latest` : named;
+      const folder = path.join(cacheRoot, OPENCODE_V1.cacheFolder(spec));
+      if (!fs.existsSync(folder)) return [{ folder: path.join(cacheRoot, OPENCODE_V1.cacheFolder(pkg)) }];
+      const version = spec.slice(pkg.length + 1);
+      return [{ spec, folder, ...(isExactSemver(version) ? { pinned: version } : {}) }];
+    },
   },
   {
     // OpenCode 2: <cache>/npm/akm-opencode-v2@<spec>/<epoch-ms>/node_modules/akm-cli, newest build per spec.
@@ -144,10 +157,10 @@ const OPENCODE_PLUGIN_LOCATIONS: readonly OpencodePluginLocation[] = [
  */
 function findBundledAkm(plugin: OpencodePluginLocation, cacheRoot: string): BundledAkm[] {
   const found: BundledAkm[] = [];
-  for (const { spec, folder } of plugin.folders(cacheRoot)) {
+  for (const { spec, pinned, folder } of plugin.folders(cacheRoot)) {
     const nodeModules = plugin.flavor.nodeModulesDir(folder);
     const version = nodeModules && readPackageVersion(path.join(nodeModules, "akm-cli", "package.json"));
-    if (version !== undefined) found.push(spec ? { spec, version } : { version });
+    if (version !== undefined) found.push({ ...(spec ? { spec } : {}), ...(pinned ? { pinned } : {}), version });
   }
   return found;
 }
@@ -160,6 +173,17 @@ function buildOpencodeBundledAdvisory(
   const bundledVersion = bundled.version;
   const stale = bundledVersion !== cliVersion;
   const where = bundled.spec ? ` (${bundled.spec})` : "";
+  if (bundled.pinned) {
+    // The config chose this build: there is nothing to update it to, so no staleness verdict.
+    return {
+      name: plugin.advisory,
+      kind: "deterministic",
+      status: "pass",
+      confidence: "high",
+      message: `${plugin.label} plugin is pinned to v${bundled.pinned}${where}; its bundled akm-cli is v${bundledVersion}, and a pinned plugin is not compared with the running CLI v${cliVersion}.`,
+      evidence: { bundledVersion, cliVersion, spec: bundled.spec, pinnedVersion: bundled.pinned },
+    };
+  }
   return {
     name: plugin.advisory,
     kind: "deterministic",
