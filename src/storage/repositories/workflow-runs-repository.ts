@@ -899,33 +899,35 @@ export function countWorkflowRunRefsForRename(
   db: Database,
   oldBundleId: string,
 ): { refs: number; active: Array<{ id: string; workflowRef: string; status: string }> } {
-  const like = `${escapeLikePattern(oldBundleId)}//%`;
+  const prefix = `${oldBundleId}//`;
   const refs = (
-    db.prepare(`SELECT COUNT(*) AS n FROM workflow_runs WHERE workflow_ref LIKE ? ESCAPE '\\'`).get(like) as {
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM workflow_runs WHERE substr(workflow_ref, 1, length(?)) = ?`)
+      .get(prefix, prefix) as {
       n: number;
     }
   ).n;
   const active = db
     .prepare(
-      `SELECT id, workflow_ref AS workflowRef, status FROM workflow_runs WHERE workflow_ref LIKE ? ESCAPE '\\' AND status IN ('active', 'blocked') ORDER BY updated_at DESC, created_at DESC`,
+      `SELECT id, workflow_ref AS workflowRef, status FROM workflow_runs WHERE substr(workflow_ref, 1, length(?)) = ? AND status IN ('active', 'blocked') ORDER BY updated_at DESC, created_at DESC`,
     )
-    .all(like) as Array<{ id: string; workflowRef: string; status: string }>;
+    .all(prefix, prefix) as Array<{ id: string; workflowRef: string; status: string }>;
   return { refs, active };
 }
 
 /**
  * Rewrite every `workflow_runs.workflow_ref` naming `oldBundleId` to
  * `newBundleId` (`akm bundle rename`). A legacy unqualified ref is not matched
- * by the `LIKE` prefix and is left alone. Returns the number of rows rewritten.
+ * by the `<old>//` prefix and is left alone. Returns the number of rows rewritten.
  */
 export function renameWorkflowRunRefs(db: Database, oldBundleId: string, newBundleId: string): number {
-  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  const prefix = `${oldBundleId}//`;
   return Number(
     db
       .prepare(
-        `UPDATE workflow_runs SET workflow_ref = ? || substr(workflow_ref, length(?) + 1) WHERE workflow_ref LIKE ? ESCAPE '\\'`,
+        `UPDATE workflow_runs SET workflow_ref = ? || substr(workflow_ref, length(?) + 1) WHERE substr(workflow_ref, 1, length(?)) = ?`,
       )
-      .run(newBundleId, oldBundleId, `${prefix}%`).changes,
+      .run(newBundleId, oldBundleId, prefix, prefix).changes,
   );
 }
 

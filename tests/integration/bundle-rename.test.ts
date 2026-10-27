@@ -507,6 +507,65 @@ describe("akm bundle rename — applied", () => {
     }
   });
 
+  test("renaming a bundle leaves the state rows of a bundle whose id differs only in case (#1250)", async () => {
+    // Bundle ids are case-sensitive config keys, so `team` and `Team` can both be configured.
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { team: { path: storage.stashDir }, Team: { path: "/tmp/other" } },
+    });
+    const stateDb = openStateDatabase();
+    try {
+      for (const bundle of ["team", "Team"]) {
+        upsertProposal(stateDb, makeProposal(`p-${bundle}`, `${bundle}//knowledge/x`, bundle), storage.stashDir);
+        upsertTaskHistory(stateDb, {
+          task_id: `wf-${bundle}`,
+          status: "completed",
+          started_at: "2026-01-01T00:00:00.000Z",
+          completed_at: "2026-01-01T00:01:00.000Z",
+          failed_at: null,
+          log_path: null,
+          target_kind: "workflow",
+          target_ref: `${bundle}//workflows/x`,
+          metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 60_000, detail: null }),
+        });
+        seedWorkflowRun(stateDb, { runId: `run-${bundle}`, steps: ["a"], workflowRef: `${bundle}//workflows/x` });
+        insertUsageEventStrict(stateDb, {
+          event_type: "feedback",
+          entry_ref: `${bundle}//knowledge/x`,
+          signal: "positive",
+          source: "user",
+        });
+        seedSalience(stateDb, `${bundle}//knowledge/x`, 0.5);
+        seedOutcome(stateDb, `${bundle}//knowledge/x`, 0.5);
+      }
+    } finally {
+      closeDatabase(stateDb);
+    }
+    const deps = renameDeps(fakeCronBackend(memoryExec()));
+
+    const plan = await renameBundle("team", "other", { dryRun: true }, deps);
+    expect(plan.state).toEqual({ proposalRefs: 1, proposalTargets: 1, taskHistoryRefs: 1, workflowRunRefs: 1 });
+    expect(plan.activeWorkflowRuns.map((run) => run.id)).toEqual(["run-team"]);
+
+    await renameBundle("team", "other", {}, deps);
+
+    const readDb = openStateDatabase();
+    try {
+      const refs = (sql: string) => (readDb.prepare(sql).all() as Array<{ ref: string }>).map((row) => row.ref).sort();
+      expect(refs("SELECT ref FROM proposals")).toEqual(["Team//knowledge/x", "other//knowledge/x"]);
+      expect(refs("SELECT target_ref AS ref FROM task_history")).toEqual(["Team//workflows/x", "other//workflows/x"]);
+      expect(refs("SELECT workflow_ref AS ref FROM workflow_runs")).toEqual([
+        "Team//workflows/x",
+        "other//workflows/x",
+      ]);
+      expect(refs("SELECT entry_ref AS ref FROM usage_events")).toEqual(["Team//knowledge/x", "other//knowledge/x"]);
+      expect(refs("SELECT asset_ref AS ref FROM asset_salience")).toEqual(["Team//knowledge/x", "other//knowledge/x"]);
+      expect(refs("SELECT asset_ref AS ref FROM asset_outcome")).toEqual(["Team//knowledge/x", "other//knowledge/x"]);
+    } finally {
+      closeDatabase(readDb);
+    }
+  });
+
   test("a bundle with no lock entry, no scheduler grants, and no state rows renames cleanly", async () => {
     await seedBundleWithOneEntry();
 

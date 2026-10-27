@@ -11,7 +11,6 @@
 
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import type { Database } from "../../storage/database";
-import { escapeLikePattern } from "../../storage/like-pattern";
 import { SQLITE_CHUNK_SIZE } from "../../storage/repositories/index-sql";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -225,16 +224,16 @@ export function purgeOldUsageEvents(db: Database, retentionDays: number): void {
  * (`akm bundle rename`). Search ranking counts feedback by `entry_ref`, so an
  * event left under the old prefix stops counting for the renamed bundle's
  * assets. `entry_id` is untouched: the rename keeps every entry's row id. A
- * legacy unqualified ref is not matched by the `LIKE` prefix and is left alone.
+ * legacy unqualified ref is not matched by the `<old>//` prefix and is left alone.
  * Returns the number of rows rewritten.
  */
 export function renameUsageEventRefs(db: Database, oldBundleId: string, newBundleId: string): number {
-  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  const prefix = `${oldBundleId}//`;
   return Number(
     db
       .prepare(
-        `UPDATE usage_events SET entry_ref = ? || substr(entry_ref, length(?) + 1) WHERE entry_ref LIKE ? ESCAPE '\\'`,
+        `UPDATE usage_events SET entry_ref = ? || substr(entry_ref, length(?) + 1) WHERE substr(entry_ref, 1, length(?)) = ?`,
       )
-      .run(newBundleId, oldBundleId, `${prefix}%`).changes,
+      .run(newBundleId, oldBundleId, prefix, prefix).changes,
   );
 }
