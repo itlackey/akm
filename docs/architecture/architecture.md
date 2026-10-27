@@ -235,11 +235,18 @@ There is **one** ranking for all indexed content: reciprocal rank fusion
    through the model's embedding profile (`src/llm/embedders/profile.ts`)
 
 Filters (type, source, scope, belief, proposed quality, default-excluded
-types) and one-hit-per-file deduplication narrow the fused list without
-reordering it, and a hit's `score` is its fused score. Of entries with
-identical indexed content only the highest-ranked is kept. Nothing else — name,
-type, tag, graph, usage or belief-state signals — changes the order. The
-design and its measured alternatives are in the retrieval evaluation
+types) drop ineligible entries from each list before its 100 candidates are
+taken. The fused score is then multiplied by
+`1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))` over the user's recorded
+feedback for the asset (`applyFeedback` in `src/indexer/search/ranking.ts`;
+[`akm feedback`](../reference/cli.md#feedback) says which feedback counts, and
+an asset with none keeps its fused score), and the list is re-sorted, equal
+scores by fully qualified ref (`<bundle>//<conceptId>`). A hit's `score` is
+that adjusted score. One-hit-per-file deduplication, and keeping only
+the highest-ranked of entries with identical indexed content, then drop entries
+from the sorted list without reordering it. Nothing else — name, type, tag,
+graph, utility score or belief-state signals — changes the order. The design
+and its measured alternatives are in the retrieval evaluation
 (`akm/eval/retrieval/reports/baseline-2026-09-27.md`).
 
 Notes:

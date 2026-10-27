@@ -117,6 +117,54 @@ describe("akm search with recorded feedback", () => {
     expect(await order()).toEqual([third, second, first]);
   });
 
+  /** A negative that carries an exact fix, which `akm feedback` applies at once. */
+  async function fixNegative(
+    ref: string,
+    replacement = "one stripe",
+  ): Promise<{ code: number | null; json: { fix?: { proposalId: string } } }> {
+    const { stdout, stderr, code } = await runCliCapture([
+      ...["feedback", ref, "--negative", "--format=json", "--reason", "The count is wrong."],
+      ...["--replace", "one stripes", "--with", replacement, "--source", "test"],
+    ]);
+    return { code, json: JSON.parse(stdout.trim() || stderr.trim()) };
+  }
+
+  test("a negative whose exact fix was applied stops demoting the corrected asset (#1249)", async () => {
+    const base = await order();
+    const first = base[0] as string;
+    const { code, json } = await fixNegative(first);
+    expect(code).toBe(0);
+    expect(json.fix?.proposalId).toBeString();
+    expect(await order()).toEqual(base);
+  });
+
+  test("a negative whose fix was refused still demotes the asset", async () => {
+    const base = await order();
+    const [first, second, third] = base as [string, string, string];
+    // The accept refuses text holding an output-redaction marker, so the event is recorded and the fix is not.
+    const { code } = await fixNegative(first, "[REDACTED]");
+    expect(code).not.toBe(0);
+    expect(await order()).toEqual([second, first, third]);
+  });
+
+  test("a negative counts again once its fix is reverted", async () => {
+    const base = await order();
+    const [first, second, third] = base as [string, string, string];
+    const { json } = await fixNegative(first);
+    expect(await order()).toEqual(base);
+    const reverted = await runCliCapture(["proposal", "revert", json.fix?.proposalId as string, "--format=json"]);
+    expect(reverted.code).toBe(0);
+    expect(await order()).toEqual([second, first, third]);
+  });
+
+  test("a negative without a fix still demotes after another negative's fix is applied", async () => {
+    const base = await order();
+    const [first, second, third] = base as [string, string, string];
+    await vote(first, "negative", 1);
+    expect((await fixNegative(first)).code).toBe(0);
+    expect(await order()).toEqual([second, first, third]);
+  });
+
   test("feedback that is not user-attributed does not move the ranking", async () => {
     const base = await order();
     const third = base[2] as string;

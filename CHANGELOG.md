@@ -17,6 +17,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `asset_outcome` rows to the new name too, and matches the old name
   case-sensitively, so renaming `team` no longer moves or overwrites the rows of
   a bundle named `Team`.
+- A negative whose exact fix was applied no longer keeps demoting the corrected
+  asset in `akm search` and `akm curate` (#1249). A negative recorded with
+  `--replace`/`--with`, `--superseded-by` or `--outdated` stops counting against
+  the asset once its fix is accepted, the same "already acted on" rule
+  `akm improve` uses; reverting the fix with `akm proposal revert` makes the
+  negative count again. A fix the accept refused, and every negative without a
+  fix, still lower the asset's ranking.
+- **The architecture and CLI reference pages now say that feedback reorders search hits
+  (#1251).** They said a hit's `score` was its fused score and that nothing else changed the
+  order. They now say that after fusion the score is multiplied by
+  `1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))` over the user's recorded feedback for
+  the asset, the list is re-sorted (equal scores by fully qualified ref), and
+  one-hit-per-file and identical-content deduplication then drop entries without reordering
+  it. They also say filters drop ineligible entries from each candidate list before its 100
+  candidates are taken, not from the fused list afterwards. The storage, indexing, registry
+  and improve-guide pages no longer say that search ranking reads the utility score: improve
+  and `akm metrics` read it, search does not.
 
 ## [0.10.261016] - 2026-10-27
 

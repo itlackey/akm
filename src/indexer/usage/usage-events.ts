@@ -126,8 +126,11 @@ export function insertUsageEventStrict(db: Database, event: UsageEvent): void {
 
 /**
  * User feedback counts for many assets at once, keyed by durable `entry_ref`.
- * Refs with no user feedback are absent from the map. Read in one query per
- * chunk of refs.
+ * A negative that carried an exact fix does not count once an accepted
+ * `feedback` proposal for the asset exists at or after it (the rule `akm
+ * improve` uses for a fix already acted on); reverting that proposal makes it
+ * count again. Refs with no user feedback are absent from the map. Read in one
+ * query per chunk of refs.
  */
 export function countFeedbackSignalsByRef(
   db: Database,
@@ -138,12 +141,17 @@ export function countFeedbackSignalsByRef(
     const chunk = refs.slice(i, i + SQLITE_CHUNK_SIZE);
     const rows = db
       .prepare(
-        `SELECT entry_ref,
-           SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
-           SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
-         FROM usage_events
-         WHERE event_type = 'feedback' AND source = 'user' AND entry_ref IN (${chunk.map(() => "?").join(",")})
-         GROUP BY entry_ref`,
+        `SELECT u.entry_ref,
+           SUM(CASE WHEN u.signal = 'positive' THEN 1 ELSE 0 END) AS pos,
+           SUM(CASE WHEN u.signal = 'negative' AND NOT (
+             json_extract(u.metadata, '$.fix') IS NOT NULL AND EXISTS (
+               SELECT 1 FROM proposals p
+               WHERE p.ref = u.entry_ref AND p.source = 'feedback' AND p.status = 'accepted'
+                 AND julianday(p.created_at) >= julianday(u.created_at))
+           ) THEN 1 ELSE 0 END) AS neg
+         FROM usage_events u
+         WHERE u.event_type = 'feedback' AND u.source = 'user' AND u.entry_ref IN (${chunk.map(() => "?").join(",")})
+         GROUP BY u.entry_ref`,
       )
       .all(...chunk) as Array<{ entry_ref: string; pos: number; neg: number }>;
     for (const row of rows) counts.set(row.entry_ref, { pos: row.pos, neg: row.neg });
