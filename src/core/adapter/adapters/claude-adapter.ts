@@ -17,7 +17,7 @@
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/claude/` + goldens
- * `tests/fixtures/format-family-goldens/claude/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/claude/{recognition,lint,renderer}.json`.
  */
 
 import fs from "node:fs";

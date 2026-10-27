@@ -23,7 +23,7 @@
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/website-snapshot/` + goldens
- * `tests/fixtures/format-family-goldens/website-snapshot/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/website-snapshot/{recognition,lint,renderer}.json`.
  */
 
 import fs from "node:fs";

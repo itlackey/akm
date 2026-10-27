@@ -17,7 +17,7 @@
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/opencode/` + goldens
- * `tests/fixtures/format-family-goldens/opencode/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/opencode/{recognition,lint,renderer}.json`.
  */
 
 import fs from "node:fs";
