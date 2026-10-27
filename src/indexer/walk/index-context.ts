@@ -40,7 +40,7 @@ export const SEMANTIC_SEARCH_META_KEY = "semanticSearch";
  */
 export interface SemanticSearchRecord {
   status: IndexVerification["semanticStatus"] | "unavailable";
-  /** For `unavailable`: `platform` when onnxruntime-node has no native library for this machine, `load` when it has one that did not load. */
+  /** For `unavailable`: `platform` when akm offers no local embeddings on this platform, `load` when it does and the runtime could not be fetched or did not load. */
   unavailable?: "platform" | "load";
   provider: IndexVerification["embeddingProvider"];
   /** The runtime the local embedder embedded with in that run; absent when it embedded nothing. */

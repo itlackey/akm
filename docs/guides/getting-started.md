@@ -34,23 +34,24 @@ Or download a standalone binary directly from the
 Hitting a PowerShell execution-policy error on Windows? See
 [Troubleshooting](#troubleshooting) at the end of this guide.
 
-### Standalone binary and semantic search
+### Local semantic search
 
-Local semantic search (`semanticSearchMode: auto`) runs its embedding model on
-ONNX Runtime. A standalone binary carries the library for its platform. The
-first time it embeds, it copies that library once into akm's cache directory,
-under `onnxruntime/<version>-<platform>-<arch>/` (18 to 34 MB depending on the
-platform; `akm info` prints the cache directory), and loads it from there. Two
-limits follow:
+Local semantic search runs its embedding model on ONNX Runtime, and akm offers
+it on Linux x64 (glibc) and Apple-silicon macOS; on every other
+platform search is keyword-only or uses an embedding endpoint you configure. Choosing the built-in embedder in
+`akm setup` (or `akm setup --yes --embedding local`) downloads what it needs once
+into akm's cache directory (`akm info` prints it): ONNX Runtime for your platform,
+under `onnxruntime/<version>-<platform>-<arch>/` (about 86 MB downloaded,
+about 36 MB kept), and the model (about 127 MB). Nothing is installed with the npm
+package or carried in a standalone binary, and the first `akm index` downloads
+what setup did not. Two notes:
 
-- A standalone binary writes its native addon to the system temp directory and
-  loads it from there, so a temp directory mounted `noexec` blocks semantic
-  search (`akm index` reports it `blocked`; keyword search works). Set `TMPDIR`
-  to a writable, executable directory. The cache directory must be on
-  an executable mount too.
-- Alpine/musl and Intel macOS have no native ONNX Runtime library. Semantic
-  search is unavailable there: `akm index` reports it `blocked` with the reason
-  and search stays keyword-only. A remote `embedding.endpoint` still works.
+- The cache directory must be on a mount that allows executing files: the
+  runtime is loaded from there, and on a `noexec` mount `akm index` reports
+  semantic search `blocked` (keyword search works).
+- On a platform without local embeddings, `akm setup` offers an embedding
+  endpoint or keyword search only, and `akm setup --embedding local` warns and
+  keeps keyword search.
 
 ### akm's own agent runtime
 
@@ -60,7 +61,8 @@ is the same for the npm package and the standalone binary: nothing of OpenCode
 is installed with akm, and the first time the runtime runs, akm downloads the
 OpenCode binary for your platform from the npm registry (one package, about
 114 MB, 240 MB on disk), checks it against the registry's integrity hash and
-keeps it in the cache directory under `opencode/<version>/`. It is fetched once.
+keeps it in the cache directory under `opencode/<version>/`. It is fetched once;
+the `akm setup` wizard offers to fetch it then, when agent work runs there.
 Three limits follow:
 
 - That step needs the npm registry. Without network access for it, enable the

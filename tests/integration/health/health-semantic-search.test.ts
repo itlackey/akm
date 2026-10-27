@@ -99,7 +99,7 @@ describe("semantic-search health check, end to end", () => {
     expect(check?.status).toBe("warn");
     expect(check?.evidence).toMatchObject({ status: "unavailable", unavailable: "platform" });
     expect(check?.message).toContain("unavailable on this platform");
-    expect(check?.message).toContain('Set semanticSearchMode to "off"');
+    expect(check?.message).toContain("akm setup --embedding off");
     expect(result.status).toBe("warn");
 
     const { vm, html } = reportFor(result);

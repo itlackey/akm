@@ -218,9 +218,16 @@ The wizard asks, in order:
    the config as this run will save it: a further `--name` connection does not
    serve embeddings, its models are not offered, and with several connections
    none called `default`, `--embedding <model>` refuses and asks you to name one
-   default or pass `--embedding-endpoint`.
+   default or pass `--embedding-endpoint`. The built-in embedder is offered on
+   Linux x64 (glibc) and Apple-silicon macOS only; elsewhere the step
+   says so in one sentence and offers an endpoint or off, and `--embedding local`
+   warns and saves off.
 5. **Save.** The config is written, the bundle directory initialized, and a
-   summary says what runs where.
+   summary says what runs where. With the built-in embedder chosen, setup then
+   downloads its runtime (ONNX Runtime, about 86 MB) and model (about 127 MB)
+   into akm's cache and loads them; the wizard asks first. When agent work runs
+   on akm's own runtime, the wizard also offers to download its OpenCode binary
+   (about 114 MB) now rather than on the first agent run.
 
 Flags answer one question each; `--yes` takes the detected default for every
 question left, so nothing is prompted. Without a terminal, `akm setup` refuses
@@ -236,7 +243,7 @@ unless `--yes` or `--from` is given.
 | `--embedding-endpoint <url>`, `--embedding-api-key-env <NAME>` | Another endpoint serving the embedding model |
 | `--from <file>` | A config file (JSON or YAML) to merge |
 | `--dir <path>`, `--no-init` | The bundle directory; skip scaffolding it |
-| `--no-probe` | Offline: the endpoint is not contacted and its models are not listed; a connection added this way has no model until `akm models set` names one |
+| `--no-probe` | Offline: nothing is contacted or downloaded. The endpoint's models are not listed, so a connection added this way has no model until `akm models set` names one, and the built-in embedder's runtime and model are downloaded by the first `akm index` |
 
 The detected defaults are: when no agent program is configured yet, every one
 found on `PATH` is enabled and the first found is the default. If no connection
@@ -249,7 +256,11 @@ whose endpoint lists an embedding model.
 
 The wizard also lets you review registries and add bundle sources. A scripted run
 prints its result with a `runs` object saying what runs where: `modelCalls`,
-`agentWork` and `embeddings`.
+`agentWork` and `embeddings`. When the saved config uses the built-in embedder,
+the result also has `semanticAssets`: `ready` once its runtime and model are
+downloaded and load, `blocked: <reason>` when they do not (the config is saved
+all the same), or `skipped` with `--no-probe`. A scripted run does not download
+akm's own agent runtime; its first agent run does.
 
 ### index
 
@@ -464,13 +475,13 @@ search, with the index's entry and vector counts read now. It loads no model and
 sends no request. It `pass`es when every entry has a vector (and a local model
 embedded on `onnxruntime-node`) or `semanticSearchMode` is `off`; `warn`s when
 vectors lag the entries (`akm index` embeds the rest), local embeddings ran on
-another runtime, or this platform has no native ONNX Runtime library
-(Alpine/musl, Intel macOS: keyword search is all there is, so the message says to
-set `semanticSearchMode` to `off` or `embedding.endpoint` to a remote service);
+another runtime, or akm offers no local embeddings on this platform (keyword
+search or an endpoint is the default there, so the message names
+`akm setup --embedding off` and `akm setup --embedding <model> --embedding-endpoint <url>`);
 `fail`s, with the recorded reason, when the last index found semantic search
 `blocked` (an embedding endpoint or model download failed) or `unavailable` for
-a cause that can be fixed (the library is there but did not load: a missing
-package or addon, a `noexec` temp or cache directory); and is `unknown` before
+a cause that can be fixed (the runtime could not be downloaded or did not load,
+for example from a `noexec` cache directory); and is `unknown` before
 the first index. Search never reads this record: a query still
 tries semantic search and falls back to keyword search on its own. A fix shows
 here after the next `akm index`. `evidence` carries the recorded `status`,

@@ -220,7 +220,8 @@ const setupCommand = defineCommand({
     },
     embedding: {
       type: "string",
-      description: "Embeddings: a model the connection serves, local (the built-in embedder), or off",
+      description:
+        "Embeddings: a model the connection serves, local (the built-in embedder, on the platforms that have it; its runtime and model are downloaded now), or off",
     },
     "embedding-endpoint": {
       type: "string",
@@ -263,7 +264,7 @@ const setupCommand = defineCommand({
     "no-probe": {
       type: "boolean",
       description:
-        "Offline run: the endpoint is not contacted and its models are not listed. A connection added this way has no model until one is named with `akm models set`; the picks it already has are kept.",
+        "Offline run: nothing is contacted or downloaded. The endpoint's models are not listed, so a connection added this way has no model until one is named with `akm models set` (the picks it already has are kept), and the local embedder's runtime and model are fetched by the first `akm index`.",
     },
   },
   async run({ args }) {

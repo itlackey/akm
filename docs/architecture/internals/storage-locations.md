@@ -810,6 +810,7 @@ adapter recognizes — `schema.md` + `pages/` is the probe) contains:
 | `$CACHE/tasks/logs/<task-id>/` | Per-run stdout/stderr log files (`<ISO-ts>.log`) | No cleanup |
 | `$CACHE/bin/rg` | Auto-downloaded ripgrep binary | Permanent |
 | `$CACHE/opencode/<version>/opencode` | The OpenCode binary akm's own runtime runs (about 240 MB), fetched from the npm registry on its first use | Permanent; safe to delete (fetched again) |
+| `$CACHE/onnxruntime/<version>-<platform>-<arch>/` | `onnxruntime_binding.node` and the ONNX Runtime library it links, which the local embedder loads; fetched from the npm registry by `akm setup --embedding local` or the first local embedding (about 36 MB kept). Must be on a mount that allows executing files | Permanent; safe to delete (fetched again) |
 | `$CACHE/index/unresolved-sources/<stash>/<name>` | Synthetic placeholder path for a configured source whose content root did not resolve this run; never written to disk, only reported as a `SearchSource.path`. Moved out of `$STASH/.akm/unresolved-sources/` (itlackey/akm#890). | N/A (not a real directory) |
 
 Cache-backed bundles (`git`, `website`, `npm`) are materialised into `$CACHE`

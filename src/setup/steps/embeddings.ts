@@ -4,7 +4,10 @@
 
 /**
  * Setup step 4: embeddings. A model the connection serves, akm's built-in local
- * embedder, another endpoint, or off (which is semantic search off).
+ * embedder, another endpoint, or off (which is semantic search off). The local
+ * embedder is offered only where akm has local embeddings
+ * (`llm/embedders/onnx-runtime.ts`); everywhere else the choice is an endpoint
+ * or keyword search.
  */
 
 import * as p from "../../cli/clack";
@@ -18,6 +21,7 @@ import { apiKeyReference, resolveApiKey, storedCredential } from "../../core/con
 import { sameEndpoint } from "../../core/endpoint-url";
 import { UsageError } from "../../core/errors";
 import { redactUrlCredentials } from "../../core/redaction";
+import { hasLocalEmbeddings, noLocalEmbeddingsReason } from "../../llm/embedders/onnx-runtime";
 import { isEmbeddingModel } from "../../llm/model-list";
 import { prompt } from "../prompt";
 import { describeSemanticSearchAssets, isRemoteEmbeddingConfig } from "../semantic-assets";
@@ -86,6 +90,10 @@ function warnOfDroppedKey(
 
 function fromFlags(input: EmbeddingStepInput): EmbeddingAnswer {
   const { flags } = input;
+  if (flags.embedding === "local" && !hasLocalEmbeddings()) {
+    warnUser(`${noLocalEmbeddingsReason()} --embedding local is ignored: semantic search stays off.`, false);
+    return { kind: "off" };
+  }
   if (flags.embedding === "off" || flags.embedding === "local") return { kind: flags.embedding };
   const model = flags.embedding as string;
   if (flags.embeddingEndpoint !== undefined) {
@@ -129,9 +137,11 @@ async function askSource(input: EmbeddingStepInput): Promise<EmbeddingAnswer> {
   const heldModel = hasServing && current.embedding?.endpoint === undefined ? current.embedding?.model : undefined;
   const connectionModels = [...new Set([...(heldModel ? [heldModel] : []), ...served])];
 
+  const local = hasLocalEmbeddings();
+  if (!local) p.log.info(noLocalEmbeddingsReason());
   const options = [
     ...connectionModels.map((model) => ({ value: `model:${model}`, label: model, hint: "served by the connection" })),
-    { value: "local", label: "Built-in local embedder", hint: "no server needed" },
+    ...(local ? [{ value: "local", label: "Built-in local embedder", hint: "no server needed" }] : []),
     { value: "endpoint", label: "Another endpoint" },
     { value: "off", label: "Off", hint: "keyword search only" },
   ];
@@ -141,7 +151,9 @@ async function askSource(input: EmbeddingStepInput): Promise<EmbeddingAnswer> {
       ? `model:${heldModel}`
       : served[0]
         ? `model:${served[0]}`
-        : "local";
+        : local
+          ? "local"
+          : "off";
   const choice = await prompt(() =>
     p.select({ message: "Which embedding source should akm use?", options, initialValue }),
   );
@@ -153,7 +165,7 @@ async function askSource(input: EmbeddingStepInput): Promise<EmbeddingAnswer> {
     message: "Embedding endpoint URL:",
     ...(current.embedding?.endpoint ? { initialValue: current.embedding.endpoint } : {}),
   });
-  if (endpoint === undefined) return { kind: "local" };
+  if (endpoint === undefined) return { kind: local ? "local" : "off" };
   // A key belongs to the endpoint it was given for, so the current one is offered for that endpoint alone.
   const unchangedEndpoint =
     current.embedding?.endpoint !== undefined && sameEndpoint(current.embedding.endpoint, endpoint);
@@ -203,6 +215,10 @@ export async function stepEmbeddings(input: EmbeddingStepInput): Promise<Embeddi
 
   const after = embeddingAfter(input, answer);
   p.note(describeSemanticSearchAssets(after).join("\n"), "Semantic Search Assets");
+  if (!input.probe) {
+    p.log.info("Offline run: semantic search is not checked or prepared now; the first `akm index` does both.");
+    return { answer, semantic: { mode: "auto", prepareAssets: false } };
+  }
   const prepareAssets = await prompt(() =>
     p.confirm({
       message: isRemoteEmbeddingConfig(after)

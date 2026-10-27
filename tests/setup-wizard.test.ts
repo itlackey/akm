@@ -352,12 +352,13 @@ describe("output setup step", () => {
 });
 
 describe("semantic search assets", () => {
-  test("should list the local model download when describing semantic search assets", async () => {
+  test("the local embedder lists its runtime download and its model download", async () => {
     const assets = describeSemanticSearchAssets();
 
-    expect(assets).toHaveLength(1);
-    expect(assets[0]).toContain("Local embedding model");
-    expect(assets[0]).toContain("download");
+    expect(assets).toHaveLength(2);
+    expect(assets[0]).toContain("ONNX Runtime");
+    expect(assets[1]).toContain("Local embedding model");
+    for (const line of assets) expect(line).toContain("download");
   });
 
   test("a remote embedding config downloads no local model", () => {

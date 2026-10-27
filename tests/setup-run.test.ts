@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { _setClackForTests } from "../src/cli/clack";
@@ -8,10 +8,12 @@ import type { IndexResponse } from "../src/indexer/indexer";
 import { _setAkmIndexForTests } from "../src/indexer/indexer";
 import { _setAgentDetectForTests } from "../src/integrations/agent";
 import { resolveTarget } from "../src/integrations/agent/resolution";
+import { agentRuntime } from "../src/integrations/agent/runtime";
 import { _setEmbedderForTests } from "../src/llm/embedder";
 import { _setDetectForTests } from "../src/setup/detect";
 import { _setLoadSetupStashesForTests, type SetupBundleEntry } from "../src/setup/registry-stash-loader";
 import { runSetupFromConfig, runSetupWizard } from "../src/setup/setup";
+import { _setScheduledTasksEnvForTests } from "../src/setup/steps/tasks";
 import { withOpencodeOnPath } from "./_helpers/opencode-version";
 import {
   type IsolatedAkmStorage,
@@ -496,7 +498,8 @@ describe("runSetupWizard", () => {
     promptState.selects.push("default", "small", "mid", "big", "off", "done", "json", "brief");
     promptState.texts.push("https://api.example.test/v1");
     promptState.passwords.push("");
-    promptState.confirms.push(true, false);
+    // Save, no schedules, and not now to fetching akm's own agent runtime.
+    promptState.confirms.push(true, false, false);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
     await withEndpoint("https://api.example.test/v1", ["small", "mid", "big"], () => runSetupWizard());
@@ -504,6 +507,44 @@ describe("runSetupWizard", () => {
     expect(readSavedConfig().connections).toEqual({ default: connection });
     // Each pick was offered preselected.
     expect(promptState.trace.filter((line) => line.startsWith('[select] Model for "'))).toHaveLength(3);
+  });
+
+  test("with agent work on akm's own runtime, the wizard offers to fetch it now; yes fetches it, no leaves it to the first run", async () => {
+    for (const answer of [true, false]) {
+      installSetupSeams();
+      // The task step asks its own confirm except under CI=true; skip it in both, so the queue below is the same.
+      overrideSeam(_setScheduledTasksEnvForTests, { isCiEnvironment: () => true });
+      resetPromptState();
+      let fetched = 0;
+      spyOn(agentRuntime, "fetch").mockImplementation(async () => {
+        fetched++;
+      });
+      promptState.selects.push("default", "small", "small", "small", "off", "done", "json", "brief");
+      promptState.texts.push("https://api.example.test/v1");
+      promptState.passwords.push("");
+      promptState.confirms.push(true, answer);
+      promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
+
+      await withEndpoint("https://api.example.test/v1", ["small"], () => runSetupWizard());
+
+      expect(promptState.trace.at(-1)).toBe(
+        `[confirm] Agent work runs on akm's own runtime. Fetch OpenCode 2.1.4 (about 114 MB, once) for it now, rather than on the first agent run? -> ${answer}`,
+      );
+      expect(fetched).toBe(answer ? 1 : 0);
+    }
+  });
+
+  test("an offline run (--no-probe) offers no fetch of akm's own runtime", async () => {
+    installSetupSeams();
+    promptState.selects.push("default", "off", "done", "json", "brief");
+    promptState.texts.push("https://api.example.test/v1", "small", "small", "small");
+    promptState.passwords.push("");
+    promptState.confirms.push(true, false);
+    promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
+
+    await runSetupWizard({ noProbe: true });
+
+    expect(promptState.trace.some((line) => line.includes("Fetch OpenCode"))).toBe(false);
   });
 
   test("a harness the user deselects on a rerun is removed from the config, and the one kept is left as it was", async () => {
@@ -675,7 +716,7 @@ describe("runSetupWizard", () => {
     );
     promptState.texts.push("http://localhost:11434");
     promptState.passwords.push("");
-    promptState.confirms.push(true, true, false);
+    promptState.confirms.push(true, true, false, false);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
 
     await withEndpoint("http://localhost:11434/v1", ["llama3.2", "nomic-embed-text"], () => runSetupWizard());
@@ -686,14 +727,13 @@ describe("runSetupWizard", () => {
     expect(saved.embedding).toEqual({ model: "nomic-embed-text" });
   });
 
-  test("warns specifically when the embedding runtime cannot load during setup prep", async () => {
+  test("warns specifically when the embedding runtime cannot be fetched or load during setup prep", async () => {
     installSetupSeams();
-    // The faked availability result exercises the warn-and-report path. Setup
-    // must never mutate the package installation to add dependencies.
+    // The faked availability result exercises the warn-and-report path.
     setupState.checkEmbeddingResult = {
       available: false,
       reason: "runtime-unavailable",
-      message: "Semantic search requires onnxruntime-node. Reinstall akm-cli.",
+      message: "Failed to load the embedding runtime (onnxruntime-node): Could not fetch ONNX Runtime 1.24.3.",
     };
 
     promptState.selects.push("default", "local", "done", "json", "brief");
@@ -703,7 +743,7 @@ describe("runSetupWizard", () => {
 
     await runSetupWizard();
 
-    expect(promptState.logs.some((entry) => entry.includes("Reinstall akm-cli"))).toBe(true);
+    expect(promptState.logs.some((entry) => entry.includes("Could not fetch ONNX Runtime"))).toBe(true);
     expect(readSavedConfig().semanticSearchMode).toBe("auto");
   });
 

@@ -16,6 +16,7 @@ import { writeCredential } from "../../src/core/config/credentials";
 import { UsageError } from "../../src/core/errors";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { effectiveEmbedding } from "../../src/llm/embedders/connection";
+import { hasLocalEmbeddings } from "../../src/llm/embedders/onnx-runtime";
 import type { InstalledHarness } from "../../src/setup/detect";
 import { parseSetupFlags } from "../../src/setup/setup-flags";
 import { applySetupAnswers } from "../../src/setup/setup-plan";
@@ -23,7 +24,7 @@ import { stepConnection } from "../../src/setup/steps/connection";
 import { stepEmbeddings } from "../../src/setup/steps/embeddings";
 import { stepHarnesses } from "../../src/setup/steps/harnesses";
 import { fakeOpencodeMajor, withOpencodeOnPath } from "../_helpers/opencode-version";
-import { withEnv, withMockedFetch } from "../_helpers/sandbox";
+import { withEnv, withMockedFetch, withProcessArch } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
 import { type ScriptedPrompts, scriptPrompts } from "../_helpers/setup-prompts";
 
@@ -709,6 +710,32 @@ describe("stepEmbeddings", () => {
     expect(prompts.of("confirm")[0]?.message).toContain("Download and verify semantic-search assets now?");
     expect(result).toEqual({ answer: { kind: "local" }, semantic: { mode: "auto", prepareAssets: false } });
   });
+
+  test("interactive, where akm has no local embeddings: no built-in embedder, the reason said once, Off preselected", async () => {
+    prompts.answers.select.push("off");
+
+    const result = await withProcessArch("ia32", () => stepEmbeddings(input()));
+
+    const [asked] = prompts.of("select");
+    expect(asked?.options.map((o) => o.value)).toEqual(["endpoint", "off"]);
+    expect(asked?.initialValue).toBe("off");
+    const reason = /^Local embeddings are not available on \S+-ia32; choose a remote endpoint or keyword search\.$/;
+    expect(prompts.output.filter((line) => reason.test(line))).toHaveLength(1);
+    expect(result).toEqual({ answer: { kind: "off" }, semantic: { mode: "off", prepareAssets: false } });
+  });
+
+  test.skipIf(!hasLocalEmbeddings())(
+    "interactive, offline: the built-in embedder is chosen with nothing downloaded or asked about it",
+    async () => {
+      prompts.answers.select.push("local");
+
+      const result = await stepEmbeddings(input({ probe: false }));
+
+      expect(prompts.of("confirm")).toHaveLength(0);
+      expect(prompts.output.join("\n")).toContain("Offline run");
+      expect(result).toEqual({ answer: { kind: "local" }, semantic: { mode: "auto", prepareAssets: false } });
+    },
+  );
 
   test("interactive: off turns semantic search off and asks nothing more", async () => {
     prompts.answers.select.push("off");

@@ -14,6 +14,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { getRegistryCacheDir } from "../../src/core/paths";
 import * as syncFromRefModule from "../../src/sources/providers/sync-from-ref";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage, withTTY } from "../_helpers/sandbox";
@@ -55,18 +56,24 @@ describe("bundle add and update carry no env-key gate (#1237)", () => {
   test("bundle add and bundle update --all of a registry bundle with PATH in env/ succeed with no flag", async () => {
     const root = bundleWithPathEnv("akm-1237-registry");
     const ref = "npm:team-bundle";
-    const spy = spyOn(syncFromRefModule, "syncFromRef").mockResolvedValue({
-      id: ref,
-      source: "npm",
-      ref,
-      artifactUrl: "https://registry.npmjs.org/team-bundle/-/team-bundle-1.0.0.tgz",
-      contentDir: root,
-      cacheDir: root,
-      extractedDir: root,
-      resolvedVersion: "1.0.0",
-      integrity: "sha512-team-fixture",
-      syncedAt: "2026-10-22T00:00:00.000Z",
-      writable: false,
+    // Into the cache root it is given (the update's staging root) or the registry cache, as the npm provider does.
+    const spy = spyOn(syncFromRefModule, "syncFromRef").mockImplementation(async (_ref, options) => {
+      const cacheDir = path.join(options?.cacheRootDir ?? getRegistryCacheDir(), "npm-team-bundle", "1.0.0");
+      const extractedDir = path.join(cacheDir, "extracted");
+      fs.cpSync(root, extractedDir, { recursive: true });
+      return {
+        id: ref,
+        source: "npm",
+        ref,
+        artifactUrl: "https://registry.npmjs.org/team-bundle/-/team-bundle-1.0.0.tgz",
+        contentDir: extractedDir,
+        cacheDir,
+        extractedDir,
+        resolvedVersion: "1.0.0",
+        integrity: "sha512-team-fixture",
+        syncedAt: "2026-10-22T00:00:00.000Z",
+        writable: false,
+      };
     });
     try {
       const added = await withTTY(false, () => runCliCapture(["bundle", "add", ref]));
@@ -74,9 +81,12 @@ describe("bundle add and update carry no env-key gate (#1237)", () => {
       expect(added.code).toBe(0);
       const updated = await withTTY(false, () => runCliCapture(["bundle", "update", "--all", "--force"]));
       expect(updated.stderr).not.toContain("DANGEROUS_ENV");
-      expect(updated.stdout).not.toContain("blocked");
       expect(updated.code).toBe(0);
-      expect(fs.existsSync(root)).toBe(true);
+      const result = JSON.parse(updated.stdout) as { processed: { id: string }[]; skipped?: unknown[] };
+      expect(result.skipped ?? [], updated.stdout).toEqual([]);
+      expect(result.processed.map((item) => item.id)).toEqual([ref]);
+      const installed = path.join(getRegistryCacheDir(), "npm-team-bundle", "1.0.0", "extracted");
+      expect(fs.readFileSync(path.join(installed, "env", "x.env"), "utf8")).toContain("PATH=/opt/team/bin");
     } finally {
       spy.mockRestore();
     }

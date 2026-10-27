@@ -46,13 +46,21 @@ jobs:
           key: akm-huggingface-${{ runner.os }}-Xenova-bge-small-en-v1.5-${{ hashFiles('src/llm/embedders/local.ts', 'src/llm/embedders/local-model-files.ts', 'scripts/copy-assets.ts', 'package.json', 'bun.lock') }}-v3
           restore-keys: |
             akm-huggingface-${{ runner.os }}-Xenova-bge-small-en-v1.5-
+      # onnxruntime-node's binding and library, which the tests copy into each sandbox
+      # (tests/_helpers/onnx-runtime-cache.ts), keyed by the file that pins the version.
+      - name: Restore ONNX Runtime cache
+        id: onnx-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/akm/onnxruntime
+          key: akm-onnxruntime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/llm/embedders/onnx-runtime.ts') }}
       - name: Run semantic search end to end with real embeddings
         run: >-
           bun test --timeout=900000
           tests/integration/semantic-search-e2e.test.ts
       # The compiled Linux binary must embed too: it builds scripts/build-standalone.ts,
-      # indexes a small stash and asserts a ready status, a vector per entry and the
-      # native onnxruntime-node runtime.
+      # runs akm setup --yes --embedding local, indexes a small stash and asserts a ready
+      # status, a vector per entry, the onnxruntime-node runtime and no embedded addon.
       - name: Index with the standalone binary
         run: >-
           bun test --timeout=900000
@@ -67,6 +75,16 @@ jobs:
         with:
           path: ${{ github.workspace }}/.ci-cache/huggingface
           key: akm-huggingface-${{ runner.os }}-Xenova-bge-small-en-v1.5-${{ hashFiles('src/llm/embedders/local.ts', 'src/llm/embedders/local-model-files.ts', 'scripts/copy-assets.ts', 'package.json', 'bun.lock') }}-v3
+      - name: Save ONNX Runtime cache from trusted schedule
+        if: >-
+          success() &&
+          steps.onnx-cache.outputs.cache-hit != 'true' &&
+          github.event_name == 'schedule' &&
+          github.ref_name == github.event.repository.default_branch
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/akm/onnxruntime
+          key: akm-onnxruntime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/llm/embedders/onnx-runtime.ts') }}
 
   docker-install:
     name: Gated / Docker Install
@@ -240,12 +258,14 @@ jobs:
             Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
           }
 
-      # The only place the macOS and Windows binaries' preload of the ONNX Runtime
-      # library runs: build the host binary, index a small stash, assert native
-      # embeddings. The model cache is the Semantic Search job's, per runner OS.
-      # Linux runs the same test in the Semantic Search job.
+      # The only place the macOS and Windows binaries run semantic search: build the
+      # host binary and index a small stash. On macOS (Apple silicon) setup gets the
+      # ONNX Runtime and the index embeds natively; Windows has no local embeddings,
+      # so the test asserts keyword search, the platform reported, and health warning.
+      # The model cache is the Semantic Search job's, per runner OS; only macOS loads
+      # the model. Linux runs the same test in the Semantic Search job.
       - name: Restore HuggingFace model cache
-        if: matrix.runtime_platform != 'linux'
+        if: matrix.runtime_platform == 'darwin'
         id: hf-cache
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
         with:
@@ -253,6 +273,13 @@ jobs:
           key: akm-huggingface-${{ runner.os }}-Xenova-bge-small-en-v1.5-${{ hashFiles('src/llm/embedders/local.ts', 'src/llm/embedders/local-model-files.ts', 'scripts/copy-assets.ts', 'package.json', 'bun.lock') }}-v3
           restore-keys: |
             akm-huggingface-${{ runner.os }}-Xenova-bge-small-en-v1.5-
+      - name: Restore ONNX Runtime cache
+        if: matrix.runtime_platform == 'darwin'
+        id: onnx-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/akm/onnxruntime
+          key: akm-onnxruntime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/llm/embedders/onnx-runtime.ts') }}
       - name: Index with the standalone binary
         if: matrix.runtime_platform != 'linux'
         shell: bash
@@ -263,7 +290,7 @@ jobs:
       - name: Save HuggingFace model cache from trusted schedule
         if: >-
           success() &&
-          matrix.runtime_platform != 'linux' &&
+          matrix.runtime_platform == 'darwin' &&
           steps.hf-cache.outputs.cache-hit != 'true' &&
           github.event_name == 'schedule' &&
           github.ref_name == github.event.repository.default_branch
@@ -271,3 +298,14 @@ jobs:
         with:
           path: ${{ github.workspace }}/.ci-cache/huggingface
           key: akm-huggingface-${{ runner.os }}-Xenova-bge-small-en-v1.5-${{ hashFiles('src/llm/embedders/local.ts', 'src/llm/embedders/local-model-files.ts', 'scripts/copy-assets.ts', 'package.json', 'bun.lock') }}-v3
+      - name: Save ONNX Runtime cache from trusted schedule
+        if: >-
+          success() &&
+          matrix.runtime_platform == 'darwin' &&
+          steps.onnx-cache.outputs.cache-hit != 'true' &&
+          github.event_name == 'schedule' &&
+          github.ref_name == github.event.repository.default_branch
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/akm/onnxruntime
+          key: akm-onnxruntime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/llm/embedders/onnx-runtime.ts') }}

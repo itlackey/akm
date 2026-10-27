@@ -13,11 +13,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { _setAkmInitForTests } from "../../src/commands/sources/init";
+import type { EmbeddingConnectionConfig } from "../../src/core/config/config";
 import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { _setAgentDetectForTests } from "../../src/integrations/agent";
 import { resolveTarget } from "../../src/integrations/agent/resolution";
+import { _setEmbedderForTests } from "../../src/llm/embedder";
 import { runSetupFromConfig, runSetupWithDefaults, type SetupSummary } from "../../src/setup/setup";
 import { parseSetupFlags, type RawSetupFlags, type SetupFlags } from "../../src/setup/setup-flags";
 import { fakeOpencodeMajor, withOpencodeOnPath } from "../_helpers/opencode-version";
@@ -26,6 +28,7 @@ import {
   withEnv,
   withIsolatedAkmStorage,
   withMockedFetch,
+  withProcessArch,
   writeSandboxConfig,
 } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
@@ -463,6 +466,17 @@ describe("akm setup --harness", () => {
 
 describe("akm setup --embedding", () => {
   const withConnection = (extra: RawSetupFlags) => run({ endpoint: "http://localhost:11434/v1", ...extra });
+  /** What the availability check was asked, which for the local embedder fetches and loads its runtime and model. */
+  let checked: (EmbeddingConnectionConfig | undefined)[];
+  beforeEach(() => {
+    checked = [];
+    overrideSeam(_setEmbedderForTests, {
+      checkEmbeddingAvailability: async (embedding) => {
+        checked.push(embedding);
+        return { available: true };
+      },
+    });
+  });
 
   test("a model on the connection is the bare model", async () => {
     await endpoint("http://localhost:11434/v1", MODELS).serve(() =>
@@ -476,6 +490,67 @@ describe("akm setup --embedding", () => {
     await endpoint("http://localhost:11434/v1", MODELS).serve(() => withConnection({ embedding: "local" }));
     expect("embedding" in written()).toBe(false);
     expect(written().semanticSearchMode).toBe("auto");
+  });
+
+  test("local fetches and loads the runtime and the model once the config is saved, and says so", async () => {
+    const summary = await endpoint("http://localhost:11434/v1", MODELS).serve(() =>
+      withConnection({ embedding: "local" }),
+    );
+    expect(checked).toEqual([undefined]);
+    expect(summary.semanticAssets).toBe("ready");
+  });
+
+  test("a runtime or model that cannot be had leaves the config saved, reported blocked with the reason", async () => {
+    overrideSeam(_setEmbedderForTests, {
+      checkEmbeddingAvailability: async () => ({
+        available: false,
+        reason: "runtime-unavailable",
+        message: "Could not fetch ONNX Runtime 1.24.3",
+      }),
+    });
+    const summary = await run({ embedding: "local" });
+    expect(written().semanticSearchMode).toBe("auto");
+    expect(summary.semanticAssets).toBe("blocked: Could not fetch ONNX Runtime 1.24.3");
+    expect(warnings.some((line) => line.includes("Semantic search is blocked: Could not fetch ONNX Runtime"))).toBe(
+      true,
+    );
+  });
+
+  test("an offline run (--no-probe) fetches nothing", async () => {
+    const summary = await run({ embedding: "local" }, { noProbe: true });
+    expect(checked).toEqual([]);
+    expect(summary.semanticAssets).toBe("skipped");
+  });
+
+  test("embeddings on an endpoint fetch nothing", async () => {
+    const summary = await endpoint("http://localhost:11434/v1", MODELS).serve(() =>
+      withConnection({ embedding: "nomic-embed-text" }),
+    );
+    expect(checked).toEqual([]);
+    expect(summary.semanticAssets).toBeUndefined();
+  });
+
+  test("where akm has no local embeddings, local warns once and saves keyword search, fetching nothing", async () => {
+    const summary = await withProcessArch("ia32", () => run({ embedding: "local" }));
+    expect(written().semanticSearchMode).toBe("off");
+    expect(summary.semanticAssets).toBeUndefined();
+    expect(checked).toEqual([]);
+    expect(warnings).toEqual([
+      expect.stringMatching(
+        /^\[akm setup\] Local embeddings are not available on \S+-ia32; choose a remote endpoint or keyword search\. --embedding local is ignored: semantic search stays off\.$/,
+      ),
+    ]);
+  });
+
+  test("--from keeps a file's local embeddings where akm has none, and reports them blocked with the reason", async () => {
+    overrideSeam(_setEmbedderForTests, {});
+    const summary = await withProcessArch("ia32", () =>
+      runSetupFromConfig({ configJson: JSON.stringify({ semanticSearchMode: "auto" }), noInit: true }),
+    );
+    expect(written().semanticSearchMode).toBe("auto");
+    expect(summary.semanticAssets).toMatch(
+      /^blocked: Local embeddings are not available on \S+-ia32; choose a remote endpoint or keyword search\.$/,
+    );
   });
 
   test("off turns semantic search off", async () => {

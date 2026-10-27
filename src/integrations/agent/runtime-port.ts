@@ -24,4 +24,8 @@ export interface AgentRuntime {
   readonly lowering: LowerTarget;
   /** Run one lowered dispatch on `connection`. Reads no config: the connection is the whole of what it is given about the endpoint. */
   run(profile: AgentProfile, opts: RunAgentOptions, connection: ChatCompletionConfig): Promise<AgentRunResult>;
+  /** What the runtime still fetches on its first run, in words (what, how large), or undefined once it has it; `akm setup` offers to fetch it then. */
+  pendingFetch(): string | undefined;
+  /** Fetch it now rather than on the first run. */
+  fetch(): Promise<void>;
 }

@@ -3,9 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Semantic-search asset preparation for the setup wizard. The embedding
- * runtime (onnxruntime-node) is a normal package dependency; setup never
- * mutates the installed CLI. This module only prepares the model.
+ * Semantic-search asset preparation for setup. For the built-in local embedder
+ * that is its runtime (onnxruntime-node's binding and library) and its model,
+ * both fetched into akm's cache; for an embedding endpoint, a check that it
+ * answers.
  */
 
 import * as p from "../cli/clack";
@@ -13,6 +14,7 @@ import { isHttpUrl } from "../core/common";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config/config";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
+import { ONNXRUNTIME_VERSION } from "../llm/embedders/onnx-runtime";
 
 // Approximate first-download size of the default local model (DEFAULT_LOCAL_MODEL), used in the setup note.
 const LOCAL_MODEL_APPROX_SIZE_MB = 127;
@@ -30,7 +32,8 @@ export function describeSemanticSearchAssets(embedding?: EmbeddingConnectionConf
   }
 
   return [
-    `• Local embedding model: ${embedding?.localModel ?? DEFAULT_LOCAL_MODEL} (~${LOCAL_MODEL_APPROX_SIZE_MB} MB download on first use)`,
+    `• ONNX Runtime ${ONNXRUNTIME_VERSION}, the local embedder's runtime (~86 MB download, once)`,
+    `• Local embedding model: ${embedding?.localModel ?? DEFAULT_LOCAL_MODEL} (~${LOCAL_MODEL_APPROX_SIZE_MB} MB download, once)`,
   ];
 }
 
@@ -44,7 +47,7 @@ export async function prepareSemanticSearchAssets(
   spin.start(
     remote
       ? "Checking remote embedding endpoint..."
-      : `Downloading local embedding model (${embedding?.localModel ?? DEFAULT_LOCAL_MODEL})...`,
+      : `Downloading the local embedder's runtime and model (${embedding?.localModel ?? DEFAULT_LOCAL_MODEL})...`,
   );
 
   const result = await checkEmbeddingAvailability(embedding);
@@ -67,7 +70,9 @@ export async function prepareSemanticSearchAssets(
     }
   }
 
-  spin.stop(remote ? "Remote embedding endpoint is ready." : "Local embedding model downloaded and ready.");
+  spin.stop(
+    remote ? "Remote embedding endpoint is ready." : "Local embedder's runtime and model downloaded and ready.",
+  );
 
   return { ok: true };
 }

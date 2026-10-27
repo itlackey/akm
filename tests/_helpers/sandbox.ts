@@ -204,6 +204,21 @@ export async function withTTY<T>(isTTY: boolean, fn: () => T | Promise<T>): Prom
   }
 }
 
+/**
+ * Run `fn` with `process.arch` reading `arch`, then restore it. For code that decides by platform: akm offers local
+ * embeddings on a short list of `<platform>-<arch>` pairs, and an arch no platform has (`ia32`) stands for every
+ * machine outside it.
+ */
+export async function withProcessArch<T>(arch: string, fn: () => T | Promise<T>): Promise<T> {
+  const original = Object.getOwnPropertyDescriptor(process, "arch") as PropertyDescriptor;
+  Object.defineProperty(process, "arch", { ...original, value: arch });
+  try {
+    return await fn();
+  } finally {
+    Object.defineProperty(process, "arch", original);
+  }
+}
+
 export function makeStashDir(): SandboxedDir {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `akm-sb-stash2-${sandboxCounter++}-`));
   registerTestRoot(dir);

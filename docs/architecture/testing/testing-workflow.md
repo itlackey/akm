@@ -240,19 +240,27 @@ sets the same path and restores it from a model/source-identified Actions
 cache. Candidate tags and manual runs are restore-only; only the scheduled
 default-branch run may save a cache entry.
 
-The same gate runs real semantic index/search round-trips on `onnxruntime-node`,
-asserts the `embeddingRuntime` the index reports, and compares the embedder's
-vectors with the Transformers.js reference in
-`tests/fixtures/embedder-reference-vectors.json`. Package acceptance separately
-verifies the ordinary npm package surface; there is no installed-consumer
-compatibility architecture or copied semantic runtime to audit.
+The same gate runs real semantic index/search round-trips on `onnxruntime-node`'s
+binding, asserts the `embeddingRuntime` the index reports, and compares the
+embedder's vectors with the Transformers.js reference in
+`tests/fixtures/embedder-reference-vectors.json`. The binding and its library are
+shared across runs the same way as the model: `tests/_helpers/onnx-runtime-cache.ts`
+copies the repo-local `.ci-cache/akm/onnxruntime/` into each sandbox's akm cache
+and keeps a folder a run fetched there, and gated CI caches that directory under
+a key from `src/llm/embedders/onnx-runtime.ts`, which pins the ONNX Runtime
+version. Package acceptance separately verifies
+the ordinary npm package surface.
 
 `tests/integration/standalone-semantic.test.ts` (the same `AKM_SEMANTIC_TESTS=1`
-gate) builds the host's standalone binary and indexes a small stash with it,
-asserting a ready status, a vector per entry and the native runtime. Gated CI
-runs it in the Semantic Search job (Linux) and in the Native Scheduler job on
-macOS and Windows, the only places the binary's preload of each platform's ONNX
-Runtime library runs.
+gate) builds the host's standalone binary and asserts it embeds no `.node` file.
+Where akm offers local embeddings it runs `akm setup --yes --embedding local`,
+expects the binding and the library in the cache folder, and indexes a small
+stash, asserting a ready status, a vector per entry and the native runtime.
+Everywhere else it asserts the default: setup warns and saves keyword search, an
+index with semantic search on reports it unavailable for the platform, `akm
+health` warns, and search is keyword. Gated CI runs it in the Semantic Search job
+(Linux) and in the Native Scheduler job on macOS (local embeddings) and Windows
+(the default), the only places the binary runs on those platforms.
 
 ### What to test explicitly
 
@@ -282,7 +290,8 @@ This validates three deployment methods across four Linux families:
 - bun-based install: Ubuntu, Debian, Alpine, Fedora
 - compiled binary install: Ubuntu, Debian, Fedora
 - npm install: Debian on `node:24-slim`, which has no compiler, python or make
-  (`npm install -g` of the packed package; the install's exit code is the check)
+  (`npm install -g --ignore-scripts` of the packed package, as npm 12 installs by
+  default; the install's exit code and the smoke test are the check)
 
 Binary validation currently excludes Alpine. The compiled Linux binary used in
 this repo's Docker tests is not packaged for Alpine/musl compatibility, so the

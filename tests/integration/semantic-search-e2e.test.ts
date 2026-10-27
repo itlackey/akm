@@ -1,6 +1,7 @@
 /**
  * End-to-end semantic search test that embeds with the real local model on
- * onnxruntime-node and verifies vector search produces meaningful results.
+ * onnxruntime-node's binding (fetched into akm's cache, or seeded from the copy
+ * the gated job caches) and verifies vector search produces meaningful results.
  *
  * Gated behind AKM_SEMANTIC_TESTS=1 because first run downloads the model.
  * Subsequent runs use the cached model and complete in ~1-2 seconds.
@@ -22,6 +23,7 @@ import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories
 import { getEmbeddableEntryCount, getEntryCount } from "../../src/storage/repositories/index-entries-repository";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
 import { getEmbeddingCount } from "../../src/storage/repositories/index-vec-repository";
+import { keepOnnxRuntime, seedOnnxRuntime } from "../_helpers/onnx-runtime-cache";
 import {
   type Cleanup,
   mutateScopedEnv,
@@ -305,11 +307,14 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
     saveConfig({ semanticSearchMode: "auto" });
 
     // Index the stash with real embeddings
-    // This downloads the model on first run and reuses DEFAULT_HF_HOME later.
+    // This downloads the model on first run and reuses DEFAULT_HF_HOME later;
+    // the runtime is shared the same way through .ci-cache/akm/onnxruntime.
     savedCacheDir = testCacheDir;
     savedConfigDir = testConfigDir;
+    seedOnnxRuntime(path.join(testCacheDir, "akm"));
 
     const result = await akmIndex({ stashDir, full: true });
+    keepOnnxRuntime(path.join(testCacheDir, "akm"));
     expect(result.totalEntries).toBeGreaterThan(0);
     expect(result.verification.semanticSearchEnabled).toBeTruthy();
 

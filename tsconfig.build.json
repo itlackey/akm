@@ -4,6 +4,5 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/standalone/native"]
+  "include": ["src/**/*.ts"]
 }
