@@ -6,7 +6,7 @@ You have access to a searchable library of scripts, skills, commands, agents, kn
 
 For any task, follow this loop:
 1. `akm curate "<task>"` — find the best matching asset
-2. `akm show <ref>` — read the schema (field names and structure)
+2. `akm show <ref>` — read the schema (field names and structure). For a large document, `akm show <ref> --detail brief` returns its outline (`toc`, no body); then `akm show <ref>#<slug>` reads only the sections you need.
 3. Edit the workspace file using schema field names + task-specific values from your README
 4. `akm feedback <ref> --positive` — record that the asset helped (it raises its ranking and does not trigger a rewrite). Record negative feedback only when the asset's content is wrong or stale, and say what is wrong and what it should say. `akm feedback <ref> --negative --reason "<what is wrong and what should change>"` flags it: the next improve run may repair its description, title or `when_to_use` from your reason, but not its text. A note that simply did not fit your task is not negative feedback: record nothing for it. Once you have verified the correct fact, add the exact fix: `--replace "<exact current text>" --with "<corrected text>" --source "<URL, command or file>"`. A note that is outdated can be marked with `--outdated`, or `--superseded-by <ref>` when another note replaces it. A failed akm command (e.g. `akm show` erroring) is not feedback on the asset — don't record it.
 
@@ -27,6 +27,8 @@ akm search "<query>" --type workflow          # Filter to workflow assets
 akm search "memories/projectA/"               # List a subtree (conceptId prefix; trailing slash required)
 akm search "<query>" --from all               # Also search registries
 akm show <ref>                                # View asset details
+akm show <ref> --detail brief                 # Outline only: a document's `toc` (each heading's slug), no body
+akm show <ref>#<slug>                         # One section of a document
 akm help <command>                            # Show a command's options and subcommands
 akm workflow run <ref>                        # Start a new run and execute it
 akm remember "Deployment needs VPN access"    # Record a memory in your bundle
@@ -58,7 +60,7 @@ akm search "<query>" --from registry          # Search all registries (registry 
 | skill | Instructions to follow (read the full content) |
 | command | A prompt template with placeholders to fill in |
 | agent | A system prompt with model and tool hints |
-| knowledge | A reference doc (append `#<heading-slug>` to the ref to read one section) |
+| knowledge | A reference doc; `toc` lists its sections and `<ref>#<slug>` reads one |
 | workflow | Parsed steps plus workflow-specific execution commands |
 | memory | Recalled context (read the content for background information) |
 | env | A `.env` file of configuration an app loads together (many vars; sensitive or not — all protected); key names only. Inject with `akm env run <ref> -- <cmd>` (the agent-safe path — values stay on disk). |

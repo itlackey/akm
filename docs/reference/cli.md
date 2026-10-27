@@ -822,7 +822,10 @@ contends with a full `akm index` rebuild in progress.
 
 Display an asset by ref. On a markdown document `#fragment` selects one
 section by heading slug (falling back to case-insensitive heading text); an
-unmatched fragment lists the available slugs.
+unmatched fragment lists the available slugs. For a large document, read the
+outline first and then only the sections you need: `akm show <ref> --detail
+brief` returns the document's `toc` without the body, and `akm show
+<ref>#<slug>` returns one section.
 
 ```sh
 akm show scripts/deploy.sh
@@ -830,7 +833,8 @@ akm show skills/code-review
 akm show agents/architect
 akm show commands/release
 akm show workflows/ship-release
-akm show knowledge/guide                 # the whole document
+akm show knowledge/guide                 # the whole document, plus its toc
+akm show knowledge/guide --detail brief  # the outline (toc), no body
 akm show knowledge/guide#authentication  # just that section
 akm show '<search-result-ref>' --context lead --max-tokens 800
 akm show knowledge/guide#nope            # lists the available fragment slugs
@@ -878,6 +882,17 @@ reduced metadata-first view without `content`/`template`/`prompt`;
 (e.g. `origin`, `tags`) down to the action-relevant field set while still
 including `ref`/`path`/`editable`, plus the optional fragment metadata
 described below.
+
+`toc` is the outline of a whole Markdown document (knowledge, and every other
+Markdown asset whose `#fragment` selects a section): one
+`{ "level", "text", "slug", "startLine" }` entry per heading, in order, at every
+`--detail` level, `brief` and `agent` included. `slug` is exactly what
+`<ref>#<slug>` selects, duplicate headings included (`notes`, `notes-1`, ...),
+and `startLine` is the heading's 1-based line in the file. It is read from the
+same file the section is cut from, so it never lists a slug the show cannot
+resolve. It is omitted for non-Markdown assets, for documents with no headings,
+and for a fragment show (`<ref>#<slug>`). `--format text` prints it as a
+`toc:` block.
 
 `links` lists the asset's declared links, grouped by kind: `outgoing` (the
 assets its own `xrefs:`, `supersededBy:`, `contradictedBy:`,
@@ -944,7 +959,7 @@ Returns type-specific payloads:
 | skill | `content` (full SKILL.md) |
 | command | `template`, `description` |
 | agent | `prompt`, `description`, `modelHint` |
-| knowledge | `content` — the whole document, or one section via `#fragment` |
+| knowledge | `content` — the whole document, or one section via `#fragment`; `toc` on a whole document |
 | workflow | `workflowTitle`, `workflowParameters`, `steps` (each step's `orchestration` summary names its `engine` (the connection or harness it runs on) and model, or — for an [exec step](https://github.com/itlackey/akm/blob/main/docs/reference/workflow-schema.md#what-akm-show-reports-for-an-exec-step) — its `exec.command` and no engine at all) |
 | memory | `content` |
 | env | `keys` (key names only — values and comment text never returned) |

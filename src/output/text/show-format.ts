@@ -11,6 +11,7 @@
  * blocks) lives in the sibling `show-directives.ts`.
  */
 
+import type { MarkdownTocEntry } from "../../core/asset/markdown";
 import type { DetailLevel } from "../context";
 import { appendShowDirectives } from "./show-directives";
 
@@ -54,6 +55,13 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
     if (r.editable !== undefined) lines.push(`editable: ${String(r.editable)}`);
     if (r.editHint) lines.push(`editHint: ${String(r.editHint)}`);
     if (r.schemaVersion !== undefined) lines.push(`schemaVersion: ${String(r.schemaVersion)}`);
+  }
+  if (Array.isArray(r.toc) && r.toc.length > 0) {
+    lines.push("");
+    lines.push("toc:");
+    for (const heading of r.toc as MarkdownTocEntry[]) {
+      lines.push(`  ${"#".repeat(heading.level)} ${heading.text} (#${heading.slug}, line ${heading.startLine})`);
+    }
   }
   const links = typeof r.links === "object" && r.links !== null ? (r.links as Record<string, unknown>) : undefined;
   if (links) {
