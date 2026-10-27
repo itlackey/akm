@@ -46,10 +46,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   registry search. The migration guide and the 0.10.0 release notes name the
   full refs `akm env` and `akm secret` now require, the removed
   `akm search --assets`, the end of the index's bundle refresh, the retired
-  `secret://` and `${secret:NAME}`, the `--belief current` default and the
-  Codex and Aider flags akm no longer passes, and no longer list
-  `GET /api/config` as a breaking change (`akm ui` is new in 0.10). The fixture
-  READMEs match the code.
+  `secret://` and `${secret:NAME}`, the `--belief current` default, the
+  Codex and Aider flags akm no longer passes, 0.9 retire proposals, the
+  `akm health` warning where local embeddings are not offered, the dropped JSON
+  fields, the workflow redaction scope, and (in the notes) the frontmatter date
+  keys, symlinked and trimmed secrets, the SIGINT-first stop and the Claude Code
+  and Codex plugin branches, and no longer list `GET /api/config` as a breaking
+  change (`akm ui` is new in 0.10). The fixture READMEs match the code.
 - **`akm bundle rename` keeps the bundle's recorded feedback** (#1250). It rewrote
   proposals, task history and workflow refs but left `usage_events` under the old
   prefix, so after a rename no feedback counted in search ranking for any asset
