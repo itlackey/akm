@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The Release workflow waits for CI on the commit it publishes, up to 25 minutes,
+  instead of failing when that run has not finished, so Release can be dispatched
+  right after the release commit is pushed. It still fails when CI failed or was
+  cancelled. `tests/release-check.sh` no longer repeats the upgrade rehearsal that
+  CI runs on the same commit.
+- `bun run check:ci` runs the pre-push check the way CI does (in a Docker
+  container with the Bun and Node versions `ci.yml` pins, a clean frozen install,
+  `CI=true` and four test shards); `.github/CONTRIBUTING.md` says when to run it.
+
 ## [0.10.261015] - 2026-10-27
 
 ### Changed
