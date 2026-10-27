@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A negative whose exact fix was applied no longer keeps demoting the corrected asset in `akm search` and `akm curate`
+  (#1249).** A negative recorded with `--replace`/`--with`, `--superseded-by` or `--outdated` stops counting against the
+  asset once its fix is accepted, the same "already acted on" rule `akm improve` uses; reverting the fix with
+  `akm proposal revert` makes the negative count again. A fix the accept refused, and every negative without a fix,
+  still lower the asset's ranking.
+
 ## [0.10.261016] - 2026-10-27
 
 ### Added

@@ -69,7 +69,8 @@ everything else routes through `akm proposal accept`.
    not trigger a rewrite.
 2. The feedback event is appended to `state.db`. `akm search` and `akm curate`
    count a user's recorded positives and negatives per asset and scale the
-   fused score by them (logarithmic in each count, the same for every asset),
+   fused score by them (logarithmic in each count, the same for every asset;
+   a negative whose exact fix has been accepted no longer counts),
    so ranking moves at once with no reindex. The asset's utility score, which
    improve and metrics read, is recomputed immediately by the same formula
    `akm index` uses (below).

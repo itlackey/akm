@@ -2025,7 +2025,9 @@ recorded positive raises the asset's score and each negative lowers it, the
 same way for every asset, so an asset with 5 positives ranks higher than one
 with 2, and each further vote counts for a little less. A hit's fused score is
 multiplied by `1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))`
-(`FEEDBACK_WEIGHT` in `src/indexer/search/ranking.ts`). The effect is small: it
+(`FEEDBACK_WEIGHT` in `src/indexer/search/ranking.ts`). A negative that carried an
+exact fix stops counting once the fix is accepted, and counts again if
+`akm proposal revert` undoes it. The effect is small: it
 reorders close matches and does not override relevance. Only feedback recorded
 as the user counts, not feedback from improve, task or audit runs; the output's
 `rankingUpdate.applied` says which it was (`true`, or `false` with a `reason`).
