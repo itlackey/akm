@@ -201,9 +201,12 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     const tmp = os.tmpdir();
     const tempBefore = new Set(fs.readdirSync(tmp));
 
-    const result = await run("akm");
+    const result = await run("akm", { connection: connection({ apiKey: "sk-runtime-test" }) });
 
     expect(result.ok).toBe(true);
+    expect(model.requests[0]?.authorization).toBe("Bearer sk-runtime-test");
+    // The run's key file is inside akm's directories, and gone once the run is.
+    expect(filesUnder(path.join(getDataDir(), "opencode-runtime", "keys"))).toEqual([]);
     for (const [root, name] of [
       [".local/share", "opencode"],
       [".config", "opencode"],

@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import akmPlugin from "../../../../assets/opencode/akm-plugin.js" with { type: "text" };
-import { toErrorMessage } from "../../../../core/common";
+import { toErrorMessage, writeFileAtomic } from "../../../../core/common";
 import {
   createLockPayload,
   probeLock,
@@ -59,6 +59,12 @@ const runtimeLowerer: LowerTarget = {
 
 /** How long preparing the database may take: it is a few milliseconds of work and a process start. */
 const PREPARE_TIMEOUT_MS = 60_000;
+
+/** The connection's key, for the one run that reads it, kept as `credentials.json` is: 0600, in a 0700 directory. */
+function writeKeyFile(file: string, key: string): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  writeFileAtomic(file, key, 0o600);
+}
 
 /** Write the plugin where OpenCode loads it from (a directory, whose `index.mjs` is the module), when it is not already there. */
 function installPlugin(directory: string): string {
@@ -157,18 +163,24 @@ export const opencodeRuntime: AgentRuntime = {
       const ambient = Object.fromEntries(
         Object.entries(buildChildEnv(opts)).filter(([name]) => !name.startsWith("OPENCODE_")),
       );
-      const config = runtimeConfig(connection, where.pluginDirectory, ambient);
-      const env = { ...ambient, ...runtimeEnv(config, where) };
-      await prepareDatabase(directory, { argv: runtimePrepareArgv(binary), env }, opts);
       // OpenCode's own ids start with `ses_`, which it requires of one it is given.
       const session = `ses_akm${randomUUID().replaceAll("-", "")}`;
-      const result = await runBuiltCommand(
-        label,
-        { argv: runtimeArgv(connection, dispatch, binary, session), env, stdin: dispatch.prompt },
-        opts,
-        "captured",
-      );
-      return { ...result, ...sessionRecord(session) };
+      const keyFile = path.join(directory, "keys", session);
+      const config = runtimeConfig(connection, where.pluginDirectory, keyFile, ambient);
+      const env = { ...ambient, ...runtimeEnv(config, where) };
+      try {
+        if (connection.apiKey) writeKeyFile(keyFile, connection.apiKey);
+        await prepareDatabase(directory, { argv: runtimePrepareArgv(binary), env }, opts);
+        const result = await runBuiltCommand(
+          label,
+          { argv: runtimeArgv(connection, dispatch, binary, session), env, stdin: dispatch.prompt },
+          opts,
+          "captured",
+        );
+        return { ...result, ...sessionRecord(session) };
+      } finally {
+        fs.rmSync(keyFile, { force: true });
+      }
     } catch (error) {
       return {
         ok: false,

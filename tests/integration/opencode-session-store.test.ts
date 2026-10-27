@@ -147,7 +147,7 @@ async function writeOpenCode2Store(): Promise<OpenCode2Fixture> {
         pluginDirectory: path.join(akmRuntimeDir(), "config", "akm-plugin"),
         akm: [],
       };
-      const runtime = runtimeEnv(runtimeConfig(connection, locations.pluginDirectory), locations);
+      const runtime = runtimeEnv(runtimeConfig(connection, locations.pluginDirectory, ""), locations);
       const modelWork = await withEnv(runtime, () =>
         opencodeBuilder.build(
           { bin: locations.binary, args: [] },

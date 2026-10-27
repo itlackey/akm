@@ -21,6 +21,7 @@ import {
 import type { ChatCompletionConfig } from "../src/llm/client";
 
 const PLUGIN = "/akm/data/opencode-runtime/config/akm-plugin";
+const KEY_FILE = "/akm/data/opencode-runtime/keys/ses_akm1";
 
 const connection = (extra: Partial<ChatCompletionConfig> = {}): ChatCompletionConfig => ({
   endpoint: "https://llm.example/v1/chat/completions",
@@ -45,7 +46,7 @@ const providerOf = (config: Record<string, unknown>): Provider => (config.provid
 
 describe("the inline config", () => {
   test("the connection is the only provider: the package OpenCode bundles, the endpoint's base URL, the one model", () => {
-    const config = runtimeConfig(connection(), PLUGIN);
+    const config = runtimeConfig(connection(), PLUGIN, KEY_FILE);
 
     expect(Object.keys(config.provider as object)).toEqual(["akm"]);
     expect(providerOf(config)).toEqual({
@@ -56,12 +57,16 @@ describe("the inline config", () => {
     });
   });
 
-  test("the key is the provider's, and only when the connection has one", () => {
-    expect(providerOf(runtimeConfig(connection({ apiKey: "sk-secret" }), PLUGIN)).options).toEqual({
+  test("the key is the provider's, read from the run's key file, and only when the connection has one", () => {
+    const config = runtimeConfig(connection({ apiKey: "sk-secret" }), PLUGIN, KEY_FILE);
+
+    expect(providerOf(config).options).toEqual({
       baseURL: "https://llm.example/v1",
-      apiKey: "sk-secret",
+      apiKey: `{file:${KEY_FILE}}`,
     });
-    expect(providerOf(runtimeConfig(connection(), PLUGIN)).options).not.toHaveProperty("apiKey");
+    // The key itself is nowhere in the config, so it is in no process's environment.
+    expect(JSON.stringify(config)).not.toContain("sk-secret");
+    expect(providerOf(runtimeConfig(connection(), PLUGIN, KEY_FILE)).options).not.toHaveProperty("apiKey");
   });
 
   test.each([
@@ -71,9 +76,8 @@ describe("the inline config", () => {
     ["states both", { contextLength: 32_768, request: { max_tokens: 2_048 } }, { context: 32_768, output: 2_048 }],
     // OpenCode refuses a model whose limit states only one of the two, so the other is its own assumption.
   ] as const)("a connection that %s", (_name, extra, limit) => {
-    const model = providerOf(runtimeConfig(connection(extra as Partial<ChatCompletionConfig>), PLUGIN)).models[
-      "org/model:7b"
-    ];
+    const model = providerOf(runtimeConfig(connection(extra as Partial<ChatCompletionConfig>), PLUGIN, KEY_FILE))
+      .models["org/model:7b"];
     expect(model?.limit).toEqual(limit);
   });
 
@@ -84,6 +88,7 @@ describe("the inline config", () => {
         inference: { temperature: 0.2, maxTokens: 4096, reasoningEffort: "high", enableThinking: false },
       }),
       PLUGIN,
+      KEY_FILE,
     );
 
     expect(config.plugins).toEqual([
@@ -104,19 +109,23 @@ describe("the inline config", () => {
   });
 
   test("the fields akm owns are not the connection's to send", () => {
-    const config = runtimeConfig(connection({ request: { model: "other", messages: [], stream: false } }), PLUGIN);
+    const config = runtimeConfig(
+      connection({ request: { model: "other", messages: [], stream: false } }),
+      PLUGIN,
+      KEY_FILE,
+    );
 
     const [entry] = config.plugins as Array<{ options: { requestFields: Record<string, unknown> } }>;
     expect(entry?.options.requestFields).toEqual({});
   });
 
   test("it defines no agent: OpenCode's own default runs, with its normal tools", () => {
-    expect(runtimeConfig(connection(), PLUGIN)).not.toHaveProperty("agents");
+    expect(runtimeConfig(connection(), PLUGIN, KEY_FILE)).not.toHaveProperty("agents");
   });
 });
 
 describe("the environment", () => {
-  const env = runtimeEnv(runtimeConfig(connection({ apiKey: "sk-secret" }), PLUGIN), where);
+  const env = runtimeEnv(runtimeConfig(connection({ apiKey: "sk-secret" }), PLUGIN, KEY_FILE), where);
 
   test("OpenCode's roots and its temp directory are akm's, under the runtime directory", () => {
     expect(env).toMatchObject({
@@ -138,7 +147,7 @@ describe("the environment", () => {
   });
 
   test("the plugin is told, for each variable the run sets, what the agent's commands get: akm's value, or none", () => {
-    const config = runtimeConfig(connection(), PLUGIN, {
+    const config = runtimeConfig(connection(), PLUGIN, KEY_FILE, {
       XDG_DATA_HOME: "/home/me/.local/share",
       TMPDIR: "/tmp",
     });
@@ -155,7 +164,7 @@ describe("the environment", () => {
 
   test("the config goes in OPENCODE_CONFIG_CONTENT, and the argv that runs akm, for the plugin, in AKM_OPENCODE_CLI", () => {
     expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT as string)).toEqual(
-      runtimeConfig(connection({ apiKey: "sk-secret" }), PLUGIN),
+      runtimeConfig(connection({ apiKey: "sk-secret" }), PLUGIN, KEY_FILE),
     );
     expect(JSON.parse(env.AKM_OPENCODE_CLI as string)).toEqual([
       "/usr/local/bin/node",

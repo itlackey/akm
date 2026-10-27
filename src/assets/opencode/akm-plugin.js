@@ -11,9 +11,9 @@
 //     runtime and the script for one run as a script (Node and `dist/akm`, say), so no shebang or shell is needed on
 //     any platform. The run's environment is the call's, so a stamped run's reads (`AKM_EVENT_SOURCE`) are recorded as
 //     that run's.
-//   - The environment of the commands the agent runs: the variables akm set for the OpenCode process (its roots, its
-//     config, which holds the connection's key) are put back to what akm runs in, or removed, so the agent's shell sees
-//     the environment a harness's child would.
+//   - The environment of the commands the agent runs: the variables akm set for the OpenCode process (its roots and
+//     its OpenCode settings) are put back to what akm runs in, or removed, so the agent's shell sees the environment a
+//     harness's child would.
 //   - The connection's request fields, laid over each model request in the endpoint's own field names, as the chat
 //     transport sends them. OpenCode sizes every request's output cap from the model's limit and sends it as
 //     `max_tokens` or `max_completion_tokens`; that is its own accounting, not a cap anyone asked for, so it is

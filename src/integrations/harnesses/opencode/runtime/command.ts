@@ -12,7 +12,9 @@
  *   - **The connection is the only provider.** `@ai-sdk/openai-compatible` (which
  *     the binary bundles) at the connection's endpoint, with its key, and the one
  *     model the run was dispatched with, with the context window and output cap the
- *     connection states.
+ *     connection states. The key is not in the config: the config names a 0600
+ *     file under akm's runtime directory that holds it (`{file:…}`), so no process
+ *     environment holds the key.
  *   - **akm's roots.** OpenCode's config, data, cache and state directories and its
  *     temp directory are akm's (`../roots.ts`), so nothing of the user's OpenCode
  *     is read or written and the sessions land where akm's reader looks. The
@@ -23,12 +25,11 @@
  *     Claude Code files (`~/.claude/skills`).
  *   - **The resume sweep is off** because `--standalone` keeps the run to one
  *     process that ends with it and replays nobody's killed sessions.
- *   - **The agent's commands do not see any of this.** The process's environment
- *     holds the connection's key (in the inline config: OpenCode 2.1.4 does not
- *     take a key for this provider from `<XDG_DATA_HOME>/opencode/auth.json`,
- *     measured), so the plugin puts the variables this module sets back to what
- *     akm runs in, or removes them, in the environment of the commands the agent
- *     runs.
+ *   - **The agent's commands do not see any of this.** The plugin puts the
+ *     variables this module sets back to what akm runs in, or removes them, in the
+ *     environment of the commands the agent runs: they get the user's directories,
+ *     not the runtime's, and no OpenCode setting of akm's (an `opencode` they run
+ *     would otherwise load akm's provider and its key file).
  *
  * The run is OpenCode's default agent (or the native agent the request names) with
  * its normal tools, akm's three read tools and the connection's request fields
@@ -59,16 +60,27 @@ export interface RuntimeLocations {
 const positiveInteger = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 
+/**
+ * A path as a `{file:…}` reference. OpenCode replaces the reference in the config's text before it parses it, so the
+ * path is read with the text's JSON escapes in it (measured on 2.1.4: a path holding a backslash or a quote is not
+ * found, and the request goes out with no key). Windows takes forward slashes, so its paths are written with them.
+ */
+function fileReference(file: string): string {
+  return process.platform === "win32" ? file.replaceAll("\\", "/") : file;
+}
+
 /** What OpenCode assumes of a model that states no limit. It refuses a model whose limit states only one of the two. */
 const DEFAULT_LIMIT = { context: 200_000, output: 32_000 };
 
 /**
- * The inline OpenCode config of a run. `ambient` is the environment the process is started over: the plugin gives the
- * commands the agent runs these values back for the variables the run sets, and removes them where there is none.
+ * The inline OpenCode config of a run. `keyFile` is where the connection's key is written for the run, when it has
+ * one. `ambient` is the environment the process is started over: the plugin gives the commands the agent runs these
+ * values back for the variables the run sets, and removes them where there is none.
  */
 export function runtimeConfig(
   connection: ChatCompletionConfig,
   pluginDirectory: string,
+  keyFile: string,
   ambient: Readonly<Record<string, string>> = {},
 ): Record<string, unknown> {
   const requestFields = effectiveRequestFields(connection.request, connection.inference);
@@ -94,7 +106,7 @@ export function runtimeConfig(
         name: PROVIDER,
         options: {
           baseURL: openAiBaseUrl(connection.endpoint),
-          ...(connection.apiKey ? { apiKey: connection.apiKey } : {}),
+          ...(connection.apiKey ? { apiKey: `{file:${fileReference(keyFile)}}` } : {}),
         },
         models: {
           [connection.model]: {

@@ -144,6 +144,26 @@ describe.skipIf(process.platform === "win32")("a run on akm's runtime", () => {
     }
   });
 
+  test("the key is in a 0600 file the config names for the run, in no environment variable, and gone after it", async () => {
+    // Reports the file the config's `{file:…}` names: whether it is there, its mode and what it holds.
+    installBinary(`
+const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT);
+const file = /^\\{file:(.+)\\}$/.exec(config.provider.akm.options.apiKey)[1];
+const fs = require("node:fs");
+console.log(JSON.stringify({ file, mode: fs.statSync(file).mode & 0o777, key: fs.readFileSync(file, "utf8"), env: process.env }));
+`);
+
+    const result = await run();
+
+    expect(result.ok, result.stderr).toBe(true);
+    const seen = JSON.parse(result.stdout) as { file: string; mode: number; key: string; env: Record<string, string> };
+    expect(path.dirname(seen.file)).toBe(path.join(getDataDir(), "opencode-runtime", "keys"));
+    expect(seen.key).toBe("sk-secret");
+    if (process.platform !== "win32") expect(seen.mode).toBe(0o600);
+    expect(Object.values(seen.env).some((value) => value.includes("sk-secret"))).toBe(false);
+    expect(fs.existsSync(seen.file)).toBe(false);
+  });
+
   test("the plugin is written to the runtime's config directory and named in the config", async () => {
     installBinary(REPORTER);
 
