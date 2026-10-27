@@ -1,21 +1,32 @@
 # Reference
 
-Authoritative reference documentation for the akm CLI and its data.
+Reference documentation for the akm CLI, configuration and data. Run
+`akm <command> --help` for the flags of any command.
 
+## Commands and configuration
+
+- [CLI](cli.md) -- Every command, the global flags, the output envelope and the exit codes
+- [Configuration](configuration.md) -- `config.json`: connections, harnesses, improve strategies, bundles, registries, output defaults and environment variables
 - [Programmatic API](api.md) -- `akm-cli/api`: in-process `curate()` for the akm plugins
-- [Bundle Types](bundle-types.md) -- Supported bundle formats and compatibility
-- [CLI](cli.md) -- All `akm` commands and flags
 - [UI API](ui-api.md) -- The read-only JSON API behind `akm ui`
-- [Configuration](configuration.md) -- Connections, harnesses, strategies, bundles, and settings
-- [Supported Formats](supported-formats.md) -- Formats akm can index, from its own bundle layout to other tools' existing asset directories
-- [Tasks](tasks.md) -- Task source v4 grammar, executable targets, scheduling, migration, and scheduler operations
-- [Workflow Schema](workflow-schema.md) -- Authoritative reference for a workflow asset's exact frontmatter and body syntax
-- [Workflows](workflows.md) -- Map of the workflow documentation: running, authoring, the schema, and the engine
-- [Memory](https://github.com/itlackey/akm/blob/main/docs/reference/memory.md) -- The `memory` asset type: capture, belief states, and derived memories
-- [Refs](https://github.com/itlackey/akm/blob/main/docs/reference/refs.md) -- The ref grammar `akm search` emits and `akm show` consumes, rename semantics, and namespacing
-- [Asset Types](https://github.com/itlackey/akm/blob/main/docs/reference/asset-types.md) -- The capability taxonomy the native `akm` adapter recognizes, bundle layout, and asset metadata
-- [Environment & Secrets](https://github.com/itlackey/akm/blob/main/docs/reference/env-and-secrets.md) -- `akm env` and `akm secret`, the two protected-value asset types
-- [Registry](https://github.com/itlackey/akm/blob/main/docs/reference/registry.md) -- Registries, search, hosting, and managing sources
-- [Website Sources](https://github.com/itlackey/akm/blob/main/docs/reference/website-sources.md) -- The pluggable fetcher API behind `akm import <url>` and other URL-based knowledge reads
-- [Data & Telemetry](data-and-telemetry.md) -- Exactly what akm reads and writes on your machine (no remote telemetry)
+- [Data and telemetry](data-and-telemetry.md) -- What akm stores and where, and what it sends over the network
 
+## Assets and bundles
+
+- [Asset types](asset-types.md) -- The asset types the native `akm` layout recognizes and how files map to them
+- [Refs](refs.md) -- The `[bundle//]conceptId[#fragment]` grammar, namespacing and renames
+- [Memory](memory.md) -- The `memory` asset type: capture, belief states and derived memories
+- [Environment and secrets](env-and-secrets.md) -- `akm env` and `akm secret`: what they print and how values reach a process
+- [Supported formats](supported-formats.md) -- The 11 bundle formats akm indexes in place, with their detection markers
+- [Bundle types](bundle-types.md) -- Pointer to the supported-formats table and the adapter internals
+
+## Sources and registries
+
+- [Registry](registry.md) -- Registries: searching, enabling skills.sh, installing bundles and hosting an index
+- [Website sources](website-sources.md) -- Crawl options and the fetcher modules behind `akm import <url>` and website bundles
+
+## Automation
+
+- [Tasks](tasks.md) -- Task source v4, targets, scheduling and scheduler operations
+- [Workflows](workflows.md) -- Map of the workflow documentation
+- [Workflow schema](workflow-schema.md) -- A workflow asset's frontmatter and body syntax

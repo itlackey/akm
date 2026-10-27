@@ -14,8 +14,9 @@ whether a script, a workflow, or a skill covers this, so it starts broad,
 narrows to a ref, and loads that ref's content:
 
 ```sh
-akm curate "deploy the app to staging" --detail agent
-# → ranked shortlist; top hit: {"type":"script","ref":"scripts/deploy.sh","score":0.91,...}
+akm curate "deploy the app to staging"
+# → shortlist; top item: {"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh",
+#                          "followUp":"akm show scripts/deploy.sh","reason":"..."}
 
 akm show scripts/deploy.sh
 # → {"run": "...", "setup": "...", ...} — ready to execute
@@ -29,10 +30,10 @@ whole retrieval loop this guide covers.
 Reach for `akm search` when you already know roughly what you're looking for
 — a type, a keyword, a conceptId prefix — and want a ranked list of matches.
 Reach for `akm curate` when you're starting a task and want akm to do the
-narrowing for you: curate runs a search, attaches previews and follow-up
-commands, and returns a small, high-confidence shortlist rather than a long
-results page. In short: search when you know what you're querying for,
-curate when you know what you're trying to do.
+narrowing for you: curate runs a search and returns a small shortlist rather
+than a long results page, with a reason and a follow-up command for each item.
+In short: search when you know what you're querying for, curate when you know
+what you're trying to do.
 
 ## 2. Discover a shortlist
 
@@ -40,22 +41,27 @@ curate when you know what you're trying to do.
 (BM25) and semantic (vector) matches fused into one list:
 
 ```sh
-akm search "deploy" --type script --detail agent
-# → [{"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh","score":0.0328,...}]
+akm search "deploy" --type script
+# → {"hits":[{"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh",
+#             "action":"akm show scripts/deploy.sh -> ...","estimatedTokens":240}]}
 ```
 
-`akm curate` goes further: it takes the top search hits in order and attaches
-a preview, run details and related support refs — all while including a
-direct `akm show <ref>` follow-up on every result:
+`akm curate` goes further: it takes the top search hits in order, adds related
+support refs, and includes a direct `akm show <ref>` follow-up on every result.
+`--detail normal` also attaches a preview and run details to each item:
 
 ```sh
 akm curate "review an architecture proposal" --type skill
-# → ranked shortlist with akm show skills/code-review as the top follow-up
+# → shortlist with akm show skills/code-review as the top follow-up
 ```
 
-Use `--detail agent` on either command to get the `ref`/`path`/`editable`
-fields an agent needs to act on a hit. See [CLI Reference](../reference/cli.md)
-for the full flag tables and exact output-field lists per `--detail` level.
+At the default `--detail brief` both commands return a `ref` for every hit, which
+is all an agent needs to call `akm show`. `--detail agent` adds each hit's `path`
+and `editable` flag, for agents that read or edit the file directly. To list a
+subtree instead of keyword-matching, end the query with a slash:
+`akm search "knowledge/"` or `akm search "team//skills/"`. See
+[CLI Reference](../reference/cli.md) for the full flag tables and exact
+output-field lists per `--detail` level.
 
 ## 3. Load the selected capability
 
@@ -68,8 +74,10 @@ akm show scripts/deploy.sh
 # → {"run": "...", "setup": "...", "cwd": "...", ...}
 ```
 
-The ref format is `[bundle//]conceptId` — the `bundle//` prefix narrows
-lookup to one installed bundle when a conceptId is ambiguous across bundles.
+The ref format is `[bundle//]conceptId`. A short ref (no `bundle//`) resolves
+against the default bundle first, then the other bundles in installation
+order; the `bundle//` prefix names one bundle when the same conceptId exists
+in several.
 
 ## 4. Load a document section
 
@@ -88,20 +96,19 @@ Every `slug` in `toc` selects its section, including repeated headings, which
 get `-1`, `-2`, ... suffixes. A whole-document show carries the same `toc`
 next to the body.
 
-Search can also return an opaque `#akm-fragment-...` selector for a bounded
-piece of a long document. The exact selector remains the default. For memories
-whose opening context helps interpret a later matching turn, opt into bounded
-lead context:
+To get the document's opening context along with the section, add
+`--context lead` and a budget:
 
 ```sh
-akm show '<ref-from-search>' --context lead --max-tokens 800
-# → indexed-safe document lead, then [Selected matching fragment] and the match
+akm show knowledge/api-guide#authentication --context lead --max-tokens 800
+# → the document lead, then [Selected matching fragment] and the section
 ```
 
-AKM preserves the selected match before lead bytes when the budget is tight and
-reports `contextTruncated` in JSON. The response also distinguishes canonical
-`parentRef` from `selectedRef` and includes fragment position, line bounds,
-neighbors, and separate fragment/parent size estimates.
+AKM keeps the selected section ahead of the lead when the budget is tight and
+reports `contextTruncated` in JSON. The response also carries `selectedRef` (an
+opaque `#akm-fragment-...` handle for that section), `parentRef`,
+`previousRef` and `nextRef`, line bounds, and separate fragment and parent size
+estimates.
 
 An unmatched fragment is an error that lists the available slugs, so a guess
 that misses still tells you what to try next; `--detail brief` is the way to
@@ -132,10 +139,10 @@ its ranking) and does not trigger a rewrite.
 
 ## 6. Troubleshoot an empty or poor result
 
-- **Zero hits on an exact-sounding query** — the search pipeline already
-  retries with prefix matching when the exact query returns nothing, so a
-  true zero usually means the term genuinely isn't indexed yet. Run `akm
-  index` (or `akm index --full` after adding a new source) and search again.
+- **Zero hits on an exact-sounding query** — keyword search matches any of the
+  query's words (common English words are ignored), so a true zero usually
+  means none of them is indexed yet. Run `akm index` (or `akm index --full`
+  after adding a new source) and search again.
 - **Query looks right but nothing comes back** — check `--type`: it's
   free-form and unvalidated, so a typo'd type (`scrpit` instead of `script`)
   silently returns no hits rather than erroring.
@@ -163,4 +170,4 @@ its ranking) and does not trigger a rewrite.
   assets before they're discoverable
 - [Use akm with any agent](use-with-any-agent.md) — how agents reference
   assets by ref in practice
-- [Concepts](concepts.md) — refs, search priority, and the FTS5 index
+- [Concepts](concepts.md) — bundles, refs, and the local index

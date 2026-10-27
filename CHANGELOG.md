@@ -1606,6 +1606,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   schema rejection: one retry without the schema, remembered for the connection. `gpt-oss:120b` through the lab
   gateway needed `supportsJsonSchema: false` set by hand. Other 5xx answers keep the transient-retry path. (#1150)
 
+## [0.9.32] - 2026-10-13
+
+A patch release: `akm feedback` no longer reports success for feedback it could not store.
+
+### Fixed
+
+- **`akm feedback` fails when it cannot record the feedback.** When `state.db` was read-only to the process, as it is
+  inside an agent sandbox that only allows writes in the workspace, the feedback row was silently dropped and the
+  command still printed `"ok": true`. It now fails with a `DATA_DIR_NOT_WRITABLE` config error (exit 78) and records
+  nothing, so an agent knows its feedback was lost. Add akm's data directory to the sandbox's writable paths.
+
 ## [0.9.31] - 2026-10-09
 
 A patch release: concurrent config writes no longer lose a change, OpenAI's reasoning models work as `llm`

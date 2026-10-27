@@ -2199,10 +2199,12 @@ in order:
    than 0.9.15 (the legacy `stashDir`/`sources[]`/`installed` layout) is not
    converted by 0.10 and blocks this step: run `akm migrate apply` under akm
    0.9.x first;
-2. pending `state.db` migrations, historical-destructive ones included, with
-   a verified sibling safety copy (`stateMigrations`) — the only path besides
-   `akm upgrade` that admits released migration 018, which an ordinary
-   command refuses;
+2. pending `state.db` migrations (`stateMigrations`), the ones that drop
+   schema (`018-drop-dead-lane-schema`, `028-improve-ledger`) included. Any
+   akm command that opens `state.db` applies them the same way: before the
+   first pending migration that drops schema, it copies the database beside
+   itself to `state.db.pre-<id>.bak` (`VACUUM INTO`). This step applies them
+   now and reports what it applied and the copy (`safetyCopyPath`);
 3. task files at version 2 or 3, and version 4 files still carrying the
    retired `schedule[].enabled` key, rewritten as task source v4
    (`taskFiles`) under one backup directory per run, each emitted document

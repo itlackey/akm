@@ -1,8 +1,8 @@
 # Maintainer Docs
 
 This is maintainer/contributor documentation, not user-facing. It covers how
-to work on `akm` itself — running it from source, measuring whether changes
-actually improve it, and the current state of the `curate` implementation.
+to work on `akm` itself: running it from source, releasing it, and measuring
+whether changes actually improve it.
 
 - [Local Development](local-development.md) — the explicit launcher for each
   kind of contributor check (live source, built launcher, packed-package

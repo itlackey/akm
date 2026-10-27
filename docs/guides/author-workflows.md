@@ -267,9 +267,8 @@ contract](../reference/workflow-schema.md#the-exec-contract).
 ### Things to get right
 
 - **`command:` is an argv array, not a shell string.** `["bun", "run", "test"]`,
-  never `"bun run test"`. Nothing is shell-parsed, which is what makes it safe;
-  if you truly need a pipeline, write `["bash", "-lc", "a | b"]` and own that
-  choice explicitly.
+  never `"bun run test"`. Nothing is shell-parsed; if you truly need a pipeline,
+  write `["bash", "-lc", "a | b"]` and own that choice explicitly.
 - **No interpolation of run data.** The argv is frozen as authored; the only
   substitution is a `${ref}` token naming an asset. A `map` step's item reaches
   the command as `AKM_ITEM` (canonical JSON) and the run params as `AKM_PARAMS` —
@@ -404,12 +403,10 @@ per-item reviewer, `balanced` as the run default for everything else.
 
 ## Fan-out width
 
-**A `map` step runs its items in parallel by default — 4 at a time as of
-0.9.1.** (Earlier versions defaulted to 1, so a fan-out over 500 items crawled
-through them one by one unless you said otherwise.) Map units are independent
-by construction, so parallel is the honest default; the number is a modest 4
-rather than "whatever the machine can take" so it stays predictable across the
-machines a workflow gets shared with.
+**A `map` step runs its items in parallel by default, 4 at a time.** Map
+units are independent by construction, so parallel is the default; the number
+is a modest 4 rather than "whatever the machine can take" so it stays
+predictable across the machines a workflow gets shared with.
 
 Say so explicitly when the default is wrong for a step:
 
@@ -423,8 +420,8 @@ Say so explicitly when the default is wrong for a step:
 `concurrency: 1` is a genuine opt-out and always wins. Reach for it when the
 units touch a shared resource, when their side effects must happen in list
 order, or when they hit an external service you must not burst. To change the
-default for every workflow on a machine instead — including restoring the old
-serial behavior wholesale — set
+default for every workflow on a machine instead, including making fan-out
+serial wholesale, set
 `akm config set workflow.defaultMapConcurrency 1`.
 
 The declared width is a **ceiling, not a promise**. Three other limits clamp it
@@ -441,13 +438,9 @@ for the full table.
 All of it is frozen into the run when it starts, so an in-flight or resumed run
 keeps the widths it began with even if you edit config or upgrade akm.
 
-A workflow that fans out is authorizing **N parallel agents**, not one — the
-same trust model described in
-[Running Workflows: workflow sources are executed code](run-workflows.md#security-workflow-sources-are-executed-code)
-applies with multiplied blast radius. Give the workflow explicit safety and
-parameter metadata (document every `params` entry, keep destructive steps
-described plainly in the body) so a reader — human or agent — can judge that
-blast radius before running it.
+A fan-out runs N agents at once, not one. Document every `params` entry and
+describe destructive steps plainly in the body, so a reader (human or agent)
+can see what a run will do before starting it.
 
 ## Verify before you publish
 

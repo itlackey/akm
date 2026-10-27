@@ -70,10 +70,10 @@ freezes to a `child-workflow` frozen target. Unlike the `command`/`shell`/
 frozen plan, embedded**: compiling the parent recursively compiles,
 validates, and freezes each child in full — depth-first, all of it — before
 the parent run is ever published. Nothing about a child is re-read at
-dispatch time; the embedded plan is authoritative. See
-[Workflow Schema: Child workflows](../reference/workflow-schema.md#child-workflows)
-for the authoring-side view, including the three composition bounds (depth,
-cycle, aggregate embedded bytes) enforced at freeze.
+dispatch time; the embedded plan is authoritative. A composition cycle is
+refused at freeze (`COMPOSITION_INVALID`, `src/workflows/freeze/targets/child-workflow.ts`).
+See [Workflow Schema: Child workflows](../reference/workflow-schema.md#child-workflows)
+for the authoring-side view.
 
 **Decoding.** An embedded child plan is decoded by the same structural
 decoder as its parent, recursively. Its `planHash` and the target's
@@ -125,11 +125,10 @@ exactly the second executor this design avoids.
 
 **Why `hashVersion` is 7, and why child composition did not move it.** The
 version prefix mixed into a unit's input hash is 7
-(`src/workflows/exec/step-work.ts`); 0.9.2 bumped it — a single, durable
-5 → 7 step, since every released tag on the line carries 5 — when
-`taskInputs`, the resolved values of a composed task's reference-kind
-`inputBindings`, joined the preimage. Child composition
-itself contributed nothing to that bump: the parent unit's input-hash
+(`src/workflows/exec/step-work.ts`); it became 7 when `taskInputs`, the
+resolved values of a composed task's reference-kind `inputBindings`, joined the
+preimage. Child composition itself contributed nothing to that bump: the
+parent unit's input-hash
 preimage already covers everything the child drive depends on — the frozen
 target carries the child's ref, plan hash, content hash, binding mode, and
 its entire embedded plan, so any change anywhere in the child changes the
@@ -153,7 +152,9 @@ Every dispatched unit is journaled under a content-derived identity — the
 node id plus a hash of its item for a map unit (`<node>:solo` otherwise) —
 together with an input hash over everything the unit was asked to do (its
 frozen instructions and target, declared `inputs:` artifacts, the params
-snapshot, gate feedback). On
+snapshot, gate feedback, and the resolved values of a composed task's input
+bindings). Environment bindings enter the hash by name, never by value, and
+`retry` and `onError` do not enter it. On
 re-run, a unit whose journal row is `completed` is **reused**, never
 re-dispatched; a failed or missing unit is dispatched live. The recorded
 input hash is informational: a completed unit stays completed even when the
@@ -182,16 +183,19 @@ dispatching anything: one `O_EXCL` file per run id under the data directory
 holder's pid, released when the invocation exits. A second `workflow run`
 against a run another live process holds refuses up front with
 `RUN_LEASE_HELD` (exit 75), naming the holder pid. A lock whose holder pid is
-dead is reclaimed at once, so a crashed engine never wedges a run; nothing
+dead is reclaimed at once, so a crashed engine does not wedge a run; nothing
 expires by age and nothing renews. `workflow status` and `list` never take
 the lock.
 
 ## Concurrency limits
 
 Native fan-out (`akm workflow run`) uses the minimum of four limits: the
-map's declared `concurrency`, the run's frozen `workflow.maxConcurrency`, the
-selected frozen connection's `concurrency` (a harness has none), and the current host's CPU-derived safety limit. Reapplying
-host safety keeps a run safe when it resumes on a smaller machine.
+map's `concurrency` (4 when the map declares none, or `workflow.defaultMapConcurrency`
+when set), the run's frozen `workflow.maxConcurrency`, the selected frozen
+connection's `concurrency` (a harness has none), and the current host's
+CPU-derived limit. The host limit is applied again on resume, so a run resumed
+on a smaller machine uses fewer workers. The policy lives in
+`src/workflows/concurrency-policy.ts`.
 
 `targetConcurrency` (`src/workflows/freeze/step-values.ts`) freezes the
 connection's value as the target's `concurrency` in the plan, and
@@ -199,12 +203,10 @@ connection's value as the target's `concurrency` in the plan, and
 `llmConcurrency` to cap `map` and `over` fan-out. The scheduler's own default of
 one is a fail-safe for a caller that names no width, not the `map` default.
 
-- **Unset (default):** the CPU-derived value `min(16, max(1, cores − 2))` — a
-  conservative default that leaves headroom on the host and matches the
-  original Claude-Code cap.
+- **Unset (default):** the CPU-derived value `min(16, max(1, cores − 2))`.
 - **Set:** an explicit positive integer, clamped when frozen to `[1, 64]`
-  (values above 64 are clamped down, never rejected, so one config shared
-  across machines with different core counts never hard-fails).
+  (values above 64 are clamped down, so one config can be shared across
+  machines with different core counts).
 
 ```console
 $ akm config set workflow.maxConcurrency 8   # raise the frozen workflow limit
@@ -212,9 +214,8 @@ $ akm config get workflow.maxConcurrency
 8
 ```
 
-A workflow that fans out is authorizing **N parallel agents**, not one — see
-[Running Workflows: workflow sources are executed code](../guides/run-workflows.md#security-workflow-sources-are-executed-code)
-for what that means for trust.
+A fan-out runs up to N agents at once, not one; see
+[Running Workflows](../guides/run-workflows.md).
 
 ## Run identity and persistence
 

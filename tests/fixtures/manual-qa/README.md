@@ -16,4 +16,4 @@ These fixtures support manual testing of the CLI.
 - `seed-proposals.ts` creates fixed proposal queue cases in an already-isolated
   configured bundle.
 
-Never run the mutating fixtures against a real bundle.
+Never run the mutating fixtures against a real bundle; use an isolated sandbox.

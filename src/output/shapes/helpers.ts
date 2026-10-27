@@ -87,7 +87,7 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
   if (detail === "normal") {
     // `confidence` and `gateDecision` (#577) explain why a proposal is pending,
     // so they are projected at `normal` for `akm proposal list/show` when present.
-    // `retirement` (alpha.9) is the same kind of field for a consolidate
+    // `retirement` is the same kind of field for a consolidate
     // `retire` proposal: without it, "list/show" carries no reason a reviewer
     // could act on (its `payload.content` is empty by design — a retire
     // proposal deletes, it does not write).
@@ -320,7 +320,7 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
 
   // Stash hit (local or remote)
   // `ref` is included at `brief` so agents can run `akm show <ref>` without
-  // needing --detail full or --detail agent (REC-03).
+  // needing --detail full or --detail agent.
   if (detail === "brief") {
     return pickFields(hit, ["type", "name", "ref", "action", "estimatedTokens", "keys"]);
   }
@@ -425,7 +425,7 @@ export function shapeShowOutput(
   const base = pickFields(result, [
     "type",
     "name",
-    // ref is always projected, same as path/editable below (R-020).
+    // ref is always projected, same as path/editable below.
     "ref",
     "origin",
     "action",

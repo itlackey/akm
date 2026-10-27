@@ -137,7 +137,7 @@ function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkSta
     : String(ignoredResult.stdout ?? "");
 
   // Data-hygiene filename skips: the legacy metadata sidecar (never indexed as
-  // content — Chunk-8 folds it into the bundle format) plus git dot-files.
+  // content) plus git dot-files.
   const SKIP_FILES = new Set([".stash.json", ".gitignore", ".gitattributes"]);
 
   const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : String(result.stdout ?? "");
