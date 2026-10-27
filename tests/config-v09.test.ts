@@ -460,6 +460,21 @@ describe("0.9 config contract", () => {
     ).toBe(false);
   });
 
+  test("a map key that breaks its naming rule is reported with that rule", () => {
+    const result = validateConfigShape({
+      configVersion: "0.9.0",
+      bundles: { "a:b": { path: "/s" } },
+      improve: { strategies: { Bad: {} } },
+    });
+    expect(result.errors).toEqual([
+      { path: "bundles.a:b", message: "bundle key must be a legal slug (no '/', ':', '.', '#', or whitespace)" },
+      {
+        path: "improve.strategies.Bad",
+        message: "names must be lowercase kebab-case and must not begin with reserved akm-",
+      },
+    ]);
+  });
+
   test("resolveConfiguredSources consumes bundles: defaultBundle first, then map insertion order (D-R4/D-R5)", () => {
     const config = {
       configVersion: "0.9.0",

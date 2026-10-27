@@ -14,6 +14,13 @@ import { isSecretRefToken } from "../../ref-token";
 import { warnOnce } from "../../warn";
 import { ENGINE_NAME_PATTERN_SOURCE } from "../engine-semantics";
 
+// Zod 4 reports a map key its key schema rejects as "Invalid key in record" and keeps that schema's own message
+// (the naming rule, the slug rule) inside the issue; config errors and warnings print only the outer message.
+z.config({
+  customError: (issue) =>
+    issue.code === "invalid_key" ? issue.issues.map((inner) => inner.message).join("; ") : undefined,
+});
+
 /** Persisted config schema version. Package prerelease/patch versions do not change this value. */
 export const CURRENT_CONFIG_VERSION = "0.9.0" as const;
 
@@ -21,6 +28,13 @@ export const CURRENT_CONFIG_VERSION = "0.9.0" as const;
 
 /** Positive integer (used for tokens, timeouts, batch sizes). */
 export const positiveInt = z.number().int().positive();
+
+/**
+ * The catchall of an object whose extra keys are the endpoint's to define (a connection's request fields):
+ * any key, contents left alone. The config walker knows it by identity: a `.passthrough()` object also has an
+ * `unknown` catchall, and its extra keys are ones akm does not define.
+ */
+export const OpaqueFieldSchema = z.unknown();
 
 /** Non-negative finite number (used for scores, weights, days). */
 export const nonNegativeNumber = z.number().finite().min(0);
@@ -117,7 +131,7 @@ export const connectionEndpoint = z.string().superRefine((value, ctx) => {
   }
 });
 
-export const ExtraParamsSchema = z.record(z.unknown()).superRefine((value, ctx) => {
+export const ExtraParamsSchema = z.record(z.string(), z.unknown()).superRefine((value, ctx) => {
   for (const issue of validateExtraParams(value)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: issue.path, message: issue.message });
   }

@@ -32,13 +32,14 @@ describe("config schema drift pins", () => {
     const defs = schema.$defs as Record<string, unknown>;
     const ipc = defs.ImproveProcessConfig as { properties?: Record<string, unknown> };
     const judgment = ipc.properties?.judgment as {
-      anyOf?: Array<{ type?: string; properties?: Record<string, unknown>; additionalProperties?: boolean }>;
+      anyOf?: Array<{ type?: string; properties?: Record<string, unknown>; additionalProperties?: unknown }>;
     };
     const objectArm = judgment.anyOf?.find((arm) => arm.type === "object");
 
     expect(judgment.anyOf?.some((arm) => arm.type === "boolean")).toBe(true);
     expect(Object.keys(objectArm?.properties ?? {})).toEqual(["enabled"]);
-    expect(objectArm?.additionalProperties).toBe(true);
+    // An empty schema: any value, which is how JSON Schema says the object keeps keys it does not name.
+    expect(objectArm?.additionalProperties).toEqual({});
   });
 
   test("where a process runs is improve.processes.<name> and improve.qualityGate, never a strategy's", () => {
@@ -141,11 +142,19 @@ describe("config schema drift pins", () => {
   test("connection, harness and improve-strategy property names match runtime grammar and reserved prefixes", () => {
     const schema = readSchema();
     const properties = schema.properties as Record<string, Record<string, unknown>>;
-    const engineNames = properties.connections!.propertyNames as { maxLength?: number; pattern?: string };
+    const engineNames = properties.connections!.propertyNames as {
+      type?: string;
+      maxLength?: number;
+      pattern?: string;
+    };
     expect(properties.harnesses!.propertyNames).toEqual(engineNames);
     const improve = properties.improve as { properties?: Record<string, Record<string, unknown>> };
-    const strategyNames = improve.properties?.strategies?.propertyNames as { maxLength?: number; pattern?: string };
-    expect(engineNames).toEqual({ maxLength: 63, pattern: ENGINE_NAME_PATTERN_SOURCE });
+    const strategyNames = improve.properties?.strategies?.propertyNames as {
+      type?: string;
+      maxLength?: number;
+      pattern?: string;
+    };
+    expect(engineNames).toEqual({ type: "string", maxLength: 63, pattern: ENGINE_NAME_PATTERN_SOURCE });
     expect(strategyNames).toEqual(engineNames);
 
     const pattern = new RegExp(engineNames.pattern ?? "");

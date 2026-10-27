@@ -262,7 +262,7 @@ describe("config CLI helpers", () => {
         "embedding",
         '{"endpoint":"https://api.openai.com/v1/embeddings","model":"text-embedding-3-small","dimension":384.5}',
       ),
-    ).toThrow(/Expected integer/);
+    ).toThrow(/expected int, received number/);
   });
 
   test("setConfigValue accepts an embedding dimension above 4096 (the vec-table cap is gone)", () => {
@@ -277,8 +277,8 @@ describe("config CLI helpers", () => {
 
   test("setConfigValue rejects invalid output values", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    expect(() => setConfigValue(base, "output.format", "xml")).toThrow(/Expected 'json' \| 'yaml' \| 'text'/);
-    expect(() => setConfigValue(base, "output.detail", "max")).toThrow(/Expected 'brief' \| 'normal' \| 'full'/);
+    expect(() => setConfigValue(base, "output.format", "xml")).toThrow(/expected one of "json"\|"yaml"\|"text"/);
+    expect(() => setConfigValue(base, "output.detail", "max")).toThrow(/expected one of "brief"\|"normal"\|"full"/);
   });
 
   test("setConfigValue rejects retired boolean semanticSearchMode value 'true'", () => {

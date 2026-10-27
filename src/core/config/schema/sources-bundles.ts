@@ -20,7 +20,7 @@ const VALID_ADAPTER_IDS_SET: ReadonlySet<string> = new Set(VALID_ADAPTER_IDS);
 
 // ── Sources / registries / installed ────────────────────────────────────────
 
-const SourceConfigEntryOptionsSchema = z.record(z.unknown());
+const SourceConfigEntryOptionsSchema = z.record(z.string(), z.unknown());
 
 export const SourceConfigEntrySchema = z
   .object({
@@ -81,7 +81,7 @@ export const RegistryConfigEntrySchema = z
     name: z.string().min(1).optional(),
     enabled: z.boolean().optional(),
     provider: z.string().min(1).optional(),
-    options: z.record(z.unknown()).optional(),
+    options: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
