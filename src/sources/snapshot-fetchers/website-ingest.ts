@@ -192,7 +192,7 @@ export async function ensureWebsiteMirror(
         crawlTimeoutMs: resolveCrawlTimeoutMs(config.options?.crawlTimeoutMs),
         resolveSecret: options?.resolveSecret,
         // As-supplied, pre-normalization start URL (see crawlWebsite's
-        // `rawStartUrl` doc comment): threaded through purely for the C-02
+        // `rawStartUrl` doc comment): threaded through purely for the start-URL
         // robots.txt check, which must see the trailing slash the user
         // actually typed before `normalizeSiteUrl` strips it.
         rawStartUrl: rawUrl,
@@ -677,7 +677,7 @@ async function resolveCrawlRobotsDecision(
 /**
  * Fail fast, before any page fetch, when the start URL itself is
  * off-limits per an actually-parsed robots.txt rule. A 5xx on robots.txt
- * itself no longer reaches this as `disallowAll`: `loadRobotsTxt` reports it the same way a
+ * itself does not reach this as `disallowAll`: `loadRobotsTxt` reports it the same way a
  * 4xx is reported (`ALLOW_ALL_RULES`), with its own warning, rather than
  * treating the site's own transient error as a Disallow. The check below
  * stays as defense-in-depth for a `RobotsPolicy` built over some other
@@ -851,7 +851,7 @@ async function crawlWebsite(
 
   // Counts actual `fetchWebsitePage` invocations (regardless of outcome) so
   // Crawl-delay pacing skips the first fetch and never charges a delay slot
-  // to a URL that robots.txt skipped without ever being fetched (C-11).
+  // to a URL that robots.txt skipped without ever being fetched.
   let fetchAttempts = 0;
   // URLs pushed back because their Crawl-delay would not fit in the remaining
   // budget, and URLs that ran out of retries entirely. Reported at the end so
@@ -1119,8 +1119,7 @@ async function fetchWebsiteResponse(
         // origin is the literal string "null", and re-resolving against it
         // throws an unhandled TypeError that aborts the whole crawl. Refuse
         // the hop outright instead of ever handing such a URL to the policy —
-        // `fetchWebsitePage` maps this to a graceful skip. Regression
-        // introduced by a67412c, which fell back to the raw `nextUrl` here.
+        // `fetchWebsitePage` maps this to a graceful skip.
         warnVerbose("[akm] website crawl: skipping redirect to %s (not an http(s) URL)", nextUrl);
         throw new RobotsDisallowedRedirectError(nextUrl);
       }
@@ -1301,7 +1300,7 @@ export function parseLlmsTxtLinks(text: string, baseUrl: string): URL[] {
  * content legitimately contains `##` headings too — so recovered page
  * boundaries can't be trusted, whereas per-page fetches through the existing
  * pipeline are cheap, bounded by this author-curated list, and produce
- * cleanly addressable assets. See the issue's "alternatives considered".
+ * cleanly addressable assets.
  */
 async function fetchLlmsManifest(
   start: URL,
@@ -1357,7 +1356,7 @@ function normalizeCrawlUrl(rawUrl: string): string | null {
 }
 
 /**
- * D-R6: `index.md`/`log.md` are OKF reserved structural filenames at every
+ * `index.md`/`log.md` are OKF reserved structural filenames at every
  * depth — no adapter indexes them, so a crawled page must never land on one.
  * Same remap convention as the content migration (`index.md` →
  * `index-content.md`). Segments are already lowercased by slugifySegment.

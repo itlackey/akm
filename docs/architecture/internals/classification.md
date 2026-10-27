@@ -1,152 +1,132 @@
-# Classification System
+# Classification
 
-akm recognizes files through **bundle adapters**. Each adapter owns a bundle
-format and exposes a `recognize()` primitive that inspects a single file (path +
-frontmatter + content) and returns an `IndexDocument` — the item's
-subdir-qualified `conceptId`, type, renderer, and metadata — or `null` if the
-adapter does not claim the file. There is no longer a global matcher registry;
-the per-format adapter is the unit of recognition.
+akm recognizes files through **bundle adapters**. An adapter owns one bundle
+format. Its `recognize()` method inspects one file (path, frontmatter, content)
+and returns an `IndexDocument` (the item's subdirectory-qualified `conceptId`,
+type, renderer, and metadata) or `null` when the adapter does not claim the
+file. The indexer calls it for every file the walker finds (see
+[Indexing](indexing.md)).
 
 ## Built-in adapters
 
-The registry is a **static frozen list** (`BUILTIN_ADAPTERS` in
-`src/core/adapter/adapters/index.ts`, exposed through
-`src/core/adapter/registry.ts`) — always populated at module load, no
-registration call required. Eleven built-ins, in probe order:
+`BUILTIN_ADAPTERS` in `src/core/adapter/adapters/index.ts` is a frozen list,
+exposed through `src/core/adapter/registry.ts`. Its order is the install-time
+probe order, and `ADAPTER_ID_TABLE` (`src/core/adapter/adapter-ids.ts`) mirrors
+it. There are eleven:
 
 | Adapter id | Format | Recognizes |
 | --- | --- | --- |
-| `website-snapshot` | Crawled website snapshot bundle (read-only) | snapshot pages |
-| `agent-skills` | Agent-skills package (root `SKILL.md`) | skills |
-| `claude` | A `.claude/` tool directory | commands, agents, skills, settings-adjacent files |
-| `opencode` | An `.opencode/` tool directory | commands, agents, skills |
-| `dotenv` | Env-file bundle | env/secret whole-file assets (values never indexed) |
-| `akm-workflow` | Workflow-dir component | workflow programs |
-| `akm-task` | Task-dir component | scheduled task definitions |
-| `llm-wiki` | LLM Wiki bundle | a wiki root (`schema.md` + `pages/`) and its pages, raw, xrefs, citations |
-| `akm` | The classic AKM bundle layout | scripts, skills, commands, agents, knowledge, instructions, workflows, memories, lessons, env, secrets, facts, tasks, sessions |
-| `okf` | Open Knowledge Format bundle | OKF concept documents of any open type |
-| `generic-files` | Catch-all file mount | explicit configuration only — never auto-probed |
+| `website-snapshot` | Crawled website snapshot (read-only) | pages under `stash/knowledge/` that carry the `website` tag or a `sourceUrl`, typed `website` |
+| `agent-skills` | Collection of `<name>/SKILL.md` packages | one `skill` per package directory; bundled resources belong to the skill |
+| `claude` | A `.claude/` tool directory | root `CLAUDE.md` (`instruction`), `commands/`, `agents/`, `skills/<name>/SKILL.md`; skips `settings.json` and `.mcp.json` |
+| `opencode` | An `.opencode/` tool directory | root `AGENTS.md` (`instruction`), `commands/`, `agents/`, `skills/<name>/SKILL.md`; skips `opencode.json` |
+| `dotenv` | Env-file bundle | `env/*.env` as `env` (key names only) and any file under `secrets/` as `secret` (name only) |
+| `akm-workflow` | Workflow bundle | `.md` workflow sources |
+| `akm-task` | Task bundle | `.yml` task sources as `task`; `.yaml` is not recognized |
+| `llm-wiki` | LLM Wiki bundle | a root with `schema.md` and `pages/`: pages (type from frontmatter `pageKind`, default `note`) and `raw/` sources (`wiki-source`) |
+| `akm` | The AKM bundle layout | the types listed under "Item types" below |
+| `okf` | Open Knowledge Format bundle | any `.md` except `index.md` and `log.md`; `type` comes from frontmatter, default `knowledge`; the directory does not change it |
+| `generic-files` | Catch-all mount | scripts as `script`, `.md`/`.txt` as `document`, everything else as `file` |
 
-`looksLikeRoot` probes run most-specific-first in the list order above; the
-first match wins and the winner is recorded per component. A root matching no
-probe falls back to `akm` (see `FALLBACK_ADAPTER_ID` in
-`src/indexer/installations.ts`).
-`generic-files` never participates in probing.
+The first adapter whose `looksLikeRoot` probe matches a root claims it, and the
+winner is recorded per component. A root matching no probe falls back to `akm`
+(`FALLBACK_ADAPTER_ID`, `src/indexer/installations.ts`). `generic-files` is not
+probed. An adapter set in a bundle's config entry (`components.<name>.adapter`,
+validated against the ids above) wins over probing. The probe order puts
+`claude`, `opencode`, and `dotenv` ahead of `akm`, and `akm` ahead of `okf`,
+because AKM Markdown is an OKF-compatible superset.
 
-Configured adapter ownership wins over probing. `akm add` records the detected
-adapter so later indexing does not reinterpret a bundle. The broad OKF probe
-also recognizes index-less typed Markdown, but strong AKM layout evidence runs
-first because AKM Markdown is an OKF-compatible superset.
-
-See [Bundle Types](../../reference/bundle-types.md) for the user-facing detail
-per adapter — conceptId/ref shape, what's indexed, `validate()` checks, and
-read/write status in 0.9.0.
+[Bundle Types](../../reference/bundle-types.md) has the user-facing detail per
+adapter: conceptId shape, what is indexed, `validate()` checks, and whether the
+adapter can write.
 
 ## Item types
 
-`type` is an open descriptive string. The core accepts every non-empty value;
-the owning adapter decides whether a value receives specialized behavior. The
-`akm` adapter emits its fourteen defined native types (`script`, `skill`,
-`command`, `agent`, `knowledge`, `instruction`, `workflow`, `memory`,
-`lesson`, `env`, `secret`, `fact`, `task`, `session`) — see
-[Bundle Types](../../reference/bundle-types.md) for the full
-purpose / agent-output table per type.
+`type` is an open string. The core accepts every non-empty value, and the owning
+adapter decides whether a value gets specialized behavior. The `akm` adapter
+emits fourteen types (`KNOWN_TYPES`, `src/core/recognition-util.ts`): `skill`,
+`command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `env`, `secret`,
+`lesson`, `task`, `session`, `fact`, `instruction`. See
+[Asset Types](../../reference/asset-types.md).
 
-`wiki` is **no longer an item type**. Multi-page wikis are a bundle *format* owned
-by the `llm-wiki` adapter, not a per-file type stamped by the classifier.
+`wiki` is not an item type; multi-page wikis are a bundle format owned by the
+`llm-wiki` adapter.
 
-## Reserved structural files
+## Reserved and skipped files
 
-`index.md` and `log.md` are reserved structural files for the `akm`, `okf`, and
-`llm-wiki` adapters. OKF defines their meaning in OKF bundles; AKM and LLM Wiki
-reserve the same names under their own format contracts. Other adapters own
-their reserved-name rules.
+`index.md` and `log.md` are reserved at every depth and are not items
+(`RESERVED_FILES`, `src/core/adapter/adapters/shared.ts`). The `akm` adapter also
+skips, using path and `stat` checks (`akmStashAbstains`,
+`src/core/adapter/adapters/akm-adapter.ts`):
 
-## Adapter-owned filtering (AKM sensitive/infra abstention)
+- the bundle's root `README.md`;
+- an `env/` `.env` file with a sibling `.sensitive` marker;
+- a `secrets/` file that is a `.sensitive` or `.lock` marker, or that has a sibling `<name>.sensitive` marker;
+- the root-level `schema.md`, `index.md`, and `log.md` of a `wikis/<name>/` directory.
 
-Each adapter decides which walked files it claims and which it abstains on — the
-core always excludes VCS internals and symlink escapes. An OKF walk includes
-ordinary dot directories and `bin/` because those paths can identify conformant
-concepts; AKM keeps its existing cache/dot-directory hygiene. The `akm`
-adapter's `recognize` abstains (returns `null`) on its own bundle's
-non-content files, using **path/stat checks only** so the bytes of sensitive files
-are never read to make the decision:
+The walker itself skips VCS internals. It indexes a symlink to a file like any other file and never descends a symlinked directory.
 
-- an `env/…` `.env` file that has a sibling `.sensitive` marker;
-- anything under the frozen legacy `vaults/` directory (the `vault` type was
-  removed in 0.9.0);
-- a `secrets/` `.sensitive`/`.lock` marker, or a secret with a sibling
-  `<name>.sensitive` marker;
-- a `wikis/<name>/` root-level infrastructure file (`schema.md`/`index.md`/`log.md`).
+## How the akm adapter picks a type
 
-This policy previously lived in the indexer's `shouldIndexStashFile` pre-filter; it
-now lives in the adapter (`akmStashAbstains` in
-`src/core/adapter/adapters/akm-adapter.ts`), so each adapter owns its own bundle's
-filtering (owner ruling 2026-07-21).
+The `akm` adapter runs four matchers from `src/indexer/walk/matchers.ts`
+(`extensionMatcher`, `directoryMatcher`, `parentDirHintMatcher`,
+`smartMdMatcher`). `recognizeMatch` (`src/core/adapter/recognize-match.ts`)
+collects their results and picks the highest specificity. On a tie the matcher
+registered later wins, in the order listed.
 
-## The akm adapter's recognition signals
-
-Inside the `akm` adapter, recognition picks a winner by **specificity descending**,
-ties broken by registration order (later wins). The signals:
-
-| Specificity | Signal | Result |
+| Specificity | Signal | Type |
 | --- | --- | --- |
-| 25 | `SKILL.md` (skill directory) | `skill` |
-| 19 | workflow markdown structure | `workflow` |
-| 18 | command frontmatter / `$ARGUMENTS` body placeholders | `command` |
-| 15 | immediate parent dir hint | directory-specific type |
-| 10 | ancestor dir hint | directory-specific type |
-| 8 | `model` frontmatter only | weak `agent` signal |
-| 5 | fallback markdown | `knowledge` |
+| 25 | file named `SKILL.md` | `skill` |
+| 19 | `type: workflow` in frontmatter | `workflow` |
+| 18 | `agent` in frontmatter, or `$ARGUMENTS` in the body | `command` |
+| 18 | `$1`, `$2`, or `$3` in the body, only when no ancestor directory declares a type | `command` |
+| 15 | immediate parent directory declares a type | that type |
+| 10 | an ancestor directory declares a type | that type |
+| 8 | `model` in frontmatter, nothing stronger | `agent` |
+| 5 | any other `.md` | `knowledge` |
 | 3 | known script extension | `script` |
 
-### Directory signals
+Directories that declare a type (`DIR_TYPE_MAP`) and the files they accept:
 
-- `scripts/` → `script`
-- `skills/` → `skill`
-- `commands/` → `command`
-- `agents/` → `agent`
-- `knowledge/` → `knowledge`
-- `workflows/` → `workflow`
-- `memories/` → `memory`
-- `lessons/` → `lesson`
-- `env/` → `env`
-- `secrets/` → `secret`
-- `tasks/` → `task`
-
-### Markdown signals
-
-| Signal | Type | Specificity |
+| Directory | Type | Files |
 | --- | --- | --- |
-| workflow heading/step structure | `workflow` | 19 |
-| `agent` in frontmatter | `command` | 18 |
-| `$ARGUMENTS` or `$1`-`$3` in body | `command` | 18 |
-| `model` in frontmatter only | `agent` | 8 |
-| any other `.md` | `knowledge` | 5 |
+| `scripts/` | `script` | script extensions |
+| `skills/` | `skill` | `SKILL.md` (other files under a skill are resources, not skills) |
+| `commands/`, `agents/`, `knowledge/`, `instructions/`, `memories/`, `lessons/`, `facts/`, `sessions/` | `command`, `agent`, `knowledge`, `instruction`, `memory`, `lesson`, `fact`, `session` | `.md` |
+| `workflows/` | `workflow` | `.md` |
+| `tasks/` | `task` | `.yml` |
+| `env/` | `env` | `.env` and `*.env` |
+| `secrets/` | `secret` | any file except `.lock` and `.sensitive` |
 
-## Asset quality values
+A `README.md` in a typed directory is not the directory's type; it is indexed
+as `knowledge`. `$ARGUMENTS` and `agent` frontmatter beat a directory hint, so a
+`knowledge/` file containing `$ARGUMENTS` is a `command`. Files under `secrets/`
+are not read for frontmatter.
 
-The `quality` field marks how an item was produced. Four values are well-known:
+## The `quality` field
+
+`quality` marks how an item was produced (`KNOWN_QUALITY_VALUES`,
+`src/indexer/passes/metadata.ts`). The default is `generated`; a frontmatter
+`quality` overrides it.
 
 | Value | Meaning |
 | --- | --- |
-| `"generated"` | Heuristically indexed; included in default search |
-| `"curated"` | Human-authored; included in default search |
-| `"enriched"` | Retired LLM enrichment pass (0.9.17-alpha.9) ran for this item; included in default search |
-| `"proposed"` | Pending review; excluded from default search, opt-in via `--include-proposed` |
+| `generated` | Derived automatically from the file; in default search |
+| `curated` | Human-authored; in default search |
+| `enriched` | Accepted on entries an earlier release enriched; nothing sets it now; in default search |
+| `proposed` | Pending review; left out of search unless `--include-proposed` |
 
-Unknown string values warn once at runtime and remain searchable.
+An unknown value warns once and stays searchable.
 
 ## Examples
 
-| File | Winning signal | conceptId |
+| File in the bundle | Winning signal | conceptId |
 | --- | --- | --- |
-| `scripts/deploy.sh` | parent dir (15) → `script` | `scripts/deploy.sh` |
-| `skills/review/SKILL.md` | `SKILL.md` (25) → `skill` | `skills/review` |
-| `commands/release.md` with `agent: coder` | command frontmatter (18) | `commands/release` |
-| `agents/reviewer.md` | parent dir (15) → `agent` | `agents/reviewer` |
-| `workflows/release.md` with workflow structure | structure (19) → `workflow` | `workflows/release` |
-| `env/prod.env` | parent dir (15) → `env` | `env/prod` |
-| `secrets/deploy-token` | parent dir (15) → `secret` | `secrets/deploy-token` |
-| `docs/guide.md` | fallback (5) → `knowledge` | `knowledge/guide` |
+| `scripts/deploy.sh` | parent directory (15) | `scripts/deploy.sh` |
+| `skills/review/SKILL.md` | `SKILL.md` (25) | `skills/review` |
+| `commands/release.md` with `agent: coder` | frontmatter (18) | `commands/release` |
+| `agents/reviewer.md` | parent directory (15) | `agents/reviewer` |
+| `workflows/release.md` | parent directory (15) | `workflows/release` |
+| `env/prod.env` | parent directory (15) | `env/prod` |
+| `secrets/deploy-token` | parent directory (15) | `secrets/deploy-token` |
+| `docs/guide.md` | fallback (5) | `knowledge/docs/guide` |

@@ -6,9 +6,8 @@ pattern: a markdown-based knowledge base that an LLM agent maintains
 together with a human, on a filesystem it can read and write directly,
 with no special SDK.
 
-**As of 0.9.0 an LLM wiki is a bundle format, not an akm asset type.**
-The `akm wiki` command family was removed with the 0.9.0 bundle-adapter
-architecture; recognition moved into the first-class LLM Wiki adapter.
+An LLM wiki is a bundle format, not an asset type: the LLM Wiki adapter
+recognizes it, and there is no `akm wiki` command.
 
 ## The design
 
@@ -44,13 +43,11 @@ log — all use the agent's native `Read` / `Write` / `Edit` tools. akm's
 job is recognition and discovery: it mounts the wiki, indexes the pages,
 and makes them searchable alongside every other asset.
 
-No LLM calls are made anywhere in the wiki surface. No network access.
+## How akm sees a wiki
 
-## How akm sees a wiki (0.9.0)
-
-The LLM Wiki adapter recognizes a wiki **deterministically at install
-time**: a bundle component whose root holds a `schema.md` plus a
-`pages/` directory is mounted as an `llm-wiki` component. From there:
+The LLM Wiki adapter recognizes a wiki when the bundle is added: a bundle
+component whose root holds a `schema.md` plus a `pages/` directory is mounted
+as an `llm-wiki` component. From there:
 
 - `pages/**.md` are indexed as searchable documents; each page's ref is
   `bundle//conceptId`, where the conceptId is the root-relative path

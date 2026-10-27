@@ -1,10 +1,11 @@
 # Product Surface
 
-Every akm feature, with its status. Status meanings are in
-[STABILITY.md](../STABILITY.md).
+Every akm feature, with its status. Status meanings, and the status of every
+command, are in [STABILITY.md](../STABILITY.md).
 
 > [!NOTE]
-> The 0.10 series makes every feature Stable or removes it.
+> Experimental features may change or be removed in the 0.10 series; STABILITY.md
+> says what is planned for each.
 
 ## Library
 
@@ -27,7 +28,8 @@ Every akm feature, with its status. Status meanings are in
 
 - [`akm improve` and proposals](guides/improve-the-library.md): reviewable changes from feedback and usage. *Evolving*
 - Improve settings and strategies other than `default` and `consolidate`. *Experimental*
-- Automatic acceptance (opt-in). *Experimental*
+- Automatic acceptance (opt-in): `experimental.improveAutonomy` together with a triage `applyMode: "promote"` strategy. *Experimental*
+- `akm proposal drain --promote`: accept the proposals a quality judge passed. *Evolving*
 - Session extraction. *Evolving*
 
 ## Monitor
@@ -40,8 +42,8 @@ Every akm feature, with its status. Status meanings are in
 
 - [Tasks and scheduling](guides/scheduling.md). *Evolving*
 - [Workflows](guides/run-workflows.md). *Experimental*
-- Agent dispatch and harnesses (Claude Code, Codex, OpenCode and others). *Evolving*
-- Model aliases. *Evolving*
+- Agent dispatch (`akm agent`, `akm command run`) and harnesses (Claude Code, Codex, OpenCode and others). *Evolving*
+- Model aliases (`akm models`). *Evolving*
 
 ## Environment and secrets
 
@@ -50,5 +52,5 @@ Every akm feature, with its status. Status meanings are in
 
 ## Setup and maintenance
 
-- Install, setup, config, help, completions. *Stable*
-- Upgrade, including agent plugins and `--next`. *Evolving*
+- Install, setup, info, config, help, completions. *Stable*
+- Upgrade, including agent plugins and `--next`. *Stable*

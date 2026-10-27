@@ -2,7 +2,7 @@
 
 akm works toward two outcomes: bring the agent assets you already have into
 one library, and install (or share) reusable capability bundles with other
-people. Both go through the same primitive — a **bundle** — which can be a
+people. Both go through the same primitive, a **bundle**, which can be a
 local directory, a git repo, an npm package, or a crawled website.
 **Registries** are discovery indexes that let you find bundles you haven't
 heard of yet. Together they give you a unified, searchable library that pulls
@@ -11,25 +11,24 @@ from anywhere and grows over time.
 ## Bring what you already have into one library
 
 If you already have skills, commands, or agent configs scattered across
-different tools, point akm at each of them. Nothing moves — akm indexes assets
-in place — and every asset becomes retrievable through the same search and
+different tools, point akm at each of them. Nothing moves: akm indexes assets
+in place, and every asset becomes retrievable through the same search and
 curate commands regardless of which agent originally created it.
 
 ```sh
 akm bundle add ~/.claude               # Claude Code's project/user assets
 akm bundle add ~/.config/opencode      # OpenCode's config directory
-akm index                              # Bring the search index up to date
 akm curate "plan a release"            # Pull the best matches from every bundle you added
 ```
 
 This is the "one library for every agent" idea in practice: assets authored
-for one tool become discoverable — and usable — from any other.
+for one tool become discoverable, and usable, from any other.
 
 ## akm bundle add
 
-`akm bundle add` connects a new bundle. The source kind is inferred from the
-input: known git hosts and URLs ending in `.git` are git bundles, while other
-HTTP(S) URLs are website bundles.
+`akm bundle add` connects a new bundle and indexes it. The source kind is
+inferred from the input: known git hosts and URLs ending in `.git` are git
+bundles, while other HTTP(S) URLs are website bundles.
 
 ```sh
 akm bundle add ~/.claude/skills                          # Local directory (filesystem)
@@ -57,33 +56,30 @@ akm bundle add github:owner/team-bundle --name team --before community
 | Bundle kind | Input shape | Behavior |
 | --- | --- | --- |
 | `filesystem` | local path | Indexed in place, writable by default |
-| `git` | `github:`, known git-host URL, or URL ending in `.git` | Cloned into `~/.cache/akm/registry/`, read-only by default |
-| `npm` | `@scope/pkg` | Installed into cache, read-only |
-| `website` | Other HTTP/HTTPS URL | Crawled and converted to markdown when added; re-crawled by `akm bundle update` |
+| `git` | `github:`, known git-host URL, or URL ending in `.git` | Cloned into the akm cache, read-only by default |
+| `npm` | `@scope/pkg` | Installed into the akm cache, read-only |
+| `website` | Other HTTP/HTTPS URL | Crawled into the akm cache and converted to markdown, read-only |
 
-`akm bundle add` materializes and indexes Git install refs before it reports
-success. A declarative `--provider git` add does the same, including writable
-checkouts. Other declarative provider entries are materialized by
-`akm bundle update`.
+**Bundle naming.** `--name` sets the bundle's key; akm's config, index, and
+every persisted ref hang off it. It must be a legal bundle slug (no `:` `.`
+`#` `/` or whitespace), and it must not already be taken by a different
+bundle, or the add fails before writing anything. Re-adding a source that is
+already installed under a different `--name` also fails, naming the existing
+key; use [`akm bundle rename`](#akm-bundle-rename) to relabel it. Every
+`akm bundle add` result carries `bundleId`, the resolved key. Without `--name`,
+akm derives one (the directory name, the package or repo name, or the
+hostname), adding a `-<hash>` suffix only on a collision.
 
-**Bundle naming.** `--name` sets the bundle's key — akm's config, index, and
-every persisted ref hang off it. It is a contract, not a hint: it must be a
-legal bundle slug (no `:` `.` `#` `/` or whitespace), and it must not already
-be taken by a different bundle, or the add fails before writing anything.
-Re-adding a source that is already installed under a different `--name` than
-it already carries also fails, naming the existing key — use
-[`akm bundle rename`](#akm-bundle-rename) instead of trying to relabel it
-through `add`. Every `akm bundle add` result carries `bundleId` (its
-resolved key), so scripting against the JSON output never has to guess it
-back out of `sourceAdded`/`installed`. Without `--name`, akm derives one
-(the directory name, the package/repo name, or the hostname), falling back to
-a `-<hash>` suffix only on a collision — that forgiving fallback applies
-solely to a derived name, never to an explicit `--name`.
+Git credentials are given as a reference, `$VAR`, `${VAR}`, or an akm ref such
+as `${secrets/gitea_token}`, never as a literal token; akm resolves it when it
+runs git and does not write it to the remote URL or `config.json`. A plain
+`http://` source URL (other than localhost) needs `--allow-insecure-transport`.
 
-Git credentials must be symbolic references: `$VAR`, `${VAR}`, or an akm ref
-such as `${secrets/gitea_token}`. AKM resolves the reference only at the Git subprocess boundary
-and sends it as an HTTPS bearer header; it does not put the token in the remote
-URL or `config.json`.
+Installing a bundle is the trust decision: it makes its scripts, prompts and
+workflows available to your agent, and `akm bundle add` does not inspect its
+`env/` files. A website sync (and `akm import <url>`) also imports and runs every
+`.ts`, `.js` or `.mjs` module in your working bundle's
+`scripts/wiki-fetchers/` directory as a custom fetcher.
 
 **Website bundles.** A `website` URL is offered to a set of specialized
 fetchers (YouTube, Bluesky, X, RSS/Atom feeds) before falling back to a
@@ -93,7 +89,7 @@ is configurable. See the
 [Website Sources](../reference/website-sources.md) for the full fetcher
 reference, X credential setup, and crawl-option details. Low-level knobs like
 `crawlTimeoutMs` and `respectRobots` live in the bundle's `website`
-descriptor — see [Configuration](../reference/configuration.md).
+descriptor; see [Configuration](../reference/configuration.md).
 
 **Index only a subdirectory of a git bundle.** Add the repo, point the
 bundle's component `root` at the subdirectory, then update:
@@ -113,14 +109,13 @@ effect on the next `akm bundle update` or `akm index`.
 
 ```sh
 akm bundle add github:my-org/team-bundle --name team
-akm index
 akm search "deploy" --type script
 ```
 
 ## akm bundle list
 
-`akm bundle list` shows all configured bundles — local directories, managed
-packages, and remote providers — so you know what is in your library.
+`akm bundle list` shows all configured bundles (local directories, managed
+packages, and remote providers) so you know what is in your library.
 
 ```sh
 akm bundle list                          # All bundles
@@ -135,18 +130,23 @@ Valid `--kind` values are the four bundle providers: `filesystem`, `git`,
 
 ## akm bundle update / akm bundle remove
 
-`akm bundle update` refreshes git, npm, and website bundles. Each candidate is
-staged outside its active root and only then published and indexed. Installing
-a bundle is the trust decision: neither `add` nor `update` inspects its `env/`
-files, so a bundle that sets `PATH` in an env file installs and refreshes
-unattended with no flag. `akm bundle remove` disconnects a bundle and
-re-indexes without it.
+`akm bundle update` re-fetches git, npm, and website bundles into a staging
+directory, then publishes and indexes the result. Installing a bundle is the
+trust decision: neither `add` nor `update` inspects its `env/` files, so a
+bundle that sets `PATH` in an env file installs and refreshes unattended with no
+flag. `akm bundle remove` disconnects a bundle and re-indexes without it.
 
-Bundle refresh is deliberately explicit: git, npm and website bundles do not
-poll upstream on their own, and `akm index` never re-fetches one. Consumers that want automatic refresh should schedule
-`akm bundle update <name>` or `akm bundle update --all`. Scheduled invocations
-should pass `--skip-if-locked` so concurrent index or improve activity becomes
-a successful skip instead of exit 75.
+Nothing refreshes on a timer. A bundle is fetched when you add it and when you
+run `akm bundle update`. `akm index` fetches a bundle only if it has never been
+materialized on this host, such as a website or a `--provider git` bundle in a
+config you copied to a new machine; it does not re-fetch a bundle that is
+already there, however old. For a git, GitHub or npm install whose files are
+missing, `akm index` warns and names `akm bundle update` instead of fetching. An
+npm bundle in config with no lock entry (for example a config copied to a new
+machine) is skipped with the same warning; `akm bundle update` installs it.
+To refresh on a schedule, schedule `akm bundle update --all --skip-if-locked`,
+where `--skip-if-locked` turns database contention with a concurrent index or
+improve run into a successful skip instead of exit 75.
 
 ```sh
 # Update
@@ -169,72 +169,51 @@ previous revision directory is kept and older ones are removed.
 
 `--allow-dangerous-env-keys` and `--yes` are deprecated no-ops on update,
 accepted through 0.10 so existing scripts keep working.
-For `--all`, failed bundles are reported separately and later bundles continue.
-A failed bundle keeps its prior bytes, lock/config state, and search-index
-generation.
 
-Private bundles that intentionally version every file under `env/` and
-`secrets/` can place this documented marker anywhere in their root
-`.gitignore`:
+With `--all`, a bundle that fails is reported and the rest continue; a failed
+bundle keeps its previous contents and index. If an update is interrupted, rerun
+`akm bundle update <name>`, then `akm health`, and `akm index --full` if health
+reports an index or state mismatch.
 
-```gitignore
-# akm: intentionally track env and secrets
-```
-
-The stash scaffold then leaves the ignore file unchanged. Use this only for a
-private remote whose exposure policy you have reviewed.
-
-During publication AKM holds a SQLite writer transaction across the index and
-the update-owned state work. Existing readers keep seeing the prior generation,
-but other writers may wait for a full index pass. This provides process-fault
-rollback for handled errors, not atomic durability across the filesystem and
-two WAL database files during `SIGKILL`, power loss, or storage failure. After
-such a failure, stop writers, run `akm health`, rerun the targeted update if its
-checkout/lock is not the intended revision, and run
-`akm index --full`. The `index-state-generation` advisory detects mismatched
-durable usage links; it cannot detect every theoretical cross-file split.
+New bundles get a `.gitignore` that keeps `env/` and `secrets/` out of git. A
+private bundle that versions them on purpose can put
+`# akm: intentionally track env and secrets` anywhere in its root `.gitignore`
+and akm leaves the file alone.
 
 **Example: keep bundles fresh**
 
 ```sh
-akm bundle update --all && akm index
+akm bundle update --all
 ```
 
 ## akm bundle rename
 
 `akm bundle rename <old> <new>` is the one command allowed to change a
-configured bundle's key. A bundle id is a mass identity prefix: every ref this
-tool minted (`entries.item_ref`, `proposals.ref`, a pending proposal's write
-target, a workflow's `task_history.target_ref`, `scheduler.enabled[].ref`)
-carries it, so hand-editing the `bundles` key in `config.json` strands all of
-it — the rest of akm keeps reading the old prefix out of the index and state
-databases while config names the new one.
+configured bundle's key. A bundle id prefixes every ref akm has stored (index
+entries, proposals, workflow history, `scheduler.enabled`), so editing the
+`bundles` key in `config.json` by hand leaves all of those pointing at the old
+name.
 
 ```sh
 akm bundle rename old-name new-name --dry-run   # See the plan first
 akm bundle rename old-name new-name
 ```
 
-`<new>` must be a legal, unused bundle slug — the same `--name` contract
-`akm bundle add` enforces. Rewritten: the config key,
-`defaultBundle`/`defaultWriteTarget` when they name the old id, every
-scheduler ref, the lockfile entry, every indexed entry's `bundle_id`, and
-this tool's own state rows that name the old bundle. Reported, never rewritten:
-refs inside the bundle's own content (cross-references, a task's `uses:`,
-`supersededBy`) — the command lists the files that still spell the old
-`<old>//` prefix so you can fix them by hand. A real run also re-syncs native
-scheduler bindings under the new name on its own, so scheduled tasks pick it
-up immediately — but the result's `taskSync.ok` is `false` when a binding
-fails to re-sync too, not only when the sync call itself fails, so a partial
-re-sync is never reported as clean; `--dry-run` lists the installed native
-rows that still name the old bundle, so you can see what that sync will
-replace.
+`<new>` must be a legal, unused bundle slug, the same rule `akm bundle add
+--name` enforces. The rename rewrites the config key, `defaultBundle` and
+`defaultWriteTarget` when they name the old id, scheduler refs, the lockfile
+entry, indexed entries, and akm's own state rows, and re-syncs native
+scheduler bindings under the new name (`taskSync.ok` is `false` when a binding
+fails to re-sync). Refs inside the bundle's own content (cross-references, a
+task's `uses:`, `supersededBy`) are not rewritten; the result lists the files
+that still spell the old `<old>//` prefix so you can fix them by hand.
 
 ## akm clone
 
-`akm clone` copies a single asset from any bundle into your writable bundle
-(or a custom destination) for local editing. After cloning, your local copy
-wins in subsequent searches automatically.
+`akm clone` copies a single asset from any bundle into your working bundle (or
+the bundle named by `--bundle`) for local editing. The copy is a separate asset
+with its own ref; `akm show` with a short ref prefers the copy in your default
+bundle, while the original stays where it was.
 
 ```sh
 akm clone scripts/deploy.sh
@@ -243,24 +222,23 @@ akm clone scripts/deploy.sh --dest ./project/.claude
 akm clone "npm:@scope/pkg//scripts/deploy.sh"   # From uninstalled package
 ```
 
-Clone is non-destructive: use `--force` to overwrite an existing local copy.
-Skills (directories with `SKILL.md`) are copied recursively. All other types
-copy a single file.
+Clone does not overwrite: use `--force` to replace an existing copy. Skills
+(directories with `SKILL.md`) are copied recursively. All other types copy a
+single file. `--dest` writes to a plain directory instead of a bundle; akm
+indexes it only if you also add it as a bundle.
 
 **Example: clone and customize a workflow**
 
 ```sh
-akm clone workflows/ship-release --dest ./project/.claude
-# Edit ./project/.claude/workflows/ship-release.md
-# The local copy wins in searches from this directory forward
+akm clone workflows/ship-release
+# Edit the copy in your working bundle; akm show workflows/ship-release now returns it
 ```
 
 ## akm sync
 
 `akm sync` stages, commits, and optionally pushes your writable bundle. It is
 the complement to `akm bundle add`: once you have made changes locally,
-`sync` persists them to git. (There is no `akm save` command — use
-`akm sync`.)
+`sync` persists them to git.
 
 ```sh
 akm sync                          # Primary bundle, auto timestamp message
@@ -273,13 +251,10 @@ remote and `writable: true`, sync first fetches and merges what another host
 pushed, then pushes. A conflicting merge is aborted and the push skipped (your
 commit stays). Otherwise it commits only.
 
-Writes that land on a writable git bundle via an explicit destination flag
-(e.g. `akm remember --bundle my-skills`, proposal accept/revert, consolidate)
-are committed automatically in a single batch at the end of the operation —
-one complete commit (staging `.akm/` + assets together), pushed under the
-same `writable + remote` gate as `akm sync`. `options.pushOnCommit` is
-rejected at config load; remove it and rely on `writable: true` + push
-instead.
+Writes akm makes to a writable git bundle (for example
+`akm remember --bundle my-skills`, `akm proposal accept`, or an improve run)
+are committed as one commit at the end of the operation, and pushed when the
+bundle has an upstream.
 
 **Example: publish your own bundle**
 
@@ -291,22 +266,15 @@ akm sync -m "Add deployment skills"
 # → stages, commits, and pushes to your configured remote
 ```
 
-For the full workflow of turning a bundle into something others can install —
-manifest conventions, versioning, and publishing to a registry — see the
+For the full workflow of turning a bundle into something others can install
+(manifest conventions, versioning, and publishing to a registry), see the
 [Bundle Author's Guide](author-bundles.md). For how a bundle's provider kind
 maps to the code that indexes and fetches it, see
 [Architecture](../architecture/architecture.md).
 
-## Install and share reusable capability bundles
-
-The other half of the bundle story is discovery: finding bundles other people
-have published, and publishing your own so others can install it. `akm bundle
-add` (above) is how you install one once you know where it lives; the
-registry (below) is how you find it in the first place.
-
 ## akm registry
 
-The registry is a discovery index — it lets you find and install bundles you
+The registry is a discovery index: it lets you find and install bundles you
 don't know about yet. The official registry ships pre-configured.
 
 ```sh
@@ -321,7 +289,6 @@ Once you find an interesting bundle in the registry, install it with `akm bundle
 ```sh
 akm search "kubernetes" --from registry
 akm bundle add github:some-org/k8s-bundle
-akm index
 ```
 
 For the registry index schema, hosting a private registry, and how entries

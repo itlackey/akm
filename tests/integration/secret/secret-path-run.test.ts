@@ -89,7 +89,7 @@ async function runCli(
   });
 }
 
-describe("secret path / secret remove — removed in 0.9.0 (R-027 / D-49)", () => {
+describe("secret path / secret remove — removed in 0.9.0", () => {
   test("`akm secret path <ref>` fails loudly: exit 2, citty's Unknown command, no path printed", () => {
     const stashDir = makeStash();
     const fp = path.join(stashDir, "secrets", "demo");

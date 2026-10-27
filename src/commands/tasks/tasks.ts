@@ -315,10 +315,10 @@ export async function akmTasksRun(
   const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
   const resolvedId = taskIdForAdapter(parsed.id, adapterId);
   const scheduled = options.scheduled === true;
-  // Built ONCE at this invocation boundary. eventSource is "task"
-  // whether or not --scheduled was passed — scheduled stays a
-  // separate field carrying its own pre-existing meaning (activation policy,
-  // scheduler env), never selecting the event source.
+  // Built ONCE at this invocation boundary. eventSource is "task" whether or
+  // not --scheduled was passed — scheduled stays a separate field carrying its
+  // own meaning (activation policy, scheduler env), never selecting the event
+  // source.
   const provenance = createExecutionProvenanceContext(scheduled);
   // The raw, exact-name input flags `tasks-cli.ts`'s Stage 1 captures ride
   // through unchanged to `runTask` -> `loadPreparedTask`'s Stage 2 materializer,
@@ -343,8 +343,8 @@ export async function akmTasksRun(
   // projectability, and resolver failures therefore create no history row.
   const result = await runTask(resolvedId, runOptions);
   // "command" means the agent/LLM arm — the native shell/script arm reports
-  // "shell" / "script" — so a shell/script task's process exit 78 still passes
-  // through as CLI exit 78 (documented behavior, src/assets/hints/cli-hints-short.md).
+  // "shell" / "script". A shell/script task's process exit 78 passes through
+  // as CLI exit 78 (documented behavior, src/assets/hints/cli-hints-short.md).
   const exitCode =
     result.status === "failed" &&
     (result.target.kind === "shell" || result.target.kind === "script") &&
@@ -827,11 +827,7 @@ export interface TasksDoctorResult {
   scheduleSubset: string;
   warnings: string[];
   /**
-   * Effective proposal-queue triage settings for the default improve strategy.
-   * Absent when the resolved strategy has no `triage` process block.
-   */
-  /**
-   * D8 — the autonomy gate's effect on the default improve strategy. A scheduled
+   * The autonomy gate's effect on the default improve strategy. A scheduled
    * run that quietly stopped consolidating is the silent no-op the gate exists
    * to prevent, and this is where an operator looks for the explanation.
    */
@@ -840,6 +836,10 @@ export interface TasksDoctorResult {
     configKey: string;
     gatedLanes: { lane: string; reason: string }[];
   };
+  /**
+   * Effective proposal-queue triage settings for the default improve strategy.
+   * Absent when the resolved strategy has no `triage` process block.
+   */
   improveTriage?: {
     defaultStrategy: string;
     enabled: boolean;
@@ -879,10 +879,9 @@ export async function akmTasksDoctor(
   const defaultEngine = (defaultHarness(config) ?? defaultConnection(config))?.name;
   const engines = [...Object.keys(config.connections ?? {}), ...Object.keys(config.harnesses ?? {})];
 
-  // §6.1: surface the effective triage settings for the default improve
-  // strategy. The struct is a fixed shape, so this is a deliberate addition.
+  // Surface the effective triage settings for the default improve strategy.
   const improveStrategyName = config.improve?.strategy ?? "default";
-  // D8 — report the EFFECTIVE strategy, not the raw one. Resolving the raw
+  // Report the EFFECTIVE strategy, not the raw one. Resolving the raw
   // strategy here would report `applyMode: "promote"` for a promote strategy
   // under a review-first config, while the run actually uses "queue" — a doctor
   // command lying about the thing it exists to diagnose.
@@ -1074,7 +1073,7 @@ interface RenderInput {
 
 /**
  * Infer a JSON-Schema-subset `type` keyword from one `--params` value's
- * runtime shape. `null` is not one of the five runtime types
+ * runtime shape. `null` is not one of the five usual runtime types
  * (string/number/boolean/object/array) but is a value JSON.parse can still
  * produce for a param; `src/core/json-schema.ts`'s subset validator accepts
  * `"null"` as a `type`, so it is handled rather than mis-typed.
@@ -1088,9 +1087,9 @@ function jsonSchemaTypeOf(value: unknown): string {
 /**
  * Render `--params` as typed `inputs:` declarations, one per key, each
  * carrying a `default:` equal to the authored value and a `type:` inferred
- * from its own JSON runtime shape (row B-20). Never emitted as `with:` —
- * task source v4 accepts `with:` only on `uses: akm/command` (§3.2.6's
- * `parseTarget`/`checkTopLevelKeys`), and a workflow target's declared
+ * from its own JSON runtime shape. Never emitted as `with:` —
+ * task source v4 accepts `with:` only on `uses: akm/command`
+ * (`parseTarget`/`checkTopLevelKeys`), and a workflow target's declared
  * inputs are what `load-task.ts`'s existing v4 delivery override binds into
  * the child run's params.
  */

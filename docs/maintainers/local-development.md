@@ -65,14 +65,6 @@ scheduled tasks that invoke `akm`. Re-run `akm task sync --rebind` only when you
 intend existing scheduler entries to capture the new installed runtime, then
 verify with `akm task doctor`.
 
-## Transitional Machine-Local Wrapper
-
-Some development machines still have a historical machine-local wrapper. Leave
-that file untouched, but treat it as transitional: do not document wrapper
-modes, depend on it in tests, or use it to choose between source and package
-behavior. Invoke `bun src/cli.ts`, `node dist/akm`, or `bun run test:package`
-explicitly instead.
-
 ## Inspecting a Live Database
 
 `state.db`, `logs.db`, and `index.db` are WAL-mode SQLite databases that akm
@@ -85,14 +77,9 @@ sqlite3 -readonly ~/.local/share/akm/state.db ".backup /tmp/state-snapshot.db"
 ```
 
 Do not open a live akm database with a plain (read-write) `sqlite3`
-connection, even just to run `.backup`. Through 0.9.17 an akm process could
-silently lose its SQLite file locks (copying the database file inside a
-process that holds it open drops them). An older `sqlite3` (< 3.51, and
-Python's `sqlite3` module on many hosts) opened read-write at that moment
-sees no other reader, takes an exclusive lock when it closes, and deletes the
-`-wal`/`-shm` files akm is still using: that produced a `state.db` with
-colliding rowids and stale index entries. `-readonly` avoids the whole class
-of risk by never taking a write connection.
+connection, even just to run `.backup`: a read-write connection can delete the
+`-wal`/`-shm` files akm is still using. `-readonly` never takes a write
+connection.
 
 ## Verification
 

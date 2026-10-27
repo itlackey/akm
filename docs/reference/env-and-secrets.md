@@ -1,22 +1,21 @@
 # Environment & Secrets
 
-Reference for `akm env` and `akm secret` — the two protected-value asset
-types. For task-oriented guidance on capturing knowledge in general, see
-[Capture Knowledge](../guides/capture-knowledge.md); this page states exact
-contract, defaults, and security behavior.
+Reference for `akm env` and `akm secret`, the two asset types for values that
+should not be printed. For task-oriented guidance on capturing knowledge in
+general, see [Capture Knowledge](../guides/capture-knowledge.md); this page
+states the exact behavior and defaults.
 
 ## env vs secret
 
 `akm env` manages a `.env`-backed group of configuration (a whole `.env` file
-loaded wholesale). `akm secret` manages a single standalone sensitive value —
-one value per file, mirroring Docker's secret model. There is no `akm vault`
-command; use `env` or `secret`.
+loaded wholesale). `akm secret` manages a single standalone sensitive value,
+one value per file, mirroring Docker's secret model.
 
 | | `env` | `secret` |
 | --- | --- | --- |
-| Purpose | configuration — related settings for an app/service | authentication — one sensitive value |
+| Purpose | configuration: related settings for an app or service | authentication: one sensitive value |
 | Holds | a `.env` file of many `KEY=value` pairs | one value per file |
-| Discoverable | key *names* (not values) | name only (the whole file is the value) |
+| Listed as | key *names* | name only |
 | Injects | many vars at once (`env run`) | one var (`secret run <ref> <VAR>`) |
 
 ## Addressing: the akm ref
@@ -29,28 +28,30 @@ the full ref (`secrets/<name>`, `env/<name>`). An unqualified ref resolves the
 way every unqualified ref does: the default bundle first, then installation
 priority.
 
-## Core security guarantee
+## What each command prints
 
-Values never appear in akm's structured output. `env list` and `akm show
-env/<name>` surface key names only — comment text is never surfaced either,
-since comments routinely contain commented-out credentials and are treated
-like values. `secret list` surfaces the secret's name only; the file content
-is never shown. Values reach a process only through the safe injection
-paths, `akm env run` and `akm secret run`, which pass values directly into
-the child process — never through akm's own stdout, the index, or `akm
-show`.
+- `akm env list` and `akm show env/<name>` print key names only: no values and
+  no comment text.
+- `akm secret list` prints secret names only.
+- `akm env path <ref>` prints the absolute path of the env file.
+- `akm env export <ref> --out <file>` writes a sourceable `export KEY='value'`
+  script to the file (mode 0600), single-quoting each value so shell
+  substitutions in the source `.env` become literal strings. It requires
+  `--out` and prints no values to stdout.
+- Values reach a process through `akm env run` and `akm secret run`, which
+  place them in the child process's environment.
 
 ```sh
 akm env create env/prod                   # create an empty .env group
 akm env create env/prod --from-file ./.env  # or ingest an existing .env
 
-# akm does not manage individual keys — edit the whole file with your own editor:
+# akm does not manage individual keys; edit the whole file with your editor:
 $EDITOR "$(akm env path env/prod --quiet)"
 
 akm env list
-akm show env/prod                         # key names only
+akm show env/prod                         # key names only (see "Indexing" below)
 
-# Inject the whole .env into a subprocess (never onto stdout):
+# Inject the whole .env into a subprocess:
 akm env run env/prod -- ./deploy.sh
 akm env run env/prod -- $SHELL            # interactive session with the env loaded
 akm env run env/prod --only DATABASE_URL -- ./migrate
@@ -62,11 +63,6 @@ akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0
 # Write into a specific source instead of the working bundle:
 akm secret set secrets/deploy-token --bundle team --from-file ./token
 ```
-
-`env export --out <file>` writes a safe, sourceable `export KEY='value'`
-script (re-serialised single-quoted, so shell substitutions in the source
-`.env` become literal strings) — it requires `--out` and never prints values
-to stdout.
 
 ## The `${ref}` token
 
@@ -119,16 +115,40 @@ env file is bundle content and is not rewritten; write the full ref.
 config still reads it as `${secrets/name}` and names the key once, and `akm
 migrate apply` rewrites the file.
 
-## File modes and storage
+## Running commands
 
-`.env` files are stored at mode 0600 under `env/` in the target bundle;
-standalone secrets are stored at mode 0600 under `secrets/`. A secret write
-is atomic under an exclusive per-secret lock held in akm's data directory;
-maximum secret size is 5 MB.
-Values never cross argv (no `/proc/cmdline` exposure). An `env` file or
-secret can carry a sibling `.sensitive` marker that excludes it from `list`
-output and from the search index entirely; the value remains usable via
-`run`.
+`akm env run <ref> -- <command>` and `akm secret run <ref> <VAR> -- <command>`
+spawn the command directly (no shell) with the values added to its environment.
+They exit with the command's status and are exempt from `--format`.
+
+- `env run` takes `--only KEY,KEY` or `--except KEY,KEY` to choose which
+  variables are injected.
+- `--clean` starts the child with a minimal inherited environment (`PATH`,
+  `HOME`, locale and terminal basics) instead of the full parent environment;
+  `--inherit NAME,NAME` adds parent variables back (only with `--clean`).
+- A value in an env file may contain a `${ref}` token, which `env run` replaces
+  (see [The `${ref}` token](#the-ref-token)).
+- Injected values stay in the child's environment for its whole lifetime, so its
+  own subprocesses can read them, and the child decides what it writes to
+  stdout and stderr. For a long-lived process, point it at the secret file
+  (`<bundle>/secrets/<name>`) directly instead.
+- Installing a bundle is the trust decision: `env run`, `secret run` and
+  workflow `env:` bindings inject what the bundle's files define, including
+  keys such as `PATH` or `LD_PRELOAD`, from any bundle, with no warning, block
+  or flag. `akm lint` still reports such keys (`dangerous-env-key`,
+  non-blocking) so an author can review their own files.
+- Each run records an `env_access` or `secret_access` event with the key or
+  variable names.
+
+## Files and storage
+
+Env files live under `env/` and secrets under `secrets/` in the target bundle,
+with mode 0600. A secret is written under an exclusive per-secret lock held in
+akm's data directory. `akm secret set` reads the value from stdin by default,
+or from `--from-file` (byte-exact, multi-line allowed) or `--from-env <VAR>`,
+so the value is not on the command line. `akm env create --sensitive` adds a
+sibling `.sensitive` marker; an env file or secret with that marker is left
+out of `list` output and the search index, and `run` still works on it.
 
 An env file or secret may be a symlink to a file anywhere else, such as a
 container's `/run/secrets/<name>`: `akm env`, `akm secret`, `${secrets/name}`
@@ -136,59 +156,36 @@ substitution and a workflow `env:` binding follow it. A name still cannot climb
 out of `env/` or `secrets/` with `..` or an absolute path. Writes never follow
 a symlink out of the bundle.
 
+### Indexing
+
+`akm bundle create` makes the bundle a git repository whose `.gitignore` lists
+`env/` and `secrets/`, so those files are never committed. The indexer skips
+git-ignored files everywhere else, but it still indexes the files under a
+bundle's `env/` and `secrets/` directories when git ignores them: `akm search
+--type env` and `akm show env/<name>` find an env file of a default bundle after
+`akm index`. The index holds key names only for an env file and the name for a
+secret; values are never indexed. `env list`, `env path`, `env export`,
+`env run`, `secret list` and `secret run` read the files directly and do not
+need the index.
+
 ## Write-target resolution
 
-Env/secret **mutations** (`env create`, `env remove`, `secret set`) choose
-their write destination like every other write command: an explicit
-`--bundle <source>` wins, else `defaultWriteTarget`, else the working
-bundle. The chosen source must be writable — a non-writable target fails
-with a `ConfigError` before anything is written — and a git-backed writable
-target commits the mutation at a single operation boundary. Reads (`list`,
-`show`, `path`, `run`, `export`) still span all configured sources.
-
-## Subprocess residency
-
-`akm env run` and `akm secret run` inject values directly into the child
-process — never through a shell — but the child controls its own
-stdout/stderr, so a command that prints its own environment will still leak
-values into your terminal or agent transcript. Injected values live in the
-child process environment for its entire lifetime and are visible to every
-subprocess the child spawns.
-
-- Prefer `akm secret run secrets/<name> <VAR> -- <command>` over `akm env
-  run` when a command only needs one value.
-- Avoid `env run` / `secret run` for long-lived daemon or server processes;
-  for those, point the process at the secret file directly
-  (`<bundle>/secrets/<name>`) so the value never sits in a process
-  environment variable at all.
-- Avoid running commands that print the environment (`env`, `printenv`,
-  shell tracing, verbose diagnostics) in agent contexts unless you
-  explicitly intend to expose the child environment.
-- Installing a bundle is the trust decision: `env run`, `secret run` and
-  workflow `env:` bindings inject what the bundle's files define, including
-  keys such as `PATH` or `LD_PRELOAD`, from any bundle, with no warning, block
-  or flag. `akm lint` still reports such keys (`dangerous-env-key`,
-  non-blocking) so an author can review their own files.
+Env and secret mutations (`env create`, `env remove`, `secret set`) choose their
+destination like every other write command: an explicit `--bundle <source>`,
+else `defaultWriteTarget`, else the working bundle. The chosen source must be
+writable, or the command fails with a `ConfigError` before anything is written;
+a git-backed writable target commits the mutation at a single operation
+boundary. Reads (`list`, `show`, `path`, `run`, `export`) span all configured
+sources.
 
 ## Stability
 
-`env list`, `env path`, `env export`, `env run`, `secret list`, and `secret
-run` — the read-and-inject surface — are Stable. `env create`, `env remove`,
-and `secret set` — the write verbs — are Experimental. Check
-[STABILITY.md](../../STABILITY.md) for the current tier of any command
-before depending on its exact output shape.
-
-## What this page does not cover
-
-This page documents akm's own guarantees for these two asset types, not the
-broader threat model (what a compromised bundle or malicious script could
-still do, what filesystem-level exposure remains, how this compares to a
-dedicated secrets manager). See [SECURITY.md](../../SECURITY.md) for that
-fuller picture, including plaintext-at-rest scope and rotation guidance.
+`env list`, `env path`, `env export`, `env run`, `secret list` and `secret run`
+are Stable. `env create`, `env remove` and `secret set` are Experimental. See
+[STABILITY.md](../../STABILITY.md).
 
 ## See also
 
-- [Capture Knowledge](../guides/capture-knowledge.md) — `remember`, `import`,
-  and when to reach for each
-- [CLI Reference](cli.md) — full flag documentation for `env` and `secret`
-- [SECURITY.md](../../SECURITY.md) — full threat model
+- [Capture Knowledge](../guides/capture-knowledge.md): `remember`, `import`, and
+  when to reach for each
+- [CLI Reference](cli.md): the `env` and `secret` commands

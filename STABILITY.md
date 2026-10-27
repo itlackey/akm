@@ -1,8 +1,8 @@
 # Stability policy
 
 `akm-cli` follows [Semantic Versioning](https://semver.org/) on the 0.x line
-**with one caveat**: until 1.0, minor releases (0.x → 0.x+1) may include
-breaking changes.
+**with one caveat**: while the version is 0.x, minor releases (0.x → 0.x+1)
+may include breaking changes.
 
 **0.9.x series exception.** The 0.9.x releases are a deliberate refactoring
 and clean-up series: the goal is to pay off all remaining technical debt and
@@ -87,23 +87,15 @@ please file it.
 | --- | --- |
 | **Stable** | Scripted use is supported. Changes are additive within a minor release; breaking changes are called out in the CHANGELOG with a migration note. |
 | **Evolving** | Available across minor releases, but flag names, prompts, and payload shapes may shift. Breaking changes are flagged in the CHANGELOG. |
-| **Experimental** | Subject to change without notice. Not recommended for scripted use. Some experimental surfaces additionally require an explicit opt-in — see [`akm improve` autonomy](#akm-improve-autonomy--opt-in-in-090). |
+| **Experimental** | Subject to change without notice. Not recommended for scripted use. Some experimental surfaces additionally require an explicit opt-in — see [`akm improve` autonomy](#akm-improve-autonomy). |
 | **Internal** | Not a public interface. May change or disappear in any release, without a CHANGELOG note. Listed here only so you can recognize it. |
 
 ## Command tier index
 
 The canonical index: every command and subcommand group in the current tree
 (enumerated from `main.subCommands` in `src/cli.ts` and each group's own
-`subCommands`), with its tier. The prose sections below remain the detailed
-explanation of *why*; this table is the lookup. Two spots have no single
-explicit sentence naming their tier and were resolved by reading neighbors:
-`akm bundle show` is assigned Evolving because it is discussed only inside
-the Evolving "Bundles & the workspace model" bullet, alongside the still-
-shifting adapter set, unlike its sibling `akm bundle list`, which the Stable
-section names explicitly; and `akm proposal list` is assigned Stable — the
-Stable section names it explicitly ("list filters"), which takes precedence
-over its incidental mention inside the Evolving "Improvement loop" bullet's
-enumeration of the whole `proposal` noun group.
+`subCommands`), with its tier. The sections below explain what each tier
+covers beyond the table.
 
 | Command | Tier | Notes |
 | --- | --- | --- |
@@ -116,10 +108,11 @@ enumeration of the whole `proposal` noun group.
 | `akm bundle create` | Stable | |
 | `akm bundle add` | Stable | |
 | `akm bundle list` | Stable | |
-| `akm bundle show` | Evolving | See note above. |
+| `akm bundle show` | Evolving | |
+| `akm bundle rename` | Stable | |
 | `akm bundle remove` | Stable | |
 | `akm bundle update` | Stable | |
-| `akm upgrade` | Stable | Including the plugin step and `--next` (0.9.28), verified on real hosts, in empty containers and on failure paths (#1099). |
+| `akm upgrade` | Stable | Including the plugin step and `--next`. |
 | `akm search` | Stable | |
 | `akm curate` | Stable | |
 | `akm show` | Stable | |
@@ -137,14 +130,14 @@ enumeration of the whole `proposal` noun group.
 | `akm registry list` | Evolving | |
 | `akm registry add` | Evolving | |
 | `akm registry remove` | Evolving | |
-| `akm migrate status` | Internal | Forwards to the standalone `akm-migrate` tool; renders its result through the normal `--format` pipeline (not exempt — see below). Listed (not hidden) in `--help`/completions. |
-| `akm migrate apply` | Internal | Forwards to the standalone `akm-migrate` tool; renders its result through the normal `--format` pipeline (not exempt — see below). Listed (not hidden) in `--help`/completions. |
+| `akm migrate status` | Internal | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. |
+| `akm migrate apply` | Internal | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. |
 | `akm config path` | Stable | |
 | `akm config list` | Stable | |
-| `akm config get` | Stable | Default bare-value shape unchanged; `--show-source` (0.9.15, opt-in) wraps it as `{ value, source }`. |
+| `akm config get` | Stable | Default bare-value shape unchanged; `--show-source` (opt-in) wraps it as `{ value, source }`. |
 | `akm config set` | Stable | |
 | `akm config unset` | Stable | |
-| `akm config diff` | Evolving | New in 0.9.15; compares effective (post-`extends`) configs, secrets redacted. |
+| `akm config diff` | Evolving | Compares effective (post-`extends`) configs. |
 | `akm feedback` | Stable | |
 | `akm log` | Evolving | |
 | `akm agent` | Evolving | |
@@ -159,7 +152,7 @@ enumeration of the whole `proposal` noun group.
 | `akm proposal diff` | Evolving | |
 | `akm proposal accept` | Evolving | |
 | `akm proposal reject` | Evolving | |
-| `akm proposal reopen` | Evolving | New in 0.9.19; undoes a rejection. |
+| `akm proposal reopen` | Evolving | Undoes a rejection. |
 | `akm proposal revert` | Evolving | |
 | `akm proposal drain` | Evolving | |
 | `akm proposal extract` | Evolving | Former top-level `akm extract`. Promoted from Experimental in 0.10 (#1133): the extract eval measures it. Evolving, not Stable, because 0.10 is still settling the improve defaults. |
@@ -178,9 +171,12 @@ enumeration of the whole `proposal` noun group.
 | `akm secret run` | Stable | Read-and-inject surface. |
 | `akm secret set` | Experimental | Write verb. |
 | `akm task add` | Evolving | |
+| `akm task enable` | Evolving | |
+| `akm task disable` | Evolving | |
 | `akm task run` | Evolving | |
 | `akm task history` | Evolving | |
 | `akm task sync` | Evolving | |
+| `akm task prune` | Evolving | |
 | `akm task doctor` | Evolving | |
 | `akm task explain` | Evolving | New in 0.9.2; secret-shaped values in provenance output are redacted on a best-effort heuristic basis (not a guarantee). |
 
@@ -206,8 +202,7 @@ enumeration of the whole `proposal` noun group.
     adapter-owned selector opaque to the core. See
     [`docs/architecture/specs/ref.md`](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/ref.md).
   - **Refs in prose** must be fully qualified (`bundle//conceptId`) or a native
-    adapter link form. A bare conceptId in prose is ordinary text, not a ref,
-    and no akm tool rewrites it.
+    adapter link form. A bare conceptId in prose is ordinary text, not a ref.
 - **ConceptId-prefix enumeration** — `akm search "memories/"`,
   `"memories/projecta/"`, `"bundle//"`, `"bundle//skills/"`. A trailing `/` is
   required. The prefix matches the **conceptId** — the spelling every emitted
@@ -228,16 +223,11 @@ enumeration of the whole `proposal` noun group.
   `akm bundle create`, `akm setup`, `akm remember`, `akm feedback`,
   `akm config set`, `akm config unset`.
 - **Renames are delete + create** — moving or renaming an item gives it a new
-  identity; learned state does not follow it. Cross-bundle movement is
-  copy/import plus delete. The procedure is a plain filesystem move, then
+  identity; learned state (feedback, usage, salience) does not follow it.
+  Cross-bundle movement is copy/import plus delete. Move the file, then run
   `akm index`, then `akm lint` to catch inbound refs the move left dangling.
-  `akm mv` was **removed in 0.9.0**: it claimed to preserve identity across a
-  rename, but its inbound-ref rewriting targeted bare conceptIds rather than
-  the anchored `bundle//conceptId` prose form, so it could rewrite non-refs
-  while leaving real refs dangling. To carry an asset's earned signal
-  (feedback, usage, salience/outcome history) across a rename, the maintainer
-  script `scripts/rekey-asset-ref.ts` re-keys those rows old -> new; it is
-  Internal tooling, not a supported command surface.
+  There is no `akm mv`; `scripts/rekey-asset-ref.ts` re-keys earned signal from
+  an old ref to a new one and is Internal tooling.
 - **Asset `type` is a free-form, open string** — `--type` filtering is an
   exact match against an open set and is deliberately **not validated**: an
   unrecognized type returns zero hits, not an error. Adapters emit types
@@ -288,14 +278,11 @@ enumeration of the whole `proposal` noun group.
   | `2` | Usage / bad input |
   | `4` | Health warning (`akm health` only) |
   | `70` | Internal / unclassified |
-  | `75` | Transient — retry shortly (`TransientError`, sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` right now |
+  | `75` | Transient — retry shortly (`TransientError`, sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now |
   | `78` | Configuration error |
 
-  **From 0.9.12**, every success envelope produced by the passthrough stamp
-  (`config`, `clone`, `models`, `task-*`, `workflow-*`, `registry-*`, …) also
-  carries `ok: true`; a command that already computes its own `ok` keeps it.
-- **Install scripts** — `install.sh` and `install.ps1` URLs; the `--prefix`
-  / `AKM_INSTALL_DIR` environment override.
+- **Install scripts** — the `install.sh` and `install.ps1` URLs and the
+  `AKM_INSTALL_DIR` environment override.
 - **Runtime** — the npm package requires Node.js >= 22 as its bootstrap and
   prefers a working Bun >= 1.0 for execution when both are available; old,
   unusable, or absent Bun installations fall back to Node.js. Standalone
@@ -323,7 +310,7 @@ CHANGELOG with a migration note.
   options or tighten validation across releases. `akm improve` stays on by
   default and is **review-first**: the lanes that mutate assets without review
   require `experimental.improveAutonomy` — see
-  [`akm improve` autonomy](#akm-improve-autonomy--opt-in-in-090).
+  [`akm improve` autonomy](#akm-improve-autonomy).
   `--auto-accept` was removed in 0.9.0 and is an unknown flag (a usage error,
   exit 2) since 0.10. The replacement is
   `akm improve && akm proposal drain --promote --yes`, or a `triage` block
@@ -457,8 +444,8 @@ for scripted use.
   **write** verbs (`create`, `set`, `unset`, `remove`) are Experimental; the
   `list` / `path` / `run` / `export` read-and-inject surface is Stable.
 - **Memory belief-state transitions** — `captureMode`, `beliefState`,
-  contradiction edges, and the consolidate journal are observable but
-  the algorithm that writes them is tuning across patch releases.
+  contradiction edges, and the consolidate journal are observable, but the
+  algorithm that writes them is tuning across patch releases.
 - **Improve built-in strategies and lanes** — the built-in strategies other
   than `default` and `consolidate` and the proactive-maintenance lane. 0.10 measures each and keeps, folds or removes it
   (#1094). `quick`, `reflect-distill`, `thorough` and `catchup` were removed
@@ -470,17 +457,18 @@ for scripted use.
   added, renamed, or dropped in any 0.9.x or 0.10.x release**. The `akm
   improve` *command* surface is Evolving (above); its tuning config is not.
 
-### `akm improve` autonomy — opt-in in 0.9.0
+### `akm improve` autonomy
 
-**`akm improve` is review-first by default in 0.9.0.** The command itself is ON
-— its schedules and reflect/distill proposals all run — but the lanes that
-mutate assets *without* review require an explicit opt-in:
+`akm improve` is review-first by default. The command is on — its schedules and
+reflect/distill proposals all run — but the lanes that change assets *without*
+review require an explicit opt-in:
 
 ```sh
 akm config set experimental.improveAutonomy true
 ```
 
-Without it, these three lanes are downgraded (the triage lane only when its
+An absent `experimental` section, an absent key and an explicit `false` all
+read as off. Without the opt-in, these three lanes are downgraded (the triage lane only when its
 judgment tier is on), and each downgrade is **reported,
 not silent**: it warns on stderr naming the lane and the key, appends an
 `improve_skipped` event with `reason: "autonomy_gated"`, is counted in
@@ -517,39 +505,28 @@ Because the gate is applied before the LLM preflight, a review-first workspace
 also needs fewer connections or harnesses configured: a strategy whose only
 model-backed process is a gated lane resolves without one at all.
 
-**Three direct writes are deliberately NOT gated**, because they are additive or
-already independently controlled:
+Reflect, distill, extract candidates, validation and proactive-maintenance
+selection only stage proposals. These writes are not gated by the opt-in:
 
-| Write | Why it stays ungated |
+| Write | What it does |
 | --- | --- |
-| `extract` session indexing | Additive `sessions/**` writes; nothing is overwritten or deleted |
-| distill's encoding-salience stamp | Frontmatter metadata only |
-| `sync.push` | Publishes already-committed content to a remote the user configured for that purpose, and has its own `improve.strategies.<name>.sync.push: false` and `--no-push` |
-
-Autonomy is never inferred: an absent `experimental` section, an absent key, and
-an explicit `false` all read as off, so a partially-written or older config is
-review-first rather than accidentally permissive.
-
-Reflect, distill, extract candidates, validation, and proactive-maintenance
-selection are proposal-only and never write assets directly. Two further
-direct writes are ungated by design: `extract`'s session
-indexing (additive `sessions/**` writes,
-`processes.extract.indexSessions`, default on) and distill's
-encoding-salience frontmatter stamp (metadata only).
+| `extract` session indexing | Writes `sessions/**` assets (`processes.extract.indexSessions`, default on) |
+| distill's encoding-salience stamp | Writes a salience score to asset frontmatter |
+| Graced archive purge | At the start of every improve run, removes retirement archives past the grace period |
+| Accept commits | Accepting a proposal commits its paths when the bundle is a git repository |
+| `sync.push` | Pushes already-committed content to the configured remote; turn it off with `improve.strategies.<name>.sync.push: false` or `--no-push` |
 
 ## Internal
 
 Not public interfaces. Listed so you can recognize them, not so you can rely
 on them.
 
-- **Migration surfaces** — the standalone `akm-migrate` tool owns the one-time
-  0.8→0.9 cutover, storage migration, and recovery backups (`akm-migrate
-  backup` / `restore`). `akm migrate` is a thin process forwarder; `akm backup`
-  and `akm config migrate` are removed. `akm help migrate <version>` is Stable
-  and only renders release notes.
+- **Migration surfaces** — the standalone `akm-migrate` tool (`status`,
+  `apply`) rewrites config, `state.db`, task files and old on-disk residue to
+  the current shape, taking a backup first. `akm migrate` is a thin process
+  forwarder for it.
 - **`bun scripts/build-registry-index.ts`** — maintainer tooling for building a
-  registry index. It is a repository script, not a CLI command (the former
-  `akm registry build-index` subcommand was removed).
+  registry index. It is a repository script, not a CLI command.
 - **Environment variables** — see the table below.
 
 ### Environment variables
@@ -560,10 +537,9 @@ on them.
 | --- | --- |
 | `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` | Filesystem layout overrides |
 | `AKM_VERBOSE`, `AKM_DEBUG` | Diagnostics |
-| `AKM_REGISTRY_URL` | akm registry mirror override |
-| `AKM_NPM_REGISTRY` | npm mirror override — redirects BOTH the trusted-tarball host allowlist and package metadata lookups (`npm view`-equivalent resolution) to the given registry base, replacing `registry.npmjs.org` wholesale rather than merging with it |
+| `AKM_REGISTRY_URL` | Comma-separated registry URL override; replaces the configured registries |
+| `AKM_NPM_REGISTRY` | npm mirror base URL; replaces `registry.npmjs.org` for package lookups |
 | `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode (network filesystems) |
-| `AKM_BIN` | Absolute `akm` path for scheduler registration |
 | `AKM_INSTALL_DIR` | Install-script prefix |
 | `AKM_UPGRADE_SKIP_CHECKSUM` | Recovery hatch for a broken upgrade checksum |
 
@@ -571,18 +547,6 @@ on them.
 `AKM_NODE_ENTRY`, `AKM_EVENT_SOURCE`, `AKM_SESSION_ID`, `AKM_AGENT_HARNESS`,
 `AKM_EMBED_DETERMINISTIC`, `AKM_CLAUDE_PROJECTS_DIR`,
 `AKM_FORCE_INIT_TMP_STASH`, `AKM_STATE_DIR`.
-
-Anything matching `AKM_TEST_*` is test-only fault injection. Never set it.
-`AKM_VERSION` is the only variable actually stripped from release builds, via
-`bun build --define` (see `.github/workflows/release.yml`); no `src/` code
-reads an `AKM_TEST_*` variable, so the compiled `akm` binary itself carries
-none. That said, three fault-injection hooks are NOT compiled out and DO ship
-in every install: `AKM_TEST_MIGRATION_FAIL_INDEX_QUARANTINE`,
-`AKM_TEST_MIGRATION_FAIL_WORKFLOW_DELETE`, and
-`AKM_TEST_MIGRATION_FAIL_RESTORE_AFTER` (`scripts/akm-migrate/`). The migration
-tool ships separately from the compiled `akm` binary, so these throw-only hooks
-remain physically present. At rest they are runtime-guarded no-ops unless the
-exact internal test value is set. Never set them.
 
 ## On the horizon
 
@@ -619,8 +583,8 @@ worth fixing.
 ## See also
 
 - [`CHANGELOG.md`](./CHANGELOG.md) — every release's behavior changes.
-- [`SECURITY.md`](./SECURITY.md) — security supported-version policy
-  (independent of the feature-stability policy above).
+- [`SECURITY.md`](./SECURITY.md) — supported versions and how to report a
+  vulnerability.
 - [`docs/architecture/specs/ref.md`](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/ref.md) — the
   normative ref grammar.
 - [`docs/reference/data-and-telemetry.md`](./docs/reference/data-and-telemetry.md) — what

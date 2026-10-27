@@ -9,10 +9,7 @@ Agents should not parse refs or construct them by hand. The intended flow is:
 search -> pick a hit -> pass its ref to show
 ```
 
-> **Status.** This document is normative for 0.9.0 and is the target the
-> implementation is being brought to. Sections marked **[0.9.0 change]**
-> describe decisions taken during the 0.9.0 surface review that the code does
-> not yet fully implement.
+This document is the normative ref grammar for 0.9.
 
 ## Item Refs
 
@@ -24,23 +21,21 @@ Item refs use this wire format:
 
 | Part | Required | Description |
 | --- | --- | --- |
-| `bundle` | no | Workspace bundle slug (e.g. `personal`, `team-catalog`) that owns the item. Separated from the rest of the ref by `//`. When omitted, the ref resolves against the containing bundle (content-internal refs) or, for CLI/API input, against `defaultBundle` and then the remaining bundles in installation-priority order. |
+| `bundle` | no | Workspace bundle slug (e.g. `personal`, `team-catalog`) that owns the item. Separated from the rest of the ref by `//`. When omitted, CLI input resolves against `defaultBundle` first and then the remaining bundles in installation-priority order. |
 | `conceptId` | yes | Adapter-defined path within the bundle, `/`-separated and canonicalized by that adapter. Examples: `knowledge/http-caching`, `skills/code-review`, `scripts/db/migrate/run.sh`, `tables/customers`. |
-| `fragment` | no | Selector for a part of the item. For markdown-document items the core interprets it as a **section selector**; for every other item kind it is an adapter-owned selector, opaque to the core. See [Fragments](#fragments). |
+| `fragment` | no | Selects a section of a Markdown item. On any other item `akm show` warns and shows the whole item. See [Fragments](#fragments). |
 
-`type` is **no longer part of a ref**. Identity is a path, not a `type:name`
-pair, and a conceptId is an **opaque path** — akm does not parse meaning out of
-its segments. `skills/deploy` and `workflows/deploy` are distinct concepts that
-never collide because their paths differ, not because their first segment is a
-recognized word.
+`type` is not part of a ref. Identity is a path, not a `type:name` pair, and a
+conceptId is an **opaque path** — akm does not parse meaning out of its
+segments. `skills/deploy` and `workflows/deploy` are distinct concepts because
+their paths differ, not because their first segment is a recognized word.
 
 An item's `type` is an **attribute of the resolved item**, supplied by the
-selected adapter, never a predicate parsed out of the ref string. The `okf`
+selected adapter, not a predicate parsed out of the ref string. The `okf`
 adapter reads it from OKF frontmatter; the `akm` adapter derives it from its
 native matcher and placement rules. This is why a ref into any bundle —
 `okfbundle//tables/customers`, `wiki//pages/attention` — is just as addressable
-as `personal//memories/vpn-note`. See
-[`okf-support.md`](./okf-support.md).
+as `personal//memories/vpn-note`. See [`okf-support.md`](./okf-support.md).
 
 Refs are parsed by `parseBundleRef` in `src/core/asset/asset-ref.ts`. The
 grammar is:
@@ -49,7 +44,7 @@ grammar is:
 ref        := [ bundle "//" ] concept-id [ "#" fragment ]
 bundle     := any run of non-space chars excluding : . # /
 concept-id := adapter-canonical path within the bundle, / -separated, NFC, case-sensitive
-fragment   := section slug (markdown-document items) | adapter-owned selector
+fragment   := section slug (Markdown items)
 ```
 
 The bundle slug excludes `:`, `.`, `#`, `/`, and whitespace so a `bundle//conceptId`
@@ -96,32 +91,21 @@ segment to be an AKM placement directory.
 - `team-catalog//workflows/release`
 - `knowledge/api-guide#authentication` (section selector)
 
-### Rejected
+### Not item refs
 
-- `viking://skills/deploy` (URI scheme — a `:` before `//` is not a bundle slug)
-- `skills/../../../etc/passwd` (path traversal)
-- `github:owner/repo` (this is an install ref, parsed elsewhere)
-- the pre-0.9.0 `<type>:<name>` grammar (e.g. the old colon-typed spelling) — dead;
-  parsed only by the frozen migrator
+- `viking://skills/deploy` (a URI scheme — a `:` before `//` is not a bundle slug)
+- `skills/../../../etc/passwd` (`..` segments)
+- `github:owner/repo` (an install ref, parsed elsewhere)
+- the old `<type>:<name>` spelling; only the frozen migrator parses it
 
 ## Fragments
 
-**Scope: `show` only in 0.9.0 (ruled 2026-07-26, Q-06).** `parseRefInput`
-still rejects any `#fragment` outright; `show` is the only command that
-accepts one, by bypassing that shared parser. Every other ref-consuming
-command (graph, tasks, improve, proposals, the utility repo, the indexer
-walk) routes through `parseRefInput` and does not accept fragments yet.
-Wider rollout is post-0.9.0.
+`akm show` is the only command that accepts a `#fragment`. Every other ref
+boundary routes through `parseRefInput`, which rejects a fragment with
+`INVALID_FLAG_VALUE`.
 
-**[0.9.0 change]** Before 0.9.0 the fragment production existed in the grammar
-and in this document, but every input boundary rejected it
-(`parseRefInput` threw `INVALID_FLAG_VALUE` for any `#fragment`) and nothing
-consumed it. It was stable on paper and unusable in practice. 0.9.0 resolves
-that by giving it one concrete meaning the core implements, and keeping the
-adapter-owned meaning for everything else.
-
-**Markdown-document items — section selector (core-implemented).** For an item
-whose adapter presents it as a markdown document, the fragment names a section:
+**Markdown-document items — section selector.** For an item whose adapter
+presents it as a markdown document, the fragment names a section:
 
 ```text
 akm show knowledge/api-guide#authentication
@@ -132,40 +116,22 @@ runs collapsed to `-`, trimmed) and match the fragment against those slugs;
 fall back to a case-insensitive match against raw heading text. The selected
 region runs from that heading to the next heading of the same or higher level.
 A fragment that matches no heading is an error that **lists the available
-fragment slugs**. The outline itself is `akm show <ref> --detail brief`, whose
-`toc` lists every heading with the slug that selects it; it replaces the
-removed `toc` view mode.
+fragment slugs**, which is how a caller discovers them; `akm show <ref> --detail brief`
+returns the outline (`toc`, each heading with the slug that selects it) without the body. Opaque
+`#akm-fragment-...` selectors resolve against the indexed revision; see
+[Architecture: Show Resolution](../architecture.md#show-resolution).
 
-**Every other item kind — adapter-owned selector.** When one item exposes
-multiple exports the adapter MAY append a stable fragment
-(`team//tools/toolbox#deploy`). The fragment is adapter-owned and opaque to
-the core. The two meanings coexist because the core only interprets
-fragments for items whose adapter declares them markdown documents; for
-everything else it passes the fragment through untouched.
+**Every other item.** `akm show` ignores the fragment, warns, and shows the whole
+item.
 
 **Fragments are input-only.** Durable state — index rows, state keys, proposal
-targets, bindings — never stores a fragment. A stored ref carrying one is
+targets, bindings — does not store a fragment, and a stored ref carrying one is
 invalid.
-
-### Superseded: the `akm show` view-mode grammar
-
-**[0.9.0 change]** `akm show <ref> toc|section "H"|lines A B|frontmatter|full`
-is removed. It was a second argv parser (`normalizeShowArgv` rewrote
-`process.argv` and injected hidden `--akmView` / `--akmHeading` / `--akmStart` /
-`--akmEnd` flags), and its view keywords were reserved words in ref position.
-
-| Old | New |
-| --- | --- |
-| `akm show X section "Auth"` | `akm show X#auth` |
-| `akm show X full` | `akm show X` (no fragment = whole item) |
-| `akm show X toc` | `akm show X --detail brief` (its `toc` field) |
-| `akm show X lines 10 30` | removed — every response carries `path`; slice the file |
-| `akm show X frontmatter` | removed — if a raw-YAML projection proves necessary it returns as a `--shape` value, the designated projection axis |
 
 ## Ref-prefix enumeration (browse)
 
-**[0.9.0 change]** Browsing a subtree uses a **conceptId prefix**, matching the
-grammar refs are actually emitted in:
+Browsing a subtree uses a **conceptId prefix**, matching the grammar refs are
+emitted in:
 
 ```text
 akm search "memories/"                 # every memory in scope
@@ -179,22 +145,13 @@ subtree semantics (`projecta/` cannot match a sibling `projectalpha/`). A query
 with interior whitespace is prose, not a prefix — it stays an ordinary keyword
 search.
 
-This replaces the pre-0.9.0 `akm search "<type>:"` / `"<type>:<prefix>/"`
-grammar, which had three defects: it resurrected the singular `type:` spelling
-the release removed; it validated against the `akm` adapter's placement types,
-so items from every other adapter could not be enumerated at all; and it
-matched against item *names* while every displayed ref is a conceptId — so
-copying a ref prefix out of search output and pasting it back in silently
-degraded to a keyword search.
-
-Because enumeration is now prefix-matching over conceptIds, it covers every
-adapter's items uniformly, and `bundle//` enumeration replaces the removed
-`akm bundle items` command.
+Enumeration is prefix-matching over conceptIds, so it covers every adapter's
+items uniformly, and a prefix copied out of search output works as typed.
 
 ## Asset types are free-form
 
 `type` is adapter-supplied metadata that presents, ranks, and filters — it
-never executes and never identifies. The OKF adapter reads the open OKF `type`
+does not execute and does not identify. The OKF adapter reads the open OKF `type`
 field and defaults it according to OKF adapter rules; other adapters derive a
 type from their native formats. `IndexDocument.type` is an open string by
 contract, and adapters emit types outside the `akm` adapter's placement set
@@ -207,7 +164,7 @@ than an error, because "unrecognized" is not a decidable property. Callers that
 want a closed set should filter on conceptId prefix instead (see above).
 
 The closed set still applies where a type must select a *write placement* —
-`akm proposal new <type> <name>`, `placeNew` — because those need a directory to write to.
+`akm proposal new <type> <name>` — because that needs a directory to write to.
 
 ## Reserved structural files
 
@@ -220,7 +177,7 @@ structure on them. Item writes must follow the selected adapter's rules.
 
 ## Install Refs (distinct grammar)
 
-`akm add` and one-shot `akm clone` accept a different ref grammar. Install
+`akm bundle add` and one-shot `akm clone` accept a different ref grammar. Install
 refs locate an upstream kit to fetch; they are **not** item refs and are
 parsed by `parseRegistryRef` in `src/registry/resolve.ts`.
 
@@ -229,11 +186,11 @@ install-ref := github-ref | git-url | npm-pkg | https-url | skills-sh-slug | loc
 ```
 
 Examples: `github:owner/repo#v1.2.3`, `git+https://gitlab.com/org/kit`,
-`@scope/kit`, `https://docs.example.com`, `skills.sh:code-review`,
+`@scope/kit`, `https://docs.example.com`,
 `./path/to/kit`.
 
 The two parsers are intentionally distinct — each rejects the other's inputs.
-Item refs never carry URI schemes; install refs are not addressable through
+Item refs do not carry URI schemes; install refs are not addressable through
 `akm show`.
 
 ## Bundle prefix
@@ -247,36 +204,28 @@ personal//knowledge/my-notes
 
 When absent, a short ref from CLI/API input resolves to `defaultBundle` if the
 conceptId exists there, otherwise to the first bundle containing it in installation
-priority order (first match wins, deterministically). A short ref inside bundle
-content resolves against its **containing** bundle. To pin lookup to a single
-bundle programmatically, use `resolveRef(input, { only: bundleId })` — there is no
-ref spelling for "primary only".
+priority order (first match wins, deterministically). akm does not resolve refs
+found inside bundle content. The one place it checks them is `akm lint`'s
+missing-ref scan, which looks a ref up among that bundle's own files (see
+[Refs in prose](#refs-in-prose)). To pin lookup to a single bundle programmatically, use
+`resolveRef(input, { only: bundleId })` — there is no ref spelling for "primary
+only".
 
 ## Refs in prose
 
-Refs embedded in prose MUST use the fully-qualified `bundle//conceptId` form —
+Refs embedded in prose must use the fully-qualified `bundle//conceptId` form —
 the bundle-slug charset makes such a token lexically anchored — or a native
 link form owned by the adapter (OKF links, wiki links). **Bare short refs in
 prose are not refs**: `memories/foo` in a sentence is ordinary text, and no
-tool may rewrite it.
-
-Only lint's missing-ref scan honours this rule today. The other consumer,
-`akm mv`'s inbound-ref rewriting, was defective: it implemented the rule
-exactly inverted (it rewrote bare conceptIds and matched no `bundle//` pattern
-at all), so it rewrote prose that is not a ref while leaving real anchored
-refs dangling. That defect is why `akm mv` shipped **Experimental** earlier in
-the 0.9.0 cycle and was never covered by the stability contract.
-
-**Amended 2026-07-30.** `akm mv` was removed outright before the 0.9.0
-release (no alias, no stub).
-There is no tool today that rewrites inbound refs on rename; see "Renames and
-moves" below for the current procedure.
+tool rewrites it. `akm lint`'s missing-ref scan checks fully-qualified refs in
+body text, and bare refs in the frontmatter ref fields (`xrefs`, `supersededBy`,
+`contradictedBy`), against the bundle's own files.
 
 ## Renames and moves
 
-**[0.9.0 change]** A rename or move is **delete plus create**. The destination
-is a new identity: it gets a fresh index row, and learned state (utility,
-salience, outcomes, usage history) does not follow it.
+A rename or move is **delete plus create**. The destination is a new identity:
+it gets a fresh index row, and learned state (utility, salience, outcomes,
+usage history) does not follow it.
 
 ```sh
 mv ~/akm/memories/old-note.md ~/akm/memories/new-note.md
@@ -289,34 +238,27 @@ Moving an item **between bundles** is copy/import followed by deletion from the
 source. Both the bundle and the concept identity change; there is no
 identity-preserving cross-bundle move.
 
-This supersedes the pre-0.9.0 rule that a rename "MUST use an explicit
-state-rekey transaction". That rule was a product choice made during the bundle
-refactor, not a constraint the architecture imposes. `akm mv`, which implemented
-the superseded rule, shipped briefly as an **Experimental** surface outside
-the stability contract, because its inbound-ref rewriting was inverted (above),
-then was removed outright before the 0.9.0 release. The procedure above —
-plain filesystem move, then `akm index`, then `akm lint` — is the only
-supported path today. If preserving learned state through renames later proves
-materially valuable, a narrow same-bundle `akm rename` can return — resolving
-through the index, using adapter-owned placement, accepting qualified refs,
-rewriting only anchored prose refs, applying one qualified old→new state
-mapping, and rebuilding derived index data rather than preserving row IDs.
+Carrying learned state (utility, salience, usage history) across a rename is
+opt-in and out-of-band: run `bun scripts/rekey-asset-ref.ts <old-ref> <new-ref>`
+from a source checkout **before** `akm index`, and it re-keys the `entries` row
+plus `asset_salience`/`asset_outcome`/`usage_events` in place rather than letting
+`akm index` mint a fresh row. See
+[`v0.9.0-troubleshooting.md`](../../migration/v0.9.0-troubleshooting.md) for the
+walkthrough.
 
-**Amended 2026-07-30.** Carrying learned state (utility, salience, usage
-history) across a rename is opt-in and out-of-band: run
-`bun scripts/rekey-asset-ref.ts <old-ref> <new-ref>` from a source checkout
-**before** `akm index`, and it re-keys the `entries` row plus
-`asset_salience`/`asset_outcome`/`usage_events` in place rather than letting
-`akm index` mint a fresh row. Automated garbage collection of orphaned rows
-left by renames that skip this script is tracked as issue #733; until it
-lands, the script is the only path. See
-[`v0.9.0-troubleshooting.md`](../../migration/v0.9.0-troubleshooting.md) for
-the full walkthrough.
+Renaming a *bundle* is separate: `akm bundle rename <old> <new>` is the one
+command that changes a bundle id. It rewrites the config `bundles` key,
+`defaultBundle` and `defaultWriteTarget`, `scheduler.enabled` refs, the lockfile
+entry, and the stored `bundle//` refs in index entries, proposals, task history,
+workflow runs, recorded feedback and usage, and the improve ledger, salience, and
+outcome rows, so search and improve keep counting the bundle's feedback. Refs
+inside bundle content are reported, not rewritten. See
+the [`bundle rename` entry in the CLI reference](../../reference/cli.md#bundle-rename).
 
 ## Usage Notes
 
-Consumers should use structured fields like `conceptId` and `bundle` for display,
-and pass the full `ref` string back to `show` as the lookup token.
+Pass the `ref` from search output back to `show` unchanged as the lookup
+token.
 
 ## Canonical Form
 

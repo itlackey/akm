@@ -7,11 +7,11 @@ the published JSON Schema (`schemas/akm-workflow.json`) and
 detail.
 
 - For a task-oriented walkthrough of writing your first workflow, see the
-  [Author's Guide](https://github.com/itlackey/akm/blob/main/docs/guides/author-workflows.md).
+  [Author's Guide](../guides/author-workflows.md).
 - For how a frozen plan actually executes — persistence, dispatch, resume —
-  see [Architecture: The Workflow Engine](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md).
+  see [Architecture: The Workflow Engine](../architecture/workflow-engine.md).
 - For operating a run day to day (`run`, `status`, `resume`, `abandon`), see
-  [Running Workflows](https://github.com/itlackey/akm/blob/main/docs/guides/run-workflows.md).
+  [Running Workflows](../guides/run-workflows.md).
 
 ## Source format
 
@@ -145,9 +145,9 @@ blocked child, its resume command. Child runs are excluded from `akm
 workflow list` by default; pass `--children` to include them. A child run
 id always works directly with `akm workflow status`/`resume`/`abandon`/`run`,
 listed or not. See
-[Running Workflows: Child runs](https://github.com/itlackey/akm/blob/main/docs/guides/run-workflows.md#child-runs) for a
+[Running Workflows: Child runs](../guides/run-workflows.md#child-runs) for a
 worked example, and
-[Architecture: The Workflow Engine](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md#child-workflows)
+[Architecture: The Workflow Engine](../architecture/workflow-engine.md#child-workflows)
 for the dispatch seam.
 
 ## Frontmatter keys
@@ -220,7 +220,7 @@ Checked by `akm lint --type workflows`:
    step's gate rubric, running to the section end — the format's **single
    reserved marker**. The judge that evaluates the step receives this whole
    section byte-exact. An omitted or empty `### gate` section needs no
-   verification. A non-empty rubric enables mandatory fail-closed
+   verification. A non-empty rubric enables mandatory
    verification; frontmatter `gate:` only tunes its retry bound.
 
 Prose is never templated — see [The reference grammar](#the-reference-grammar)
@@ -363,8 +363,7 @@ alongside its byte-exact instructions, structured context:
 Instructions refer to this context in plain language — "clone the repository
 named by the `repo` parameter," "review the file you were given," "using the
 intake step's artifact attached to this unit" — never by splicing a value
-into the instruction string. This closes the injection class at the root:
-data never enters the instruction string, spliced or otherwise.
+into the instruction string.
 
 `akm lint --type workflows` still checks every bare reference statically —
 unknown step, unknown param, bad path — at lint time.
@@ -375,7 +374,7 @@ Run params are copied verbatim into every unit's dispatched instructions and
 are stored on the run row and shown by `akm workflow status`, so params are
 **declared non-secret**: secrets belong in `env:` refs instead, which carry
 by name only through the plan and are resolved from akm's env/secret store
-at dispatch (see [Reference: Env & Secrets](https://github.com/itlackey/akm/blob/main/docs/reference/env-and-secrets.md)).
+at dispatch (see [Reference: Env & Secrets](env-and-secrets.md)).
 
 As a best-effort guardrail, `akm workflow run` scans a new run's params for
 values that *look* like credentials — secret-suggesting key names (`token`,
@@ -430,10 +429,8 @@ resolution time instead (`steps.X.output is not an object — cannot resolve
 property "y"`). Declare `output:` when you want that mismatch caught at the
 producing step rather than at the consuming one.
 
-akm does not warn about a missing step `output:` schema. It briefly did, and
-the advisory was removed: it fired on essentially every step, could not be
-enforced (advisories never reach `--fail-on-flagged`), and flagged a state
-that is legitimate.
+akm does not warn about a missing step `output:` schema; leaving it off is
+legitimate.
 
 ## Typed step artifacts
 
@@ -533,26 +530,16 @@ The step's body prose is still required (it is the step's section, like any
 other unit step) and is **not** passed to the command — it documents what the
 command does, for the human reading the workflow.
 
-### `command` is an argv array, never a shell string
+### `command` is an argv array
 
-There is deliberately **no shell-string spelling**. The child is spawned
-directly, so nothing ever parses the words: `;`, `|`, `&&`, `$(…)`, backticks,
-`>`, and `*` inside an argument are inert literal bytes. The entire
-quoting/injection class a `sh -c "<string>"` surface opens is *structurally
-absent*, not defended against — a value that happens to contain `; rm -rf /`
-is one argument containing those characters, and always was.
-
-If you genuinely want a pipeline or a shell builtin, name the interpreter
-yourself:
+`command` is a non-empty list of non-empty strings; there is no shell-string
+spelling. The program is spawned directly, so `;`, `|`, `&&`, `$(…)`,
+backticks, `>` and `*` inside an argument are literal characters. For a
+pipeline or a shell builtin, name the interpreter yourself:
 
 ```yaml
         command: ["bash", "-lc", "bun run build | tee build.log"]
 ```
-
-That is allowed and sometimes right — but it is now a visible, reviewable line
-in the frontmatter diff rather than something the format did for you silently.
-
-Bounds: 1–64 argv entries, each a non-empty string of at most 4096 bytes.
 
 ### `cwd`
 
@@ -927,8 +914,6 @@ model step). It rejects
 environment. Exact named `env:` bindings are dispatch-significant and form part
 of the unit's input hash.
 
-The historical `inherit_env` spelling is unsupported.
-
 ### What `akm show` reports for an exec step
 
 `akm show <workflow> --format json` summarizes each step under
@@ -973,7 +958,7 @@ Everything else in the summary is unchanged: a `map` of exec units carries both
 ### Security
 
 Exec units sit inside the existing workflow trust model — see
-[Security: workflow sources are executed code](https://github.com/itlackey/akm/blob/main/docs/guides/run-workflows.md#security-workflow-sources-are-executed-code).
+[Security: workflow sources are executed code](../guides/run-workflows.md#security-workflow-sources-are-executed-code).
 They do not widen it, and they do not narrow it:
 
 - **The child inherits akm's environment.** The command runs with your
@@ -1005,12 +990,9 @@ independent by construction — no unit can read another's result — so they ru
 
 ### The default
 
-**Since 0.9.1, a `map` step that declares no `concurrency:` freezes a width of
-4.** (Before 0.9.1 it froze 1, so every fan-out ran one item at a time unless
-the author opted in.) 4 rather than "as wide as the machine allows" is
-deliberate: it is a predictable 4× on any fan-out longer than four items, it
-stays under the host CPU cap on any machine with 6 or more cores, and it is a
-number an author can reason about without knowing which box the run lands on.
+**A `map` step that declares no `concurrency:` freezes a width of 4.** The
+width is a fixed number rather than "as wide as the machine allows", so an
+author can reason about it without knowing which host the run lands on.
 
 Three ways to change it:
 
@@ -1022,8 +1004,8 @@ Three ways to change it:
 
 `concurrency: 1` is a real, honored opt-out, not the absence of a value: an
 authored `1` is kept distinct from an unset field, and it always beats the
-config default. Set `workflow.defaultMapConcurrency` to `1` to restore the
-pre-0.9.1 serial-by-default behavior everywhere at once.
+config default. Set `workflow.defaultMapConcurrency` to `1` to make every map step serial by
+default.
 
 A step with no `map:` is one unit, not a fan-out. It is unaffected by any of
 this.
@@ -1154,17 +1136,16 @@ rejected, and a model step's declared `max_loops` is untouched. This is the
 same reasoning that makes an exec unit's `output:` schema miss fail without a
 corrective re-dispatch.
 
-**Fail-closed verification.** With no non-empty `### gate` rubric, no
+**Verification.** With no non-empty `### gate` rubric, no
 verification runs. When a rubric is present, the workflow requires a
 connection or a harness to judge it before the plan can be frozen: the judge
 runs where model work runs (the default connection, else the default harness; see
 [Where each process runs](configuration.md#where-each-process-runs)) — see
-[Author's Guide: Troubleshooting](https://github.com/itlackey/akm/blob/main/docs/guides/author-workflows.md#troubleshooting)
+[Author's Guide: Troubleshooting](../guides/author-workflows.md#troubleshooting)
 if neither is configured yet. That verifier invocation is frozen into the run.
 
 Only a well-formed `complete: true` verdict advances a criteria-bearing step.
-A missing verifier, dispatch failure, or malformed result rejects the gate
-instead of silently bypassing it. A well-formed `complete: false` verdict
+A missing verifier, dispatch failure, or malformed result rejects the gate. A well-formed `complete: false` verdict
 returns its missing criteria and feedback and can trigger another bounded
 `max_loops` attempt.
 
@@ -1202,11 +1183,11 @@ string that is not an alias is an exact model name and is used as written. An
 alias the connection does not map answers with that connection's first model; a
 harness with no model for it passes none and uses its own default. See
 [Aliases](configuration.md#aliases) for the full rules and the author's guide
-for [which tier to pick per step](https://github.com/itlackey/akm/blob/main/docs/guides/author-workflows.md#choosing-where-a-step-runs-and-which-model).
+for [which tier to pick per step](../guides/author-workflows.md#choosing-where-a-step-runs-and-which-model).
 
 ## See also
 
-- [Running Workflows](https://github.com/itlackey/akm/blob/main/docs/guides/run-workflows.md) — operating a run day to day
-- [Author's Guide: Writing Workflows](https://github.com/itlackey/akm/blob/main/docs/guides/author-workflows.md) — a task-oriented walkthrough
-- [Architecture: The Workflow Engine](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md) — persistence, dispatch, and resume internals
+- [Running Workflows](../guides/run-workflows.md) — operating a run day to day
+- [Author's Guide: Writing Workflows](../guides/author-workflows.md) — a task-oriented walkthrough
+- [Architecture: The Workflow Engine](../architecture/workflow-engine.md) — persistence, dispatch, and resume internals
 - [CLI Reference](cli.md) — full flag documentation for `workflow` and `lint`

@@ -13,12 +13,12 @@ live one level up in `docs/migration/`.
 - [0.9.16](0.9.16.md) — Source-bound scheduler grants, local execution authority, and split unsafe overrides.
 - [0.9.15](0.9.15.md) — Lease/state.db contention exit code 75, scheduled-task engine requirements, and safer launchers.
 - [0.9.14](0.9.14.md) — Index v22→v23 derived-cache rebuild, lexical fragments, and collapse-detector canaries.
-- [0.9.2](0.9.2.md) — Task source v4 migration, workflow source IR v1, and durable-v4-family `irVersion: 5`.
+- [0.9.2](0.9.2.md) — Task source v4 migration and the workflow plan format change.
 - [0.9.0](0.9.0.md) — 0.9 release-candidate and final-release migration notes.
 - [0.8.0](0.8.0.md) — CLI/storage break, improve-owned graph pipeline, config v2, and task assets.
 - [0.7.5](0.7.5.md) — Patch rollup for everything shipped on `main` after v0.7.4.
 - [0.7.4](0.7.4.md) — Publish-process-only patch release with no functional change from 0.7.3.
-- [0.7.3](0.7.3.md) — Stability improvements, security hardening, and UX refinements.
+- [0.7.3](0.7.3.md) — Stability improvements and UX refinements.
 - [0.7.0](0.7.0.md) — Last v1-cycle pre-1.0 release with the proposal queue and improve-loop groundwork.
 - [0.6.0](0.6.0.md) — v1 architecture refactor, stash rename cleanup, and sandbox/setup guidance.
 - [0.5.0](0.5.0.md) — Wiki, workflow, vault, and save command additions before the 0.6 architecture cut.

@@ -69,14 +69,12 @@ akm show scripts/deploy.sh         # View details and run command
 - **One library for every agent** -- Use the same capability library from Claude Code, OpenCode, Cursor, Aider, Windsurf, or any assistant that can run shell commands.
 - **Load only what the task needs** -- Search or curate a shortlist, then load full content by ref. No giant startup prompt is required.
 - **Package complete capabilities** -- Install and share bundles containing skills, scripts, workflows, agents, instructions, memories, and knowledge -- not just prompt snippets.
-- **Improve through evidence, with review** -- Feedback re-ranks assets right away. A negative report can carry an exact text fix, and `akm improve` repairs metadata; every edit lands as a diffable proposal you accept, reject or revert, and only writable bundles are changed.
-- **Turn knowledge into repeatable work** -- Run persisted workflows with dispatch, gates, retries, budgets, and resume instead of reconstructing a process from prose every session.
+- **Improve through evidence, with review** -- Feedback re-ranks assets right away. A negative report can carry an exact text fix, and `akm improve` repairs metadata. Edits land as diffable proposals you accept, reject or revert, unless you opt in to automatic acceptance (`experimental.improveAutonomy`). Only writable bundles are changed.
+- **Turn knowledge into repeatable work** -- Run persisted workflows with dispatch, gates, retries, budgets, and resume instead of reconstructing a process from prose every session. Workflows are Experimental.
 
-akm retrieves every supported capability type. It directly orchestrates
-defined execution surfaces such as workflows, agent dispatch, tasks, and
-guarded subprocess injection -- it does not blindly execute arbitrary indexed
-content merely because that content appears in search results. It
-complements MCP and assistant-native skills rather than replacing them.
+Search and show only return content; running a workflow, task, script, or
+agent is a separate command. akm complements MCP and assistant-native skills
+rather than replacing them.
 
 ## Agent Integration
 
@@ -99,8 +97,8 @@ Full docs, CLI reference, and guides are at **[akm.fwdslsh.dev](https://akm.fwds
 - [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/)
 - [Supported Formats](https://akm.fwdslsh.dev/docs/reference/supported-formats/)
 - [CLI Reference](https://akm.fwdslsh.dev/docs/reference/cli/)
-- [Task v3 Reference](https://akm.fwdslsh.dev/docs/reference/tasks/)
-- [0.9.2 Migration Guide](https://akm.fwdslsh.dev/docs/migration/v0.9.1-to-v0.9.2/)
+- [Tasks Reference](https://akm.fwdslsh.dev/docs/reference/tasks/)
+- [Migration guides](https://akm.fwdslsh.dev/docs/migration/README/)
 - [Configuration](https://akm.fwdslsh.dev/docs/reference/configuration/)
 - [Bundle Authoring Guide](https://akm.fwdslsh.dev/docs/guides/author-bundles/)
 - [Registry](https://akm.fwdslsh.dev/docs/reference/registry/)

@@ -1,431 +1,199 @@
-# AKM Data & Telemetry
-
-AKM stores your data locally on your machine and has **no telemetry**: it does not send usage data, analytics, or crash reports to Anthropic or to the AKM project, and it has no servers of its own that receive your data. It does, however, make network requests to the endpoints **you** configure — your model connections and embedding provider, the harness programs you enable, the registries and source hosts you install from, and GitHub for upgrades — and those endpoints necessarily receive whatever those requests contain. This document describes exactly what AKM reads, writes, and sends.
-
-## No Telemetry
-
-AKM does not:
-- Send usage data, events, or crash reports to Anthropic or the AKM project
-- Contact any AKM-operated analytics or telemetry endpoint at runtime
-- Include any analytics SDK or beacon
-- Collect your email, name, or any personally-identifying information for the project's benefit
-
-AKM adds no network destinations of its own. The requests it *does* make all go to endpoints you chose or invoked, and those third parties receive whatever the request contains:
-
-1. **Your configured connections and embedding provider** (e.g. Anthropic, OpenAI, a local Ollama, or any OpenAI-compatible endpoint) receive the prompts and asset content sent for reflect/propose/distill/embedding when you enable those features, and `akm setup`, `akm models` and `akm health` ask each endpoint which models it serves. If you point AKM at Anthropic, Anthropic receives those requests. Your API key is sent only to the endpoint of the connection it belongs to.
-   **A harness you enable** (Claude Code, Codex, OpenCode, ...) is a program akm runs on your machine, and what akm hands it reaches whatever that harness is configured for: its own provider, its own tools, its own MCP servers. It runs with your environment as it is ([How akm runs a harness](configuration.md#how-akm-runs-a-harness)). akm's own agent runtime (used when no harness is enabled) sends to your connection only.
-2. **Registry metadata and bundle packages** from sources you explicitly configure (GitHub, npm, git remotes, websites) — those hosts receive the fetch/clone/crawl requests, and website sources receive requests for the pages you crawl.
-3. **`akm upgrade`** — fetches the latest release from GitHub releases (GitHub sees the request).
-4. **`akm setup`** — looks for an OpenAI-compatible server on `localhost` (ports 11434, 1234 and 8080) with one `GET /v1/models` each, and asks the endpoint you give it (and the embedding endpoint, if you pick another) for its model list. `--no-probe` contacts none of them.
-5. **`akm improve` dead-link checks** — a full-scope improve run (the default for a bare `akm improve`) sends best-effort `HEAD` requests (following redirects, with a short per-request timeout, checked at a bounded concurrency rather than all at once) to every URL found in the bodies of the knowledge assets it is improving, to flag dead links. The hosts of those URLs see a `HEAD` request; no asset content is sent. Keep URLs you don't want probed out of knowledge-asset bodies, or run improve with an explicit narrower scope.
-
-In every case the receiving endpoint is one you configured or invoked; the data leaving your machine is the data you directed AKM to send there.
-
----
-
-## Dry runs and diagnostic output
-
-Command dry-run is an intentionally zero-write diagnostic.
-A command dry-run does not mutate or write authored source.
-A command dry-run does not mutate or write durable state.
-A command dry-run records no usage.
-A command dry-run emits no events.
-A command dry-run performs no accounting.
-
-`akm command run --dry-run` still reads the selected source and configuration,
-performs authorization, and lowers a request. It does not dispatch or
-materialize credentials. Its output contains only safe field provenance and
-fixed lowering notices; resolved prompt, command, environment, endpoint,
-model, and credential values are excluded. Live `--verbose` writes the same
-safe diagnostic metadata to stderr while preserving normal stdout.
-
----
-
-## Local On-Disk Surface
-
-AKM writes to these locations on your machine. All paths follow [XDG Base Directory](https://specifications.freedesktop.org/basedir-spec/latest/) conventions on Linux/macOS and Windows conventions on Windows.
-
-### Config Directory (`$XDG_CONFIG_HOME/akm` or `~/.config/akm/`)
-
-| Path | Contents | Safe to delete? |
-|---|---|---|
-| `config.json` | Your AKM configuration: connections, harnesses, improve strategies, bundles (bundle sources), and experimental opt-ins — see [Configuration](configuration.md) | **No** — deleting resets all settings |
-| `credentials.json` | The API keys akm holds for your connections and for the `embedding` and `search.curateRerank` services, each with the endpoint it was stored for, written with mode 0600 (see [Credentials](configuration.md#credentials)) | **No** — deleting it removes those keys; akm sends requests without them |
-
-Override: set `AKM_CONFIG_DIR` or `XDG_CONFIG_HOME`.
-
-### Data Directory (`$XDG_DATA_HOME/akm` or `~/.local/share/akm/`)
-
-| Path | Contents | Safe to delete? |
-|---|---|---|
-| `index.db` | Search index for all your bundle assets (FTS5 + metadata) | Yes — rebuilds via `akm index --full` |
-| `state.db` | Events, local usage telemetry, proposals, task history, improve run results, and workflow run state/history (the former `workflow.db` was folded in during the 0.9.0 cutover) | **No** — deletes event/usage logs, proposal queue, improve history, and workflow run history |
-| `logs.db` | Structured, high-volume task/run log lines (`{ts, task_id, run_id, stream, level, line}`), joined to `state.db`'s `task_history` rows by `task_id@started_at`. Kept separate from `state.db` because log lines are append-only and freely purgeable, unlike durable state | Yes — log lines are regenerable per run; deleting loses historical run output only |
-| `akm.lock` | Inter-process write lock | Yes — recreated automatically |
-| `backups/tasks/` | Copies of task files taken by `akm migrate apply` before it rewrites them, one timestamped directory per run that rewrote a file | Yes — once the migrated tasks are verified |
-| `akm.lock.lck` | Lock write sentinel | Yes — recreated automatically |
-| `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --type opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces) | Yes — recreated on next use; deleting it loses the runtime's session history |
-
-Override: set `AKM_DATA_DIR` or `XDG_DATA_HOME`.
-
-These files take your **process umask** — akm does not set or change their
-permissions. They hold task history, captured command output, and indexed
-content, so on a shared machine you probably do not want them world-readable;
-set a tighter umask, or `chmod` the directory yourself. akm will not do it for
-you, and `akm health` will not nag about it either — `0644` under a default
-`022` umask is simply the expected state.
-
-If akm **cannot read** this directory — a uid/ownership mismatch, for instance
-when two accounts share one `$XDG_DATA_HOME` — commands fail loudly with a
-`DATA_DIR_UNREADABLE` config error (exit 78) naming the path, the errno, the
-mode and owner, and the uid you are running as. They do **not** report an empty
-index. `akm health` stays runnable in that state and reports it as a failing
-`state-db-readable` check, so it remains the command to reach for.
-
-If akm can read this directory but **cannot write** it — an agent sandbox that
-only allows writes inside the workspace, for instance — `akm feedback` fails with
-a `DATA_DIR_NOT_WRITABLE` config error (exit 78) and records nothing, instead of
-reporting success for feedback it could not store. Add the data directory to the
-sandbox's writable paths.
-
-> **0.9.1 note.** A pre-release build briefly chmodded this directory to `0700`
-> and the databases to `0600` on every open. That was reverted: it silently
-> changed the permissions of directories akm did not create, which broke installs
-> sharing `$XDG_DATA_HOME` between two uids. If a 0.9.1 pre-release tightened
-> your data directory and you need it shared again, `chmod` it back.
-
-### Cache Directory (`$XDG_CACHE_HOME/akm` or `~/.cache/akm/`)
-
-Everything in the cache is regenerable. It is safe to delete the entire cache directory; AKM will recreate what it needs on next use.
-
-| Path | Contents | Safe to delete? |
-|---|---|---|
-| `config-backups/config-<timestamp>.json` | Pre-save config snapshots (5 retained; owner-only permissions — file `0600`, dir `0700`, since 08-F4; on a filesystem without POSIX permissions, such as a CIFS/Azure Files share, the mount options decide them instead) | Yes |
-| `config-backups/config.latest.json` | Latest backup alias (owner-only `0600`) | Yes |
-| `registry/` | Downloaded registry tarballs (bundle packages from npm, GitHub, etc.) | Yes — re-downloaded on next `akm bundle add` or `akm bundle update` |
-| `registry-index/` | Legacy per-URL JSON cache (v0.7 artifact) | Yes — fully replaced by `index.db` in 0.8.0 |
-| `bin/` | Downloaded AKM binary cache (used by `akm upgrade`) | Yes |
-| `tasks/logs/` | Scheduled task log files. Written at your umask; they hold captured command/agent output, so tighten the directory yourself if the machine is shared | Yes — ephemeral logs |
-| `tasks/history/` | Legacy task history JSONL (v0.7 migration artifact) | Yes |
-| `opencode/<version>/` | The OpenCode binary akm's own agent runtime runs (about 240 MB), fetched from the npm registry on the runtime's first use | Yes — fetched again on next use |
-
-Override: set `AKM_CACHE_DIR` or `XDG_CACHE_HOME`.
-
-### Bundle Directory (`~/akm/` by default, or user-configured)
-
-| Path | Contents | Safe to delete? |
-|---|---|---|
-| `<stash>/` | All your asset files: agents, skills, commands, knowledge, instructions, workflows, scripts, memories, env files, secrets, lessons, tasks, sessions, facts, plus any bundle-adapter-owned content (e.g. `llm-wiki` bundle roots — not an AKM `PLACEMENT_SPECS` type) | **No** — this is YOUR data |
-| `<stash>/.akm/` | Hidden AKM metadata (v0.7 proposals, legacy runs) | Caution — check for pending proposals first |
-
-Override: set `AKM_BUNDLE_DIR`, or configure `bundles`/`defaultBundle` in `config.json` (the top-level `stashDir` key from 0.8 is retired and rejected in 0.9 — see [Configuration](configuration.md#bundles-and-write-target)).
-
----
-
-## What Is Stored in `state.db`
-
-`state.db` holds four categories of non-regenerable data:
-
-### 1. Events Table
-
-An append-only log of every mutating action you perform with AKM. Events are stored locally for self-improvement (the improve loop uses them to surface usage patterns) and for inspection via `akm log`.
-
-**What is recorded:**
-- `event_type` — what action was taken (see full list below)
-- `ts` — ISO-8601 UTC timestamp
-- `ref` — the asset ref affected (e.g. `skills/code-review`), if applicable
-- `metadata` — structured payload specific to the event type (e.g. query text for `search`, score for `feedback`)
-
-**What is NOT recorded:**
-- File contents
-- LLM prompts or responses
-- API keys or secrets (config is not stored in events)
-- Personal information
-
-**Retention:** Events older than 90 days are purged automatically when `akm improve` runs its maintenance pass. The window is `improve.eventRetentionDays` (default `90`; set `0` to disable), enforced by `purgeOldEvents()`.
-
-**Full event type list.** `EventType` (`src/core/events.ts`) is an open
-string union — new types can be added without a schema bump — so this is
-the set of types the code actually emits at HEAD (verified against every
-`appendEvent(...)` and `insertEventOnce(...)` call site, 2026-09-30), grouped by area:
-
-*Asset lifecycle*
-
-| Event type | When emitted | Key metadata fields |
-|---|---|---|
-| `add` | `akm bundle add <source>` | `target`, `name`, `writable`; `provider` when given |
-| `remove` | `akm bundle remove <source>` | `ref` |
-| `update` | `akm bundle update [source]` | `target`, `all`, `processed` |
-| `remember` | `akm remember <text>` | `ref`, `path`, `force` |
-| `import` | `akm import <file>` | `ref`, `source`, `path`, `force` |
-| `rekey` | `scripts/rekey-asset-ref.ts` moved at least one row onto a renamed asset's new ref — nothing is emitted on a no-op re-run | `ref` (the new ref); metadata `{from, to, changed}` (row counts only) |
-
-*Search, retrieval, sync*
-
-| Event type | When emitted | Key metadata fields |
-|---|---|---|
-| `search` | `akm search <query>` | `query`, `hitCount`, `resultRefs`, `mode` |
-| `curate` | `akm curate <prompt>` | `query`, `itemCount`, `itemRefs` |
-| `show` | `akm show <ref>` | `ref`, `type`, `name` |
-| `select` | `akm show` after a search returning the same ref | `ref`, `query`, `searchTs`, `rankPosition` |
-| `feedback` | `akm feedback <ref>` | `signal` (positive/negative), `reason`, `tags`, `fix` (`source`, the number of replacements and, for `--superseded-by` or `--outdated`, the `beliefState` the proposal leaves and the `supersededBy` ref, when a fix was attached), `contentHash` (sha256 of the asset's body, without its frontmatter, as it stood when the feedback was given: it lets reflect mark feedback given on an earlier version of the text, and the loop's distill pass tell that a memory flagged wrong still has it; left out for an env or secret file and when the file cannot be read) |
-| `sync` | `akm sync` | `name`, `message`, `ok` |
-| `index_db_vacuumed` | `akm index` VACUUMed index.db, after an index layout migration or because more than half its pages were free | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
-| `index_completed` | `akm index`, once when a run finishes | `mode`, `totalMs`, `walkMs`, `llmMs`, `embedMs`, `ftsMs`, `finalizeMs` (phase timings in milliseconds) |
-| `stash_synced` | `akm improve`'s internal sync passes (the `sync.push` feature), before the run and at its end, **distinct from** the `akm sync` command above | `phase` (`pre-run` or `end-of-run`), `committed`, `pushed`, `skipped`, `reason`, `attributed` (paths the run wrote and staged), `unattributed` (in-scope paths that went dirty during the run without the run writing them — left for their author) |
-| `env_access` | `akm env run <ref> -- <command>`, and a workflow unit's `env:` binding at each dispatch (audit trail: key **names** only, values never recorded) | `ref`, `keys` |
-| `secret_access` | `akm secret run <ref> <VAR> -- <command>` (audit trail: var **name** only, value never recorded) | `ref`, `var` |
-
-*Proposals*
-
-| Event type | When emitted | Key metadata fields |
-|---|---|---|
-| `promoted` | `akm proposal accept <id>` | `ref` |
-| `rejected` | `akm proposal reject <id>` | `ref` |
-| `proposal_reopened` | `akm proposal reopen <id>` (a rejected proposal goes back to pending) | `ref`, `proposalId`, `source`, `reason` (when given) |
-| `proposal_reverted` | `akm proposal revert <id>` (undoes a previously-accepted proposal, restores prior content) | `ref` |
-| `proposal_expired` | A pending proposal aged past the retention window and was auto-expired | `ref` |
-| `proposal_expiration_pass` | Summary emitted once per `akm improve` maintenance run after per-proposal `proposal_expired` events | expiry counts |
-| `proposal_orphan_purge` | Stale proposals whose target asset no longer exists on disk, pruned by improve maintenance | `checked`, `rejected` |
-| `proposal_creation_rejected` | `createProposal()` validation failed before write | `ref`, `reason`, `source` |
-| `triage_drained` | `akm proposal drain` run summary | `promoted`, `rejected`, `deferredByReason`, `skippedByCap`, `applyMode` |
-| `triage_deferred` | `akm proposal drain` left items unresolved after the (optional) judgment tier | `deferred`, `deferredByReason`, `reason` |
-
-*`akm improve` pipeline*
-
-| Event type | When emitted | Key metadata fields |
-|---|---|---|
-| `improve_invoked` | Start of an `akm improve` run | `ref` (scope); `strategy`, `scope`, `dryRun`, `eligibleCount` |
-| `improve_completed` | `akm improve` run finished | run stats |
-| `improve_failed` | `akm improve` run errored | error |
-| `improve_skipped` | `akm improve` left a ref, a lane, or a group of refs out | `reason` (`no_new_signal`, `not_retrieved`, `distill_no_new_signal`, `budget_exhausted`, `budget_exhausted_batch`, `asset_missing_on_disk`, `strategy_filtered_all_passes`, `autonomy_gated`, `engine_unavailable`, `consolidation_no_memory_updates`, `below_min_new_sessions`, `derived_memory_reflect_skipped`, `memory_distill_requires_feedback`, `distill_flagged_wrong`, `distill_positive_without_reason`, `distill_deprecated_or_superseded`); `count`, `remaining`, `strategy`, `lane` or `configKey` where they apply |
-| `improve_lock_recovered` | Stale improve lock cleared at startup | |
-| `improve_review_needed` | `akm feedback` pushed a high-utility asset's utility below the review threshold — a review-needed escalation is recorded (not a proposal, so it can't accidentally overwrite the asset) | `ref`, `previousUtility`, `nextUtility` |
-| `reflect_invoked` | Start of reflect phase in `akm improve` | `ref`, engine |
-| `reflect_completed` | Reflect phase produced a proposal | `ref` |
-| `improve_reflect_outcome` | Per-asset reflect result | `ref`, `ok`, `durationMs`, `reason` |
-| `propose_invoked` | `akm proposal new` | `ref` |
-| `distill_invoked` | Distill phase inside the `akm improve`/`akm proposal new` pipeline. **`akm distill` is not a CLI command** — there is no standalone verb by that name | `ref`, outcome (`queued`, `skipped` with a `skipReason` such as `lesson_exists`, `nothing_reusable` or `conflict_noop`, `llm_failed`, `validation_failed`, `quality_rejected`, `review_needed`). A `quality_rejected` or `review_needed` event also carries `score`, `reason`, the judge's per-criterion `criteria` when it ran, and `rejectedContent`, the turned-away lesson text cut to 2000 characters (the judge prompt's cap), kept locally in `state.db` |
-| `extract_invoked` | `akm proposal extract --type <harness>` / `--auto`, or improve-stage session extraction | `outcome`, `sessionId`, `harness` |
-| `extract_triaged` | The pre-LLM extract triage gate evaluated at least one session | `evaluated`, `passed`, `triagedOut`, `sourceRun` (aggregated) |
-| `schema_repair_invoked` | The schema-repair pass inside `akm improve` (`runSchemaRepairPass`) attempts to patch missing frontmatter on an asset that failed schema validation. **There is no `akm lint --repair` flag** — `lint` has `--fix`/`--auto-fix`, unrelated to this event | `ref`, outcome |
-| `proactive_selected` | The proactive-maintenance selector runs (once per `akm improve` run) | `count`, `dueTotal`, `neverReflected` (aggregated) |
-| `events_purged` | Old events deleted by improve maintenance (90-day default retention) | `purgedCount`, `retentionDays` |
-| `improve_runs_purged` | Old `improve_runs` rows deleted by improve maintenance (same retention window as events) | `purgedCount`, `retentionDays` |
-| `asset_state_gc` | Improve maintenance found `asset_salience`/`asset_outcome` rows that no longer resolve against the index (`pending`) or deleted them (`improve.stateGc.collect`); a run with neither emits nothing | `pending`, `collected`, `byTable` |
-| `state_db_vacuumed` | state.db was VACUUMed after the retention purge because more than half its pages were free | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
-| `task_logs_purged` | Old scheduled-task log files purged by improve maintenance | |
-
-*Workflows*
-
-| Event type | When emitted | Key metadata fields |
-|---|---|---|
-| `workflow_started` | `akm workflow run <ref>` creates a run (including native workflow task execution) | `ref`, `runId` |
-| `workflow_step_completed` | The run completion path records a genuine `completed` transition | `ref`, `runId`, `stepId`, `status` |
-| `workflow_step_updated` | The run completion path records a non-`completed` transition (`failed`/`skipped`/`blocked`) | `ref`, `runId`, `stepId`, `status` |
-| `workflow_finished` | A `run` transition makes the run terminal | `ref`, `runId` |
-| `workflow_abandoned` | `akm workflow abandon` | `runId` only — never the workflow title |
-| `workflow_unit_started` | A unit begins through `akm workflow run` | ids/status only — never unit instructions or results |
-| `workflow_unit_finished` | A workflow unit terminates | ids/status/tokens only — never unit instructions or results |
-
-*LLM usage and health*
-
-| Event type | When emitted | Key metadata fields |
-|---|---|---|
-| `llm_usage` | Per-attempt LLM call usage telemetry (#576), written by every akm command that makes an LLM call (`index`, `curate`, workflows, agent dispatch, `command run`, `improve`, `proposal drain`) | model provenance, terminal outcome, duration, optional token usage |
-| `llm_usage_summary` | The owning LLM telemetry sink's terminal-record count marker. The process-wide sink that covers commands other than `improve` writes none when it saw no call | `expectedTerminalRecords` |
-| `health_probe` | `akm health`'s state.db round-trip write/read probe. **Not durably retained**: the row is inserted then deleted within the same connection once the round trip is confirmed, so the net effect on the `events` table is always zero rows | n/a (ephemeral) |
-
-`llm_usage` rows also carry `process`/`engine`/`stage` (each optional; a call
-made outside any attributed scope carries none of them). `akm improve`
-(#944) builds a process x engine x model cross-tab from the LLM call records
-the run's own usage sink collects — `summarizeLlmUsageRecordsCrossTab` in
-`src/commands/health/llm-usage.ts` — persisted on the run result as
-`usageReport.byProcessEngineModel` and queryable per-run or aggregated with
-`akm improve report`; see `docs/reference/cli.md`'s `#### improve report`
-section. `summarizeLlmUsageCrossTab` is the events form of the same
-aggregation, used by `improve report` to recompute the cross-tab from stored
-`llm_usage` events when a run has no persisted `usageReport`.
-
-### 2. Usage Events Table
-
-`usage_events` is the local analytical record behind utility scores,
-retrieval-demand counts, GRR, and real-query eval generation (0.9.0: its CLI
-read surface, `akm history`, was removed — the table itself and everything
-below still applies). It stores
-search/curate queries, per-entry search impressions, explicit show/curate
-engagement, feedback signals, stable refs, and timestamps. It never leaves the
-machine unless you explicitly copy the database or send derived content to a
-configured endpoint.
-
-Successful `search`, `curate`, and `show` commands always record usage. Machine
-reads are stamped by source (below), so they never skew ranking or eval.
-
-The `search` summary row (the one with no `entry_ref`) carries `resultCount`,
-`stashHitCount`, `registryHitCount`, `resolvedCount` and `mode` in its metadata,
-plus latency for `akm metrics`: `totalMs` for the whole search, and `rankMs` and
-`embedMs` for the ranking and query-embedding phases when the local search
-reported them (a registry-only search has `totalMs` alone).
-
-Every runtime writer stamps provenance as `user`, `improve`, `task`, `audit`, or
-`unknown`. Direct interactive CLI traffic defaults to `user`; internal improve,
-scheduled-task, and eval subprocesses preserve their stamp across nested
-search/curate/show/remember/agent reads. Omitted or invalid writer provenance is
-`unknown`, and pre-provenance rows rescued at the 0.9 cutover are also
-`unknown`. Only exact `source='user'` rows contribute demand, utility, GRR, or
-real-query labels.
-
-Per-entry `search`, `curate`, and `show` rows carry a local-only
-`metadata.downstreamAttribution` object. Version 1 uses `control: true` for
-current traffic where memory inference does not apply; rows without the
-version marker are historical/unattributed. Attributed rows use
-`control: false` and may contain:
-
-- `memoryInference`: `direct` when the emitted ref is an inferred child, or
-  `surface` when derived description/tags were actually present in the emitted
-  search or selected curate output. Brief output and internally replaced
-  descriptions are controls. Tag-only fallback is attributed in full search;
-  normal/agent search and curate omit tags and remain controls in that case.
-- `graphExtraction`: written only by releases that boosted search with the
-  graph — the graph contribution applied to the hit, plus `bodyHash` and
-  `extractionRunId` when available. Current releases do not rank by the graph
-  and never write it.
-
-Attribution metadata contains fully-qualified refs and graph identifiers, never
-asset bodies or provenance content. It is not added to `search`, `curate`, or
-`show` result payloads; there is no CLI surface that reads it back (0.9.0:
-`akm history` was removed). The full index still applies its existing
-higher-priority-wins `(type, entry.name)` dedup across sources: attribution
-source-qualifies every indexed row but does not invent a lower-priority row for
-an identity that production indexing omitted.
-
-**Retention:** usage events older than 90 days are purged on every `akm index`.
-`created_at` is `YYYY-MM-DD HH:MM:SS` in UTC (SQLite `datetime('now')`), not
-ISO 8601, so time bounds compare `datetime(created_at)` with the bound rather
-than the raw text.
-
-`akm metrics` is the read surface for this table: it aggregates the rows of a
-window into per-asset usage, queries (including searches that returned nothing),
-feedback, and daily series, and `--format html` carries the window's rows in the
-page so they can be filtered and exported in the browser. It reads
-`usage_events`, the `select` events, `utility_scores`, `asset_outcome`,
-`proposals`, the workflow tables, and `llm_usage` events, and writes nothing.
-A window longer than a store's retention is reported in the result's `notes`.
-
-### 3. Proposals Table
-
-The proposal queue: pending, accepted, rejected, and reverted improvement proposals for your bundle assets. Generated by `akm improve`, `akm proposal new`, and related proposal-producing flows.
-
-Contents:
-- Proposal UUID (primary key)
-- Target asset ref
-- Status (pending/accepted/rejected/reverted)
-- Source (which process generated it — e.g. `reflect`, `distill`)
-- Full proposal content (Markdown text)
-- Created/updated timestamps
-- For a `consolidate-pair` retire proposal, the pair judge's verdict in its `retirement` metadata: label, reason, cosine, and the claims only the retired side holds (`onlyInRetired`) and only the kept side holds (`onlyInSuccessor`), each at most 20 entries of 200 characters
-
-Beside it, the `improve_ledger` table records what each improve stage last did
-with each asset — one row per bundle, asset ref and stage: the outcome
-(`proposed`, `accepted`, `rejected`, `quality_rejected`, `review_needed`,
-`expired`, `unchanged`, `failed`, `judged_no_action`), when it was attempted,
-and the earliest time the stage may try that asset again. It holds refs,
-timestamps, a proposal id and a short reason — never asset content. A row whose
-next attempt depends on the asset changing rather than on a clock (the
-consolidate pair pass, and a consolidate promotion once accepted or rejected)
-also holds a hash of the asset's body, and no earliest-retry time.
-
-### 4. Task History Table
-
-A record of scheduled task runs (from `akm task`):
-- Task ID, status, start/end times
-- Log file path (the log content stays in `$CACHE/tasks/logs/`)
-
----
-
-## How to Inspect and Clear Local Data
-
-### Report on usage
+# Data and Telemetry
+
+akm keeps your data on your machine. It has no analytics or crash reporting.
+It makes network requests only to the endpoints you configure or the commands
+you run, listed below. This page covers what akm sends, and what it stores and
+where.
+
+## Network destinations
+
+- **Your model connections and embedding endpoint** (`connections` and
+  `embedding` in [Configuration](configuration.md)) receive the prompts and
+  asset content that `improve`, `proposal new`, `index`, enrichment and the
+  other model-backed features send. `akm setup`, `akm models` and `akm health`
+  ask each endpoint which models it serves. Your API key is sent only to the
+  endpoint of the connection it belongs to.
+- **A harness you enable** (Claude Code, Codex, OpenCode, ...) is a program akm
+  runs on your machine, and what akm hands it reaches whatever that harness is
+  configured for: its own provider, its own tools, its own MCP servers. It runs
+  with your environment as it is ([How akm runs a
+  harness](configuration.md#how-akm-runs-a-harness)). akm's own agent runtime
+  (used when no harness is enabled) sends to your connection only.
+- **Hugging Face Hub** serves the local embedding model when
+  `semanticSearchMode` is `auto` and no remote embedding endpoint is set. The
+  model is downloaded once into `$CACHE/models` (or `HF_HOME`, if set). Set
+  `HF_HUB_OFFLINE=1` to forbid the download. The ONNX Runtime binding it runs on
+  is fetched once from the npm registry into `$CACHE/onnxruntime`.
+- **Bundle and registry hosts you configure**: git remotes, npm registries,
+  websites you crawl, and the registries behind `akm search --from registry`.
+  They receive the clone, fetch, crawl and search requests.
+- **Snapshot fetchers** for website sources contact `public.api.bsky.app`
+  (Bluesky), `youtube.com`, `api.x.com` (with `X_BEARER_TOKEN`, or the
+  `secrets/x-bearer-token` secret) and `api.github.com` when a crawled URL
+  matches that fetcher. See [Website sources](website-sources.md).
+- **`akm upgrade`** calls `registry.npmjs.org` and `github.com` (release
+  metadata and downloads) and `api.github.com`. It attaches `GITHUB_TOKEN`,
+  `GH_TOKEN`, or the output of `gh auth token` to GitHub API requests. Its
+  plugin step runs `npm view` and the `claude`, `codex` or `opencode` CLIs.
+- **`akm health`**, unless you pass `--no-probe`, sends a reachability probe to
+  each connection's endpoint, runs each harness's `--version`, calls
+  `api.github.com` to compare your version with the latest release, and runs
+  `git ls-remote --symref` against the remote of an installed Claude plugin
+  marketplace clone.
+- **`akm sync`** and the syncs `akm improve` runs before and after a run fetch
+  from and push bundle content to the git remote you configured.
+- **`akm improve` dead-link checks** send `HEAD` requests to the URLs found in
+  the bodies of the knowledge assets being improved. No asset content is sent.
+- **`akm setup`** looks for an OpenAI-compatible server on `localhost` (ports
+  11434, 1234 and 8080) with one `GET /v1/models` each, and asks the endpoint
+  you give it (and the embedding endpoint, if you pick another) for its model
+  list. `--no-probe` contacts none of them.
+
+## Where akm stores data
+
+On Linux and macOS the directories follow the XDG Base Directory conventions.
+Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
+`%LOCALAPPDATA%\akm\state`).
+
+### Config directory
+
+`$XDG_CONFIG_HOME/akm` (default `~/.config/akm/`). Override with
+`AKM_CONFIG_DIR`.
+
+| Path | Contents |
+| --- | --- |
+| `config.json` | Your configuration: connections, harnesses, improve strategies, bundles, registries and experimental opt-ins. See [Configuration](configuration.md). Deleting it resets all settings. |
+| `credentials.json` | The API keys akm holds for your connections and for the `embedding` and `search.curateRerank` services, each with the endpoint it was stored for, written with mode 0600 (see [Credentials](configuration.md#credentials)). Deleting it removes those keys; akm sends requests without them. |
+
+### Data directory
+
+`$XDG_DATA_HOME/akm` (default `~/.local/share/akm/`). Override with
+`AKM_DATA_DIR`.
+
+| Path | Contents |
+| --- | --- |
+| `index.db` | The search index. Rebuilt by `akm index --full`. |
+| `state.db` | Durable local state: events, usage records, proposals, task history, improve runs, workflow runs. Not regenerable. |
+| `logs.db` | Log lines from scheduled task runs. Old lines are purged by `akm improve`. |
+| `akm.lock` | The lockfile: resolved version, revision and integrity of each installed bundle. `akm.lock.lck` is its write sentinel. |
+| `index.rebuild.lock`, `index.db.write.lock` | Lock files for `akm index` and asset writes. |
+| `secret-locks/` | Per-secret lock files taken while a secret is written. |
+| `backups/tasks/` | Copies of task files made by `akm migrate apply` before it rewrites them. |
+| `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --type opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces). Recreated on next use; deleting it loses the runtime's session history. |
+
+If akm cannot read this directory, commands fail with `DATA_DIR_UNREADABLE`
+(exit 78) naming the path; `akm health` still runs and reports it.
+If the directory is read-only (an agent sandbox that only allows writes in the
+workspace, for example), `akm feedback` fails with `DATA_DIR_NOT_WRITABLE`
+instead of reporting success for feedback it could not store.
+
+### State directory
+
+`$XDG_STATE_HOME/akm` (default `~/.local/state/akm/`). Override with
+`AKM_STATE_DIR`.
+
+| Path | Contents |
+| --- | --- |
+| `locks/scheduler.lock` | Serializes writes to the native scheduler (`akm task`). |
+| `locks/<bundle-key>/improve.lock` | Whole-run lock for `akm improve`, one directory per bundle. |
+
+### Cache directory
+
+`$XDG_CACHE_HOME/akm` (default `~/.cache/akm/`). Override with
+`AKM_CACHE_DIR`. Everything here is regenerable; deleting the directory is safe.
+
+| Path | Contents |
+| --- | --- |
+| `config-backups/` | The last 5 pre-save snapshots of `config.json`, plus `config.latest.json`. Owner-only (file `0600`, directory `0700`); on a filesystem without POSIX permissions, such as a CIFS/Azure Files share, the mount options decide them instead. |
+| `registry/` | Downloaded npm and git packages for installed bundles. |
+| `registry-index/` | Git mirrors (`git-<key>/`) and website snapshots (`website-<key>/`). |
+| `models/` | The local embedding model downloaded from Hugging Face. |
+| `onnxruntime/` | The ONNX Runtime binding and library for local embeddings, downloaded once from the npm registry. |
+| `opencode/<version>/` | The OpenCode binary akm's own agent runtime runs (about 240 MB), fetched from the npm registry on the runtime's first use. |
+| `tasks/logs/` | Per-run log files of scheduled tasks. |
+
+### Bundle directory
+
+`~/akm/` by default; override with `AKM_BUNDLE_DIR`, or configure `bundles` and
+`defaultBundle` in `config.json`. This holds your asset files and is not
+regenerable. akm also writes into it:
+
+| Path | Contents |
+| --- | --- |
+| `<bundle>/<type>/...` | Your assets: skills, knowledge, memories, workflows, tasks, env files, secrets and the rest. |
+| `<bundle>/.akm/memory-cleanup/` | Retired memories (`archive/`) and a log of belief changes (`belief-transitions.jsonl`). |
+| `<bundle>/sessions/` | Session assets written by `akm proposal extract` and the improve extract stage. |
+
+## What state.db records
+
+- **Events**: an append-only log of what you do with akm: bundle changes,
+  `remember`, `import`, `search`, `curate`, `show`, `feedback`, `sync`, proposal
+  decisions, improve and workflow activity, and LLM call usage (model, outcome,
+  duration, token counts). Each event has a type, timestamp, optional asset ref
+  and a small metadata payload; search events include the query text and the
+  refs returned. `akm env run`, a workflow unit's `env:` binding and
+  `akm secret run` record the names of the keys injected, not their values.
+- **Usage records**: queries, search impressions, show/curate engagement and
+  feedback. They feed utility scores and `akm metrics`, and the feedback recorded
+  as the user adjusts search ranking. Each record is stamped with its source
+  (`user`, `improve`, `task`, `audit` or `unknown`); only `user` records count.
+- **Proposals**: pending, accepted, rejected and reverted improvement proposals,
+  with their full content, plus the improve ledger of what each stage last did
+  with each asset.
+- **Task history and workflow runs**: scheduled task runs and workflow run
+  state.
+
+Event types, for `akm log --type <type>`:
+
+- Bundles and assets: `add`, `remove`, `update`, `remember`, `import`
+- Retrieval and sync: `search`, `curate`, `show`, `select`, `feedback`, `sync`,
+  `stash_synced`, `index_completed`, `index_db_vacuumed`, `env_access`,
+  `secret_access`
+- Proposals: `promoted`, `rejected`, `proposal_reopened`, `proposal_reverted`,
+  `proposal_expired`, `proposal_expiration_pass`, `proposal_orphan_purge`,
+  `proposal_creation_rejected`, `triage_drained`, `triage_deferred`
+- Improve: `improve_invoked`, `improve_completed`, `improve_failed`,
+  `improve_skipped`, `improve_lock_recovered`, `improve_review_needed`,
+  `reflect_invoked`, `reflect_completed`, `improve_reflect_outcome`,
+  `propose_invoked`, `distill_invoked`, `extract_invoked`, `extract_triaged`,
+  `schema_repair_invoked`, `proactive_selected`, `events_purged`,
+  `improve_runs_purged`, `asset_state_gc`, `state_db_vacuumed`,
+  `task_logs_purged`, `task_log_files_purged`
+- Workflows: `workflow_started`, `workflow_step_completed`,
+  `workflow_step_updated`, `workflow_finished`, `workflow_abandoned`,
+  `workflow_unit_started`, `workflow_unit_finished`
+- LLM usage: `llm_usage`, `llm_usage_summary`
+
+Events and improve run rows older than 90 days are purged by `akm improve`
+(`improve.eventRetentionDays`; `0` disables). Usage records older than 90 days
+are purged on `akm index`. Read these with `akm log`, `akm metrics`,
+`akm proposal list` and `akm task history`.
+
+## Inspect and clear
 
 ```sh
-# What was searched, shown and rated in the last 30 days
-akm metrics
-
-# A dashboard you can open from disk
-akm metrics --format html --output metrics.html
+akm metrics                                   # usage report for the last 30 days
+akm log --type search --limit 20              # recent events
+akm proposal list                             # pending proposals
+akm info                                      # where config, bundle, cache and index live
 ```
-
-### Inspect events
 
 ```sh
-# List recent events
-akm log
-
-# Filter by type
-akm log --type search --limit 20
-
-# Filter by asset ref
-akm log --ref skills/code-review
+rm ~/.local/share/akm/index.db && akm index --full   # rebuild the index
+rm -rf ~/.cache/akm                                  # drop all caches
 ```
 
-### Inspect proposals
+`state.db` has no clearing command. Removing it deletes events, proposals, task
+history and workflow runs. To reset everything except your bundle files, remove
+the config, data, state and cache directories.
 
-```sh
-# List pending proposals
-akm proposal list
+## Environment variables
 
-# Show a specific proposal
-akm proposal show <id>
-```
-
-### Clear specific data
-
-```sh
-# Delete the search index (safe — rebuilds with akm index --full)
-rm ~/.local/share/akm/index.db
-
-# Delete all cached registry downloads
-rm -rf ~/.cache/akm/registry/
-
-# Delete config backups
-rm -rf ~/.cache/akm/config-backups/
-
-# Delete the events log from state.db (non-reversible)
-# There is no akm CLI command to do this directly (`akm log` only exposes
-# `list`/`tail`, no delete/purge verb). Use SQLite directly.
-# Stop akm first (no `akm` process or scheduled task running): an older
-# `sqlite3` (< 3.51) opened read-write alongside a running akm can corrupt
-# the database.
-sqlite3 ~/.local/share/akm/state.db "DELETE FROM events;"
-
-# Delete all proposals (same precondition: stop akm first)
-sqlite3 ~/.local/share/akm/state.db "DELETE FROM proposals;"
-```
-
-### Start completely fresh (nuclear reset)
-
-```sh
-rm -f ~/.config/akm/config.json
-rm -rf ~/.local/share/akm/
-rm -rf ~/.cache/akm/
-# Your stash files in ~/akm/ are NOT touched by the above.
-```
-
----
-
-## Environment Variable Overrides
-
-You can redirect any AKM directory to a custom path:
-
-| Variable | Overrides |
-|---|---|
-| `AKM_CONFIG_DIR` | Config directory (`~/.config/akm/`) |
-| `AKM_DATA_DIR` | Data directory (`~/.local/share/akm/`) |
-| `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE`. Use `DELETE`/`TRUNCATE` on network filesystems (NFS/SMB) where WAL is impossible. When left at the `WAL` default, akm auto-detects a network FS for the data dir and falls back to `DELETE`. |
-| `AKM_STATE_DIR` | State directory (`~/.local/state/akm/`) |
-| `AKM_CACHE_DIR` | Cache directory (`~/.cache/akm/`) |
+| Variable | Effect |
+| --- | --- |
+| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Override the config, data, state and cache directories |
 | `AKM_BUNDLE_DIR` | Default bundle directory (`~/akm/`) |
-| `XDG_CONFIG_HOME` | XDG base — akm appends `/akm` |
-| `XDG_DATA_HOME` | XDG base — akm appends `/akm` |
-| `XDG_STATE_HOME` | XDG base — akm appends `/akm` |
-| `XDG_CACHE_HOME` | XDG base — akm appends `/akm` |
+| `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` | XDG bases; akm appends `/akm` |
+| `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE` or `TRUNCATE`. On a detected network filesystem the default falls back to `DELETE`. |
+| `AKM_NPM_REGISTRY` | Base URL of an npm mirror. Replaces `registry.npmjs.org` for npm bundle resolution. |
+| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` for `akm search --from registry`. Prefix an entry with `<provider>::` (for example `skills-sh::https://skills.sh`) to choose a provider; the default is `static-index`. |

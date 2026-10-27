@@ -1,10 +1,9 @@
 # Scheduling
 
-This guide covers running akm tasks — `akm improve` and other background
-work — through the OS scheduler (cron / launchd / schtasks) safely: how
-`akm setup` reviews task definitions before touching the scheduler, how to
-verify the result, and how to migrate or repair scheduler bindings after
-moving or reinstalling akm.
+This guide covers running akm tasks (`akm improve` and other background work)
+through the OS scheduler (cron / launchd / schtasks): how `akm setup` reviews
+task definitions before touching the scheduler, how to verify the result, and
+how to migrate or repair scheduler bindings after moving or reinstalling akm.
 
 ## Review tasks during setup
 
@@ -18,13 +17,9 @@ akm setup
 ```
 
 Before any OS scheduler change, setup shows every reviewed task's schedule
-and enabled state and asks one explicit activation question. Confirming runs
-the scheduler sync; declining leaves both task files and scheduler state
+and enabled state and asks one activation question. Confirming runs the
+scheduler sync; declining leaves both task files and scheduler state
 unchanged.
-
-**Safety note:** schedule activation always requires an explicit confirmation
-after reviewing the complete task summary. Nothing is written to the OS
-scheduler without that review step.
 
 ## Verify
 
@@ -36,7 +31,7 @@ akm task doctor
 warnings — run it after any setup pass, and again after a `--rebind` (below),
 to confirm the scheduler state matches what you expect.
 
-## Non-interactive setup never activates schedules
+## Non-interactive setup skips schedules
 
 `akm setup --yes`, config-file setup, and CI runs skip the task step
 entirely: neither task definitions nor OS scheduler entries are created or
@@ -60,9 +55,9 @@ installed akm runtime so scheduled execution does not silently switch to a
 different checkout or package. Editing definitions and running ordinary `akm
 task sync` preserves that captured runtime.
 
-A scheduled fire re-reads the guarded current source and creates a fresh
-durable-v4-family freeze at executable `irVersion: 8`.
-Scheduler sync/validation evidence is not an executable snapshot and is never reused as the later run plan.
+A scheduled fire reads the task's current source and freezes a fresh plan for
+that run; the result of `task sync` or validation is not reused as the run
+plan.
 
 ## A scheduled `akm improve` covers one bundle
 
@@ -122,8 +117,7 @@ never silently rebinds existing entries on your behalf.
 
 ## See also
 
-- [Getting Started](getting-started.md) — the first-run path this guide was
-  split out of
+- [Getting Started](getting-started.md) — the first-run path
 - [CLI Reference: task](../reference/cli.md#task) — the full `task` command
   group, including `add`, `enable`, `disable`, `run`, `sync`, `doctor`, and
   `history`

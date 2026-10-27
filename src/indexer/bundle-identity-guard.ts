@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * §11.5 bundle-rename startup guard.
+ * Bundle-rename startup guard.
  *
  * Renaming a workspace bundle id is a mass identity migration (every ref in the
  * bundle changes without any file moving) and MUST go through the
@@ -11,13 +11,13 @@
  * every ref-keyed state table atomically. If a user instead hand-edits the
  * `bundles` KEY in config.json, the durable index/state rows still carry the OLD
  * bundle prefix while the config names the NEW id. Silently re-minting fresh
- * state under the new id would strand the old rows; §11.5 requires we detect this
- * and refuse-or-warn.
+ * state under the new id would strand the old rows, so this guard detects it
+ * and warns.
  *
  * This guard implements the cheap heuristic form (WARN, never silently re-mint):
  * it compares the configured bundle ids against the DISTINCT `bundle_id`
- * (item_ref bundle prefix) values already persisted in the index — and, by
- * cutover construction, the same prefixes key the state.db usage/salience rows.
+ * (item_ref bundle prefix) values already persisted in the index — the same
+ * prefixes key the state.db usage/salience rows.
  * The hand-rename signature is: a configured bundle id with NO indexed rows
  * co-existing with indexed rows under a bundle id that is no longer configured.
  *
@@ -78,7 +78,7 @@ function indexedBundlePaths(dbPath: string): IndexedBundlePath[] | undefined {
 
 /**
  * Warn (once per process) when the config's bundle ids and the index's bundle
- * prefixes show the hand-rename signature (§11.5). No-op for an old-shape config
+ * prefixes show the hand-rename signature. No-op for an old-shape config
  * (no `bundles`), an absent/empty index, or when the guard already settled.
  */
 export function warnOnBundleRenameDrift(config: AkmConfig = loadConfig()): void {

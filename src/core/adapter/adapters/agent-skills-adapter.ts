@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `agent-skills` adapter — akm 0.9.0 format-family work item (#46).
+ * The `agent-skills` adapter.
  *
  * Recognizes a COLLECTION of standalone SKILL.md packages (like
  * github.com/anthropics/skills): each `<name>/SKILL.md` is one `skill` item
@@ -59,7 +59,7 @@ const SKILL_MANIFEST = "SKILL.md";
 /** Agent Skills hard limits. */
 const NAME_MAX = 64;
 const DESCRIPTION_MAX = 1024;
-/** Agent Skills reserved words a name must not contain (real-world source). */
+/** Agent Skills reserved words a name must not contain. */
 const RESERVED_NAME_WORDS = ["anthropic", "claude"];
 /** name charset/shape rule. */
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -107,7 +107,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   return doc;
 }
 
-/** The Agent Skills §4.5 hard-rule checks for one SKILL.md (name + description). */
+/** The Agent Skills hard-rule checks for one SKILL.md (name + description). */
 function skillFieldDiagnostics(relPath: string, dirName: string, data: Record<string, unknown>): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const name = typeof data.name === "string" ? data.name.normalize("NFKC") : "";
@@ -203,8 +203,8 @@ async function scanPackageCandidate(
  *
  * `validate` walks CHANGES, and a change is always a file — so a package
  * directory carrying resources but no manifest contributes nothing the
- * change-loop can see, and the check the spec (§4.5) and the lint golden's
- * `missingSkillMd` edge case both name was unreachable. This scans the
+ * change-loop can see, and the check the lint golden's `missingSkillMd` edge
+ * case names would be unreachable. This scans the
  * component root through {@link ValidateContext.list} instead, so the case is
  * actually reported.
  *
@@ -258,7 +258,7 @@ export const agentSkillsAdapter: BundleAdapter = {
     return [{ path: path.join(c.root, conceptId, SKILL_MANIFEST), conceptId }];
   },
 
-  /** Install-time probe (§1.2): a root that directly contains one or more `<name>/SKILL.md` skill packages. */
+  /** Install-time probe: a root that directly contains one or more `<name>/SKILL.md` skill packages. */
   looksLikeRoot(root: string): boolean {
     let entries: fs.Dirent[];
     try {

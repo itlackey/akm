@@ -115,7 +115,7 @@ automation keeps working — agents that want the deeper summary follow
 - `akm search --belief` and `akm curate --belief` default to `current`; pass
   `--belief all` (API `belief: "all"`) for every belief state.
 
-## Security / persistence implications
+## Storage
 
 - Memories are plain markdown files inside a bundle directory; there is no
   separate memory store. `akm improve` and `akm lint` only operate on

@@ -680,7 +680,8 @@ metadata placed before body content.
 
 `semanticSearchMode` (top-level, `"off" | "auto"`, default `"off"`, or `"auto"` when `embedding` is set) gates
 embedding-based search. `"auto"` lets AKM set up embeddings (which downloads
-a local model unless you point `embedding` at a remote provider) and falls
+a local model from Hugging Face Hub into `$CACHE/models` unless you point
+`embedding` at a remote provider) and falls
 back to keyword-only FTS if the embedding runtime is unavailable; `"off"`
 disables semantic search outright and search is always keyword-only FTS.
 If a backend marked ready cannot serve a query, search still returns the FTS
@@ -770,46 +771,12 @@ apply when unset), for a remote endpoint (`src/llm/embedders/remote.ts`):
 
 | Key | Default | Bounds |
 | --- | --- | --- |
-| `embedding.maxInputTokens` | `512` | Per-DOCUMENT cap, applied before batching (#956). A document's embedded text is truncated to its head (unicode-safe) at this many estimated tokens instead of ever being skipped for size alone — a document is skipped only when its truncated head is empty. |
-| `embedding.maxTokens` | `6000` (`DEFAULT_TOKEN_BUDGET`) | Per-REQUEST token budget: how many (already-capped) documents' estimated tokens fit in one HTTP request. With the 512-token default document cap, a request carries about 11 documents by default. Lowered from 8000 to 6000 (#954): the 4-chars-per-token estimator undercounts dense technical text by 7-55%, so 8000 regularly overshot an 8192-token endpoint's real context window. |
+| `embedding.maxInputTokens` | `512` | Per-DOCUMENT cap, applied before batching. A document's embedded text is truncated to its head (unicode-safe) at this many estimated tokens instead of ever being skipped for size alone — a document is skipped only when its truncated head is empty. |
+| `embedding.maxTokens` | `6000` (`DEFAULT_TOKEN_BUDGET`) | Per-REQUEST token budget: how many (already-capped) documents' estimated tokens fit in one HTTP request. With the 512-token default document cap, a request carries about 11 documents by default. The 4-chars-per-token estimator undercounts dense technical text, so a larger budget can overshoot an 8192-token endpoint's real context window. |
 | `embedding.batchSize` | `100` | Per-REQUEST document-COUNT safety cap, independent of the token budget — guards against many tiny documents packing an oversized request. |
-| `embedding.contextLength` | unset | Ollama's `num_ctx` ONLY, forwarded verbatim as `options.num_ctx` on the native `/api/embed` request. Does **not** feed the request token budget above (#956) — the two used to share this one field, so setting it for the server's context window silently changed request batching too. |
+| `embedding.contextLength` | unset | Ollama's `num_ctx` ONLY, forwarded verbatim as `options.num_ctx` on the native `/api/embed` request. Does **not** feed the request token budget above. |
 | `embedding.timeoutMs` | `120000` (120s) | Per-request wall timeout — see below. |
 | `embedding.concurrency` | `1` loopback / `2` remote | In-flight request window — see below. |
-
-**Which knob fixed the field's 8k-context overflow, worked examples.** A
-0.9.15-beta field report described documents estimated under the request
-budget that still tokenized to 8.5k-12.4k real tokens against an
-8192-token endpoint, because the 4-chars-per-token estimator undercounts
-dense technical text. Three knobs changed shape between beta and this
-release; only one of them makes that overflow structurally unreachable:
-
-- `embedding.maxInputTokens: 512` — per-DOCUMENT cap, applied before
-  batching. Example: a 6,000-character API reference page is truncated to
-  its first ~2,000 characters (512 estimated tokens) before it is ever
-  counted toward a request. This is the fix for the original overflow: no
-  single document can contribute more than 512 estimated tokens to a
-  request, no matter how `maxTokens` or `contextLength` are set.
-- `embedding.maxTokens: 6000` — per-REQUEST budget: how many already-capped
-  documents' estimated tokens fit in one HTTP request. Example: with the
-  default 512-token document cap, a request packs about 11 documents before
-  this budget is reached and the request is sent; if the run's first
-  request is still rejected for exceeding the endpoint's real context
-  window, akm shrinks this budget to three quarters of its value (floored
-  at twice `maxInputTokens`) for every later request in the same run. A
-  request-level budget alone cannot stop one oversized document from
-  overflowing a request — only the per-document cap above does that.
-- `embedding.contextLength: 8192` — Ollama's `num_ctx` only, forwarded
-  verbatim on a native `/api/embed` request. It has no effect on request or
-  document sizing, and no effect at all against a non-Ollama endpoint — see
-  below for why that used not to be true.
-
-A field config of `contextLength: 8192` + `maxTokens: 8000` (the exact
-0.9.15-beta values from the original report) produces no 400s on 0.9.15:
-`maxInputTokens` (512, new this release) caps every document before it is
-counted, so the original 8.5k-12.4k-token documents that overflowed the
-8192-token endpoint can never reach the request budget in the first place —
-independent of whatever `maxTokens` or `contextLength` are set to.
 
 `embedding.timeoutMs` (positive integer, default `120000` — 120s) is the
 budget for a request at the FULL token budget (`embedding.maxTokens`); a
@@ -822,15 +789,14 @@ documents. Set `embedding.timeoutMs` lower to fail fast against a
 known-fast endpoint, or higher for a slow local server on large batches.
 
 `embedding.maxTokens` (or its default) is also a run-scoped adaptive
-starting point, not a hard ceiling (#954): on the FIRST rejection of an
+starting point, not a hard ceiling: on the FIRST rejection of an
 `akm index` run for exceeding the endpoint's context window, akm shrinks
 the request budget to three quarters of its current value — floored at
 twice `embedding.maxInputTokens` — for every request not yet sent, and
 prints one line naming the new value. This never changes the rejected
 request's own split-and-retry (below), never shrinks a second time in the
 same run, and never grows the budget back up. Users who set
-`embedding.maxTokens` explicitly are unaffected by the LOWERED DEFAULT
-above but still benefit from this same-run recovery if their own value
+`embedding.maxTokens` explicitly get the same same-run recovery if their value
 turns out to be too high for the endpoint.
 
 A request TIMEOUT (not a rejection for exceeding the context window) never
@@ -873,7 +839,7 @@ taking about the same wall time as a single one against a healthy endpoint.
 | --- | --- |
 | `search.defaultExcludeTypes` | Asset types excluded from results by default |
 
-### Curate rerank (#951)
+### Curate rerank
 
 An optional cross-encoder rerank pass over the top fused search candidates
 `akm curate` fetches, via a standalone `/rerank`-style HTTP endpoint (not a
@@ -903,7 +869,7 @@ or malformed response keeps the fused order.
 
 `bundles` (replacing the retired `stashDir`/`sources[]`/`installed[]` trio)
 and `defaultBundle` are the 0.9 source configuration shape — see
-[Concepts](https://github.com/itlackey/akm/blob/main/docs/guides/concepts.md) and the [CLI reference](cli.md) for the
+[Concepts](../guides/concepts.md) and the [CLI reference](cli.md) for the
 full bundle model (`path`, `git`, `website`, `npm`, `writable`, `registryId`,
 `components`). `defaultBundle` must name a key in `bundles` when set. A
 bundle's `components.<id>.adapter` key pins it to a specific format adapter
@@ -919,9 +885,9 @@ the other entry before running ordinary commands.
 ### defaultWriteTarget
 
 `defaultWriteTarget` names the bundle that write commands (`akm remember`,
-`akm env`/`secret create`, `akm improve`, etc.) fall back to when no
-explicit destination flag is given and the command isn't already scoped to a
-specific source. It must name a configured bundle; setting it with no
+`akm import`, `akm env create`, `akm secret set`, `akm improve`, etc.) fall
+back to when no explicit destination flag is given and the command isn't
+already scoped to a specific source. It must name a configured bundle; setting it with no
 `bundles` configured, or naming an unconfigured bundle, is rejected at
 `config set` (or config load) time. The full write-target resolution order
 is the command's destination flag (`--bundle`) -> `defaultWriteTarget` ->
@@ -954,12 +920,14 @@ proposal back. Setting it to `0` or less disables expiry entirely.
 `registries` (top-level array, distinct from `bundles`) lists remote package
 registries `akm registry`/`akm bundle add` can search and install from.
 Each entry is `{ url, name?, enabled?, provider?, options? }`; `provider`
-defaults to `"static-index"`. See [Registries](https://github.com/itlackey/akm/blob/main/docs/reference/registry.md) for the full
-field reference and provider list.
+defaults to `"static-index"`. With no `registries` key, the defaults are the
+official registry and a skills.sh entry that ships with `enabled: false`. See
+[Registries](registry.md) for the field reference, the provider list and how to
+enable skills.sh.
 
-Registry `url` values must not contain username/password userinfo. The built-in
-providers do not currently support authenticated registry requests; `options`
-does not add an authentication mechanism. Use a credential-free HTTPS endpoint.
+Registry `url` values cannot carry a username or password: such an entry is
+dropped with a warning. The built-in providers send no credentials and
+`options` does not add any; use a credential-free HTTPS endpoint.
 
 ## Output defaults
 
@@ -995,7 +963,13 @@ section, an absent key, and an explicit `false` all read identically as off.
   deterministic-only promote runs without it), and `memoryCleanup` lanes. `akm improve`
   itself always runs; this only gates mutations without a human in the loop.
   Consolidation is not gated: it remains advisory and emits reviewable
-  proposals. `sync.push` is deliberately **not** gated by this key.
+  proposals. With `triage` `applyMode: "promote"` on, `akm proposal drain`
+  accepts the proposals the quality judge passed, and the consolidate pair
+  pass's retire proposals that it staged with no continuity risk. These are
+  outside the gate: session assets written under `sessions/`, the purge of
+  archived memories past their grace period at the start of every improve run,
+  the commits `akm proposal accept` makes, and the end-of-run `sync.push`
+  (which has its own `--no-push` and `sync.push` controls).
 
 ## Managing Config
 
@@ -1120,8 +1094,10 @@ akm config diff fleet//config/shared.json
 | `AKM_BUNDLE_DIR` | Override the bundle directory |
 | `AKM_DATA_DIR` | Override the data directory — `index.db`, durable `state.db`, and `akm.lock` (or set `XDG_DATA_HOME`) |
 | `AKM_CACHE_DIR` | Override the cache directory — regenerable caches (or set `XDG_CACHE_HOME`) |
-| `AKM_STATE_DIR` | Override the state directory — task-scheduler invocation state, and (per stash) `akm improve`'s machine-local writers and whole-run lock (or set `XDG_STATE_HOME`) |
+| `AKM_STATE_DIR` | Override the state directory — the scheduler lock and, per bundle, `akm improve`'s whole-run lock (or set `XDG_STATE_HOME`) |
 | `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
+| `AKM_NPM_REGISTRY` | Base URL of an npm mirror; replaces `registry.npmjs.org` for npm bundle resolution |
+| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` for `akm search --from registry` (prefix an entry with `<provider>::` to choose a provider) |
 | `AKM_VERBOSE` | Truthy value enables the same diagnostics as `--verbose` |
 | `AKM_DEBUG` | `1` prints a stack trace on unexpected internal errors |
 

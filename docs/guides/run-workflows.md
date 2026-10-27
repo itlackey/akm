@@ -27,9 +27,8 @@ the run so `akm workflow run <id>` can continue it.
 `--new` is a deprecated no-op (a ref always starts a new run), kept through
 0.10 so existing scripts keep working.
 
-Every new run/start compiles source IR v1 and freezes the durable plan v4
-family's current executable format (`irVersion: 8`) before publishing the run.
-A workflow ref is a Markdown `.md` source.
+Every new run compiles its source and freezes the plan (`irVersion: 8`) before
+publishing the run. A workflow ref is a Markdown `.md` source.
 
 ```sh
 akm workflow run workflows/ship-release --version 1.2.3
@@ -49,7 +48,7 @@ active run rejects parameter flags.
 
 `--max-steps <n>` leaves a partial run active after at most `n` steps.
 `--max-retries <n>` retries a failed step on the same run up to `n` additional
-times (0 through 100). `--timeout <duration>` bounds the whole invocation and
+times. `--timeout <duration>` bounds the whole invocation and
 accepts `N`, `Nms`, `Ns`, or `Nm`; bare `N` is milliseconds. A timeout or
 signal abort releases the run's lock without advancing the active step, so the
 run remains resumable. Failed, gate-rejected, timed-out, and interrupted runs
@@ -202,8 +201,10 @@ completed are skipped, not re-run (see
 A resume consumes the frozen plan and journaled attempts; it does not re-read
 configuration or the index, and reads the authored workflow only to warn once
 when it changed since the run was frozen (the run continues on the frozen
-plan; `akm workflow run <ref>` starts a new run that picks up the edit). A stored plan this akm
-cannot decode is abandoned with a message naming how to start a new run.
+plan; `akm workflow run <ref>` starts a new run that picks up the edit). A plan
+frozen by an earlier release that this akm can decode runs with a warning. A
+stored plan this akm cannot decode is abandoned with a message naming how to
+start a new run.
 
 ## Abandon a run
 
@@ -216,11 +217,10 @@ run's status — `resume` can still reopen it later if you change your mind.
 
 ## Follow a run's events
 
-There is no `akm workflow watch` (0.9.0: dropped — a foreground polling
-daemon in a one-shot CLI). `akm log --run <run-id>` reads the same
+There is no `akm workflow watch`. `akm log --run <run-id>` reads the
 `workflow_*` / `workflow_unit_*` events from the general append-only events
 stream: `--since '@offset:<id>'` gives a durable row-id cursor a cooperating
-process can poll from, in place of `watch --stream`'s in-process loop.
+process can poll from.
 
 ```sh
 akm workflow run <run-id> &                                  # engine in one shell
@@ -228,8 +228,7 @@ akm log --run <run-id> --since '@offset:0'                   # backlog so far
 akm log --run <run-id> --since '@offset:<nextOffset>'        # poll for more, from the prior call's nextOffset
 ```
 
-Event metadata is ids/status/enums only — never workflow-authored content —
-so following a run's events is safe to pipe into logs or dashboards.
+Event metadata carries ids, statuses and counts, not step text.
 
 ## Security: workflow sources are executed code
 

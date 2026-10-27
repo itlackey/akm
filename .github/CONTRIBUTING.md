@@ -59,9 +59,7 @@ bundles. To try something against scratch data instead, point `HOME`, `XDG_*`,
 first.
 
 The global checkout install deliberately replaces the globally resolved `akm`;
-do not use it for routine inner-loop testing. Some development machines still
-have a machine-local wrapper for historical workflows. Treat it as transitional,
-leave it untouched, and do not rely on it in tests or contributor instructions.
+do not use it for routine inner-loop testing.
 See [Local development](../docs/maintainers/local-development.md) for exact isolated
 package-acceptance commands.
 

@@ -9,7 +9,7 @@ without you converting anything first.
 
 A directory AKM indexes this way is a **bundle**. AKM auto-detects which
 format a bundle uses — you never declare it yourself unless you want to pin
-one explicitly. 0.9.0 recognizes 11 formats.
+one explicitly. AKM recognizes 11 formats.
 
 ## Format compatibility
 
@@ -23,7 +23,7 @@ one explicitly. 0.9.0 recognizes 11 formats.
 | `akm-workflow` | Workflow steps, name, description, tags | A top-level `.md` file with explicit `type: workflow` frontmatter | Writable — `akm workflow create` only | A standalone workflow bundle, one workflow per file |
 | `akm-task` | Task source v4 (`version: 4`) `.yml` sources as type `task`, including local schedules/manual triggers and the exact authored YAML | A top-level `.yml` file accepted by the task source v4 parser (`version: 4`, one `uses`/`run` executable selector, optional top-level `schedule:`) | Read-only | A standalone scheduled-task bundle; `.yaml` is rejected |
 | `llm-wiki` | `raw/` sources as `wiki-source`; `pages/` as their `pageKind` (default `note`), with resolved cross-reference links | Root `schema.md` plus a `pages/` directory | Read-only (author by writing directly into `pages/`; AKM indexes and serves the result) | [Karpathy's LLM-wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — agent-authored reference wikis |
-| `akm` (native) | AKM's own 14 native asset types — see [Asset Types](https://github.com/itlackey/akm/blob/main/docs/reference/asset-types.md) | A `.stash` marker directory, or two-plus native subdirectories, or the fallback when nothing else matches | Fully writable — every AKM-native write command | Your working bundle, and any bundle authored as AKM's own format |
+| `akm` (native) | AKM's own 14 native asset types — see [Asset Types](asset-types.md) | A `.stash` marker directory, or two-plus native subdirectories, or the fallback when nothing else matches | Fully writable — every AKM-native write command | Your working bundle, and any bundle authored as AKM's own format |
 | `okf` | Frontmatter `type` (defaults to `knowledge`); name, description, tags, links, body | A root `index.md`, or any `.md` file anywhere carrying a non-empty frontmatter `type` | Read-only | The [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) — the portable baseline every markdown-based format here is a superset of |
 | `generic-files` | Files classified by extension: scripts, markdown/text as `document`, everything else as `file` | None — only claimed via an explicit `components.<id>.adapter: "generic-files"` config override | Read-only | A catch-all for a directory that doesn't match any other format |
 
@@ -61,13 +61,13 @@ You don't migrate a Claude Code project, an OpenCode project, or an OKF
 knowledge base into AKM's own layout to get search, curation, and validation
 over it — AKM meets each format where it already lives. Writing new
 capabilities back into a foreign-format bundle is a separate, narrower
-guarantee; see [Adapters](https://github.com/itlackey/akm/blob/main/docs/architecture/adapters.md) for exactly which
+guarantee; see [Adapters](../architecture/adapters.md) for exactly which
 formats are writable today and why.
 
 ## See also
 
-- [Asset Types](https://github.com/itlackey/akm/blob/main/docs/reference/asset-types.md) — the 14 native asset types AKM's own format recognizes
-- [Adapters](https://github.com/itlackey/akm/blob/main/docs/architecture/adapters.md) — how AKM picks a format, the write-path internals, and current caveats
-- [Architecture: Connections and Harnesses](https://github.com/itlackey/akm/blob/main/docs/architecture/architecture.md#connections-and-harnesses) — how translated native agents and commands are executed
-- [Concepts](https://github.com/itlackey/akm/blob/main/docs/guides/concepts.md) — the retrieval loop these formats feed
-- [Wikis](https://github.com/itlackey/akm/blob/main/docs/guides/wikis.md) — the `llm-wiki` authoring workflow
+- [Asset Types](asset-types.md) — the 14 native asset types AKM's own format recognizes
+- [Adapters](../architecture/adapters.md) — how AKM picks a format, the write-path internals, and current caveats
+- [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) — how translated native agents and commands are executed
+- [Concepts](../guides/concepts.md) — the retrieval loop these formats feed
+- [Wikis](../guides/wikis.md) — the `llm-wiki` authoring workflow
