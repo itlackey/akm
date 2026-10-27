@@ -8,10 +8,9 @@ authored source; scheduler entries are derived OS state.
 **Task source v4 (`version: 4`) is the only task source grammar akm reads.**
 A document with `version: 3` or `version: 2` fails to load with `UsageError`
 code `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming `akm migrate apply`, which
-converts it. A declared `version: 4` document whose `schedule[]` still
-carries a per-entry `enabled` key — 0.9.15's v4 grammar accepted it, this
-release's does not — fails the same way with `TASK_SOURCE_INVALID`
-(activation is host-local, below). Each such file fails on its own:
+converts it. A `version: 4` document whose `schedule[]` carries a
+per-entry `enabled` key fails with `TASK_SOURCE_INVALID` (activation is
+host-local, below). Each such file fails on its own:
 `akm task sync` reports it and keeps reconciling every other task. Task
 source v4 adds typed `inputs:` and a single bounded `output:` schema
 (command targets only), and makes scheduling OPTIONAL rather than
@@ -75,9 +74,8 @@ exclusive.
 
 A GitHub Action locator (`owner/repo[/path]@ref`, e.g. `actions/checkout@v4`)
 is **not** a recognized `uses:` shape — it fails at parse with
-`TASK_SOURCE_INVALID` alongside every other unrecognized target. AKM never
-acquired or executed a remote action in any release; this is the removal of
-a recognized-but-rejected spelling, not a capability that used to work.
+`TASK_SOURCE_INVALID` alongside every other unrecognized target. AKM does not
+acquire or execute remote actions.
 
 Agent refs such as `agents/reviewer` are personas and are not executable.
 Task refs such as `tasks/nightly` are also not executable. Local actions
@@ -149,7 +147,7 @@ own deadline, and the runner (a harness's process, or akm's own runtime) enforce
 Either way, a dispatch that times out is recorded as `status: failed` with
 `detail.reason: "timeout"` in `task_history` — not a silent `completed` — and
 `akm task run` exits non-zero for it; see [health-advisories.md's
-`task-fail-rate` row](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/health-advisories.md)
+`task-fail-rate` row](../architecture/internals/health-advisories.md)
 for how `akm health` surfaces a timeout-dominant failure pattern.
 
 ## Scheduling
@@ -325,14 +323,11 @@ separate renderer: it flattens the same envelope into `dotted.path=value`
 lines (the same convention `akm config list --format text` uses), not a
 copy of the JSON.
 
-> A secret-shaped **input default** (as opposed to a supplied value) is
-> redacted the same way, but its accompanying explanation currently reuses
-> workflow-parameter wording that does not quite fit a task input — treat
-> the redaction itself as reliable even where the prose reads oddly.
-> `akm task run --<name> <secret-looking-value>` never echoes the offered
-> value in its error envelope, whether the value fails typed-flag coercion
-> or fails the declared schema (an `enum`/`minimum`/`maximum` mismatch
-> included) — both paths report only the violated constraint.
+A secret-shaped **input default** is redacted the same way as a supplied
+value. `akm task run --<name> <secret-looking-value>` does not echo the offered
+value in its error envelope, whether it fails typed-flag coercion or the
+declared schema (an `enum`/`minimum`/`maximum` mismatch included); both paths
+report only the violated constraint.
 
 ## Migrating to task source v4
 
@@ -541,8 +536,7 @@ on:
 `with:` on any `uses:` target carried v3's untyped params bag (workflow
 refs consumed it as run params; command/script refs rejected it outright).
 A GitHub Action locator (`owner/repo[/path]@ref`) was a recognized `uses:`
-shape that was always rejected before dispatch — remote action acquisition
-was never implemented in any akm release. `akm.enabled` was source-owned
+shape that was always rejected before dispatch. `akm.enabled` was source-owned
 scheduling state. `akm migrate apply` removes it; migration preserves actual
 host activation only when the native scheduler proves that the corresponding
 binding is enabled.
@@ -553,6 +547,6 @@ convert a file out of this grammar.
 ## See also
 
 - [CLI Reference: task](cli.md#task)
-- [Scheduling guide](https://github.com/itlackey/akm/blob/main/docs/guides/scheduling.md)
+- [Scheduling guide](../guides/scheduling.md)
 - [Workflow source formats](workflow-schema.md)
 - [Data and telemetry](data-and-telemetry.md)

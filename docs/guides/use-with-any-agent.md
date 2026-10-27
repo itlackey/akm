@@ -29,10 +29,9 @@ the full ref format — generate one instead of hand-writing it:
 akm hints --detail brief >> AGENTS.md
 ```
 
-The output is stable across patch releases and designed for agents rather
-than humans: it describes the lookup workflow (`curate` → `show` →
-`feedback`) and explains how refs work. It prints the complete guide by default;
-`--detail brief` prints the short one.
+The output is written for agents rather than humans: it describes the lookup
+workflow (`curate` → `show` → `feedback`) and explains how refs work. It prints
+the complete guide by default; `--detail brief` prints the short one.
 
 ## The retrieval loop: curate, show, feedback
 
@@ -50,14 +49,16 @@ akm show workflows/deploy-to-prod
 akm feedback workflows/deploy-to-prod --positive --reason "Completed without issues"
 ```
 
-**Get refs from search.** Agents should call `akm search --detail agent` or
-`akm curate` to discover refs — not guess them. The `ref` field in search
-results is the stable token to pass to `akm show`. For a long document,
-`akm show <ref> --detail brief` returns its outline (`toc`, no body), and
-`akm show <ref>#<slug>` then loads only the sections the task needs. Feedback
-closes the loop.
-Record `--negative` only when the asset's content is wrong or stale; a note that
-simply did not fit the task is not negative feedback, so record nothing for it.
+**Get refs from search.** Agents should call `akm search` or `akm curate` to
+discover refs rather than guess them. Both return a `ref` at the default detail
+level; pass it to `akm show`. `--detail agent` additionally returns each hit's
+`path` and `editable` flag, for agents that read or edit the file directly. For
+a long document, `akm show <ref> --detail brief` returns its outline (`toc`, no
+body), and `akm show <ref>#<slug>` then loads only the sections the task needs.
+
+Feedback closes the loop. Record `--negative` only when the asset's content is
+wrong or stale; a note that simply did not fit the task is not negative
+feedback, so record nothing for it.
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
 flags the asset, and the next improve run may repair its description, title or
 `when_to_use` from your reason. Once you have verified the correct fact, attach
@@ -116,7 +117,7 @@ than replacing either.
 - **Plugin integrations.** For tighter editor and agent integrations,
   platform-specific plugins are available in
   [akm-plugins](https://github.com/itlackey/akm-plugins) (current
-  integrations include OpenCode). Plugins add richer UX — in-editor asset
+  integrations include Claude Code, Codex and OpenCode). Plugins add richer UX — in-editor asset
   browsing, automatic context injection — but the core `akm` CLI works
   without them.
 
@@ -171,5 +172,5 @@ the OpenCode you use yourself.
 - [Capture Knowledge](capture-knowledge.md) — capturing agent-generated memories
 - [Improve the Library](improve-the-library.md) — feeding back usage signals
 - [CLI Reference](../reference/cli.md) — `completions`, `agent`, and `hints` command documentation
-- [Concepts](concepts.md) — refs, origins, and the asset type system
+- [Concepts](concepts.md) — bundles, adapters, refs, and the asset type system
 - [Bundle Types](../reference/bundle-types.md) — how AKM indexes existing project layouts in place

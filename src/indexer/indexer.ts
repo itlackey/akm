@@ -1867,8 +1867,10 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
   // (Chunk-8 WI-8.3); its table is created by state migration 020.
   if (!scoped) purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
 
-  // Time-proportional decay: apply one round of EMA per elapsed day so
-  // indexing frequency doesn't affect how fast scores decay.
+  // Decay is raised to the days since the last run, floored at one day. Every
+  // run therefore applies at least one full round of EMA decay (so runs less
+  // than a day apart each decay a full round), and a longer gap applies
+  // proportionally more rounds. The first run counts as one day.
   const lastComputedAt = getMeta(db, "last_utility_computed_at");
   let elapsedDays = 1; // default for first run
   if (lastComputedAt) {

@@ -24,11 +24,28 @@ what runs, what the autonomy gate does and does not allow, how sync happens
 at the end of a run, and how session extraction fits in.
 
 **Boundary:** `akm improve` (and its subprocesses — reflect, distill,
-consolidate) never write asset files directly. The only durable artifact they
-produce is a proposal row in `state.db`. The narrow set of writes that *are*
-allowed to happen without review is enumerated below, under
-[The autonomy gate](#the-autonomy-gate);
-everything else routes through `akm proposal accept`.
+consolidate) do not write asset files directly. The durable artifact they
+produce is a proposal row in `state.db`, and everything else routes through
+`akm proposal accept`. The writes that happen without a person reviewing the
+diff are these:
+
+- **Gated lanes**, off unless `experimental.improveAutonomy` is `true` (see
+  [The autonomy gate](#the-autonomy-gate)): memory inference, memory cleanup,
+  and a triage promote that runs the judgment tier.
+- **Ungated writes:** a triage promote through the deterministic gates alone
+  (see [The autonomy gate](#the-autonomy-gate)); session assets under
+  `sessions/**` (see [Session extraction](#session-extraction)); the salience
+  score distill writes into the frontmatter of the asset it reads; the graced
+  archive purge at the start of every improve run (see
+  [Archive purge](#archive-purge)); the local commit that follows each
+  `akm proposal accept` in a git repository; and the pre-run sync and the
+  end-of-run auto-sync commit and push for git-backed bundles (see
+  [Auto-sync](#auto-sync)).
+
+`akm improve` and the proposal commands other than `akm proposal list` (Stable)
+are Evolving, and the
+`improve.strategies.*` tuning keys can change between releases; see
+[STABILITY.md](../../STABILITY.md#akm-improve-autonomy).
 
 ## Components
 
@@ -82,8 +99,7 @@ everything else routes through `akm proposal accept`.
    since: a negative feedback in the window judged the body it still has (or,
    recorded without that body's hash, is newer than its file's last write). It
    also skips a memory whose only feedback in the window is positive with no
-   reason or note, which gives the writer nothing to distil (10 of the 11
-   lessons made from such memories were rejected). Unless
+   reason or note, which gives the writer nothing to distil. Unless
    `--require-feedback-signal` is set, the
    proactive-maintenance lane (where the strategy enables it, as `default`
    does) adds the stable assets due for a revisit that the retrieval scope below
@@ -115,7 +131,11 @@ everything else routes through `akm proposal accept`.
    drain policy (`akm proposal drain`) reviews and resolves each proposal. A
    rejection is not final: `akm proposal reopen` puts a rejected proposal back
    to `pending`.
-7. `akm proposal accept` promotes the proposal into the bundle; `akm proposal
+7. `akm proposal accept` promotes the proposal into the bundle. A proposal
+   records the content hash of the file it was generated against, and accept
+   refuses to overwrite a target that has changed since (the comparison ignores
+   akm's own bookkeeping frontmatter); a proposal that creates a file likewise
+   refuses when the file now exists. `akm proposal
    revert` restores the prior content from the backup captured at promotion
    time, if the proposal overwrote an existing asset. When the bundle is a git
    repository (a `.git` directory, whatever its source kind), an accept is
@@ -132,7 +152,7 @@ everything else routes through `akm proposal accept`.
    began with the same sync, so it started from what other hosts had pushed.
 
 
-## Current decisions
+## How it works
 
 ### Utility scoring
 
@@ -161,7 +181,7 @@ for the storage-level summary.
 Improve presets live under `improve.strategies` (config) and the built-in
 set: `default` and `consolidate` (`src/assets/improve-strategies/*.json`). The removed `quick`, `thorough`,
 `catchup`, `reflect-distill` and `proactive-maintenance` still work as user-defined strategies. Selection
-order is `--strategy`, then `defaults.improveStrategy`, then `default`.
+order is `--strategy`, then `improve.strategy`, then `default`.
 
 Resolution is a two-step deep merge (`resolveImproveStrategy`): a named
 built-in strategy is first merged onto the built-in `default` strategy, then
@@ -176,7 +196,7 @@ of the retired built-in) resolves the same way, merged onto `default`.
 
 ### Retrieval scope
 
-Improve reworks only what gets read (#986). Fresh feedback and an explicit ref
+Improve reworks only what gets read. Fresh feedback and an explicit ref
 scope (`akm improve skills/x`) are usage evidence of their own. Every other
 pick — the proactive-maintenance lane, and the memories consolidation judges — must be in the retrieval
 scope (`src/commands/improve/retrieval-scope.ts`):
@@ -201,9 +221,10 @@ processed each once.
 
 Every reflect revision and every distilled lesson is scored by a judge before it
 is queued (`runQualityJudge`, `src/commands/improve/stage.ts`): one call at
-temperature 0, each criterion scored 1 to 5, failing closed (no runner, a
-timeout, or an unparseable or incomplete reply never passes content and goes to
-review). A reflect revision is scored on three criteria:
+temperature 0, each criterion scored 1 to 5. Content passes only on a complete
+verdict: with no runner, or when the call times out or returns an unparseable or
+incomplete reply, it does not pass and goes to review. A reflect revision is
+scored on three criteria:
 
 - **need**: does it fix a concrete problem in the source: something the
   feedback reports as wrong or missing, a factual error, or broken, garbled,
@@ -215,19 +236,19 @@ review). A reflect revision is scored on three criteria:
 - **quality**: is it coherent and accurate, with nothing the source or the
   feedback does not support?
 
-Content passes only when **every** criterion scores 4 or more (a lesson's
-grounding is judged apart, see
-[distill](internals/improve-workflow.md#distill-akmdistill)); a mean of 3.5
-passed it before. A verdict that does not pass is a review when its mean is 2.5
-or more and a rejection below that. Reflect narrows that band: a revision whose
+Content passes only when **every** criterion scores 4 or more. A verdict that
+does not pass is a review when its mean is 2.5 or more and a rejection below
+that. Reflect narrows that band: a revision whose
 mean is 3.5 or more is queued for a person (reason `judge-uncertain`, with the
 `scores` and `judgeReason`) and records no rejection window, and a lower mean is
 refused. On 113 reviewed frontmatter-only proposals (lab 27B Q2, the shipped
 judge) the non-passing ones at 3.5 or more were 17 good and 9 bad, the rest 1
 good and 2 bad; on 396 labelled body rewrites a mean below 3.5 was good 6 times
-in 291 (the constant and its sources are in `src/commands/improve/reflect.ts`). The rubric and the rule were chosen on 90
-labelled real rewrites, where judging on the mean let rewrites that only
-reworded a correct asset through.
+in 291 (the constant and its sources are in `src/commands/improve/reflect.ts`).
+A lesson is scored on `reusable`, `nonRedundancy`, and `grounding`;
+`grounding` is left out of the mean, and any lesson criterion at 2 or lower
+rejects whatever the mean is (see
+[distill](internals/improve-workflow.md#distill-akmdistill)).
 
 A reflect pass is stamped on the proposal as a `staged` decision from the
 `quality-gate` with the per-criterion `scores` and the judge's `judgeReason`;
@@ -238,14 +259,9 @@ the lesson or promotion is minted `deferred` for a person (reason
 triage drain and its judgment tier leave it alone. A lesson that repeats an existing
 lesson may instead be proposed as an update of that lesson (reason
 `distill-update`, same gate), with only what the memory adds; the drain leaves
-it for a person too. On 2026-10-05 the gate had
-staged 12 lessons and 10 were bad (they restated the memory, claimed what it
-does not say, or filed a dated status as a lesson), and no score separated them
-from the two good ones. Reflect revises only an asset's
+it for a person too. Reflect revises only an asset's
 `description`, `when_to_use` and title, and edits the body only to add a missing level-1
-heading; the rest of the body stays byte for byte. On 396 labelled edits,
-those that fixed a frontmatter defect and left the body alone were good 24
-times in 26, and those that also rewrote the body were bad 175 times in 224.
+heading; the rest of the body stays byte for byte.
 
 ### Judgment tier: promotions only
 
@@ -271,50 +287,37 @@ it. An empty diff is still rejected. Proposals driven by feedback (`signal-delta
 
 ### Retirement continuity
 
-Before the consolidate pair pass mints a `retire` proposal (rule R3,
-`src/commands/improve/consolidate/continuity-check.ts`), it replays up to five
+Before the consolidate pair pass mints a `retire` proposal
+(`src/commands/improve/consolidate/continuity-check.ts`), it replays up to five
 of the retired asset's own past `search`/`curate` queries
 (`loadRetrievalQueries`, `../retrieval-queries.ts` — boilerplate, harness/tool envelopes,
-pastes and near-duplicates dropped before replay, S3a) through akm's own
+pastes and near-duplicates dropped before replay) through akm's own
 search, in-process — the ranking a user actually gets, no LLM. For every
-query where the retired asset ranked in the top 10, the successor must too
-(N2: compared directly — search itself returns at most the top 10 hits, so
-"ranked" and "absent from those hits" are the only two states there are, no
-generic rank-change-report abstraction needed). An asset with no recorded
-queries is not checked at all, and neither is a pair whose two bodies are
-content-identical once whitespace is collapsed (S3b) — search's own
-content-dedupe already hides the successor behind the retired asset for
-every such query, so a "successor missing" finding there would not be a
-real risk.
+query where the retired asset ranked in the top 10, the successor must too.
+An asset with no recorded queries is not checked, and neither is a pair whose
+two bodies are content-identical once whitespace is collapsed — search's own
+content dedupe already hides the successor behind the retired asset for every
+such query.
 
-A failing pair still mints — the check flags, it never blocks — but the
+A failing pair still mints — the check flags, it does not block — but the
 proposal carries `continuityRisk` in its retirement metadata: the failing
 query count and the rank pairs, visible in `akm proposal show`/`list`/`diff`. A
 flagged proposal is excluded from every bulk accept path (`accept
 --generator …`, with or without `--yes`); a person can still accept it by id.
-Bulk *reject* is unaffected, since declining a flagged proposal is always the
-safe direction.
+Bulk reject is unaffected.
 
 A query that never ran (the search call threw) or that fell back to
 keyword-only ranking instead of the real one (`mode: "fts-fallback"` — most
 often a down or unreachable embedding endpoint) is "unverified": it is never
 compared for rank at all, and on its own it is enough to set
 `continuityRisk` (`unverifiedQueries` alongside the usual `ranks`), so an
-endpoint outage reads as "risk unknown," never as the silent "no risk
-found" a search that quietly used a degraded ranking would otherwise
-produce. Once any query in a pair-pass run falls back, every later query in
-that same run skips the semantic attempt entirely and goes straight to
-keyword-only — a dead endpoint costs one failed attempt for the whole run,
-not one per remaining query.
+endpoint outage reads as "risk unknown" rather than "no risk found". Once any
+query in a pair-pass run falls back, every later query in that same run skips
+the semantic attempt and goes straight to keyword-only — a dead endpoint costs
+one failed attempt for the whole run, not one per remaining query.
 
-This check replaces the old per-run forgetting-safety lane (a one-time WS-1
-cutover guard that compared improve's own salience ranking before and after
-each run). The 30-day event window showed it made no pick the signal-delta
-lane or the retrieval scope would not also have made, and it protected
-`asset_salience.rank_score`, which only improve itself ever read — a rank drop
-could not hide anything from search. `forgetting-safety` stays a valid
-`eligibilitySource`/event-type value so old proposals and events still decode,
-but nothing assigns or emits it any more.
+`forgetting-safety` remains a valid `eligibilitySource` and event-type value so
+old proposals and events still decode; nothing assigns or emits it any more.
 
 ### Dry-run planning boundary
 
@@ -338,9 +341,7 @@ The dry path stops at that projection boundary. It may read indexed assets,
 the filesystem, and an existing `state.db`, but opens state read-only and does
 not create it when absent. It does not acquire the improve lock or write the
 index, state, events, proposals, assets, cache, sync journal, or persisted run
-result, and it never dispatches an LLM. SQLite inputs are inspected through
-disposable main/WAL copies so even a held source SHM file is not touched.
-Consolidation pool inspection and the extract `minNewSessions` gate use shared
+result, and it does not dispatch an LLM. Consolidation pool inspection and the extract `minNewSessions` gate use shared
 zero-LLM selectors, while live execution re-inspects mutable inputs immediately
 before dispatch. A missing index or one without the current `entries` table
 yields an explicit empty `plan.snapshot` (`missing` or `incompatible`) rather
@@ -382,13 +383,16 @@ opt-in warns `[improve] memoryInference skipped` and names
 a silent no-op (`applyAutonomyGate` in `src/commands/improve/autonomy-gate.ts`,
 the warning in `runImproveStageSequence` in `src/commands/improve/improve.ts`).
 Consolidation stays enabled with
-autonomy off: both its passes only ever emit a reviewable proposal. The one
+autonomy off: both its passes emit only reviewable proposals. The one
 pair-pass `retire` proposal `triage` `applyMode: "promote"` accepts is a
 retirement the pair pass staged (nothing unique to the retired side, confirmed
-by a second look, no continuity risk); every other one waits for `akm proposal accept`. An absent `experimental`
-section, an absent key, and an explicit `false` all read identically as off —
-autonomy is never inferred. `akm proposal drain --promote` is a second,
-explicit promote surface independent of this gate.
+by a second look, no continuity risk); every other one waits for `akm proposal accept`. Triage runs as a
+pre-pass at the start of an improve run, over the backlog already queued, so a proposal
+a run queues is first eligible for `applyMode: "promote"` on the next run (a run scoped
+to a single ref skips the pre-pass). An absent `experimental`
+section, an absent key, and an explicit `false` all read as off.
+`akm proposal drain --promote` is a second, explicit promote surface
+independent of this gate.
 
 ### Auto-sync
 
@@ -434,7 +438,7 @@ then rewritten by the run IS committed. Deletions are journaled like writes, so
 the final on-disk state is what lands — a path written and then reverted or
 purged produces no commit at all. The run reports its journal as
 `writtenPaths` on the improve result. Callers that supply no explicit path list
-(`akm sync`, `akm push`) keep the managed-pathspec fallback in `saveGitStash`.
+(`akm sync`) keep the managed-pathspec fallback in `saveGitStash`.
 
 ### Archive purge
 
@@ -447,15 +451,15 @@ before index bootstrap or triage. For a git-backed bundle, it deletes the
 archived asset file(s) — never `cleanup.md` — of every retirement whose
 tombstone `retiredAt` is more than 30 days old (`RETIRE_GRACE_DAYS`) AND
 whose archive directory is entirely git-tracked and clean (`git ls-files`
-plus `git status --porcelain -uall`, both checked once per sweep, not once
-per directory). `.git` presence alone does not guarantee a retirement was
-ever committed: an accept commits its own paths, once per process (`commitAcceptedPaths` in
+plus `git status --porcelain -uall`, checked once per sweep, not once per
+directory). A `.git` directory alone does not mean a retirement was committed:
+an accept commits its own paths, once per process (`commitAcceptedPaths` in
 `src/core/write-source.ts`), on a `kind: "filesystem"` source with a `.git`
-directory too, but a commit that failed only warned, and a retirement accepted
-by an older akm left archived bytes sitting on disk with no commit behind them
-at all. A directory with even one untracked or modified file (the tombstone
-included) is left whole for a later sweep, so the purge only ever removes
-bytes git can already recover. Every deleted path is journaled individually,
+directory too, but a commit that failed only warns. A directory with even one
+untracked or modified file (the tombstone included) is left whole for a later
+sweep, so the purge removes only bytes git can recover. If git cannot report
+the archive's state, the sweep removes nothing and warns. Every deleted path is
+journaled individually,
 so the end-of-run auto-sync commits the removal the same way it commits the
 archive move itself. A bundle with no `.git` of its own has no history to
 fall back on, so its archive is left untouched — `akm health` reports its
@@ -464,17 +468,16 @@ size and file count instead (`memory-cleanup-archive` advisory,
 
 ### Session extraction
 
-`akm proposal extract` is the standalone entry point for mining coding-agent
-session transcripts (`--type claude`, `--type codex`, `--type opencode`, or
-`--auto` to iterate every harness with a detectable session-log location) into
-proposals.
-It replaced the legacy session-checkpoint hook and runs independently of
-whether a strategy's own `processes.extract` stage is enabled — no shipped
-strategy turns that improve-stage extraction on, and a direct
-`akm proposal extract --type <harness>` or `--auto` invocation is never gated
-by that toggle. Session indexing writes are additive
-(`sessions/**`), which is why they are one of the writes left deliberately
-ungated by the autonomy gate above.
+`akm proposal extract` is the standalone entry point for mining
+coding-agent session transcripts (`--type claude`, `--type codex`,
+`--type opencode`, or `--auto` to iterate every harness with a detectable
+session-log location) into proposals. It runs independently of whether a
+strategy's own `processes.extract` stage is enabled — no shipped strategy turns
+that improve-stage extraction on, and a direct
+`akm proposal extract --type <harness>` or `--auto` invocation does not depend
+on that toggle. Session indexing writes `sessions/**` assets
+(`processes.extract.indexSessions`, default on); these writes are additive and
+are not behind the autonomy gate.
 
 `--dry-run` keeps eligible candidate refs in `sessions[].previewRefs`. It leaves
 proposal rows, seen-session tracking, the improve ledger and assets unchanged;
@@ -509,5 +512,5 @@ actual proposal rows, and health uses live seen-session outcomes.
   including the Utility Scoring and Writing to Sources sections
 - [Configuration Reference — Strategies](../reference/configuration.md#strategies)
   and [Experimental opt-ins](../reference/configuration.md#experimental-opt-ins)
-- [STABILITY.md](../../STABILITY.md#akm-improve-autonomy--opt-in-in-090) — the
-  normative autonomy-gate contract
+- [STABILITY.md](../../STABILITY.md#akm-improve-autonomy) — the stability status of
+  `akm improve` and the opt-in for `experimental.improveAutonomy`

@@ -4,8 +4,7 @@ A minimal `.opencode` tool directory. The `opencode` adapter is a translator
 that derives the open `type` from directory + frontmatter; `opencode.json` is
 runtime config and is never indexed.
 
-- **Adapter built by:** a future Chunk-2 format-adapter work item (no `opencode`
-  adapter exists in `src/core/adapter/adapters/` yet).
+- **Adapter:** `src/core/adapter/adapters/opencode-adapter.ts`
 - **Goldens:** `tests/fixtures/format-family-goldens/opencode/{recognition,placement,lint,renderer}.json`
 - **Real-world source:** https://opencode.ai/docs/commands/ ,
   https://opencode.ai/docs/agents/ , https://opencode.ai/docs/skills/ ,

@@ -69,29 +69,29 @@ bun run check
 
 Relevant coverage:
 
-- `tests/integration/self-update.test.ts` - self-upgrade detection and checksum enforcement
-- `tests/integration/registry-*.test.ts`, `tests/provider-registry.test.ts` - `list`, `remove`, `update`, cache cleanup, install resolution, tar safety, local/git/npm paths
-- `tests/integration/setup-run.test.ts` - full setup wizard orchestration and failure handling
-- `tests/integration/install-script.test.ts` - repeatable `install.sh` edge cases and permission paths
+- `tests/integration/self-update.test.ts` - self-upgrade detection and checksum handling
+- `tests/integration/registry/*.test.ts`, `tests/provider-registry.test.ts` - registry search, index formats, and install resolution
+- `tests/setup-wizard.test.ts`, `tests/setup-scheduled-tasks.test.ts` - setup wizard orchestration and failure handling
+- `tests/integration/install/install-script.test.ts` - repeatable `install.sh` edge cases and permission paths
 
 ### Writing deterministic, isolated tests
 
 Both `scripts/test-unit.sh` (`bun run test:unit`) and `scripts/test-integration.sh`
 (`bun run test:integration`) shard their target across up to `min(nproc, 8)`
 concurrent `bun test` processes, splitting the file list round-robin — neither
-runner is a single shared process, and neither is "the unit suite" alone.
-Within one shard, every file assigned to that process still runs in **one
-shared process**: one `process.env`, one module-singleton namespace, and
-(under fake timers) one global clock for every file in that shard. A test that
-mutates shared state without restoring it, or that asserts on a wall-clock
-measurement, can pass on one scheduling and fail on another.
+runner is a single shared process. Within one shard, every file assigned to that
+process still runs in **one shared process**: one `process.env`, one
+module-singleton namespace, and (under fake timers) one global clock for every
+file in that shard. A test that mutates shared state without restoring it, or
+that asserts on a wall-clock measurement, can pass on one scheduling and fail on
+another.
 
-Rules (conventions, not statically enforced — the lint script that policed
-them was deleted in 0.9.8; the runtime guard in `src/core/paths.ts` throws
-`TEST_ISOLATION_MISSING` and the preload tripwire catches leaks):
+Rules (conventions, not statically enforced; `src/core/paths.ts` throws
+`TEST_ISOLATION_MISSING` at runtime when isolation is missing, and the preload
+tripwire catches leaks):
 
-1. **Never mutate `AKM_*` / `XDG_*` / `HOME` on `process.env` directly.** Use the
-   sanctioned helpers in `tests/_helpers/sandbox.ts`:
+1. **Do not mutate `AKM_*` / `XDG_*` / `HOME` on `process.env` directly.** Use the
+   helpers in `tests/_helpers/sandbox.ts`:
    - `sandboxStashDir`, `sandboxXdgConfigHome`, `sandboxXdgDataHome`,
      `sandboxXdgCacheHome`, `sandboxXdgStateHome`, `sandboxHome` — set the env var
      to an isolated temp dir and return a `cleanup` that restores the prior value.
@@ -99,7 +99,7 @@ them was deleted in 0.9.8; the runtime guard in `src/core/paths.ts` throws
    - `withEnv({ AKM_BUNDLE_DIR }, async () => …)` — scoped override that always
      restores in a `finally`, even on throw. Use this for per-call overrides
      around an in-process CLI invocation.
-   - `makeStashDir` / `makeSandboxDir` — temp dirs that are NOT wired into env
+   - `makeStashDir` / `makeSandboxDir` — temp dirs that are not wired into env
      (pass them to `withEnv` or a subprocess env object yourself).
    - `writeSandboxConfig(partial)` — merges `partial` into the sandboxed
      `config.json` (call `sandboxXdgConfigHome` first).
@@ -112,30 +112,24 @@ them was deleted in 0.9.8; the runtime guard in `src/core/paths.ts` throws
 
    The DB path resolves from `XDG_DATA_HOME`; if you `akmIndex` then `akmSearch`,
    both must see the **same** sandboxed `XDG_DATA_HOME` or the search reads a
-   different (empty/stale) DB. Sandbox it in `beforeEach`.
+   different (empty or stale) DB. Sandbox it in `beforeEach`.
 
 2. **Do not assert on a measured wall-clock delta.** `expect(Date.now() - start)
    .toBeLessThan(N)` races the scheduler. Assert the *observable result* instead
    (e.g. `result.reason === "timeout"`), or drive time deterministically with
-   `jest.useFakeTimers()` + `jest.advanceTimersByTime(...)` and a fetch/spawn stub.
-   Asserting on a `durationMs` field computed from injected fixture timestamps is
-   fine (it is deterministic).
+   fake timers and a fetch/spawn stub. Asserting on a `durationMs` field
+   computed from injected fixture timestamps is fine (it is deterministic).
 
-3. **Sort/compare on the value the user sees.** When a test asserts ordering,
-   make the production sort key the same quantized value that is displayed
-   (`db-search.ts` sorts on the clamped+rounded score, then breaks ties by name),
-   so an invisible sub-display-precision epsilon can never reorder visible ties.
+3. **Assert on the value the user sees.** Search orders fused candidates by
+   score and then by `itemRef` (`src/indexer/search/ranking.ts`), and a hit's
+   `score` is rounded for display; when a test asserts ordering, compare the
+   same value the output carries.
 
-4. **Avoid stateful feedback within one test.** Re-running `akmSearch` without
-   `skipLogging: true` writes utility/recency rows that perturb the next search's
-   ranking. Pass `skipLogging: true` when you need repeatable ranking across
-   calls in a single test.
-
-5. **Pass `--timeout` when a test spawns `bun test <fixture>`.** Bun ignores
+4. **Pass `--timeout` when a test spawns `bun test <fixture>`.** Bun ignores
    `bunfig.toml`'s `timeout` (see the comment there), so the fixture dies at 5 s
    under load.
 
-6. **Keep an index from downloading a model.** An index with
+5. **Keep an index from downloading a model.** An index with
    `semanticSearchMode: "auto"` and no fake embedder downloads a Hugging Face
    model mid-test; use the deterministic embedder (`AKM_EMBED_DETERMINISTIC`) or
    `"off"`.
@@ -194,14 +188,13 @@ bun run test:integration
 Collectively, these suites (`tests/integration/`) exercise real flows,
 including:
 
-- fallback search without an index
 - `index -> search -> show`
 - CLI subprocess execution through `src/cli.ts`
 - config read/write behavior
-- registry-source compatibility
+- registry sources and static-index compatibility
 - progressive indexing and re-indexing
 - update and upgrade command error paths
-- knowledge `#fragment` selection and mixed asset discovery
+- markdown `#fragment` selection and mixed asset discovery
 
 ## Semantic Search States
 
@@ -227,8 +220,9 @@ can be:
 - `ready-js` when every entry has a vector (the name is historical; there is no other vector path)
 - `blocked` when semantic search cannot run with the current provider/setup
 
-These cases are covered by `tests/integration/setup-run.test.ts` and the focused
-semantic/config suites.
+These cases are covered by the setup and semantic-status suites
+(`tests/setup-wizard.test.ts`, `tests/integration/vector-search.test.ts`,
+`tests/integration/update-no-op-semantic-status.test.ts`).
 
 The real-model gate runs with
 `AKM_SEMANTIC_TESTS=1 bun test tests/integration/semantic-search-e2e.test.ts`; its
@@ -293,21 +287,41 @@ This validates three deployment methods across four Linux families:
   (`npm install -g --ignore-scripts` of the packed package, as npm 12 installs by
   default; the install's exit code and the smoke test are the check)
 
-Binary validation currently excludes Alpine. The compiled Linux binary used in
-this repo's Docker tests is not packaged for Alpine/musl compatibility, so the
-binary deployment gate focuses on the glibc-based targets we currently support.
+Binary validation currently excludes Alpine: there is no
+`Dockerfile.alpine-binary`, because the compiled Linux binary targets glibc and
+Alpine is musl-based.
 
 The Docker smoke test in `tests/docker/smoke-test.sh` verifies:
 
 - `akm --help`
 - `akm bundle create`
-- bundle directory creation
 - `akm index`
-- `akm search`
+- `akm search` (including `--format json` and `--type skill`)
 - `akm show`
 - `akm info`
 - `akm bundle list`
 - incremental re-index after adding a new asset
+
+The Dockerfiles are `tests/docker/Dockerfile.{ubuntu,debian,alpine,fedora}-bun`,
+`tests/docker/Dockerfile.{ubuntu,debian,fedora}-binary` and
+`tests/docker/Dockerfile.debian-npm`. Run one variant for a focused repro:
+
+```sh
+./tests/docker/run-docker-tests.sh ubuntu-binary
+./tests/docker/run-docker-tests.sh --bun-only
+./tests/docker/run-docker-tests.sh --binary-only
+```
+
+The matrix shows that the CLI starts in minimal Linux images, that runtime
+dependencies are enough for `bundle create`, `index`, `search`, and `show`, that
+bun-linked installs work after building from source, that compiled Linux
+binaries run when copied into the image, and that an npm install of the packed
+package works on an image with no compiler. It also exercises the real
+entrypoint scripts, which can catch shell-level failures that unit and
+subprocess tests miss. It does not show that the published release artifact
+matches the local compiled binary, that `install.sh` works against a real GitHub
+release, or that self-upgrade can replace the running binary in place; check
+those by hand in a disposable container after publishing.
 
 ### 4. OpenCode 2 CLI compatibility
 
@@ -350,8 +364,8 @@ cannot be reached they skip, with a message that says why. Run them against a ne
 
 ### 5. Benchmark (agent utility)
 
-The LLM-provider-driven, multi-seed agent-utility benchmark (`akm-bench`) now
-lives in the standalone repo **[itlackey/akm-bench](https://github.com/itlackey/akm-bench)**.
+The LLM-provider-driven, multi-seed agent-utility benchmark (`akm-bench`) lives
+in the standalone repo **[itlackey/akm-bench](https://github.com/itlackey/akm-bench)**.
 Run it from there after any change to `src/output/`, `src/commands/read/show.ts`,
 APPLY directives, or other content that affects what agents see.
 
@@ -359,9 +373,7 @@ For curate/search ranking quality, run the retrieval eval of
 **[itlackey/akm-eval](https://github.com/itlackey/akm-eval)**
 (`evals/retrieval/run --corpus public`, with `AKM_BIN` naming the build under
 test). It scores `akm search` and `akm curate` against graded judgments and
-calls no model service. The in-repo curate benchmark that used to do this,
-`akm-eval-curate-bench`, left with the rest of `scripts/akm-eval/`; see
-`docs/maintainers/eval.md`.
+calls no model service. See `docs/maintainers/eval.md`.
 
 ## Recommended Workflow
 
@@ -383,7 +395,7 @@ source management, or Docker assets:
 
 ```sh
 bun run test:unit
-bun test tests/integration/self-update.test.ts tests/integration/setup-run.test.ts tests/integration/install-script.test.ts
+bun test tests/integration/self-update.test.ts tests/integration/install/install-script.test.ts
 ./tests/docker/run-docker-tests.sh
 bun run lint:fix
 bunx tsc --noEmit
@@ -416,94 +428,39 @@ have passed on that commit; see the
 [maintainer release checklist](../../maintainers/release-checklist.md). The
 weekly scheduled run of Gated CI detects default-branch drift.
 
-## Docker Deployment Validation
-
-### Automated matrix
-
-The repo already contains Dockerfiles for:
-
-- `tests/docker/Dockerfile.ubuntu-bun`
-- `tests/docker/Dockerfile.debian-bun`
-- `tests/docker/Dockerfile.alpine-bun`
-- `tests/docker/Dockerfile.fedora-bun`
-- `tests/docker/Dockerfile.ubuntu-binary`
-- `tests/docker/Dockerfile.debian-binary`
-- `tests/docker/Dockerfile.fedora-binary`
-
-`Dockerfile.alpine-binary` does not exist and is deliberately not part of this
-matrix: binary validation excludes Alpine (see above) because the compiled
-binary targets glibc and Alpine is musl-based.
-
-Run one variant if you need a focused repro:
-
-```sh
-./tests/docker/run-docker-tests.sh ubuntu-binary
-./tests/docker/run-docker-tests.sh --bun-only
-./tests/docker/run-docker-tests.sh --binary-only
-```
-
-### What the Docker matrix proves
-
-- the CLI starts in minimal Linux images
-- runtime dependencies are sufficient for `bundle create`, `index`, `search`, and `show`
-- bun-linked installs work after building from source
-- compiled Linux binaries run correctly when copied into the image
-- the CLI can create a fresh bundle, build an index, and discover new assets
-
-Treat this matrix as a release gate for shell-level regressions too. The Docker
-smoke path exercises real entrypoint scripts and container command execution,
-which can catch failures that unit and subprocess tests miss.
-
-### What it does not prove by itself
-
-- that the published release artifact matches the local compiled binary
-- that `install.sh` works against a real GitHub release
-- that self-upgrade can replace the running binary in-place
-
-Those should be validated in disposable containers as described next.
-
 ## Upgrade Regression Coverage
 
 Managed-source updates and CLI self-upgrade are separate implementations.
-Provider/registry suites cover source add/update/remove/cache behavior;
+Provider and registry suites cover source add/update/remove/cache behavior;
 `tests/integration/self-update.test.ts` covers install-method detection,
 orchestration, checksum, and failure paths.
 
 ### Upgrade rehearsal gate
 
-`tests/integration/upgrade-rehearsal/` installs the PREVIOUS published stable
-`akm-cli` release as a real global npm package (real `npm pack` / `npm
-install --global` into a throwaway prefix — see `scripts/package-install.ts`)
-under the label `live`, drives it to build a realistic home — a filesystem
-bundle, a git bundle (with an in-bundle symlink at its root), a website
-bundle, an npm bundle, three scheduled tasks (two granted, one left
-ungranted) plus a manual task, a synced native (fake) crontab, and the 0.9
-`engines` form the previous release itself writes (an llm engine with an
-`apiKeyFile`, an agent engine, a `models.json`, a command and a task source
-that name an engine) — then
-installs the CANDIDATE build OVER `live`, in the SAME prefix: an in-place
-swap, the same thing a real `npm i -g akm-cli@…`/`bun add -g` upgrade does,
-not a side-by-side install. It then runs the CANDIDATE against that home
-(`migrate status`/`apply`, which converts the `engines` form, files its key
-and rewrites the `engine:` keys, `bundle list` with every bundle confirmed enabled,
-`search`/`show`, `task sync` dry-run and real — plain, no `--rebind`, as an
-upgrading user actually runs it — executing the generated cron command and
-confirming it ran the candidate, `task run`, `health`, `improve --dry-run`), and
-finally installs a separate untouched copy of the PREVIOUS release and runs
-it back against the candidate-written home to prove read-back still works.
-It exists because no other suite drives a real prior release against a real
-candidate build: the symlink-abort regression fixed in 0.9.17-alpha.3
-(`d76af0a7b`) went undetected by the full unit/integration suite,
-`tests/release-check.sh`, and the Docker matrix, because no fixture combined
-a git bundle with an in-bundle symlink, a website bundle, an npm bundle, an
-ungranted task, and a real crontab row in one home. Plain `task sync` proves
-clean specifically because the candidate lands inside the SAME prefix the
-previous release's scheduler rows already point at — no launcher path moves,
-so nothing needs rebinding; a side-by-side install (a separate prefix) would
-need `--rebind` instead, which is not what an in-place package-manager
-upgrade does. `tests/integration/previous-release-corpus.test.ts` covers
-persisted-data shapes read in isolation; this gate covers the whole CLI
-surface driven end to end across two real installed releases.
+`tests/integration/upgrade-rehearsal/` runs once per origin in
+`KNOWN_UPGRADE_ORIGINS` (`previous-release.ts`): `previous`, the highest stable
+release below the candidate's `package.json` version, and `0.9.15`, a fixed
+older release. For each origin it installs that release as a real global npm
+package (a real `npm pack` / `npm install --global` into a throwaway prefix, see
+`scripts/package-install.ts`), uses it to build a realistic home — filesystem,
+git (with an in-bundle symlink at its root), website, and npm bundles, scheduled
+tasks, a synced native (fake) crontab, and the 0.9 `engines` form the release
+itself writes (an llm engine with an `apiKeyFile`, an agent engine, a
+`models.json`, a command and a task source that name an engine) — then installs
+the CANDIDATE build OVER it in the SAME prefix: an in-place swap, the same thing
+a real `npm i -g akm-cli@…` or `bun add -g` upgrade does. It then runs the
+candidate against that home (`migrate status` / `apply`, which converts the
+`engines` form, files its key and rewrites the `engine:` keys, `bundle list`,
+`search` / `show`, `task sync` dry-run and real — plain, no `--rebind`, as an
+upgrading user runs it — executing the generated cron command and confirming it
+ran the candidate, `task run`, `health`, `improve --dry-run`), and finally runs a
+separate untouched copy of the origin release back against the candidate-written
+home to check that read-back still works. Plain `task sync` is clean because the
+candidate lands inside the same prefix the previous release's scheduler rows
+already point at; a side-by-side install (a separate prefix) would need
+`--rebind`. `tests/integration/previous-release-corpus.test.ts` covers
+persisted-data shapes read in isolation; this gate covers the whole CLI surface
+across two real installed releases.
 
 Run it locally with:
 
@@ -512,14 +469,16 @@ bun run build
 AKM_UPGRADE_REHEARSAL=1 TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/
 ```
 
-Unset (the default), the suite logs one line and skips — it never fails
-"inconclusively" (#795): every missing capability (no `npm` on `PATH`, no
-network reachable to resolve/fetch the previous release, no candidate build)
-throws naming the fix instead. Env overrides:
+Unset (the default), the suite logs one line and skips. When it is requested,
+every missing capability (no `npm` on `PATH`, no network reachable to resolve or
+fetch the previous release, no candidate build) throws naming the fix. Env
+overrides:
 
-- `AKM_UPGRADE_FROM=<version>` — pin the previous release instead of
-  resolving the highest published stable version below the candidate's
-  `package.json` version.
+- `AKM_UPGRADE_FROM=<version>` — pin the `previous` origin instead of resolving
+  the highest published stable version below the candidate's `package.json`
+  version.
+- `AKM_UPGRADE_REHEARSAL_ORIGIN=<origin>` — run only one origin (CI runs each
+  origin as its own job).
 - `AKM_CANDIDATE_TARBALL=<path>` — use an already-packed candidate tarball
   instead of running `npm pack` on the working tree (which requires
   `dist/cli.js` — run `bun run build` first).
@@ -532,30 +491,20 @@ branches, on manual runs and on every commit of a pull request that is ready
 for review (a draft pull request skips it until it is marked ready). The Release
 workflow requires that CI run to pass on the commit it publishes.
 
-## Coverage Gap Guide
+## Coverage Notes
 
-This repo now has broad coverage across the major CLI, indexing, registry, and
-semantic-search paths. Use this file as a current gap guide, not a greenfield
-test plan.
+Coverage is broad across the CLI, indexing, registry, workflow, and
+semantic-search paths. Use these directories as the starting point when
+extending it:
 
-### Areas With Strong Existing Coverage
-
-- database and scoring (`tests/integration/db.test.ts`, `tests/integration/db-scoring.test.ts`, `tests/integration/fts-field-weighting.test.ts`)
-- search/show CLI surfaces (`tests/integration/commands/search-cli-envelope.test.ts`, `tests/integration/commands/show.test.ts`, and the other `search-*`/`show-*` suites under `tests/integration/`)
-- registry install/search/update/list flows
-- workflow, vault, and wiki behavior
-- semantic status, vector search, and embedding config behavior
-- CLI error handling and output shaping
-- Docker install validation
-
-### Highest-Value Remaining Gaps
-
-1. corrupt or version-mismatched DB fallback behavior during search
-2. local model download and ONNX startup failures
-3. partial embedding-generation failures during indexing
-4. concurrent search/embedder behavior under load
-5. semantic readiness reporting parity between `setup`, `search`, and `info`
-6. broader platform CI for Alpine/musl, ARM, and Windows edge cases
+- `tests/integration/db/`, `tests/integration/fts/`, `tests/integration/indexer/`,
+  `tests/integration/storage/` — database, full-text search, and index behavior
+- `tests/search-rrf.test.ts`, `tests/integration/search-fusion.test.ts` — search ranking
+- `tests/integration/registry/` — registry install, search, and update flows
+- `tests/integration/workflows/`, `tests/integration/tasks/` — workflow and task behavior
+- `tests/integration/vector-search.test.ts`, `tests/integration/semantic-search-e2e.test.ts` — vectors and embeddings
+- `tests/integration/info-command.test.ts`, `tests/integration/output-baseline.test.ts` — CLI output shaping
+- `tests/integration/docker-install.test.ts` — Docker install validation
 
 ### When Adding Tests
 
@@ -563,12 +512,3 @@ test plan.
 - use isolated temp config/cache/stash dirs
 - cover the user-visible CLI behavior when the risk is output shaping or command routing
 - cover internal units directly when the risk is scoring, metadata extraction, or persistence
-
-### Useful Existing Suites To Extend
-
-- `tests/integration/commands/search-cli-envelope.test.ts`
-- `tests/integration/commands/show.test.ts`
-- `tests/integration/vector-search.test.ts`
-- `tests/setup-wizard.test.ts`, `tests/setup-scheduled-tasks.test.ts`
-- `tests/integration/info-command.test.ts`
-- `tests/integration/docker-install.test.ts`

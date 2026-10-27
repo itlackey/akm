@@ -74,8 +74,8 @@ frontmatter for markdown assets, and structured comments for scripts. The
 indexer derives metadata from filenames, code comments, frontmatter, and
 `package.json`.
 
-See [Filesystem Layout](../architecture/internals/storage-locations.md) for
-the full field reference.
+See [Storage Locations](../architecture/internals/storage-locations.md) for the
+on-disk layout of the databases, caches and asset directories.
 
 ### Bundle orientation: the `.meta/` convention
 
@@ -132,16 +132,13 @@ For script assets, akm resolves execution hints in this order:
   backlink, and domain convention facts the bundle skeleton ships with (see
   [Refs — namespacing](refs.md#namespacing)).
 
-## Security / persistence implications
+## Storage
 
-- `env` and `secret` assets carry protected values: key names are
-  discoverable, but values are never written to stdout, the index, or
-  structured output. See `STABILITY.md`'s "Protected env & secret values"
-  entry for the exact contract and the safe injection path
-  (`akm env run` / `akm secret run`).
-- All asset content is plain files inside the bundle directory — the search
-  index (`index.db`) is a derived, regenerable cache rebuilt by `akm index`;
-  it is never the source of truth for asset content.
+- `env` and `secret` assets hold values that akm does not print: `list` shows
+  key names or secret names, and values reach a process only through `akm env
+  run` and `akm secret run`. See [Env and secrets](env-and-secrets.md).
+- All asset content is plain files inside the bundle directory. The search
+  index (`index.db`) is a derived cache rebuilt by `akm index`.
 - `akm lint` only operates on writable sources, and `akm improve` on one of
   them: the bundle it writes to (`--bundle`, else `defaultWriteTarget`, else the
   working bundle). Read-only registry caches (`git`, `npm`, `website`) are
@@ -163,4 +160,4 @@ distillation triggers and ranking are Experimental tuning targets. See
 - [Memory](memory.md) — the memory asset type's belief-state and derived-memory model
 - [Bundle Types](bundle-types.md) — every bundle format akm recognizes, not just its own
 - [Classification](../architecture/internals/classification.md) — the specificity-based matcher
-- [Filesystem Layout](../architecture/internals/storage-locations.md) — full metadata field reference
+- [Storage Locations](../architecture/internals/storage-locations.md) — the on-disk inventory: databases, locks, caches and asset directories

@@ -6,7 +6,7 @@
  * `akm search` — entry point.
  *
  * Search consults the local FTS5 index. There is one query path
- * because there is one data store. Provider fan-out is gone.
+ * because there is one data store; there is no provider fan-out.
  *
  * The orchestration here is thin: build the FTS query, optionally interleave
  * a registry search behind `--from registry|all`, and log a usage event.
@@ -318,9 +318,9 @@ function resolveEntryIds(
     try {
       const entryId = getEntryIdByFilePath(db, hit.path);
       if (entryId !== undefined) {
-        // F4c: persist the DURABLE fully-qualified `bundle//conceptId` spelling,
-        // derived from the resolved entry row's `item_ref` (D-R3: durable keys
-        // come from the resolved item, never raw input).
+        // Persist the DURABLE fully-qualified `bundle//conceptId` spelling,
+        // derived from the resolved entry row's `item_ref` (durable keys come
+        // from the resolved item, never raw input).
         const itemRef = getItemRefById(db, entryId);
         if (itemRef !== null) {
           results.push({ entryId, ref: itemRef, hit });
@@ -364,7 +364,7 @@ function logSearchEvent(
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm search invocations without relying on stdout scraping.
   const stashHits = response.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-  // D8: include registry hit refs so a show following a registry-only search generates a select event
+  // Include registry hit refs so a show following a registry-only search generates a select event
   const registryHitRefs = (response.registryHits ?? []).map((h) => `registry:${h.id}`);
   const allResultRefs = [...stashHits.map((h) => h.ref), ...registryHitRefs];
   appendEvent({
@@ -379,7 +379,7 @@ function logSearchEvent(
     withIndexDb(
       (db) => {
         const resolved = resolveEntryIds(db, stashHits.slice(0, 50));
-        // usage_events telemetry now writes to state.db (Chunk-8 WI-8.3);
+        // usage_events telemetry writes to state.db;
         // entry_id/entry_ref are resolved from index.db above and carried across.
         const stashHitCount = response.hits.length;
         const registryHitCount = Array.isArray(response.registryHits) ? response.registryHits.length : 0;

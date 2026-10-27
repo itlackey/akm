@@ -1,41 +1,39 @@
 # Fresh-Host Rebuild Runbook
 
-Rebuild a working akm install on a new machine. Assumes your bundle lives in a
-git remote and that a versioned `config.json` copy is committed to the bundle
-git (the 08-F1 recovery pattern — see step 3).
+Rebuild a working akm install on a new machine. It assumes your bundle lives in
+a git remote and that you kept a copy of `config.json` somewhere you can
+restore it from.
 
 1. **Install the CLI.** Prebuilt binary (no runtime needed):
    `curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash`
-   — or npm package (Node.js >= 22 required): `npm install -g akm-cli`.
-   If a working Bun >= 1.0 is also on `PATH`, the package prefers it after Node
-   bootstrap; old, unusable, or absent Bun installations fall back to Node.js.
-   The standalone binary is runtime-free.
-   (Windows: `irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex`.)
+   (Windows: `irm https://github.com/itlackey/akm/releases/latest/download/install.ps1 | iex`).
+   Or the npm package, which needs Node.js 22 or later: `npm install -g akm-cli`.
+   A working Bun 1.0 or later on `PATH` is optional and preferred over Node.
 2. **Confirm the binary resolves:** `akm --version`.
-3. **Restore `config.json`.** akm reads a single user config at
-   `~/.config/akm/config.json` (`%APPDATA%\akm\config.json` on Windows;
-   override with `AKM_CONFIG_DIR`). This file is gitignored on the host, so the
-   recovery source is the ONE versioned copy committed to the bundle git
-   (08-F1 pattern). Copy that file into place; it carries the `connections`,
-   `harnesses`, and cron-load-bearing improve
-   strategies that are otherwise unrecoverable.
-4. **Provide secrets/env.** `config.json` references API keys via `$VAR`
-   placeholders; export those environment variables (or restore
-   `credentials.json` from your own backup; it is never part of `config.json`)
-   so the connections and the embedding endpoint resolve. Never commit the
-   resolved values.
-5. **Restore the working bundle.** Clone your bundle git remote to the path
-   named by your working bundle's entry under `bundles` in the restored
-   config (`defaultBundle` selects which one; default path `~/akm`). There is
-   no top-level `stashDir` config key in 0.9 — it is retired and rejected at
-   load. If starting clean instead, run `akm setup --yes` to scaffold it.
-6. **Re-add non-git sources.** For each managed source not carried in the bundle
-   git (websites, npm packages, GitHub repos), run `akm bundle add <ref>`. Verify the
-   full set with `akm bundle list`.
-7. **Rebuild the index:** `akm index --full` (forces a complete reindex rather
-   than an incremental update).
-8. **Verify health:** `akm health` (checks runtime, artifacts, and improve
-   metrics — exits non-zero if `state.db` is missing) and `akm info` for index
-   stats and effective config.
-9. **Smoke-test discovery:** `akm search <term>` returns results, confirming the
-   index and bundle are wired correctly.
+3. **Restore `config.json`.** akm reads one user config at
+   `~/.config/akm/config.json` (`%APPDATA%\akm\config.json` on Windows; set
+   `AKM_CONFIG_DIR` to move it). It holds your `connections`, `harnesses`, and
+   your improve strategies.
+4. **Provide secrets.** `config.json` refers to API keys as `$VAR` or
+   `${VAR}`. Export those environment variables, or restore `credentials.json`
+   from your own backup (it is never part of `config.json`), so the
+   connections and the embedding endpoint resolve.
+5. **Restore the working bundle.** Clone your bundle's git remote to the path
+   of the working bundle's entry under `bundles` in the restored config
+   (`defaultBundle` selects which one; the default path is `~/akm`). To start
+   clean instead, run `akm setup --yes`, which scaffolds the bundle.
+6. **Check the other bundles.** `akm bundle list` shows the bundles the
+   restored config defines. Re-add any that are missing with
+   `akm bundle add <ref>`.
+7. **Rebuild the index:** `akm index --full`. `index.db` is derived from your
+   bundles and is rebuilt from scratch.
+8. **Verify health:** `akm health`, then `akm info` for index stats and the
+   effective config. `akm health` creates `state.db` if it is missing and
+   applies its migrations. It exits 0 when every check passes, 4 on warnings,
+   and 1 when a hard check fails. See [Health Checks](health-advisories.md) for
+   what each check means.
+9. **Smoke-test discovery:** `akm search <term>` returns results.
+
+`$DATA/state.db` holds proposals, events, and task history, and is not rebuilt
+from your bundles. Copy it from the old host before step 8 if you want that
+history.

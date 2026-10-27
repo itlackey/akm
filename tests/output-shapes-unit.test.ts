@@ -117,7 +117,7 @@ describe("shapeSearchHit — local stash hits", () => {
   };
 
   test("brief keeps only type/name/ref/action/estimatedTokens", () => {
-    // REC-03: ref is now included at brief so agents can run `akm show <ref>`
+    // ref is included at brief so agents can run `akm show <ref>`
     expect(shapeSearchHit(fullHit, "brief")).toEqual({
       type: "skill",
       name: "deploy",
@@ -148,8 +148,8 @@ describe("shapeSearchHit — local stash hits", () => {
 });
 
 describe("shapeSearchHit — registry hits", () => {
-  // v1 spec §4.2: registry hits no longer surface a `curated` boolean. They
-  // may surface optional `warnings` when a provider has non-fatal issues.
+  // Registry hits carry no `curated` boolean. They may surface optional
+  // `warnings` when a provider has non-fatal issues.
   const registryHit = {
     type: "registry",
     name: "azure-ops",
@@ -294,10 +294,8 @@ describe("shapeShowOutput", () => {
     expect(out.name).toBe("deploy");
   });
 
-  // R-020: `ref` is the canonical identity of the shown asset and must be
-  // present in EVERY show shape (human default, summary, and agent) — it was
-  // previously stripped by the human/summary field lists, leaving `--shape
-  // agent` as the only projection that carried it.
+  // `ref` is the canonical identity of the shown asset and must be present in
+  // EVERY show shape (human default, summary, and agent).
   test("ref is present in shape=human at every detail level", () => {
     expect(shapeShowOutput(fullShow, "brief", "human").ref).toBe("team//skills/deploy");
     expect(shapeShowOutput(fullShow, "normal", "human").ref).toBe("team//skills/deploy");
@@ -347,7 +345,7 @@ describe("shapeShowOutput", () => {
     }
   });
 
-  // D-14: `path` and `editable` are projected at every --detail level, not
+  // `path` and `editable` are projected at every --detail level, not
   // gated behind --detail full — only `schemaVersion`/`editHint` are full-only.
   test("path and editable are present in shape=human at --detail brief (not full-gated)", () => {
     const out = shapeShowOutput(fullShow, "brief", "human");
@@ -531,10 +529,9 @@ describe("curate agent access projection", () => {
 
 describe("shapeForCommand: unknown command", () => {
   test("throws with the command name in the message instead of silently passing the result through", () => {
-    // v1 spec §9: the output shape registry is exhaustive. A missing case is
-    // a registration bug (silent JSON.stringify fallback was the old
-    // behaviour). The throw must include the unknown command name so the
-    // caller / test sees the missing registration.
+    // The output shape registry is exhaustive. A missing case is a registration
+    // bug (there is no silent JSON.stringify fallback). The throw must include the
+    // unknown command name so the caller / test sees the missing registration.
     expect(() => shapeForCommand("definitely-not-a-real-command", { foo: "bar" }, "normal")).toThrow(
       "output shape not registered for command: definitely-not-a-real-command",
     );
@@ -577,7 +574,7 @@ describe("shapeForCommand — `results` collection alias (#922)", () => {
   });
 });
 
-// ── #284 GAP-MED 1: shapeProposal* — proposal commands ─────────────────────
+// ── #284: shapeProposal* — proposal commands ───────────────────────────────
 
 describe("shapeProposal* — proposal commands", () => {
   const fullProposal: Record<string, unknown> = {
@@ -625,10 +622,10 @@ describe("shapeProposal* — proposal commands", () => {
     expect((out.payload as Record<string, unknown>).content).toBe("BODY");
   });
 
-  // alpha.9: a consolidate retire proposal's payload.content is empty by
-  // design (it deletes, it does not write) — `retirement` is the field a
-  // reviewer needs instead, so it must survive shaping at normal AND full,
-  // the same way confidence/gateDecision already do.
+  // A consolidate retire proposal's payload.content is empty by design (it
+  // deletes, it does not write) — `retirement` is the field a reviewer needs
+  // instead, so it must survive shaping at normal AND full, the same way
+  // confidence/gateDecision already do.
   const retireProposal: Record<string, unknown> = {
     ...fullProposal,
     source: "consolidate-pair",
@@ -669,7 +666,7 @@ describe("shapeProposal* — proposal commands", () => {
     expect(out).not.toHaveProperty("continuityRisk"); // this fixture is not flagged
   });
 
-  test("shapeProposalEntry brief projects a minimal continuityRisk marker for a flagged retire proposal (round 3)", () => {
+  test("shapeProposalEntry brief projects a minimal continuityRisk marker for a flagged retire proposal", () => {
     // `proposal list`'s DEFAULT detail level is "brief" (no --detail flag
     // given projects here) — retirement itself is not restored until
     // "normal", so without this marker a flagged proposal would be
@@ -861,13 +858,12 @@ describe("shapeProposal* — proposal commands", () => {
       "brief",
     ) as Record<string, unknown>;
     expect(diff.isNew).toBe(true);
-    // R-063/R-064: the "reflect" shape registration was deleted — `akm
-    // reflect` has no standalone CLI verb and no `output("reflect", ...)`
-    // call site (reflect.ts is an internal function the improve loop calls
-    // directly). "proposal-new" (`akm proposal new`, formerly the top-level
-    // `akm propose`) shares the same producer-shape handler and IS a live CLI
-    // verb (src/commands/proposal/propose-cli.ts), so it covers this
-    // registry path.
+    // There is no "reflect" shape registration: `akm reflect` has no standalone
+    // CLI verb and no `output("reflect", ...)` call site (reflect.ts is an
+    // internal function the improve loop calls directly). "proposal-new" (`akm
+    // proposal new`) shares the same producer-shape handler and IS a live CLI
+    // verb (src/commands/proposal/propose-cli.ts), so it covers this registry
+    // path.
     const propose = shapeForCommand(
       "proposal-new",
       { schemaVersion: 2, ok: true, ref: "lessons/x", proposal: fullProposal, engine: "p", durationMs: 1 },

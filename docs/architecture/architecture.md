@@ -2,12 +2,7 @@
 
 akm is a Bun-based CLI for discovering and using agent assets from local
 filesystem sources, cache-backed sources (git, website, npm), and registry
-catalogs.
-
-This document is the operating summary of the current architecture and is the
-current-truth reference.
-
----
+catalogs. This page summarizes how it is put together.
 
 ## Invariants
 
@@ -119,12 +114,11 @@ canonical source directory through `src/core/asset/asset-placement.ts`'s
 `PLACEMENT_SPECS` map. See
 [Bundle Types](../reference/bundle-types.md) for the full table.
 
-The deprecated `vault` type was removed in 0.9.0 and replaced by `env` (whole
-`.env` files) and `secret` (single-value secret files). `wiki` is not an item
-type: multi-page wikis are a bundle *format* owned by the `llm-wiki` adapter,
-not a per-file type stamped by the classifier (see
+`env` holds whole `.env` files and `secret` holds single-value secret files.
+`wiki` is not an item type: multi-page wikis are a bundle *format* owned by the
+`llm-wiki` adapter, not a per-file type stamped by the classifier (see
 [Classification](internals/classification.md) and
-[Bundle Types](../reference/bundle-types.md) for the other ten formats akm
+[Bundle Types](../reference/bundle-types.md) for the ten other formats akm
 recognizes besides its own native one).
 
 ---
@@ -145,9 +139,9 @@ All four kinds expose the same minimal `SourceProvider` interface
 ```ts
 interface SourceProvider {
   readonly name: string;
-  readonly kind: string;                        // "filesystem" | "git" | "website" | "npm"
+  readonly kind: SourceKind;                    // "filesystem" | "git" | "website" | "npm"
   path(): string;                               // directory the indexer walks
-  sync?(options?: { force?: boolean }): Promise<void>; // refresh from upstream (no-op for filesystem)
+  sync?(options?: SyncOptions): Promise<void>;  // refresh from upstream (no-op for filesystem)
 }
 ```
 
@@ -155,17 +149,14 @@ Providers do **not** implement `search`, `show`, `canShow`, or any read method.
 The indexer walks `path()`, classifies files, and answers all queries from the
 local FTS5 index.
 
-File semantics are owned by the selected bundle adapter. OKF is the first-class
-least-common-denominator for Markdown path identity, open types, content, links,
-and heading fragments. The `akm` format is an OKF-compatible Markdown superset:
-its adapter progressively adds native command, script, workflow, task,
-environment, secret, memory, and lesson behavior. Non-Markdown formats retain
-their native serialization and every adapter retains its own capability,
-validation, redaction, and placement rules.
-
-The legacy `LiveStashProvider` / `SyncableStashProvider` split is gone, as is
-any "remote-only" provider tier. API-backed sources (mem0, Notion, etc.) are
-deferred to a separate `QuerySource` tier post-v1.
+File semantics are owned by the selected bundle adapter (see
+[Adapters](adapters.md)). OKF is the first-class least-common-denominator for
+Markdown path identity, open types, content, links, and heading fragments. The
+`akm` format is an OKF-compatible Markdown superset: its adapter progressively
+adds native command, script, workflow, task, environment, secret, memory, and
+lesson behavior. Non-Markdown formats retain their native serialization and
+every adapter retains its own capability, validation, redaction, and placement
+rules.
 
 ### Cache-backed sources are still indexed locally
 
@@ -173,6 +164,19 @@ deferred to a separate `QuerySource` tier post-v1.
 `$XDG_CACHE_HOME/akm/`. Once mirrored, they participate in the same local
 indexing pipeline as filesystem sources. There is no parallel scoring system
 for "remote" content.
+
+A cache-backed source is fetched when it is added and when `akm bundle update`
+forces a sync. `akm index` calls `sync()` without `force`, so it fetches a
+source only if it has never been materialized on this host; nothing refreshes
+on a timer. A git or npm install recorded in the lockfile whose files are
+missing is reported with a warning that names `akm bundle update`; index does
+not fetch it. A configured npm bundle with no lock entry has no walkable path,
+so index skips it with a warning that names `akm bundle update` instead of
+calling `sync()`.
+
+`akm index` indexes each source through its bundle's adapter. A source that
+could not be walked completely keeps its previously indexed rows and the index
+run warns; a bundle whose adapter id is unknown is skipped with a warning.
 
 ---
 
@@ -185,16 +189,17 @@ User-facing item refs are path-identified:
 ```
 
 - the subdir-qualified `conceptId` (`skills/code-review`) identifies an item
-  within a bundle; `type` is no longer a separate ref segment
+  within a bundle; `type` is not a ref segment
 - the fully qualified `bundle//conceptId` spelling is canonical in index rows
   and durable state; index-backed local read output keeps the short form for the
   default bundle and qualifies every non-default bundle
 - optional `bundle//` narrows input lookup to a configured bundle
 - refs are parsed by `parseBundleRef` in `src/core/asset/asset-ref.ts`
 - markdown-backed items strip `.md` from canonical names
-- `#fragment` is input-only and never stored: on markdown-document items the
-  core resolves it as a section selector (`knowledge/api-guide#authentication`);
-  elsewhere it is an adapter-owned selector opaque to the core
+- `#fragment` is input-only and never stored, and `akm show` is the only command
+  that accepts one: on markdown-document items the core resolves it as a
+  section selector (`knowledge/api-guide#authentication`); on any other item
+  `akm show` ignores the fragment, warns, and shows the whole item
 - refs embedded in prose must be fully qualified (`bundle//conceptId`) or a
   native adapter link form — a bare conceptId in prose is ordinary text, and no
   tool rewrites it
@@ -215,11 +220,10 @@ Examples:
 - `workflows/release/train`
 - `team//commands/deploy`
 
-URI schemes (`viking://...`, `github://...`) are **not** asset refs. Install
-locators like `github:owner/repo`, `git+https://...`, `npm:@scope/pkg`,
-`skills.sh:slug`, and `./local/path` are a separate grammar parsed by
-`parseRegistryRef` in `src/registry/resolve.ts` and consumed by
-`akm add` / `akm clone`.
+URI schemes are **not** asset refs. Install locators like `github:owner/repo`,
+`git+https://...`, `npm:@scope/pkg`, and `./local/path` are a
+separate grammar parsed by `parseRegistryRef` in `src/registry/resolve.ts` and
+consumed by `akm bundle add` and `akm clone`.
 
 ---
 
@@ -245,9 +249,7 @@ scores by fully qualified ref (`<bundle>//<conceptId>`). A hit's `score` is
 that adjusted score. One-hit-per-file deduplication, and keeping only
 the highest-ranked of entries with identical indexed content, then drop entries
 from the sorted list without reordering it. Nothing else — name, type, tag,
-graph, utility score or belief-state signals — changes the order. The design
-and its measured alternatives are in the retrieval evaluation
-(`akm/eval/retrieval/reports/baseline-2026-09-27.md`).
+graph, utility score or belief-state signals — changes the order.
 
 Notes:
 
@@ -257,11 +259,13 @@ Notes:
 - the query embedding is requested before the FTS query runs and is bounded
   by `embedding.queryTimeoutMs` (default 3000); on timeout or failure the
   search is served by the lexical list alone
-- Markdown fragments are not searched; `akm show` reads the stored safe
-  Markdown (`entry_fragments`) for `#fragment` refs
-- `hints` includes `searchHints`, `examples`, `usage`, intent fields, wiki
-  cross-references, and page-kind hints
-- `content` is bounded low-weight body prose plus TOC headings and parameter metadata; secret/env/session material is excluded at the adapter boundary
+- Markdown fragments are not searched; they are a `show` feature (see
+  [Show Resolution](#show-resolution))
+- `hints` carries search hints, examples, usage, intent fields, cross-references,
+  page kind, and when-to-use text
+- `content` is bounded body text plus TOC headings and parameter metadata; `env`
+  and `secret` entries index key names and file names only, and session bodies
+  are not indexed
 - registry results live in `registryHits`, never in `hits`
 - `--from all` keeps registry results in `registryHits` — they are not
   rank-merged with source hits
@@ -272,12 +276,12 @@ Notes:
 - local search and curate expose the actual execution in `searchMode`:
   `semantic`, intentional/unavailable `keyword`, or `fts-fallback` when a
   ready semantic runtime failed during the query; that degradation also
-  surfaces as one sanitized `warnings[]` entry, including in agent shape
-- usage-event writes are best-effort; `EROFS`/`EACCES` from a read-only
-  environment are silent and never affect `searchMode`
+  surfaces as one `warnings[]` entry, including in agent shape
+- usage-event writes are best-effort; a read-only filesystem drops them
+  silently and does not change `searchMode`
 
 `akm search` is implemented in `src/commands/read/search.ts` and queries the
-indexer's local search (`src/indexer/search/db-search.ts`). Provider fan-out is gone.
+indexer's local search (`src/indexer/search/db-search.ts`).
 
 ---
 
@@ -290,23 +294,21 @@ Local show flow (`src/commands/read/show.ts`):
 1. parse `[bundle//]conceptId`
 2. `lookup(ref)` by indexed `item_ref` and materialized source root
 3. return the indexed canonical ref and read `file_path` from disk
-4. report not-found when no index row resolves; physical ownership can prevent
-   a lower-priority source from retargeting a ref, but never authorizes a
-   direct file read
+4. report not-found when no index row resolves
 5. apply generic Markdown content/fragment presentation for OKF, or the owning
    adapter's progressively enhanced native presentation
 
-An opaque `#akm-fragment-...` selector resolves against the safe Markdown
-revision persisted in `entry_fragments`, so search and show remain consistent
-if the materialized file changes before it is reindexed. Bare fragment show is
-still exact. The opt-in `--context lead` projection assembles the first and
-selected fragments from that same indexed revision under a hard character
-budget, labels the selected match, and keeps it last. It never reconstructs
-neighbors from the current raw file. Fragment search plus opaque/contextual show
-JSON exposes the selected and parent refs, one-based ordinal/count and
-source-line bounds, neighbor refs, and separate fragment/parent size estimates;
-canonical `ref` remains the parent on show. A default exact friendly-heading
-show stays source-live and omits indexed provenance.
+A friendly heading fragment (`#authentication`) selects a section of the live
+file. An opaque `#akm-fragment-...` selector resolves against the safe Markdown
+revision persisted in `entry_fragments`, so it stays consistent if the
+materialized file changes before it is reindexed. The opt-in `--context lead`
+projection assembles the first and selected fragments from that same indexed
+revision under a character budget (`--max-chars` or `--max-tokens`), labels the
+selected match, and keeps it last. Opaque and contextual show JSON exposes the
+selected and parent refs, one-based ordinal and count, source-line bounds,
+neighbor refs, and separate fragment and parent size estimates; the canonical
+`ref` remains the parent. An exact friendly-heading show stays source-live and
+omits indexed provenance.
 
 There is **no provider or local-disk fallback** for asset refs. The file is
 read only after an indexed row resolves it.
@@ -315,26 +317,25 @@ read only after an indexed row resolves it.
 
 Agent-shaped search, show, and curate results for materialized local assets
 include the index-backed `ref`, absolute `path`, and `editable`. `editHint` is
-included only when `editable` is `false`; it is secondary guidance and never
-replaces the normal show, run, or use action (or curate follow-up). Registry-only
+included only when `editable` is `false`; it is secondary guidance and does not
+replace the normal show, run, or use action (or curate follow-up). Registry-only
 results have no local path or editability fields.
 
-`editable` means current AKM source policy authorizes direct in-place
-modification of that exact file. It is computed when the response is built from
-the current resolved source roots and effective `writable` policy, is not stored
-in the index, and fails closed when no configured source owns the path.
+`editable` means the asset's file belongs to a configured source whose
+effective `writable` policy is true. It is computed when the response is built
+from the current resolved source roots, is not stored in the index, and is
+`false` when no configured source owns the path.
 
 ---
 
 ## Writing to Sources
 
-Writes go through one helper: `src/core/write-source.ts`. This is the only
-place in the codebase that branches on `source.kind`. Review holds that line
-(core principle 2); the lint script that once checked it was deleted.
-
-Command layers therefore never hold provider knowledge. Where a step is
-meaningful only for a publication-backed target, `write-source.ts` exposes a
-kind-neutral wrapper that absorbs the guard and no-ops otherwise:
+Writes go through one helper: `src/core/write-source.ts`. It is the only
+place that should branch on `source.kind`; command layers do not hold provider
+knowledge. That is a convention that code review holds (core principle 2), not
+a lint rule. Where a step is meaningful only for a publication-backed target,
+`write-source.ts` exposes a kind-neutral wrapper that does the work for a git
+target and does nothing otherwise:
 `prepareWriteTargetForMutation`, `commitWriteTargetBoundary`, and
 `withWriteTargetMutation` (write the file, `git add` exactly the recorded
 paths, commit, push with `--force-with-lease` when configured). Recording a
@@ -348,9 +349,11 @@ deleteAssetFromSource(source, config, ref)
 
 The flow:
 
-1. Refuse if the source is not `writable`.
-2. Plain filesystem write to `path.join(source.path, …)` — for **every** kind,
-   with no commit (0.9.0, issue #507).
+1. Refuse if the source is not `writable`, is not a `filesystem` or `git`
+   source, or belongs to a bundle whose adapter is not on the write allowlist
+   (see [Adapters](adapters.md#write-allowlists)).
+2. Atomic filesystem write to `path.join(source.path, …)` with no commit. A git
+   target records the path for the boundary commit.
 
 Git-backed targets are committed in a single batch at the operation boundary via
 `commitWriteTargetBoundary(target, message, { push })`, which delegates to
@@ -358,10 +361,9 @@ Git-backed targets are committed in a single batch at the operation boundary via
 boundary, which stages and commits only those files (so unrelated staged work,
 including work under the same asset directory, is not included). Improve
 auto-sync similarly subtracts the Git dirty-path baseline captured at invocation
-start. Push remains gated on `writable && hasRemote && push !== false`. The old
-per-asset commit/push path (`options.pushOnCommit`) is **hard-rejected** at
-config load — not merely deprecated — by a `superRefine` on the bundle/source
-schema (`src/core/config/schema/sources-bundles.ts`).
+start. Push happens when the target is writable, has an upstream, and `push` is
+not `false`. `options.pushOnCommit` is not supported: config load reports it
+(`src/core/config/schema/sources-bundles.ts`).
 
 `writable` is a config flag, not an interface concern. Defaults: `true` for
 `filesystem`, `false` for everything else. `writable: true` on `website` or
@@ -370,11 +372,10 @@ refresh.
 
 Write-target resolution (`resolveWriteTarget`) follows: an explicit
 destination flag (`--bundle`) -> `config.defaultWriteTarget` -> working
-bundle (`defaultBundle`) -> `ConfigError`. The resolved target keeps the
-optional configured selector separate from the stable `source.name`: APIs
-that must re-resolve a destination use the selector, while durable refs and
-state rows always use `source.name`. The implicit working bundle therefore has
-no selector but has durable identity `stash`.
+bundle (`defaultBundle`) -> `ConfigError`. There is no fallback to the first
+writable source. The resolved target keeps the optional configured selector
+separate from the stable `source.name`: APIs that must re-resolve a destination
+use the selector, while durable refs and state rows always use `source.name`.
 
 On mutation surfaces that accept asset refs, a qualified ref implies its
 bundle as the write target. A matching explicit destination flag is allowed;
@@ -389,16 +390,16 @@ combined with `--bundle`.
 
 ### Improve durable-state identity
 
-Improve readers and writers use one current key for each asset. A resolved
-indexed entry uses its fully qualified `item_ref`; a direct or provenance-free
-ref uses its current concept ID. There is no alternate root-based key, bare alias
-merge, or second state lookup. This prevents a duplicate concept in another
-installation from inheriting unrelated feedback, proposal-cursor, salience, or
-convergence state.
+Improve readers and writers use one current key for each asset (`stateKey`,
+`src/commands/improve/ledger.ts`). A resolved indexed entry uses its fully
+qualified `item_ref`; a direct or provenance-free ref uses its current concept
+ID. There is no alternate root-based key, bare alias merge, or second state
+lookup, so a duplicate concept in another installation does not inherit
+unrelated feedback, proposal-cursor, salience, or convergence state.
 
 Retrieval demand is scoped separately through usage-event entry IDs and selected
-source roots, with qualified refs covering detached events. Improve never merges
-retrieval counts or last-use timestamps solely by bare ref across sources.
+source roots, with qualified refs covering detached events. Improve does not
+merge retrieval counts or last-use timestamps by bare ref across sources.
 
 ### Proposal queues and destinations
 
@@ -406,10 +407,9 @@ retrieval counts or last-use timestamps solely by bare ref across sources.
 whose proposal queue is read or adjudicated; it does not override the proposal's
 write destination. Qualified proposals and unqualified proposals created in a
 configured secondary queue record the destination source name and materialized
-root. Diff, accept, and revert use that binding by default and reject an explicit
-`--bundle` that resolves elsewhere. An unbound short proposal requires either
-an explicit `--bundle` or an authenticated `--queue` context; it does not
-inherit a default write target.
+root. Diff, accept, and revert use that binding by default and refuse an
+explicit `--bundle` that resolves elsewhere. An unbound short proposal needs
+either `--bundle` or `--queue`; it does not inherit a default write target.
 
 ---
 
@@ -426,19 +426,17 @@ interface RegistryProvider {
 ```
 
 The contract is a single `search()` method — the orchestrator's only entry
-point. Implementations must never throw; errors are returned as
-`warnings[]` on the result.
+point. Implementations return errors as `warnings[]` on the result instead of
+throwing.
 
 Built-in registries:
 
 | Kind | Role |
 | --- | --- |
-| `static-index` | Reads the v2 or v3 JSON index schema, same `stashes[]` wire format (official akm registry, team mirrors). `scripts/build-registry-index.ts` emits v3; the live official registry currently publishes v2. |
+| `static-index` | Reads the v2 or v3 JSON index schema, same `stashes[]` wire format (official akm registry, team mirrors). `scripts/build-registry-index.ts` emits v3. |
 | `skills-sh` | Wraps the skills.sh REST API. |
 
-Context Hub is **not** a registry provider type. It is just a recommended git
-kit installable through the official static-index registry like any other
-source.
+These two are the only registry provider types, and Context Hub is **not** a registry provider type.
 
 ---
 
@@ -448,7 +446,9 @@ Workflow definitions live in `workflows/`, but workflow run state is separate
 durable runtime state. `workflow_runs`, `workflow_run_steps`,
 `workflow_run_units`, and `workflow_run_unit_attempts` live in `state.db`
 alongside events, tasks, and proposals. `index.db` remains rebuildable search
-state, while `logs.db` stores task/run log lines.
+state, while `logs.db` stores task/run log lines. See
+[The Workflow Engine](workflow-engine.md) for how a run is frozen, driven, and
+resumed.
 
 - workflow discovery and search use the shared asset index
 - workflow run records survive index rebuilds
@@ -469,27 +469,30 @@ improve's salience work; search ranking does not read it.
 
 ## Errors
 
-`ConfigError`, `UsageError`, and `NotFoundError` (in `src/core/errors.ts`) each
-carry a stable `code` and a `hint(): string | undefined` method. The CLI
-surfaces hints by calling `error.hint()` directly — there is no regex chain
-parsing error messages.
+`ConfigError`, `UsageError`, `NotFoundError`, and `TransientError` (in
+`src/core/errors.ts`) each carry a stable `code` and a `hint(): string |
+undefined` method. The CLI surfaces hints by calling `error.hint()` directly —
+there is no regex chain parsing error messages.
 
-All three extend a shared abstract base `AkmError` carrying a `kind`
-discriminant (`"config" | "usage" | "not-found"`). The CLI exit-code classifier
-(`classifyExitCode` in `src/cli/shared.ts`) switches exhaustively on `kind`
-(`never`-checked via `assertNever`), so adding a new error class is a
-compile-time error until its exit code is mapped. Any thrown value that is
-**not** an `AkmError` is treated as an unexpected internal failure and maps to
-the distinct INTERNAL exit code **70** (sysexits `EX_SOFTWARE`) — this lets
-scripts tell "akm threw unexpectedly" apart from an ordinary `NotFoundError`
-(exit 1).
+All four extend a shared abstract base `AkmError` carrying a `kind`
+discriminant (`"config" | "usage" | "not-found" | "transient"`). The CLI
+exit-code classifier (`classifyExitCode` in `src/cli/shared.ts`) switches
+exhaustively on `kind` (`never`-checked via `assertNever`), so adding a new
+error class is a compile-time error until its exit code is mapped. Any thrown
+value that is **not** an `AkmError` is treated as an unexpected internal
+failure and maps to the distinct INTERNAL exit code **70** (sysexits
+`EX_SOFTWARE`) — this lets scripts tell "akm threw unexpectedly" apart from an
+ordinary `NotFoundError` (exit 1).
 
 | Class / case | Exit code |
 | --- | --- |
 | `ConfigError` (`kind: "config"`) | 78 |
 | `UsageError` (`kind: "usage"`) | 2 |
 | `NotFoundError` (`kind: "not-found"`) | 1 |
+| `TransientError` (`kind: "transient"`) — another akm process holds a lock; retry shortly | 75 |
 | unclassified / non-`AkmError` (INTERNAL) | 70 |
+
+`akm health` exits 4 when it reports a warning (`EXIT_CODES.HEALTH_WARN`).
 
 ---
 
@@ -546,6 +549,11 @@ explicit `null`, zero, and empty values stay distinct. The result's
 `provenance` names the layer behind each field (`akm task explain`,
 `command run --dry-run`).
 
+An agent asset is a persona (a system prompt), not executable work. An
+`agents/<name>` selector (optionally `bundle//`-qualified) is resolved by akm
+into a persona; any other agent string is a native harness selector that
+replaces the persona.
+
 `buildExecution` hands the request to the selected harness's own builder
 (registered on `HARNESS_REGISTRY`), to the runtime's lowerer, or builds chat
 messages for a direct request. A harness builder is a thin shell: it names the
@@ -589,32 +597,37 @@ which includes every earlier plan with a command step, is marked abandoned and
 refused, naming the upgrade. AKM does not support full GitHub Actions semantics
 or arbitrary remote action execution.
 
+Tasks are `tasks/<name>.yml` documents in task source v4 (`parseTaskSource`).
+Version 2 and 3 files are not read at runtime: they are refused with a message
+naming `akm migrate apply`, which converts them. Historical task-run metadata
+remains readable.
+
 ### In-tree LLM helpers (`src/llm/`)
 
 Every helper under `src/llm/` is a **bounded, single-shot, stateless** call.
 Concretely:
 
 - Each public export is either a stateless function (`chatCompletion` performs
-  one HTTP request and keeps nothing between calls; `splitMemoryIntoAtomicFacts`,
-  `resolveIndexPassExecution`, `parseJsonResponse`, …) or a factory that returns
-  a one-shot client tied to the symbolic runner/config the caller passes in.
+  one HTTP request and keeps nothing between calls; `resolveIndexPassExecution`,
+  `parseJsonResponse` in `src/core/parse.ts`, …) or a factory that returns a
+  one-shot client tied to the symbolic runner/config the caller passes in.
 - No module under `src/llm/` keeps session, conversation, or response state at
-  module scope. The only module-level singleton is the local embedder
-  pipeline in `src/llm/embedder.ts`, which is an expensive-to-build but
-  stateless model handle (see the comment in that file). It exposes
-  `resetLocalEmbedder()` so tests can construct a fresh pipeline.
-- `callStructured()` is the common bounded structured-LLM seam: it adapts an
-  already-resolved symbolic runner into an inline resolved request, lowers it,
-  and dispatches it through `runExecution`, which materializes the connection's
-  key at dispatch like every other dispatch and re-runs no alias resolution.
-  Index callers use `resolveIndexPassExecution()` to freeze the typed
+  module scope. The module-level state is the local embedder pipeline and the
+  embedding cache in `src/llm/embedder.ts` — an expensive-to-build but
+  stateless model handle and an LRU of vectors. `resetLocalEmbedder()` lets
+  tests construct a fresh pipeline.
+- `callStructured()` (`src/llm/structured-call.ts`) is the common bounded
+  structured-LLM seam: it adapts an already-resolved symbolic runner into an
+  inline resolved request, lowers it, and dispatches it through `runExecution`,
+  which materializes the connection's key at dispatch like every other dispatch
+  and re-runs no alias resolution. Index callers use
+  `resolveIndexPassExecution()` (`src/llm/index-passes.ts`) to freeze the typed
   `{ runner, notices }` selection once per invocation; there is no separate
-  readiness projection. Which improve processes run is chosen
-  by `improve.strategies`, and where each runs by `improve.processes`; see
+  readiness projection. Which improve processes run is chosen by
+  `improve.strategies`, and where each runs by `improve.processes`; see
   `docs/reference/configuration.md` for canonical config paths.
 
-Review holds the seam; the test that once inspected the module shape of each
-`src/llm/*` entry was deleted.
+Review holds the seam.
 
 ### External agents (`src/integrations/agent/`, `src/integrations/harnesses/`)
 
@@ -635,8 +648,7 @@ Agent programs are reachable by two execution paths, both behind
   ([How akm runs a harness](../reference/configuration.md#how-akm-runs-a-harness)).
 - The `AgentRunResult` envelope carries `{ ok, exitCode, stdout, stderr,
   durationMs, reason?, error?, ... }` where `reason` is a typed code such as
-  `"timeout"`, `"spawn_failed"`, `"non_zero_exit"` or `"parse_error"`. Callers
-  never see raw process errors.
+  `"timeout"`, `"spawn_failed"`, `"non_zero_exit"` or `"parse_error"`.
 
 **akm's OpenCode runtime** (`src/integrations/harnesses/opencode/runtime/`):
 
@@ -694,17 +706,16 @@ Agent programs are reachable by two execution paths, both behind
   (no binary and no registry to fetch it from) fails as `spawn_failed`, naming
   the package, the URL and the cache path.
 
-New tasks are task source v4 `.yml` assets. Normal execution rejects v2 and v3
-and directs operators to the explicit preview/apply migrator. Task source v4
-command, workflow, script, and shell targets use the common resolved/lowered
-execution boundary. Historical task-run metadata remains readable.
+---
+
+## Locks
 
 Long-lived mutable operations each take their own lock file, one `O_EXCL`
-create (`src/core/file-lock.ts`): index writers, improve and extract process
-locks, lockfile writers, the scheduler lock, and each workflow run's lock. A
-lock whose holder process is gone is reclaimed. There is no shared barrier or
-activity registry around them; `state.db` writers serialize on SQLite's own
-`BEGIN IMMEDIATE`.
+create (`src/core/file-lock.ts`, `src/core/run-lock.ts`): index writers, improve
+and extract process locks, lockfile writers, the scheduler lock, and each
+workflow run's lock. A lock whose holder process is gone is reclaimed; nothing
+expires by age. There is no shared barrier or activity registry around them;
+`state.db` writers serialize on SQLite's own `BEGIN IMMEDIATE`.
 
 ---
 
@@ -716,12 +727,13 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 | `src/cli/` | citty composition helpers |
 | `src/core/asset/asset-placement.ts` | asset type registry and canonical source directories (`PLACEMENT_SPECS`) |
 | `src/core/asset/asset-ref.ts` | asset ref parsing and normalization (`parseBundleRef`) |
+| `src/core/adapter/` | the `BundleAdapter` contract and the built-in adapters (see [Adapters](adapters.md)) |
 | `src/core/config/config.ts` | config loading, validation, env resolution; the default connection and harness |
 | `src/core/config/credentials.ts` | `credentials.json` and the dispatch-time resolution of a connection's key (`$VAR`, else the stored entry) |
 | `src/core/config/convert-engines.ts` | the one conversion of the older `engines` / `defaults` form to `connections` / `harnesses`, called by the loader and by `akm migrate apply` |
 | `src/core/errors.ts` | error classes with stable codes and hints |
 | `src/core/parse.ts` | shared JSON parsing: think/fence stripping, balanced-brace extraction |
-| `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 1 worker) |
+| `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 1 worker) and keyed serialization |
 | `src/core/write-source.ts` | the single write helper (branches on `source.kind`) |
 | `src/execution/resolved-request.ts` | the versioned resolved execution request and its canonical wire form (tolerant decode) |
 | `src/integrations/agent/resolution.ts` | `resolveTarget`: the connection or harness a call runs on, and its model, timeout and request fields |
@@ -733,10 +745,11 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 | `src/sources/provider.ts` | minimal `SourceProvider` interface |
 | `src/sources/providers/` | filesystem / git / website / npm implementations |
 | `src/sources/resolve.ts` | filesystem path resolution for refs |
+| `src/storage/repositories/` | SQL for `index.db`, `state.db`, and `logs.db` (entries, FTS, proposals, task history, workflow runs, …) |
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
 | `src/indexer/walk/` | walker, matchers, path/file/index context — the walk phase |
 | `src/indexer/db/` | `llm-cache` — the persistence phase (entries/embeddings persistence lives in `src/storage/repositories/`) |
-| `src/indexer/search/` | `db-search`, ranking, search-fields, search-source, enrichers — the search phase |
+| `src/indexer/search/` | `db-search`, `fts-query`, ranking, search-fields, search-source, enrichers — the search phase |
 | `src/indexer/passes/` | memory-inference, dir-staleness, metadata — LLM/metadata passes |
 | `src/indexer/usage/` | usage-events |
 | `src/commands/read/search.ts` | `akm search` orchestration |
@@ -748,10 +761,10 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 | `src/commands/tasks/` | scheduled-task command surface |
 | `src/commands/agent/` | contribute/agent command surface |
 | `src/registry/providers/` | registry provider implementations (static-index, skills-sh) |
-| `src/output/shapes/`, `src/output/text/` | JSON-envelope and text-output registries per command (#490) — a parallel concern to `src/output/renderers.ts`'s per-asset-type `show` renderers, which is still live and self-registering, not replaced |
+| `src/output/shapes/`, `src/output/text/` | JSON-envelope and text-output registries per command — a parallel concern to `src/output/renderers.ts`'s per-asset-type `show` renderers, which register themselves when the module loads |
 | `src/workflows/authoring/` | workflow authoring |
 | `src/workflows/runtime/runs.ts` | workflow run persistence (raw SQL lives in `src/storage/repositories/workflow-runs-repository.ts`) |
-| `src/workflows/runtime/` | run lifecycle: runs, checkin, agent-identity |
+| `src/workflows/runtime/` | run lifecycle: runs, run-plan decoding, run outputs, agent-identity |
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
 | `src/llm/index-passes.ts` | per-pass connection or harness resolution for `akm index` (`index.*`) |
 | `src/llm/memory-infer.ts` | atomic-fact split helper (runs where `improve.processes.memoryInference` or `index.memory` says) |

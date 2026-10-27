@@ -185,10 +185,8 @@ function hasExtractedRepo(repoDir: string): boolean {
 
   try {
     if (!fs.statSync(repoDir).isDirectory()) return false;
-    // WI-3.1: the "any type dir present" test is now sourced from the `akm`
-    // adapter's directoryList() — behavior-identical to the placement
-    // stash-subdir names, with `stashDirNames()` kept live as the fallback. The
-    // content/ subdir check above is preserved verbatim.
+    // The "any type dir present" test is sourced from the `akm`
+    // adapter's directoryList(), with `stashDirNames()` as the fallback.
     const ownedDirs =
       akmAdapter.directoryList?.({ id: "akm", adapter: "akm", root: repoDir, writable: false }) ?? stashDirNames();
     return ownedDirs.some((dirName) => fs.existsSync(path.join(repoDir, dirName)));

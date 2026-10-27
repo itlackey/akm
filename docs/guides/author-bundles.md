@@ -8,10 +8,12 @@ asset types, directory conventions, and per-type examples.
 
 ## Create a Bundle
 
-A bundle is just a directory of assets. akm classifies each asset by **file
-extension and content**, so directory names are hints, not requirements — a
-`.sh` file is a script whether it lives in `scripts/`, `deploy/`, or the
-bundle root, and nesting is fully supported.
+A bundle is just a directory of assets. akm classifies scripts, knowledge,
+commands, agents and workflows by **file extension and content**, so directory
+names are hints for those, not requirements: a `.sh` file is a script whether
+it lives in `scripts/`, `deploy/`, or the bundle root, and nesting is fully
+supported. Env files, secrets, memories and the other placement-based types
+are found only under their own directory.
 
 ```sh
 mkdir my-bundle && cd my-bundle
@@ -30,29 +32,29 @@ env files, and more), and worked examples of each, see
 Add a `.meta/` directory at the bundle root to orient readers to the bundle
 *as a whole* — what it's for, where to start, conventions to follow. `.meta/`
 is a dot-directory, so the indexer skips it: these docs never appear in
-`akm search` and never compete for ranking. They're read directly with
-`akm show meta[:<name>]` (or `akm show <bundle>//meta[:<name>]` once
-installed). See [Reference: Asset Types](../reference/asset-types.md) for the
-`.meta/` layout and an example `index.md`.
+`akm search`. They're read directly with `akm show meta` (the bundle's
+`.meta/index.md`) or `akm show meta:<name>`, and `akm show <bundle>//meta` or
+`akm show <bundle>//meta:<name>` for an installed bundle. This `meta:` form is
+the one exception to the `[bundle//]conceptId` ref grammar. See
+[Reference: Asset Types](../reference/asset-types.md) for the `.meta/` layout
+and an example `index.md`.
 
 ## Write Metadata for Discovery
 
-Metadata is not documentation for humans skimming your repo — it is the
-signal an agent's search ranking runs on. Write descriptions that describe
-*what the asset does and when to reach for it*, not just what it's named.
+Metadata is not documentation for humans skimming your repo: search matches
+an asset's name, description, tags, hints and content, and an agent chooses
+from the lean result list. Write descriptions that describe *what the asset
+does and when to reach for it*, not just what it's named.
 
 Prefer metadata that travels with the asset itself, so it can't drift out of
 sync with the code:
 
-- Markdown assets: a `description` in frontmatter is extracted automatically
-  with high confidence.
+- Markdown assets: a `description` in frontmatter is used as the asset's
+  description.
 - Scripts: header comments (`@param`, `@run`, `@setup`, `@cwd`) keep
   execution metadata next to the code it describes.
 - Everything else: filenames and a nearby `package.json` provide fallback
   metadata when `akm index` runs.
-
-If you still have a legacy `.stash.json` sidecar, migrate its fields into
-inline metadata before publishing.
 
 **Keep `show` payloads focused.** `akm show` returns the whole asset body by
 default (the whole document for a knowledge asset, the whole `SKILL.md` for a
@@ -71,15 +73,12 @@ lesson learned from a failure — belongs in `memories/`, `facts/`, or
 reusable asset harder to reuse elsewhere and makes the project-specific
 context harder to find and prune later.
 
-**Give scripts and workflows explicit safety and parameter metadata.** AKM
-retrieves every supported capability type, but it only orchestrates execution
-surfaces it can reason about — scripts run through `@run`/`@setup`/`@cwd`
-declarations, workflows through their declared steps. Undocumented
-parameters or missing execution hints don't make an asset safer to skip; they
-make it a worse citizen of that boundary, forcing an agent (or a human) to
-guess what a script does before running it. Document every parameter with
+**Document scripts and workflows.** `akm show` turns a script's
+`@run`/`@setup`/`@cwd` headers into the `run` command an agent executes, and a
+workflow's declared steps into what it runs. Document every parameter with
 `@param`, declare the interpreter and working directory explicitly, and
-describe destructive or irreversible steps in the body text.
+describe destructive or irreversible steps in the body text, so an agent does
+not have to guess what a script does before running it.
 
 ## Test Before You Publish
 
@@ -109,7 +108,7 @@ renaming the file to match the query.
 Run `akm lint` before you publish. It catches structural problems (missing
 `name`/`type` on commands and agents, broken refs, malformed workflow
 structure, invalid task YAML) as well as the dangerous-env-key findings described
-in [Env Security](#env-security) below.
+in [Env files](#env-files) below.
 
 ```sh
 akm lint
@@ -137,8 +136,8 @@ pinned to the old layout.
 Users are expected to fork individual assets out of your bundle rather than
 edit your source tree directly. `akm clone` copies one asset (or, for a
 skill, its whole directory) into the user's writable bundle or a custom
-`--dest`, and the local copy wins in subsequent searches from that point
-forward:
+`--dest`. The copy is a separate asset with its own ref, and `akm show` with a
+short ref prefers the copy in the user's default bundle:
 
 ```sh
 akm clone scripts/deploy.sh
@@ -166,10 +165,8 @@ cover only what changes when you're the one publishing.
    "Topics").
 3. Others can now install it: `akm bundle add github:your-username/my-bundle`.
 4. To pin a version, tag a release and install with a `#ref`:
-   `akm bundle add github:your-username/my-bundle#v1.0.0`. Installs are
-   git-based — an unpinned add tracks the default branch, a `#ref` pins that
-   tag/branch/commit — and the latest-release tarball is used only as a
-   fallback when git access fails.
+   `akm bundle add github:your-username/my-bundle#v1.0.0`. An unpinned add
+   tracks the default branch; a `#ref` pins that tag, branch or commit.
 
 ### Sharing on npm
 
@@ -187,10 +184,9 @@ cover only what changes when you're the one publishing.
    ```
 
    Paths are relative to `package.json`; only listed directories/files are
-   copied into the install cache, and `.git` is always excluded. Remember to
-   include `.meta` explicitly — dot-directories are otherwise easy to leave
-   out of a published tarball (a GitHub tarball install includes `.meta/`
-   automatically, without needing an allowlist).
+   copied into the install cache, and `.git` is always excluded. Include
+   `.meta` explicitly, since dot-directories are easy to leave out of a
+   published tarball.
 
 3. `npm publish --access public`.
 4. Others can now install it: `akm bundle add @your-scope/my-bundle`.
@@ -203,10 +199,9 @@ For teams sharing assets without a registry, mount a bundle directly:
 akm bundle add /mnt/shared/team-bundle
 ```
 
-Assets appear in search results immediately, no further install step needed.
-See [Bundles](bundles.md) for adding a mounted source to
-`~/.config/akm/config.json` directly, and for write-safety behavior when a
-mounted or git bundle is marked `writable`.
+`akm bundle add` indexes the bundle, so its assets appear in search results
+straight away. A local path is writable by default; pass `writable: false` in
+config to make it read-only.
 
 ### Submitting to the Registry
 
@@ -219,61 +214,40 @@ before inclusion. For the registry's entry schema and how auto-discovered
 and curated entries are reconciled, see
 [Reference: Registry](../reference/registry.md).
 
-CLI-based submission (`akm` driving the PR) is planned for a future release.
+## Writable bundles
 
-## Write-Safety Expectations
+Publishing a bundle does not make it writable. `akm bundle add` installs git,
+npm, and website bundles read-only unless a git bundle is explicitly marked
+`writable` (`writable: true` on npm and website bundles is rejected at config
+load). Local directories are writable by default; opt out with
+`writable: false`. Only a writable bundle accepts writes such as
+`akm remember --bundle`, `akm proposal accept` and `akm sync`. If you expect
+other teams to write back into your bundle, say so in your `README.md` and
+document the `writable: true` configuration your users need. See
+[`akm sync`](bundles.md#akm-sync) for exactly what gets committed and when a
+push happens.
 
-Publishing a bundle does not make it writable by default. `akm bundle add`
-installs git, npm, and website bundles read-only unless the source is
-explicitly marked `writable` (filesystem sources are the exception — local
-directories are writable by default, opt out with `writable: false`), and
-only the primary bundle or a source resolved as writable accepts changes back (via `akm sync`, `akm clone --dest`, or
-`akm remember --bundle`). If you're publishing a bundle you expect other
-teams to write back into — not just install and read — say so in your
-`README.md` and document the `writable: true` configuration your users need.
-See [`akm sync`](bundles.md#akm-sync) for exactly what gets committed and
-when a push happens.
+## Env files
 
-## Env Security
+If your bundle includes env files under `env/`, `akm lint` reports any that set
+a variable name that changes how a process starts when the file is loaded with
+`akm env run`: 41 names, including `LD_PRELOAD`, `PATH`,
+`DYLD_INSERT_LIBRARIES` and `NODE_OPTIONS`, plus the `BASH_FUNC_*` and
+`GIT_CONFIG_*` prefixes. The finding is `dangerous-env-key`, a non-blocking
+warning. It is advice for you as the author, not a gate: installing a bundle is
+the user's trust decision, so `akm bundle add`, `akm bundle update`,
+`akm env run`, `akm secret run` and workflow `env:` bindings never scan, prompt
+for or block these keys, whichever bundle the file comes from. If your bundle
+needs one of these keys (for example, a `PATH` override for a hermetic
+toolchain), say why in your `README.md`, or leave its value out of the shipped
+file; a file with only key names and comments produces no findings. Suppress a
+single key with a `# akm-lint-ok: dangerous-env-key` comment on the preceding
+line.
 
-> The `vault` asset type was removed in 0.9.0; `env` replaces it. See the
-> [0.8 → 0.9 migration guide](../migration/v0.8-to-v0.9.md).
-
-If your bundle includes env files under `env/`, be aware of how `akm` handles
-them.
-
-**Dangerous key findings.** `akm lint` reports env files that set environment
-variable names which can be used to hijack process execution when the file is
-loaded via `akm env run`. The flagged names include `LD_PRELOAD`,
-`PATH`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, and 37 others (41 literal
-keys total), plus two pattern-based families (`BASH_FUNC_*`, Shellshock-class
-injection; `GIT_CONFIG_*`, git config override injection). The finding is
-advice for you as the author, not a gate: installing a bundle is the user's
-trust decision, so `akm bundle add`, `akm bundle update`, `akm env run`,
-`akm secret run` and workflow `env:` bindings never scan, prompt for or block
-these keys, whichever bundle the file comes from.
-
-If your bundle legitimately needs one of these keys (for example, a `PATH`
-override for a hermetic toolchain), do the following before publishing:
-
-1. Document the reason clearly in your `README.md`. Explain which key is set,
-   why it is needed, and what the value does.
-2. Run `akm lint` against your bundle locally to see the `dangerous-env-key`
-   findings before your users do (suppress a specific key with a
-   `# akm-lint-ok: dangerous-env-key` comment on the preceding line):
-
-   ```sh
-   akm lint
-   ```
-
-3. Consider whether the value can be set by the user after install rather than
-   shipped in the env file. Env files that ship without values — just key names
-   and comments — produce no findings.
-
-**Key names are metadata, not secrets.** Env key names appear in `akm env list`
-and search results by design. Only values are protected. The `--sensitive` flag
-on `akm env create` excludes a file from both `env list` output and the search
-index; its key names then surface only when the file is shown directly by ref.
+Key names are listed by `akm env list` and appear in search results. The
+`--sensitive` flag on `akm env create` leaves a file out of `env list` and the
+search index; its key names then appear only when the file is shown directly
+by ref.
 
 ## Bundle Structure Tips
 
@@ -281,12 +255,12 @@ index; its key names then surface only when the file is shown directly by ref.
   with 50 mediocre ones.
 
 - **Write good descriptions.** The `description` field (preferably in
-  frontmatter, otherwise in script comments or `package.json`) is the primary
-  signal for search ranking.
+  frontmatter, otherwise in script comments or `package.json`) is what an
+  agent reads in search and curate results when it decides what to load.
 
 - **Use frontmatter in markdown assets.** A `description` in frontmatter is
-  extracted automatically with high confidence (0.9), making your commands,
-  agents, and knowledge documents more discoverable.
+  picked up automatically, making your commands, agents, and knowledge
+  documents easier to choose between.
 
 - **Use structured header comments for scripts.** `.sh`, `.ts`, `.py`, etc. get
   strong results from good filenames plus leading comments and tags like

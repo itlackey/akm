@@ -1,32 +1,30 @@
 # Architecture Index
 
-How akm is built: system overview, normative specs, and subsystem internals.
+How akm is built.
 
-- [Architecture](architecture.md) -- How akm's bundles, cache, index, and registries fit together
+## Overview
+
+- [Architecture](architecture.md) -- How bundles, sources, refs, the index, search and show, writes, registries, and the execution boundary fit together
 - [Core Principles](akm-core-principles.md) -- How the code, tests and docs in this repo are built: the engineering rules and what enforces each
-- [Adapters](adapters.md) -- The `BundleAdapter` contract: what a bundle's files *are*, how they're indexed, linted, and written
-- [Architecture: The Workflow Engine](workflow-engine.md) -- How a workflow compiles to a frozen plan, persists run/unit state, dispatches work, and resumes without replaying completed steps
-- [Architecture: The Improvement Loop](improvement.md) -- Purpose and boundary of the improvement loop
+- [Adapters](adapters.md) -- The `BundleAdapter` contract: how a bundle's files are recognized, indexed, linted, and written
+- [The Workflow Engine](workflow-engine.md) -- How a workflow compiles to a frozen plan, persists run and unit state, dispatches work, and resumes without replaying completed steps
+- [The Improvement Loop](improvement.md) -- How feedback changes ranking and the utility signal, how evidence becomes reviewable proposals, and which writes happen without review
+- [Persisted-Data Compatibility](persisted-data-compat.md) -- What a reader owes data an earlier release wrote, per persisted format
 
-## Specs (`specs/`)
+## Specs
 
-Normative specifications and binding conventions.
+- [Ref Format](specs/ref.md) -- The `[bundle//]conceptId[#fragment]` ref grammar
+- [OKF Format Support](specs/okf-support.md) -- What the built-in `okf` adapter reads, and how OKF relates to AKM Markdown
 
-- [OKF format support](specs/okf-support.md) -- OKF is a first-class format supported through the built-in `okf` adapter
-- [Ref Format](specs/ref.md) -- Wire format for asset references
+## Internals
 
-## Internals (`internals/`)
-
-Current-truth subsystem references.
-
-- [Storage Locations](internals/storage-locations.md) -- Authoritative inventory of every on-disk read/write path
+- [Storage Locations](internals/storage-locations.md) -- Where akm reads and writes on disk
 - [Indexing](internals/indexing.md) -- How the search index is built
-- [Classification](internals/classification.md) -- Matcher and renderer behavior
-- [Improve Workflow](internals/improve-workflow.md) -- `akm improve` command surface and pipeline reference
-- [Health Advisories](internals/health-advisories.md) -- `akm health` advisory-to-action map for operators
+- [Classification](internals/classification.md) -- How adapters recognize files and pick renderers
+- [Improve Workflow](internals/improve-workflow.md) -- `akm improve` command surface and per-step pipeline reference
+- [Health Advisories](internals/health-advisories.md) -- The `akm health` checks and what to do about each
 - [Fresh-Host Rebuild Runbook](internals/fresh-host-rebuild-runbook.md) -- Rebuild an akm install on a new machine
-- [Persisted-Data Compatibility Contract](persisted-data-compat.md) -- What a reader owes data an earlier release wrote, per persisted format
 
-## Testing (`testing/`)
+## Testing
 
-- [Testing Workflow](testing/testing-workflow.md) -- End-to-end, Docker, deployment, and upgrade validation, plus the coverage gap guide
+- [Testing Workflow](testing/testing-workflow.md) -- Test layers, isolation rules, Docker and upgrade validation

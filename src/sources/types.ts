@@ -88,7 +88,7 @@ export interface SourceSearchHit {
   beliefState?: string;
   currentBeliefRefs?: string[];
   /**
-   * Phase 5A / Advantage D5 — derived-memory pointer.
+   * Derived-memory pointer.
    *
    * When a parent memory has a derived child indexed, the parent's search hit
    * is enriched with `expandTo` set to the child's ref (e.g.
@@ -236,14 +236,14 @@ export interface WorkflowRunSummary {
   /** Frozen workflow plan format on this row (informational); null for historical rows. */
   planIrVersion?: number | null;
   /**
-   * Resolved declared `outputs:` (P3b), present only on a completed run
+   * Resolved declared `outputs:`, present only on a completed run
    * whose plan declared any. Absent, never `null` — every pre-existing
    * envelope stays byte-identical (Stable tier).
    */
   outputs?: Record<string, unknown>;
-  /** The parent run this run was spawned under (P3b); present only on a child run. */
+  /** The parent run this run was spawned under; present only on a child run. */
   parentRunId?: string;
-  /** The parent run's unit that spawned this run (P3b); present only on a child run. */
+  /** The parent run's unit that spawned this run; present only on a child run. */
   spawnedByUnitId?: string;
 }
 
@@ -410,7 +410,7 @@ export interface UpdatePlainSyncedItem {
  * A configured source this update call did NOT process, with a human-
  * readable reason. Exists so `akm update --all` accounts for every configured
  * source instead of silently omitting the ones it cannot or does not sync
- * (R-015) — e.g. website sources (`--all` re-crawl not yet implemented) and
+ * — e.g. website sources (`--all` re-crawl not yet implemented) and
  * filesystem sources (no remote to sync).
  */
 export interface UpdateSkippedItem {
@@ -431,7 +431,7 @@ export interface UpdateResponse {
   processed: UpdateResultItem[];
   /** Plain sources freshly hydrated/reconciled by this call. Omitted when empty. */
   plainSynced?: UpdatePlainSyncedItem[];
-  /** Configured sources this call did not process, with why (R-015). Omitted when empty. */
+  /** Configured sources this call did not process, with why. Omitted when empty. */
   skipped?: UpdateSkippedItem[];
   config: {
     sourceCount: number;
@@ -621,7 +621,7 @@ export interface InfoResponse {
   version: string;
   /** Primary bundle directory, same resolution `akm sources list` uses. */
   bundleDir: string;
-  /** Name of the primary bundle from config, or `null` when none is configured (R-057). */
+  /** Name of the primary bundle from config, or `null` when none is configured. */
   defaultBundle: string | null;
   /**
    * Set only when config.json exists but could not be loaded (parse or
@@ -669,7 +669,7 @@ export interface InfoResponse {
   sourceProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
   indexStats: {
     entryCount: number;
-    /** Per-asset-type breakdown of `entryCount`, keyed by asset type (e.g. "skill", "knowledge") (R-057). */
+    /** Per-asset-type breakdown of `entryCount`, keyed by asset type (e.g. "skill", "knowledge"). */
     byType: Record<string, number>;
     /**
      * Declared links (#935) per kind, with how many name a target that is not
