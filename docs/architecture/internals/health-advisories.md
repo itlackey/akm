@@ -2,12 +2,13 @@
 
 `akm health` prints JSON by default (`--format text` for the table view) and
 emits the checks below. Each result has a `name`, and lands in `hardChecks` (the
-state.db, connection and harness, and semantic-search checks) or `advisories`
-(the rest). The list comes from `HEALTH_CHECKS` in
-`src/commands/health/checks.ts`, `akmHealth` in `src/commands/health.ts`, and the
-collectors in `src/commands/health/`. The checks from `index-state-generation`
-down to `opencode-plugin-version` appear only when they have something to
-report; the others are always present.
+state.db, `task-history-read`, `active-runs`, connection and harness, and
+semantic-search checks) or `advisories` (the rest). The list comes from
+`HEALTH_CHECKS` in `src/commands/health/checks.ts`, `akmHealth` in
+`src/commands/health.ts`, and the collectors in `src/commands/health/`. The
+checks from `index-state-generation` down to `opencode-plugin-version` appear
+only when they have something to report, and `state-db-readable` only in place
+of every other check; the others are always present.
 
 ## Status and exit code
 
@@ -28,8 +29,9 @@ response counts as reachable, so a cold local server is never asked to load a mo
 request per distinct endpoint per invocation, with no cross-run cache), runs each configured
 harness's `--version`, looks up the latest akm release on GitHub for `cli-version`
 (5 second timeout, no retries), and runs the akm binary recorded by the scheduler with
-`--version` for `scheduler-binary`. `plugin-version` runs `git ls-remote --tags origin`
-against the Claude plugin marketplace clone whenever a Claude plugin is installed. With
+`--version` for `scheduler-binary`. `plugin-version` runs `git ls-remote --symref origin`
+(it lists refs and fetches nothing) against the Claude plugin marketplace clone whenever a
+Claude plugin is installed. With
 `--no-probe` none of these runs: the connection rows carry no `reachable` field and the
 message says reachability was not probed, and `plugin-version` reports `unknown` (its
 `AKM_VERSION_RANGE` check is local and still runs). The `plugin-version` and `cli-version`
@@ -43,7 +45,7 @@ and `src/commands/health/version-drift.ts`.
 | `state-db-schema` | `fail`: state.db is missing one of `events`, `proposals`, `schema_migrations`, `task_history`. | The message lists the missing tables. |
 | `state-db-round-trip` | `fail`: appending and reading back a probe event failed. The probe row is deleted again. | The message gives the error. |
 | `state-db-integrity` | `fail`: `PRAGMA integrity_check` failed, or reading the freelist failed. `warn`: more than 50% of the pages are free. | For a failed check, follow the repair in the message: back up state.db, run `sqlite3 -readonly state.db ".recover" \| sqlite3 state.new.db`, confirm `state.new.db` passes `integrity_check`, stop every akm process, delete `state.db-wal` and `state.db-shm`, then swap `state.new.db` in as state.db. The free-page warning clears when `akm improve`'s retention purge VACUUMs state.db. |
-| `state-db-migrations` | Always `pass` in a normal run; the message lists the migrations this open applied and the pre-migration copy. `fail` when the open could not apply a pending migration; this row is then the whole report. | Run `akm migrate apply`. |
+| `state-db-migrations` | Always `pass` in a normal run; the message lists the migrations this open applied and the pre-migration copy (`evidence.applied`, `evidence.backupPath`). `fail` when the open could not apply a pending migration, or a read-only run (the `akm ui` health view) finds one pending, which it must not apply; this row is then the whole report. | Run `akm migrate apply`. |
 | `task-history-read` | Always `pass`; reports the number of `task_history` rows read in the window. | None. |
 | `active-runs` | `warn`: a task run has been active for more than 15 minutes. The message names the tasks and their age. | Inspect with `akm task history`. |
 | `connections-and-harnesses` | One table of every configured connection (endpoint, whether its key is held — a `$VAR` set in this shell, a `credentials.json` entry, or none — and whether the endpoint answers) and harness (platform, whether its binary is on `PATH`, and with a probe its `--version`), then the work that runs on them: improve, judges, agents, extract, enrich, index, embedding and curate rerank, each naming the connection or harness and the model it resolves to through the same resolver the calls use (`evidence.rows`, typed `connection`, `harness` or `process`). `warn` when a key variable is unset, an endpoint does not answer, a harness is not installed, several connections (or harnesses) are configured and none is called `default` (said once, with the fix: name one `default`), or a work row cannot resolve because of the config; `unknown` when neither a connection nor a harness is configured; otherwise `pass`. Endpoint reachability is one bounded `GET /models` and the version is the harness's own `--version`; with `--no-probe` neither runs and the message says so. | Correct the named connection, key or harness; run `akm setup` when nothing is configured. A work row whose parts run somewhere other than the row's own target lists them in `overrides`, each with the kind (connection or harness), name and model it runs on: that is a per-process pin, working as set. |
@@ -62,7 +64,7 @@ and `src/commands/health/version-drift.ts`.
 | `data-dir-usage` | `warn`: the data directory is over 1 GB and either more than 3 times the size of `state.db`, `index.db`, and `logs.db` (with their WAL and SHM files), or one top-level subdirectory holds more than half of it. The message names that subdirectory and its size. | Inspect the named subdirectory. `backups/tasks/` holds task-file snapshots written by `akm migrate apply`. |
 | `plugin-version` | One row per installed Claude Code harness plugin: its version and whether its declared `AKM_VERSION_RANGE` admits the running CLI. The newest version is read on the channel the marketplace clone follows: on the remote's default branch the newest stable tag, on any other branch (such as `next`) the release tag on that branch's head, and on a clone pinned to a tag that tag. The newest-tag lookup is `--probe`-gated: with `--no-probe` the row is `unknown` ("not probed") and only the local range check still runs. `warn`: the plugin is stale, or its range does not admit the running CLI. | Run the `claude plugin update <ref>` command in the message. |
 | `opencode-plugin-version` | The same check for the OpenCode plugin's own bundled `akm-cli` (read from its `package.json`, never executed): it runs in-process and shares the host's databases, so its lag matters the same way. OpenCode 1 caches each spec in its own folder, so it reads the one folder of the spec the global OpenCode config names under `plugin` (`akm-opencode`, read as `akm-opencode@latest`, or `akm-opencode@next`), and for `akm-opencode@<version>` reports the plugin as pinned with no staleness verdict; with no entry, or no folder for it, it reads `packages/akm-opencode`, and it never scans the other cached specs. It reads local files only and is never `--probe`-gated. `warn`: the bundled version differs from the running CLI. Omitted when the OpenCode plugin is not installed. | Update the OpenCode plugin. |
-| `state-db-readable` | `state.db` is missing or cannot be read, or is behind on migrations that a read-only run must not apply. Every other check is skipped, because none of them can read it. | Check the owner and mode of the data directory (or point `AKM_DATA_DIR` / `XDG_DATA_HOME` at one you own); run any akm command that records state, such as `akm health`, to create it. |
+| `state-db-readable` | `fail`: `state.db` cannot be read, or is missing in a read-only run (which does not create it). Every other check is skipped, because none of them can read it. | Check the owner and mode of the data directory (or point `AKM_DATA_DIR` / `XDG_DATA_HOME` at one you own); run any akm command that records state, such as `akm health`, to create it. |
 
 ## Connections, harnesses and the work on them
 
