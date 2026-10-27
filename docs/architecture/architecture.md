@@ -239,10 +239,10 @@ types) drop ineligible entries from each list before its 100 candidates are
 taken. The fused score is then multiplied by
 `1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))` over the user's recorded
 feedback for the asset (`applyFeedback` in `src/indexer/search/ranking.ts`;
-improve, task and audit feedback does not count, and an asset with none keeps
-its fused score), and the list is re-sorted, equal scores by fully qualified
-ref (`<bundle>//<conceptId>`). A hit's
-`score` is that adjusted score. One-hit-per-file deduplication, and keeping only
+[`akm feedback`](../reference/cli.md#feedback) says which feedback counts, and
+an asset with none keeps its fused score), and the list is re-sorted, equal
+scores by fully qualified ref (`<bundle>//<conceptId>`). A hit's `score` is
+that adjusted score. One-hit-per-file deduplication, and keeping only
 the highest-ranked of entries with identical indexed content, then drop entries
 from the sorted list without reordering it. Nothing else — name, type, tag,
 graph, utility score or belief-state signals — changes the order. The design
