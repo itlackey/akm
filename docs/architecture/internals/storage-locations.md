@@ -901,8 +901,6 @@ How utility scores flow through the system:
 ```
 akm search / akm show
   → insertUsageEvent()       → usage_events table (SQL aggregation)
-  → bumpUtilityScoresBatch() → utility_scores (between-index EMA bump)
-       formula: next = clamp(current + 0.1 × (1.0 − current), 0, 1)
 
 akm feedback
   → insertUsageEvent()       → usage_events (signal column)
@@ -917,9 +915,8 @@ akm index  (recomputeUtilityScores)
        utility      = prevUtility × decay + effectiveRate × (1 − decay)
   → overwrites/decays the union of aggregated entries and existing utility rows
 
-akm search  (ranking phase)
-  → recencyFactor = exp(−daysSinceLastUse / 30)
-  → score        *= min(1 + utility × recencyFactor × 0.5, 1.5)
+akm improve / akm metrics
+  → read utility_scores (search ranking does not)
 ```
 
 `usage_events` and the general `events` log are both durable tables in
