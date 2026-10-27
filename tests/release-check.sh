@@ -99,10 +99,14 @@ verify_model_surface() {
 	local root="$CANDIDATE_DIR/model-surface"
 	local out status
 
+	# The AKM_*_DIR overrides beat HOME and XDG_* (src/core/paths.ts), so a
+	# caller's are dropped, as the test preload does: otherwise these commands
+	# read and write that config.
 	akm_in() {
 		local scenario="$1"
 		shift
-		env HOME="$root/$scenario/home" \
+		env -u AKM_CONFIG_DIR -u AKM_DATA_DIR -u AKM_STATE_DIR -u AKM_CACHE_DIR \
+			HOME="$root/$scenario/home" \
 			XDG_CONFIG_HOME="$root/$scenario/config" XDG_DATA_HOME="$root/$scenario/data" \
 			XDG_CACHE_HOME="$root/$scenario/cache" XDG_STATE_HOME="$root/$scenario/state" \
 			AKM_BUNDLE_DIR="$root/$scenario/bundle" \
@@ -142,8 +146,9 @@ verify_model_surface() {
 }
 
 # Release acceptance for the packaged artifact. Lint, typecheck, the unit and
-# integration suites and the native-scheduler gates run in CI and Gated CI on
-# the same commit; release.yml requires both before it publishes.
+# integration suites and the upgrade rehearsal run in CI, and the
+# native-scheduler gates in Gated CI, on the same commit; release.yml requires
+# both before it publishes.
 run_step "Workflow Syntax" validate_workflow_syntax
 run_step "Build Package" bun run build
 run_step \
@@ -165,9 +170,6 @@ run_step \
 	bun test --timeout=300000 tests/integration/standalone-first-run.test.ts
 run_step "Package Acceptance" bun scripts/package-install.ts test-package --skip-build
 run_step "Pack Package Candidate" pack_package_candidate
-run_step \
-	"Upgrade Rehearsal" \
-	env AKM_UPGRADE_REHEARSAL=1 AKM_CANDIDATE_TARBALL="$PACKAGE_CANDIDATE" TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/
 run_step \
 	"Verify npm candidate release surface" \
 	tar -tzf "$PACKAGE_CANDIDATE" \

@@ -73,24 +73,9 @@ jobs:
           echo "CANDIDATE_VERSION=$CANDIDATE_VERSION" >> "$GITHUB_ENV"
           echo "Releasing akm-cli@$CANDIDATE_VERSION"
 
-      # Lint, typecheck and the unit and integration suites already ran in CI
-      # on this exact commit; require that run to have passed rather than
-      # running them again here.
-      - name: Require green CI on this commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          passed="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" \
-            --json conclusion --jq '[.[] | select(.conclusion == "success")] | length')"
-          if [ "$passed" = "0" ]; then
-            echo "CI has not passed on $GITHUB_SHA; wait for it (or rerun it) before releasing" >&2
-            exit 1
-          fi
-
       # tests/release-check.sh proves the packaged artifact: npm bin targets,
-      # the akm-migrate bundle under Bun and Node, package acceptance, and the
-      # published-upgrade rehearsal against the packed tarball. Docker runs in
-      # the gated job above.
+      # the akm-migrate bundle under Bun and Node, and package acceptance. Docker
+      # runs in the gated job above; the upgrade rehearsal runs in CI.
       - name: Release check
         run: ./tests/release-check.sh --skip-docker
 
@@ -128,6 +113,34 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+
+      # Lint, typecheck, the unit and integration suites and the upgrade
+      # rehearsal run in CI on this exact commit; wait for that run rather than
+      # running them again here, so Release can be dispatched right after the
+      # release commit is pushed. The newest push or manual CI run on the commit
+      # decides: a pull_request run tests a merge with its base branch, and on a
+      # draft skips the upgrade rehearsal. It passes at once when that run
+      # already passed, and fails when it failed or was cancelled, or has not
+      # passed in 25 minutes (50 polls, 30 seconds apart).
+      - name: Require green CI on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for _ in $(seq 50); do
+            runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" \
+              --json event,status,conclusion --jq '.[] | .event + " " + .status + " " + .conclusion')"
+            run="$(awk 'NF && $1 != "pull_request" { print $2 " " $3; exit }' <<<"$runs")"
+            case "$run" in
+              "completed success") exit 0 ;;
+              "completed "*)
+                echo "CI did not pass on $GITHUB_SHA: $run" >&2
+                exit 1
+                ;;
+            esac
+            sleep 30
+          done
+          echo "CI has not passed on $GITHUB_SHA within 25 minutes; last status: ${run:-no push or manual CI run yet}" >&2
+          exit 1
 
       - name: Publish to npm
         env:

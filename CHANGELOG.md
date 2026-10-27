@@ -19,6 +19,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   takes `detail: "brief"`) now point agents at the outline first, then the
   sections they need.
 
+### Changed
+
+- The Release workflow waits for CI on the commit it publishes, up to 25 minutes,
+  instead of failing when that run has not finished, so Release can be dispatched
+  right after the release commit is pushed. It still fails when CI failed or was
+  cancelled, and only the newest push or manual CI run counts: a pull request's
+  run tests a merge and, on a draft, skips the upgrade rehearsal.
+  `tests/release-check.sh` no longer repeats the upgrade rehearsal that CI runs on
+  the same commit.
+- `bun run check:ci` runs the pre-push check the way CI does (in a Docker
+  container with the Bun and Node versions `ci.yml` pins, a clean frozen install,
+  `CI=true` and four test shards); `.github/CONTRIBUTING.md` says when to run it.
+
 ### Fixed
 
 - `akm health`'s `plugin-version` advisory no longer reports a Claude Code

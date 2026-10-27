@@ -406,9 +406,9 @@ For a local release gate without Docker, use:
 ./tests/release-check.sh --skip-docker
 ```
 
-That script checks the packaged artifact: bin targets, the migrator, package
-acceptance, and the upgrade rehearsal against the packed tarball. Lint, the
-typecheck and the test suites are `bun run check`.
+That script checks the packaged artifact: bin targets, the migrator and package
+acceptance. Lint, the typecheck and the test suites are `bun run check`; the
+upgrade rehearsal runs in CI.
 
 The Release workflow runs Gated CI (real embeddings, Docker, and the
 Linux/macOS/Windows schedulers) on the commit it publishes and requires CI to
@@ -521,17 +521,16 @@ throws naming the fix instead. Env overrides:
   resolving the highest published stable version below the candidate's
   `package.json` version.
 - `AKM_CANDIDATE_TARBALL=<path>` — use an already-packed candidate tarball
-  (`tests/release-check.sh` passes `$PACKAGE_CANDIDATE`) instead of running
-  `npm pack` on the working tree (which requires `dist/cli.js` — run
-  `bun run build` first).
+  instead of running `npm pack` on the working tree (which requires
+  `dist/cli.js` — run `bun run build` first).
 
 Fetched previous-release tarballs are cached under
 `${TMPDIR:-/tmp}/akm-upgrade-rehearsal/previous-release/<version>/` so repeat
 runs do not re-hit the network. It is wired into CI as the `upgrade-rehearsal`
 job (`.github/workflows/ci.yml`), which runs on pushes to `main` and release
 branches, on manual runs and on every commit of a pull request that is ready
-for review (a draft pull request skips it until it is marked ready), and into
-`tests/release-check.sh` right after packing the release candidate.
+for review (a draft pull request skips it until it is marked ready). The Release
+workflow requires that CI run to pass on the commit it publishes.
 
 ## Coverage Gap Guide
 

@@ -4,8 +4,8 @@
 
 /**
  * Resolves the CANDIDATE release's npm tarball: `AKM_CANDIDATE_TARBALL`
- * (release-check.sh passes `$PACKAGE_CANDIDATE`, already packed from this
- * exact checkout) or a fresh `npm pack` of the repo.
+ * (a tarball already packed from this exact checkout) or a fresh `npm pack`
+ * of the repo.
  */
 
 import fs from "node:fs";

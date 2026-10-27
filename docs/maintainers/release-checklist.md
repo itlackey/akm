@@ -19,7 +19,8 @@ next):
    the `package.json` version (`tests/workflow-release.test.ts`).
 3. Add a migration note if the release needs one (see
    [CONTRIBUTING](https://github.com/itlackey/akm/blob/main/.github/CONTRIBUTING.md#shipping-a-release--migration-notes)).
-4. Commit `release: <version>`, push it to the branch, and let CI run on it.
+4. Commit `release: <version>`, push it to the branch and dispatch the release
+   (next section); the workflow waits for CI on that commit.
 
 ## 2. Release akm
 
@@ -31,13 +32,19 @@ The Release workflow, on the pushed commit:
 
 1. runs Gated CI: semantic search with real embeddings, the Docker install
    matrix, and the native schedulers on Linux, macOS and Windows;
-2. requires CI to have passed on the same commit (it does not run lint, the
-   typecheck or the test suites again);
-3. runs `tests/release-check.sh --skip-docker`: the packaged artifact's bin
-   targets and migrator, package acceptance, and the upgrade rehearsal against
-   the packed tarball;
-4. builds the package and standalone binaries, publishes to npm (`latest` for
-   a stable version, `next` for a prerelease) and creates the GitHub release.
+2. runs `tests/release-check.sh --skip-docker`: the packaged artifact's bin
+   targets and migrator, and package acceptance;
+3. builds the package and standalone binaries;
+4. requires CI to pass on the same commit, waiting up to 25 minutes for the run
+   to finish: the newest push or manual run counts, a pull request's does not
+   (it does not run lint, the typecheck, the test suites or the upgrade
+   rehearsal again);
+5. publishes to npm (`latest` for a stable version, `next` for a prerelease)
+   and creates the GitHub release.
+
+Push nothing else to the branch until the Release finishes: a push cancels the
+release commit's CI run (`ci.yml` cancels an in-progress run on the same ref),
+and the Release then fails.
 
 If a job fails on a flake, rerun the failed jobs. If the fix needs a code
 change, commit it and release that commit. npm can take several minutes to show

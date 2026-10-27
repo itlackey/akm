@@ -26,7 +26,7 @@ export function requireUpgradeRehearsalCapabilities(capabilities: UpgradeRehears
   if (!capabilities.candidateTarballProvided && !capabilities.distCliExists) {
     throw new Error(
       "AKM_UPGRADE_REHEARSAL=1 requires a candidate build: dist/cli.js is missing — run `bun run build`, " +
-        "or set AKM_CANDIDATE_TARBALL to a pre-packed tarball (tests/release-check.sh passes $PACKAGE_CANDIDATE).",
+        "or set AKM_CANDIDATE_TARBALL to a pre-packed tarball.",
     );
   }
 }

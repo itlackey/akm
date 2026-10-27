@@ -75,6 +75,7 @@
     "check": "bun run lint && bunx tsc --noEmit && bun run test:unit && bun run test:integration",
     "check:fast": "bun run lint && bunx tsc --noEmit && bun run test:unit",
     "check:changed": "bun run lint && bunx tsc --noEmit && bun test tests/integration/output-baseline.test.ts tests/integration/registry/registry-search.test.ts tests/integration/show-argv-entrypoint.test.ts tests/output-shapes-unit.test.ts",
+    "check:ci": "bash scripts/check-like-ci.sh",
     "sweep:tmp": "bun scripts/sweep-test-tmp.ts",
     "test": "bash scripts/test-unit.sh",
     "test:unit": "bash scripts/test-unit.sh",

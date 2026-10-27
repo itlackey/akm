@@ -122,6 +122,14 @@ For faster iteration while changing output contracts, run:
 
 Use it during development, then run `bun run check` before every push.
 
+`bun run check` uses your machine's Bun, as many test shards as it has cores
+(up to 8) and no `CI` variable; CI uses the Bun version `ci.yml` pins, 4 shards
+and `CI=true`, and a failure that depends on one of those only shows up there.
+`bun run check:ci` (Docker required) runs the same check the way CI does, on a
+clean install in a container, and leaves your `node_modules` alone. It takes
+about four and a half minutes; run it on the batch you are about to push instead
+of pushing to find out.
+
 ### Why this exists
 
 This repository has repeatedly seen CI failures caused by output-shape changes
