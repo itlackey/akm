@@ -240,7 +240,8 @@ taken. The fused score is then multiplied by
 `1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))` over the user's recorded
 feedback for the asset (`applyFeedback` in `src/indexer/search/ranking.ts`;
 improve, task and audit feedback does not count, and an asset with none keeps
-its fused score), and the list is re-sorted, equal scores by ref. A hit's
+its fused score), and the list is re-sorted, equal scores by fully qualified
+ref (`<bundle>//<conceptId>`). A hit's
 `score` is that adjusted score. One-hit-per-file deduplication, and keeping only
 the highest-ranked of entries with identical indexed content, then drop entries
 from the sorted list without reordering it. Nothing else — name, type, tag,
