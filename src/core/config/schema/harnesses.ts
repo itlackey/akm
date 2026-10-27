@@ -15,7 +15,15 @@ import { engineName, nonEmptyString } from "./primitives";
 
 export const HarnessSchema = z
   .object({
-    platform: z.enum(HARNESS_CONFIG_PLATFORMS).optional(),
+    // Zod 4's message for a value outside an enum no longer quotes the value; the warning for a dropped harness should.
+    platform: z
+      .enum(HARNESS_CONFIG_PLATFORMS, {
+        error: (issue) =>
+          issue.code === "invalid_value"
+            ? `${JSON.stringify(issue.input)} is not one of ${HARNESS_CONFIG_PLATFORMS.join(", ")}`
+            : undefined,
+      })
+      .optional(),
     bin: nonEmptyString.optional(),
     args: z.array(z.string()).optional(),
     workspace: nonEmptyString.optional(),
