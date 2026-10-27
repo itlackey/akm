@@ -16,7 +16,7 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { verifyIntegrity } from "../src/core/npm-package";
+import { fetchNpmPackageFiles, verifyIntegrity } from "../src/core/npm-package";
 import { extractTarGzMembers } from "../src/core/tar";
 import {
   detectHost,
@@ -281,10 +281,10 @@ describe("the first-use fetch", () => {
     expect(requests).toHaveLength(2);
   });
 
-  test("a rename that loses to another process's finished file leaves that file in use", async () => {
+  test("a binary another process finishes while this one downloads is left in place, not renamed over", async () => {
     const { serve } = registry(packageTarball(BINARY));
     const binary = runtimeBinaryPath();
-    // The other process finishes while this one downloads, and where a file in place cannot be replaced the rename fails.
+    // A process without the fetch lock (an older akm) finishes while this one downloads.
     const otherFinishes = (url: string): Response => {
       if (url.endsWith("/-/package-2.1.4.tgz")) {
         fs.mkdirSync(path.dirname(binary), { recursive: true });
@@ -292,12 +292,11 @@ describe("the first-use fetch", () => {
       }
       return serve(url);
     };
-    spyOn(fs, "renameSync").mockImplementation(() => {
-      throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
-    });
+    const renamed = spyOn(fs, "renameSync");
 
     await expect(withMockedFetch(() => ensureRuntimeBinary(), otherFinishes)).resolves.toBe(binary);
 
+    expect(renamed.mock.calls.filter(([, to]) => to === binary)).toEqual([]);
     expect(fs.readFileSync(binary).equals(BINARY)).toBe(true);
     expect(leftovers()).toEqual([]);
   });
@@ -343,5 +342,103 @@ describe("the first-use fetch", () => {
     // The next use tries again: a failure is not remembered.
     const { serve } = registry(packageTarball(BINARY));
     await expect(withMockedFetch(() => ensureRuntimeBinary(), serve)).resolves.toBe(runtimeBinaryPath());
+  });
+});
+
+describe("one fetch per cache directory at a time", () => {
+  const BINARY = Buffer.from("#!/bin/sh\necho opencode\n");
+  const PACKAGE = "@opencode/cli-fixture";
+  const FILES = [{ member: "package/bin/opencode", file: "opencode" }];
+  let directory: string;
+
+  beforeEach(() => {
+    directory = path.join(scratch.dir, "cache", "opencode", OPENCODE_RUNTIME_VERSION);
+  });
+
+  /** A registry serving a package holding `BINARY`; `requests` lists the URLs asked. */
+  function stubRegistry() {
+    const archive = packageTarball(BINARY);
+    const requests: string[] = [];
+    const serve = async (url: string): Promise<Response> => {
+      requests.push(url);
+      if (url === `https://registry.npmjs.org/${PACKAGE}/2.1.4`) {
+        return Response.json({ dist: { tarball: `${url}.tgz`, integrity: integrityOf(archive) } });
+      }
+      // The tarball takes a while, so a second fetch starts while the first is under way.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return new Response(fs.readFileSync(archive));
+    };
+    return { requests, serve };
+  }
+
+  const fetchBinary = () => fetchNpmPackageFiles(PACKAGE, "2.1.4", directory, FILES);
+
+  test("two fetches into one empty cache download once and leave one binary", async () => {
+    const { requests, serve } = stubRegistry();
+
+    await withMockedFetch(() => Promise.all([fetchBinary(), fetchBinary()]), serve);
+
+    expect(requests).toEqual([
+      `https://registry.npmjs.org/${PACKAGE}/2.1.4`,
+      `https://registry.npmjs.org/${PACKAGE}/2.1.4.tgz`,
+    ]);
+    expect(fs.readdirSync(directory)).toEqual(["opencode"]);
+    expect(fs.readFileSync(path.join(directory, "opencode")).equals(BINARY)).toBe(true);
+  });
+
+  test("a fetch into a cache that already holds the binary downloads nothing and leaves it as it is", async () => {
+    const binary = path.join(directory, "opencode");
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(binary, BINARY, { mode: 0o755 });
+    const inode = fs.statSync(binary).ino;
+    const { requests, serve } = stubRegistry();
+
+    await withMockedFetch(fetchBinary, serve);
+
+    expect(requests).toEqual([]);
+    expect(fs.statSync(binary).ino).toBe(inode);
+    expect(fs.readdirSync(directory)).toEqual(["opencode"]);
+  });
+
+  test("a fetch waits for a live holder, then downloads nothing if the holder finished the binary", async () => {
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, "fetch.lock"), JSON.stringify({ pid: process.pid, lockId: "other" }));
+    const { requests, serve } = stubRegistry();
+
+    const fetching = withMockedFetch(fetchBinary, serve);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(requests).toEqual([]);
+    fs.writeFileSync(path.join(directory, "opencode"), BINARY, { mode: 0o755 });
+    fs.rmSync(path.join(directory, "fetch.lock"));
+    await fetching;
+
+    expect(requests).toEqual([]);
+    expect(fs.readdirSync(directory)).toEqual(["opencode"]);
+  });
+
+  test("a lock left by a dead process is reclaimed and the fetch goes ahead", async () => {
+    const dead = spawnSync(process.execPath, ["--version"]).pid;
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, "fetch.lock"), JSON.stringify({ pid: dead, lockId: "gone" }));
+    const { requests, serve } = stubRegistry();
+
+    await withMockedFetch(fetchBinary, serve);
+
+    expect(requests).toHaveLength(2);
+    expect(fs.readdirSync(directory)).toEqual(["opencode"]);
+    expect(fs.readFileSync(path.join(directory, "opencode")).equals(BINARY)).toBe(true);
+  });
+
+  test("a failed fetch releases the lock, so the next fetch is not blocked", async () => {
+    await expect(withMockedFetch(fetchBinary, async () => new Response("gone", { status: 404 }))).rejects.toThrow(
+      /HTTP 404/,
+    );
+    expect(fs.readdirSync(directory)).toEqual([]);
+
+    const { requests, serve } = stubRegistry();
+    await withMockedFetch(fetchBinary, serve);
+
+    expect(requests).toHaveLength(2);
+    expect(fs.readdirSync(directory)).toEqual(["opencode"]);
   });
 });
