@@ -90,7 +90,13 @@ import {
   getDirIndexState,
   inferZeroRowReason,
 } from "./passes/dir-staleness";
-import { type IndexDocument, isWorkflowSkipWarning, type StashFile, withFileSize } from "./passes/metadata";
+import {
+  CONTENT_PROJECTION_VERSION,
+  type IndexDocument,
+  isWorkflowSkipWarning,
+  type StashFile,
+  withFileSize,
+} from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
@@ -1205,7 +1211,9 @@ async function scanSourceDirs(
       warn(`Skipping component "${component.id}": unknown adapter id "${component.adapter}".`);
       continue;
     }
-    const indexVariant = `${adapter.id}@${adapter.version}`;
+    // The content projection's version is part of the variant: a change to what Markdown bodies index re-projects
+    // every directory once instead of keeping the old text for unchanged files.
+    const indexVariant = `${adapter.id}@${adapter.version}+content${CONTENT_PROJECTION_VERSION}`;
 
     for (const removal of removals) {
       dirRecords.push(removal);

@@ -44,7 +44,7 @@ The command returns the entry count, per-phase timings, warnings, the `--clean` 
 | `hints` | hints, `searchHints`, `examples`, `usage`, intent text, `xrefs`, `pageKind`, `whenToUse` |
 | `content` | table-of-contents headings, parameter names and descriptions, and the body projection |
 
-The body projection is the body text the adapter provides; for native Markdown it is bounded by `MARKDOWN_CONTENT_MAX_CHARS` (1,000,000 characters) and truncation is reported as a warning. `env`, `session`, and `secret` entries get no native body projection. `buildSearchText` joins the same fields into the text each entry's vector is made from.
+The body projection is the body text the adapter provides; for native Markdown it is bounded by `MARKDOWN_CONTENT_MAX_CHARS` (1,000,000 characters) and truncation is reported as a warning. Fenced code contributes only its identifiers, never its literal values (`fencedCodeIdentifiers`, akm#1260). The projection's version, `CONTENT_PROJECTION_VERSION`, is part of every directory's index fingerprint, so changing what the projection returns re-projects every directory once on the next `akm index`. `env`, `session`, and `secret` entries get no native body projection. `buildSearchText` joins the same fields into the text each entry's vector is made from.
 
 Lexical retrieval is one `OR` query over the query's tokens (Unicode letters and numbers, NFKC-normalized, lowercased, English stopwords removed; a query of only stopwords keeps them), ranked by BM25 with equal column weights. A query that is a ref prefix (`skills/`, `bundle//`) enumerates a subtree and skips FTS. Ranking fuses the lexical and vector lists with reciprocal rank fusion; see the Search Pipeline in [Architecture](../architecture.md).
 
