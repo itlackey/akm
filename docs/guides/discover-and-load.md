@@ -73,13 +73,20 @@ lookup to one installed bundle when a conceptId is ambiguous across bundles.
 
 ## 4. Load a document section
 
-Knowledge docs and other markdown assets can be large. Append `#fragment` to
-a ref to return one section by heading slug instead of the whole document:
+Knowledge docs and other markdown assets can be large. Read the outline first,
+then only the sections you need. `--detail brief` returns the document's `toc`
+without the body, and appending `#<slug>` to a ref returns one section:
 
 ```sh
+akm show knowledge/api-guide --detail brief
+# → {"toc": [{"level": 2, "text": "Authentication", "slug": "authentication", "startLine": 12}, ...], ...}
 akm show knowledge/api-guide#authentication
 # → just the "Authentication" section, not the full document
 ```
+
+Every `slug` in `toc` selects its section, including repeated headings, which
+get `-1`, `-2`, ... suffixes. A whole-document show carries the same `toc`
+next to the body.
 
 Search can also return an opaque `#akm-fragment-...` selector for a bounded
 piece of a long document. The exact selector remains the default. For memories
@@ -96,8 +103,9 @@ reports `contextTruncated` in JSON. The response also distinguishes canonical
 `parentRef` from `selectedRef` and includes fragment position, line bounds,
 neighbors, and separate fragment/parent size estimates.
 
-An unmatched fragment lists the available slugs instead of erroring, so a
-guess that misses still tells you what to try next.
+An unmatched fragment is an error that lists the available slugs, so a guess
+that misses still tells you what to try next; `--detail brief` is the way to
+see them without guessing.
 
 ## 5. Record the outcome
 

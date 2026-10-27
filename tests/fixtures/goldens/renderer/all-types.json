@@ -35,7 +35,7 @@
       "type": "fact"
     },
     "knowledge/all-types-knowledge.md": {
-      "action": "Reference material - read the content below. For a large document, read one section with `akm show <ref>#fragment` (an unmatched #fragment lists the available slugs).",
+      "action": "Reference material - read the content below. For a large document, run `akm show <ref> --detail brief` for its outline (`toc`, no body), then `akm show <ref>#<slug>` for only the sections you need.",
       "content": "---\ndescription: Minimal knowledge fixture used by the all-types parity stash\nupdated: 2025-06-01\n---\n# All Types Knowledge\n\nA one-paragraph reference document used to exercise the \"knowledge\" asset\ntype end to end (recognition, placement, rendering, lint). It contains no\noperational guidance and represents nothing about a real project.\n\n## Background\n\nThis section exists only so the knowledge renderer's table-of-contents and\nsection views have more than one heading to work with.\n",
       "name": "all-types-knowledge",
       "path": "<STASH>/knowledge/all-types-knowledge.md",

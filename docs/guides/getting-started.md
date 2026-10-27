@@ -198,8 +198,9 @@ akm show <ref>            # e.g. akm show workflows/deploy
 
 **Success check:** structured JSON with everything an agent needs to use the
 asset — a `run` command plus optional `cwd` and `setup` for scripts, a
-`prompt` payload for agents, or the document `content` for knowledge (append
-`#<heading-slug>` to a ref for one section).
+`prompt` payload for agents, or the document `content` for knowledge (with
+`--detail brief`, just its outline `toc`; append `#<slug>` to a ref for one
+section).
 
 AKM retrieves every supported capability type. It directly orchestrates
 defined execution surfaces such as workflows, agent dispatch, tasks, and

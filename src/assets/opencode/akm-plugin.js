@@ -6,11 +6,11 @@
 // it in the inline config's `plugins` list (src/integrations/harnesses/opencode/runtime/). It runs inside OpenCode, so
 // it imports no package: only Node's own child_process, to call back into akm.
 //
-//   - akm's three read tools, each a run of the akm that started OpenCode, with `--detail agent --format json`. akm
-//     passes the argv that runs it in `AKM_OPENCODE_CLI`, a JSON array: the executable alone for a compiled akm, the
-//     runtime and the script for one run as a script (Node and `dist/akm`, say), so no shebang or shell is needed on
-//     any platform. The run's environment is the call's, so a stamped run's reads (`AKM_EVENT_SOURCE`) are recorded as
-//     that run's.
+//   - akm's three read tools, each a run of the akm that started OpenCode, with `--detail agent --format json`
+//     (`--detail brief` when akm_show asks for a document's outline). akm passes the argv that runs it in
+//     `AKM_OPENCODE_CLI`, a JSON array: the executable alone for a compiled akm, the runtime and the script for one
+//     run as a script (Node and `dist/akm`, say), so no shebang or shell is needed on any platform. The run's
+//     environment is the call's, so a stamped run's reads (`AKM_EVENT_SOURCE`) are recorded as that run's.
 //   - The environment of the commands the agent runs: the variables akm set for the OpenCode process (its roots and
 //     its OpenCode settings) are put back to what akm runs in, or removed, so the agent's shell sees the environment a
 //     harness's child would.
@@ -59,8 +59,16 @@ const TOOLS = [
     name: "akm_show",
     command: "show",
     positional: "ref",
-    description: "Read one akm asset by its ref, as returned by akm_curate or akm_search.",
-    input: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] },
+    description:
+      'Read one akm asset by its ref, as returned by akm_curate or akm_search. For a large document, call it with detail "brief" for its outline (toc, no body), then with ref#<slug> for only the sections you need.',
+    input: {
+      type: "object",
+      properties: {
+        ref: { type: "string" },
+        detail: { type: "string", enum: ["brief"], description: "brief: the outline (toc) without the body" },
+      },
+      required: ["ref"],
+    },
   },
 ];
 
@@ -78,7 +86,7 @@ function cliArguments(tool, input) {
     ...(type && tool.positional !== "ref" ? ["--type", type] : []),
     ...(limit && tool.positional !== "ref" ? ["--limit", limit] : []),
     "--detail",
-    "agent",
+    tool.positional === "ref" && input?.detail === "brief" ? "brief" : "agent",
     "--format",
     "json",
   ];

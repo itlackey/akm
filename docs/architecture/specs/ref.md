@@ -132,8 +132,9 @@ runs collapsed to `-`, trimmed) and match the fragment against those slugs;
 fall back to a case-insensitive match against raw heading text. The selected
 region runs from that heading to the next heading of the same or higher level.
 A fragment that matches no heading is an error that **lists the available
-fragment slugs** — that error is the discovery mechanism, replacing the removed
-`toc` view mode.
+fragment slugs**. The outline itself is `akm show <ref> --detail brief`, whose
+`toc` lists every heading with the slug that selects it; it replaces the
+removed `toc` view mode.
 
 **Every other item kind — adapter-owned selector.** When one item exposes
 multiple exports the adapter MAY append a stable fragment
@@ -157,7 +158,7 @@ is removed. It was a second argv parser (`normalizeShowArgv` rewrote
 | --- | --- |
 | `akm show X section "Auth"` | `akm show X#auth` |
 | `akm show X full` | `akm show X` (no fragment = whole item) |
-| `akm show X toc` | `akm show X#<unmatched>` lists available fragment slugs |
+| `akm show X toc` | `akm show X --detail brief` (its `toc` field) |
 | `akm show X lines 10 30` | removed — every response carries `path`; slice the file |
 | `akm show X frontmatter` | removed — if a raw-YAML projection proves necessary it returns as a `--shape` value, the designated projection axis |
 
