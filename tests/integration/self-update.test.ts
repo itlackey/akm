@@ -748,25 +748,6 @@ describe("performUpgrade", () => {
     },
   );
 
-  test("a failed post-upgrade index reports its exit code when its stderr went to the terminal", async () => {
-    let call = 0;
-    spyOn(childProcess, "spawnSync").mockImplementation((() => {
-      call++;
-      // Install and version verification succeed; the index fails with stderr not captured.
-      return (call < 3 ? { status: 0, stdout: "", stderr: "" } : { status: 1, stdout: "", stderr: null }) as never;
-    }) as never);
-
-    const result = await performUpgrade(
-      { currentVersion: "0.0.13", latestVersion: "0.0.14", updateAvailable: true, installMethod: "npm" },
-      undefined,
-      currentMigrator,
-    );
-
-    expect(result.postUpgrade?.ok).toBe(false);
-    expect(result.postUpgrade?.exitCode).toBe(1);
-    expect(result.postUpgrade?.message).toContain("exit code 1");
-  });
-
   test("skips the post-upgrade `akm index` when skipPostUpgrade is set", async () => {
     const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
@@ -942,8 +923,8 @@ describe("performUpgrade", () => {
         // Package install and version verification succeed.
         return { status: 0, stdout: "", stderr: "" } as never;
       }
-      // The post-upgrade `akm index` fails with a non-zero exit.
-      return { status: 1, stdout: "", stderr: "no embedding model configured" } as never;
+      // The post-upgrade `akm index` fails; its stderr went to the terminal, so none is captured.
+      return { status: 1, stdout: "", stderr: null } as never;
     }) as never);
 
     const result = await performUpgrade(
@@ -960,7 +941,7 @@ describe("performUpgrade", () => {
     expect(result.upgraded).toBe(true); // upgrade itself succeeded
     expect(result.postUpgrade?.ok).toBe(false);
     expect(result.postUpgrade?.exitCode).toBe(1);
-    expect(result.postUpgrade?.message).toContain("no embedding model configured");
+    expect(result.postUpgrade?.message).toContain("exit code 1");
     expect(spawnSyncSpy).toHaveBeenCalledTimes(3);
   });
 

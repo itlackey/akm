@@ -524,7 +524,7 @@ function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullab
       };
     }
     if (result.status !== 0) {
-      const detail = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit code ${result.status}`;
+      const detail = (result.stdout ?? "").trim() || `exit code ${result.status}`;
       return {
         ok: false,
         skipped: false,
