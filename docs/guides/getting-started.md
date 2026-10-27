@@ -41,8 +41,8 @@ it on Linux x64 (glibc) and Apple-silicon macOS; on every other
 platform search is keyword-only or uses an embedding endpoint you configure. Choosing the built-in embedder in
 `akm setup` (or `akm setup --yes --embedding local`) downloads what it needs once
 into akm's cache directory (`akm info` prints it): ONNX Runtime for your platform,
-under `onnxruntime/<version>-<platform>-<arch>/` (about 86 MB downloaded, 19 to
-36 MB kept), and the model (about 127 MB). Nothing is installed with the npm
+under `onnxruntime/<version>-<platform>-<arch>/` (about 86 MB downloaded,
+about 36 MB kept), and the model (about 127 MB). Nothing is installed with the npm
 package or carried in a standalone binary, and the first `akm index` downloads
 what setup did not. Two notes:
 

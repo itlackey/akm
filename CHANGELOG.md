@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- `akm setup` downloads what the configuration it saves needs. Choosing the
+- `akm setup` downloads what the configuration it saves needs (#1254). Choosing the
   built-in embedder (`--embedding local`, or the wizard's choice) downloads ONNX
   Runtime 1.24.3 for this platform once from the npm registry (about 86 MB,
   checked against the registry's sha512 integrity before anything is extracted)
@@ -21,7 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   runtime: its next `akm index` downloads it once. The vectors are unchanged,
   so no re-index is needed.
 - Local embeddings are offered on Linux x64 (glibc) and Apple-silicon
-  macOS. Every other platform uses keyword search or an embedding endpoint:
+  macOS (#1256). Every other platform uses keyword search or an embedding endpoint:
   setup offers only those, with one sentence saying why, `--embedding local`
   warns and saves keyword search, `--from` keeps the file's values, the index
   reports semantic search unavailable for the platform, and `akm health` warns
@@ -29,7 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - When agent work runs on akm's own runtime, the setup wizard offers to download
   its OpenCode binary now rather than on the first agent run. `--yes` and
   `--from` leave it to the first run.
-- The npm package installs with no install script anywhere in its tree, so it
+- The npm package installs with no install script anywhere in its tree (#1255), so it
   works as installed where npm runs none (npm 12 blocks dependency scripts by
   default). On Node, the SQLite driver is `better-sqlite3` 13.0.3, which ships
   prebuilt N-API bindings for Linux (glibc and musl) and macOS on x64 and arm64
@@ -37,15 +37,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `npm rebuild`. 32-bit ARM Linux has no SQLite binding on Node.
 - Standalone binaries carry no native code and are up to 36 MB smaller (Linux
   x64: 123.6 MB to 88.0 MB). A `noexec` temp directory no longer affects
-  semantic search; akm's cache directory must still allow executing files.
+  semantic search (#1257); akm's cache directory must still allow executing files.
 
 ### Removed
 
 - The `onnxruntime-node` dependency, and with it the install script that
   downloaded about 317 MB of CUDA providers on every Linux x64 `npm install`
-  (akm uses the CPU only). akm loads that package's binding from its cache
+  (akm uses the CPU only; #1254). akm loads that package's binding from its cache
   instead.
-- The `preinstall` Node.js version check. Both launchers and the CLI still
+- The `preinstall` Node.js version check (#1255). Both launchers and the CLI still
   refuse Node.js older than 22 when akm starts, and npm warns from
   `engines.node` at install.
 
