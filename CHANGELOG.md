@@ -17,7 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   improved slightly and the prose-only books set is unchanged. Search results
   carry no `content`, so what search hands an agent is the same size. Fragments,
   fragment ids and `akm show` are unchanged. The next `akm index` (including the
-  one `akm upgrade` runs) re-projects every directory once; no `--full` needed.
+  one `akm upgrade` runs) re-projects every directory once and re-embeds the
+  entries whose fenced code adds identifiers; no `--full` needed.
 
 ### Fixed
 
