@@ -63,6 +63,8 @@ export type CronExecResult = {
   stderr: string;
   /** True when the `crontab` binary itself could not be spawned (ENOENT), not merely a nonzero exit. */
   enoent?: boolean;
+  /** True when `crontab` failed in a process with no-new-privileges set (Linux `NoNewPrivs: 1`), which it inherits. */
+  noNewPrivileges?: boolean;
 };
 
 export interface CronExec {
@@ -525,14 +527,15 @@ function readCrontab(exec: CronExec): string {
   // permission refusal) is reported as what it said.
   const stderr = (result.stderr ?? "").trim();
   if (((result.stdout ?? "").trim() === "" && stderr === "") || /no crontab/i.test(stderr)) return "";
-  // `crontab` reads the spool through its setgid `crontab` group. A process started with no-new-privileges (an agent
-  // sandbox, a container, systemd `NoNewPrivileges=`) runs it without that group, and the spool refuses the read.
-  // The crontab itself is fine, so say so instead of passing on a bare `fopen` error.
-  if (/permission denied/i.test(stderr)) {
+  // `crontab` reads the spool through its setgid `crontab` group (setuid root on some distributions). A process
+  // started with no-new-privileges (an agent sandbox, a container, systemd `NoNewPrivileges=`) runs it without that
+  // privilege, and the spool refuses the read. The crontab itself is fine, so say so instead of passing on a bare
+  // `fopen` error. Without no-new-privileges a refusal has another cause and is reported as what it said.
+  if (result.noNewPrivileges && /permission denied/i.test(stderr)) {
     throw new ConfigError(
       "crontab -l could not read the crontab spool (permission denied). `crontab` reads it through its setgid " +
-        "group, which a process started with no-new-privileges (an agent sandbox, a container, systemd " +
-        "NoNewPrivileges=) does not get; run this from a normal shell to see the installed tasks.",
+        "(or setuid) bit, which this process, started with no-new-privileges (an agent sandbox, a container, " +
+        "systemd NoNewPrivileges=), does not grant; run this from a normal shell to see the installed tasks.",
       "INVALID_CONFIG_FILE",
       "Run the command from a normal login shell or terminal, not from a sandboxed process.",
     );
@@ -567,6 +570,15 @@ function replaceCrontab(exec: CronExec, existing: string, next: string): void {
   }
 }
 
+/** Whether this process has Linux's no-new-privileges flag, which every child (`crontab` included) inherits. */
+function hasNoNewPrivileges(): boolean {
+  try {
+    return /^NoNewPrivs:\s*1$/m.test(fs.readFileSync("/proc/self/status", "utf8"));
+  } catch {
+    return false;
+  }
+}
+
 function defaultCronExec(): CronExec {
   const run = (args: string[], input?: string): CronExecResult => {
     const r = spawnSync("crontab", args, { encoding: "utf8", ...(input !== undefined ? { input } : {}) });
@@ -575,6 +587,7 @@ function defaultCronExec(): CronExec {
       stdout: r.stdout ?? "",
       stderr: r.stderr ?? "",
       enoent: (r.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT",
+      noNewPrivileges: r.status !== 0 && hasNoNewPrivileges(),
     };
   };
   return {

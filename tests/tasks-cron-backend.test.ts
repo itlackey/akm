@@ -623,12 +623,30 @@ describe("cron backend drift detection", () => {
     test("a spool permission refusal names the no-new-privileges cause, not a bare fopen error", () => {
       // What Debian's crontab prints when it runs without its setgid group (a no-new-privileges sandbox).
       const exec: CronExec = {
-        read: () => ({ status: 1, stdout: "", stderr: "crontabs/someone/: fopen: Permission denied\n" }),
+        read: () => ({
+          status: 1,
+          stdout: "",
+          stderr: "crontabs/someone/: fopen: Permission denied\n",
+          noNewPrivileges: true,
+        }),
         write: () => ({ status: 0, stdout: "", stderr: "" }),
       };
       const backend = CRON_BACKEND(opts(exec));
 
       expect(() => backend.list()).toThrow(/could not read the crontab spool \(permission denied\).*no-new-privileges/);
+    });
+
+    test("a spool permission refusal without no-new-privileges is reported as what crontab said", () => {
+      const exec: CronExec = {
+        read: () => ({ status: 1, stdout: "", stderr: "crontabs/someone/: fopen: Permission denied\n" }),
+        write: () => ({ status: 0, stdout: "", stderr: "" }),
+      };
+      const backend = CRON_BACKEND(opts(exec));
+
+      expect(() => backend.list()).toThrow(
+        /^crontab -l failed \(exit 1\): crontabs\/someone\/: fopen: Permission denied/,
+      );
+      expect(() => backend.list()).not.toThrow(/no-new-privileges/);
     });
   });
 

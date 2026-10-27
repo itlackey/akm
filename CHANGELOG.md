@@ -27,11 +27,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the channel the marketplace clone follows: on `next`, the release tag on that
   branch's head; on the default branch, the newest stable tag; on a marketplace
   added at a tag, that tag.
-- When `crontab -l` cannot read the crontab spool (permission denied), akm says
-  why: `crontab` reads the spool through its setgid group, which a process
-  started with no-new-privileges (an agent sandbox, a container, systemd
-  `NoNewPrivileges=`) does not get. `akm health` and `akm task` commands run from
-  such a process used to repeat a bare `fopen: Permission denied`.
+- When `crontab -l` cannot read the crontab spool (permission denied) in a
+  process started with no-new-privileges (an agent sandbox, a container, systemd
+  `NoNewPrivileges=`), akm says why: `crontab` reads the spool through its setgid
+  (or setuid) bit, which such a process does not grant. `akm health` and
+  `akm task` commands run from such a process used to repeat a bare
+  `fopen: Permission denied`. A refusal without no-new-privileges is reported as
+  before.
 
 ## [0.10.261015] - 2026-10-27
 
