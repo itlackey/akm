@@ -126,8 +126,9 @@ Use it during development, then run `bun run check` before every push.
 (up to 8) and no `CI` variable; CI uses the Bun version `ci.yml` pins, 4 shards
 and `CI=true`, and a failure that depends on one of those only shows up there.
 `bun run check:ci` (Docker required) runs the same check the way CI does, on a
-clean install in a container, and leaves your `node_modules` alone. Run it on
-the batch you are about to push instead of pushing to find out.
+clean install in a container, and leaves your `node_modules` alone. It takes
+about four and a half minutes; run it on the batch you are about to push instead
+of pushing to find out.
 
 ### Why this exists
 
