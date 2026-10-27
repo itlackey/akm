@@ -171,7 +171,8 @@ source only if it has never been materialized on this host; nothing refreshes
 on a timer. A git or npm install recorded in the lockfile whose files are
 missing is reported with a warning that names `akm bundle update`; index does
 not fetch it. A configured npm bundle with no lock entry has no walkable path,
-so index skips it with the same warning instead of calling `sync()`.
+so index skips it with a warning that names `akm bundle update` instead of
+calling `sync()`.
 
 `akm index` indexes each source through its bundle's adapter. A source that
 could not be walked completely keeps its previously indexed rows and the index
@@ -263,7 +264,8 @@ Notes:
 - `hints` carries search hints, examples, usage, intent fields, cross-references,
   page kind, and when-to-use text
 - `content` is bounded body text plus TOC headings and parameter metadata; `env`
-  and `secret` entries index key names and file names only
+  and `secret` entries index key names and file names only, and session bodies
+  are not indexed
 - registry results live in `registryHits`, never in `hits`
 - `--from all` keeps registry results in `registryHits` — they are not
   rank-merged with source hits

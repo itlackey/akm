@@ -42,7 +42,8 @@ diff are these:
   end-of-run auto-sync commit and push for git-backed bundles (see
   [Auto-sync](#auto-sync)).
 
-`akm improve` and the proposal commands are Evolving, and the
+`akm improve` and the proposal commands other than `akm proposal list` (Stable)
+are Evolving, and the
 `improve.strategies.*` tuning keys can change between releases; see
 [STABILITY.md](../../STABILITY.md#akm-improve-autonomy).
 
@@ -180,7 +181,7 @@ for the storage-level summary.
 Improve presets live under `improve.strategies` (config) and the built-in
 set: `default` and `consolidate` (`src/assets/improve-strategies/*.json`). The removed `quick`, `thorough`,
 `catchup`, `reflect-distill` and `proactive-maintenance` still work as user-defined strategies. Selection
-order is `--strategy`, then `defaults.improveStrategy`, then `default`.
+order is `--strategy`, then `improve.strategy`, then `default`.
 
 Resolution is a two-step deep merge (`resolveImproveStrategy`): a named
 built-in strategy is first merged onto the built-in `default` strategy, then
@@ -222,8 +223,8 @@ Every reflect revision and every distilled lesson is scored by a judge before it
 is queued (`runQualityJudge`, `src/commands/improve/stage.ts`): one call at
 temperature 0, each criterion scored 1 to 5. Content passes only on a complete
 verdict: with no runner, or when the call times out or returns an unparseable or
-incomplete reply, it does not pass (a timeout or unparseable reply goes to
-review). A reflect revision is scored on three criteria:
+incomplete reply, it does not pass and goes to review. A reflect revision is
+scored on three criteria:
 
 - **need**: does it fix a concrete problem in the source: something the
   feedback reports as wrong or missing, a factual error, or broken, garbled,
@@ -437,7 +438,7 @@ then rewritten by the run IS committed. Deletions are journaled like writes, so
 the final on-disk state is what lands — a path written and then reverted or
 purged produces no commit at all. The run reports its journal as
 `writtenPaths` on the improve result. Callers that supply no explicit path list
-(`akm sync`, `akm push`) keep the managed-pathspec fallback in `saveGitStash`.
+(`akm sync`) keep the managed-pathspec fallback in `saveGitStash`.
 
 ### Archive purge
 
