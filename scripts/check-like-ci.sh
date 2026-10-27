@@ -46,10 +46,12 @@ if [ -d "$ROOT/dist" ]; then
   scratch+=(--tmpfs "$ROOT/dist:rw,exec,size=1g,uid=$(id -u),gid=$(id -g)")
 fi
 
-# TINI_KILL_PROCESS_GROUP: --init's tini passes a Ctrl-C to the whole process
-# group, not only to sh, which waits on bun and would keep the run going.
-docker run --rm --init \
-  --env TINI_KILL_PROCESS_GROUP=1 \
+# A Ctrl-C reaches only the container's sh, which waits on bun, so the run
+# would go on for minutes: run it in the background and stop the container on
+# INT or TERM instead.
+container="akm-check-like-ci-$$"
+trap 'docker kill "$container" >/dev/null 2>&1 || true' INT TERM
+docker run --rm --init --name "$container" \
   --user "$(id -u):$(id -g)" \
   --env HOME=/tmp/home \
   --env CI=true \
@@ -59,4 +61,5 @@ docker run --rm --init \
   "${scratch[@]}" \
   --workdir "$ROOT" \
   "$IMAGE" \
-  sh -c 'mkdir -p "$HOME" && bun install --frozen-lockfile && bun run check'
+  sh -c 'mkdir -p "$HOME" && bun install --frozen-lockfile && bun run check' &
+wait "$!"
