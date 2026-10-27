@@ -19,7 +19,7 @@ ignored. Per-call tuning lives on a named connection under
 5. **Embed.** `runEmbeddingPass` generates vectors for entries without one under the configured model, then verifies semantic search state.
 6. **Finalize.** Rebuild `entries_fts` if its totals are stale, re-link `state.db` usage events to the new entry ids, recompute `utility_scores` (improve and `akm metrics` read utility; search ranking does not), clear orphaned `llm_enrichment_cache` rows, and (after a complete scan) record `builtAt`, `stashDir`, `stashDirs`, and `sourceOwners` in `index_meta`. Then `VACUUM` if due, and append an `index_completed` event with the phase timings.
 
-The command returns the entry count, per-phase timings, warnings, the `--clean` result, and a `verification` block with `semanticStatus` (`disabled`, `pending`, `ready-js`, or `blocked`). Semantic status is computed during the run (`verifyIndexState`); it is not stored in a file.
+The command returns the entry count, per-phase timings, warnings, the `--clean` result, and a `verification` block with `semanticStatus` (`disabled`, `pending`, `ready-js`, or `blocked`). The run computes it (`verifyIndexState`) and records it in `index_meta` under `semanticSearch` (`unavailable` when the local runtime could not be downloaded or loaded), which `akm health`'s `semantic-search` check reads.
 
 ## Modes
 

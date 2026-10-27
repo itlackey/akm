@@ -32,7 +32,7 @@ lives in `$STATE`, `$CACHE`, or `$DATA`.
 
 | Path | Contents |
 |---|---|
-| `memory-cleanup/belief-transitions.jsonl` | One line per memory belief-state transition: `appliedAt`, `ref`, `parentRef`, `fromState`, `toState`, `reason`, and `relatedRef` when present. Written by the memory cleanup pass (`appendBeliefStateTransitionLog`). |
+| `memory-cleanup/belief-transitions.jsonl` | One line per memory belief-state transition: `appliedAt`, `ref`, `parentRef`, `fromState`, `toState`, `reason`, and `relatedRef`, `relatedRefs` and `currentBeliefRefs` when present. Written by the memory cleanup pass (`appendBeliefStateTransitionLog`). |
 | `memory-cleanup/archive/<stamp>-<ref>/` | A pruned or retired memory moved aside, plus a `cleanup.md` tombstone. Ref resolution reads the tombstones so an edge to a pruned memory reports "archived" instead of "missing" (`src/core/asset/memory-archive.ts`). `akm improve` deletes the archived files of a retirement 30 days after `retiredAt` when the bundle is a git repository and the files are tracked and clean; `cleanup.md` stays. |
 
 `<cwd>/.akm/config.json` is not read as configuration.
@@ -44,7 +44,8 @@ removes them (`scripts/akm-migrate/migrate/dead-residue.ts`).
 
 ## SQLite databases
 
-Every database opens with a 30,000 ms `busy_timeout`. `AKM_SQLITE_JOURNAL_MODE`
+Managed openers set a 30,000 ms `busy_timeout`; the fire-and-forget usage-telemetry
+writes lower it to 250 ms, and `akm info` reads the index with 750 ms. `AKM_SQLITE_JOURNAL_MODE`
 (`WAL`, `DELETE`, `TRUNCATE`) selects the journal mode; the default is WAL, and
 WAL falls back to DELETE when the data directory is on a detected network
 filesystem. The rollback-journal modes also set `synchronous = FULL`
@@ -72,7 +73,8 @@ Vector search is an exact scan of `embeddings` (`src/storage/repositories/index-
 
 `key` TEXT PRIMARY KEY, `value` TEXT NOT NULL. Keys: `version`, `builtAt`,
 `stashDir`, `stashDirs`, `sourceOwners`, `last_utility_computed_at`, `embeddingFingerprint` (the model the
-vectors were made under), `hasEmbeddings` (`"0"` or `"1"`), `vacuumPending`,
+vectors were made under), `hasEmbeddings` (`"0"` or `"1"`), `semanticSearch` (what the
+last `akm index` found about semantic search; `akm health` reads it), `vacuumPending`,
 and `ftsTotalsStale` (set when a delete removed a row from `entries_fts`;
 cleared when `akm index` rebuilds the FTS table).
 
@@ -169,8 +171,9 @@ corrupt value falls through to a recompute (`src/indexer/passes/memory-inference
 `entry_id` INTEGER PRIMARY KEY (FK to `entries(id)`, ON DELETE CASCADE),
 `utility`, `show_count`, `search_count`, `select_rate`, `last_used_at`,
 `updated_at`. Recomputed by `akm index` from `state.db` `usage_events` and
-adjusted by `akm feedback`. The improve eligibility code reads it
-(`src/commands/improve/eligibility.ts`); search ranking does not.
+adjusted by `akm feedback`. `akm improve` (eligibility and salience,
+`src/commands/improve/eligibility.ts`, `salience.ts`) and `akm metrics` read it;
+search ranking does not.
 
 #### `registry_index_cache`
 
@@ -204,8 +207,8 @@ by migration 020; no current code reads or writes it).
 | `ref` | TEXT | Asset ref, or a synthetic ref such as `proposals/_expiration` |
 | `metadata_json` | TEXT NOT NULL DEFAULT '{}' | |
 
-Indexes on `event_type`, `ref`, `ts`. The event types and their metadata are
-listed in [Data & Telemetry](../../reference/data-and-telemetry.md). `akm
+Indexes on `event_type`, `ref`, `ts`. The event types are listed in [Data &
+Telemetry](../../reference/data-and-telemetry.md). `akm
 improve` purges events older than `improve.eventRetentionDays` (default 90; 0
 disables).
 
@@ -262,7 +265,7 @@ rebuilding `index.db` does not discard it.
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
 | `event_type` | TEXT NOT NULL | `search`, `show`, `curate`, `feedback` |
-| `query` | TEXT | Search query; NULL otherwise |
+| `query` | TEXT | The search or curate query; NULL for show and feedback |
 | `entry_id` | INTEGER | `index.db` entry id; re-linked after a rebuild |
 | `entry_ref` | TEXT | Stable ref string |
 | `signal` | TEXT | `positive` or `negative` for feedback |
@@ -295,15 +298,14 @@ Candidate selection in each improve stage reads it before any model call
 
 | Table | Holds |
 |---|---|
-| `improve_runs` | One row per `akm improve` run: `id`, `started_at`, `completed_at`, `stash_dir`, `dry_run`, `strategy`, `scope_mode`, `scope_value`, `ok`, `result_json`, `metrics_json`. Purged by the retention pass. |
+| `improve_runs` | One row per `akm improve` run: `id`, `started_at`, `completed_at`, `stash_dir`, `dry_run`, `strategy`, `scope_mode`, `scope_value`, `guidance`, `ok`, `result_json`, `metrics_json`, `metadata_json`, and `profile` (no longer written). Purged by the retention pass. |
 | `extract_sessions_seen` | Primary key `(harness, session_id)`; the extractor's record of which sessions it processed and with what outcome. |
 | `asset_salience`, `asset_outcome` | Per-asset improve scoring state, keyed by `asset_ref`. |
 | `body_embeddings` | Cache of memory-body embedding vectors keyed by `content_hash`, with `model_id` (`src/storage/repositories/embeddings-repository.ts`). |
 
 #### Workflow run tables
 
-Run state lives in four tables; runs persist until a retention policy removes
-them. Column definitions are in migrations `020-three-db-cutover`,
+Run state lives in four tables; no retention pass deletes a run. Column definitions are in migrations `020-three-db-cutover`,
 `022-workflow-unit-attempts`, `023-child-workflow-runs`, and
 `024-workflow-run-outputs` (`src/core/state/migrations.ts`); run semantics are
 in [Workflow Engine](../workflow-engine.md).
@@ -352,7 +354,7 @@ that ran as the `akm-model-work` agent). The binary itself is in
 |---|---|
 | `$CONFIG/config.json` | User configuration: bundles, connections, harnesses, feature flags, registries (JSONC: comments are stripped at parse time). |
 | `$CONFIG/credentials.json` | The API keys akm holds, as `{ "connections": { "<name>": { "key", "endpoint" } }, "services": { "embedding" \| "curateRerank": { "key", "endpoint" } } }`: each key with the endpoint it was stored for. Written atomically with mode `0600` (directory `0700` when akm creates it) by `akm setup` and `akm migrate apply`; never part of `config.json`. See [Credentials](../../reference/configuration.md#credentials). |
-| `$CACHE/config-backups/config-<ISO-ts>.json` | Snapshot of `config.json` taken before each config write (`backupExistingConfig`, `src/core/config/config-io.ts`), plus `config.latest.json`, a copy of the newest. The five newest timestamped snapshots are kept. |
+| `$CACHE/config-backups/config-<ISO-ts>.json` | Snapshot of `config.json` taken before each config write (`backupExistingConfig`, `src/core/config/config-io.ts`), plus `config.latest.json`, a copy of the newest. The five newest timestamped snapshots are kept. `akm migrate apply` also leaves `credentials.json.<ts>` (a copy of the key store, taken before it re-files older entries) and `models.json.<ts>` (the retired file, moved aside) here; those are not pruned. |
 | `$DATA/akm.lock` | JSON array of installed bundle entries, maintained by `akm bundle add` and `akm bundle remove` (`src/integrations/lockfile.ts`). |
 | `$STASH/memories/MEMORY.md` | Optional memory index. `akm improve` warns when it passes 180 of a 200-line budget; akm does not write it. |
 
@@ -396,9 +398,9 @@ A bundle recognized by the `llm-wiki` adapter (a root with `schema.md` and
 | `$CACHE/registry-index/git-<hash>/` | Mirror of a `git` bundle: `repo/` and an `index.json` freshness marker | Fetched on add and on `akm bundle update`, never on a timer; if a forced refresh fails, `akm bundle update` reports the error and the old copy stays on disk |
 | `$CACHE/registry-index/website-<hash>/` | A `website` bundle snapshot: `stash/` and `manifest.json` | Fetched on add and on `akm bundle update`, never on a timer; if a forced refresh fails, `akm bundle update` reports the error and the old copy stays on disk |
 | `$CACHE/index/unresolved-sources/<stash>/<name>` | Placeholder path for a configured source whose content root did not resolve; not created on disk | n/a |
-| `$CACHE/tasks/logs/<task-id>/<ISO-ts>.log` | Per-run task log file; the cron backend also writes `<id>.log` directly in `$CACHE/tasks/logs/` | `akm improve` deletes files older than `improve.eventRetentionDays` (default 90) |
-| `$CACHE/logs/index/<ISO-ts>.log`, `$CACHE/logs/improve/<ISO-ts>.log` | Log of one `akm index` run or one non-dry-run `akm improve` run | No automatic cleanup |
-| `$CACHE/models/` | Hugging Face model cache for the local embedder (`HF_HOME`, when not already set) | No automatic cleanup |
+| `$CACHE/tasks/logs/<task-id>/<ISO-ts>.log` | Per-run task log file; each scheduler backend (cron, launchd, Task Scheduler) also writes `<id>.log` directly in `$CACHE/tasks/logs/`, which no retention pass deletes | `akm improve` deletes files older than `improve.eventRetentionDays` (default 90) |
+| `$CACHE/logs/index/<ISO-ts>.log`, `$CACHE/logs/improve/<ISO-ts>.log` | Log of one `akm index` run or one non-dry-run `akm improve` run | `akm improve` deletes files older than `improve.eventRetentionDays` (default 90) |
+| `$CACHE/models/` | Hugging Face model cache for the local embedder; `$HF_HOME` is used instead when it is set | No automatic cleanup |
 | `$CACHE/opencode/<version>/opencode` | The OpenCode binary akm's own runtime runs (about 240 MB), fetched from the npm registry on its first use | Permanent; safe to delete (fetched again) |
 | `$CACHE/onnxruntime/<version>-<platform>-<arch>/` | `onnxruntime_binding.node` and the ONNX Runtime library it links, which the local embedder loads; fetched from the npm registry by `akm setup --embedding local` or the first local embedding (about 36 MB kept). Must be on a mount that allows executing files | Permanent; safe to delete (fetched again) |
 

@@ -13,20 +13,27 @@ where.
   other model-backed features send. `akm setup`, `akm models` and `akm health`
   ask each endpoint which models it serves. Your API key is sent only to the
   endpoint of the connection it belongs to.
+- **The curate reranker** (`search.curateRerank`, off by default) receives the
+  query and, for each top candidate `akm curate` fetches, its name, description
+  and the start of its indexed content (2,000 characters in all).
 - **A harness you enable** (Claude Code, Codex, OpenCode, ...) is a program akm
   runs on your machine, and what akm hands it reaches whatever that harness is
   configured for: its own provider, its own tools, its own MCP servers. It runs
   with your environment as it is ([How akm runs a
   harness](configuration.md#how-akm-runs-a-harness)). akm's own agent runtime
-  (used when no harness is enabled) sends to your connection only.
+  (used when no harness is enabled) sends to your connection only; on its first
+  use it fetches its pinned OpenCode binary once from `registry.npmjs.org` into
+  `$CACHE/opencode/<version>/`.
 - **Hugging Face Hub** serves the local embedding model when
   `semanticSearchMode` is `auto` and no remote embedding endpoint is set. The
   model is downloaded once into `$CACHE/models` (or `HF_HOME`, if set). Set
   `HF_HUB_OFFLINE=1` to forbid the download. The ONNX Runtime binding it runs on
-  is fetched once from the npm registry into `$CACHE/onnxruntime`.
-- **Bundle and registry hosts you configure**: git remotes, npm registries,
-  websites you crawl, and the registries behind `akm search --from registry`.
-  They receive the clone, fetch, crawl and search requests.
+  is fetched once from `registry.npmjs.org` into `$CACHE/onnxruntime`.
+- **Bundle and registry hosts**: the git remotes, npm registries and websites of
+  the bundles you add, and the registries behind `akm search --from registry`
+  (by default `raw.githubusercontent.com/itlackey/akm-registry`, which the
+  `akm setup` wizard also reads to list bundles). They receive the clone,
+  fetch, crawl and search requests.
 - **Snapshot fetchers** for website sources contact `public.api.bsky.app`
   (Bluesky), `youtube.com`, `api.x.com` (with `X_BEARER_TOKEN`, or the
   `secrets/x-bearer-token` secret) and `api.github.com` when a crawled URL
@@ -48,6 +55,8 @@ where.
   11434, 1234 and 8080) with one `GET /v1/models` each, and asks the endpoint
   you give it (and the embedding endpoint, if you pick another) for its model
   list. `--no-probe` contacts none of them.
+- **HTML reports** (`akm health --format html`, `akm metrics --format html`)
+  load ECharts from `cdn.jsdelivr.net` in the browser that opens them.
 
 ## Where akm stores data
 
@@ -63,6 +72,7 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 | Path | Contents |
 | --- | --- |
 | `config.json` | Your configuration: connections, harnesses, improve strategies, bundles, registries and experimental opt-ins. See [Configuration](configuration.md). Deleting it resets all settings. |
+| `config.json.lck` | Write sentinel held while `config.json` is saved. |
 | `credentials.json` | The API keys akm holds for your connections and for the `embedding` and `search.curateRerank` services, each with the endpoint it was stored for, written with mode 0600 (see [Credentials](configuration.md#credentials)). Deleting it removes those keys; akm sends requests without them. |
 
 ### Data directory
@@ -78,7 +88,11 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 | `akm.lock` | The lockfile: resolved version, revision and integrity of each installed bundle. `akm.lock.lck` is its write sentinel. |
 | `index.rebuild.lock`, `index.db.write.lock` | Lock files for `akm index` and asset writes. |
 | `secret-locks/` | Per-secret lock files taken while a secret is written. |
+| `state.db.pre-<migration id>.bak` | A copy of `state.db` taken before a migration that drops schema (`018`, `028`) runs. Yours to delete. |
+| `workflow-run-locks/` | One lock file per running workflow run. |
 | `backups/tasks/` | Copies of task files made by `akm migrate apply` before it rewrites them. |
+| `backups/asset-engine-keys/` | Copies of commands, agents, workflows and task sources made by `akm migrate apply` before it rewrites their `engine:` key. |
+| `migrate/engine-targets.json` | The connection or harness each old engine name became, kept by `akm migrate apply` until every `engine:` key is rewritten. |
 | `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --type opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces). Recreated on next use; deleting it loses the runtime's session history. |
 
 If akm cannot read this directory, commands fail with `DATA_DIR_UNREADABLE`
@@ -104,13 +118,14 @@ instead of reporting success for feedback it could not store.
 
 | Path | Contents |
 | --- | --- |
-| `config-backups/` | The last 5 pre-save snapshots of `config.json`, plus `config.latest.json`. Owner-only (file `0600`, directory `0700`); on a filesystem without POSIX permissions, such as a CIFS/Azure Files share, the mount options decide them instead. |
+| `config-backups/` | The last 5 pre-save snapshots of `config.json`, plus `config.latest.json`. `akm migrate apply` also leaves `credentials.json.<ts>` (a copy of your API keys, taken before it re-files older entries) and `models.json.<ts>` (the retired file) here; those are not pruned. Owner-only (file `0600`, directory `0700`); on a filesystem without POSIX permissions, such as a CIFS/Azure Files share, the mount options decide them instead. |
 | `registry/` | Downloaded npm and git packages for installed bundles. |
 | `registry-index/` | Git mirrors (`git-<key>/`) and website snapshots (`website-<key>/`). |
 | `models/` | The local embedding model downloaded from Hugging Face. |
 | `onnxruntime/` | The ONNX Runtime binding and library for local embeddings, downloaded once from the npm registry. |
 | `opencode/<version>/` | The OpenCode binary akm's own agent runtime runs (about 240 MB), fetched from the npm registry on the runtime's first use. |
 | `tasks/logs/` | Per-run log files of scheduled tasks. |
+| `logs/index/`, `logs/improve/` | One log file per `akm index` run and per `akm improve` run; `akm improve` deletes files older than `improve.eventRetentionDays`. |
 
 ### Bundle directory
 
@@ -158,7 +173,7 @@ Event types, for `akm log --type <type>`:
   `propose_invoked`, `distill_invoked`, `extract_invoked`, `extract_triaged`,
   `schema_repair_invoked`, `proactive_selected`, `events_purged`,
   `improve_runs_purged`, `asset_state_gc`, `state_db_vacuumed`,
-  `task_logs_purged`, `task_log_files_purged`
+  `task_logs_purged`, `task_log_files_purged`, `run_log_files_purged`
 - Workflows: `workflow_started`, `workflow_step_completed`,
   `workflow_step_updated`, `workflow_finished`, `workflow_abandoned`,
   `workflow_unit_started`, `workflow_unit_finished`
