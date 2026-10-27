@@ -188,7 +188,8 @@ usual starting point for an agent.
 
 **Success check:** the response includes a small shortlist; each entry
 carries a `ref` and a `followUp` command such as `akm show <ref>` (registry
-hits, with `--from registry`, carry `akm bundle add <id>` instead).
+entries, with `--from registry`, carry an `id` and a `followUp` that starts
+`akm bundle add <installRef>` instead).
 
 ## 6. Show one of the results
 

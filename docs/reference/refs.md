@@ -7,9 +7,8 @@ rename semantics, and namespacing conventions.
 
 A **ref** is a compact handle identifying one capability. Agents should
 treat refs as opaque tokens: get them from search or curate, pass them to
-show. At `--detail full`, each search hit also carries `itemRef`, `bundleId`
-and `conceptId` as separate fields; they are absent at `brief` and `normal`.
-Read those fields instead of parsing a ref string by hand.
+show. Search hits do not carry the bundle and conceptId as separate fields;
+pass `ref` to `akm show` as it is instead of parsing it by hand.
 
 ## Grammar
 

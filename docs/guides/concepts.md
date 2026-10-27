@@ -62,8 +62,8 @@ Search ranks by relevance (keyword match, fused with vector similarity when
 semantic search is on) adjusted by the feedback recorded for each asset, and has
 no preference for any bundle. A short ref given to `akm show` resolves against
 the default bundle first, then the remaining bundles in installation order.
-`akm clone` copies an asset into your working bundle (or the bundle named by
-`--bundle`). The copy is a separate asset with its own ref; when it lands in
+`akm clone` copies an asset into the write target (`--bundle`, else
+`defaultWriteTarget`, else your working bundle). The copy is a separate asset with its own ref; when it lands in
 your default bundle under the same name, the short ref resolves to it.
 
 ## 4. A ref names one asset

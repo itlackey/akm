@@ -26,9 +26,10 @@ for one tool become discoverable, and usable, from any other.
 
 ## akm bundle add
 
-`akm bundle add` connects a new bundle and indexes it. The source kind is
-inferred from the input: known git hosts and URLs ending in `.git` are git
-bundles, while other HTTP(S) URLs are website bundles.
+`akm bundle add` connects a new bundle and indexes it (a `--provider npm` or
+`--provider website` add is only recorded; `akm bundle update` fetches it). The
+source kind is inferred from the input: known git hosts and URLs ending in
+`.git` are git bundles, while other HTTP(S) URLs are website bundles.
 
 ```sh
 akm bundle add ~/.claude/skills                          # Local directory (filesystem)
@@ -210,9 +211,9 @@ that still spell the old `<old>//` prefix so you can fix them by hand.
 
 ## akm clone
 
-`akm clone` copies a single asset from any bundle into your working bundle (or
-the bundle named by `--bundle`) for local editing. The copy is a separate asset
-with its own ref; `akm show` with a short ref prefers the copy in your default
+`akm clone` copies a single asset from any bundle into the write target
+(`--bundle`, else `defaultWriteTarget`, else your working bundle) for local
+editing. The copy is a separate asset with its own ref; `akm show` with a short ref prefers the copy in your default
 bundle, while the original stays where it was.
 
 ```sh
