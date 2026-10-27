@@ -99,10 +99,14 @@ verify_model_surface() {
 	local root="$CANDIDATE_DIR/model-surface"
 	local out status
 
+	# The AKM_*_DIR overrides beat HOME and XDG_* (src/core/paths.ts), so a
+	# caller's are dropped, as the test preload does: otherwise these commands
+	# read and write that config.
 	akm_in() {
 		local scenario="$1"
 		shift
-		env HOME="$root/$scenario/home" \
+		env -u AKM_CONFIG_DIR -u AKM_DATA_DIR -u AKM_STATE_DIR -u AKM_CACHE_DIR \
+			HOME="$root/$scenario/home" \
 			XDG_CONFIG_HOME="$root/$scenario/config" XDG_DATA_HOME="$root/$scenario/data" \
 			XDG_CACHE_HOME="$root/$scenario/cache" XDG_STATE_HOME="$root/$scenario/state" \
 			AKM_BUNDLE_DIR="$root/$scenario/bundle" \
