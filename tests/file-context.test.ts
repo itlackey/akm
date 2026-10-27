@@ -639,7 +639,7 @@ describe("Renderer", () => {
     // Section selection is the ref's `#fragment`, applied by showLocal — the
     // renderer itself has no view modes to branch on.
     expect(response.content).toBe(content);
-    expect(response.action).toContain("#fragment");
+    expect(response.action).toContain("akm show <ref>#<slug>");
   });
 
   test("getAllRenderers() returns all 13 built-in renderers", async () => {

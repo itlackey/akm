@@ -201,7 +201,8 @@ enumeration of the whole `proposal` noun group.
   - `#fragment` is **input-only** and never stored. On markdown-document items
     the core resolves it as a section selector — `akm show <ref>#<heading-slug>`
     returns that one section, no fragment returns the whole item, and an
-    unmatched fragment lists the available slugs. Elsewhere it is an
+    unmatched fragment lists the available slugs. A whole document's `show`
+    carries `toc`, every heading with the slug that selects it. Elsewhere it is an
     adapter-owned selector opaque to the core. See
     [`docs/architecture/specs/ref.md`](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/ref.md).
   - **Refs in prose** must be fully qualified (`bundle//conceptId`) or a native

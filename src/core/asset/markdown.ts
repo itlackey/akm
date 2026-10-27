@@ -33,6 +33,26 @@ export function markdownFragmentSlugs(content: string): string[] {
   return uniqueHeadingSlugs(parseMarkdownToc(content).headings).filter(Boolean);
 }
 
+/** One addressable heading: `slug` is what `<ref>#<slug>` selects, `startLine` its 1-based file line. */
+export interface MarkdownTocEntry {
+  level: number;
+  text: string;
+  slug: string;
+  startLine: number;
+}
+
+/**
+ * The headings `extractSection` can select, with the slug it resolves each by.
+ * A heading with no sluggable text has no selector, so it is left out.
+ */
+export function markdownToc(content: string): MarkdownTocEntry[] {
+  const headings = parseMarkdownToc(content).headings;
+  const slugs = uniqueHeadingSlugs(headings);
+  return headings.flatMap((heading, index) =>
+    slugs[index] ? [{ level: heading.level, text: heading.text, slug: slugs[index]!, startLine: heading.line }] : [],
+  );
+}
+
 /** One slug per heading, in order; a heading with no sluggable text gets "". */
 export function uniqueHeadingSlugs(headings: TocHeading[]): string[] {
   const used = new Set<string>();

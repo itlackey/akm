@@ -55,6 +55,7 @@ describe("akm show view-mode grammar is removed", () => {
       const error = JSON.parse(result.stderr) as Record<string, unknown>;
       expect(error.ok).toBe(false);
       expect(String(error.error)).toContain("akm show knowledge/guide#");
+      expect(String(error.hint)).toContain("akm show knowledge/guide --detail brief");
     });
   }
 
@@ -171,6 +172,71 @@ describe("akm show --detail resolution (F6/R-021)", () => {
     const json = JSON.parse(result.stdout) as Record<string, unknown>;
     expect(json.type).toBe("command");
     expect(json.template).toBe("Run release {{version}}\n");
+  });
+});
+
+describe("akm show toc at each --detail level", () => {
+  const GUIDE = ["# Guide", "Intro.", "", "## Install", "Run it.", "", "## Install", "Again."].join("\n");
+  const TOC = [
+    { level: 1, text: "Guide", slug: "guide", startLine: 1 },
+    { level: 2, text: "Install", slug: "install", startLine: 4 },
+    { level: 2, text: "Install", slug: "install-1", startLine: 7 },
+  ];
+
+  function seedGuide(): void {
+    const storage = useStorage();
+    writeSandboxConfig({ semanticSearchMode: "off" });
+    writeFixture(path.join(storage.stashDir, "knowledge", "guide.md"), GUIDE);
+    writeFixture(path.join(storage.stashDir, "scripts", "deploy.sh"), "#!/bin/sh\n# Deploy\necho hi\n");
+  }
+
+  async function showJson(args: string[]): Promise<Record<string, unknown>> {
+    const result = await runEntrypoint(["show", ...args, "--format=json"]);
+    expect(result.status).toBe(0);
+    return JSON.parse(result.stdout) as Record<string, unknown>;
+  }
+
+  test("--detail brief is the outline without the body", async () => {
+    seedGuide();
+    const json = await showJson(["knowledge/guide", "--detail", "brief"]);
+    expect(json.toc).toEqual(TOC);
+    expect(json).not.toHaveProperty("content");
+  });
+
+  for (const detail of [[], ["--detail", "normal"], ["--detail", "full"], ["--detail", "agent"]]) {
+    test(`${detail.join(" ") || "the default detail"} carries the toc next to the body`, async () => {
+      seedGuide();
+      const json = await showJson(["knowledge/guide", ...detail]);
+      expect(json.toc).toEqual(TOC);
+      expect(json.content).toBe(GUIDE);
+    });
+  }
+
+  test("every slug the CLI lists selects its section", async () => {
+    seedGuide();
+    const { toc } = (await showJson(["knowledge/guide", "--detail", "brief"])) as { toc: typeof TOC };
+    for (const heading of toc) {
+      const section = await showJson([`knowledge/guide#${heading.slug}`]);
+      expect(String(section.content).split("\n")[0]).toBe(GUIDE.split("\n")[heading.startLine - 1]);
+      expect(section).not.toHaveProperty("toc");
+    }
+    expect((await showJson(["knowledge/guide#install-1"])).content).toBe("## Install\nAgain.");
+  });
+
+  test("a non-markdown asset has no toc at any level", async () => {
+    seedGuide();
+    for (const detail of ["brief", "agent", "full"]) {
+      expect(await showJson(["scripts/deploy.sh", "--detail", detail])).not.toHaveProperty("toc");
+    }
+  });
+
+  test("--format text prints the outline", async () => {
+    seedGuide();
+    const result = await runEntrypoint(["show", "knowledge/guide", "--detail", "brief", "--format=text"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      "toc:\n  # Guide (#guide, line 1)\n  ## Install (#install, line 4)\n  ## Install (#install-1, line 7)",
+    );
   });
 });
 
