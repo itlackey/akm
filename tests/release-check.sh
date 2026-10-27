@@ -142,8 +142,9 @@ verify_model_surface() {
 }
 
 # Release acceptance for the packaged artifact. Lint, typecheck, the unit and
-# integration suites and the native-scheduler gates run in CI and Gated CI on
-# the same commit; release.yml requires both before it publishes.
+# integration suites and the upgrade rehearsal run in CI, and the
+# native-scheduler gates in Gated CI, on the same commit; release.yml requires
+# both before it publishes.
 run_step "Workflow Syntax" validate_workflow_syntax
 run_step "Build Package" bun run build
 run_step \
@@ -165,9 +166,6 @@ run_step \
 	bun test --timeout=300000 tests/integration/standalone-first-run.test.ts
 run_step "Package Acceptance" bun scripts/package-install.ts test-package --skip-build
 run_step "Pack Package Candidate" pack_package_candidate
-run_step \
-	"Upgrade Rehearsal" \
-	env AKM_UPGRADE_REHEARSAL=1 AKM_CANDIDATE_TARBALL="$PACKAGE_CANDIDATE" TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/
 run_step \
 	"Verify npm candidate release surface" \
 	tar -tzf "$PACKAGE_CANDIDATE" \

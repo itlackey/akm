@@ -42,8 +42,8 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
 const REQUESTED = process.env.AKM_UPGRADE_REHEARSAL === "1";
 // The CI matrix (.github/workflows/ci.yml's upgrade-rehearsal job) runs each
 // KNOWN_UPGRADE_ORIGINS entry in its own parallel job by setting this to one
-// origin; unset (local dev, tests/release-check.sh) runs every origin's
-// describe block in this one process, same as before this filter existed.
+// origin; unset (local dev) runs every origin's describe block in this one
+// process, same as before this filter existed.
 const ORIGIN_FILTER = process.env.AKM_UPGRADE_REHEARSAL_ORIGIN?.trim();
 
 if (!REQUESTED) {
