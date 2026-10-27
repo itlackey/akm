@@ -130,9 +130,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     run's unfinished turns are never resumed (OpenCode's background service
     resumes every top-level session whose turn did not finish, whichever process
     owns it). OpenCode makes and migrates its database at start, and two
-    processes doing that to one empty database break each other, so the first
-    start of the runtime's database is a run of its own (`session list`, no model)
-    and runs that start with it, as a workflow's parallel units do, wait for it.
+    processes doing that to one database break each other, so the first start of
+    the runtime's OpenCode version is a run of its own (`session list`, no model)
+    under a lock file in the runtime directory, and every run that starts with it,
+    a workflow's parallel units or another akm process's, waits for it.
   - A plugin akm writes to the runtime's config directory gives the agent akm's
     read tools (`akm_search`, `akm_show`, `akm_curate`), which call the `akm` that
     started the run with `--detail agent --format json` and the run's
@@ -142,9 +143,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     (`max_completion_tokens: 32000` unless the model's limit says otherwise): a
     request carries the cap the connection or the call writes, and none
     otherwise, as on chat. A persona goes in the prompt.
-  - The commands the agent runs get the environment a CLI harness's child gets:
-    akm's own, with its directories (`AKM_CONFIG_DIR` and the rest) and the run's
-    variables (workflow and task `env:`, `AKM_EVENT_SOURCE`) set over it. What
+  - The commands the agent runs get the environment a CLI harness's child gets,
+    less its `OPENCODE_*` variables: akm's own, with its directories
+    (`AKM_CONFIG_DIR` and the rest) and the run's variables (workflow and task
+    `env:`, `AKM_EVENT_SOURCE`) set over it. What
     akm sets for the OpenCode process itself (its directories, and the inline
     config that holds the connection's key) is put back to what akm runs in, or
     removed, for each command, so the key is never in an agent's shell.
@@ -159,10 +161,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - OpenCode's headless `run` cancels questions and rejects permission requests,
     and the model carries on. A run reports its reply only: no token usage and no
     session id.
-  - The runtime can also run a request as model work, as the read-only
-    `akm-model-work` agent the `opencode` harness uses (reading and searching, and
-    akm's three tools). Model work on a connection is still a direct request to its
-    endpoint, so nothing sends it there today.
+  - A failed run reports as a harness run does, a non-zero exit with OpenCode's
+    own message: the `llm_rate_limit`, `llm_content_filter` and `parse_error`
+    reasons the embedded runtime gave are not given.
 - `platform: "opencode"` is your OpenCode, whichever major is installed, run
   through its CLI: `opencode run` with the prompt on stdin, a model only when akm
   names one, an agent only when the asset names one, and your `args` as written.

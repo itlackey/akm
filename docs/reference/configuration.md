@@ -293,11 +293,16 @@ default connection. The npm package and the standalone binary do the same.
   and all of its files under `<akm data dir>/opencode-runtime/`. Nothing is
   written under `~/.local/share/opencode`.
 - The commands the agent runs get the environment akm runs in, with the
-  directories this akm resolved and the run's variables set over it. What akm sets
-  for the OpenCode process itself (its directories, and the config that holds the
-  connection's key) is not in it: akm's plugin puts those variables back to what
-  akm runs in, or removes them, for each command.
-- A run reports no token usage: the OpenCode process prints only the reply.
+  directories this akm resolved and the run's variables set over it, less your
+  `OPENCODE_*` variables. What akm sets for the OpenCode process itself (its
+  directories, and the config that holds the connection's key) is not in it:
+  akm's plugin puts those variables back to what akm runs in, or removes them,
+  for each command.
+- A run reports no token usage: the OpenCode process prints only the reply. A
+  failed run is a non-zero exit with OpenCode's own message (`non_zero_exit`), as
+  for a harness.
+- Runs that start together, in one akm process or several, wait while the first
+  run of this OpenCode version prepares its database alone.
 
 ## Credentials
 

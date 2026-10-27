@@ -656,20 +656,22 @@ Agent programs are reachable by two execution paths, both behind
   models and model-catalog fetch are off, and the `OPENCODE_*` variables akm runs with are not passed to it.
   `--standalone` keeps a run to one process that ends with it, and replays no
   killed session. OpenCode makes and migrates its database at start and two
-  processes doing that to one empty database break each other, so the first start
-  of the database is a run of its own (`session list`, no model) and runs that
-  start with it wait for it.
+  processes doing that to one database break each other, so the first start of
+  this OpenCode version is a run of its own (`session list`, no model) under a
+  lock file in the runtime directory (`prepare.lock`, a dead holder reclaimed),
+  which leaves a `prepared-<version>` marker; runs that start with it, in this
+  akm process or another, wait for it.
 - The process loads akm's plugin (`src/assets/opencode/akm-plugin.js`, written
   to the runtime's config directory): `akm_search`, `akm_show` and `akm_curate`
-  call the akm executable that started the run (`AKM_OPENCODE_CLI`), the
+  run the akm that started the run, by the argv it runs as (`AKM_OPENCODE_CLI`,
+  a JSON array: the executable alone when compiled, the runtime and the script
+  otherwise), the
   connection's request fields are laid over each model request, with OpenCode's
   own output cap taken off, and the variables akm set for the process (its
   directories, and the config that holds the connection's key) are put back to
   akm's own, or removed, in the environment of the commands the agent runs.
-- Agent work runs OpenCode's default agent with its normal tools. The runtime can
-  also run a request as model work, as the read-only `akm-model-work` agent
-  (reading and searching, and akm's three tools), but model work on a connection
-  is a direct request to its endpoint, so nothing sends it there today.
+- Agent work runs OpenCode's default agent with its normal tools. Model work never
+  runs here: on a connection it is a direct request to its endpoint.
 - Every session is stored in akm's own OpenCode database
   (`<akm data dir>/opencode-runtime/data/opencode/opencode.db`), which `akm
   proposal extract --type opencode` reads back with SQLite alone, beside your own
