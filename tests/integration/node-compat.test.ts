@@ -811,7 +811,7 @@ describe("model surface parity", () => {
   });
 
   test.skipIf(!ENABLED || OPENCODE_UNAVAILABLE !== undefined)(
-    "agent work over a connection runs on akm's own runtime under Node",
+    "agent work over a connection runs on akm's own runtime under Node, and its akm tools run this akm under Node",
     async () => {
       setupStorage();
       linkSharedOpencode(getCacheDir());
@@ -821,12 +821,14 @@ describe("model surface parity", () => {
           endpoint: model.url,
           models: { fast: "fake-model", balanced: "fake-model", reasoning: "fake-model" },
         });
-        const run = await nodeRunAsync(["agent", "--prompt", "MODE:answer"], nodeEnv);
+        const run = await nodeRunAsync(["agent", "--prompt", "MODE:akm"], nodeEnv);
         assertNoBoundaryLeak(run, "agent over a connection");
         expect(run.status, `agent over a connection:\nstdout:\n${run.stdout}\nstderr:\n${run.stderr}`).toBe(0);
         const envelope = parseJson(run.stdout) as { ok?: boolean; engine?: string; stdout?: string } | undefined;
         expect(envelope).toMatchObject({ ok: true, engine: "default" });
-        expect(envelope?.stdout?.trim()).toMatch(/^ANSWER-\d+$/);
+        // The model called akm_search; the plugin ran akm by the argv it runs as (Node and the entry script) and its
+        // JSON came back through the tool.
+        expect(envelope?.stdout?.trim()).toMatch(/^AKM:\{[\s\S]*"hits"/);
       } finally {
         model.stop();
       }
