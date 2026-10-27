@@ -226,6 +226,30 @@ The spectral quokka calibration nonce rotates every Thursday.
       dropped: ["wJalrXUtnFEMI", "K7MDENG", "EXAMPLEKEY"],
     },
     {
+      name: "a quoted key keeps its name, not its unquoted value",
+      line: '"password": fakeplainvalue',
+      kept: ["password"],
+      dropped: ["fakeplainvalue"],
+    },
+    {
+      name: "a quoted key's dotted reference value stays",
+      line: '{"token": process.env.DEPLOY_TOKEN}',
+      kept: ["token", "process.env.DEPLOY_TOKEN"],
+      dropped: [],
+    },
+    {
+      name: "an Authorization header keeps its name, not its credential",
+      line: "Authorization: Basic ZmFrZTpmYWtl",
+      kept: ["Authorization"],
+      dropped: ["ZmFrZTpmYWtl"],
+    },
+    {
+      name: "a bearer token after its scheme is dropped",
+      line: "authorization: bearer fakebearervalue",
+      kept: ["authorization"],
+      dropped: ["fakebearervalue"],
+    },
+    {
       name: "flags, calls and dotted references are names",
       line: "if (process.env.CI) throw new ProviderInitError(code); akm index --full",
       kept: ["process.env.CI", "ProviderInitError", "Provider", "--full"],

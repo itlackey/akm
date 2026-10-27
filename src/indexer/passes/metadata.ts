@@ -903,8 +903,9 @@ const TOKEN_LIKE_MIN_LENGTH = 20;
  *
  * - a quoted string survives only as a key (`"name":`) or an absolute path;
  *   every other quoted literal is dropped;
- * - the value of an assignment (`KEY=value`, `key: value`) is dropped unless
- *   it is a dotted code reference (`process.env.CI`); the name stays;
+ * - the value of an assignment (`KEY=value`, `key: value`, `"key": value`,
+ *   `Authorization: Bearer token`) is dropped unless it is a dotted code
+ *   reference (`process.env.CI`); the name stays;
  * - long token-like strings with digits (keys, hashes) are dropped, base64
  *   included: its `/`, `+` and `=` do not cut it into short kept pieces;
  * - camelCase, snake_case, dotted and dashed names also add their parts.
@@ -913,11 +914,18 @@ const TOKEN_LIKE_MIN_LENGTH = 20;
  */
 export function fencedCodeIdentifiers(line: string): string {
   const cleaned = line
-    .replace(/(["'`])((?:\\.|(?!\1).)*)\1(\s*:)?/g, (_match, _quote, body: string, colon?: string) =>
-      colon || /^\/[\w./-]+$/.test(body) ? ` ${body} ` : " ",
+    .replace(
+      /(["'`])((?:\\.|(?!\1).)*)\1(\s*:)?/g,
+      (match: string, _quote: string, body: string, colon: string | undefined, offset: number) => {
+        // Keep a key's colon when an unquoted value follows, so the assignment rule below drops that value.
+        if (colon) return /^\s*["'`]/.test(line.slice(offset + match.length)) ? ` ${body} ` : ` ${body}: `;
+        return /^\/[\w./-]+$/.test(body) ? ` ${body} ` : " ";
+      },
     )
-    .replace(/([A-Za-z_][A-Za-z0-9_.-]*\s*[:=]\s*)(\S+)/g, (_match, name: string, value: string) =>
-      /^[!(]*[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)+[()]*[,;]?$/.test(value) ? `${name} ${value}` : name,
+    .replace(
+      /([A-Za-z_][A-Za-z0-9_.-]*\s*[:=]\s*)((?:[Bb]earer|[Bb]asic|[Tt]oken|[Dd]igest)\s+\S+|\S+)/g,
+      (_match, name: string, value: string) =>
+        /^[!(]*[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)+[()\]}]*[,;]?$/.test(value) ? `${name} ${value}` : name,
     )
     // Base64 is one token: its `/`, `+` and `=` would otherwise cut a key body into short pieces that are kept.
     .replace(/(?<![\w.-])[A-Za-z0-9+/=]{20,}(?![\w.-])/g, (run) =>
