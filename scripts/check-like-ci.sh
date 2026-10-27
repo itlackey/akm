@@ -46,7 +46,10 @@ if [ -d "$ROOT/dist" ]; then
   scratch+=(--tmpfs "$ROOT/dist:rw,exec,size=1g,uid=$(id -u),gid=$(id -g)")
 fi
 
+# TINI_KILL_PROCESS_GROUP: --init's tini passes a Ctrl-C to the whole process
+# group, not only to sh, which waits on bun and would keep the run going.
 docker run --rm --init \
+  --env TINI_KILL_PROCESS_GROUP=1 \
   --user "$(id -u):$(id -g)" \
   --env HOME=/tmp/home \
   --env CI=true \
