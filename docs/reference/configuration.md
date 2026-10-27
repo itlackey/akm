@@ -690,21 +690,43 @@ semantic search is disabled or has not been built. A read-only sandbox that
 cannot record best-effort usage telemetry does not by itself mark search as
 degraded.
 The local embedder runs its model (`Xenova/bge-small-en-v1.5` unless
-`embedding.localModel` names another) on `onnxruntime-node`, with
-`@huggingface/tokenizers` for the token ids. Both are normal dependencies of the
-package, imported directly; AKM does not carry a copied runtime under `src/` or
-`dist/`. The model's four files (about 127 MB) are fetched from the Hugging Face
-Hub on first use into `$HF_HOME/<repo>/` (default `<cache dir>/models`), and
-`HF_HUB_OFFLINE=1` forbids the fetch. `akm index --format json` reports the
-runtime it embedded with as `verification.embeddingRuntime`.
-If the runtime cannot load, because the dependency is missing or the platform
-has no native ONNX Runtime library (Alpine/musl, Intel macOS), the index reports
-semantic search `blocked` with the reason and search stays keyword-only:
-reinstall `akm-cli` for a missing dependency, or configure a remote
-`embedding.endpoint`. A standalone binary copies the library it embeds once into
-`<cache dir>/onnxruntime/` (see
-[Getting Started](../guides/getting-started.md#standalone-binary-and-semantic-search)).
-Setup does not mutate a global installation to add runtime packages.
+`embedding.localModel` names another) on ONNX Runtime, through
+`onnxruntime-node`'s native binding, with `@huggingface/tokenizers` for the token
+ids. akm offers local embeddings on Linux x64 and arm64 (glibc) and Apple-silicon
+macOS; on every other platform semantic search uses an embedding endpoint or
+stays keyword-only. akm does not install `onnxruntime-node`:
+`akm setup --embedding local` (or the wizard's built-in embedder) downloads that
+package's binding and library for this platform once from the npm registry
+(about 86 MB; the registry's sha512 integrity is checked before anything is
+extracted) into `<cache dir>/onnxruntime/<version>-<platform>-<arch>/`, and the
+first local embedding downloads them when setup did not. The model's four files
+(about 127 MB) come from the Hugging Face Hub the same way, into
+`$HF_HOME/<repo>/` (default `<cache dir>/models`); `HF_HUB_OFFLINE=1` forbids
+that download. `akm index --format json` reports the runtime it embedded with as
+`verification.embeddingRuntime`. If the runtime cannot be downloaded or does not
+load (the cache directory is mounted `noexec`), the index reports semantic search
+`blocked` with the reason and search stays keyword-only. On a platform without
+local embeddings, `akm setup` offers an endpoint or keyword search,
+`--embedding local` warns and saves keyword search, and a config that turns
+semantic search on anyway gets it reported unavailable for the platform by the
+index and a warning from `akm health`.
+
+**Without network access**, fill akm's cache directory (`akm info` prints
+`cacheDir`; `AKM_CACHE_DIR` moves it) before the first `akm index`:
+
+- `onnxruntime/<version>-<platform>-<arch>/` (for example
+  `onnxruntime/1.24.3-linux-x64/`) holding `onnxruntime_binding.node` and the
+  library it links (`libonnxruntime.so.1` on Linux,
+  `libonnxruntime.1.24.3.dylib` on macOS). Take both from
+  `package/bin/napi-v6/<platform>/<arch>/` in the `onnxruntime-node@1.24.3`
+  tarball (`npm pack onnxruntime-node@1.24.3`), or copy the folder from a
+  connected machine of the same platform after
+  `akm setup --yes --embedding local`.
+- `models/Xenova/bge-small-en-v1.5/` holding `tokenizer.json`,
+  `tokenizer_config.json`, `config.json` and `onnx/model.onnx`, or set `HF_HOME`
+  to a directory that holds them and `HF_HUB_OFFLINE=1`.
+- `opencode/2.1.4/opencode` (`opencode.exe` on Windows) for akm's own agent
+  runtime.
 The default is `"off"` so a bare or headless install (`akm bundle create`, `--yes`,
 `--config`) never silently downloads the local embedding model on first
 index. A config that has an `embedding` block and sets no `semanticSearchMode`

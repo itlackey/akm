@@ -40,14 +40,13 @@ prefers Bun for execution; old, unusable, or absent Bun installations fall
 back to Node.js. Node.js remains required for the npm package. The standalone
 binaries are runtime-free.
 
-Local semantic search runs its embedding model on ONNX Runtime
-(`onnxruntime-node`). A standalone binary carries the library for its platform
-and copies it once into akm's cache (18 to 34 MB); a `noexec` temp directory
-blocks a standalone binary's semantic search (keyword search still works), so
-set `TMPDIR` to a writable, executable one.
-Alpine/musl and Intel macOS have no native ONNX Runtime, so semantic search is
-unavailable there and keyword search works. See
-[Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/#standalone-binary-and-semantic-search).
+Local semantic search runs its embedding model on ONNX Runtime and is offered on
+Linux x64 and arm64 (glibc) and Apple-silicon macOS; every other platform uses
+keyword search or an embedding endpoint. Choosing it in `akm setup`
+(`--embedding local`) downloads the runtime (about 86 MB) and the model (about
+127 MB) once into akm's cache: installing the package runs no install script and
+downloads nothing native. See
+[Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/#local-semantic-search).
 
 With a connection and no harness, agent work runs on akm's own runtime, a pinned
 OpenCode 2 binary. The first time it runs, akm downloads that binary from the npm

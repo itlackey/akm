@@ -54,19 +54,24 @@ it and never appears on the command line:
 akm setup --yes --endpoint https://api.example.com/v1 --api-key-env EXAMPLE_API_KEY
 ```
 
-`--no-probe` keeps the run offline (the endpoint's model list is not fetched), so a
-new connection has no model until `akm models set` names one.
+`--no-probe` keeps the run offline: nothing is contacted or downloaded (the
+endpoint's model list is not fetched, so a new connection has no model until
+`akm models set` names one).
 For the full set of flags, see `akm setup --help`; for the config they write,
 see [configuration.md](../../reference/configuration.md).
 
-**Semantic search.** Headless setups (`--yes` or `--from`, no wizard
-prompts) defer the embedding-model download to the first `akm index` run,
-unlike the interactive wizard which downloads immediately during `akm
-setup`. Set the mode explicitly rather than relying on the implicit default:
+**Semantic search.** `--embedding local` chooses the built-in embedder, offered
+on Linux x64 and arm64 (glibc) and Apple-silicon macOS; elsewhere it warns and
+keeps keyword search. Once the config is saved, a headless setup (`--yes` or
+`--from`) downloads the embedder's runtime and model into akm's cache and
+reports `semanticAssets` in its result (`ready`, `blocked: <reason>`, or
+`skipped` with `--no-probe`, which leaves the download to the first
+`akm index`). Without the flag, semantic search stays as the config has it
+(`off` by default):
 
 ```sh
-akm config set semanticSearchMode auto   # local embeddings, downloaded on first index
-akm config set semanticSearchMode off    # skip embeddings entirely
+akm setup --yes --embedding local          # local embeddings, downloaded now
+akm config set semanticSearchMode off      # skip embeddings entirely
 ```
 
 For resource requirements and remote-embedding alternatives, see
