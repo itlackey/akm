@@ -3,7 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
 
@@ -107,5 +109,81 @@ describe("release workflow", () => {
     for (const step of workflow.jobs.release.steps) {
       expect(step.run ?? "").not.toContain(VERSION_INPUT);
     }
+  });
+
+  describe("the CI gate waits for the CI run on the commit", () => {
+    const workflow = YAML.parse(source) as {
+      jobs: { release: { steps: Array<{ name?: string; run?: string }> } };
+    };
+    const steps = workflow.jobs.release.steps;
+    const gate = steps.find((step) => step.name === "Require green CI on this commit");
+
+    // Runs the step's script with a fake `gh` that prints one snapshot of `gh run list` per call (the last one
+    // repeats) and a fake `sleep` that counts its calls and returns at once.
+    function runGate(snapshots: string[]): { status: number | null; stderr: string; sleeps: number } {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-release-gate-"));
+      try {
+        snapshots.forEach((snapshot, index) => {
+          fs.writeFileSync(path.join(dir, `snapshot-${index + 1}`), snapshot);
+        });
+        fs.writeFileSync(
+          path.join(dir, "gh"),
+          [
+            "#!/bin/sh",
+            `n=$(( $(cat "${dir}/calls" 2>/dev/null || echo 0) + 1 ))`,
+            `echo "$n" > "${dir}/calls"`,
+            `[ "$n" -le ${snapshots.length} ] || n=${snapshots.length}`,
+            `cat "${dir}/snapshot-$n"`,
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+        fs.writeFileSync(path.join(dir, "sleep"), `#!/bin/sh\necho x >> "${dir}/sleeps"\n`, { mode: 0o755 });
+        const result = spawnSync("bash", ["-e", "-c", gate?.run ?? ""], {
+          encoding: "utf8",
+          env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, GITHUB_REPOSITORY: "o/r", GITHUB_SHA: "abc123" },
+        });
+        const sleepsFile = path.join(dir, "sleeps");
+        const sleeps = fs.existsSync(sleepsFile) ? fs.readFileSync(sleepsFile, "utf8").trim().split("\n").length : 0;
+        return { status: result.status, stderr: result.stderr, sleeps };
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    test("sits after the release check and before the publish", () => {
+      const names = steps.map((step) => step.name);
+      const at = names.indexOf("Require green CI on this commit");
+      expect(at).toBeGreaterThan(names.indexOf("Release check"));
+      expect(at).toBeLessThan(names.indexOf("Publish to npm"));
+    });
+
+    test("passes at once when CI already passed, even with another run still going", () => {
+      expect(runGate(["completed success\nin_progress "])).toMatchObject({ status: 0, sleeps: 0 });
+    });
+
+    test("waits while CI has not started or is running, then passes", () => {
+      expect(runGate(["", "queued ", "in_progress ", "completed success"])).toMatchObject({ status: 0, sleeps: 3 });
+    });
+
+    test("keeps waiting past a failed run while another run for the commit is still going", () => {
+      expect(runGate(["completed failure\nin_progress ", "completed failure\ncompleted success"])).toMatchObject({
+        status: 0,
+        sleeps: 1,
+      });
+    });
+
+    test("fails when CI failed or was cancelled", () => {
+      expect(runGate(["completed failure"])).toMatchObject({ status: 1, sleeps: 0 });
+      const cancelled = runGate(["in_progress ", "completed cancelled"]);
+      expect(cancelled).toMatchObject({ status: 1, sleeps: 1 });
+      expect(cancelled.stderr).toContain("CI did not pass on abc123");
+    });
+
+    test("fails after 25 minutes of 30-second polls when CI never finishes", () => {
+      const result = runGate(["in_progress "]);
+      expect(result).toMatchObject({ status: 1, sleeps: 50 });
+      expect(result.stderr).toContain("within 25 minutes");
+      expect(gate?.run).toContain("sleep 30");
+    });
   });
 });
