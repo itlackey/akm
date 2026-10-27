@@ -13,6 +13,7 @@ import { _setEmbedderForTests } from "../src/llm/embedder";
 import { _setDetectForTests } from "../src/setup/detect";
 import { _setLoadSetupStashesForTests, type SetupBundleEntry } from "../src/setup/registry-stash-loader";
 import { runSetupFromConfig, runSetupWizard } from "../src/setup/setup";
+import { _setScheduledTasksEnvForTests } from "../src/setup/steps/tasks";
 import { withOpencodeOnPath } from "./_helpers/opencode-version";
 import {
   type IsolatedAkmStorage,
@@ -511,6 +512,8 @@ describe("runSetupWizard", () => {
   test("with agent work on akm's own runtime, the wizard offers to fetch it now; yes fetches it, no leaves it to the first run", async () => {
     for (const answer of [true, false]) {
       installSetupSeams();
+      // The task step asks its own confirm except under CI=true; skip it in both, so the queue below is the same.
+      overrideSeam(_setScheduledTasksEnvForTests, { isCiEnvironment: () => true });
       resetPromptState();
       let fetched = 0;
       spyOn(agentRuntime, "fetch").mockImplementation(async () => {
@@ -519,12 +522,14 @@ describe("runSetupWizard", () => {
       promptState.selects.push("default", "small", "small", "small", "off", "done", "json", "brief");
       promptState.texts.push("https://api.example.test/v1");
       promptState.passwords.push("");
-      promptState.confirms.push(true, false, answer);
-      promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], [], []);
+      promptState.confirms.push(true, answer);
+      promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
 
       await withEndpoint("https://api.example.test/v1", ["small"], () => runSetupWizard());
 
-      expect(promptState.trace.at(-1)).toContain("Fetch OpenCode 2.1.4 (about 114 MB, once) for it now");
+      expect(promptState.trace.at(-1)).toBe(
+        `[confirm] Agent work runs on akm's own runtime. Fetch OpenCode 2.1.4 (about 114 MB, once) for it now, rather than on the first agent run? -> ${answer}`,
+      );
       expect(fetched).toBe(answer ? 1 : 0);
     }
   });
