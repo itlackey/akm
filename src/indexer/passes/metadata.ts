@@ -885,6 +885,7 @@ function isMarkdownFenceClosing(line: string, fence: MarkdownFence): boolean {
 }
 
 // ── SPIKE akm#1260: fenced code in the search projection ──────────────────
+// b1b: b1, but a quoted key, a quoted path and a dotted code reference survive.
 // b1: identifier-like tokens only (quoted strings, assignment values, numbers
 //     and long token-like strings dropped; camelCase/snake_case also split).
 // b2: b1 plus each fence's info-string language.
@@ -917,8 +918,14 @@ function fencedSearchText(lines: string[], start: number): string[] {
 
 function fenceIdentifiers(line: string): string {
   const cleaned = line
-    .replace(/(["'`])(?:\\.|(?!\1).)*\1/g, " ") // quoted literals
-    .replace(/([A-Za-z_][A-Za-z0-9_.-]*\s*[:=]\s*)\S+/g, "$1"); // assignment values
+    // Quoted text: keep a key ("name": ...) or a path-like value; drop every other literal.
+    .replace(/(["'`])((?:\\.|(?!\1).)*)\1(\s*:)?/g, (_m, _q, body: string, colon?: string) =>
+      colon || /^\/[\w./-]+$/.test(body) ? ` ${body} ` : " ",
+    )
+    // Assignment values: keep a dotted code reference (process.env.CI), drop any other value.
+    .replace(/([A-Za-z_][A-Za-z0-9_.-]*\s*[:=]\s*)(\S+)/g, (_m, lhs: string, value: string) =>
+      /^[!(]*[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)+[()]*[,;]?$/.test(value) ? `${lhs} ${value}` : lhs,
+    );
   const words: string[] = [];
   for (let token of cleaned.match(/--?[A-Za-z][A-Za-z0-9-]*|[A-Za-z_][A-Za-z0-9_.-]*/g) ?? []) {
     token = token.replace(/[.-]+$/, "");
