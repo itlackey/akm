@@ -25,29 +25,32 @@
 import type { z } from "zod";
 // Harness ids derive from the harness registry; nothing the registry imports
 // reaches `core/config` at runtime, so there is no cycle.
-import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "../../integrations/harnesses";
+import { VALID_HARNESS_IDS } from "../../integrations/harnesses";
 
 /**
  * Canonical list of valid agent harness / platform ids, derived from the harness
- * registry so the Zod `AgentPlatformSchema` enum, the agent-engine platform
- * union, and setup's `DetectedHarness` union cannot drift.
+ * registry so the harness `platform` check and setup's `DetectedHarness` union
+ * cannot drift.
  */
-export { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS };
+export { VALID_HARNESS_IDS };
 
 /** Union of valid harness ids, derived from {@link VALID_HARNESS_IDS}. */
 export type HarnessId = (typeof VALID_HARNESS_IDS)[number];
 
-/** OpenAI-compatible embedding connection config. */
-export type EmbeddingConnectionConfig = z.infer<typeof import("./config-schema").EmbeddingConnectionConfigSchema>;
+/**
+ * OpenAI-compatible embedding connection config. `credentialName` is never
+ * configured: it is set on an embedding that runs on the default connection
+ * (see `effectiveEmbedding`) to the name that connection's key is filed under.
+ */
+export type EmbeddingConnectionConfig = z.infer<typeof import("./config-schema").EmbeddingConnectionConfigSchema> & {
+  readonly credentialName?: string;
+};
 
-/** OpenAI-compatible LLM connection materialized from a named engine. */
-export type LlmConnectionConfig = z.infer<typeof import("./config-schema").LlmConnectionConfigSchema>;
+/** A `connections.<name>` entry: an OpenAI-compatible endpoint and the models it serves. */
+export type ConnectionConfig = z.infer<typeof import("./config-schema").ConnectionSchema>;
 
-/** Internal LLM call shape including structured-output capability metadata. */
-export type LlmProfileConfig = z.infer<typeof import("./config-schema").LlmProfileConfigSchema>;
-
-/** A named 0.9 engine (LLM connection or agent platform). */
-export type EngineConfig = z.infer<typeof import("./config-schema").EngineConfigSchema>;
+/** A `harnesses.<name>` entry: an agent program the user already has. */
+export type HarnessConfig = NonNullable<z.infer<typeof import("./config-schema").HarnessesSchema>[string]>;
 
 /**
  * Per-process config (`improve.strategies.<strategy>.processes.<process>`). Most
@@ -125,19 +128,22 @@ export type SourceConfigEntry = z.infer<typeof import("./config-schema").SourceC
 export type OutputConfig = z.infer<typeof import("./config-schema").OutputConfigSchema>;
 
 /**
- * Per-pass index configuration. Each named pass can select an engine and apply
+ * Per-pass index configuration. Each named pass can select a connection and apply
  * bounded invocation overrides; `enabled: false` opts a pass out.
  */
 export type IndexPassConfig = z.infer<typeof import("./config-schema").IndexPassConfigSchema>;
 
 /**
- * Index-time configuration. Combines the reserved `defaults` block with
+ * Index-time configuration. Combines the index-wide model-work settings with
  * per-pass overrides keyed by pass name.
  */
 export type IndexConfig = z.infer<typeof import("./config-schema").IndexConfigSchema>;
 
 /** `akm improve` pipeline tuning (`improve`). See config-schema.ts for docs. */
 export type ImproveConfig = z.infer<typeof import("./config-schema").ImproveConfigSchema>;
+
+/** Where one improve call runs: `improve.processes.<name>` and `improve.qualityGate`. */
+export type ImproveWhere = z.infer<typeof import("./config-schema").ImproveWhereSchema>;
 
 /** Host-local scheduler activation configuration. */
 export type SchedulerConfig = z.infer<typeof import("./config-schema").SchedulerConfigSchema>;

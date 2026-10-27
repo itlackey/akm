@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import { saveConfig } from "../../../src/core/config/config";
-import { ConfigError } from "../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../src/core/improve-types";
 import { openStateDatabase } from "../../../src/core/state-db";
@@ -326,43 +325,6 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
 // ── M-3 / #387 — schema-repair routes through proposal queue ─────────────────
 
 describe("M-3: schema-repair routes through proposal queue (#387)", () => {
-  test("runSchemaRepairPass preserves a missing symbolic credential as a hard config failure", async () => {
-    const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
-    const stashDir = makeTempDir("akm-m3-schema-credential-");
-    const memFile = path.join(stashDir, "memories", "credential.md");
-    fs.mkdirSync(path.dirname(memFile), { recursive: true });
-    fs.writeFileSync(memFile, "---\n---\nCredential-bound content.\n", "utf8");
-    configureStash(stashDir);
-    let chatCalls = 0;
-
-    const failure = withEnv({ AKM_SCHEMA_REPAIR_REQUIRED_KEY: undefined }, () =>
-      runSchemaRepairPass([{ ref: "memories/credential", reason: "missing description" }], {
-        startMs: Date.now(),
-        budgetMs: 30_000,
-        stashDir,
-        llmRunner: {
-          kind: "llm",
-          engine: "repair",
-          connection: { endpoint: "http://localhost/v1/chat", model: "test" },
-          credential: { names: ["AKM_SCHEMA_REPAIR_REQUIRED_KEY"], required: true },
-        },
-        findFilePath: async () => memFile,
-        isLessonCandidateFn: () => false,
-        chatFn: async () => {
-          chatCalls += 1;
-          return JSON.stringify({ description: "wrong" });
-        },
-      }),
-    );
-
-    await expect(failure).rejects.toBeInstanceOf(ConfigError);
-    await expect(failure).rejects.toMatchObject({ code: "INVALID_CONFIG_FILE" });
-    expect(chatCalls).toBe(0);
-    const { listProposals } = await import("../../../src/commands/proposal/repository");
-    expect(listProposals(stashDir)).toEqual([]);
-    expect(fs.readFileSync(memFile, "utf8")).toBe("---\n---\nCredential-bound content.\n");
-  });
-
   test("runSchemaRepairPass queues a proposal instead of writing directly to disk", async () => {
     const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
     const { listProposals } = await import("../../../src/commands/proposal/repository");
@@ -430,49 +392,6 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     expect(listProposals(stashDir)).toHaveLength(1);
   });
 
-  test("two-item schema repair validates a required credential before any proposal or event", async () => {
-    const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
-    const { listProposals } = await import("../../../src/commands/proposal/repository");
-    const stashDir = makeTempDir("akm-m3-schema-batch-required-");
-    const files = new Map<string, string>();
-    for (const name of ["first", "second"]) {
-      const ref = `memories/${name}`;
-      const file = path.join(stashDir, "memories", `${name}.md`);
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, `---\n---\n${name} body.\n`, "utf8");
-      files.set(ref, file);
-    }
-    configureStash(stashDir);
-
-    await withEnv({ AKM_SCHEMA_BATCH_KEY: undefined }, async () => {
-      await expect(
-        runSchemaRepairPass(
-          [
-            { ref: "memories/first", reason: "missing description" },
-            { ref: "memories/second", reason: "missing description" },
-          ],
-          {
-            startMs: Date.now(),
-            budgetMs: 30_000,
-            stashDir,
-            llmRunner: {
-              kind: "llm",
-              engine: "repair",
-              connection: { endpoint: "http://localhost/v1/chat", model: "test" },
-              credential: { names: ["AKM_SCHEMA_BATCH_KEY"], required: true },
-            },
-            findFilePath: async (ref) => files.get(ref) ?? null,
-            isLessonCandidateFn: () => false,
-            chatFn: async () => JSON.stringify({ description: "must not run" }),
-          },
-        ),
-      ).rejects.toBeInstanceOf(ConfigError);
-    });
-
-    expect(listProposals(stashDir)).toEqual([]);
-    expect(readEvents({ type: "schema_repair_invoked" }).events).toEqual([]);
-  });
-
   test("each schema-repair dispatch reads the credential current at that call", async () => {
     const { runSchemaRepairPass } = await import("../../../src/commands/sources/schema-repair");
     const { listProposals } = await import("../../../src/commands/proposal/repository");
@@ -501,10 +420,8 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
           budgetMs: 30_000,
           stashDir,
           llmRunner: {
-            kind: "llm",
-            engine: "repair",
-            connection: { endpoint: "http://localhost/v1/chat", model: "test" },
-            credential: { names: ["AKM_SCHEMA_BATCH_KEY"], required: true },
+            ...testLlmRunner({ endpoint: "http://localhost/v1/chat", model: "test" }, "repair"),
+            apiKey: "$AKM_SCHEMA_BATCH_KEY",
           },
           findFilePath: async (ref) => files.get(ref) ?? null,
           isLessonCandidateFn: () => false,
@@ -572,10 +489,7 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: {
-        default: { kind: "llm", endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "test" },
-      },
-      defaults: { llmEngine: "default" },
+      connections: { default: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "test" } } },
     });
 
     const { appendEvent: appendFeedbackEvent } = await import("../../../src/core/events");
@@ -641,9 +555,7 @@ describe("zero-signal stash: 0 eligible refs when stash has no feedback or retri
       stashDir,
       config: {
         semanticSearchMode: "off",
-        engines: {
-          default: { kind: "llm", endpoint: "http://localhost/chat/completions", model: "test" },
-        },
+        connections: { default: { endpoint: "http://localhost/chat/completions", models: { fast: "test" } } },
         improve: {
           strategies: {
             default: {
@@ -656,7 +568,6 @@ describe("zero-signal stash: 0 eligible refs when stash has no feedback or retri
             },
           },
         },
-        defaults: { llmEngine: "default" },
       },
       ensureIndexFn: async () => false,
       reflectFn: async ({ ref }) => {

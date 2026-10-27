@@ -327,7 +327,7 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
   if (detail === "normal") {
     // `warnings` is projected at `normal` so non-fatal hit-level issues are
     // visible without forcing callers up to `--detail full`. Optional
-    // `quality` (v1 spec §4.2) is also surfaced when present so callers
+    // `quality` is also surfaced when present so callers
     // can see why a `proposed` entry showed up under `--include-proposed`.
     const shaped = capDescription(
       pickFields(hit, [
@@ -404,7 +404,6 @@ export function shapeShowOutput(
       "run",
       "setup",
       "cwd",
-      "toolPolicy",
       "modelHint",
       "agent",
       "parameters",
@@ -434,7 +433,6 @@ export function shapeShowOutput(
     "content",
     "template",
     "prompt",
-    "toolPolicy",
     "modelHint",
     "agent",
     "parameters",

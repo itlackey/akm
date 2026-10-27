@@ -72,10 +72,7 @@ describe("collectEgressAdvisory (08 surfaces 3/9)", () => {
         team: { git: "https://github.com/x/y.git" },
         local: { path: "/stash" },
       },
-      engines: {
-        judge: { kind: "llm", endpoint: "http://127.0.0.1:1234/v1/chat/completions" },
-        agent: { kind: "agent" },
-      },
+      connections: { judge: { endpoint: "http://127.0.0.1:1234/v1/chat/completions" } },
       embedding: { endpoint: "http://127.0.0.1:8080" },
     });
     expect(adv?.name).toBe("egress-endpoints");
@@ -83,7 +80,7 @@ describe("collectEgressAdvisory (08 surfaces 3/9)", () => {
     const endpoints = adv?.evidence?.endpoints as string[];
     expect(endpoints).toContain("registry reg: https://example.com/index.json");
     expect(endpoints).toContain("source team (git): https://github.com/x/y.git");
-    expect(endpoints).toContain("llm judge: http://127.0.0.1:1234/v1/chat/completions");
+    expect(endpoints).toContain("connection judge: http://127.0.0.1:1234/v1/chat/completions");
     expect(endpoints).toContain("embedding: http://127.0.0.1:8080");
     expect(endpoints.some((e) => e.includes("disabled.example.com"))).toBe(false);
     expect(endpoints.some((e) => e.includes("/stash"))).toBe(false);
@@ -97,7 +94,7 @@ describe("collectEgressAdvisory (08 surfaces 3/9)", () => {
   test("never prints a credential carried in a configured URL", () => {
     const adv = collectEgressAdvisory({
       bundles: { team: { git: "https://bot:hunter2secret@git.example.com/team/stash.git" } },
-      engines: { lab: { kind: "llm", endpoint: "https://llm.example.com/v1?token=tok-abc123secret&x=1" } },
+      connections: { lab: { endpoint: "https://llm.example.com/v1?token=tok-abc123secret&x=1" } },
       embedding: { endpoint: "https://embed.example.com/v1?api_key=key-zz9secret" },
     });
     const text = JSON.stringify(adv);

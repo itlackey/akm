@@ -5,14 +5,14 @@
 /**
  * Shared prompt builders for proposal-producing agent commands (#226).
  *
- * `akm reflect` and `akm proposal new` both ask the configured engine for a
+ * `akm reflect` and `akm proposal new` both ask the connection or harness they run on for a
  * structured proposal payload. The prompts are intentionally similar and share
- * their construction here. `proposal new` asks every engine kind for the JSON
+ * their construction here. `proposal new` asks a connection and a harness alike for the JSON
  * object below, with {@link PROPOSAL_JSON_SCHEMA} as the request's output
- * schema. Reflect asks every engine kind for its own contract, JSON Schema or
+ * schema. Reflect asks both for its own contract, JSON Schema or
  * framed markdown ({@link ReflectOutputMode}).
  *
- * The output an engine must produce for `proposal new` is a strict JSON object:
+ * The output `proposal new` needs back is a strict JSON object:
  *
  * ```json
  * {
@@ -40,7 +40,7 @@ import {
 } from "../../core/authoring-rules";
 import { isRecord } from "../../core/common";
 import { parseEmbeddedJsonResponse, stripCodeFences, stripThinkBlocks } from "../../core/parse";
-import type { StructuredValidation } from "../../core/structured";
+import type { Parsed } from "../../core/structured";
 import type { ExecutionJsonObject } from "../../execution/json";
 
 /** Agent-returned proposal payload (after JSON parse). */
@@ -71,7 +71,7 @@ const TYPE_HINTS: Record<string, string> = {
   command:
     "command assets are markdown with optional frontmatter (`name`, `description`). The body is the prompt template the user invokes.",
   agent:
-    "agent assets are markdown with frontmatter describing the agent role (`name`, `description`, optional `tools`, `model`).",
+    "agent assets are markdown with frontmatter describing the agent role (`name`, `description`, optional `model`).",
   knowledge: "knowledge assets are reference markdown documents. Include a top-level `# Title` and concise sections.",
   memory:
     "memory assets are short factual notes the user wants persisted across sessions. Frontmatter usually includes `description`.",
@@ -111,7 +111,7 @@ export const REFLECT_CONTENT_CAP = 12_000;
 export const REFLECT_TRUNCATION_MARKER = "... [truncated — focus on the visible portion]";
 
 /**
- * The JSON envelope `proposal new` asks the engine to honour. The wrapper code
+ * The JSON envelope `proposal new` asks the model to honour. The wrapper code
  * uses `JSON.parse(stdout)` to extract the payload — anything outside the JSON
  * object will be treated as a parse error.
  */
@@ -133,10 +133,10 @@ const RESPONSE_CONTRACT_JSON = [
 
 /**
  * The JSON Schema of {@link RESPONSE_CONTRACT_JSON}'s object, the output
- * schema `proposal new` sends with its request: an LLM engine gets it as
- * `response_format`, codex as `--output-schema`, every agent engine as the
- * shared schema instruction. It is in the strict form those native channels
- * accept (every property required, no others), so it leaves out the optional
+ * schema `proposal new` sends with its request: a connection gets it as
+ * `response_format`, a harness as the shared schema instruction. It
+ * is in the strict form a provider's native channel accepts (every property
+ * required, no others), so it leaves out the optional
  * `frontmatter`, which `content` already carries. The reply is held only to
  * what {@link validateProposalPayload} needs.
  */
@@ -195,23 +195,16 @@ export interface ReflectPromptInput {
    * proposals that have already been reviewed and refused.
    */
   rejectedProposals?: RejectedProposalContext[];
-  /**
-   * Prior draft content from the previous refinement iteration (R-1 / #372).
-   * When set, the agent is asked to critique the draft and produce a better
-   * version. Self-Refine arXiv:2303.17651 — iterative feedback+revise loop.
-   */
-  priorDraft?: string;
-  /** The response contract, for any engine kind. Defaults to the JSON Schema contract. */
+  /** The response contract, for a connection or a harness. Defaults to the JSON Schema contract. */
   outputMode?: ReflectOutputMode;
   /**
    * Override for the asset-content character cap (#952). Undefined keeps
-   * today's flat {@link REFLECT_CONTENT_CAP} (12 000 chars) — the safe
-   * default for agent/SDK runners whose prompt travels through CLI argv.
-   * Direct-LLM callers may pass a larger, context-aware budget since their
-   * prompt never touches argv; see the reflect dispatch site for how it's
-   * computed.
+   * the flat {@link REFLECT_CONTENT_CAP} (12 000 chars): the safe default for
+   * a harness whose prompt travels as a CLI argument, which the OS limits.
+   * A prompt that never touches argv may pass a larger, context-aware budget,
+   * or `null` for no cap; see the reflect dispatch site for how it is chosen.
    */
-  contentBudgetChars?: number;
+  contentBudgetChars?: number | null;
 }
 
 export type ReflectOutputMode = "json_schema" | "framed_markdown";
@@ -380,12 +373,13 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
 
   if (input.assetContent?.trim()) {
     // Cap defaults to REFLECT_CONTENT_CAP (12 000 chars) to stay well under OS
-    // ARG_MAX when the prompt is passed as a CLI argument to opencode/claude
-    // — large assets (wiki snapshots, long runbooks) would otherwise trigger
-    // E2BIG on posix_spawn. Direct-LLM callers never touch argv, so they may
-    // pass a larger, context-aware `contentBudgetChars` (#952); it is never
-    // allowed below the flat floor, which the caller enforces before calling in.
-    const contentCap = input.contentBudgetChars ?? REFLECT_CONTENT_CAP;
+    // ARG_MAX when the prompt is passed as a CLI argument — large assets (wiki
+    // snapshots, long runbooks) would otherwise trigger E2BIG on posix_spawn.
+    // A prompt on stdin or over HTTP never touches argv, so the caller passes a
+    // larger, context-aware `contentBudgetChars` (#952), or `null` for none; a
+    // number is never allowed below the flat floor, which the caller enforces.
+    const contentCap =
+      input.contentBudgetChars === null ? Number.POSITIVE_INFINITY : (input.contentBudgetChars ?? REFLECT_CONTENT_CAP);
     const body = input.assetContent.trimEnd();
     const truncated = body.length > contentCap;
     sections.push(
@@ -432,22 +426,6 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     );
   }
 
-  // R-1 / #372: Self-Refine (arXiv:2303.17651) — inject prior draft as critique target.
-  // On refinement iterations (iter > 0), the agent is shown its previous proposal
-  // and asked to self-critique and improve it rather than starting from scratch.
-  if (input.priorDraft?.trim()) {
-    sections.push(
-      "## Self-Refine: Critique and Improve\n" +
-        "The following is your previous draft proposal. " +
-        "Identify specific weaknesses: missing evidence, vague wording, incomplete frontmatter, " +
-        "or claims that duplicate existing content without adding new signal. " +
-        "Then produce an improved version that addresses those weaknesses.\n\n" +
-        "Previous draft:\n```\n" +
-        input.priorDraft.trimEnd() +
-        "\n```",
-    );
-  }
-
   if (input.ref && input.assetContent?.trim()) {
     const problems = frontmatterProblems(input.assetContent);
     sections.push(
@@ -479,7 +457,7 @@ export interface ProposePromptInput {
 
 /**
  * Build the prompt for `akm proposal new <type> <name> --task ...`. Asks the
- * engine to author a brand-new asset of the given type fulfilling `task`, and
+ * model to author a brand-new asset of the given type fulfilling `task`, and
  * to return it as the JSON object of {@link RESPONSE_CONTRACT_JSON}.
  */
 export function buildProposePrompt(input: ProposePromptInput): string {
@@ -543,7 +521,7 @@ export function parseAgentProposalPayload(stdout: string): AgentProposalPayload 
  * `content` must be non-empty strings. A malformed optional field is dropped,
  * never refused.
  */
-export function validateProposalPayload(parsed: unknown): StructuredValidation<AgentProposalPayload> {
+export function validateProposalPayload(parsed: unknown): Parsed<AgentProposalPayload> {
   if (!isRecord(parsed)) return { ok: false, errors: ["agent response is not a JSON object"] };
   if (typeof parsed.ref !== "string" || !parsed.ref.trim()) {
     return { ok: false, errors: ['agent response missing required string field "ref"'] };

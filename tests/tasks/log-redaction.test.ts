@@ -8,7 +8,7 @@
  *
  * The failure this guards against in BOTH directions: a configured secret
  * echoed by a scheduled command was persisted verbatim, and the obvious fix
- * (treat every non-allowlisted env value as secret) would have turned ordinary
+ * (treat every env value as secret) would have turned ordinary
  * build output into `[REDACTED]` confetti. The over-redaction cases below are
  * not padding — they are the reason the collector is shaped the way it is.
  */
@@ -63,17 +63,19 @@ describe("secret-name inference (#755)", () => {
 });
 
 describe("collectTaskLogSensitiveValues (#755)", () => {
-  test("collects a config-declared engine credential at any length", () => {
+  test("collects a config-declared connection credential at any length", () => {
     const values = collectTaskLogSensitiveValues({
-      env: { AKM_ENGINE_MAIN_API_KEY: "xy" },
-      config: { engines: { main: { kind: "llm", endpoint: "https://api.example.com", model: "m" } } },
+      env: { MAIN_KEY: "xy" },
+      config: {
+        connections: { main: { endpoint: "https://api.example.com", models: { fast: "m" }, apiKey: "$MAIN_KEY" } },
+      },
     });
     // Two characters — a DECLARED secret has no length floor, because the
     // operator told us what it is rather than akm guessing.
     expect(values).toContain("xy");
   });
 
-  test("collects the embedding key the engine collector does not cover", () => {
+  test("collects the embedding key the connection collector does not cover", () => {
     const declared = collectTaskLogSensitiveValues({
       env: { CUSTOM_EMBED: "embed-secret-value" },
       config: { embedding: { apiKey: "${CUSTOM_EMBED}" } },
@@ -122,12 +124,6 @@ describe("collectTaskLogSensitiveValues (#755)", () => {
       npm_config_registry: "https://registry.npmjs.org/",
     };
     expect(collectTaskLogSensitiveValues({ env })).toEqual([]);
-  });
-
-  test("an allowlisted name is not treated as secret even when its shape matches", () => {
-    // LLM_BASE_URL is policy-allowlisted; a plain URL there is configuration.
-    const values = collectTaskLogSensitiveValues({ env: { LLM_BASE_URL: "https://api.example.com/v1" } });
-    expect(values).not.toContain("https://api.example.com/v1");
   });
 
   test("end to end: the secret goes, the log survives", () => {

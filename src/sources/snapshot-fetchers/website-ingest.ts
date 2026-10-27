@@ -127,7 +127,7 @@ interface WebsiteValidationOptions extends WebsiteUrlValidationOptions {
    * When set, `fetchWebsitePage` re-checks the *final* (post-redirect) URL
    * against this policy and drops the page (warnVerbose, no error) when
    * disallowed. Only `crawlWebsite` passes this — `fetchWebsiteMarkdownSnapshot`
-   * (single-URL, user-typed fetches) intentionally stays ungated per spec §1.
+   * (single-URL, user-typed fetches) intentionally stays ungated.
    * Without this, `normalizeCrawlUrl` stripping trailing slashes plus a
    * server's own redirect (e.g. `/secret` -> `/secret/`) could land on a page
    * disallowed by a `Disallow: /secret/`-shaped rule that was never re-checked
@@ -675,7 +675,7 @@ async function resolveCrawlRobotsDecision(
 }
 
 /**
- * C-02/C-03: fail fast, before any page fetch, when the start URL itself is
+ * Fail fast, before any page fetch, when the start URL itself is
  * off-limits per an actually-parsed robots.txt rule. A 5xx on robots.txt
  * itself no longer reaches this as `disallowAll`: `loadRobotsTxt` reports it the same way a
  * 4xx is reported (`ALLOW_ALL_RULES`), with its own warning, rather than
@@ -688,7 +688,7 @@ async function resolveCrawlRobotsDecision(
  * `normalizeSiteUrl` stripped any trailing slash — via
  * `decideRobotsAllowance`. Without this, a start URL typed as `.../secret/`
  * under `Disallow: /secret/` would never match that rule and would be
- * crawled instead of rejected with the spec §4.6 C-02 UsageError; conversely,
+ * crawled instead of rejected with a UsageError; conversely,
  * a start URL typed as `.../docs/` under `Disallow: / \n Allow: /docs/`
  * would be normalized to `.../docs`, fail to match `Allow: /docs/`, and be
  * rejected even though the site owner explicitly opened `/docs/` to
@@ -1020,7 +1020,7 @@ async function websitePageFromResponse(
   // `Disallow: /secret/` correctly lets `/secret` through that gate; if the
   // server then redirects to `/secret/` (a common trailing-slash
   // canonicalization), the disallowed page would otherwise be fetched and
-  // stored without ever being weighed against robots.txt. See spec §4.6 C-04.
+  // stored without ever being weighed against robots.txt.
   // Checks `rawFinalUrl` (the un-normalized `response.url`, slash intact) as
   // well as `finalUrl`, per `isCrawlUrlAllowedByRobots` — `normalizeCrawlUrl`
   // would otherwise strip the very trailing slash a `Disallow: /secret/`
@@ -1107,8 +1107,7 @@ async function fetchWebsiteResponse(
     // `/secret/` even when robots.txt disallows it, because that hop is
     // never the queue URL and never the final URL. Only gated when a
     // `RobotsPolicy` was actually threaded in (`crawlWebsite`); single-URL
-    // `fetchWebsiteMarkdownSnapshot` fetches stay deliberately ungated per
-    // spec §1.
+    // `fetchWebsiteMarkdownSnapshot` fetches stay deliberately ungated.
     if (options?.robots) {
       const normalizedNext = normalizeCrawlUrl(nextUrl);
       if (!normalizedNext) {
@@ -1139,15 +1138,15 @@ async function fetchWebsiteResponse(
 
 /**
  * Fetches and classifies `<origin>/robots.txt`. Reuses `fetchWebsiteResponse`
- * (spec §6.2: no second fetch path) so robots.txt gets the exact same SSRF
+ * (no second fetch path) so robots.txt gets the exact same SSRF
  * guards, retry, and redirect handling as a page fetch.
  *
  * Steps 1–2 (the guard on the INITIAL URL) run OUTSIDE the try/catch on
  * purpose: a guard rejection there must propagate as-is, never be downgraded
- * to "unavailable" (spec §4.5 F-12, §6.2). Guard rejections on a LATER
+ * to "unavailable". Guard rejections on a LATER
  * redirect hop happen inside `fetchWebsiteResponse`, which the try/catch
  * below does cover — the guard has already refused to fetch that host, so
- * only the error *reporting* is downgraded (F-11).
+ * only the error *reporting* is downgraded.
  */
 export async function loadRobotsTxt(
   robotsUrl: string,
@@ -1181,7 +1180,7 @@ export async function loadRobotsTxt(
 
     if (response.status >= 500 && response.status < 600) {
       await response.body?.cancel().catch(() => undefined);
-      // Guard-audit finding 12: RFC 9309 §2.3.1.4 recommends treating an
+      // RFC 9309 §2.3.1.4 recommends treating an
       // unreachable robots.txt as a full disallow, but for a personal tool
       // crawling a site the operator explicitly chose, a transient 5xx on
       // the site's OWN robots.txt is not a site owner's Disallow — it is the

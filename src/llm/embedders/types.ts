@@ -14,7 +14,7 @@ export type EmbeddingVector = number[];
 
 /**
  * Common embedder interface implemented by both the local
- * (@huggingface/transformers) and remote (OpenAI-compatible) embedders.
+ * (onnxruntime-node) and remote (OpenAI-compatible) embedders.
  *
  * Both methods are required: query paths use `embed()`, indexer paths use
  * `embedBatch()` for throughput.
@@ -31,14 +31,18 @@ export interface Embedder {
 
 export type EmbeddingCheckResult =
   | { available: true }
-  | { available: false; reason: "missing-package" | "model-download-failed" | "remote-unreachable"; message: string };
+  | {
+      available: false;
+      reason: "runtime-unavailable" | "model-download-failed" | "remote-unreachable";
+      message: string;
+    };
 
 /**
  * Cosine similarity between two embedding vectors.
  *
  * Lives next to {@link EmbeddingVector} so importers (notably `db.ts`)
  * can pull just the math without dragging in the embedder facade and its
- * transitive Transformers.js runtime import chain.
+ * transitive embedding runtime import chain.
  *
  * Returns 0 when the vectors have different dimensions — silently
  * computing on a truncated view would produce meaningless scores.

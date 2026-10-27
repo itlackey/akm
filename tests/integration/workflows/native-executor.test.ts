@@ -1124,8 +1124,8 @@ Do second.
       code: "untranslated-field",
       severity: "warning" as const,
       adapter: "codex",
-      field: "tools",
-      message: "tool selection was not translated",
+      field: "inference.vendorKnob",
+      message: "inference knob was not translated",
     };
     const result = await runWorkflowSteps({
       target: RUN_ID,

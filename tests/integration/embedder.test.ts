@@ -1,43 +1,40 @@
-import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import path from "node:path";
-import { setSecret } from "../../src/commands/env/secret";
+import { beforeEach, describe, expect, test } from "bun:test";
 import type { EmbeddingConnectionConfig } from "../../src/core/config/config";
-import { setQuiet } from "../../src/core/warn";
+import { writeCredential } from "../../src/core/config/credentials";
 import {
-  _setTransformersLoaderForTests,
+  _setLocalPipelineLoaderForTests,
+  checkEmbeddingAvailability,
   cosineSimilarity,
+  DEFAULT_LOCAL_MODEL,
   embed,
   embedBatch,
-  isEmbeddingAvailable,
+  localEmbeddingRuntime,
   resetLocalEmbedder,
 } from "../../src/llm/embedder";
-import { LocalEmbedder } from "../../src/llm/embedders/local";
+import { LocalEmbedder, LocalRuntimeUnavailableError } from "../../src/llm/embedders/local";
 import { buildTokenBoundedBatches, estimateTokenCount, RemoteEmbedder } from "../../src/llm/embedders/remote";
-import { withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
 
-let pipelineImpl: ((task: string, model: string, options?: { dtype?: string }) => Promise<unknown>) | undefined;
+/** What the faked model loader hands out: the loaded model, one vector per text. */
+let loadedModel: ((texts: string[]) => Promise<Float32Array[]>) | undefined;
+let loadedModelNames: string[] = [];
 
-function createLocalVector(values: number[] = [0.1, 0.2, 0.3], dimension = 384): Float32Array {
-  const vector = new Float32Array(dimension);
-  values.forEach((value, index) => {
-    vector[index] = value;
-  });
-  return vector;
+function vectorOf(...values: number[]): Float32Array {
+  return Float32Array.from(values);
 }
 
 beforeEach(() => {
   resetLocalEmbedder();
-  pipelineImpl = undefined;
-  overrideSeam(_setTransformersLoaderForTests, async () => ({
-    env: { backends: { onnx: { wasm: {} } } },
-    pipeline: async (task: string, model: string, options?: { dtype?: string }) => {
-      if (!pipelineImpl) {
-        throw new Error("pipelineImpl not configured");
-      }
-      return pipelineImpl(task, model, options);
-    },
-  }));
+  loadedModel = undefined;
+  loadedModelNames = [];
+  overrideSeam(_setLocalPipelineLoaderForTests, async (modelName: string) => {
+    loadedModelNames.push(modelName);
+    if (!loadedModel) {
+      throw new Error("loadedModel not configured");
+    }
+    return loadedModel;
+  });
 });
 
 function createMockEmbeddingServer(
@@ -135,7 +132,7 @@ describe("remote embed", () => {
     }
   });
 
-  test("resolves a secrets ref apiKey from the store at header-building time (#917)", async () => {
+  test("reads the key stored for the embedding at header-building time when config names none (#917)", async () => {
     const storage = withIsolatedAkmStorage();
     let capturedAuth = "";
     const server = Bun.serve({
@@ -154,13 +151,12 @@ describe("remote embed", () => {
       },
     });
     try {
-      setSecret(path.join(storage.stashDir, "secrets", "embed-key"), Buffer.from("store-secret-value"));
       const config: EmbeddingConnectionConfig = {
         endpoint: `http://localhost:${server.port}`,
         model: "test-model",
-        apiKey: "${secrets/embed-key}",
       };
-      await embed("secret store apiKey header test", config);
+      writeCredential({ service: "embedding" }, "store-secret-value", config.endpoint as string);
+      await embed("stored credential header test", config);
       expect(capturedAuth).toBe("Bearer store-secret-value");
     } finally {
       server.stop(true);
@@ -206,23 +202,23 @@ describe("remote embed", () => {
     }
   });
 
-  test("isEmbeddingAvailable returns true for valid remote endpoint", async () => {
+  test("checkEmbeddingAvailability reports a valid remote endpoint available", async () => {
     const { url, server } = createMockEmbeddingServer([0.1, 0.2]);
     try {
       const config: EmbeddingConnectionConfig = { endpoint: url, model: "test-model" };
-      const available = await isEmbeddingAvailable(config);
+      const { available } = await checkEmbeddingAvailability(config);
       expect(available).toBe(true);
     } finally {
       server.stop(true);
     }
   });
 
-  test("isEmbeddingAvailable returns false for unreachable endpoint", async () => {
+  test("checkEmbeddingAvailability reports an unreachable endpoint unavailable", async () => {
     const config: EmbeddingConnectionConfig = {
       endpoint: "http://localhost:1",
       model: "test-model",
     };
-    const available = await isEmbeddingAvailable(config);
+    const { available } = await checkEmbeddingAvailability(config);
     expect(available).toBe(false);
   });
 
@@ -495,229 +491,104 @@ describe("cosineSimilarity", () => {
   });
 });
 
-describe("local embedder pipeline setup", () => {
-  test("routes Transformers.js file caching through the stable HF_HOME", async () => {
-    const transformersEnv = {
-      backends: { onnx: { wasm: {} } },
-      cacheDir: "node_modules/@huggingface/transformers/.cache",
-    };
-    const stableHfHome = path.join("stable", "huggingface");
-    const fakeModule = {
-      env: transformersEnv,
-      pipeline: async () => async () => ({ data: createLocalVector() }),
-    };
-    overrideSeam(_setTransformersLoaderForTests, async () => fakeModule);
-
-    await withEnv({ HF_HOME: stableHfHome }, async () => {
-      await embed("cache me");
-      expect(transformersEnv.cacheDir).toBe(stableHfHome);
-    });
-  });
-
-  test("disables remote model loading when HF_HUB_OFFLINE is enabled", async () => {
-    const transformersEnv: {
-      allowRemoteModels?: boolean;
-      backends: { onnx: { wasm: Record<string, never> } };
-    } = {
-      backends: { onnx: { wasm: {} } },
-    };
-    overrideSeam(_setTransformersLoaderForTests, async () => ({
-      env: transformersEnv,
-      pipeline: async () => async () => ({ data: createLocalVector() }),
-    }));
-
-    await withEnv({ HF_HUB_OFFLINE: "1" }, async () => {
-      await embed("offline model");
-      expect(transformersEnv.allowRemoteModels).toBe(false);
-    });
-  });
-
-  test("requests fp32 dtype for local embeddings", async () => {
-    const pipelineMock = mock(async (_task: string, _model: string, options?: { dtype?: string }) => {
-      expect(options?.dtype).toBe("fp32");
-      return async () => ({ data: createLocalVector([0.1, 0.2, 0.3]) });
-    });
-
-    pipelineImpl = pipelineMock;
+describe("local embedder", () => {
+  test("embeds one text with the default model", async () => {
+    loadedModel = async (texts) => texts.map(() => vectorOf(0.1, 0.2, 0.3));
 
     const result = await embed("hello local");
+
     expect(result[0]).toBeCloseTo(0.1, 6);
     expect(result[1]).toBeCloseTo(0.2, 6);
     expect(result[2]).toBeCloseTo(0.3, 6);
-    expect(pipelineMock).toHaveBeenCalledTimes(1);
+    expect(loadedModelNames).toEqual([DEFAULT_LOCAL_MODEL]);
   });
 
-  test("falls back to default pipeline options when dtype is rejected", async () => {
-    const pipelineMock = mock(async (_task: string, _model: string, options?: { dtype?: string }) => {
-      if (options?.dtype === "fp32") {
-        throw new Error('Unsupported dtype "fp32"');
-      }
-      expect(options?.dtype).toBe("auto");
-      return async () => ({ data: createLocalVector([0.4, 0.5, 0.6]) });
-    });
+  test("loads the model once for concurrent calls and reports the runtime it embedded with", async () => {
+    loadedModel = async (texts) => texts.map(() => vectorOf(1, 0));
+    expect(localEmbeddingRuntime()).toBeUndefined();
 
-    pipelineImpl = pipelineMock;
+    await Promise.all([embed("one"), embed("two"), embed("three")]);
 
-    // setQuiet(false): harness defaults to quiet=true; opt into noisy mode so
-    // warn() calls from production code reach the warnSpy.
-    setQuiet(false);
-    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-
-    try {
-      const result = await embed("hello fallback");
-      expect(result[0]).toBeCloseTo(0.4, 6);
-      expect(result[1]).toBeCloseTo(0.5, 6);
-      expect(result[2]).toBeCloseTo(0.6, 6);
-      expect(pipelineMock).toHaveBeenCalledTimes(2);
-      expect(pipelineMock.mock.calls[0]?.[2]).toEqual({ dtype: "fp32" });
-      expect(pipelineMock.mock.calls[1]?.[2]).toEqual({ dtype: "auto" });
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      warnSpy.mockRestore();
-      setQuiet(true); // restore harness default
-    }
+    expect(loadedModelNames).toEqual([DEFAULT_LOCAL_MODEL]);
+    expect(localEmbeddingRuntime()).toBe("onnxruntime-node");
   });
 
-  test("never retries without a dtype option after fp32 rejection", async () => {
-    const pipelineMock = mock(async (_task: string, _model: string, options?: { dtype?: string }) => {
-      if (options?.dtype === "fp32") {
-        throw new Error('Unsupported dtype "fp32"');
-      }
-      if (!options || options.dtype === undefined) {
-        throw new Error("pipeline retried without dtype");
-      }
-      return async () => ({ data: createLocalVector([0.7, 0.8, 0.9]) });
+  test("a model that fails to load is retried by the next call", async () => {
+    await expect(embed("first")).rejects.toThrow("loadedModel not configured");
+    expect(localEmbeddingRuntime()).toBeUndefined();
+
+    loadedModel = async (texts) => texts.map(() => vectorOf(1, 0));
+    expect(await embed("second")).toEqual([1, 0]);
+    expect(loadedModelNames).toHaveLength(2);
+  });
+
+  test("checkEmbeddingAvailability names a runtime that cannot load, not a model download", async () => {
+    overrideSeam(_setLocalPipelineLoaderForTests, async () => {
+      throw new LocalRuntimeUnavailableError("no native library", "platform");
+    });
+    expect(await checkEmbeddingAvailability()).toEqual({
+      available: false,
+      reason: "runtime-unavailable",
+      message: "no native library",
     });
 
-    pipelineImpl = pipelineMock;
-
-    // setQuiet(false): harness defaults to quiet=true; opt into noisy mode so
-    // warn() calls from production code reach the warnSpy.
-    setQuiet(false);
-    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-
-    try {
-      const result = await embed("hello fallback auto");
-      expect(result[0]).toBeCloseTo(0.7, 6);
-      expect(result[1]).toBeCloseTo(0.8, 6);
-      expect(result[2]).toBeCloseTo(0.9, 6);
-      expect(pipelineMock).toHaveBeenCalledTimes(2);
-      expect(pipelineMock.mock.calls[0]?.[2]).toEqual({ dtype: "fp32" });
-      expect(pipelineMock.mock.calls[1]?.[2]).toEqual({ dtype: "auto" });
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      warnSpy.mockRestore();
-      setQuiet(true); // restore harness default
-    }
+    overrideSeam(_setLocalPipelineLoaderForTests, async () => {
+      throw new Error("HTTP 503");
+    });
+    expect(await checkEmbeddingAvailability()).toEqual({
+      available: false,
+      reason: "model-download-failed",
+      message: "HTTP 503",
+    });
   });
 });
 
-describe("local embedder batching — Tensor return shape (WS-3a blocker fix)", () => {
-  // The @huggingface/transformers feature-extraction pipeline returns a single
-  // Tensor for batch string[] input — NOT an Array<{data}>. The Tensor has:
-  //   .data: Float32Array of length (batch * dim)
-  //   .dims: [batch, dim]
-  // These tests lock the fix so a future regression does not silently revert
-  // to one-at-a-time fallback.
-
-  function makeBatchTensor(rows: number[][]): { data: Float32Array; dims: number[] } {
-    const batch = rows.length;
-    const dim = rows[0]?.length ?? 0;
-    const flat = new Float32Array(batch * dim);
-    for (let r = 0; r < batch; r++) {
-      for (let c = 0; c < dim; c++) {
-        flat[r * dim + c] = (rows[r] as number[])[c] as number;
-      }
-    }
-    return { data: flat, dims: [batch, dim] };
-  }
-
-  test("embedBatch slices a batch Tensor correctly — two texts, 4-dim", async () => {
-    // Pipeline returns a Tensor for the string[] call, single {data} for string.
+describe("local embedder batching", () => {
+  test("embedBatch returns one vector per text, in order — two texts, 4-dim", async () => {
     const row0 = [0.1, 0.2, 0.3, 0.4];
     const row1 = [0.5, 0.6, 0.7, 0.8];
+    loadedModel = async () => [vectorOf(...row0), vectorOf(...row1)];
 
-    pipelineImpl = async () => {
-      // Return a function (the "pipeline") that returns the batch Tensor.
-      return async (input: unknown) => {
-        if (Array.isArray(input)) {
-          return makeBatchTensor([row0, row1]);
-        }
-        // Single string → single result.
-        return { data: new Float32Array(row0) };
-      };
-    };
-
-    const embedder = new LocalEmbedder();
-    const results = await embedder.embedBatch(["text-a", "text-b"]);
+    const results = await new LocalEmbedder().embedBatch(["text-a", "text-b"]);
 
     expect(results).toHaveLength(2);
-    // Row 0
     expect(results[0]).toHaveLength(4);
     expect((results[0] as number[])[0]).toBeCloseTo(0.1, 6);
     expect((results[0] as number[])[3]).toBeCloseTo(0.4, 6);
-    // Row 1
     expect(results[1]).toHaveLength(4);
     expect((results[1] as number[])[0]).toBeCloseTo(0.5, 6);
     expect((results[1] as number[])[3]).toBeCloseTo(0.8, 6);
   });
 
-  test("embedBatch handles a single-item batch via Tensor shape", async () => {
-    const row0 = [1.0, 0.0, -0.5];
-
-    pipelineImpl = async () => {
-      return async (input: unknown) => {
-        if (Array.isArray(input)) {
-          return makeBatchTensor([row0]);
-        }
-        return { data: new Float32Array(row0) };
-      };
+  test("embedBatch runs 32 texts at a time and reports each chunk's indices", async () => {
+    const chunkSizes: number[] = [];
+    loadedModel = async (texts) => {
+      chunkSizes.push(texts.length);
+      return texts.map((text) => vectorOf(Number(text)));
     };
+    const texts = Array.from({ length: 70 }, (_, i) => String(i));
+    const committed: Array<{ indices: number[]; values: number[] }> = [];
 
-    const embedder = new LocalEmbedder();
-    const results = await embedder.embedBatch(["only-text"]);
+    const results = await new LocalEmbedder().embedBatch(texts, undefined, (indices, embeddings) => {
+      committed.push({ indices, values: embeddings.map((vector) => vector[0] as number) });
+    });
 
-    expect(results).toHaveLength(1);
-    expect((results[0] as number[])[0]).toBeCloseTo(1.0, 6);
-    expect((results[0] as number[])[1]).toBeCloseTo(0.0, 6);
-    expect((results[0] as number[])[2]).toBeCloseTo(-0.5, 6);
+    expect(chunkSizes).toEqual([32, 32, 6]);
+    expect(results.map((vector) => vector[0])).toEqual(texts.map(Number));
+    expect(committed.map((chunk) => chunk.indices.length)).toEqual([32, 32, 6]);
+    expect(committed[2]?.indices).toEqual([64, 65, 66, 67, 68, 69]);
+    expect(committed[2]?.values).toEqual([64, 65, 66, 67, 68, 69]);
   });
 
-  test("embedBatch rejects the retired Array<{data}> shape without re-executing texts", async () => {
-    const row0 = [0.3, 0.4];
-    const row1 = [0.7, 0.8];
-    let callCount = 0;
-
-    pipelineImpl = async () => {
-      return async (input: unknown) => {
-        callCount++;
-        if (Array.isArray(input)) {
-          return [{ data: new Float32Array(row0) }, { data: new Float32Array(row1) }];
-        }
-        return { data: new Float32Array(row0) };
-      };
-    };
-
-    const embedder = new LocalEmbedder();
-    await expect(embedder.embedBatch(["text-a", "text-b"])).rejects.toThrow(
-      "unexpected pipeline return shape for batch input",
-    );
-    expect(callCount).toBe(1);
-  });
-
-  test("embedBatch propagates a current pipeline failure without re-executing texts", async () => {
+  test("embedBatch propagates a model failure without re-executing texts", async () => {
     let callCount = 0;
     const failure = new Error("batch inference failed");
-
-    pipelineImpl = async () => {
-      return async (_input: unknown) => {
-        callCount++;
-        throw failure;
-      };
+    loadedModel = async () => {
+      callCount++;
+      throw failure;
     };
 
-    const embedder = new LocalEmbedder();
-    await expect(embedder.embedBatch(["t1", "t2"])).rejects.toBe(failure);
+    await expect(new LocalEmbedder().embedBatch(["t1", "t2"])).rejects.toBe(failure);
     expect(callCount).toBe(1);
   });
 });

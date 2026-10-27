@@ -27,6 +27,7 @@
 import { defineCommand } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
+import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import {
   defineGroupCommand,
   defineJsonCommand,
@@ -70,7 +71,7 @@ const bundleArg = {
  * other value spelling (`--<name>=false`, `--<name>=1`, `--<name>=`) walks
  * straight past it and is then absorbed downstream — by citty's non-strict
  * parser, or by `parseTaskInputFlags`' reserved-name skip — exactly the
- * silent-discard defect these rejecters exist to close (review round 1). The
+ * silent-discard defect these rejecters exist to close. The
  * name is taken as everything before the FIRST `=`, which is
  * `parseTaskInputFlags`' own split (see its `body.indexOf("=")` below), so the
  * rejecter and the scanner can never disagree about what a token names.
@@ -115,22 +116,21 @@ function rejectExplainScheduledFlag(): void {
   throw new UsageError('Unknown flag "--scheduled".', "UNKNOWN_FLAG");
 }
 
-// ── `akm task run` input flags — Stage 1: capture (spec §5.1) ──────────────
+// ── `akm task run` input flags — Stage 1: capture ───────────────────────────
 //
 // Mirrors `parseWorkflowParameterFlags` (src/commands/workflow-cli.ts:232-289)
 // exactly: the CLI carries RAW string/boolean flag values to the boundary
 // that knows the task's declared contract (Stage 2, src/tasks/run/load-task.ts)
 // — coercion happens once, there. `akm task run`'s own declared flags
 // (GLOBAL_OUTPUT_ARGS, --bundle, --scheduled) are excluded so they are never
-// mistaken for inputs (B-33).
+// mistaken for inputs.
 
 // `TASK_RUN_VALUE_FLAGS` / `TASK_RUN_BOOLEAN_FLAGS` are re-exported here
 // (unchanged in name, location, and value) from a dependency-free leaf module
 // so `src/tasks/source/task-source-v4.ts` can reject a declared `inputs:`
 // name that collides with one of them without importing this CLI file —
 // which would cycle back through `./tasks` -> `../../tasks/source/*` into the
-// parser (code-review finding, docs/plans/specs/p2b-input-bindings.md review
-// round 2; see `../../tasks/task-run-reserved-flags.ts`'s own header).
+// parser (see `../../tasks/task-run-reserved-flags.ts`'s own header).
 export { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS };
 
 const TASK_RUN_VALUE_FLAG_SET = new Set<string>(TASK_RUN_VALUE_FLAGS);
@@ -206,8 +206,8 @@ const tasksAddCommand = defineJsonCommand({
       description:
         'Exact shell string to run on the schedule (no AI agent), e.g. "akm improve --strategy consolidate".',
     },
-    engine: { type: "string", description: "Engine to use for prompt targets (default: defaults.engine)" },
-    model: { type: "string", description: "Model override for prompt targets" },
+    ...SELECTION_ARGS,
+    ...RETIRED_ENGINE_ARG,
     "timeout-ms": { type: "string", description: "Positive timeout in milliseconds for prompt or command targets" },
     params: { type: "string", description: "Workflow params as a JSON object" },
     name: { type: "string", description: "Human-readable name for the task" },
@@ -230,8 +230,7 @@ const tasksAddCommand = defineJsonCommand({
       workflow: args.workflow,
       prompt: args.prompt,
       command: args.command,
-      engine: args.engine,
-      model: args.model,
+      ...selectionFromArgs(args),
       timeoutMs: args["timeout-ms"] === undefined ? undefined : parsePositiveIntFlag(args["timeout-ms"]),
       params: args.params,
       name: args.name,
@@ -392,8 +391,7 @@ const tasksSyncCommand = defineJsonCommand({
   },
 });
 
-// ── `akm task explain` — read-only introspection (P2b Lane B, spec
-// docs/plans/specs/p2b-input-bindings.md §4.5, §1.7 B-N4) ──────────────────
+// ── `akm task explain` — read-only introspection ────────────────────────────
 
 const tasksExplainCommand = defineJsonCommand({
   meta: {

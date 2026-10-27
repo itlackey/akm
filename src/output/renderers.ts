@@ -248,19 +248,14 @@ const agentMdRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const parsedMd = parseFrontmatter(ctx.content());
-    const toolPolicy = parsedMd.data.tools as ShowResponse["toolPolicy"];
     const modelHint = typeof parsedMd.data.model === "string" ? parsedMd.data.model : undefined;
     return {
       type: "agent",
       name,
       path: ctx.absPath,
-      action: "Dispatch using the prompt below verbatim. Use modelHint and toolPolicy if present.",
+      action: "Dispatch using the prompt below verbatim. Use modelHint if present.",
       description: asNonEmptyString(parsedMd.data.description),
       prompt: parsedMd.content,
-      // `tools` is self-declared frontmatter and is passed through as-is. The
-      // host's `execution.allowedTools` caps it at dispatch (agent execution),
-      // so `show` does not filter it by source.
-      ...(toolPolicy !== undefined ? { toolPolicy } : {}),
       ...(modelHint !== undefined ? { modelHint } : {}),
     };
   },
@@ -290,7 +285,7 @@ const knowledgeMdRenderer: AssetRenderer = {
 // ── 4c. lesson-md ────────────────────────────────────────────────────────────
 
 /**
- * Renderer for the `lesson` asset type (v1 spec §13).
+ * Renderer for the `lesson` asset type.
  *
  * Lessons are markdown files with required `description` and `when_to_use`
  * frontmatter. The renderer projects both fields explicitly so consumers can

@@ -5,7 +5,7 @@
 /**
  * `akm-cli/api` `curate()` against the real CLI.
  *
- * Classification (AGENTS.md ORG-03): spawns the real CLI (`spawnSync`) for the
+ * Classification: spawns the real CLI (`spawnSync`) for the
  * equivalence baseline and `curate()` opens the real index database.
  *
  * Pins: (1) `curate()` returns byte-for-byte the stdout of

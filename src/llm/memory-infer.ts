@@ -20,13 +20,11 @@
 
 import memoryInferSystemPrompt from "../assets/prompts/memory-infer-system.md" with { type: "text" };
 import memoryInferUserPrompt from "../assets/prompts/memory-infer-user.md" with { type: "text" };
-import { toErrorMessage } from "../core/common";
-import type { AkmConfig } from "../core/config/config";
+import { effectiveRequestFields } from "../core/llm-inference";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { warn } from "../core/warn";
 import type { LoweringNotice } from "../execution/resolved-request";
-import { type RunnerSpec, runnerLlmConnection } from "../integrations/agent/runner";
-import type { TryLlmFeatureFallbackEvent } from "./feature-gate";
+import type { RunnerSpec } from "../integrations/agent/runner";
 import { callStructured } from "./structured-call";
 
 const SYSTEM_PROMPT = memoryInferSystemPrompt;
@@ -55,7 +53,7 @@ export interface DerivedMemoryDraft {
  * The model's explicit, successful decision that the memory needs no derived
  * memory (a tool-count or checkpoint note, or a note already adequate as it is).
  * This is a result, not a failure: failures (malformed or HTML replies, timeouts,
- * aborts, transport errors, a disabled pass) all stay `undefined`.
+ * aborts, transport errors) all stay `undefined`.
  */
 export interface MemoryInferNoChange {
   noChange: true;
@@ -80,8 +78,7 @@ export interface MemoryInferTelemetry {
 
 /**
  * Strict JSON Schema for the derived-memory payload. Sent as `response_format`
- * unless the engine sets `supportsJsonSchema: false`; the client drops it once
- * for a provider that rejects it.
+ * and the client drops it once for a provider that rejects it.
  *
  * Every property is required (a strict provider refuses otherwise), so the
  * explicit no-change decision is `noChange: true` with the other fields empty.
@@ -102,6 +99,54 @@ export const DERIVED_MEMORY_JSON_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/** The temperature a connection's request fields set, if any. */
+function configuredTemperature(runner: RunnerSpec): number | undefined {
+  const temperature =
+    runner.kind === "connection" ? effectiveRequestFields(runner.request, runner.inference).temperature : undefined;
+  return typeof temperature === "number" ? temperature : undefined;
+}
+
+/** Read the model's reply: a draft, an explicit no-change decision, or `undefined` for one that is unusable. */
+function parseDerivedMemory(raw: string): DerivedMemoryDraft | MemoryInferNoChange | undefined {
+  if (!raw) return undefined;
+  const parsed = parseEmbeddedJsonResponse<Record<string, unknown>>(raw);
+  if (!parsed) {
+    warn("memory inference: invalid JSON response from LLM; skipping memory.");
+    return undefined;
+  }
+  // Only a literal boolean `true` is a decision; anything else falls through
+  // to the complete-payload checks, so a malformed reply is never restraint.
+  if (parsed.noChange === true) return MEMORY_INFER_NO_CHANGE;
+  const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
+  const description = typeof parsed.description === "string" ? parsed.description.trim() : "";
+  const content = typeof parsed.content === "string" ? parsed.content.trim() : "";
+  const tags = Array.isArray(parsed.tags)
+    ? parsed.tags
+        .filter((t): t is string => typeof t === "string")
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .slice(0, 8)
+    : [];
+  const searchHints = Array.isArray(parsed.searchHints)
+    ? parsed.searchHints
+        .filter((h): h is string => typeof h === "string")
+        .map((h) => h.trim())
+        .filter(Boolean)
+        .slice(0, 6)
+    : [];
+  if (!title || !description || !content || tags.length === 0 || searchHints.length === 0) {
+    warn("memory inference: incomplete derived memory payload from LLM; skipping memory.");
+    return undefined;
+  }
+  if (
+    [title, description, content, ...tags, ...searchHints].some((value) => PROMPT_PLACEHOLDERS.has(value.toLowerCase()))
+  ) {
+    warn("memory inference: prompt placeholder response from LLM; skipping memory.");
+    return undefined;
+  }
+  return { title, description, tags, searchHints, content };
+}
+
 /**
  * Compress a single memory into one derived memory via the configured LLM.
  * `body` is the pass's effective input (a `Source context:` section, then the
@@ -109,20 +154,15 @@ export const DERIVED_MEMORY_JSON_SCHEMA = {
  *
  * Returns the draft, or {@link MEMORY_INFER_NO_CHANGE} when the model explicitly
  * decides the memory needs no derived memory. Returns `undefined` on any failure
- * (timeout, invalid JSON, empty or incomplete response, HTML, abort, disabled
- * pass), which is never the same thing as no-change. Errors are logged via `warn()` but never thrown — a failed split for one memory
- * must not abort the rest of the index pass.
- *
- * Routes through `callStructured({ feature: "memory_inference", ... })` so the
- * feature gate, error classification, and onFallback hook are honoured uniformly
- * (Fix C5).
+ * (timeout, invalid JSON, empty or incomplete response, HTML, abort), which is
+ * never the same thing as no-change. Failures are logged via `warn()` but never
+ * thrown — a failed split for one memory must not abort the rest of the index
+ * pass. Whether the pass runs at all is the pass's decision, not this helper's.
  */
 export async function compressMemoryToDerivedMemory(
   llmRunner: RunnerSpec,
   body: string,
   signal?: AbortSignal,
-  akmConfig?: AkmConfig,
-  onFallback?: (evt: TryLlmFeatureFallbackEvent) => void,
   telemetry?: MemoryInferTelemetry,
   onRetryAttempt?: () => void,
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void,
@@ -130,83 +170,27 @@ export async function compressMemoryToDerivedMemory(
   const trimmedBody = body.trim();
   if (!trimmedBody) return undefined;
 
-  const userPrompt = `${USER_PROMPT_PREFIX}${trimmedBody}`;
-
-  // Memory inference is always gated: no config closes the gate instead of
-  // taking callStructured's ungated path for direct callers.
-  if (!akmConfig) {
-    onFallback?.({ feature: "memory_inference", reason: "disabled" });
-    return undefined;
-  }
-
-  return callStructured<DerivedMemoryDraft | MemoryInferNoChange | undefined>({
-    feature: "memory_inference",
-    akmConfig,
+  const outcome = await callStructured({
     runner: llmRunner,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userPrompt },
+      { role: "user", content: `${USER_PROMPT_PREFIX}${trimmedBody}` },
     ],
     request: {
-      // The engine's or the process's configured temperature; 0.1 only when neither sets one.
-      temperature: runnerLlmConnection(llmRunner)?.temperature ?? 0.1,
-      ...(Object.hasOwn(llmRunner, "timeoutMs") ? { timeoutMs: llmRunner.timeoutMs } : {}),
+      // The connection's or the process's configured temperature; 0.1 only when neither sets one.
+      temperature: configuredTemperature(llmRunner) ?? 0.1,
       signal,
       responseSchema: DERIVED_MEMORY_JSON_SCHEMA as unknown as Record<string, unknown>,
       onRetryAttempt,
     },
     onNotices,
-    parse: (raw) => {
-      if (!raw) return undefined;
-      const parsed = parseEmbeddedJsonResponse<Record<string, unknown>>(raw);
-      if (!parsed) {
-        warn("memory inference: invalid JSON response from LLM; skipping memory.");
-        return undefined;
-      }
-      // Only a literal boolean `true` is a decision; anything else falls through
-      // to the complete-payload checks, so a malformed reply is never restraint.
-      if (parsed.noChange === true) return MEMORY_INFER_NO_CHANGE;
-      const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
-      const description = typeof parsed.description === "string" ? parsed.description.trim() : "";
-      const content = typeof parsed.content === "string" ? parsed.content.trim() : "";
-      const tags = Array.isArray(parsed.tags)
-        ? parsed.tags
-            .filter((t): t is string => typeof t === "string")
-            .map((t) => t.trim())
-            .filter(Boolean)
-            .slice(0, 8)
-        : [];
-      const searchHints = Array.isArray(parsed.searchHints)
-        ? parsed.searchHints
-            .filter((h): h is string => typeof h === "string")
-            .map((h) => h.trim())
-            .filter(Boolean)
-            .slice(0, 6)
-        : [];
-      if (!title || !description || !content || tags.length === 0 || searchHints.length === 0) {
-        warn("memory inference: incomplete derived memory payload from LLM; skipping memory.");
-        return undefined;
-      }
-      if (
-        [title, description, content, ...tags, ...searchHints].some((value) =>
-          PROMPT_PLACEHOLDERS.has(value.toLowerCase()),
-        )
-      ) {
-        warn("memory inference: prompt placeholder response from LLM; skipping memory.");
-        return undefined;
-      }
-      return { title, description, tags, searchHints, content };
-    },
-    onError: (cls, err) => {
-      if (cls === "html") {
-        if (telemetry) telemetry.htmlErrorCount = (telemetry.htmlErrorCount ?? 0) + 1;
-        warn(`memory inference: provider returned HTML instead of JSON; skipping memory: ${toErrorMessage(err)}`);
-        return undefined;
-      }
-      warn(`memory inference failed: ${toErrorMessage(err)}`);
-      return undefined;
-    },
-    fallback: undefined,
-    onFallback,
   });
+  if (outcome.ok) return parseDerivedMemory(outcome.raw);
+  if (outcome.result?.llmErrorCode === "provider_html_error") {
+    if (telemetry) telemetry.htmlErrorCount = (telemetry.htmlErrorCount ?? 0) + 1;
+    warn(`memory inference: provider returned HTML instead of JSON; skipping memory: ${outcome.error}`);
+  } else {
+    warn(`memory inference failed: ${outcome.error}`);
+  }
+  return undefined;
 }

@@ -16,12 +16,12 @@ import type { HealthCheckResult } from "../src/commands/health/types";
 const check = HEALTH_CHECKS.find((c) => c.name === "cli-version");
 
 describe("cli-version check (#950)", () => {
-  test("is registered as an advisory check, between thinking-control and engine-last-used", () => {
+  test("is registered as an advisory check, between auto-accept-validation and scheduler-binary", () => {
     expect(check).toBeDefined();
     expect(check?.channel).toBe("advisory");
     const names = HEALTH_CHECKS.map((c) => c.name);
-    expect(names.indexOf("cli-version")).toBe(names.indexOf("thinking-control") + 1);
-    expect(names.indexOf("cli-version")).toBe(names.indexOf("engine-last-used") - 1);
+    expect(names.indexOf("cli-version")).toBe(names.indexOf("auto-accept-validation") + 1);
+    expect(names.indexOf("cli-version")).toBe(names.indexOf("scheduler-binary") - 1);
   });
 
   test("is a pure projection of ctx.versionDrift", () => {

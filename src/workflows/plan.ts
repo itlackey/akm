@@ -10,7 +10,7 @@
  * plan carries what the author wrote — each step's {@link WorkflowStepSpec},
  * the document `defaults`, display prose — and no execution
  * decisions. Freeze (`freeze/freeze.ts`) resolves every spec into a frozen
- * `root` (engine, model, concurrency, dispatch target), fills gate judges,
+ * `root` (connection or harness, model, concurrency, dispatch target), fills gate judges,
  * drops the compile-only fields, and records the source file's sha256. The
  * frozen plan is what `workflow_runs.plan_json` stores.
  *
@@ -18,17 +18,19 @@
  * a stored plan back into this type, from this release or an earlier one.
  */
 
+import type { LlmInference as LlmInvocationOverrides } from "../core/llm-inference";
 import type { TaskInputBinding } from "../execution/input-contract";
 import type { ResolvedExecutionRequestV1 } from "../execution/resolved-request";
-import type { LlmInvocationOverrides } from "../integrations/agent/engine-resolution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 
 /**
  * Stored plans record this; 0.9.15 and 0.9.16 wrote 5 and early 0.10 wrote 6,
  * which still decode (the 0.9.15 floor, #1091). 7 stopped freezing locations:
  * the plan names the refs the engine dereferences, never a directory or file.
+ * 8 freezes a connection or harness where 7 froze an engine: a plan of 7 or
+ * earlier that holds a command target cannot be decoded, and its run starts afresh.
  */
-export const WORKFLOW_PLAN_VERSION = 7 as const;
+export const WORKFLOW_PLAN_VERSION = 8 as const;
 
 /** A 1-indexed inclusive line span in a workflow source file. */
 export interface SourceRef {
@@ -47,7 +49,7 @@ export interface WorkflowError {
 
 export type WorkflowOnError = "fail" | "continue";
 export type WorkflowReducer = "collect" | "vote";
-export type WorkflowRuntimeKind = "llm" | "agent" | "sdk" | "exec";
+export type WorkflowRuntimeKind = "connection" | "harness" | "exec";
 
 export interface WorkflowRetry {
   max: number;
@@ -59,8 +61,11 @@ export interface WorkflowBudget {
   maxUnits?: number;
 }
 
-/** Authored engine/timeout settings shared by a step's unit and the document `defaults`. */
+/** Authored connection/harness/timeout settings shared by a step's unit and the document `defaults`. */
 export interface WorkflowUnitSettings {
+  connection?: string;
+  harness?: string;
+  /** The retired spelling of `connection` / `harness`. */
   engine?: string;
   model?: string;
   llm?: LlmInvocationOverrides;
@@ -207,7 +212,7 @@ export interface WorkflowGateNode {
   /** The `### gate` rubric, whole, as the one criterion; `[]` = no verification. */
   readonly criteria: string[];
   readonly maxLoops: number;
-  /** Filled at freeze; `null` when there are no criteria or no judge engine. */
+  /** Filled at freeze; `null` when there are no criteria or no judge connection or harness. */
   readonly frozenJudge: FrozenWorkflowCommandTarget | null;
 }
 

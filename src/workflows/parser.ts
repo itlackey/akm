@@ -40,7 +40,9 @@ import { parseMarkdownToc } from "../core/asset/markdown";
 import { isRecord } from "../core/common";
 import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
 import { checkJsonSchemaDefinition, JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS } from "../core/json-schema";
+import { warnOnce } from "../core/warn";
 import { INPUT_NAME_PATTERN } from "../execution/input-contract";
+import { warnRetiredEngineKey } from "../execution/source";
 import { classifyTargetRef } from "../execution/target-ref";
 import {
   type SourceRef,
@@ -132,7 +134,7 @@ interface ProgramStep {
   source: SourceRef;
 }
 
-type LlmInvocationOverrides = import("../integrations/agent/engine-resolution").LlmInvocationOverrides;
+type LlmInvocationOverrides = import("../core/llm-inference").LlmInference;
 
 /** Envelope keys every AKM markdown asset carries ($ref'd from schemas/akm-asset-envelope.json). */
 const ENVELOPE_KEYS = [
@@ -151,13 +153,15 @@ const ENVELOPE_KEYS = [
 ];
 const WORKFLOW_KEYS = ["params", "defaults", "budget", "steps"];
 const TOP_LEVEL_KEYS = [...ENVELOPE_KEYS, ...WORKFLOW_KEYS];
-const DEFAULTS_KEYS = ["engine", "model", "timeout", "on_error", "llm"];
+const DEFAULTS_KEYS = ["connection", "harness", "engine", "model", "timeout", "on_error", "llm"];
 const BUDGET_KEYS = ["max_tokens", "max_units"];
 const STEP_KEYS = ["id", "unit", "map", "inputs", "output", "gate"];
 const UNIT_KEYS = [
   "exec",
   "workflow",
   "with",
+  "connection",
+  "harness",
   "engine",
   "model",
   "llm",
@@ -168,8 +172,8 @@ const UNIT_KEYS = [
   "env",
 ];
 const EXEC_KEYS = ["command", "cwd", "pass_env"];
-/** Unit keys that name an ENGINE dispatch and therefore cannot appear beside `exec:`. */
-const UNIT_ENGINE_KEYS = ["engine", "model", "llm"] as const;
+/** Unit keys that name a model or agent dispatch and therefore cannot appear beside `exec:`. `engine` is the retired spelling of `connection` / `harness`. */
+const UNIT_ENGINE_KEYS = ["connection", "harness", "engine", "model", "llm"] as const;
 const MAP_KEYS = ["over", "concurrency", "reducer", "unit"];
 const RETRY_KEYS = ["max", "on"];
 const GATE_KEYS = ["max_loops"];
@@ -665,9 +669,11 @@ function parseDefaults(ctx: Ctx, raw: unknown): ProgramDefaults | undefined {
   }
   checkUnknownKeys(ctx, raw, path, DEFAULTS_KEYS, `"defaults"`);
   const defaults: ProgramDefaults = {};
-  if (raw.engine !== undefined) {
-    const engine = parseEngineName(ctx, raw.engine, [...path, "engine"], `"defaults.engine"`);
-    if (engine !== undefined) defaults.engine = engine;
+  for (const key of ["connection", "harness", "engine"] as const) {
+    if (raw[key] === undefined) continue;
+    const name = parseEngineName(ctx, raw[key], [...path, key], `"defaults.${key}"`);
+    if (name !== undefined) defaults[key] = name;
+    if (key === "engine") warnRetiredEngineKey();
   }
   if (raw.model !== undefined) {
     if (typeof raw.model === "string" && raw.model.trim() !== "") defaults.model = raw.model.trim();
@@ -810,7 +816,7 @@ function parseUnit(
   if (raw.exec !== undefined) {
     const exec = parseExec(ctx, raw.exec, [...path, "exec"], stepLabel);
     if (exec !== undefined) unit.exec = exec;
-    // An exec unit dispatches no engine call, so every engine-selection key is
+    // An exec unit dispatches no model call, so every connection or harness selection key is
     // a contradiction rather than a harmless extra. Reported per key so the
     // author sees exactly which line to delete.
     for (const key of UNIT_ENGINE_KEYS) {
@@ -832,7 +838,7 @@ function parseUnit(
         `${stepLabel} "unit" declares both "exec" and "workflow" — a unit runs one or the other.`,
       );
     }
-    // A workflow unit starts a child run: it reaches no engine and the child carries its own environment.
+    // A workflow unit starts a child run: it reaches no model and the child carries its own environment.
     for (const key of [...UNIT_ENGINE_KEYS, "env"]) {
       if (raw[key] === undefined) continue;
       ctx.err(
@@ -858,9 +864,11 @@ function parseUnit(
     }
   }
 
-  if (raw.engine !== undefined) {
-    const engine = parseEngineName(ctx, raw.engine, [...path, "engine"], `${stepLabel} "engine"`);
-    if (engine !== undefined) unit.engine = engine;
+  for (const key of ["connection", "harness", "engine"] as const) {
+    if (raw[key] === undefined) continue;
+    const name = parseEngineName(ctx, raw[key], [...path, key], `${stepLabel} "${key}"`);
+    if (name !== undefined) unit[key] = name;
+    if (key === "engine") warnRetiredEngineKey();
   }
   if (raw.model !== undefined) {
     if (typeof raw.model === "string" && raw.model.trim() !== "") unit.model = raw.model.trim();
@@ -949,17 +957,19 @@ function parseExec(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Workf
 }
 
 /**
- * `pass_env:` — extra parent-process env var NAMES the child may see on top of
- * the default allowlist. NAMES ONLY: a value would be a plaintext secret in the
- * frozen plan, which is exactly what `env:` bindings exist to avoid.
+ * `pass_env:` — env var NAMES, recorded in the frozen plan. They select nothing:
+ * an exec child inherits akm's environment, so a workflow written before that
+ * still parses. NAMES ONLY: a value would be a plaintext secret in the frozen
+ * plan, which is exactly what `env:` bindings exist to avoid.
  */
 function parseExecPassEnv(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): string[] | undefined {
   if (raw === undefined) return undefined;
   if (!Array.isArray(raw) || raw.length === 0) {
     ctx.err(
       path,
-      `${stepLabel} "exec.pass_env" must be a non-empty list of environment variable NAMES to copy through from ` +
-        `akm's own environment, e.g. pass_env: [CARGO_HOME]. Values never appear here — use "env:" bindings for those.`,
+      `${stepLabel} "exec.pass_env" must be a non-empty list of environment variable NAMES, e.g. ` +
+        `pass_env: [CARGO_HOME]. It has no effect: the command inherits akm's environment. Values never appear ` +
+        `here — use "env:" bindings for those.`,
     );
     return undefined;
   }
@@ -1109,21 +1119,21 @@ function parseGate(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
 // ---------------------------------------------------------------------------
 
 /**
- * Engine names must already satisfy the frozen-plan grammar
+ * Connection and harness names must already satisfy the frozen-plan grammar
  * (`WORKFLOW_ENGINE_NAME_PATTERN`, max 63 chars) at parse time — the decoder
  * enforces the same bound on persisted plans, and a name that only fails there
  * surfaces as an unlocated "Invalid frozen workflow plan" at `workflow run`.
  */
 function parseEngineName(ctx: Ctx, raw: unknown, path: Path, label: string): string | undefined {
   if (typeof raw !== "string" || raw.trim() === "") {
-    ctx.err(path, `${label} must be a non-empty engine name.`);
+    ctx.err(path, `${label} must be a non-empty name.`);
     return undefined;
   }
   const name = raw.trim();
   if (!WORKFLOW_ENGINE_NAME_PATTERN.test(name) || name.length > WORKFLOW_MAX_ENGINE_NAME_LENGTH) {
     ctx.err(
       path,
-      `${label} has an invalid engine name ${JSON.stringify(name)}. Engine names are lowercase words of letters ` +
+      `${label} has an invalid name ${JSON.stringify(name)}. Names are lowercase words of letters ` +
         `and digits separated by single dashes, starting with a letter (e.g. "code-review-llm"), at most ` +
         `${WORKFLOW_MAX_ENGINE_NAME_LENGTH} characters.`,
     );
@@ -1225,7 +1235,13 @@ function parseEnumField(
   return undefined;
 }
 
-/** Parse only invocation tuning. Connection identity belongs to a named engine. */
+/** Keys a unit's `llm:` once took and akm no longer reads: warned about once, then ignored. */
+const RETIRED_LLM_KEYS: Readonly<Record<string, string>> = {
+  supports_json_schema: "akm retries without a schema when the endpoint rejects one",
+  context_length: "the context window is a connection's setting (contextLength)",
+};
+
+/** Parse only invocation tuning. Where it is sent belongs to a named connection. */
 function parseLlmOverrides(ctx: Ctx, raw: unknown, path: Path, label: string): LlmInvocationOverrides | undefined {
   if (raw === undefined) return undefined;
   if (!isRecord(raw)) {
@@ -1252,9 +1268,8 @@ function parseLlmOverrides(ctx: Ctx, raw: unknown, path: Path, label: string): L
       result.maxTokens = raw.max_tokens;
     } else ctx.err([...path, "max_tokens"], `${label}.max_tokens must be a positive integer.`);
   }
-  if (raw.supports_json_schema !== undefined) {
-    if (typeof raw.supports_json_schema === "boolean") result.supportsJsonSchema = raw.supports_json_schema;
-    else ctx.err([...path, "supports_json_schema"], `${label}.supports_json_schema must be a boolean.`);
+  for (const [key, why] of Object.entries(RETIRED_LLM_KEYS)) {
+    if (raw[key] !== undefined) warnOnce(`workflow-llm-${key}`, `A workflow's llm.${key} is ignored: ${why}.`);
   }
   if (raw.extra_params !== undefined) {
     if (!isRecord(raw.extra_params)) {
@@ -1271,11 +1286,6 @@ function parseLlmOverrides(ctx: Ctx, raw: unknown, path: Path, label: string): L
         result.extraParams = raw.extra_params;
       }
     }
-  }
-  if (raw.context_length !== undefined) {
-    if (typeof raw.context_length === "number" && Number.isInteger(raw.context_length) && raw.context_length > 0) {
-      result.contextLength = raw.context_length;
-    } else ctx.err([...path, "context_length"], `${label}.context_length must be a positive integer.`);
   }
   if (raw.enable_thinking !== undefined) {
     if (typeof raw.enable_thinking === "boolean") result.enableThinking = raw.enable_thinking;

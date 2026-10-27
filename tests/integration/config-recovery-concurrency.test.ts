@@ -149,13 +149,13 @@ describe("raw recovery startup", () => {
 });
 
 describe("locked config mutation", () => {
-  test("concurrent config set processes preserve every independent engine", async () => {
+  test("concurrent config set processes preserve every independent connection", async () => {
     const first = await runCliCapture([
       "config",
       "set",
       "--silent",
-      "engines.seed",
-      '{"kind":"llm","endpoint":"http://localhost:1/v1/chat/completions","model":"seed"}',
+      "connections.seed",
+      '{"endpoint":"http://localhost:1/v1","models":{"fast":"seed"}}',
     ]);
     expect(first.code).toBe(0);
     const env = { ...process.env };
@@ -167,11 +167,10 @@ describe("locked config mutation", () => {
           "config",
           "set",
           "--silent",
-          `engines.worker-${index}`,
+          `connections.worker-${index}`,
           JSON.stringify({
-            kind: "llm",
-            endpoint: `http://localhost:${8100 + index}/v1/chat/completions`,
-            model: `model-${index}`,
+            endpoint: `http://localhost:${8100 + index}/v1`,
+            models: { fast: `model-${index}` },
           }),
         ],
         { cwd: path.resolve(import.meta.dir, "../.."), env, stdout: "pipe", stderr: "pipe" },
@@ -179,8 +178,8 @@ describe("locked config mutation", () => {
     );
     const exits = await Promise.all(children.map((child) => child.exited));
     expect(exits).toEqual(new Array(8).fill(0));
-    const written = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as { engines: Record<string, unknown> };
-    expect(Object.keys(written.engines).sort()).toEqual([
+    const written = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as { connections: Record<string, unknown> };
+    expect(Object.keys(written.connections).sort()).toEqual([
       "seed",
       "worker-0",
       "worker-1",

@@ -5,7 +5,7 @@
 /**
  * The `dotenv` adapter — akm 0.9.0 format-family work item (#46).
  *
- * A metadata-only env/secret bundle (spec §6/§7, normative §21.2). REDACTION IS
+ * A metadata-only env/secret bundle. REDACTION IS
  * A HARD CONTRACT keyed on the ADAPTER, never on the open `type` value (a
  * frontmatter `type:` cannot opt out):
  *   - `env/*.env` → `type: env` — only the KEY NAMES are surfaced (on `hints`);
@@ -17,7 +17,7 @@
  * conceptId: env strips `.env`; secret keeps its natural path (including any
  * extension). Neither branch ever writes a value onto the emitted document.
  *
- * ── validate (spec §6 env/secret validation column) ──
+ * ── validate ──
  *
  * The dangerous-key scan (`dangerous-env-key`), reusing the akm adapter's
  * `dangerousEnvKeyDiagnostics` — which preserves the code-grounded narrowness:
@@ -47,7 +47,7 @@ const COMPONENT_ID = "main";
 const ENV_DIR = "env";
 /** The `secrets/` content subdir (whole-file secrets). */
 const SECRETS_DIR = "secrets";
-/** Non-secret marker suffixes under `secrets/` (spec §6 secret row). */
+/** Non-secret marker suffixes under `secrets/`. */
 const SECRET_SKIP_SUFFIXES = [".lock", ".sensitive"];
 
 type DotenvType = "env" | "secret";

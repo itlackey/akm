@@ -37,8 +37,8 @@ first step's attached artifact."
 
 A `### gate` sub-heading is the step's completion rubric: the judge
 receives this whole section byte-exact. Omit the heading or leave its text
-empty to skip validation. A non-empty rubric requires
-`workflow.judgeEngine`; verifier failures and malformed verdicts reject the
+empty to skip validation. A non-empty rubric needs a connection or a harness
+to judge it; verifier failures and malformed verdicts reject the
 gate rather than silently skipping it.
 
 - Confirm the step accomplished what it set out to do.

@@ -34,7 +34,6 @@ import type {
 import { withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { countUsageEventsByType, USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
-import { runnerLlmConnection } from "../../integrations/agent/runner";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import type { Database } from "../../storage/database";
@@ -201,12 +200,9 @@ function planConsolidationPass(args: {
         { readOnly: args.eventsCtx?.readOnly === true },
       )
     : { poolSize: 0, candidatePoolSize: 0, judgedUnchanged: 0 };
-  // A credential-unavailable engine still resolved its context length.
-  const unavailable = resolvedPlan.engineUnavailable.find((item) => item.process === "consolidate");
+  const consolidateRunner = resolvedPlan.processes.consolidate.runner;
   const chunkSize = computeSafeChunkSize(
-    (resolvedPlan.processes.consolidate.runner &&
-      runnerLlmConnection(resolvedPlan.processes.consolidate.runner)?.contextLength) ??
-      unavailable?.contextLength ??
+    (consolidateRunner?.kind === "connection" ? consolidateRunner.contextLength : undefined) ??
       DEFAULT_CONTEXT_LENGTH_TOKENS,
     500,
     processConfig?.maxChunkSize,
@@ -299,24 +295,27 @@ interface ExtractPassPlan {
 }
 
 /** The extract gates, evaluated once for both the live pass and the dry-run report. */
-function inspectExtractPass(args: ImprovePreparationStageArgs, readOnly: boolean): ExtractPassPlan {
+async function inspectExtractPass(args: ImprovePreparationStageArgs, readOnly: boolean): Promise<ExtractPassPlan> {
   const { options, improveProfile, resolvedPlan, eventsCtx } = args;
   const enabled = resolvedPlan.processes.extract.enabled;
-  const hasRunner = resolvedPlan.processes.extract.runner?.engine !== undefined;
+  const hasRunner = resolvedPlan.processes.extract.runner !== null;
   const availableHarnesses = (options.extractHarnesses ?? getAvailableHarnesses()).filter((h) => h.isAvailable());
   const configured = improveProfile.processes?.extract?.minNewSessions;
   const minNewSessions = typeof configured === "number" ? configured : 0;
   let newCandidateCount: number | undefined;
   if (enabled && hasRunner && availableHarnesses.length > 0 && minNewSessions > 0) {
     const defaultSince = improveProfile.processes?.extract?.defaultSince;
-    newCandidateCount = (options.extractCandidateCountFn ?? countNewExtractCandidates)(options.config ?? loadConfig(), {
-      harnesses: availableHarnesses,
-      improveProfile,
-      ...(defaultSince ? { since: defaultSince } : {}),
-      ...(eventsCtx?.db ? { stateDb: eventsCtx.db } : {}),
-      ...(!readOnly && eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
-      ...(readOnly ? { readOnly: true } : {}),
-    });
+    newCandidateCount = await (options.extractCandidateCountFn ?? countNewExtractCandidates)(
+      options.config ?? loadConfig(),
+      {
+        harnesses: availableHarnesses,
+        improveProfile,
+        ...(defaultSince ? { since: defaultSince } : {}),
+        ...(eventsCtx?.db ? { stateDb: eventsCtx.db } : {}),
+        ...(!readOnly && eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
+        ...(readOnly ? { readOnly: true } : {}),
+      },
+    );
   }
   const belowMinNewSessions =
     minNewSessions > 0 && newCandidateCount !== undefined && newCandidateCount < minNewSessions;
@@ -354,17 +353,16 @@ async function runSessionExtractPass(
   const warnings: string[] = [];
   if (!resolvedPlan.processes.extract.enabled) return { warnings };
   const runner = resolvedPlan.processes.extract.runner;
-  if (!runner?.engine) {
+  if (!runner) {
     throw new ConfigError("Resolved improve plan has no runner for enabled extract process.", "LLM_NOT_CONFIGURED");
   }
   const config = options.config ?? loadConfig();
   const extractPlan: ResolvedExtractPlan = Object.freeze({
     strategy: resolvedPlan.strategy.name,
-    engine: runner.engine,
+    engine: runner.name,
     enabled: true,
     process: resolvedPlan.processes.extract.config,
     runner,
-    timeoutMs: runner.timeoutMs === undefined ? 600_000 : runner.timeoutMs,
     embeddingConfig: Object.freeze(structuredClone(config.embedding)),
     ...(resolvedPlan.processes.extract.notices?.length ? { notices: resolvedPlan.processes.extract.notices } : {}),
   });
@@ -529,7 +527,7 @@ export async function runImprovePreparationStage(args: ImprovePreparationStageAr
         plan: planConsolidationPass(args).plan,
       }
     : await runConsolidationPass(args);
-  const extractPlan = inspectExtractPass(args, planOnly);
+  const extractPlan = await inspectExtractPass(args, planOnly);
   const extractPass = planOnly ? { warnings: [] } : await runSessionExtractPass(args, extractPlan);
   cleanupWarnings.push(...extractPass.warnings);
   if (persist) {

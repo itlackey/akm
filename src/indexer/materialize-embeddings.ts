@@ -20,10 +20,12 @@
 
 import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config/config";
 import { getConfigPath } from "../core/paths";
+import { redactUrlCredentials } from "../core/redaction";
 import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { embedBatch } from "../llm/embedder";
+import { effectiveEmbedding } from "../llm/embedders/connection";
 import { DETERMINISTIC_EMBED_MODEL_ID, isDeterministicEmbedEnabled } from "../llm/embedders/deterministic";
-import { DEFAULT_LOCAL_MODEL } from "../llm/embedders/local";
+import { DEFAULT_LOCAL_MODEL, LocalRuntimeUnavailableError } from "../llm/embedders/local";
 import { applyEmbeddingTemplate, documentTemplateFingerprint, resolveEmbeddingProfile } from "../llm/embedders/profile";
 import {
   capEmbeddingText,
@@ -74,6 +76,8 @@ export interface EmbeddingProgressEvent {
 export interface EmbeddingGenerationResult {
   success: boolean;
   message?: string;
+  /** The local embedding runtime could not load on this machine, and why (see {@link LocalRuntimeUnavailableError}). */
+  runtimeUnavailable?: LocalRuntimeUnavailableError["kind"];
 }
 
 export interface GenerateEmbeddingsOptions {
@@ -149,28 +153,30 @@ export async function generateEmbeddingsForDb(
     return { success: false, message: "Semantic search is disabled." };
   }
 
+  const embedding = effectiveEmbedding(config);
+
   // #953 field gap: the actionable outcome is a self-diagnosing run, not a
-  // fix (every RemoteEmbedder path already resolves `${ref}` credentials through one
-  // boundary — a keyless request can only mean embedding.apiKey was absent
-  // from the config THIS run loaded). One default-level line, before the
-  // first provider request of the phase, naming the endpoint/model/credential
-  // SOURCE — never the credential value.
-  if (hasRemoteEndpoint(config.embedding ?? {})) {
-    const endpoint = normalizeEmbeddingEndpoint(config.embedding?.endpoint ?? "");
-    const credential = describeEmbeddingCredential(config.embedding?.apiKey);
+  // fix (every RemoteEmbedder path resolves its key through one boundary — a
+  // keyless request can only mean no key was configured in the config THIS run
+  // loaded). One default-level line, before the first provider request of the
+  // phase, naming the endpoint/model/credential SOURCE — never the credential
+  // value.
+  if (embedding && hasRemoteEndpoint(embedding)) {
+    const endpoint = redactUrlCredentials(normalizeEmbeddingEndpoint(embedding.endpoint ?? ""));
+    const credential = describeEmbeddingCredential(embedding);
     const configFileSuffix = isVerbose() ? `; config: ${getConfigPath()}` : "";
     onProgress({
       phase: "embeddings",
-      message: `[embed] endpoint ${endpoint}, model ${config.embedding?.model ?? "unknown"}; credential: ${credential}${configFileSuffix}`,
+      message: `[embed] endpoint ${endpoint}, model ${embedding.model ?? "unknown"}; credential: ${credential}${configFileSuffix}`,
     });
   }
 
-  const model = deriveSemanticProviderFingerprint(config.embedding);
+  const model = deriveSemanticProviderFingerprint(embedding);
   const storedModel = getMeta(db, "embeddingFingerprint");
   let targetEntryIds = entryIds;
   /** Set only when every entry is (re)embedded, so the up-front "Re-embedding N entries" line names why. */
   let rebuildReason: string | undefined;
-  const maxInputTokens = config.embedding?.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
+  const maxInputTokens = embedding?.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
 
   if (opts?.forceReembed) {
     // The explicit operator override: purge and re-embed everything. The model
@@ -216,7 +222,7 @@ export async function generateEmbeddingsForDb(
     let truncatedCount = 0;
     const texts: string[] = [];
     const pendingEntries: typeof candidateEntries = [];
-    const { documentTemplate } = resolveEmbeddingProfile(config.embedding);
+    const { documentTemplate } = resolveEmbeddingProfile(embedding);
     for (const entry of candidateEntries) {
       const capped = capEmbeddingText(entry.searchText, maxInputTokens);
       if (capped.text.length === 0) continue;
@@ -317,7 +323,7 @@ export async function generateEmbeddingsForDb(
       // Whether the remote provider's endpoint/model/token language is
       // meaningful for this run — the per-batch diagnostic line below is
       // remote-only, same gate the credential diagnostic (#953) above uses.
-      const reportPerBatchLine = hasRemoteEndpoint(config.embedding ?? {});
+      const reportPerBatchLine = embedding !== undefined && hasRemoteEndpoint(embedding);
       const onBatch: EmbeddingBatchCommit = (indices, batchEmbeddings, outcome) => {
         // #954 field-report follow-up: a "retrying" event carries nothing to
         // commit — the request hasn't settled yet — only the notice that a
@@ -407,7 +413,7 @@ export async function generateEmbeddingsForDb(
           message: `Embedded ${storedCount}/${pendingEntries.length} entries.`,
         });
       };
-      await embedBatch(texts, config.embedding, signal, onSkip, onBatch);
+      await embedBatch(texts, embedding, signal, onSkip, onBatch);
       throwIfAborted(signal);
       const elapsedSeconds = Math.max((Date.now() - embedStart) / 1000, 0.001);
       if (skippedCount > 0) {
@@ -509,6 +515,7 @@ export async function generateEmbeddingsForDb(
     return {
       success: false,
       message: `Semantic search verification failed: ${message}`,
+      ...(error instanceof LocalRuntimeUnavailableError ? { runtimeUnavailable: error.kind } : {}),
     };
   }
 }
@@ -524,7 +531,7 @@ export function publishTargetedEmbeddingMeta(db: Database, config: AkmConfig): v
   }
 
   const entryCount = getEmbeddableEntryCount(db);
-  const embeddingCount = getEmbeddingCount(db, deriveSemanticProviderFingerprint(config.embedding));
+  const embeddingCount = getEmbeddingCount(db, deriveSemanticProviderFingerprint(effectiveEmbedding(config)));
   const ready = entryCount > 0 && embeddingCount >= entryCount;
   setMeta(db, "hasEmbeddings", ready ? "1" : "0");
 }

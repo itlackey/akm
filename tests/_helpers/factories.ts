@@ -24,18 +24,19 @@ import type { AgentProfile } from "../../src/integrations/agent/profiles";
  * focused on reflect/distill mechanics. The dedicated fail-closed behavior is
  * covered by `tests/commands/improve/quality-gate-fail-closed.test.ts`.
  *
- * The fixture includes a named agent engine because reflect resolves through
- * the same strict engine boundary in tests and production.
+ * The fixture includes a harness because reflect resolves through the same
+ * strict boundary in tests and production. `bin` is the program it runs: a fake
+ * harness binary (`writeFakeHarness`) for a test that reaches the dispatch.
  */
-export function quietQualityGateConfig(): AkmConfig {
+export function quietQualityGateConfig(bin = "fake-agent"): AkmConfig {
   return {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
-    engines: {
-      "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+    harnesses: {
+      "fake-agent": { platform: "gemini", bin },
     },
-    defaults: { engine: "fake-agent", improveStrategy: "default" },
     improve: {
+      strategy: "default",
       strategies: {
         default: {
           processes: { distill: { qualityGate: { enabled: false } }, reflect: { qualityGate: { enabled: false } } },
@@ -46,7 +47,7 @@ export function quietQualityGateConfig(): AkmConfig {
 }
 
 /**
- * The reply a model gives reflect on any engine kind: the JSON object of
+ * The reply a model gives reflect on a connection or a harness: the JSON object of
  * `REFLECT_JSON_SCHEMA`, a patch of the fields to change (each one left out is
  * `null`: no change). A reflect run with no target asks for the unscoped
  * object, which names the asset in `ref`.
@@ -98,8 +99,6 @@ export function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile
     bin: "fake-agent",
     args: [],
     stdio: "captured",
-    envPassthrough: ["PATH"],
-    parseOutput: "text",
     ...overrides,
   };
 }

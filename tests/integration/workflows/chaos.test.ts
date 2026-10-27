@@ -648,7 +648,7 @@ const ENV_SOLO_WF = [
   "---",
   "type: workflow",
   "defaults:",
-  "  engine: test-agent",
+  "  engine: test-llm",
   "steps:",
   "  - id: build",
   "    unit: { env: [env/leak] }",
@@ -729,16 +729,18 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
     expect(unitDump).not.toContain(FAKE_SECRET);
   });
 
-  test("a `pass_env` value survives in the journaled exec output; a secret bound through an env asset is still redacted", async () => {
-    // #1096: pass-through values were added to the redaction set, so a
-    // pass-through `AKM_BUNDLE_DIR=/stash` turned `/stash/inbox/x` into
-    // `[REDACTED]/inbox/x`. The documented contract is that they are not redacted.
+  test("an ordinary inherited value survives in the journaled exec output, with or without a frozen `pass_env` naming it; a secret bound through an env asset is still redacted", async () => {
+    // #1096: inherited values were added to the redaction set, so an inherited
+    // `AKM_BUNDLE_DIR=/stash` turned `/stash/inbox/x` into `[REDACTED]/inbox/x`.
+    // The documented contract is that an inherited value is redacted only when its
+    // name is credential-shaped, which `INHERITED_PROBE` is not. `pass_env` still
+    // parses, selects nothing, and is kept here so a workflow that has it loads.
     const PASSED = "/pass-env-probe-stash";
     writeEnvAsset("leak", "FAKE_TOKEN=${secrets/fake}\n", { fake: FAKE_SECRET });
     const command = [
       process.execPath,
       "-e",
-      'process.stdout.write(process.env.PASS_ENV_PROBE + "/inbox/x " + process.env.FAKE_TOKEN)',
+      'process.stdout.write(process.env.INHERITED_PROBE + "/inbox/x " + process.env.FAKE_TOKEN)',
     ];
     writeProgram(
       "pass-env",
@@ -751,7 +753,7 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
         "      env: [env/leak]",
         "      exec:",
         `        command: ${JSON.stringify(command)}`,
-        "        pass_env: [PASS_ENV_PROBE]",
+        "        pass_env: [INHERITED_PROBE]",
         "---",
         "",
         "## build",
@@ -760,8 +762,8 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
         "",
       ].join("\n"),
     );
-    const prior = process.env.PASS_ENV_PROBE;
-    process.env.PASS_ENV_PROBE = PASSED;
+    const prior = process.env.INHERITED_PROBE;
+    process.env.INHERITED_PROBE = PASSED;
     try {
       const started = await startWorkflowRun("workflows/pass-env", {});
       const result = await runWorkflowSteps({ target: started.run.id, summaryJudge: null });
@@ -772,8 +774,8 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
       expect(journaled).not.toContain(FAKE_SECRET);
       expect(journaled).toContain("[REDACTED]");
     } finally {
-      if (prior === undefined) delete process.env.PASS_ENV_PROBE;
-      else process.env.PASS_ENV_PROBE = prior;
+      if (prior === undefined) delete process.env.INHERITED_PROBE;
+      else process.env.INHERITED_PROBE = prior;
     }
   });
 
@@ -825,7 +827,7 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
         "---",
         "type: workflow",
         "defaults:",
-        "  engine: test-agent",
+        "  engine: test-llm",
         "steps:",
         "  - id: call",
         "    unit: { env: [env/hook] }",

@@ -19,7 +19,9 @@ import { parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import { UsageError } from "../../core/errors";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
+import { ConfigError, UsageError } from "../../core/errors";
+import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { installLlmUsagePersistenceIfAbsent } from "../../llm/usage-persist";
 import { withLlmStage } from "../../llm/usage-telemetry";
@@ -40,16 +42,6 @@ import {
 } from "./proposal";
 import { proposalWaitingSince } from "./proposal-types";
 import { proposeCommand } from "./propose-cli";
-
-export function mergeProposalDrainNotices(
-  resolutionNotices: readonly Readonly<LoweringNotice>[] | undefined,
-  dispatchNotices: readonly Readonly<LoweringNotice>[] | undefined,
-): readonly Readonly<LoweringNotice>[] | undefined {
-  const byKey = new Map<string, Readonly<LoweringNotice>>();
-  for (const notice of resolutionNotices ?? []) byKey.set(JSON.stringify(notice), notice);
-  for (const notice of dispatchNotices ?? []) byKey.set(JSON.stringify(notice), notice);
-  return byKey.size > 0 ? Object.freeze([...byKey.values()]) : undefined;
-}
 
 /**
  * Parse + validate the shared bulk-adjudication filter flags
@@ -500,10 +492,9 @@ const proposalDrainCommand = defineJsonCommand({
     }
 
     // `--older-than` is applied here as a pre-filter on excludeIds: ids that
-    // are too fresh are excluded so the engine never touches them. This reads
+    // are too fresh are excluded so the drain never touches them. This reads
     // the pending set once here; drainProposals reads the pending set again
-    // internally, so a future engine-level olderThan option could remove this
-    // second read (engine API owned by another agent — not changed here).
+    // internally.
     let excludeIds: Set<string> | undefined;
     if (olderThanMs !== undefined) {
       const { listProposals } = await import("./repository");
@@ -526,16 +517,23 @@ const proposalDrainCommand = defineJsonCommand({
     // disabled block. An explicitly selected strategy may opt in through its
     // judgment block; the implicit default strategy keeps standalone drain's
     // historical no-judge behavior.
-    const judgmentResolution =
-      args.judgment === true || (args.strategy !== undefined && triageConfig?.judgment?.enabled === true)
-        ? resolveImproveExecution({
-            config: cfg,
-            profile: selectedStrategy.config,
-            process: triageConfig,
-            current: triageConfig?.judgment,
-            processName: "proposal-triage-judgment",
-          })
-        : null;
+    const judgmentWanted =
+      args.judgment === true || (args.strategy !== undefined && triageConfig?.judgment?.enabled === true);
+    const judgmentResolution = judgmentWanted
+      ? resolveImproveExecution({
+          config: cfg,
+          process: "triage",
+          processName: "proposal-triage-judgment",
+          alias: SHIPPED_ALIAS.judge,
+        })
+      : null;
+    if (judgmentWanted && !judgmentResolution) {
+      throw new ConfigError(
+        "Proposal judgment was requested, but no connection or harness is configured to judge with.",
+        "LLM_NOT_CONFIGURED",
+        "Run `akm setup`, or set improve.connection or improve.processes.triage.connection.",
+      );
+    }
     const judgment = judgmentResolution?.runner ?? null;
 
     // #576: persist + attribute per-call LLM usage for the standalone drain
@@ -560,7 +558,7 @@ const proposalDrainCommand = defineJsonCommand({
     }
 
     const dispatchNotices = (result as typeof result & { notices?: readonly Readonly<LoweringNotice>[] }).notices;
-    const notices = mergeProposalDrainNotices(judgmentResolution?.notices, dispatchNotices);
+    const notices = mergeNotices(judgmentResolution?.notices, dispatchNotices);
 
     output("proposal-drain", {
       schemaVersion: 1,
@@ -568,7 +566,7 @@ const proposalDrainCommand = defineJsonCommand({
       applyMode,
       dryRun,
       strategy: selectedStrategy.name,
-      judgmentEngine: judgment?.engine ?? null,
+      judgmentEngine: judgment?.name ?? null,
       judgmentKind: judgment?.kind ?? null,
       ...(notices ? { notices } : {}),
       promoted: result.promoted,

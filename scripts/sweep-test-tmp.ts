@@ -3,72 +3,83 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Sweep stale test-sandbox directories out of the OS temp dir.
+ * Sweep the sandbox roots of test runs that died out of the OS temp dir.
  *
- * The test harness creates per-process sandbox roots under `os.tmpdir()`:
- *   - `akm-test-suite-*` — the suite-wide sandbox (tests/_preload.ts)
- *   - `akm-sb-*`         — the sandbox helpers (tests/_helpers/sandbox.ts)
- *   - `akm-*`            — many individual tests' ad-hoc `mkdtempSync` fixtures
- *
- * These tear down on normal exit and (now) on catchable signals, but a
- * SIGKILL'd or crashed worker leaks its whole root. Over a long session that
- * accumulated tens of thousands of husks in tmpfs. This sweep is the backstop:
- * it removes ONLY entries under `os.tmpdir()` whose name starts with `akm-`,
- * and ONLY when older than a threshold (default 60 min) so a concurrently-
- * running test suite — whose dirs are fresh — is never touched. Production akm
- * never writes to `/tmp/akm-*` (it uses ~/.local/share/akm and the stash), and
- * the owner's stash lives at ~/akm — so this cannot affect prod data, and a
- * non-akm sibling like `/tmp/openpalm-*` never matches the `akm-` prefix.
+ * A test process that creates a sandbox root (the suite root in
+ * `tests/_preload.ts`, the roots of `tests/_helpers/sandbox.ts`) registers it with
+ * `registerTestRoot`: one line in a lease file named for the process, kept apart
+ * from the root so the root holds nothing the test did not put there. A SIGKILL'd
+ * or crashed process leaks its roots, and this sweep removes exactly the roots a
+ * lease lists once the process that holds the lease is gone. A directory no lease
+ * lists is not the sweep's, whatever its name or age: akm's own
+ * `akm-model-work-*` scratch (the run that made it removes it), another tool's
+ * `akm-*` directory, a person's checkout. A root whose process is alive is in
+ * use, however old it is.
  *
  * Best-effort: never throws, always exits 0, so it can prefix test scripts
  * without ever failing a run.
  *
  * Usage:  bun scripts/sweep-test-tmp.ts
- *   AKM_TMP_SWEEP_MIN_AGE_MS — override the age threshold (default 3600000).
  */
 
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-// Every `/tmp/akm-*` entry is a test-sandbox husk (prod uses ~/.local/share/akm
-// and the ~/akm stash, never tmp). The `akm-` prefix is deliberately broad so
-// the per-test ad-hoc fixtures are swept too; the age guard is what keeps a live
-// run safe. NOTE: keep this an `akm-` prefix — never widen to all of tmpdir.
-const SWEEP_PREFIXES = ["akm-"] as const;
-const DEFAULT_MIN_AGE_MS = 60 * 60 * 1000; // 1 hour
+/** Where the leases are kept, inside the temp dir. */
+function leaseDir(tmp: string): string {
+  return path.join(tmp, ".akm-test-leases");
+}
 
-function main(): void {
-  const tmp = os.tmpdir();
-  const minAgeMs = Number(process.env.AKM_TMP_SWEEP_MIN_AGE_MS) || DEFAULT_MIN_AGE_MS;
-  const cutoff = Date.now() - minAgeMs;
+/** Record `dir`, a directory directly under the temp dir, as a root this process created and will remove. */
+export function registerTestRoot(dir: string): void {
+  const leases = leaseDir(os.tmpdir());
+  fs.mkdirSync(leases, { recursive: true });
+  fs.appendFileSync(path.join(leases, String(process.pid)), `${dir}\n`);
+}
 
-  let entries: string[];
+/** Whether `pid` names a running process (one this user may not signal is running). */
+function isAlive(pid: number): boolean {
   try {
-    entries = fs.readdirSync(tmp);
-  } catch {
-    return; // tmp unreadable — nothing to do.
-  }
-
-  let removed = 0;
-  for (const name of entries) {
-    if (!SWEEP_PREFIXES.some((prefix) => name.startsWith(prefix))) continue;
-    const full = path.join(tmp, name);
-    try {
-      const stat = fs.lstatSync(full);
-      if (!stat.isDirectory()) continue;
-      // Age guard: skip anything a live run may still be using.
-      if (stat.mtimeMs > cutoff) continue;
-      fs.rmSync(full, { recursive: true, force: true });
-      removed += 1;
-    } catch {
-      // Best-effort per entry; ignore (e.g. removed concurrently).
-    }
-  }
-
-  if (removed > 0) {
-    console.error(`[sweep-test-tmp] removed ${removed} stale test-sandbox dir(s) from ${tmp}`);
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
-main();
+/** Remove the roots listed by the leases under `tmp` whose process is gone; the number removed. */
+export function sweepTestTmp(tmp: string): number {
+  const leases = leaseDir(tmp);
+  let held: string[];
+  try {
+    held = fs.readdirSync(leases);
+  } catch {
+    return 0; // No lease was ever taken here.
+  }
+  let removed = 0;
+  for (const name of held) {
+    const pid = Number(name);
+    if (!Number.isInteger(pid) || pid <= 0 || isAlive(pid)) continue;
+    const lease = path.join(leases, name);
+    try {
+      for (const dir of fs.readFileSync(lease, "utf8").split("\n")) {
+        // A lease lists direct children of the temp dir; a line that is anything else is not this sweep's to remove.
+        if (dir === "" || path.dirname(dir) !== tmp || !fs.existsSync(dir)) continue;
+        if (!fs.lstatSync(dir).isDirectory()) continue;
+        fs.rmSync(dir, { recursive: true, force: true });
+        removed += 1;
+      }
+      fs.rmSync(lease, { force: true });
+    } catch {
+      // Best-effort per lease; the next sweep retries.
+    }
+  }
+  return removed;
+}
+
+if (import.meta.main) {
+  const tmp = os.tmpdir();
+  const removed = sweepTestTmp(tmp);
+  if (removed > 0) console.error(`[sweep-test-tmp] removed ${removed} dead test-sandbox dir(s) from ${tmp}`);
+}

@@ -158,7 +158,7 @@ async function akmInitReal(options?: {
   let previousStashDir: string | undefined;
   if (options?.persistConfig !== false) {
     const result = mutateConfig((latest) => {
-      // 0.9.0 (spec §10.1): the primary stash is the `defaultBundle`'s filesystem
+      // The primary stash is the `defaultBundle`'s filesystem
       // `path`, not the retired top-level `stashDir`.
       const currentPrimary = primaryBundlePath(latest);
       const shouldPersist = !dirExplicitlyProvided || !currentPrimary || setDefault;

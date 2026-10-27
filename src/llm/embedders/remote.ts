@@ -11,13 +11,11 @@
 
 import { abortableDelay, backoffDelay, fetchWithTimeout, isHttpUrl, readBodyWithByteCap } from "../../core/common";
 import { concurrentMap } from "../../core/concurrent";
-import { type EmbeddingConnectionConfig, resolveSecret } from "../../core/config/config";
-import { ENV_REFERENCE_PATTERN } from "../../core/config/schema/primitives";
+import type { EmbeddingConnectionConfig } from "../../core/config/config";
+import { apiKeyReference, type CredentialSlot, readCredential, resolveApiKey } from "../../core/config/credentials";
 import { defaultConcurrencyForEndpoint } from "../../core/loopback";
-import { redactErrorBody, redactSensitiveText } from "../../core/redaction";
-import { isRefToken } from "../../core/ref-token";
+import { redactErrorBody, redactSensitiveText, redactUrlCredentials } from "../../core/redaction";
 import { warnVerbose } from "../../core/warn";
-import { resolveSecretFromStore } from "../../sources/snapshot-fetchers/secret-seam";
 import type { Embedder, EmbeddingVector } from "./types";
 
 /**
@@ -966,9 +964,13 @@ export class RemoteEmbedder implements Embedder {
     return results;
   }
 
+  private resolveKey(): string | undefined {
+    return resolveApiKey(this.config.apiKey, embeddingSlot(this.config), this.config.endpoint ?? "");
+  }
+
   private buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const resolvedKey = resolveSecret(this.config.apiKey, resolveSecretFromStore);
+    const resolvedKey = this.resolveKey();
     if (resolvedKey) {
       headers.Authorization = `Bearer ${resolvedKey}`;
     }
@@ -985,7 +987,7 @@ export class RemoteEmbedder implements Embedder {
    * far unredacted and uncapped, at readBodyWithByteCap's 10 MB default.
    */
   private safeErrorBody(body: string): string {
-    const resolvedKey = resolveSecret(this.config.apiKey, resolveSecretFromStore);
+    const resolvedKey = this.resolveKey();
     return redactSensitiveText(redactErrorBody(body), resolvedKey ? [resolvedKey] : []);
   }
 }
@@ -1031,7 +1033,7 @@ export function normalizeEmbeddingEndpoint(endpoint: string): string {
 function embeddingEndpointPathHint(endpoint: string): string {
   const normalizedEndpoint = normalizeEmbeddingEndpoint(endpoint);
   if (normalizedEndpoint !== endpoint) {
-    return ` Check that your endpoint includes the full embeddings path (for example "${normalizedEndpoint}", not just "${endpoint}").`;
+    return ` Check that your endpoint includes the full embeddings path (for example "${redactUrlCredentials(normalizedEndpoint)}", not just "${redactUrlCredentials(endpoint)}").`;
   }
   return "";
 }
@@ -1063,19 +1065,24 @@ export function hasRemoteEndpoint(config: EmbeddingConnectionConfig): boolean {
   return isHttpUrl(config.endpoint);
 }
 
+/** Where the embedding key is stored: the serving connection's slot when a connection serves the model, else the embedding service's own. */
+function embeddingSlot(config: EmbeddingConnectionConfig): CredentialSlot {
+  return config.credentialName !== undefined ? { connection: config.credentialName } : { service: "embedding" };
+}
+
 /**
- * Describe WHERE an `embedding.apiKey` came from, never its value — the
- * actionable outcome of the #953 field gap: `resolveSecret` throws on an
- * unresolvable `${ref}` reference, so a keyless request can only mean
- * `embedding.apiKey` was absent from the config the run actually loaded (a
- * different config root, scope, or a config edited after the run started).
- * A default-level progress line naming the credential's SOURCE (this
- * helper), printed once before the first provider request, lets a field run
- * self-diagnose that without ever surfacing the secret itself.
+ * Describe WHERE the embedding key comes from, never its value: the `$VAR`
+ * reference in `embedding.apiKey` (or its default connection's), the key in
+ * `credentials.json` filed under `embedding` (or under that connection's
+ * name), or nothing. A keyless request can only mean neither was present in the
+ * config the run actually loaded (a different config root, scope, or a config
+ * edited after the run started). A default-level progress line naming the
+ * credential's SOURCE (this helper), printed once before the first provider
+ * request, lets a field run self-diagnose that without ever surfacing the
+ * secret itself (#953).
  */
-export function describeEmbeddingCredential(apiKey: string | undefined): string {
-  if (!apiKey) return "none configured";
-  if (isRefToken(apiKey)) return `${apiKey} (store)`;
-  if (ENV_REFERENCE_PATTERN.test(apiKey)) return `${apiKey} (env)`;
-  return "literal apiKey";
+export function describeEmbeddingCredential(config: EmbeddingConnectionConfig): string {
+  const reference = apiKeyReference(config.apiKey);
+  if (reference) return `${reference} (env)`;
+  return readCredential(embeddingSlot(config), config.endpoint ?? "") ? "credentials.json" : "none configured";
 }

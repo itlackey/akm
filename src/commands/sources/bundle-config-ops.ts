@@ -3,13 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Bundle-map config write helpers (0.9.0 config-shape cutover, spec §10.1).
+ * Bundle-map config write helpers.
  *
  * The `stashDir`/`sources[]`/`installed[]` trio is retired: every source is now
  * a `bundles.<slug>` entry, and the primary working stash is the `defaultBundle`.
  * These helpers give the source writers (`akm bundle create`, `akm setup`, `akm bundle add`,
  * `akm sources add/remove`) one place to derive slug-legal bundle keys (via the
- * shared {@link deriveBundleId} — D-R5), locate an existing bundle by its source
+ * shared {@link deriveBundleId}), locate an existing bundle by its source
  * descriptor, and set/repoint the primary bundle — without duplicating the
  * keying rules across call sites.
  */

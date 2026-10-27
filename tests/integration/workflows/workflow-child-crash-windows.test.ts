@@ -82,6 +82,7 @@ import type { UnitDispatchResult } from "../../../src/workflows/exec/native-exec
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { computeStepWorkList } from "../../../src/workflows/exec/step-work";
 import { canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
+import { WORKFLOW_PLAN_VERSION } from "../../../src/workflows/plan";
 import { decodeWorkflowPlan, frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { getWorkflowStatus, resumeWorkflowRun, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
@@ -117,7 +118,7 @@ afterEach(() => storage.cleanup());
 const CHILD_LEAF_WF = [
   "---",
   "type: workflow",
-  "defaults: { engine: test-agent }",
+  "defaults: { connection: test-llm }",
   "steps:",
   "  - id: work",
   "---",
@@ -170,7 +171,7 @@ describe.skipIf(!BUN)("multi-process crash windows around a composing child (C-0
     writeProgram(storage.stashDir, "cw1-leaf", CHILD_LEAF_WF);
     writeComposingParent(storage.stashDir, "cw1-parent", "workflows/cw1-leaf");
     const started = await startWorkflowRun("workflows/cw1-parent", {});
-    expect(started.run.planIrVersion).toBe(7);
+    expect(started.run.planIrVersion).toBe(WORKFLOW_PLAN_VERSION);
     const parentRunId = started.run.id;
 
     // Held on the child's own unit so the crasher can never race past this
@@ -343,6 +344,7 @@ function buildConcurrentPublisherWorkerScript(options: {
 import { openDatabase } from ${JSON.stringify(options.databaseModulePath)};
 import { WorkflowRunsRepository } from ${JSON.stringify(options.repositoryModulePath)};
 import { writeFileSync } from "node:fs";
+import { WORKFLOW_PLAN_VERSION } from "../../../src/workflows/plan";
 
 const db = openDatabase(${JSON.stringify(options.dbPath)});
 try {

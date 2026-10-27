@@ -8,7 +8,7 @@
  * Provides unified operations across all configured bundle source providers.
  * The CLI's `akm bundle list`, `akm bundle remove`, and `akm bundle update` commands are wired here.
  *
- * 0.9.0 (spec §10.1/§10.2): the retired `installed[]` array is gone — a
+ * 0.9.0: the retired `installed[]` array is gone — a
  * registry-managed source is now a `bundles.<slug>` entry (the desired locator)
  * paired with a lock entry (the resolved `localRoot`/version). A bundle that has
  * a lock entry is "managed" (installed from a registry and overwritten on
@@ -160,7 +160,7 @@ function describeComponents(entry: BundleConfigEntry, bundleRoot: string | undef
   const names = Object.keys(configuredComponents);
   if (names.length === 0) {
     // No explicit component at all — the implicit single component every
-    // bundle gets (spec §1.2 rule 5; `deriveInstallations` applies the same
+    // bundle gets (`deriveInstallations` applies the same
     // "main"-shaped default at index time).
     const adapter = bundleRoot !== undefined ? detectAdapterId(bundleRoot) : "akm";
     return [{ name: "main", adapter, detected: true }];

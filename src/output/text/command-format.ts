@@ -17,6 +17,7 @@
 import { formatRegistryUrl } from "../../core/registry-url";
 import type { IndexResponse } from "../../indexer/indexer";
 import type { DetailLevel } from "../context";
+import { renderTargetsTable } from "./targets-table";
 
 /** Render the current `InfoResponse` shape. */
 export function formatInfoPlain(r: Record<string, unknown>): string {
@@ -67,6 +68,7 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
       lines.push(`  [${String(source.type ?? "?")}] ${String(label)}${disabled}`);
     }
   }
+  if (Array.isArray(r.connectionsAndHarnesses)) lines.push(...renderTargetsTable(r.connectionsAndHarnesses));
   const indexStats = r.indexStats as Record<string, unknown> | undefined;
   if (indexStats) {
     lines.push("indexStats:");
@@ -275,9 +277,9 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (hit.installRef) lines.push(`  installRef: ${String(hit.installRef)}`);
     if (hit.run) lines.push(`  run: ${String(hit.run)}`);
     if (Array.isArray(hit.tags) && hit.tags.length > 0) lines.push(`  tags: ${hit.tags.join(", ")}`);
-    // Optional v1 spec §4.2 quality marker (e.g. "curated" / "proposed").
+    // Optional quality marker (e.g. "curated" / "proposed").
     if (typeof hit.quality === "string" && hit.quality) lines.push(`  quality: ${hit.quality}`);
-    // Surface optional hit-level warnings (v1 spec §4.2).
+    // Surface optional hit-level warnings.
     if (Array.isArray(hit.warnings) && hit.warnings.length > 0) {
       lines.push(`  warnings: ${(hit.warnings as string[]).join("; ")}`);
     }
@@ -451,33 +453,32 @@ export function formatListPlain(r: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
-/** Render `akm models list`'s `{ rows }` as a column-aligned table (#946). */
-export function formatModelsListPlain(r: Record<string, unknown>): string {
-  const rows = Array.isArray(r.rows) ? (r.rows as Record<string, unknown>[]) : [];
-  if (rows.length === 0) return "No model aliases configured.";
-  const headers = ["ALIAS", "COLUMN", "MODEL", "SOURCE", "VIA", "ENGINE"] as const;
-  const cells: string[][] = rows.map((row) => [
-    String(row.alias ?? "?"),
-    String(row.column ?? "?"),
-    String(row.model ?? "?"),
-    String(row.source ?? "?"),
-    String(row.via ?? "?"),
-    row.engine !== undefined ? String(row.engine) : "-",
-  ]);
-  const widths = headers.map((header, i) => {
-    let width = header.length;
-    for (const cols of cells) {
-      const cell = cols[i];
-      if (cell !== undefined && cell.length > width) width = cell.length;
-    }
-    return width;
-  });
-  const renderRow = (cols: readonly string[]): string =>
-    cols
-      .map((cell, i) => cell.padEnd(widths[i] ?? cell.length))
-      .join("  ")
-      .trimEnd();
-  return [renderRow(headers), ...cells.map(renderRow)].join("\n");
+/** Render `akm models`'s `{ connection, aliases, available }`: each alias's model, then the models the endpoint lists. */
+export function formatModelsPlain(r: Record<string, unknown>): string {
+  const aliases =
+    r.aliases && typeof r.aliases === "object" ? Object.entries(r.aliases as Record<string, unknown>) : [];
+  const available = Array.isArray(r.available) ? r.available.map(String) : [];
+  const title = `Connection ${String(r.connection ?? "?")}`;
+  if (aliases.length === 0 && available.length === 0) {
+    return `${title} has no model aliases. Set one with \`akm models set <alias> <model>\`.`;
+  }
+  const lines = [title];
+  if (aliases.length > 0) {
+    const width = Math.max("ALIAS".length, ...aliases.map(([alias]) => alias.length));
+    lines.push(
+      `${"ALIAS".padEnd(width)}  MODEL`,
+      ...aliases.map(([alias, model]) => `${alias.padEnd(width)}  ${String(model)}`),
+    );
+  }
+  if (available.length > 0)
+    lines.push(...(aliases.length > 0 ? [""] : []), "AVAILABLE", ...available.map((model) => `  ${model}`));
+  return lines.join("\n");
+}
+
+/** Render `akm models set`'s result. */
+export function formatModelsSetPlain(r: Record<string, unknown>): string {
+  const was = typeof r.previous === "string" ? ` (was ${r.previous})` : "";
+  return `${String(r.alias)} -> ${String(r.model)} on connection ${String(r.connection)}${was}`;
 }
 
 /** Render a single `SourceEntry` — `akm bundle show <name>`'s detail view of one `list` row. */

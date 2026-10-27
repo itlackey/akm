@@ -41,7 +41,7 @@
         "hoist:tags",
         "hoist:agent",
         "hoist:inference",
-        "hoist:tools",
+        "drop:tools",
         "hoist:timeout-duration-string"
       ]
     },

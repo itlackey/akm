@@ -12,14 +12,13 @@ import {
 } from "../../execution/json";
 import { type StrictRecordSnapshot, snapshotStrictRecord } from "../../execution/record";
 import {
-  type AdapterOwnedExtensions,
   type AdapterRenderedCommandSource,
   type AdapterRenderedExecutionSource,
   type AdapterRenderedPersonaSource,
-  cloneToolSelection,
   createAdapterRenderedExecutionSource,
   type ExecutionSourceIdentity,
   type UnresolvedExecutionDefaults,
+  warnRetiredEngineKey,
 } from "../../execution/source";
 import { UsageError } from "../errors";
 import { warnOnce } from "../warn";
@@ -170,7 +169,6 @@ export function executionDefaultsFromFrontmatter(
   options: {
     readonly kind: "command" | "persona";
     readonly allowTopLevelEngine?: boolean;
-    readonly toolsKeys?: readonly string[];
   },
 ): UnresolvedExecutionDefaults {
   const frontmatter = snapshotStrictRecord(data, "frontmatter");
@@ -181,12 +179,6 @@ export function executionDefaultsFromFrontmatter(
   const allowTopLevelEngine = Object.hasOwn(options, "allowTopLevelEngine") ? options.allowTopLevelEngine : false;
   if (typeof allowTopLevelEngine !== "boolean") {
     throw new TypeError("execution frontmatter projection options.allowTopLevelEngine must be a boolean");
-  }
-  const configuredToolsKeys = Object.hasOwn(options, "toolsKeys")
-    ? cloneExecutionJson(options.toolsKeys, "execution frontmatter projection options.toolsKeys")
-    : ["tools"];
-  if (!Array.isArray(configuredToolsKeys) || configuredToolsKeys.some((key) => typeof key !== "string" || !key)) {
-    throw new TypeError("execution frontmatter projection options.toolsKeys must be an array of non-empty strings");
   }
 
   const namespace = own(frontmatter, "akm")
@@ -200,7 +192,7 @@ export function executionDefaultsFromFrontmatter(
         : undefined;
     if (location) {
       throw new TypeError(
-        `${location} is host-controlled and cannot be declared by an executable asset; configure the selected engine or workflow execution environment instead`,
+        `${location} is host-controlled and cannot be declared by an executable asset; configure the selected harness or workflow execution environment instead`,
       );
     }
   }
@@ -208,28 +200,18 @@ export function executionDefaultsFromFrontmatter(
   if (kind === "command" && own(frontmatter, "agent")) {
     out.agent = nullableString(frontmatter.agent, "frontmatter.agent");
   }
-  const namespacedEngine = own(namespace, "engine")
-    ? nullableString(namespace.engine, "frontmatter.akm.engine")
-    : undefined;
-  const topLevelEngine =
-    allowTopLevelEngine && own(frontmatter, "engine")
-      ? nullableString(frontmatter.engine, "frontmatter.engine")
-      : undefined;
-  if (topLevelEngine !== undefined) out.engine = topLevelEngine;
-  else if (namespacedEngine !== undefined) out.engine = namespacedEngine;
+  // `engine` is the retired spelling of `connection` / `harness`; the resolver reads it as whichever it names.
+  for (const key of ["connection", "harness", "engine"] as const) {
+    const topLevel =
+      allowTopLevelEngine && own(frontmatter, key) ? nullableString(frontmatter[key], `frontmatter.${key}`) : undefined;
+    const namespaced = own(namespace, key) ? nullableString(namespace[key], `frontmatter.akm.${key}`) : undefined;
+    if (topLevel !== undefined) out[key] = topLevel;
+    else if (namespaced !== undefined) out[key] = namespaced;
+    if (key === "engine" && out.engine !== undefined) warnRetiredEngineKey();
+  }
   if (own(frontmatter, "model")) {
     out.model = nullableString(frontmatter.model, "frontmatter.model");
   }
-  let toolsSelected = false;
-  for (const key of configuredToolsKeys) {
-    if (!own(frontmatter, key)) continue;
-    const selection = cloneToolSelection(frontmatter[key], `frontmatter.${key}`);
-    if (!toolsSelected) {
-      out.tools = selection;
-      toolsSelected = true;
-    }
-  }
-
   let inferenceEntries: Map<string, ExecutionJsonValue> | null | undefined;
   if (own(namespace, "inference")) {
     if (namespace.inference === null) inferenceEntries = null;
@@ -309,9 +291,6 @@ export function executionDefaultsFromFrontmatter(
 type DefaultsProjection =
   | UnresolvedExecutionDefaults
   | ((data: Readonly<Record<string, unknown>>) => UnresolvedExecutionDefaults);
-type ExtensionsProjection =
-  | AdapterOwnedExtensions
-  | ((data: Readonly<Record<string, unknown>>) => AdapterOwnedExtensions | undefined);
 
 export interface RenderMarkdownExecutionSourceInput {
   readonly kind: "command" | "persona";
@@ -319,7 +298,6 @@ export interface RenderMarkdownExecutionSourceInput {
   readonly raw: string;
   readonly identity: Omit<ExecutionSourceIdentity, "hash">;
   readonly defaults?: DefaultsProjection;
-  readonly extensions?: ExtensionsProjection;
 }
 
 export function renderMarkdownExecutionSource(
@@ -346,12 +324,6 @@ export function renderMarkdownExecutionSource(
   if (hasDefaults && defaults === undefined) {
     throw new TypeError("adapter execution source defaults must be omitted or resolve to an object");
   }
-  const extensionsProjection = input.extensions;
-  const extensionsAreProjected = typeof extensionsProjection === "function";
-  const extensions = extensionsAreProjected ? extensionsProjection(parsed.data) : extensionsProjection;
-  if (Object.hasOwn(input, "extensions") && !extensionsAreProjected && extensions === undefined) {
-    throw new TypeError("adapter execution source extensions must be omitted or be an adapter-owned extension object");
-  }
   return createAdapterRenderedExecutionSource({
     kind,
     content: parsed.content,
@@ -363,6 +335,5 @@ export function renderMarkdownExecutionSource(
       hash: createHash("sha256").update(raw, "utf8").digest("hex"),
     },
     ...(hasDefaults ? { defaults } : {}),
-    ...(extensions === undefined ? {} : { extensions }),
   });
 }

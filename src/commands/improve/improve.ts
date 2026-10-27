@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
+import { collectCredentialValues } from "../../core/config/credentials";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { LockOwnership } from "../../core/file-lock";
@@ -31,12 +32,12 @@ import { openStateDatabase } from "../../core/state-db";
 import { info, warn, warnVerbose } from "../../core/warn";
 import { beginWriteProvenance, relativeWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
 import { resolveWorkingStashTarget, resolveWritable, resolveWriteTarget } from "../../core/write-source";
+import { type Notice, noticeSet } from "../../execution/notices";
 import { ensureIndex } from "../../indexer/ensure-index";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { akmIndex } from "../../indexer/indexer";
 import { countPendingMemoriesNeedingDecision } from "../../indexer/passes/memory-inference";
 import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
-import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { type LlmUsageRecord, withLlmStage } from "../../llm/usage-telemetry";
 import {
@@ -88,7 +89,7 @@ import {
 import { buildImproveExecutionPlan } from "./planner";
 import { CONSOLIDATION_CONFIG_KEYS, pickDefined, recordImproveSkip, runImprovePreparationStage } from "./preparation";
 import { akmReflect } from "./reflect";
-import { errMessage, type Notice, noticeSet } from "./stage";
+import { errMessage } from "./stage";
 
 export type {
   AkmImproveOptions,
@@ -136,7 +137,7 @@ export function renderSyncCommitMessage(
 }
 
 /**
- * How long the loop waits for its first engine response before printing one
+ * How long the loop waits for its first model response before printing one
  * "still waiting" line (#957): a dead endpoint otherwise looks like a slow run.
  * Armed when the loop starts, not at run start.
  */
@@ -192,7 +193,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const { budgetMs, budgetAbortController, scope, selectedStrategy, syncRepoDir, resolvedStateDbPath } = setup;
   let clearBudgetTimer = (): void => {};
   let clearFirstResponseHeartbeat = (): void => {};
-  // Set by the usage sink when any engine call terminates, prepass included.
+  // Set by the usage sink when any model call terminates, prepass included.
   let firstEngineResponseSeen = false;
   let initialGitPaths = new Set<string>();
   let preRunSync: ImproveSyncOutcome | undefined;
@@ -342,7 +343,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     }
     if (!firstEngineResponseSeen) {
       const firstResponseTimer = setTimeout(() => {
-        warn("[improve] Still waiting for the first engine response...");
+        warn("[improve] Still waiting for the first model response...");
       }, FIRST_ENGINE_RESPONSE_HEARTBEAT_MS);
       firstResponseTimer.unref?.();
       clearFirstResponseHeartbeat = () => clearTimeout(firstResponseTimer);
@@ -467,13 +468,9 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
   const scope: ImproveScope = resolveImproveScope(options.scope);
   const config = options.config ?? loadConfig();
   const configuredImproveProfile = resolveImproveStrategy(options.strategy, config).config;
-  // A dry run never dispatches, so an all-disabled strategy must not abort it.
   const resolvedPlan =
     options.resolvedPlan ??
-    resolveImprovePlan(options.strategy, config, {
-      repairValidationFailures: options.repairValidationFailures,
-      allowAllDisabled: options.dryRun,
-    });
+    resolveImprovePlan(options.strategy, config, { repairValidationFailures: options.repairValidationFailures });
   const selectedStrategy = resolvedPlan.strategy;
   const improveProfile = selectedStrategy.config;
   const configuredLimits = {
@@ -540,7 +537,7 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
     config,
     resolvedPlan,
     selectedStrategy,
-    improveSensitiveValues: collectEngineCredentialValues(config),
+    improveSensitiveValues: collectCredentialValues(config),
     improveProfile,
     configuredImproveProfile,
     configuredLimits,
@@ -774,7 +771,6 @@ export function buildDryRunResult(
     ...(preparation?.planning ? { plan: buildResultExecutionPlan(run, preparation, collected, true) } : {}),
     ...(strategyFilteredRefs.length > 0 ? { strategyFilteredRefs } : {}),
     ...(run.resolvedPlan.engineUnavailable.length > 0 ? { skippedProcesses: run.resolvedPlan.engineUnavailable } : {}),
-    ...(run.options.engineProbe !== undefined ? { engineProbe: run.options.engineProbe } : {}),
     ...(preparation?.proactiveMaintenance ? { proactiveMaintenance: preparation.proactiveMaintenance } : {}),
   };
 }
@@ -887,8 +883,9 @@ async function runTriagePrePass(run: ImproveRunSetup): Promise<DrainResult | und
           dryRun: false,
           excludeIds: new Set<string>(),
           judgment: resolvedPlan.triageJudgment,
+          signal: run.budgetAbortController.signal,
         }),
-      { engine: resolvedPlan.triageJudgment?.engine, process: "triage.judgment" },
+      { engine: resolvedPlan.triageJudgment?.name, process: "triage.judgment" },
     );
   } catch (err) {
     warn(`[improve] triage pre-pass failed (non-fatal): ${errMessage(err)}`);
@@ -1238,7 +1235,6 @@ function finalizeImproveResult(args: {
     ...(preparation.planning ? { plan: buildResultExecutionPlan(run, preparation, collected, false) } : {}),
     ...(strategyFilteredRefs.length > 0 ? { strategyFilteredRefs } : {}),
     ...(resolvedPlan.engineUnavailable.length > 0 ? { skippedProcesses: resolvedPlan.engineUnavailable } : {}),
-    ...(options.engineProbe !== undefined ? { engineProbe: options.engineProbe } : {}),
     ...(usageReport ? { usageReport } : {}),
     actions: persistedActions,
     ...(distillSkippedAggregate ? { distillSkipped: distillSkippedAggregate } : {}),

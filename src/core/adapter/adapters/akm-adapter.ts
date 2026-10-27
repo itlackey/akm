@@ -3,19 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The AKM workspace's own `akm` adapter — akm 0.9.0 chunk-2, WI-B.
+ * The AKM workspace's own `akm` adapter.
  *
- * Implements `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §5.1 (BINDING) +
- * §6 + §7 (the `akm` row) EXACTLY: a BEHAVIOR-PRESERVING PORT that reproduces
+ * A BEHAVIOR-PRESERVING PORT that reproduces
  * TODAY'S classification and placement VERBATIM by REUSING the existing matcher
  * stack. It is NOT re-derived onto frontmatter `type` (that is the sibling
- * `okf` adapter's job, §5), NOT split per-`type` (the 14 AKM formats are `type`
- * VALUES the single `akm` adapter emits, §6/§0.2), and introduces NO new
+ * `okf` adapter's job), NOT split per-`type` (the 14 AKM formats are `type`
+ * VALUES the single `akm` adapter emits), and introduces NO new
  * positional/directory heuristics of its own.
  *
- * ── recognize (§5.1): the sync `runMatchers` reproduction ──
+ * ── recognize: the sync `runMatchers` reproduction ──
  *
- * `file-context.ts#runMatchers` (`:242-265`) is async ONLY because of its lazy
+ * `file-context.ts#runMatchers` is async ONLY because of its lazy
  * `ensureBuiltinsRegistered()` dynamic import; its ARBITRATION is pure and
  * synchronous. We reproduce it here by importing the SAME four builtin matcher
  * functions (`matchers.ts` `extensionMatcher` / `directoryMatcher` /
@@ -32,10 +31,10 @@
  * same arbitration.
  *
  * The winning `MatchResult.renderer` is carried on `documentJson.renderer` so
- * WI-C can wire presentation via `TYPE_PRESENTATION` without a new
- * `IndexDocument` field (WI-C owns presentation).
+ * presentation can be wired via `TYPE_PRESENTATION` without a new
+ * `IndexDocument` field.
  *
- * ── conceptId (§5.1 + ref-grammar decision D-R2): the QUALIFIED spelling ──
+ * ── conceptId: the QUALIFIED spelling ──
  *
  * conceptId = `<stash-subdir>/<canonical-name>` — the placement stash-subdir
  * (`stashDirFor(type)`) followed by the winning type's canonical name
@@ -44,26 +43,26 @@
  * extension, env/task strip their ext, and secret/session keep the natural
  * path). For Markdown types this IS the OKF concept ID (path − `.md`); it is
  * the same spelling `readCandidates` consumes, so
- * recognize/read share one identity (D-R2 resolved the earlier split). The
- * `type` is carried separately on `IndexDocument.type`, per §0.2 (type ≠
+ * recognize/read share one identity. The
+ * `type` is carried separately on `IndexDocument.type` (type ≠
  * identity), and `entry.name` keeps the BARE canonical name for FTS parity.
  *
  * ── readCandidates / directoryList / looksLikeRoot: type-driven placement ──
  *
  * Placement is type-driven (`path-resolver.ts#buildDiskCandidates`: the primary
  * candidate is `assetPathForName(ref.type, join(root, stashDirFor(ref.type)),
- * ref.name)`). §5.1 removes `type` from the ref, so `readCandidates` recovers
+ * ref.name)`). A ref carries no `type`, so `readCandidates` recovers
  * it from the conceptId's LEADING path segment — the qualified `<stash-subdir>/
- * <name>` form of §1.3 — reverse-mapping that segment against the placement
+ * <name>` form — reverse-mapping that segment against the placement
  * stash-subdir map and then delegating to `assetPathCandidatesForName`.
  *
- * ── validate: base checks only (WI-B) ──
+ * ── validate ──
  *
- * Base validate checks only for this WI (shared `validateChangesWithBaseChecks`
- * — the ported unquoted-colon / missing-updated / stale-path / missing-ref).
- * The per-type linters (SkillLinter/WorkflowLinter/TaskLinter/…) are WI-C.
+ * Shared base checks (`validateChangesWithBaseChecks` — the ported
+ * unquoted-colon / missing-updated / stale-path / missing-ref), then the
+ * per-type linters (SkillLinter/WorkflowLinter/TaskLinter/…) in `akm-lint.ts`.
  *
- * ── Cycle-safety (chunk-3 cutover, baseline 18) ──
+ * ── Cycle-safety ──
  *
  * This module VALUE-imports `matchers.ts` (indexer/walk) for classification and
  * `asset-placement.ts` (core/asset) for placement — delegating to the existing
@@ -75,9 +74,7 @@
  * in production for the frozen `BUILTIN_ADAPTERS` list
  * (`installations.ts#detectAdapterId`, `provider-utils.ts#detectStashRoot`).
  * The adapter is still itself a leaf, since neither the barrel nor the
- * registry import anything that imports back into this file — verified: `bun
- * scripts/lint-import-cycles.ts` reports 0 cycle participants and this module
- * is NOT one.
+ * registry import anything that imports back into this file.
  */
 
 import fs from "node:fs";
@@ -118,15 +115,14 @@ import { hashContent, type ParsedForValidate, RESERVED_FILES, runBaseValidateChe
 export { recognizeMatch } from "../recognize-match";
 
 /**
- * OKF reserved structural files (ref-grammar decision D-R6, spec §5.1 /
- * adapter-spec §5.1/§6): `index.md` (directory listing) and `log.md` (update
+ * OKF reserved structural files: `index.md` (directory listing) and `log.md` (update
  * history) are bundle structure at EVERY depth — never a concept document. The
  * `okf` / `llm-wiki` adapters already exclude them (`shared.ts`'s
  * `RESERVED_FILES`); this brings the `akm` adapter into conformance so a
  * `knowledge/index.md` never classifies as a `knowledge` item. Case-insensitive,
  * matched on the bare filename so the exclusion holds at any depth.
  */
-/** True when `name` (a bare file name) is an OKF reserved file, case-insensitively (D-R6). */
+/** True when `name` (a bare file name) is an OKF reserved file, case-insensitively. */
 function isReservedFileName(name: string): boolean {
   return RESERVED_FILES.has(name.toLowerCase());
 }
@@ -190,11 +186,11 @@ function stashDirToType(stashDir: string): string | undefined {
 
 /**
  * The search-surface `IndexDocument` fields that have NO first-class `IndexDocument`
- * home (spec §3) and therefore ride `documentJson` so the persist-time fold
- * (`search-fields.ts:28-33`) can still reach them — the exact set
+ * home and therefore ride `documentJson` so the persist-time fold
+ * (`search-fields.ts`) can still reach them — the exact set
  * `buildSearchFields` folds into the `hints`/`content` FTS columns beyond the
  * first-class name/description/tags/aliases/searchHints, plus the provenance the
- * WI-C tests read (renderer/source). Kept as a named list so the fold surface and
+ * tests read (renderer/source). Kept as a named list so the fold surface and
  * the mapping stay in lockstep.
  */
 const DOCUMENT_JSON_CARRIED_FIELDS = [
@@ -228,11 +224,11 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
 
 /**
  * Map the fully-assembled `IndexDocument` (produced by the shared metadata
- * pipeline) onto an `IndexDocument` (spec §3). First-class ranking/embedding
+ * pipeline) onto an `IndexDocument`. First-class ranking/embedding
  * fields land on named IndexDocument fields; every other search-surface or
  * signal field rides `documentJson` (opaque adapter extras) so nothing the
- * ranking/embedding/filter inputs read is lost — the M-b shadow-parity gate.
- * The winning renderer name is carried on `documentJson.renderer` (WI-C contract).
+ * ranking/embedding/filter inputs read is lost.
+ * The winning renderer name is carried on `documentJson.renderer`.
  */
 function indexDocumentFromEntry(
   entry: IndexDocument,
@@ -279,7 +275,7 @@ function conceptIdForRecognizedType(root: string, filePath: string, type: string
 }
 
 function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
-  // D-R6 (spec §5.1): `index.md` / `log.md` are OKF reserved structural files at
+  // `index.md` / `log.md` are OKF reserved structural files at
   // every depth — never items. Excluded BEFORE classification so a directory
   // listing or update log never becomes a `knowledge` (or other) concept.
   if (isReservedFileName(file.fileName)) return null;
@@ -306,12 +302,12 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   // identity ≠ search text.
   const dirPath = path.dirname(file.absPath);
 
-  // Chunk 5 M-b: recognize now carries the FULL index-time metadata surface
-  // (spec §2/§3), reproducing `buildEntryFromFile`'s flat-walk metadata
+  // recognize carries the FULL index-time metadata surface,
+  // reproducing `buildEntryFromFile`'s flat-walk metadata
   // output by SHARING its P1/P2/P4 assembly and substituting the synchronous
   // `foldRecognizedMetadata` (+ `applyFoldedMetadata`, which replicates the
   // in-place contributor precedence) for the async P3 renderer contributors.
-  // `entry.name` = the BARE canonical name (conceptId minus the D-R2 stash-subdir
+  // `entry.name` = the BARE canonical name (conceptId minus the stash-subdir
   // prefix) so the FTS `name` column
   // matches the pre-0.9.0 indexer (search-behavior parity), NOT the frontmatter
   // title. Parity is by construction — the two paths differ only in the P3 step,
@@ -364,7 +360,6 @@ function renderExecutionSource(c: BundleComponent, file: FileContext): AdapterRe
       executionDefaultsFromFrontmatter(data, {
         kind: document.type === "command" ? "command" : "persona",
         allowTopLevelEngine: true,
-        toolsKeys: ["tools"],
       }),
   });
 }
@@ -372,7 +367,7 @@ function renderExecutionSource(c: BundleComponent, file: FileContext): AdapterRe
 /**
  * A read-only {@link FileContext} backed by an OVERLAY string (a pending
  * change's content) instead of the live filesystem — the `validate` contract
- * ({@link BundleAdapter.validate} doc comment / adapter-spec §12.1) forbids
+ * ({@link BundleAdapter.validate} doc comment) forbids
  * reading the live FS. It mirrors `buildFileContext`'s eager path-field
  * derivation exactly (so the matchers classify identically) and serves the
  * overlay bytes from `content()`/`frontmatter()`. `stat()` throws: no matcher
@@ -416,7 +411,7 @@ function buildOverlayContext(root: string, relPathInput: string, raw: string): F
 }
 
 /**
- * `validate` (spec §6) = shared base checks + the winning `type`'s per-type
+ * `validate` = shared base checks + the winning `type`'s per-type
  * extra checks, reproducing today's `akmLint`/`getLinterForType` dispatch
  * byte-for-byte (the FROZEN `lint/all-types.json` `perType` golden is the gate).
  *

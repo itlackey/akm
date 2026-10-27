@@ -3,29 +3,24 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #953 — `akm index`'s embedding requests must carry the
- * `${secrets/name}` store-resolved credential, the same way `akm improve`'s
- * consolidate path already does (see the last describe block below, the
- * known-good control).
+ * #953 — `akm index`'s embedding requests must carry the credential stored
+ * for the embedding in `credentials.json` (the key `embedding`), the same way
+ * `akm improve`'s consolidate path already does (see the last describe block
+ * below, the known-good control).
  *
- * A field run with `${secrets/lab-api-key}` on `embedding.apiKey` and
- * `LAB_API_KEY` deliberately absent from the environment reportedly sent
- * every embedding request with NO Authorization header at all — silently,
- * not as a resolution error. This suite reproduces the standalone `akm
- * index` materializer path in-process AND as a real CLI child process
- * (since the field failure was specifically the CLI), plus every other path
- * that reaches `RemoteEmbedder`: an inherited credential that must not cross
- * the host-local config boundary while adapter detection persists mid-run;
- * `akm bundle update`'s reindex (reached via `akmUpdate`);
- * the `remember` write path (`indexWrittenAssets`, which calls
- * `generateEmbeddingsForDb` at its own fresh `loadConfig()`); and the
- * improve consolidate path as the known-good control.
+ * A field run reportedly sent every embedding request with NO Authorization
+ * header at all — silently, not as a resolution error. This suite reproduces
+ * the standalone `akm index` materializer path in-process AND as a real CLI
+ * child process (since the field failure was specifically the CLI), plus
+ * every other path that reaches `RemoteEmbedder`: an inherited `$VAR`
+ * reference that must not cross the host-local config boundary while adapter
+ * detection persists mid-run; `akm bundle update`'s reindex (reached via
+ * `akmUpdate`); the `remember` write path (`indexWrittenAssets`, which calls
+ * `generateEmbeddingsForDb` at its own fresh `loadConfig()`); and the improve
+ * consolidate path as the known-good control.
  *
  * Every request the mock server sees is asserted to carry the resolved
- * `Authorization` header — none of the variants below reproduced a keyless
- * request against the code as it stands (see the #953 entry in the 0.9.15
- * "Added" section of CHANGELOG.md for what was actually found); this suite
- * pins that as a regression guard.
+ * `Authorization` header; this suite pins that as a regression guard.
  *
  * Integration-classified (ORG-03/04/05/06): drives a real `akm index` run
  * against a real index.db and a real HTTP mock server, and one variant
@@ -35,16 +30,16 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { setSecret } from "../../src/commands/env/secret";
 import { akmUpdate } from "../../src/commands/sources/installed-stashes";
 import { resetConfigCache } from "../../src/core/config/config";
+import { writeCredential } from "../../src/core/config/credentials";
 import { getRegistryCacheDir } from "../../src/core/paths";
 import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
 import { akmIndex } from "../../src/indexer/indexer";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import * as syncFromRefModule from "../../src/sources/providers/sync-from-ref";
 import { seedLockEntries } from "../_helpers/lockfile";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 /** Absolute path to the repo's CLI entrypoint, for the child-process variant. */
 const CLI_ENTRYPOINT = path.join(import.meta.dir, "..", "..", "src", "cli.ts");
@@ -77,7 +72,7 @@ function expectEveryRequestCarriedCredential(authHeaders: (string | null)[], exp
   }
 }
 
-describe("akm index embedding requests carry the secrets ref credential (#953)", () => {
+describe("akm index embedding requests carry the stored credential (#953)", () => {
   let storage: IsolatedAkmStorage;
   let server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -100,11 +95,10 @@ describe("akm index embedding requests carry the secrets ref credential (#953)",
     );
   }
 
-  test("in-process akmIndex({ full: true }) sends Bearer <store value> on every embedding request", async () => {
-    setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("store-secret-value"));
-
+  test("in-process akmIndex({ full: true }) sends Bearer <stored key> on every embedding request", async () => {
     const capture = createAuthCapturingEmbeddingServer();
     server = capture.server;
+    writeCredential({ service: "embedding" }, "store-secret-value", capture.url);
 
     writeMemory("entry-1.md", "First memory entry for the credential test.");
     writeMemory("entry-2.md", "Second memory entry for the credential test.");
@@ -113,7 +107,7 @@ describe("akm index embedding requests carry the secrets ref credential (#953)",
       semanticSearchMode: "auto",
       bundles: { stash: { path: storage.stashDir, writable: true } },
       defaultBundle: "stash",
-      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "${secrets/lab-api-key}" },
+      embedding: { endpoint: capture.url, model: "mock", dimension: 8 },
     });
     resetConfigCache();
 
@@ -123,11 +117,32 @@ describe("akm index embedding requests carry the secrets ref credential (#953)",
     expectEveryRequestCarriedCredential(capture.authHeaders, "Bearer store-secret-value");
   });
 
-  test("the real CLI child process (`bun src/cli.ts index --full`) sends Bearer <store value> too", async () => {
-    setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("cli-store-secret-value"));
-
+  test("an embedding with only a model runs on the default connection and sends the key stored under its name", async () => {
     const capture = createAuthCapturingEmbeddingServer();
     server = capture.server;
+    writeCredential({ connection: "lab" }, "connection-store-secret-value", capture.url);
+
+    writeMemory("entry-1.md", "First memory entry for the default-connection embedding test.");
+
+    writeSandboxConfig({
+      semanticSearchMode: "auto",
+      bundles: { stash: { path: storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      connections: { lab: { endpoint: capture.url, models: { fast: "chat-model" } } },
+      embedding: { model: "mock", dimension: 8 },
+    });
+    resetConfigCache();
+
+    const result = await akmIndex({ stashDir: storage.stashDir, full: true });
+
+    expect(result.verification.ok).toBe(true);
+    expectEveryRequestCarriedCredential(capture.authHeaders, "Bearer connection-store-secret-value");
+  });
+
+  test("the real CLI child process (`bun src/cli.ts index --full`) sends Bearer <stored key> too", async () => {
+    const capture = createAuthCapturingEmbeddingServer();
+    server = capture.server;
+    writeCredential({ service: "embedding" }, "cli-store-secret-value", capture.url);
 
     writeMemory("entry-1.md", "First memory entry for the CLI credential test.");
 
@@ -135,7 +150,7 @@ describe("akm index embedding requests carry the secrets ref credential (#953)",
       semanticSearchMode: "auto",
       bundles: { stash: { path: storage.stashDir, writable: true } },
       defaultBundle: "stash",
-      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "${secrets/lab-api-key}" },
+      embedding: { endpoint: capture.url, model: "mock", dimension: 8 },
     });
 
     // A child process inherits nothing about the current test's in-memory
@@ -161,9 +176,7 @@ describe("akm index embedding requests carry the secrets ref credential (#953)",
     void stderr; // available for debugging on failure; not asserted on
   }, 60_000);
 
-  test("an inherited apiKey cannot authorize a locally configured embedding endpoint", async () => {
-    setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("extends-store-secret-value"));
-
+  test("an inherited apiKey reference cannot authorize a locally configured embedding endpoint", async () => {
     const capture = createAuthCapturingEmbeddingServer();
     server = capture.server;
 
@@ -177,7 +190,7 @@ describe("akm index embedding requests carry the secrets ref credential (#953)",
       `${JSON.stringify(
         {
           configVersion: "0.9.0",
-          embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "${secrets/lab-api-key}" },
+          embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "$LAB_API_KEY" },
         },
         null,
         2,
@@ -198,7 +211,9 @@ describe("akm index embedding requests carry the secrets ref credential (#953)",
     });
     resetConfigCache();
 
-    const result = await akmIndex({ stashDir: storage.stashDir, full: true });
+    const result = await withEnv({ LAB_API_KEY: "extends-env-secret-value" }, () =>
+      akmIndex({ stashDir: storage.stashDir, full: true }),
+    );
 
     expect(result.configUpdated?.detectedAdapters).toEqual({ stash: "akm" });
     expect(result.verification.ok).toBe(true);
@@ -213,7 +228,7 @@ describe("akm index embedding requests carry the secrets ref credential (#953)",
   });
 });
 
-describe("akm bundle update: the update's embedding phase carries the secrets ref credential (#953)", () => {
+describe("akm bundle update: the update's embedding phase carries the stored credential (#953)", () => {
   let storage: IsolatedAkmStorage;
   let server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -241,11 +256,10 @@ describe("akm bundle update: the update's embedding phase carries the secrets re
     }
   }
 
-  test("akmUpdate sends Bearer <store value> on every embedding request", async () => {
-    setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("bundle-update-store-secret-value"));
-
+  test("akmUpdate sends Bearer <stored key> on every embedding request", async () => {
     const capture = createAuthCapturingEmbeddingServer();
     server = capture.server;
+    writeCredential({ service: "embedding" }, "bundle-update-store-secret-value", capture.url);
 
     const id = "credential-probe";
     const cacheDir = path.join(getRegistryCacheDir(), `${id}-cache`);
@@ -257,7 +271,7 @@ describe("akm bundle update: the update's embedding phase carries the secrets re
       bundles: {
         [id]: { npm: id, components: { main: { root: ".", adapter: "akm", writable: false } } },
       },
-      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "${secrets/lab-api-key}" },
+      embedding: { endpoint: capture.url, model: "mock", dimension: 8 },
     });
     resetConfigCache();
     seedLockEntries([
@@ -311,7 +325,7 @@ describe("akm bundle update: the update's embedding phase carries the secrets re
   });
 });
 
-describe("akm remember write path: indexWrittenAssets carries the secrets ref credential (#953)", () => {
+describe("akm remember write path: indexWrittenAssets carries the stored credential (#953)", () => {
   let storage: IsolatedAkmStorage;
   let server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -326,11 +340,10 @@ describe("akm remember write path: indexWrittenAssets carries the secrets ref cr
     resetConfigCache();
   });
 
-  test("generateEmbeddingsForDb, called at indexWrittenAssets's own fresh loadConfig(), sends Bearer <store value>", async () => {
-    setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("remember-store-secret-value"));
-
+  test("generateEmbeddingsForDb, called at indexWrittenAssets's own fresh loadConfig(), sends Bearer <stored key>", async () => {
     const capture = createAuthCapturingEmbeddingServer();
     server = capture.server;
+    writeCredential({ service: "embedding" }, "remember-store-secret-value", capture.url);
 
     fs.writeFileSync(
       path.join(storage.stashDir, "memories", "seed-memory.md"),
@@ -342,7 +355,7 @@ describe("akm remember write path: indexWrittenAssets carries the secrets ref cr
       semanticSearchMode: "auto",
       bundles: { stash: { path: storage.stashDir, writable: true } },
       defaultBundle: "stash",
-      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "${secrets/lab-api-key}" },
+      embedding: { endpoint: capture.url, model: "mock", dimension: 8 },
     });
     resetConfigCache();
 
@@ -380,14 +393,13 @@ describe("known-good control: improve consolidate's embedding path (#953)", () =
     resetConfigCache();
   });
 
-  test("embedBatch(texts, config.embedding, ...) from the improve consolidate call shape sends Bearer <store value>", async () => {
-    setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("consolidate-store-secret-value"));
-
+  test("embedBatch(texts, config.embedding, ...) from the improve consolidate call shape sends Bearer <stored key>", async () => {
     const capture = createAuthCapturingEmbeddingServer();
     server = capture.server;
+    writeCredential({ service: "embedding" }, "consolidate-store-secret-value", capture.url);
 
     writeSandboxConfig({
-      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "${secrets/lab-api-key}" },
+      embedding: { endpoint: capture.url, model: "mock", dimension: 8 },
     });
     resetConfigCache();
 

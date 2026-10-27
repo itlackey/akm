@@ -13,39 +13,29 @@ import { akmReflect } from "../../../../src/commands/improve/reflect";
 import { listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { openStateDatabase } from "../../../../src/core/state-db";
-import type { SpawnedSubprocess, SpawnFn } from "../../../../src/core/subprocess";
 import type { ChatMessage } from "../../../../src/llm/client";
+import { writeFakeHarness } from "../../../_helpers/engine-stubs";
 import { quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  makeSandboxDir,
+  type SandboxedDir,
+  withIsolatedAkmStorage,
+} from "../../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 
+let binDir: SandboxedDir;
+
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  binDir = makeSandboxDir("akm-judge-pass-bin");
 });
 
 afterEach(() => {
+  binDir.cleanup();
   storage.cleanup();
 });
-
-function fakeSpawn(stdout: string): SpawnFn {
-  const stream = () =>
-    new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(stdout));
-        controller.close();
-      },
-    });
-  return () =>
-    ({
-      exitCode: 0,
-      exited: Promise.resolve(0),
-      stdout: stream(),
-      stderr: new ReadableStream<Uint8Array>({ start: (c) => c.close() }),
-      stdin: null,
-      kill: () => undefined,
-    }) as SpawnedSubprocess;
-}
 
 const BODY = [
   "# Rotating the VPN key",
@@ -58,15 +48,15 @@ const BODY = [
 const OLD = `---\ndescription: OLD_MARKER How to rotate the VPN key\n---\n\n${BODY}\n`;
 const PATCH = { description: "NEW_MARKER How to rotate the WireGuard VPN key" };
 
-function config(): AkmConfig {
+function config(bin: string): AkmConfig {
   return {
-    ...quietQualityGateConfig(),
-    engines: {
-      "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
-      judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "judge-model" },
+    ...quietQualityGateConfig(bin),
+    connections: { judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "judge-model" } } },
+    improve: {
+      strategy: "default",
+      processes: { reflect: { harness: "fake-agent" } },
+      strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
     },
-    defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
-    improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
   } as AkmConfig;
 }
 
@@ -92,9 +82,9 @@ describe("reflect after a judge pass", () => {
     const result = await akmReflect({
       ref: "knowledge/vpn-rotation",
       stashDir: storage.stashDir,
-      config: config(),
+      config: config(writeFakeHarness(binDir.dir, "fake-agent", [reflectReply(PATCH)])),
+      // Reflect runs on the harness; the judge, with no harness named, on the default connection.
       assetContent: OLD,
-      runAgentOptions: { spawn: fakeSpawn(reflectReply(PATCH)) },
       chat: async (_connection: unknown, messages: ChatMessage[]) => {
         prompts.push(messages.at(-1)?.content ?? "");
         return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "fine" });

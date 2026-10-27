@@ -4,45 +4,28 @@
 
 /**
  * The bounded-document front end and field helpers both task source grammars
- * share (spec docs/plans/specs/p2a-task-source-v4.md §1.5 D2-N4, §3.1).
- *
- * This is the actual D2-N4 move, not a parallel reimplementation: every
- * helper below — including the `TASK_V3_MAX_*` resource bounds and
- * `assertBoundedTaskYamlDocument` — is now OWNED here, body-intact from
- * `src/tasks/source-v3.ts`. `source-v3.ts` imports every one of them (and
- * re-exports `assertBoundedTaskYamlDocument` / the `TASK_V3_MAX_*` constants
- * at their existing names, since those were already part of its public
- * surface) instead of declaring its own copies. §9's acceptance criterion is
- * structural: "src/tasks/source/bounded-document.ts exists and owns the
- * D2-N4 helpers; src/tasks/source-v3.ts imports them and contains no copy of
- * any of them" — `tests/tasks/bounded-document.test.ts`'s last describe
- * block pins this with an AST scan of `source-v3.ts`, not just a runtime
- * behavior check (a copy-instead-of-move implementation would pass every
- * OTHER test in that file and in `tests/tasks/source-v3.test.ts`, because
- * both files would still call functions they have in scope either way).
+ * share. Every helper below — including the `TASK_V3_MAX_*` resource bounds and
+ * `assertBoundedTaskYamlDocument` — is owned here. `source-v3.ts` imports every
+ * one of them (and re-exports `assertBoundedTaskYamlDocument` and the
+ * `TASK_V3_MAX_*` constants at their existing names, since those were already
+ * part of its public surface) and declares no copy of any of them.
+ * `tests/tasks/bounded-document.test.ts`'s last describe block pins this with
+ * an AST scan of `source-v3.ts`, not just a runtime behavior check (a copy
+ * would pass every other test in that file and in
+ * `tests/tasks/source-v3.test.ts`, because both files would still call
+ * functions they have in scope either way).
  *
  * This module deliberately imports NOTHING from `../source-v3` (not even a
- * type) — `tests/architecture/import-cycle-ratchet.test.ts` is an ABSOLUTE
- * no-cycle gate over all of `src/**` (its baseline emptied at chunk-8 and
- * counts type-only imports as real graph edges), and `source-v3.ts` now
- * imports from this file, so a reverse edge here would close a cycle. Where
- * a moved helper's signature referenced a v3-only type
- * (`TaskV3AkmOptions["tools"]`, `TaskV3Environment`) the return type is
- * inlined structurally instead — invisible at runtime, and TypeScript's
- * structural typing makes the inlined shape and the named alias
- * interchangeable at every call site.
+ * type): `source-v3.ts` imports from this file, so a reverse edge here would
+ * close an import cycle. Where a helper's signature referenced a v3-only type
+ * (`TaskV3Environment`) the return type is inlined structurally instead —
+ * invisible at runtime, and TypeScript's structural typing makes the inlined
+ * shape and the named alias interchangeable at every call site.
  *
- * `parseTimeout` and `parseTools` stay v3-only in the sense that they
- * hardcode the `["akm", …]` field path (byte-identical to v3's existing
- * behavior — that hardcoding is exactly what D2-N4's binding resolution asks
- * to preserve). Task source v4's top-level `timeout:`/`tools:` fields have
- * their own siblings in `src/tasks/source/task-source-v4.ts`
- * (`parseTimeoutTopLevel`/`parseToolsTopLevel`) with the same accept/reject
- * semantics at a different, un-prefixed field path — v3 imports the two
- * below rather than declaring them itself, purely because D2-N4 homes every
- * one of these named helpers here. `nullableSelector` is the same kind of
- * `["akm", …]`-hardcoding helper but is NOT in D2-N4's named list and stays
- * declared directly in `source-v3.ts`.
+ * `parseTimeout` hardcodes the `["akm", …]` field path. Task source v4's
+ * top-level `timeout:` field has its own sibling in
+ * `src/tasks/source/task-source-v4.ts` (`parseTimeoutTopLevel`) with the same
+ * accept/reject semantics at a different, un-prefixed field path.
  */
 
 import { types as utilTypes } from "node:util";
@@ -71,11 +54,9 @@ export interface BoundedDocumentContext {
   readonly filePath: string;
   /**
    * The text substituted into `Invalid <sourceLabel> at <path>: …` — the ONLY
-   * text that differs between callers. P4 (docs/plans/specs/p4-deletions-closeout.md
-   * §3.2) deleted task v3 acceptance from `src`, so the "task v3 source"
-   * label this field once carried no longer has a live caller here; today's
-   * two values are `"task source v4"` (`task-source-v4.ts`'s `SOURCE_LABEL`)
-   * and `"task source"` (the version router, `parse-task-source.ts`, whose
+   * text that differs between callers. The two values are `"task source v4"`
+   * (`task-source-v4.ts`'s `SOURCE_LABEL`) and `"task source"` (the version
+   * router, `parse-task-source.ts`, whose
    * front end runs before `root.version` is read).
    */
   readonly sourceLabel: string;
@@ -317,26 +298,6 @@ export function parseTimeout(value: unknown, ctx: BoundedDocumentContext): strin
   return value as string | number;
 }
 
-/**
- * `akm.tools` — v3-only (hardcodes the `["akm", "tools"]` field path, see
- * this module's header). Body-intact from `source-v3.ts`; the return type is
- * inlined (was `TaskV3AkmOptions["tools"]`) so this module imports nothing
- * from `../source-v3` (see header — the import-cycle ratchet is absolute).
- */
-export function parseTools(
-  value: ExecutionJsonValue,
-  ctx: BoundedDocumentContext,
-): string | readonly string[] | ExecutionJsonObject | null {
-  if (value === null || typeof value === "string") return value;
-  if (Array.isArray(value)) {
-    if (value.some((entry) => typeof entry !== "string"))
-      sourceError(ctx, ["akm", "tools"], "array values must be strings.");
-    return value as readonly string[];
-  }
-  if (typeof value === "object") return value as ExecutionJsonObject;
-  sourceError(ctx, ["akm", "tools"], "must be a string, string array, mapping, or null.");
-}
-
 export function yamlProblem(message: string): string {
   return message.split("\n")[0]?.trim() || "invalid YAML";
 }
@@ -440,35 +401,25 @@ export function assertBoundedTaskYamlDocument(
 
 /**
  * Parse hostile YAML without aliases/tags/merges, then hand back the bounded
- * `{root, lineAt}` pair both grammars that read a task document consume —
- * originally lifted from the now-deleted `parseTaskV3Yaml`
- * (`source-v3.ts:894-952`), generalized only by `sourceLabel`.
+ * `{root, lineAt}` pair both grammars that read a task document consume,
+ * generalized by `sourceLabel`.
  *
- * P4 (docs/plans/specs/p4-deletions-closeout.md §3.2) deleted task v3
- * acceptance from `src` entirely — `parseTaskV3Yaml` and its `"task v3
- * source"` label no longer exist here (the grammar survives only in the
- * vendored, frozen `scripts/akm-migrate/migrate/task-source-v3-frozen.ts`
- * copy, which does not call this function). The two live `src` callers
- * today: `parseTaskSourceV4`'s standalone YAML-string entry
- * (`task-source-v4.ts:790`) passes `sourceLabel: "task source v4"`; the
- * version router (`parse-task-source.ts:61`) calls this directly with
- * `sourceLabel: "task source"` — not "task v3 source" — because its front
- * end runs before `root.version` is even read, so it cannot yet know which
- * schema version the document will turn out to be.
+ * The two live `src` callers: `parseTaskSourceV4`'s standalone YAML-string entry
+ * (`task-source-v4.ts`) passes `sourceLabel: "task source v4"`; the version
+ * router (`parse-task-source.ts`) calls this directly with
+ * `sourceLabel: "task source"` because its front end runs before
+ * `root.version` is even read, so it cannot yet know which schema version the
+ * document will turn out to be.
  */
 export function readBoundedTaskSourceYaml(
   input: BoundedTaskSourceYamlInput,
   options: { readonly sourceLabel: string },
 ): BoundedTaskSourceYamlResult {
   const sourceLabel = options.sourceLabel;
-  // P4 (docs/plans/specs/p4-deletions-closeout.md §5.2, row R-R8): these six
-  // throws used to omit their `code` argument and rely on the constructor's
-  // `INVALID_FLAG_VALUE` default (a pre-P4 ratchet-gaming trick that kept the
-  // literal string out of the grep-style count while the effective code
-  // stayed generic). §5.2's target table closes that gap: every pre-version
-  // failure in this bounded YAML front end (not a string, too large, YAML
-  // parse/expansion) is a task-source defect, not a flag-parsing one, so each
-  // now carries `TASK_SOURCE_INVALID` explicitly.
+  // Every pre-version failure in this bounded YAML front end (not a string, too
+  // large, YAML parse/expansion) is a task-source defect, not a flag-parsing
+  // one, so each throw carries `TASK_SOURCE_INVALID` explicitly instead of the
+  // constructor's `INVALID_FLAG_VALUE` default.
   if (typeof input.yaml !== "string") {
     throw new UsageError(
       `Invalid ${sourceLabel} at ${input.filePath}: source must be a string.`,

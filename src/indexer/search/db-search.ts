@@ -22,6 +22,7 @@ import { withStateDbTelemetry } from "../../core/state-db";
 import { systemErrorCode } from "../../core/system-error";
 import { presentationFor } from "../../core/type-presentation";
 import { embed } from "../../llm/embedder";
+import { effectiveEmbedding } from "../../llm/embedders/connection";
 import { applyEmbeddingTemplate, resolveEmbeddingProfile } from "../../llm/embedders/profile";
 import { normalizeEmbeddingEndpoint } from "../../llm/embedders/remote";
 import type {
@@ -160,8 +161,7 @@ export interface SearchLocalInput {
   filters?: StashEntryScope;
   /**
    * When true, entries with `quality === "proposed"` are kept in the result
-   * set. By default (false) they are excluded before candidate selection per v1
-   * spec §4.2.
+   * set. By default (false) they are excluded before candidate selection.
    */
   includeProposed?: boolean;
   beliefFilter?: BeliefFilterMode;
@@ -586,7 +586,7 @@ export function applyEntryFilters<T extends { id: number; entry: IndexDocument; 
   const scopeFiltered = filters
     ? sourceFiltered.filter((item) => entryMatchesScope(item.entry.scope, filters))
     : sourceFiltered;
-  // Proposed-quality filter (v1 spec §4.2): exclude `quality: "proposed"`
+  // Proposed-quality filter: exclude `quality: "proposed"`
   // entries unless the caller opts in.
   const qualityFiltered = opts.includeProposed
     ? scopeFiltered
@@ -669,7 +669,8 @@ function startVectorChannel(
   // a live warning instead of silently skipping with no signal.
   if (getEmbeddingCount(db) === 0) return Promise.resolve({ neighbors: null });
 
-  const timeoutMs = config.embedding?.queryTimeoutMs ?? DEFAULT_QUERY_EMBED_TIMEOUT_MS;
+  const embedding = effectiveEmbedding(config);
+  const timeoutMs = embedding?.queryTimeoutMs ?? DEFAULT_QUERY_EMBED_TIMEOUT_MS;
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -678,8 +679,8 @@ function startVectorChannel(
       reject(new Error(`Query embedding timed out after ${timeoutMs}ms`));
     }, timeoutMs);
   });
-  const queryText = applyEmbeddingTemplate(resolveEmbeddingProfile(config.embedding).queryTemplate, query);
-  return Promise.race([embed(queryText, config.embedding, controller.signal), timeout])
+  const queryText = applyEmbeddingTemplate(resolveEmbeddingProfile(embedding).queryTemplate, query);
+  return Promise.race([embed(queryText, embedding, controller.signal), timeout])
     .then((vector) => ({ neighbors: searchVec(db, vector, CHANNEL_DEPTH, undefined, filterCandidates) }))
     .catch((error: unknown) => ({ neighbors: null, warning: buildVectorFallbackWarning(config, error) }))
     .finally(() => clearTimeout(timer));
@@ -690,7 +691,7 @@ function buildVectorFallbackWarning(config: AkmConfig, error: unknown): string {
   const reason = classifyVectorFailure(error);
   const target = endpoint
     ? `embedding endpoint ${endpoint}`
-    : config.embedding?.endpoint
+    : effectiveEmbedding(config)?.endpoint
       ? "configured embedding endpoint"
       : "local embedding model";
   const unavailable = reason === "connection failed" ? `cannot reach ${target}` : `${target} is unavailable`;
@@ -702,7 +703,7 @@ function buildVectorFallbackWarning(config: AkmConfig, error: unknown): string {
  * or fragments into a warning. Invalid authored values fail closed.
  */
 function safeEmbeddingEndpoint(config: AkmConfig): string | undefined {
-  const endpoint = config.embedding?.endpoint;
+  const endpoint = effectiveEmbedding(config)?.endpoint;
   if (!endpoint) return undefined;
   try {
     const parsed = new URL(normalizeEmbeddingEndpoint(endpoint));
@@ -788,7 +789,7 @@ export async function buildDbHit(input: {
     score: input.score,
     ...(input.whyMatched ? { whyMatched: input.whyMatched } : {}),
     ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
-    // Surface optional quality (v1 spec §4.2). Omitted when entry has
+    // Surface optional quality. Omitted when entry has
     // no `quality` field so payloads stay compact for the common case.
     ...(input.entry.quality ? { quality: input.entry.quality } : {}),
     ...(input.entry.beliefState ? { beliefState: input.entry.beliefState } : {}),

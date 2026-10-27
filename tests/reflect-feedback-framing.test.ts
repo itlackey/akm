@@ -211,7 +211,6 @@ describe("buildReflectPrompt — a patch of three fields, and 'nothing to change
       ref: "skills/foo",
       feedback: ["did not help"],
       rejectedProposals: [{ ref: "skills/foo", reason: "not an improvement" }],
-      priorDraft: "a previous reply",
       assetContent: "x".repeat(2000),
     }).prompt;
     for (const removed of [

@@ -38,16 +38,14 @@ function setup(indexSessions = true) {
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
     defaultWriteTarget: "stash",
-    engines: {
+    connections: {
       test: {
-        kind: "llm",
         endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test",
-        supportsJsonSchema: true,
+        models: { fast: "test" },
       },
     },
-    defaults: { llmEngine: "test", improveStrategy: "extract-only" },
     improve: {
+      strategy: "extract-only",
       strategies: {
         "extract-only": { processes: { extract: { enabled: true, indexSessions, triage: { enabled: false } } } },
       },

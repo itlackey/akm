@@ -276,19 +276,6 @@ describe("recognizeMatch", () => {
     expect(result?.specificity).toBe(8);
   });
 
-  test("smartMdMatcher matches .md with 'tools' frontmatter as 'agent'", () => {
-    const root = tmpDir();
-    const filePath = path.join(root, "misc", "builder.md");
-    writeFile(filePath, ["---", "tools:", "  read: allow", "---", "You are a builder."].join("\n"));
-
-    const ctx = buildFileContext(root, filePath);
-    const result = smartMdMatcher(ctx);
-
-    expect(result).not.toBeNull();
-    expect(result?.type).toBe("agent");
-    expect(result?.specificity).toBe(20);
-  });
-
   test("smartMdMatcher classifies .md without agent/command signals as knowledge", () => {
     const root = tmpDir();
     const filePath = path.join(root, "misc", "deploy.md");
@@ -333,30 +320,6 @@ describe("recognizeMatch", () => {
     expect(result?.specificity).toBe(18);
   });
 
-  test("smartMdMatcher: a toolPolicy-only file is not an agent", () => {
-    const root = tmpDir();
-    const filePath = path.join(root, "misc", "legacy-policy.md");
-    writeFile(filePath, ["---", "toolPolicy:", "  read: allow", "---", "You are an agent."].join("\n"));
-
-    const ctx = buildFileContext(root, filePath);
-    const result = smartMdMatcher(ctx);
-
-    expect(result?.type).toBe("knowledge");
-  });
-
-  test("smartMdMatcher: tools (20) beats agent frontmatter command signal (18)", () => {
-    const root = tmpDir();
-    const filePath = path.join(root, "misc", "hybrid.md");
-    writeFile(filePath, ["---", "tools:", "  read: allow", "agent: build", "---", "You are a hybrid."].join("\n"));
-
-    const ctx = buildFileContext(root, filePath);
-    const result = smartMdMatcher(ctx);
-
-    // tools is agent-exclusive at 20, wins over agent dispatch at 18
-    expect(result?.type).toBe("agent");
-    expect(result?.specificity).toBe(20);
-  });
-
   test("smartMdMatcher: agent frontmatter (18) beats model-only (8)", () => {
     const root = tmpDir();
     const filePath = path.join(root, "misc", "deploy.md");
@@ -377,30 +340,6 @@ describe("recognizeMatch", () => {
 
     const ctx = buildFileContext(root, filePath);
     expect(smartMdMatcher(ctx)).toBeNull();
-  });
-
-  test("specificity ordering: strong agent signal (tools) beats directoryMatcher", async () => {
-    const root = tmpDir();
-    const filePath = path.join(root, "commands", "hybrid.md");
-    writeFile(filePath, ["---", "tools:", "  read: allow", "---", "Agent in commands dir."].join("\n"));
-
-    const ctx = buildFileContext(root, filePath);
-
-    // directoryMatcher says "command" at specificity 10
-    const dirResult = directoryMatcher(ctx);
-    expect(dirResult?.type).toBe("command");
-    expect(dirResult?.specificity).toBe(10);
-
-    // smartMdMatcher says "agent" at specificity 20 (tools is a strong signal)
-    const smartResult = smartMdMatcher(ctx);
-    expect(smartResult?.type).toBe("agent");
-    expect(smartResult?.specificity).toBe(20);
-
-    // recognizeMatch should pick the higher specificity
-    const best = recognizeMatch(ctx);
-    expect(best).not.toBeNull();
-    expect(best?.type).toBe("agent");
-    expect(best?.specificity).toBe(20);
   });
 
   test("specificity ordering: directoryMatcher(10) beats smartMdMatcher(5) for plain .md", async () => {

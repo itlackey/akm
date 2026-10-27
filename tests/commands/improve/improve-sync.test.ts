@@ -52,8 +52,8 @@ function makeGitBacked(): void {
 function cheapConfig(sync?: { enabled?: boolean; push?: boolean }): AkmConfig {
   return {
     semanticSearchMode: "off",
-    defaults: { improveStrategy: "sync-test" },
     improve: {
+      strategy: "sync-test",
       strategies: {
         "sync-test": {
           processes: {

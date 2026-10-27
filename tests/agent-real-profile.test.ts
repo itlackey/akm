@@ -63,8 +63,7 @@ describe.skipIf(!REAL_AGENT_TESTS)("real-profile integration (opt-in via AKM_REA
       agentConfig: {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        engines: { opencode: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "opencode" },
+        harnesses: { opencode: { platform: "opencode" } },
       },
       timeoutMs: 60_000,
     });
@@ -82,9 +81,9 @@ describe.skipIf(!REAL_AGENT_TESTS)("real-profile integration (opt-in via AKM_REA
       config: {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        engines: { claude: { kind: "agent", platform: "claude" } },
-        defaults: { engine: "claude", improveStrategy: "default" },
+        harnesses: { claude: { platform: "claude" } },
         improve: {
+          strategy: "default",
           strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } },
         },
       },

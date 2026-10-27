@@ -59,8 +59,8 @@ recognizes and indexes them.
 Scripts and knowledge are classified by **what they are**: a `.sh` file is a
 script; a plain `.md` file is knowledge. Commands and agents are classified
 by **how an LLM should use them**: a `.md` file with `$ARGUMENTS`
-placeholders is a command template; one with `tools` in its frontmatter is an
-agent definition. Workflow assets are `.md`, classified by `type: workflow`
+placeholders is a command template; one under `agents/` is an agent
+definition. Workflow assets are `.md`, classified by `type: workflow`
 or placement. Skills are a
 **packaging convention**: a directory containing a `SKILL.md` file.
 

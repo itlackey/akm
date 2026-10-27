@@ -150,11 +150,10 @@ async function seed(): Promise<{ proposalId: string }> {
   writeSandboxConfig({
     ...makeConfig(stash),
     semanticSearchMode: "off",
-    engines: {
+    connections: {
       default: {
-        kind: "llm",
         endpoint: "https://llm.example.test/v1/chat/completions",
-        model: "m",
+        models: { fast: "m" },
         apiKey: PLANTED_API_KEY,
       },
     },
@@ -271,6 +270,12 @@ describe("pages", () => {
     expect(config).toContain("Effective config");
     expect(config).toContain("redacted");
     expect(config).not.toContain(PLANTED_API_KEY);
+    // Connections and harnesses are two tables; the connection's alias map is shown as alias: model.
+    expect(config).toContain("<h2>Connections</h2>");
+    expect(config).toContain("fast: m");
+    expect(config).toContain("<h2>Harnesses</h2>");
+    expect(config).toContain("No harnesses are configured.");
+    expect(config).not.toContain("<h2>Engines</h2>");
 
     const pending = (await (await view("proposals.js", "renderList"))(ctx())).text;
     expect(pending).toContain("stash//lessons/rg");

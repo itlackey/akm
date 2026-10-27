@@ -60,6 +60,7 @@ import {
   type OpenCodeFlavor,
   readPackageVersion,
 } from "../../integrations/harnesses/opencode/plugin-layout";
+import { opencodeCacheDir } from "../../integrations/harnesses/opencode/roots";
 import { isExactSemver, isSemverRange, maxSatisfying, satisfiesRange } from "../../registry/semver";
 import type { HealthCheckResult } from "./types";
 
@@ -82,8 +83,8 @@ function claudePluginsDir(): string {
  * sharing the host's databases with every other akm install — its version
  * lag matters the same way a stale Claude plugin's does.
  */
-function opencodeCacheDir(): string {
-  return process.env.AKM_OPENCODE_CACHE_DIR ?? path.join(os.homedir(), ".cache", "opencode");
+function defaultOpencodeCacheRoot(): string {
+  return process.env.AKM_OPENCODE_CACHE_DIR ?? opencodeCacheDir();
 }
 
 /** One cached copy of an OpenCode plugin's bundled `akm-cli`. */
@@ -294,7 +295,7 @@ export interface PluginStalenessOptions {
   probe?: boolean;
   /** Injectable remote-tag lister; defaults to the real `git ls-remote`. */
   listRemoteTags?: ListRemoteTagsFn;
-  /** Root of OpenCode's package cache. Defaults to `opencodeCacheDir()`. */
+  /** Root of OpenCode's package cache. Defaults to `defaultOpencodeCacheRoot()`. */
   opencodeCacheRoot?: string;
 }
 
@@ -317,7 +318,7 @@ export function collectPluginStalenessAdvisories(options: PluginStalenessOptions
     buildAdvisory(plugin, options.cliVersion, pluginsRoot, listRemoteTags, probe),
   );
 
-  const opencodeCacheRoot = options.opencodeCacheRoot ?? opencodeCacheDir();
+  const opencodeCacheRoot = options.opencodeCacheRoot ?? defaultOpencodeCacheRoot();
   for (const plugin of OPENCODE_PLUGIN_LOCATIONS) {
     for (const bundled of findBundledAkm(plugin, opencodeCacheRoot)) {
       results.push(buildOpencodeBundledAdvisory(plugin, bundled, options.cliVersion));

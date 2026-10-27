@@ -235,8 +235,8 @@ const secretRunCommand = defineJsonCommand({
       throw err;
     }
     // R-067: was `process.exit(result.status ?? 0)`, unconditional even on
-    // the success path — it skipped the `finally { await
-    // disposeDispatchResources(); }` cleanup in src/cli.ts's `runCommand`.
+    // the success path — it skipped the `finally { disposeLlmUsageSink(); }`
+    // cleanup in src/cli.ts's `runCommand`.
     // Setting `process.exitCode` and returning still exits with the child's
     // exact status once the event loop drains, but lets cleanup run first —
     // same pattern `emitJsonError` (src/cli/shared.ts) already established.

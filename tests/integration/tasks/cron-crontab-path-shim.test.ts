@@ -9,7 +9,7 @@
  * injects. This is the only way to prove `spawnSync`'s ENOENT is actually
  * detected and distinguished from a fake `crontab` binary on PATH that
  * merely exits nonzero, so it belongs under `tests/integration/` per the
- * "spawns a real process" rule (AGENTS.md ORG-03/04/05/06) rather than
+ * "spawns a real process" rule rather than
  * beside the mocked-exec cases.
  *
  * A REAL SUBPROCESS is required (not just a real `spawnSync` call in this

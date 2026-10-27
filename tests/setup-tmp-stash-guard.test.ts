@@ -17,15 +17,18 @@
 // under os.tmpdir() (via makeSandboxDir), and isTransientStashPath()
 // deliberately hardcodes /tmp, /var/tmp, and their macOS /private
 // equivalents rather than reading TMPDIR. A relocated TMPDIR makes these
-// fixtures fail for reasons unrelated to the guard under test. See
-// AGENTS.md's Tests section.
+// fixtures fail for reasons unrelated to the guard under test.
 
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { assertSetupSandbox, runSetupFromConfig, runSetupWithDefaults } from "../src/setup/setup";
+import { fakeOpencodeMajor } from "./_helpers/opencode-version";
 import { makeSandboxDir, withEnv } from "./_helpers/sandbox";
+
+// Setup asks the PATH `opencode` which major it is; no suite runs a real one.
+beforeEach(() => fakeOpencodeMajor(1));
 
 function captureWarnings(): { warnings: string[]; restore: () => void } {
   const warnings: string[] = [];

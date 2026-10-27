@@ -3,11 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * File-private helpers prepareTaskV3Execution depends on, moved body-intact
- * out of the pre-P1b src/tasks/runtime-v3.ts (spec
- * docs/plans/specs/p1b-model-extraction.md §4.1, Lane B / D4 module map).
- * None of these was exported at head either; only the subset prepare.ts's
- * moved function body calls is exported here.
+ * Helpers prepareTaskV3Execution depends on. Only the subset prepare.ts's
+ * function body calls is exported here.
  */
 
 import type { PreparedCommandInvocation } from "../../commands/command/command-execution";
@@ -94,11 +91,12 @@ export function currentExecutionValues(
               : agent,
         }
       : {}),
+    ...(own(akm, "connection") ? { connection: akm?.connection } : {}),
+    ...(own(akm, "harness") ? { harness: akm?.harness } : {}),
     ...(own(akm, "engine") ? { engine: akm?.engine } : {}),
     ...(own(akm, "model") ? { model: akm?.model } : {}),
     ...(own(akm, "inference") ? { inference: akm?.inference } : {}),
     ...(own(akm, "outputSchema") ? { outputSchema: akm?.outputSchema } : {}),
-    ...(own(akm, "tools") ? { tools: akm?.tools } : {}),
     ...(own(akm, "timeout") ? { timeout: akm?.timeout } : {}),
     workspace: context.bundleRoot,
     environment,
@@ -155,9 +153,9 @@ export function validatePreparedCommand(
   context: PrepareTaskV3ExecutionContext,
 ): PreparedCommandInvocation {
   const { request } = invocation;
-  if (!request.engine.name) {
+  if (!request.target.name) {
     throw new ConfigError(
-      `Task ${JSON.stringify(context.taskRef)} has no resolved execution engine. Configure defaults.engine or akm.engine before running it.`,
+      `Task ${JSON.stringify(context.taskRef)} has no resolved connection or harness. Run \`akm setup\`, or set akm.connection or akm.harness before running it.`,
       "INVALID_CONFIG_FILE",
     );
   }
@@ -176,8 +174,7 @@ export function validateWorkflowRuntimeSource(
   const source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(readFile(file, workspaceRoot));
   const compiled = compileWorkflowSource(source, { path: file });
   if (!compiled.ok) {
-    // P4-N2's mapping (docs/plans/specs/p4-deletions-closeout.md §3.3.4): a
-    // task-wrapped workflow target's own multi-job source is a composition
+    // A task-wrapped workflow target's own multi-job source is a composition
     // failure, same as freezing it directly would be; any other compile
     // failure is WORKFLOW_SOURCE_INVALID.
     const detail = compiled.errors.map((error) => `${error.path}:${error.line}: ${error.message}`).join("; ");

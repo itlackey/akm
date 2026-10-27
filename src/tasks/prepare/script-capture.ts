@@ -3,13 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The one shared implementation of frozen-script byte/interpreter capture
- * (spec docs/plans/specs/p1b-model-extraction.md §4.3). Both prepare.ts's
- * script arm (the moved prepareTaskV3Execution) and
+ * The one shared implementation of frozen-script byte/interpreter capture.
+ * Both prepare.ts's script arm (prepareTaskV3Execution) and
  * prepare-script-target.ts's typed prepareScriptTarget() call
  * captureScriptTarget() below, so the two never drift into two copies of the
- * same capture logic. scriptInterpreter() is moved body-intact out of the
- * pre-P1b src/tasks/runtime-v3.ts.
+ * same capture logic.
  */
 
 import { createHash } from "node:crypto";

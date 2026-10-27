@@ -3,23 +3,21 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `index` config: reserved feature sections + arbitrary per-pass entries.
- * Extracted verbatim from the former `config-schema.ts` monolith — no behavior
- * change.
+ * `index` config: the index-wide model-work settings + arbitrary per-pass entries.
  */
 import { z } from "zod";
-import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt } from "./primitives";
+import { LlmInvocationOverridesSchema, nonEmptyString, positiveInt } from "./primitives";
 
 // ── Index / per-pass ────────────────────────────────────────────────────────
 
 /**
- * Per-pass `index.<pass>` entry. Unknown keys (including inline engine
+ * Per-pass `index.<pass>` entry. Unknown keys (including inline connection
  * settings an earlier release carried) are kept and named by the config
  * loader's schema walk like any other unknown key.
  */
 export const IndexPassConfigSchema = z
   .object({
-    engine: engineName.optional(),
+    connection: nonEmptyString.optional(),
     model: nonEmptyString.optional(),
     timeoutMs: z.union([positiveInt, z.null()]).optional(),
     enabled: z.boolean().optional(),
@@ -27,27 +25,25 @@ export const IndexPassConfigSchema = z
   })
   .passthrough();
 
-const IndexDefaultsSchema = z
-  .object({
-    engine: engineName.optional(),
-    model: nonEmptyString.optional(),
-    timeoutMs: z.union([positiveInt, z.null()]).optional(),
-    llm: LlmInvocationOverridesSchema.optional(),
-  })
-  .passthrough();
+/** The keys that are settings for every pass, not a pass of their own. */
+const INDEX_WIDE_KEYS = ["connection", "model", "timeoutMs", "llm"] as const;
 
 type IndexConfigOutput = {
   [key: string]: unknown;
-  defaults?: z.infer<typeof IndexDefaultsSchema>;
+  connection?: string;
+  model?: string;
+  timeoutMs?: number | null;
+  llm?: z.infer<typeof LlmInvocationOverridesSchema>;
   memory?: z.infer<typeof IndexPassConfigSchema>;
 };
 
 /**
- * Index config is a union of reserved feature sections and per-pass entries.
- * Passthrough so per-pass entries (keyed by arbitrary pass names like
- * `memory`, or a retired one like `graph`) can live next to the reserved keys.
- * The outer preprocess emits the legacy parser's actionable error messages
- * for the two most common type-shape mistakes:
+ * Index config is the index-wide model-work settings (`connection`, `model`,
+ * `timeoutMs`, `llm`) plus per-pass entries keyed by pass name. Passthrough so
+ * per-pass entries (keyed by arbitrary pass names like `memory`, or a retired
+ * one like `graph`) can live next to the index-wide keys. The outer preprocess
+ * emits the legacy parser's actionable error messages for the two most common
+ * type-shape mistakes:
  *   - An array at the `index` block.
  *   - A non-object at `index.<passName>`.
  * Inner field validation (invocation overrides, provider-key rejection) is
@@ -66,6 +62,7 @@ const IndexConfigRuntimeSchema = z.preprocess(
     }
     if (typeof raw !== "object") return raw;
     for (const [passName, value] of Object.entries(raw as Record<string, unknown>)) {
+      if ((INDEX_WIDE_KEYS as readonly string[]).includes(passName)) continue;
       if (typeof value !== "object" || value === null || Array.isArray(value)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -78,7 +75,10 @@ const IndexConfigRuntimeSchema = z.preprocess(
   },
   z
     .object({
-      defaults: IndexDefaultsSchema.optional(),
+      connection: nonEmptyString.optional(),
+      model: nonEmptyString.optional(),
+      timeoutMs: z.union([positiveInt, z.null()]).optional(),
+      llm: LlmInvocationOverridesSchema.optional(),
     })
     .catchall(IndexPassConfigSchema),
 );

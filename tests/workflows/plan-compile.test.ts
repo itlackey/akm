@@ -73,7 +73,7 @@ Deploy the artifact.
 describe("compiled plan — structural golden", () => {
   test("compiles to the golden plan", () => {
     expect(compileOk(LINEAR_MD, "Ship it")).toEqual({
-      irVersion: 7,
+      irVersion: 8,
       title: "Ship it",
       steps: [
         {
@@ -216,7 +216,7 @@ describe("compiled and frozen plan — full-vocabulary golden", () => {
   });
 
   test("freeze turns each step into its frozen node: unit ids, map template, defaults applied", () => {
-    const executable = FULL_WF.replace("default-agent", "test-agent").replace("engine: reviewer", "engine: test-agent");
+    const executable = FULL_WF.replace("default-agent", "test-llm").replace("engine: reviewer", "engine: test-llm");
     const plan = freezeWorkflow(executable, "workflows/test.md");
     const [discover, review, triage, ship] = plan.steps;
     expect(discover?.root).toMatchObject({
@@ -547,7 +547,7 @@ Do the assigned item.
 // key-order-independence properties it also covered are pinned by the two
 // tests above and by `freezeWorkflow`'s exclusive use in every other suite.
 describe("computePlanHash", () => {
-  const executableWf = FULL_WF.replace("default-agent", "test-agent").replace("engine: reviewer", "engine: test-agent");
+  const executableWf = FULL_WF.replace("default-agent", "test-llm").replace("engine: reviewer", "engine: test-llm");
 
   test("same workflow → same hash (deterministic across compiles)", () => {
     const a = freezeWorkflow(executableWf, "workflows/test.md");

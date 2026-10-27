@@ -13,11 +13,11 @@ import path from "node:path";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   AkmConfigSchema,
+  ConnectionSchema,
   CURRENT_CONFIG_VERSION,
   EmbeddingConnectionConfigSchema,
   ImproveProcessConfigSchema,
   ImproveProfileConfigSchema,
-  LlmProfileConfigSchema,
   RegistryConfigEntrySchema,
 } from "../src/core/config/config-schema";
 import { HARNESS_REGISTRY } from "../src/integrations/harnesses";
@@ -37,7 +37,7 @@ function generate(): JsonSchema {
   // them into a single $defs map.
   const targets = {
     AkmConfig: AkmConfigSchema,
-    LlmProfileConfig: LlmProfileConfigSchema,
+    ConnectionConfig: ConnectionSchema,
     EmbeddingConnectionConfig: EmbeddingConnectionConfigSchema,
     ImproveProcessConfig: ImproveProcessConfigSchema,
     ImproveProfileConfig: ImproveProfileConfigSchema,
@@ -83,12 +83,15 @@ const HARNESS_DOC_END = "<!-- harness-table:end -->";
 /** The "Supported harnesses" docs table, derived from `HARNESS_REGISTRY`. */
 export function renderHarnessTable(): string {
   const yes = (v: boolean): string => (v ? "yes" : "no");
+  // A harness that asks the installed program (OpenCode: only version 2 can be restricted) has no single answer.
+  const restricted = (h: (typeof HARNESS_REGISTRY)[number]): string =>
+    h.confinableInstalled ? "depends on the install" : yes(h.confinable);
   const rows = HARNESS_REGISTRY.map(
     (h) =>
-      `| \`${h.id}\` | ${h.displayName} | ${h.profile ? `\`${h.profile.bin}\`` : "in-process"} | ${yes(h.capabilities.sessionLogs)} | ${yes(h.capabilities.modelWork)} | ${yes(h.capabilities.nativeAgent)} |`,
+      `| \`${h.id}\` | ${h.displayName} | \`${h.profile.bin}\` | ${yes(h.sessionLogProvider !== undefined)} | ${restricted(h)} | ${yes(h.nativeAgent)} |`,
   );
   return [
-    "| `platform` | Harness | Binary | Session logs | Model work | Native `agent` |",
+    "| `platform` | Harness | Binary | Session logs | Restricted model work | Native `agent` |",
     "| --- | --- | --- | --- | --- | --- |",
     ...rows,
   ].join("\n");

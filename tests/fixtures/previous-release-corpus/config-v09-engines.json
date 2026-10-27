@@ -1,0 +1,76 @@
+{
+  "configVersion": "0.9.0",
+  "semanticSearchMode": "auto",
+  "engines": {
+    "lab": {
+      "kind": "llm",
+      "provider": "lmstudio",
+      "endpoint": "http://lab:8080/v1/chat/completions",
+      "model": "qwen3-32b",
+      "apiKeyFile": "__KEY_FILE__",
+      "temperature": 0.2,
+      "maxTokens": 4096,
+      "enableThinking": false,
+      "supportsJsonSchema": false,
+      "extraParams": {
+        "top_p": 0.9
+      },
+      "contextLength": 32768,
+      "timeoutMs": 900000
+    },
+    "cloud": {
+      "kind": "llm",
+      "endpoint": "https://api.openai.com/v1/chat/completions",
+      "model": "gpt-4o-mini",
+      "apiKey": "${secrets/openai}"
+    },
+    "hosted": {
+      "kind": "llm",
+      "endpoint": "https://hosted.example.com/v1/chat/completions",
+      "model": "hosted-model",
+      "apiKey": "sk-literal-from-0-9"
+    },
+    "env": {
+      "kind": "llm",
+      "endpoint": "https://env.example.com/v1/chat/completions",
+      "model": "env-model",
+      "apiKey": "$ENV_ENGINE_KEY"
+    },
+    "claude": {
+      "kind": "agent",
+      "platform": "claude"
+    },
+    "sdk": {
+      "kind": "agent",
+      "platform": "opencode-sdk",
+      "llmEngine": "lab"
+    }
+  },
+  "defaults": {
+    "llmEngine": "lab",
+    "engine": "claude",
+    "improveStrategy": "nightly"
+  },
+  "workflow": {
+    "judgeEngine": "cloud"
+  },
+  "improve": {
+    "strategies": {
+      "nightly": {
+        "processes": {
+          "reflect": {
+            "enabled": true,
+            "engine": "cloud",
+            "model": "balanced"
+          },
+          "distill": {
+            "enabled": true
+          },
+          "consolidate": {
+            "enabled": false
+          }
+        }
+      }
+    }
+  }
+}

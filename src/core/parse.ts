@@ -6,8 +6,8 @@
  * Shared JSON parsing utilities for LLM and agent output.
  *
  * Lives in `src/core/` so that both `src/llm/` and `src/integrations/agent/`
- * can import without crossing the one-way boundary defined by v1 spec §9.7
- * (agent/ must not import from llm/).
+ * can import without crossing the one-way boundary (agent/ must not import
+ * from llm/).
  *
  * The canonical implementation is ported from `src/llm/client.ts` (most
  * complete version):

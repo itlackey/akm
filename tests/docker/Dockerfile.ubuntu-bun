@@ -1,5 +1,5 @@
 # Ubuntu 22.04 — bun install method
-FROM node:22 AS node-runtime
+FROM node:24 AS node-runtime
 FROM ubuntu:22.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

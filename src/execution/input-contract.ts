@@ -7,15 +7,12 @@
  * `src/workflows/ir/params.ts` (workflow parameters) into a contract-shaped
  * vocabulary both workflow params AND task source v4's `inputs:`
  * declarations consume — one validation/coercion implementation, injected
- * per-caller diagnostics (D3-N3). Binding boundary: `src/execution/**` must
- * never import `src/workflows/**` (D3-N1) — `INPUT_NAME_PATTERN` and the
+ * per-caller diagnostics. Binding boundary: `src/execution/**` must
+ * never import `src/workflows/**` — `INPUT_NAME_PATTERN` and the
  * canonical-JSON helpers are therefore defined locally rather than imported
- * from the workflow side (D3-N1/D3-N2), verified by
+ * from the workflow side, verified by
  * `tests/execution/input-contract.test.ts`'s purity/byte-equality scans.
  * Pure module: no IO, no engine imports.
- *
- * See docs/architecture/decisions/0004-task-input-contract-and-flag-coercion.md
- * for the full generalization history and the D3-N1/D3-N2/D3-N3 rationale.
  */
 
 import { createHash } from "node:crypto";
@@ -50,18 +47,16 @@ export interface InputFlag {
 
 /**
  * A single input binding as it will be frozen into a `TaskInvocation`
- * (`src/tasks/model/invocation.ts`, P2b). Task source v4's `inputs:` grammar
+ * (`src/tasks/model/invocation.ts`). Task source v4's `inputs:` grammar
  * needs both a literal value (an `akm task run --<name> <value>` flag, or a
- * `schedule[i].inputs` literal) and a reference binding (P2b,
- * `docs/plans/specs/p2b-input-bindings.md` §3.6). P2a's `akm task run` input
+ * `schedule[i].inputs` literal) and a reference binding. `akm task run` input
  * flags only ever produce `kind: "literal"` bindings.
  *
  * The `reference` arm additionally carries `schema` — the declaration's
- * bounded JSON Schema (P2b §3.6's "Contract note"): pre-attempt resolution
+ * bounded JSON Schema: pre-attempt resolution
  * (`src/workflows/exec/step-work.ts`) validates the reference's RESOLVED
  * value against it without re-reading the task source, so the check stays a
- * pure function of the frozen plan. This is an additive widening; the
- * `literal` arm is untouched.
+ * pure function of the frozen plan.
  */
 export type TaskInputBinding =
   | Readonly<{ kind: "literal"; name: string; value: unknown }>

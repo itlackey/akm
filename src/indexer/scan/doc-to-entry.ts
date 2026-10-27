@@ -63,7 +63,7 @@ export function indexDocumentToStashEntry(doc: IndexDocument): IndexDocument {
     filename: path.basename(doc.path ?? ""),
   };
 
-  // ── First-class IndexDocument members (spec §3) ──
+  // ── First-class IndexDocument members ──
   if (doc.description !== undefined) entry.description = doc.description;
   if (doc.tags !== undefined) entry.tags = doc.tags;
   if (doc.content !== undefined) entry.content = doc.content;

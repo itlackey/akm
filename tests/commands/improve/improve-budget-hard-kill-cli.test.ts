@@ -54,8 +54,7 @@ test("the hard-kill hook persists a terminated improve run with reason budget_ex
       writeSandboxConfig({
         configVersion: "0.9.0",
         semanticSearchMode: "off",
-        engines: { ready: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "m" } },
-        defaults: { llmEngine: "ready" },
+        connections: { ready: { endpoint: "https://example.test/v1/chat/completions", models: { fast: "m" } } },
       });
       await runCliCapture(["improve"]);
       const db = new Database(getStateDbPath(), { readonly: true });

@@ -14,7 +14,7 @@
  * every other validator in
  * proposal-quality-validators.ts, this one is NOT advisory — it blocks,
  * because a truncated body silently replacing a full asset is data loss
- * (AGENTS.md's defensive-code carve-out for data-loss guards), not a prose
+ * (the data-loss exemption of core principle 1), not a prose
  * quality nit.
  */
 

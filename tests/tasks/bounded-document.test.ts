@@ -39,10 +39,9 @@
  * logic that check was guarding entirely; the module's surviving purpose is
  * the prepare seam's document vocabulary (types only), which imports no
  * D2-N4 helper at all. `task-source-v4.ts` is the extraction's real home
- * now, but it is a deliberately NOT byte-identical sibling for two of the
- * eleven original helpers (`parseTimeout`/`parseTools` became
- * `parseTimeoutTopLevel`/`parseToolsTopLevel` there — the file's own header
- * records why), so re-pointing the same helper list at it would assert
+ * now, but it is a deliberately NOT byte-identical sibling for one of the
+ * eleven original helpers (`parseTimeout` became `parseTimeoutTopLevel`
+ * there — the file's own header records why), so re-pointing the same helper list at it would assert
  * something the design never promised.
  */
 

@@ -211,6 +211,8 @@ describe("task source v4 — closed key-set constants (D2-N3, D2-N7)", () => {
         "working-directory",
         "schedule",
         "agent",
+        "connection",
+        "harness",
         "engine",
         "model",
         "inference",
@@ -1108,23 +1110,27 @@ describe("task source v4 — top-level execution controls", () => {
     expectTopLevelFieldPath(error.message, "timeout");
   });
 
-  test("engine/model/agent accept null and reject an empty string, each at its OWN top-level field path (not akm.<key>)", () => {
-    const ok = parseTaskSourceV4Document(v4Doc({ uses: "commands/review", engine: null, model: null, agent: null }), {
-      filePath: "/x.yml",
-    });
+  test("connection/harness/engine/model/agent accept null and reject an empty string, each at its OWN top-level field path (not akm.<key>)", () => {
+    const ok = parseTaskSourceV4Document(
+      v4Doc({ uses: "commands/review", connection: null, harness: null, engine: null, model: null, agent: null }),
+      { filePath: "/x.yml" },
+    );
+    expect(ok.execution.connection).toBeNull();
+    expect(ok.execution.harness).toBeNull();
     expect(ok.execution.engine).toBeNull();
     expect(ok.execution.model).toBeNull();
     expect(ok.execution.agent).toBeNull();
 
     // v3's nullableSelector hardcodes ["akm", key] (source-v3.ts:375) for
-    // every one of engine/model/agent — pin all three field paths
-    // individually, not just "engine" (test-review finding,
-    // tests/tasks/source-v4.test.ts:130).
-    const engineError = expectTaskSourceInvalid(
-      () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", engine: "" }), { filePath: "/x.yml" }),
-      /engine/i,
-    );
-    expectTopLevelFieldPath(engineError.message, "engine");
+    // every one of these selectors — pin each field path individually
+    // (test-review finding, tests/tasks/source-v4.test.ts:130).
+    for (const key of ["connection", "harness", "engine"]) {
+      const targetError = expectTaskSourceInvalid(
+        () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", [key]: "" }), { filePath: "/x.yml" }),
+        new RegExp(key, "i"),
+      );
+      expectTopLevelFieldPath(targetError.message, key);
+    }
 
     const modelError = expectTaskSourceInvalid(
       () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", model: "" }), { filePath: "/x.yml" }),
@@ -1186,21 +1192,37 @@ describe("task source v4 — top-level execution controls", () => {
     expectTopLevelFieldPath(error.message, "maxSteps");
   });
 
-  test("when_to_use, tags, inference, and tools survive as top-level v4 keys with identical validation (D2-N7)", () => {
+  test("when_to_use, tags, and inference survive as top-level v4 keys with identical validation (D2-N7)", () => {
     const doc = parseTaskSourceV4Document(
       v4Doc({
         uses: "commands/review",
         when_to_use: "Run during release review",
         tags: ["contract", "review"],
         inference: { seed: 7 },
-        tools: ["read", "grep"],
       }),
       { filePath: "/x.yml" },
     );
     expect(doc.when_to_use).toBe("Run during release review");
     expect(doc.tags).toEqual(["contract", "review"]);
     expect(doc.execution.inference).toEqual({ seed: 7 });
-    expect(doc.execution.tools).toEqual(["read", "grep"]);
+  });
+
+  test("a top-level tools: is ignored, with a one-time retired warning", () => {
+    const warnCalls: string[] = [];
+    _resetWarnOnceForTests();
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level === "warn") warnCalls.push(args.map(String).join(" "));
+    });
+
+    const parse = () =>
+      parseTaskSourceV4Document(v4Doc({ uses: "commands/review", tools: ["read", "grep"] }), {
+        filePath: "/x.yml",
+      });
+    const doc = parse();
+    parse();
+
+    expect(doc.execution).not.toHaveProperty("tools");
+    expect(warnCalls).toEqual(["/x.yml: `tools` is retired and ignored."]);
   });
 
   test("an invalid tags: value is TASK_SOURCE_INVALID at the TOP-LEVEL field path 'tags' (not akm.tags, D2-N7)", () => {

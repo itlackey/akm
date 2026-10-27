@@ -20,7 +20,6 @@ import { probeLlmEndpoint } from "../llm/client";
 import { type Database, openDatabase } from "../storage/database";
 import { insertEvent } from "../storage/repositories/events-repository";
 import { getExtractOutcomeCountsSince } from "../storage/repositories/extract-sessions-repository";
-import { countImproveRunsSince } from "../storage/repositories/improve-runs-repository";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries } from "../storage/repositories/index-entries-repository";
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
@@ -31,19 +30,18 @@ import { collectArchiveUsageAdvisory } from "./health/archive-usage";
 import {
   HEALTH_CHECKS,
   type HealthCheckContext,
-  probeActiveImproveStrategy,
-  runHealthEngineProbes,
   runPendingStateMigrationsCheck,
   SESSION_EXTRACTION_LEDGER_WINDOW_DAYS,
 } from "./health/checks";
 import { collectConfigSkewAdvisory } from "./health/config-skew";
+import { runConnectionsAndHarnessesCheck } from "./health/connections-and-harnesses-check";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
 import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
-import { engineLastUsedSince, readLastEngineUsage } from "./health/engine-usage";
 import { emptyImproveMetrics, roundRate } from "./health/improve-metrics";
 import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usage";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
+import { readSemanticSearchState } from "./health/semantic-search-check";
 import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
 import {
@@ -96,7 +94,7 @@ export interface AkmHealthOptions {
    */
   stashExposureGit?: GitRunner;
   /**
-   * Probe LLM engine reachability in the engine checks (#914). Off by default
+   * Probe each connection's endpoint for reachability in the `connections-and-harnesses` check (#914). Off by default
    * so library callers and tests stay offline; the CLI turns it on unless
    * `--no-probe` is given.
    */
@@ -305,7 +303,7 @@ function gatherTaskHistoryPhase(
   const stateDbIntegrity = runStateDbIntegrityCheck(stateDbPath);
   const stateDbFreelist = getStateDbFreelistInfo(stateDbPath);
 
-  // D8 (spec §5.3): a marked "command" row or a legacy (unmarked) "prompt"
+  // A marked "command" row or a legacy (unmarked) "prompt"
   // row is the agent/LLM arm; an unmarked "command" row is the legacy
   // native shell/script arm and must not be counted here (see
   // isAgentTaskHistoryRow's header comment, referenced from
@@ -329,30 +327,25 @@ function gatherTaskHistoryPhase(
   };
 }
 
-interface EgressConfigPhase {
-  egressConfigView: EgressConfigView | undefined;
-  /** #949: configured `kind: "llm"` engine names with `enableThinking: false`. */
-  thinkingOffEngines: string[];
+/**
+ * The config view the surfaces advisory needs. Best-effort: an unloadable
+ * config leaves it undefined and the advisory degrades to its generic state.
+ */
+function gatherEgressConfigView(): EgressConfigView | undefined {
+  try {
+    return loadConfig() as EgressConfigView;
+  } catch {
+    return undefined;
+  }
 }
 
-/**
- * Config fields the surfaces advisory and (#949) the `thinking-control`
- * check need. Best-effort: an unloadable config leaves both fields at their
- * empty fallback and the callers degrade to their generic/unknown states.
- */
-function gatherEgressConfigPhase(): EgressConfigPhase {
-  let egressConfigView: EgressConfigView | undefined;
-  let thinkingOffEngines: string[] = [];
+/** The configured `semanticSearchMode`; undefined when the config cannot load. */
+function gatherSemanticSearchMode(): string | undefined {
   try {
-    const config = loadConfig();
-    egressConfigView = config as EgressConfigView;
-    thinkingOffEngines = Object.entries(config.engines ?? {})
-      .filter(([, engine]) => engine.kind === "llm" && engine.enableThinking === false)
-      .map(([name]) => name);
+    return loadConfig().semanticSearchMode;
   } catch {
-    // fall through with undefined/empty
+    return undefined;
   }
-  return { egressConfigView, thinkingOffEngines };
 }
 
 /** Extract-ledger outcome counts for the `session-extraction` check's window, independent of `--since`. */
@@ -725,9 +718,11 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
   try {
     const { windowResults, deltas } = resolveWindowComparePhase(options, db, stateDbPath, now);
     // Network probes overlap the local database phases below; awaited where consumed.
-    const engineProbesPromise = runHealthEngineProbes({ probeReachable: options.probe ? probeLlmEndpoint : undefined });
-    engineProbesPromise.catch(() => undefined);
-    // #950: same best-effort, --probe-gated discipline as engineProbesPromise
+    const connectionsAndHarnessesPromise = runConnectionsAndHarnessesCheck({
+      probeReachable: options.probe ? probeLlmEndpoint : undefined,
+    });
+    connectionsAndHarnessesPromise.catch(() => undefined);
+    // #950: same best-effort, --probe-gated discipline as connectionsAndHarnessesPromise
     // above — started here, alongside it, and awaited later.
     const versionDriftPromise = collectVersionDriftAdvisory(Boolean(options.probe), { cliVersion: pkgVersion });
     versionDriftPromise.catch(() => undefined);
@@ -740,7 +735,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     const taskHistory = gatherTaskHistoryPhase(db, since, stateDbPath, now, readOnly);
     const { tableNames, missingTables, probe } = taskHistory;
 
-    const { egressConfigView, thinkingOffEngines } = gatherEgressConfigPhase();
+    const egressConfigView = gatherEgressConfigView();
 
     // Same window bundle `--window-compare` builds per-window (windows.ts) —
     // reused here for the main `--since` window's improve summary and for
@@ -758,23 +753,11 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
 
     const sessionExtractionLedger = gatherSessionExtractionLedgerPhase(db, now);
 
-    // #950: computed once (no IO beyond config/env, same as gatherEgressConfigPhase)
-    // so `active-improve-strategy` and `engine-last-used` project the same
-    // process→engine map instead of each resolving the strategy independently.
-    const { check: activeImproveStrategy, processEngines: activeImproveStrategyEngines } = probeActiveImproveStrategy();
-
-    // #950: `engine-last-used` reads a fixed lookback window independent of
-    // `--since` (mirrors sessionExtractionLedger's independent window above).
-    const engineLastUsedSinceIso = engineLastUsedSince(now);
-    const engineLastUsed = readLastEngineUsage(stateDbPath, now, readOnly);
-    const improveRunsInLookbackWindow = countImproveRunsSince(db, engineLastUsedSinceIso);
-
-    const engineProbes = await engineProbesPromise;
+    const connectionsAndHarnesses = await connectionsAndHarnessesPromise;
     const versionDrift = await versionDriftPromise;
     const schedulerBinaryDrift = await schedulerBinaryDriftPromise;
 
-    // Read once, shared by the `thinking-control` check (#949) and the
-    // `metrics.llmUsage` report field below — same window, same aggregate.
+    // The `metrics.llmUsage` report field below.
     const llmUsage = readLlmUsageAggregate(stateDbPath, since, undefined, readOnly);
 
     // Run the ordered health-check registry. Each check projects the shared
@@ -798,14 +781,9 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       sessionExtractionLedger,
       autoAccept: improveSummary.autoAccept,
-      engineProbes,
-      thinkingOffEngines,
-      llmUsage,
+      connectionsAndHarnesses,
+      semanticSearch: readSemanticSearchState(gatherSemanticSearchMode()),
       versionDrift,
-      activeImproveStrategy,
-      activeImproveStrategyEngines,
-      engineLastUsed,
-      improveRunsInLookbackWindow,
       schedulerBinaryDrift,
     };
     for (const check of HEALTH_CHECKS) {

@@ -37,9 +37,10 @@ import { resolveStandardsContext } from "../../core/standards/resolve-standards-
 import { withStateDb } from "../../core/state-db";
 import { warn, warnVerbose } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
+import { type NoticeSet, noticeSet } from "../../execution/notices";
+import type { ConfiguredExecutionSettings } from "../../execution/source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import type { chatCompletion } from "../../llm/client";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
@@ -71,8 +72,6 @@ import {
   callStage,
   LESSON_REJECT_MAX_SCORE,
   mintProposal,
-  type NoticeSet,
-  noticeSet,
   type QualityJudgeResult,
   rejectedProposalContext,
   resolveQualityGateJudge,
@@ -102,6 +101,8 @@ export interface AkmDistillOptions {
   config?: AkmConfig;
   /** Exact runner frozen by the improve plan (an own key, `null` meaning none). */
   llmRunner?: RunnerSpec | null;
+  /** What the improve run selected: the nearest layer of this stage's quality-gate judge. */
+  run?: ConfiguredExecutionSettings;
   /** Shared improve deadline for generation and judging. */
   signal?: AbortSignal;
   /** Test seam: transport override. */
@@ -503,8 +504,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     stash,
     config,
     profile,
-    runner: stageRunner(options, config, profile, "distill", notices.add),
-    judgeRunner: resolveQualityGateJudge(config, profile, "distill", notices.add),
+    runner: stageRunner(options, config, "distill", notices.add),
+    judgeRunner: resolveQualityGateJudge(config, profile, "distill", notices.add, options.run),
     notices,
     eligMeta,
     asset,
@@ -527,9 +528,6 @@ async function distill(
   // A reinforced memory graduates to knowledge without a generation call.
   const promotion = targetKind === "lesson" ? null : await planPromotion(run, feedbackEvents);
   if (promotion) {
-    if (run.runner && promotion.existing) assertRunnerCredentials(run.runner);
-    const judge = run.judgeRunner ?? run.runner;
-    if (judge && qualityGateEnabled(run)) assertRunnerCredentials(judge);
     const promoted = await promoteToKnowledge(run, promotion);
     stampInputSalience(run);
     return promoted;
@@ -555,11 +553,9 @@ async function distill(
   const { system, prompt } = await buildDistillMessages(run, feedback, kind, outputRef);
   const call = run.runner
     ? await callStage({
-        feature: "distill",
         runner: run.runner,
         system,
         prompt,
-        gate: { config: run.config, enabled: true },
         // NONE is an answer: a parser that rejected it would ask for a lesson again.
         parse: (raw) => (answeredNone(raw) ? raw : parseEmbeddedJsonResponse(raw)),
         // The injected test transport never sees the schema.
@@ -858,11 +854,9 @@ async function proposeLessonUpdate(
   if (candidates.length === 0) return undefined;
 
   const call = await callStage({
-    feature: "distill",
     runner: run.runner,
     system: "Return only valid JSON. No prose.",
     prompt: buildLessonUpdatePrompt(memory, feedback, candidates),
-    gate: { config: run.config, enabled: true },
     request: {
       ...(run.options.chat === undefined
         ? { responseSchema: DISTILL_LESSON_UPDATE_JSON_SCHEMA }
@@ -1115,7 +1109,6 @@ async function promoteToKnowledge(run: DistillRun, plan: PromotionPlan): Promise
   let content = plan.content;
   if (plan.existing && run.runner) {
     const merged = await callStage({
-      feature: "distill",
       runner: run.runner,
       system: "Return only valid JSON. No prose.",
       prompt: [

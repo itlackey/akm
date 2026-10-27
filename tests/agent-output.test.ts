@@ -331,11 +331,14 @@ describe("--format jsonl", () => {
       path.join(stashDir, "agents", "reviewer.md"),
       "---\ndescription: Reviewer\n---\nRendered system prompt.\n",
     );
+    // Claude Code reads the prompt on stdin; this one prints its arguments and then its stdin.
+    const bin = path.join(stashDir, "echo-claude.sh");
+    writeFile(bin, '#!/bin/sh\necho "$@"\ncat\n');
+    fs.chmodSync(bin, 0o755);
     const config = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: { test: { kind: "agent", platform: "opencode", bin: "/bin/echo" } },
-      defaults: { engine: "test" },
+      harnesses: { test: { platform: "claude", bin } },
     };
     const runtime = makeCliRuntime();
     await runCli(stashDir, ["index", "--full", "--format=json", "-q"], config, runtime);
@@ -373,8 +376,7 @@ describe("--format jsonl", () => {
           components: { main: { root: ".", adapter: "okf", writable: false } },
         },
       },
-      engines: { test: { kind: "agent", platform: "opencode", bin: "/bin/echo" } },
-      defaults: { engine: "test" },
+      harnesses: { test: { platform: "opencode", bin: "/bin/echo" } },
     };
     const runtime = makeCliRuntime();
     await runCli(stashDir, ["index", "--full", "--format=json", "-q"], config, runtime);

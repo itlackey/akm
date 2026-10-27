@@ -117,13 +117,15 @@ Failures classified by akm emit a JSON error envelope on **stderr** before
 exiting; stdout is normally left empty:
 
 ```json
-{"ok": false, "error": "<message>", "hint": "<optional hint>"}
+{"ok": false, "error": "<message>", "code": "<stable code>", "hint": "<optional hint>"}
 ```
 
-The `hint` field is present only when actionable remediation is available
-(e.g. a suggested flag or alternate command). Agents should check
-`ok === false` on the parsed stderr envelope or a non-zero exit code to
-detect failure. Scripts can rely on the exit code alone.
+The `code` field is the stable machine-readable code of a classified akm error
+(`INVALID_CONFIG_FILE`, `MISSING_REQUIRED_ARGUMENT`, ...); an unexpected
+internal error has none. The `hint` field is present only when actionable
+remediation is available (e.g. a suggested flag or alternate command). Agents
+should check `ok === false` on the parsed stderr envelope or a non-zero exit
+code to detect failure. Scripts can rely on the exit code alone.
 
 Every success envelope produced by the passthrough stamp — `config`, `clone`,
 `models`, `task-*`, `workflow-*`, `registry-*`, and the rest of that shared
@@ -179,32 +181,75 @@ hijacking your real default bundle.
 
 ### setup
 
-Run the interactive first-run wizard.
+Run the first-run wizard.
 
 ```sh
 akm setup
+akm setup --endpoint http://localhost:11434/v1 --yes   # no prompts
 ```
 
-The setup wizard configures AKM in two steps:
+The wizard asks, in order:
 
-**Step 1 — Small model connection** (for background processing)
-Configures the OpenAI-compatible endpoint and model used for `akm improve`
-and `akm remember --enrich`. Supports Ollama,
-OpenAI, LM Studio, or any custom endpoint. Skipping disables enrichment features.
+1. **Agent programs.** Which installed agent programs (Claude Code, Codex,
+   OpenCode, ...) akm may use; each is shown with whether akm can limit it to
+   reading and searching for its own model calls. With several, you pick the
+   default. For OpenCode, setup asks the program the harness will run (its `bin`,
+   else `opencode` on `PATH`) for `--version` and treats a version it cannot read
+   as OpenCode 1. When a harness that cannot be restricted is enabled for akm's
+   model calls, setup says "Model work on `<name>` cannot be restricted: it can
+   edit files and run commands." where you choose, and in its summary line.
+2. **Model calls.** Whether the default agent program also takes akm's own
+   model calls (improve, judging, extraction). It is asked only when a harness is
+   enabled and there is no connection yet and no `--endpoint`, because a
+   connection always takes model calls; answering no leads to a connection. A no
+   that no connection follows is saved as `modelWork: false` on that harness, so
+   model calls stay off (the summary says so and points at `akm setup
+   --endpoint`) rather than falling back to it. A `modelWork: false` already
+   saved is the question's default and stays through `--yes`; only a yes clears
+   it. With `--yes` the answer is yes only for a harness akm can limit to reading
+   and searching for its own model calls, and whose `modelWork: false` is not
+   already saved.
+3. **Connection.** An OpenAI-compatible endpoint, its API key (typed at a masked
+   prompt and stored in `credentials.json`, never in `config.json`), and one model
+   per alias (`fast`, `balanced`, `reasoning`) picked from the models the
+   endpoint lists. Change a pick later with `akm models set`.
+4. **Embeddings.** A model the default connection serves, akm's built-in local
+   embedder, another endpoint, or off. The serving connection is the default of
+   the config as this run will save it: a further `--name` connection does not
+   serve embeddings, its models are not offered, and with several connections
+   none called `default`, `--embedding <model>` refuses and asks you to name one
+   default or pass `--embedding-endpoint`.
+5. **Save.** The config is written, the bundle directory initialized, and a
+   summary says what runs where.
 
-**Step 2 — Agent connection** (for agentic commands)
-Configures how `akm improve`, `akm proposal new`, and `akm task run` dispatch AI sessions.
-Options:
-- **Same connection** — reuse the Step 1 endpoint with a (optionally different) model
-- **New connection** — separate endpoint, model, and API key
-- **Installed CLI agent** — use an installed agent binary (opencode, claude, codex, etc.)
-- **None** — agentic commands disabled with a clear warning
+Flags answer one question each; `--yes` takes the detected default for every
+question left, so nothing is prompted. Without a terminal, `akm setup` refuses
+unless `--yes` or `--from` is given.
 
-A feature capability summary is shown at the end of setup.
+| Flag | Answers |
+|---|---|
+| `--endpoint <url>` | The connection to add or update (the first is named `default`) |
+| `--api-key-env <NAME>` | The environment variable holding its key (`apiKey: "$NAME"`) |
+| `--name <name>` | A further connection, with `--endpoint` |
+| `--harness <a,b>` | Agent programs to enable; the first is the default |
+| `--embedding <model\|local\|off>` | Embeddings |
+| `--embedding-endpoint <url>`, `--embedding-api-key-env <NAME>` | Another endpoint serving the embedding model |
+| `--from <file>` | A config file (JSON or YAML) to merge |
+| `--dir <path>`, `--no-init` | The bundle directory; skip scaffolding it |
+| `--no-probe` | Offline: the endpoint is not contacted and its models are not listed; a connection added this way has no model until `akm models set` names one |
 
-The wizard also lets you choose a bundle directory, review registries, and add bundle
-sources. When you save, akm writes the config file, initializes the bundle directory,
-and builds the search index.
+The detected defaults are: when no agent program is configured yet, every one
+found on `PATH` is enabled and the first found is the default. If no connection
+exists, model calls go to that program when akm can limit it to reading and searching; otherwise a
+local OpenAI-compatible server (Ollama on 11434, LM Studio on 1234, or a server
+on 8080), when one answers, becomes the connection `default`. Each alias takes
+the connection's current pick, else the first model the endpoint lists that is
+not an embedding model. Embeddings turn on only for a new default connection
+whose endpoint lists an embedding model.
+
+The wizard also lets you review registries and add bundle sources. A scripted run
+prints its result with a `runs` object saying what runs where: `modelCalls`,
+`agentWork` and `embeddings`.
 
 ### index
 
@@ -225,7 +270,9 @@ Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
 breakdown in milliseconds. Use `--verbose` to print the indexing mode,
 semantic-search settings, and phase-by-phase progress to stderr while the
 index is being built. Malformed workflow assets are skipped with file-path
-warnings instead of aborting the full run.
+warnings instead of aborting the full run. `verification.embeddingRuntime` is
+`onnxruntime-node` when the local embedder embedded in this run; it is absent
+for a remote embedding provider and when nothing was embedded locally.
 
 **Progress in non-verbose JSON mode (default output format, #954):** even
 without `--verbose`, phase-start messages and the embedding heartbeat
@@ -323,6 +370,7 @@ Returns a JSON object with:
 | `searchModes` | Active search modes (`fts`, optionally `semantic` and `hybrid`) |
 | `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
 | `registries` | Configured registries |
+| `connectionsAndHarnesses` | The connections, harnesses and work that runs on them, as the rows `akm health` reports under its `connections-and-harnesses` check, without contacting anything: each connection's endpoint and whether its key is held, each harness's platform and whether its binary is on `PATH`, and for each kind of work the connection or harness and model it resolves to |
 | `sourceProviders` | Configured sources (filesystem, git, website, npm) |
 | `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `links` (declared links per kind with `total` and `unresolved`; absent when the index holds none), `lastBuiltAt`, `hasEmbeddings`, `unreadable` (index.db exists but the filesystem refuses to read it — a permissions problem), `unavailable` (index.db is readable but the SQLite-level read didn't complete: locked by another akm process, a newer layout this akm can't understand, or a corrupt file) |
 
@@ -366,14 +414,13 @@ akm health --report --window-compare 7d --format html
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `default-llm-engine` / `configured-engines` reachability probes, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
+| `--no-probe` | Skip the `connections-and-harnesses` reachability probes and harness `--version` runs, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
-default agent engine, and summarizes recent `improve_*` events. Unless
+configured connections and harnesses (the `connections-and-harnesses` table), and summarizes recent `improve_*` events. Unless
 `--no-probe` is given, it also sends a bounded (3s timeout) reachability probe
-to the `default-llm-engine` and every `configured-engines` LLM connection (and
-an SDK engine's LLM fallback), one probe per distinct endpoint, checks the
+to each connection's endpoint, one probe per distinct endpoint, checks the
 installed akm-cli version against the latest GitHub release (`cli-version`),
 runs the scheduler's recorded akm binary with `--version` to check it
 against the running CLI (`scheduler-binary`).
@@ -383,8 +430,8 @@ Primary result fields:
 | Field | Description |
 | --- | --- |
 | `status` | Overall health verdict: `pass`, `warn`, or `fail` |
-| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `active-runs`, `default-engine`, `model-map-files`, `default-llm-engine`, `configured-engines`, and `active-improve-strategy` |
-| `advisories` | Non-fatal warnings including `semantic-search-runtime`, `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), `thinking-control` (an `enableThinking: false` engine whose recorded usage still shows reasoning tokens), and `engine-last-used` (an engine bound to an enabled improve process with no recorded use in 30 days) |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `active-runs`, `connections-and-harnesses`, and `semantic-search` |
+| `advisories` | Non-fatal warnings including `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), and `scheduler-binary` |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
 
@@ -401,27 +448,40 @@ It `fail`s only when a pending migration could not be applied — naming it and
 pointing at `akm migrate apply` — rather than the command crashing. Read this
 check's `status` instead of grepping akm's error text.
 
-`default-llm-engine` and `configured-engines` probe reachability (not just
-configuration) for a `kind: "llm"` engine — an unreachable endpoint is a hard
-`fail` for `default-llm-engine` and a `warn` for any other engine. `--no-probe`
-skips this. When a required credential is missing from the shell but an
-`env/` asset defines the same variable name, the warn names that asset's ref
-(never the variable name) and points at `akm env run <ref> -- ...`.
-`active-improve-strategy` names the resolved engine per process
-in its evidence and message, so a strategy-level `engine` pin that shadows
-`defaults.llmEngine` is visible without config archaeology.
+`connections-and-harnesses` is one table: a row for each configured connection (endpoint, whether
+its key is held, whether the endpoint answers) and harness (platform, whether
+its binary is found, and with a probe its `--version`), then a row for each kind of work
+(`improve`, `judges`, `agents`, `extract`, `enrich`, `index`, `embedding`,
+`curate-rerank`) naming the connection or harness and the model it resolves to.
+The rows are in `evidence.rows`, each typed `connection`, `harness` or `process`;
+the text format always prints them. It is a `warn` when a key variable is unset,
+an endpoint does not answer (the probes, and the harness `--version` runs, are skipped by `--no-probe`), a harness is not
+installed, or the config leaves a kind of work unresolvable, and `unknown` when
+nothing is configured.
+
+`semantic-search` reports what the last `akm index` recorded about semantic
+search, with the index's entry and vector counts read now. It loads no model and
+sends no request. It `pass`es when every entry has a vector (and a local model
+embedded on `onnxruntime-node`) or `semanticSearchMode` is `off`; `warn`s when
+vectors lag the entries (`akm index` embeds the rest), local embeddings ran on
+another runtime, or this platform has no native ONNX Runtime library
+(Alpine/musl, Intel macOS: keyword search is all there is, so the message says to
+set `semanticSearchMode` to `off` or `embedding.endpoint` to a remote service);
+`fail`s, with the recorded reason, when the last index found semantic search
+`blocked` (an embedding endpoint or model download failed) or `unavailable` for
+a cause that can be fixed (the library is there but did not load: a missing
+package or addon, a `noexec` temp or cache directory); and is `unknown` before
+the first index. Search never reads this record: a query still
+tries semantic search and falls back to keyword search on its own. A fix shows
+here after the next `akm index`. `evidence` carries the recorded `status`,
+`unavailable` (`platform` or `load`), `provider`, `runtime`, `reason`, the index's `builtAt`, `entryCount` and
+`embeddingCount`. `akm health --report --format html` shows it as the Semantic
+Search line: `OK`, `OFF`, `BLOCKED`, `UNAVAILABLE` or `UNKNOWN`.
 
 `cli-version` compares the installed akm-cli version against the latest
 GitHub release — the same source `akm upgrade` trusts — and `warn`s with the
 upgrade command when a newer release exists. `--no-probe`, offline, or a
 rate-limited request all degrade it to `unknown`, never a false `warn`.
-
-`engine-last-used` checks, for every engine bound to an enabled process in
-the active improve strategy, whether it has a recorded `llm_usage` call in
-the last 30 days (independent of `--since`). It `warn`s naming the idle
-engine and its bound process, and stays `unknown` — not a noisy `warn` —
-until at least one improve run has been recorded (started) in that window,
-so a fresh install is quiet.
 
 The `session-extraction` advisory is derived from the `extract_sessions_seen`
 ledger for the last 7 days — not `improve_runs`, which the hook-driven `akm
@@ -429,8 +489,9 @@ proposal extract --session-id ...` invocation never writes. It reports
 `unknown` when nothing was recorded in the window (cannot tell "off on
 purpose" from "broken"), `warn` when every session in the window was skipped
 for an infrastructure reason (`llm_unavailable`, `read_failed`, `exception`,
-`locked_concurrent`) — naming the reason and, when recorded, the engine — and
-`pass` otherwise, with per-outcome counts.
+`locked_concurrent`) — naming the reason and, when recorded, the connection or
+harness it ran on, as `engine "<name>"` — and `pass` otherwise, with
+per-outcome counts.
 
 ### metrics
 
@@ -468,7 +529,7 @@ Result sections (`schemaVersion: 1`):
 | `feedback` | Positive and negative totals, per-asset valence, per-tag counts, and the most recent negatives with their reasons |
 | `utility` | A ten-bucket histogram of `utility_scores`, the lowest and highest assets, and how many indexed entries were never used |
 | `outcomes` | The assets with the lowest `outcome_score` |
-| `llm` | `akm health`'s LLM usage aggregate (by stage, process and engine) |
+| `llm` | `akm health`'s LLM usage aggregate (`byStage`, `byProcess`, and `byEngine`, keyed by the name of the connection or harness) |
 | `index`, `tasks`, `proposals`, `workflows` | Index runs and median time, task runs and fail rate, proposals by status and accept rate by source, workflow runs and tokens by model |
 | `rows` | The raw usage and LLM rows of the window; see below |
 | `notes` | Anything that limits what the numbers mean |
@@ -504,7 +565,7 @@ the matching CLI commands use, so the UI and the CLI report the same numbers.
 | --- | --- |
 | Overview | Overall health, failing and warning check counts and the akm version; the health checks grouped by status with expandable evidence; metrics tiles; the last 10 improve runs (result, duration, model calls and failures, sync, triage) with bars; and a 14-day stacked usage chart (search, curate, show, feedback). |
 | Bundles | Cards including disabled bundles, source, component writability, settings origin, Git and index state. Explicit add, update, confirmed removal, enabled/writable settings and default-bundle/write-target controls use existing AKM operations. |
-| Config | The effective config as a collapsible tree with a `default` / `file` / `extends:<ref>` source badge on every key, the engines table and the `AKM_*` environment. |
+| Config | The effective config as a collapsible tree with a `default` / `file` / `extends:<ref>` source badge on every key, the connections and harnesses tables and the `AKM_*` environment. |
 | Proposals | The pending queue grouped by source (filter by source) with age and gate decision, a Recent tab of accepted, rejected and reverted proposals with reasons, and a detail page with the unified diff and, for retirements, the pair judgment. The detail page has Accept (after an inline confirmation) and Reject (with a required reason); the pending list has checkboxes and an Accept selected bar that accepts several in one commit. |
 | Changes | Recent stash commits as a timeline by day, each tagged by origin (`improve-sync`, `accept`, `remember`, `sync`, `other`) with its changed paths. |
 | Search | Search or browse the existing index grouped by path, with type/bundle, current/all/historical and user/agent/run/channel scope controls. Asset detail includes safe Markdown tables/tasks, indexed relative links, heading navigation, source, per-file Git history/diffs and explicit feedback with reasons/tags. New knowledge supports Markdown source and preview through `akm import`, without overwriting existing files. |
@@ -873,7 +934,7 @@ Returns type-specific payloads:
 | command | `template`, `description` |
 | agent | `prompt`, `description`, `modelHint` |
 | knowledge | `content` — the whole document, or one section via `#fragment` |
-| workflow | `workflowTitle`, `workflowParameters`, `steps` (each step's `orchestration` summary names its engine/model, or — for an [exec step](https://github.com/itlackey/akm/blob/main/docs/reference/workflow-schema.md#what-akm-show-reports-for-an-exec-step) — its `exec.command` and no engine at all) |
+| workflow | `workflowTitle`, `workflowParameters`, `steps` (each step's `orchestration` summary names its `engine` (the connection or harness it runs on) and model, or — for an [exec step](https://github.com/itlackey/akm/blob/main/docs/reference/workflow-schema.md#what-akm-show-reports-for-an-exec-step) — its `exec.command` and no engine at all) |
 | memory | `content` |
 | env | `keys` (key names only — values and comment text never returned) |
 | lesson | `content` plus `when_to_use` surfaced from frontmatter |
@@ -1011,8 +1072,10 @@ budget is left. `gate.max_loops` (1–100) is the per-step ceiling;
 from the unit journal so they hold across resumes.
 
 `run` is Experimental and does not consult `experimental.workflowEngine`. Every
-non-empty `### gate` requires `workflow.judgeEngine` to name a configured LLM
-or agent engine before a new run can be frozen. Gate evaluation is fail-closed.
+non-empty `### gate` needs a connection or a harness to judge it before a new
+run can be frozen (the judge runs where model work runs; see
+[Configuration](configuration.md#where-each-process-runs)). Gate evaluation is
+fail-closed.
 
 Workflow runs are identified by run id, and workflows by ref; neither depends
 on the working directory. `workflow list` and `workflow status workflows/<name>`
@@ -1103,7 +1166,7 @@ Text-mode example:
 ```
 workflow: team//workflows/release (markdown)
 source:   workflows/release.md
-plan:     irVersion 7, hash 4f2ba91c3d0e… (not published)
+plan:     irVersion 8, hash 4f2ba91c3d0e… (not published)
 limits:   maxConcurrency 4; budget max_units 50, max_tokens 100000
 params:   channel, version
 steps:
@@ -1134,8 +1197,8 @@ content (`request.command.content`, `request.persona`, `request.conversation`,
 `request.runtime.environment`), a script's `bytesBase64`, or any credential —
 only binding *shapes* (`inputBindings[].name`/`.kind`, a literal's `.value`,
 a reference's `.from`), environment binding *names* (`environment[].kind`/
-`.name`, an `env-ref`'s `.ref`), and engine *names*
-(`gate.judgeEngine`).
+`.name`, an `env-ref`'s `.ref`), and connection and harness *names*
+(`orchestration.engine`, `gate.judgeEngine`).
 
 #### workflow resume
 
@@ -1347,9 +1410,7 @@ is running.
 The index and its update-owned state maintenance share one deferred SQLite
 transaction. WAL readers continue to see the last committed generation while a
 full update index pass runs, and competing writers wait for that pass to commit
-or roll back. The semantic-status JSON file is a recomputable advisory: failure
-to refresh it after the database commit warns but does not undo a committed
-bundle update.
+or roll back.
 
 This boundary guarantees rollback for handled process faults (throws and
 SQLite commit failures); it is not an abrupt-termination or cross-database
@@ -1461,17 +1522,18 @@ stopping the CLI upgrade.
 | Claude Code | `claude` is on `PATH`, the `akm-plugins` marketplace is configured and `akm@akm-plugins` is installed | `claude plugin marketplace update akm-plugins`, then `claude plugin update akm@akm-plugins` |
 | Codex | `codex` is on `PATH` and `akm@akm-plugins` is installed from the `akm-plugins` marketplace | `codex plugin marketplace upgrade akm-plugins` (this also refreshes the installed plugin cache) |
 | OpenCode 1 | `akm-opencode` is cached at `$XDG_CACHE_HOME/opencode/packages/akm-opencode@latest` (default `~/.cache/opencode/...`) and `opencode` is on `PATH` | If npm's `akm-opencode@latest` differs from the cached version and no OpenCode process is running: the cache directory is moved to the trash (never deleted), then `opencode debug config` is run from a temporary directory to fetch the new version. While OpenCode runs the update is `deferred` to a later `akm upgrade`. |
-| OpenCode 2 | `akm-opencode-v2` is named under `"plugins"` in the global OpenCode config (`opencode.json` or `.jsonc`) and cached at `$XDG_CACHE_HOME/opencode/npm/akm-opencode-v2@latest/<build>/`, and the `opencode` on `PATH` is OpenCode 2 | If npm's `akm-opencode-v2@latest` differs from the cached version (the newest `<build>` folder): `opencode plugin update <spec>` is run from a temporary directory, with the spec as the config names it. OpenCode 2 installs the new build into a fresh `<build>` folder and the running service keeps the old one until it restarts, so nothing is moved to the trash and the update is not deferred while OpenCode runs. Listed only on a host that has the plugin, so an OpenCode 1 host reports exactly what it did before. |
+| OpenCode 2 | `akm-opencode-v2` is named under `"plugins"` in the global OpenCode config (`opencode.json` or `.jsonc`) and cached at `$XDG_CACHE_HOME/opencode/npm/akm-opencode-v2@latest/<build>/`, and the `opencode2` on `PATH` (else the `opencode`) is OpenCode 2 | If npm's `akm-opencode-v2@latest` differs from the cached version (the newest `<build>` folder): `opencode plugin update <spec>` is run from a temporary directory, with the spec as the config names it. OpenCode 2 installs the new build into a fresh `<build>` folder and the running service keeps the old one until it restarts, so nothing is moved to the trash and the update is not deferred while OpenCode runs. Listed only on a host that has the plugin, so an OpenCode 1 host reports exactly what it did before. |
 
 The two OpenCode plugins never touch each other: `akm-opencode` is only looked
 for in OpenCode 1's cache and `plugin` key, `akm-opencode-v2` only in OpenCode
-2's cache and `plugins` key. Before moving a cache, akm reads `opencode
---version` and skips the plugin when the `opencode` on `PATH` is the other
-major, since only the matching major can re-create that cache; akm never
+2's cache and `plugins` key. Before moving a cache, akm reads `--version` of the
+binary that owns it (`opencode` for OpenCode 1; for OpenCode 2 `opencode2` when
+it is on `PATH`, else `opencode`) and skips the plugin when that binary is the
+other major, since only the matching major can re-create that cache; akm never
 installs or replaces `opencode`. A spec that appears only under the legacy
-`plugin` key for OpenCode 2 is skipped with a note (move it to `plugins`). Which OpenCode major akm itself drives is
-[detected from the engine's binary](configuration.md#engines), independent of this
-step.
+`plugin` key for OpenCode 2 is skipped with a note (move it to `plugins`). akm's
+own runtime does not depend on this step: it runs its own pinned OpenCode binary,
+fetched by akm (see [Configuration](configuration.md#without-a-harness)).
 
 OpenCode 2 has its own updater, `opencode plugin check` and `opencode plugin update`,
 which akm uses for `akm-opencode-v2`. Two things to know when you run them by
@@ -2079,13 +2141,22 @@ wrapper over the standalone `akm-migrate` executable (installed alongside
 akm 0.9.15 and later wrote so the CLI proper reads only current schemas. The steps,
 in order:
 
-1. config.json rewritten in its current shape (`configFile`): retired and
-   unknown keys dropped, `configVersion` bumped — the same pipeline every
-   load already runs in memory, so this only persists it, under a backup. A
-   config older than 0.9.15 (the legacy `stashDir`/`sources[]`/`installed`
-   layout, an `extraParams` key that shadows a first-class engine field) is
-   not converted by 0.10 and blocks this step: run `akm migrate apply` under
-   akm 0.9.x first;
+1. config.json rewritten in its current shape (`configFile`): unknown keys
+   dropped, `configVersion` bumped, and the `engines` / `defaults` form converted
+   to `connections` / `harnesses` — the same conversion every load already
+   runs in memory, so this only persists it, under a backup. The keys akm no
+   longer reads from config (an engine's `apiKeyFile`, a literal or
+   `${secrets/...}` `apiKey`, and the same on a connection, `embedding` or
+   `search.curateRerank`) move to `credentials.json`, one note per key and
+   never its value; a key that cannot be moved stays where it was, with a
+   note. A leftover `models.json` is folded into the `models` of the
+   connections and harnesses it names, then moved to `config-backups/` in the
+   cache directory. A connection or harness akm cannot use stays in the file as
+   written, with a note on what to fix. What each retired key becomes is the
+   table in [Configuration](configuration.md#the-engines-form). A config older
+   than 0.9.15 (the legacy `stashDir`/`sources[]`/`installed` layout) is not
+   converted by 0.10 and blocks this step: run `akm migrate apply` under akm
+   0.9.x first;
 2. pending `state.db` migrations, historical-destructive ones included, with
    a verified sibling safety copy (`stateMigrations`) — the only path besides
    `akm upgrade` that admits released migration 018, which an ordinary
@@ -2095,7 +2166,13 @@ in order:
    (`taskFiles`) under one backup directory per run, each emitted document
    re-parsed by the runtime v4 parser first; a file the planner cannot
    convert unambiguously is reported `blocked` and left alone;
-4. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
+4. the retired `engine:` key on commands, agents, workflows and task sources
+   rewritten to `connection:` or `harness:` by what the name is now
+   (`assetEngineKeys`), under one backup directory per run. The run that has
+   rewritten every such key it can reach forgets the old engine names and adds one
+   note to `assetEngineKeys.notes` listing each renamed engine and the flag that
+   replaces it (see [The `engines` form](configuration.md#the-engines-form));
+5. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
    the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
    version-stamp files older releases kept under `$DATA`, `$STATE` and
    `$CONFIG`.
@@ -2138,7 +2215,7 @@ akm config get output.format        # Read one key
 akm config get output.format --show-source  # Read one key, with where it came from
 akm config set output.detail full   # Set one key
 akm config set output.detail full --silent  # Set without the post-write config dump on stdout
-akm config unset llm                # Remove an optional key
+akm config unset embedding          # Remove an optional key
 akm config path                     # Print path to config file
 akm config diff other-host/config.json  # Effective-config differences, secrets redacted
 ```
@@ -2150,9 +2227,16 @@ Subcommands:
 | `get <key>` | Read one config key (the effective, post-`extends` value). `--show-source` wraps it as `{ value, source }`, where `source` is `local`, `extends:<ref>`, or `default`. |
 | `list` | List current configuration |
 | `set <key> <value>` | Set one config key; prints the resulting config with `ok: true` |
-| `unset <key>` | Unset an optional key, or a whole `embedding`/engine section; prints the resulting config with `ok: true` |
+| `unset <key>` | Unset an optional key, or a whole `embedding`, connection or harness section; prints the resulting config with `ok: true` |
 | `path` | Print the config file path (`akm info` reports the bundle, config, data, cache and state directories). Load-bearing: `config path` is the one subcommand the CLI still allows to run when the on-disk config itself fails to load, so you always have a way to locate a broken config. |
 | `diff <path\|bundle//path>` | Compare this instance's effective config (its own `extends` already applied) against another config file or bundle-relative file (loaded through the same loader — its `extends` honoured too); prints sorted `{ path, local, other }` rows for every differing leaf, secrets redacted on both sides. |
+
+A key that holds an API key (`connections.<name>.apiKey`, `embedding.apiKey`,
+`search.curateRerank.apiKey`) accepts a `$VAR` reference and rejects a literal
+key: keys live in the environment or in `credentials.json`, never in
+`config.json` (see [Credentials](configuration.md#credentials)). A connection or
+harness name that is not lowercase kebab-case, or a harness entry that names no
+platform, is refused before anything is written.
 
 `set` and `unset` accept `--silent` to suppress the post-write config dump
 entirely — nothing is printed on stdout, and the exit code is the status (the
@@ -2172,34 +2256,24 @@ See [configuration.md](configuration.md) for details.
 
 ### models
 
-Manage the installed and operator-owned model intent map. Bare `akm models`
-is a usage error; use `list` to inspect the effective table or `copy-defaults`
-when you want an editable full map.
+Show which model answers each alias (`fast`, `balanced`, `reasoning`, and any
+you add) on a connection, then the models its endpoint lists, and change one.
+Connections only: a harness's alias map is `harnesses.<name>.models`, edited
+with `akm config set`. Run `akm models --help` for the options.
 
 ```sh
-akm models list
-akm models copy-defaults
-akm models copy-defaults --overwrite
+akm models                            # The default connection's picks and the endpoint's models
+akm models --connection cloud         # Another connection
+akm models --no-probe                 # The picks only; the endpoint is not contacted
+akm models set reasoning glm-5        # Make glm-5 answer "reasoning"
 ```
 
-`list` shows the fully resolved alias table — one row per (alias, column)
-pair with its `model`, optional `inference`, `source` (`default`: unchanged
-from the installed file; `user`: touched by the user overlay), and `via`
-(`literal`: a model string; `engine`: borrowed from a configured
-`engines.<name>` connection, in which case the row also names that `engine`).
-Read-only; it never writes `models.json`.
-
-`copy-defaults` validates the packaged version-1 `models.json`, then stages and
-syncs it beside the normal AKM configuration target. Creation uses an atomic
-no-replace publish and fails safely on filesystems that cannot provide it.
-`--overwrite` performs an atomic pathname replacement after a best-effort
-regular-file identity recheck; it never dereferences a symlink, but portable
-filesystems do not offer a conditional rename that locks the previously
-observed inode. Symlinks and other non-regular targets observed during checks
-are refused. See
-[Model-map files](configuration.md#model-map-files) for schema, overlay, and
-resolution semantics — including the `engine` field (0.9.15) that lets a
-column borrow its model from a configured engine instead of a literal string.
+`akm models` prints `{ connection, aliases, available }`. `set` writes
+`connections.<name>.models.<alias>`; an alias whose entry carries request fields
+keeps them and changes the model. A model the endpoint does not list is written
+with a warning. With no connection configured both commands say so and point at
+`akm setup`. A `--connection` that is not configured fails as any named target
+does: exit 78, the configured connections listed and the closest name suggested.
 
 ### help
 
@@ -2340,8 +2414,8 @@ However, the child process controls its own stdout/stderr: if it prints its
 environment, those values will appear in your terminal or agent transcript.
 `--only` / `--except` (comma-separated key names, mutually exclusive) restrict
 which env-file keys are injected. `--clean` starts from a minimal inherited
-environment (PATH/HOME/locale/terminal basics) instead of inheriting the full
-parent environment; use `--inherit KEY1,KEY2` to pass specific parent vars
+environment (PATH/HOME/locale/terminal basics, and the names Windows needs to
+start a process) instead of inheriting the full parent environment; use `--inherit KEY1,KEY2` to pass specific parent vars
 through in clean mode. Installing a bundle is the trust decision, so `env run`
 injects what the env file defines whichever bundle it comes from, including keys
 such as `PATH` or `LD_PRELOAD`; it does not warn or block. `--allow-dangerous-env-keys`
@@ -2586,10 +2660,12 @@ These commands define the self-improvement and agent-dispatch surface.
 ### command run
 
 Resolve a stored command through its owning bundle adapter and execute one
-fresh session through the common engine/model cascade:
+fresh session. It runs on the default harness, else on akm's own runtime over
+the default connection, unless a flag or the command's own frontmatter names a
+connection or harness (see [Configuration](configuration.md#where-each-process-runs)):
 
 ```sh
-akm command run <command-ref> [--arguments <exact-text>] [--agent <selector>] [--engine <name>] [--model <id-or-alias>] [--timeout-ms <ms>] [--cwd <path>] [--dry-run]
+akm command run <command-ref> [--arguments <exact-text>] [--agent <selector>] [--connection <name> | --harness <name>] [--model <id-or-alias>] [--timeout-ms <ms>] [--cwd <path>] [--dry-run]
 ```
 
 `--dry-run` does not dispatch and does not materialize credentials.
@@ -2599,26 +2675,26 @@ akm command run <command-ref> [--arguments <exact-text>] [--agent <selector>] [-
 | `<command-ref>` | Local indexed command ref, optionally bundle-qualified (for example `commands/review` or `team//commands/review`) |
 | `--arguments <exact-text>` | Exact string substituted for every literal `$ARGUMENTS`; it is not trimmed, tokenized, quoted, or recursively expanded |
 | `--agent <selector>` | Portable `agents/...` ref or a native harness selector |
-| `--engine <name>` | Current-invocation engine override |
-| `--model <id-or-alias>` | Current-invocation exact model or operator model-map alias |
+| `--connection <name>` / `--harness <name>` | Current-invocation connection or harness override (mutually exclusive) |
+| `--model <id-or-alias>` | Current-invocation model: an alias (`fast`, `balanced`, `reasoning`) or an exact name |
 | `--timeout-ms <ms>` | Current-invocation timeout override |
 | `--cwd <path>` | Current-invocation workspace override |
-| `--dry-run` | Resolve, authorize, and lower the command without dispatching or materializing credentials |
+| `--dry-run` | Resolve and lower the command without dispatching or materializing credentials |
 
 Commands and portable personas are rendered by their bundle adapter. Native
 frontmatter is never sent as prompt text and native files are never rewritten.
 The only portable template token is literal `$ARGUMENTS`. Positional, named,
 expression, legacy `{{...}}`, and other native-only constructs fail before
-authorization or dispatch; invoke those templates through their native tool.
+dispatch; invoke those templates through their native tool.
 Omitting `--arguments` and passing an explicit empty string both substitute
 empty text, but remain distinct in the resolved request.
 
-`akm command run ... --dry-run` performs the real adapter read, cascade/model
-resolution, operator authorization or policy check, and engine lowering. It
+`akm command run ... --dry-run` performs the real adapter read, target and model
+resolution, and request lowering. It
 returns a successful JSON result with `schemaVersion: 1`,
-`shape: "command-dry-run"`, `ok: true`, `dryRun: true`, the selected engine
-name, safe `provenance`, and safe lowering `notices`. It has no fake exit code,
-stdout, stderr, or duration.
+`shape: "command-dry-run"`, `ok: true`, `dryRun: true`, `engine` (the name of
+the connection or harness it would run on), safe `provenance`, and safe
+lowering `notices`. It has no fake exit code, stdout, stderr, or duration.
 
 Each provenance entry contains only `field`, `layer`, `kind`, and `via`. Each
 lowering notice contains `code`, `severity`, `adapter`, optional `field`, and
@@ -2639,85 +2715,70 @@ that consume stdout.
 
 ### agent
 
-Dispatch a configured agent engine, optionally selecting a bundle agent persona
-and model defaults. A nonempty tool request from that asset is not
-authorization: the current CLI rejects it at the execution boundary.
-Stored command assets execute only through `akm command run`; `akm agent` has
-no command compatibility alias.
+Run an agent on a harness, or on akm's own runtime over a connection, optionally
+embodying a bundle agent persona. Run `akm agent --help` for the options. Stored
+command assets execute only through `akm command run`; `akm agent` has no
+command compatibility alias.
 
 ```sh
-akm agent [<agent-ref>] [--engine <name>] [--prompt <text>] [--model <model>] [--timeout-ms <ms>] [--cwd <path>]
+akm agent [<agent-ref>] [--connection <name> | --harness <name>] [--prompt <text>] [--model <model>] [--timeout-ms <ms>] [--cwd <path>]
 ```
 
 | Argument / Flag | Description |
 | --- | --- |
-| `<agent-ref>` | Optional agent asset ref (e.g. `agents/code-reviewer`). Resolves persona and model defaults; a nonempty tool request still requires separate operator authorization. |
-| `--engine <name>` | Agent engine to use; defaults to `defaults.engine` |
-| `--prompt <text>` | Task prompt to pass to the agent |
-| `--model <model>` | Model override. Accepts aliases (`opus`, `sonnet`, `haiku`) or exact platform model IDs. Overrides the model in the agent asset. Resolved per platform: `opencode/claude-opus-4-7` for opencode, `claude-opus-4-7` for claude. |
-| `--timeout-ms <ms>` | Override the agent CLI timeout in milliseconds |
-| `--cwd <path>` | Working directory for the spawned agent (defaults to the current directory) |
+| `<agent-ref>` | Optional agent asset ref (e.g. `agents/code-reviewer`). Resolves persona and model defaults. |
+| `--connection <name>` / `--harness <name\|platform>` | Connection or harness to run on, by name, a harness also by platform (mutually exclusive); default: the default harness, else akm's own runtime over the default connection |
+| `--prompt <text>` / `--prompt-stdin` | The task. Without one the harness starts interactively. |
+| `--model <model>` | An alias (`fast`, `balanced`, `reasoning`) or an exact model name; overrides the model in the agent asset |
+| `--timeout-ms <ms>` | Override the run's timeout in milliseconds |
+| `--cwd <path>` | Working directory for the run (defaults to the current directory) |
 
-When `<agent-ref>` is provided, akm resolves the bundle agent's persona,
-`modelHint`, and requested `toolPolicy`. The `--model` flag wins over any model
-specified in the asset. An alias resolves per the selected `--engine`'s
-model-map column (see [Model-map files](configuration.md#model-map-files)),
-which — as of 0.9.15 — may itself be an `engine`-backed indirection, so
-`--engine local-fast --model fast` can resolve to `local-fast`'s own
-`engines.local-fast.model` instead of a hardcoded per-platform literal. The
-requested tool policy never grants access by itself: authorization runs before
-lowering, credentials, or provider dispatch.
-The current CLI has no built-in allow-all authorizer, so a nonempty request is
-rejected rather than silently weakened.
-Selecting a persona or model without `--prompt` or `--prompt-stdin` is also
-rejected; akm never fabricates an empty command. The
-prompt-free interactive exemption applies only when no persona/model/tool/schema
-or inference payload was selected.
+With a prompt the agent runs the task, and its reply is the result's `stdout`.
+On a harness the program runs as you would run it by hand ([How akm runs a
+harness](configuration.md#how-akm-runs-a-harness)).
+When `<agent-ref>` is provided, akm resolves the bundle agent's persona and model
+default; `--model` wins over the asset. An alias is looked up on the selected
+connection or harness (see [Aliases](configuration.md#aliases)): `--harness
+claude --model reasoning` runs Claude Code's `reasoning` model, and `--connection
+local --model reasoning` the model `connections.local.models.reasoning` names.
 
-**Platform-specific dispatch:** akm uses a platform builder to construct the
-CLI argv for each engine's harness platform. `platform: "opencode"` engines emit:
-`opencode run [--model opencode/claude-opus-4-7] "<prompt>"`. `opencode run` has
-no system-prompt option, so akm composes a persona into the prompt.
-`platform: "claude"` engines emit:
-`claude [--system-prompt "..."] [--model claude-opus-4-7] --print -- "<prompt>"`.
-Agent engines may set `bin`, `args`, `workspace`, `model`, and `timeoutMs` in
-config. Semantic model aliases live only in the installed/user `models.json`
-files and resolve before dispatch.
-
-Without any `--prompt`, `<agent-ref>`, or `--model`, the agent is launched
-interactively (no injected prompt, no platform-specific flags beyond the
-engine's base args).
-
-Configure agent engines under `engines.<name>` with `kind: "agent"` and a
-registered harness `platform` (see [Configuration](configuration.md)). AKM
-lowers the selected engine to the spawn or embedded SDK runner with captured or
-interactive stdio, hard timeout, and structured failure reasons.
+Without a prompt, `akm agent --harness <name>` starts the harness interactively,
+with the terminal inherited and nothing sent to it; only a model may ride along.
+A connection has nothing to start, so `--connection` without `--prompt` is an
+error that says to pass `--prompt` or name a harness. A persona, an inference
+setting or an output schema applies to a task, so selecting one without
+`--prompt` or `--prompt-stdin` is rejected.
 
 ```sh
 # Interactive launch:
-akm agent --engine opencode
+akm agent --harness opencode
 
 # Dispatch with a prompt only:
-akm agent --engine claude --prompt "summarize recent changes"
+akm agent --harness claude --prompt "summarize recent changes"
 
 # Embody a bundle agent asset:
-akm agent agents/code-reviewer --engine opencode --prompt "review src/"
+akm agent agents/code-reviewer --harness opencode --prompt "review src/"
 
 # Model override with alias:
-akm agent agents/planner --engine claude --model sonnet --prompt "plan the sprint"
+akm agent agents/planner --harness claude --model reasoning --prompt "plan the sprint"
 
-# Exact model ID override:
-akm agent --engine opencode --model opencode/claude-opus-4-7 --prompt "audit the API"
+# Exact model name override:
+akm agent --harness opencode --model anthropic/claude-opus-4-7 --prompt "audit the API"
+
+# On akm's own runtime, over a connection:
+akm agent --connection local --prompt "summarize recent changes"
 ```
 
-Returns `{ ok, exitCode, stdout?, stderr?, durationMs, reason?, sessionId? }`; `sessionId` is the
-harness's own session id when it reports one (`opencode-sdk` keeps its OpenCode session, so the run can be
-found there). On
-failure, `reason` is one of `timeout | spawn_failed | non_zero_exit |
-parse_error`. Captured dispatches render this final envelope using the selected
-akm format. Interactive child stdout/stderr remain inherited and raw. A failed
-dispatch exits 1; `exitCode` in the envelope retains the child's exact status
-when one exists.
+Returns `{ ok, engine, exitCode, stdout, stderr, durationMs, reason?, error?, sessionId? }`.
+`engine` is the name of the connection or harness the run used. `sessionId` is
+the run's session id when it has one: akm's own runtime reports the session it
+keeps in `<akm data dir>/opencode-runtime/data/opencode/opencode.db`, so the run
+can be found there; a harness run reports none. On
+failure, `reason` is a short code such as `timeout`, `spawn_failed`,
+`non_zero_exit` or `parse_error`. Captured dispatches render this final envelope
+using the selected akm format. Interactive child stdout/stderr remain inherited
+and raw. A failed dispatch exits 1; `exitCode` in the envelope retains the
+child's exact status when one exists.
 
 ### lint
 
@@ -2775,11 +2836,11 @@ akm improve memory
 akm improve skills/code-review
 akm improve workflows/release-checklist --task "reduce duplication"
 akm improve --skip-if-locked           # for high-frequency scheduled runs: skip (exit 0) if a run is already in progress
-akm improve --require-engines          # for scheduled runs: abort (exit 78) instead of degrading if an engine/credential is unavailable
+akm improve --harness claude            # run every call of this run, judges included, on the claude harness
 akm improve --no-sync                  # skip the pre-run and end-of-run git sync entirely (default: on for git-backed bundles)
 akm improve --sync --no-push           # commit only, skip the push after it
-akm improve --dry-run --strategy consolidate # preview consolidate's resolved engine/model routing; nothing is dispatched
-akm improve lessons/my-lesson --show-prompt --format text # print the composed reflect prompt for one asset, unwrapped; no lock/index/engine call
+akm improve --dry-run --strategy consolidate # preview which connection or harness and model each consolidate process would use; nothing is dispatched
+akm improve lessons/my-lesson --show-prompt --format text # print the composed reflect prompt for one asset, unwrapped; no lock/index/model call
 akm improve report                     # LLM usage/routing report for the most recent real run
 akm improve report --run <id>          # ...for one specific improve_runs id
 akm improve report --since 7d          # ...aggregated over every real run started in the last 7 days
@@ -2794,11 +2855,12 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
 | `--require-feedback-signal` | Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned |
-| `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
+| `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`); it chooses which processes run, never where |
+| `--connection <name>` / `--harness <name>` | Run every call of this run, judges included, on this connection or harness instead of the default; they are mutually exclusive |
+| `--model <alias\|name>` | The model for every call of this run: an alias (`fast`, `balanced`, `reasoning`) or an exact name |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
-| `--require-engines` | Abort (exit 78, before any indexing, lock, or log side effect) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe — the same probe `akm health`'s `default-llm-engine`/`configured-engines` checks run, once per distinct endpoint. An agent engine's check is that its binary is on PATH, and an `opencode-sdk` engine's is both its binary and, when it sets `llmEngine`, that LLM fallback's endpoint. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
-| `--show-prompt` | Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or engine dispatch. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside the resolved `engine`/`engineKind`; pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
+| `--show-prompt` | Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or model call. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside `engine` (the connection or harness reflect would run on) and `engineKind` (`connection` or `harness`); pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
 | `--sync` / `--no-sync` | Sync the git-backed primary bundle like `akm sync` (fetch and merge the upstream, commit, push) before the run, and commit (and optionally push) when it finishes. A conflict or fetch failure before the run only warns; the run continues on the local state. Default: on for git-backed bundles (per profile config). |
 | `--push` / `--no-push` | Push after the pre-run and end-of-run sync commits when writable with a remote configured. `--no-push` commits only, skipping the push. Default: per profile config (`true`). `sync.push` stays outside the autonomy gate — this is a per-run opt-out, not a default change. |
 
@@ -2890,35 +2952,36 @@ material no improve stage has processed. The planned refs are ranked by salience
 and cut to the limit; an explicit ref scope bypasses every gate. Use
 `--require-feedback-signal` to turn that lane off for the run.
 
-When the active strategy enables a process (or the triage judgment engine)
-whose engine or credential cannot be resolved in this process's environment,
-the run does not silently do nothing for it: the process is skipped, and the
-result carries `skippedProcesses` — an array of `{process, configKey, reason}`
-entries (omitted entirely when nothing was skipped). When the process resolved
-a real engine whose credential just isn't reachable here (as opposed to never
-resolving an engine at all), the entry also carries the structurally resolved
-`engine`/`model`/`contextLength` it would have used — never the credential
-itself. `ok` and the exit code are unchanged either way, matching `extract`'s
-`skipReasons` contract: consumers that need to know branch on
-`skippedProcesses` (or pass `--require-engines` to abort instead of
-degrading). `reason` names which engine and which credential reference (an env
-var, `apiKeyFile` path, or `${ref}` reference — never its value) is
-missing. A `--dry-run` preview never dispatches, so it never aborts
-on an unavailable credential either — even a strategy left with every process
-disabled this way still returns its plan, with the affected processes in
-`skippedProcesses`.
+When the active strategy enables a process (or the triage judgment) that has no
+connection or harness to run on, the run does not silently do nothing for it:
+the process is skipped, and the result carries `skippedProcesses` — an array of
+`{process, configKey, reason}` entries (omitted entirely when nothing was
+skipped). `configKey` is the setting that would place the process
+(`improve.processes.<process>.connection`) and `reason` says that no connection
+or harness is configured and points at `akm setup`. `ok` and the exit code are
+unchanged either way, matching `extract`'s `skipReasons` contract: consumers
+that need to know branch on `skippedProcesses`. When no model-calling process
+can run at all (no connection or harness is configured, or several are and none
+is called `default`), there is nothing to degrade to: the run stops at planning
+with exit 78, naming what is missing, before it takes a lock, writes the index
+or opens a log, and `--dry-run` stops the same way. No flag asks for that. (The
+0.9 `--require-engines` is still accepted and does nothing, with one warning, so
+a task installed for 0.9 keeps running. It used to refuse the run unless every
+enabled process had a usable target; that check is gone, and `akm health`
+(`akm health && akm improve`, which stops on exit 4) is what checks whether each
+connection answers and each harness is installed.)
 
 `--timeout-ms` is a run-wide wall-clock budget: when it expires, the run
-cooperatively aborts any in-flight engine request (the same `AbortSignal`
-every LLM call already honors) instead of waiting out the engine's own,
-much longer, per-call timeout — the run then finishes and reports normally
+cooperatively aborts any in-flight model request (the same `AbortSignal`
+every LLM call already honors) instead of waiting out the call's own,
+much longer, timeout — the run then finishes and reports normally
 rather than hanging past its budget. SIGTERM/SIGINT/SIGHUP end a live run
 the same way, within a short bounded grace period, and the process exits
 with a stable per-signal code (`143`/`130`/`129`) rather than needing a
 `kill -9`. If a live run has waited more than a few seconds without any
-engine response at all, one default-level line ("Still waiting for the
-first engine response...") is printed so a scheduled run's log is never
-silently empty while an engine is slow or dead.
+model response at all, one default-level line ("Still waiting for the
+first model response...") is printed so a scheduled run's log is never
+silently empty while a model is slow or dead.
 
 For dry runs, `plannedRefs` is the effective post-limit work set, not every
 ref in the requested scope. The `plan` object preserves both views: raw scope
@@ -2936,38 +2999,35 @@ not an atomic cross-store snapshot or a reservation. Live execution re-inspects
 mutable inputs, so a later run can differ after index, state, filesystem,
 clock, or session-log changes.
 
-`plan.processes` (#947) is the resolved process -> engine -> model routing
-table: one row per improve process (`reflect`, `distill`, `consolidate`,
+`plan.processes` (#947) is the resolved process -> connection or harness -> model
+routing table: one row per improve process (`reflect`, `distill`, `consolidate`,
 `memoryInference`, `extract`, `validation`, `triage`,
 `proactiveMaintenance`), plus a `triage.judgment` row when the strategy
-configures a judgment engine. Each row carries `enabled`, the resolved
-`engine`, its `model` (when the engine has an LLM connection) and `engineKind`, this process's
-own lowering `notices`, and — for reflect/distill/consolidate only —
-`eligibleRefs`, the count of this run's `effectiveRefs` the process would act
-on (`shouldSkipRef`'s allowedTypes/excludeRefPrefixes (reflect only)/
-process-disabled check; a count, not a per-ref matrix, to keep the envelope
-bounded). A row that could not resolve an
-engine or credential carries `unavailable: {configKey, reason}` — the same
-data behind `skippedProcesses` above, reshaped per process. When the process
-resolved a real engine whose credential just isn't reachable here, the row
-still carries that engine's `engine`/`model`/`engineKind` alongside
-`unavailable`, rather than omitting them the way a never-configured process
-does — so a preview can show what would have run. This table is
-resolved before any dispatch on every invocation (dry or live), so
-`akm improve --dry-run --strategy <name>` previews an ad-hoc
-strategy override without changing config first; `akm health`'s
-`active-improve-strategy` check performs the equivalent resolution but only
-for the configured default strategy (`defaults.improveStrategy`), and reports
-no model or per-process notices. `--dry-run` does not probe
-engine reachability over the network — pair with `akm health --probe` (or the
-default probe-on behavior) to check whether a named engine actually answers.
+enables a judgment. Each row carries `enabled`, `engine` (the name of the
+connection or harness it resolved to), its `model` and `engineKind`
+(`connection` or `harness`), this process's own lowering `notices`, and — for
+reflect/distill/consolidate only — `eligibleRefs`, the count of this run's
+`effectiveRefs` the process would act on (`shouldSkipRef`'s
+allowedTypes/excludeRefPrefixes (reflect only)/process-disabled check; a count,
+not a per-ref matrix, to keep the envelope bounded). A row whose process has no
+connection or harness carries `unavailable: {configKey, reason}` — the same data
+behind `skippedProcesses` above, reshaped per process. Wherever a result says
+where work ran (`agent`, `command run`, `extract`, `llm_usage` rows, a workflow
+step's summary) the field is named `engine` and always holds a connection or
+harness name; scripts can rely on it. This table is resolved
+before any dispatch on every invocation (dry or live), so
+`akm improve --dry-run --strategy <name>` previews an ad-hoc strategy override
+without changing config first; `akm health` and `akm info` print the same
+resolution for every kind of work, whichever strategy runs. `--dry-run` does not
+probe reachability over the network — run `akm health` to check whether a
+connection actually answers.
 
 `--show-prompt` (#952) is the cheapest way to exercise reflect alone: it
 builds the exact prompt reflect would send for one asset — the same source
 resolution, runner selection, feedback/schema-hint/rejected-proposal
 gathering `akm improve`'s live reflect step uses — and prints it
-without reading a credential, so it never calls an engine. An LLM engine
-receives the reply's JSON Schema as `response_format`, and an agent engine as
+without reading a credential, so it never calls a model. A connection
+receives the reply's JSON Schema as `response_format`, and a harness as
 an instruction that dispatch appends to this prompt. Add
 `--format text` (the default JSON/yaml envelope escapes the prompt into one
 line, which defeats a by-eye read) to confirm by eye that recent feedback is
@@ -2980,7 +3040,7 @@ destination than `memory`.
 
 #### improve report
 
-`akm improve report` (#944) answers "which engine did each model-calling process
+`akm improve report` (#944) answers "which connection or harness did each model-calling process
 use this run, how much did it cost, and which enabled processes made zero
 calls (and why)" without hand-written SQLite against `state.db`. It is a
 real subcommand (`report` is not an asset type, so it is not a scope of the
@@ -2994,7 +3054,8 @@ Every real (non-dry-run) `akm improve` invocation persists a `usageReport`
 field on the result (`result_json` in `improve_runs`, and in the
 `--json-to-stdout` / dry-run JSON): `{ byProcessEngineModel, noCalls }`.
 `byProcessEngineModel` is a cross-tab of the LLM call records this run's own
-usage sink collects (#576) — one row per distinct `(process, engine, model)` triple, each with
+usage sink collects (#576) — one row per distinct `(process, engine, model)` triple,
+where `engine` is the connection or harness name, each with
 `calls`, `failures`, `promptTokens`, `completionTokens`, `totalTokens`,
 `reasoningTokens`, and `totalDurationMs`. `noCalls` lists every model-calling
 process (`reflect`, `distill`, `consolidate`, `memoryInference`,
@@ -3024,13 +3085,15 @@ support.
 #### improve judge
 
 `akm improve judge` (a real subcommand; `--strategy` is its only flag) runs reflect's quality judge on one revision and prints its
-verdict, for testing a judge engine on revisions whose right answer you know. It
+verdict, for testing a judge on revisions whose right answer you know. It
 reads `{"source": "...", "candidate": "...", "feedback": "...", "ref": "..."}` JSON
 from stdin (`feedback` and `ref` are optional; `ref` names the revised asset,
-which a judge on an agent engine may read), judges with the engine the strategy's
-`processes.reflect.qualityGate.engine` names (`--strategy` picks the strategy),
-and prints `{ engine, pass, score, reason, criteria }` with the gate's prompt and
-pass rule. A `score` of `-1` means the judge gave no verdict. It writes nothing.
+which a judge on a harness may read), judges with the connection or harness
+`improve.qualityGate` names (the default when it names none; `--strategy` picks
+the strategy whose reflect gate must be enabled), and prints `{ engine, pass,
+score, reason, criteria }` with the gate's prompt and pass rule, where `engine`
+is the name of the connection or harness that judged. A `score` of `-1` means
+the judge gave no verdict. It writes nothing.
 
 ### proposal
 
@@ -3084,9 +3147,10 @@ akm proposal extract --type claude --location /custom/path --session-id <id>
 | `--auto` | Iterate every available harness with the default `--since`. Mutually exclusive with `--type`. |
 | `--dry-run` | Show candidates without queuing proposals. |
 | `--force` | Re-process sessions even if they were already extracted and have no new events. Default: skip already-seen sessions. |
-| `--timeout-ms <ms>` | Per-session LLM timeout in ms (default `600000`). |
-| `--engine <name>` | Named engine for this invocation: an LLM engine, or a `claude`, `opencode` or `opencode-sdk` agent engine. Mutually exclusive with `--strategy`. |
-| `--strategy <name>` | Improve strategy supplying extract behavior and engine. Mutually exclusive with `--engine`. |
+| `--timeout-ms <ms>` | Per-session LLM timeout in ms. Default: the selected connection's or harness's own timeout. |
+| `--connection <name>` / `--harness <name\|platform>` | Connection or harness for this invocation, by name, a harness also by platform (mutually exclusive). |
+| `--model <alias\|name>` | Model for this invocation: an alias or an exact name. |
+| `--strategy <name>` | Improve strategy supplying extract behavior; it never chooses where the model runs. |
 
 `--type` and `--auto` are mutually exclusive; one of them is required.
 `--auto` iterates `getAvailableHarnesses()` — every harness with a detectable
@@ -3099,30 +3163,45 @@ The `codex` harness reads Codex's rollout files under `$CODEX_HOME/sessions`
 (`~/.codex/sessions` by default; `--location` points at another rollout
 directory). It lists a person's sessions, `codex exec` runs included, and
 leaves out the rollouts Codex writes for subagents and its other internal agents:
-those are not sessions of their own.
+those are not sessions of their own. akm's own Codex model-work runs are among
+the sessions it lists; Codex gives them no marker.
+
+The `opencode` harness reads two SQLite files, read-only and without starting
+OpenCode: OpenCode's own `opencode.db` (under `$XDG_DATA_HOME/opencode`, which is
+`~/.local/share/opencode` unless `XDG_DATA_HOME` says otherwise, on every
+platform) and akm's own runtime's `opencode.db` (under
+`<akm data dir>/opencode-runtime/data/opencode/`), where it keeps its agent runs
+(`--location` points at a directory holding another
+`opencode.db`). Runs of the `opencode` harness are in OpenCode's own file. It
+reads both OpenCode 2 and OpenCode 1 files. Of an OpenCode 2 file it lists only
+top-level sessions, leaving out subagent sessions and akm's own model work,
+which ran as the `akm-model-work` agent; OpenCode 1 keeps no such marker, so its
+model-work sessions are listed like any other. A file it cannot read is named in
+a warning, never taken for an empty history.
 
 There is no `akm proposal extract --watch`/`--debounce-ms` either (0.9.0:
 dropped — a foreground polling daemon in a one-shot CLI); the shipped
 `core/extract.yml` cron template (`akm proposal extract --auto` on a
 schedule) is the answer.
 
-Requires an engine that can run unattended model work (an LLM engine, or a
-`claude`, `opencode` or `opencode-sdk` agent): pass `--engine`, select a
-`--strategy` whose `processes.extract.engine` is set, or configure
-`defaults.llmEngine`.
+Extraction is model work: it needs a connection or a harness (see
+[Configuration](configuration.md#where-each-process-runs)). With neither it fails
+and points at `akm setup`. It runs on the default connection, else the default
+harness; `--connection`, `--harness` and `--model` choose another, and
+`improve.processes.extract` sets it for the improve stage too.
 
 **Output.** `ok` means the command ran to completion — it is `true` even when
-every session was skipped (an unreachable LLM engine included); it does not
+every session was skipped (an unreachable connection included); it does not
 mean anything was harvested. Consumers that need "did this run actually
 harvest" branch on `skipReasons`, `warnings`, or `sessionsProcessed` /
 `sessionsSkipped` instead. The envelope also reports:
 
 | Field | Description |
 | --- | --- |
-| `engine` | Resolved engine name for this run. Absent only when extract is disabled by the selected improve strategy (the run returns before an engine is resolved). |
-| `engineKind` | `"llm"`, `"sdk"`, or `"agent"` — the kind of runner `engine` resolved to. Same absence condition as `engine`. |
+| `engine` | Name of the connection or harness the run resolved to. Absent only when extract is disabled by the selected improve strategy (the run returns before a target is resolved). |
+| `engineKind` | `"connection"` or `"harness"` — what `engine` names. Same absence condition as `engine`. |
 | `skipReasons` | Per-`skipReason` count across `sessions[]` (e.g. `{ "llm_unavailable": 25 }`). Present only when `sessionsSkipped > 0`. |
-| `warnings` | Includes one aggregate line per infrastructure skip reason that fired (`llm_unavailable`, `read_failed`, `exception`, `locked_concurrent`) — e.g. `25 of 25 sessions skipped: llm_unavailable (engine "default")` — so an engine outage is visible without inspecting `sessions[]`. Session-content skips (`already_extracted`, `too_short`, `triaged_out`) are counted in `skipReasons` but never produce a warning line. |
+| `warnings` | Includes one aggregate line per infrastructure skip reason that fired (`llm_unavailable`, `read_failed`, `exception`, `locked_concurrent`) — e.g. `25 of 25 sessions skipped: llm_unavailable (engine "default")` — so an outage is visible without inspecting `sessions[]`. Session-content skips (`already_extracted`, `too_short`, `triaged_out`) are counted in `skipReasons` but never produce a warning line. |
 | `sessions[].warnings` | One line per candidate the model wrote that the output contract refuses, as `<type>:<name> dropped: <reason>` — a lesson without a `when_to_use` of 15 characters, a description under 20, a name that is not a kebab-case slug — and one per candidate held back by the improve ledger. A session whose every candidate was dropped has `candidateCount: 0` and no `rationaleIfEmpty`, so this is where the loss shows. |
 
 #### proposal new
@@ -3145,27 +3224,24 @@ akm proposal new skill code-review --bundle team --task "PR-style review skill" 
 | `--bundle` | Configured writable bundle to queue the proposal for. The prompt takes its convention facts from that bundle, the proposal records it as its target (so `akm proposal accept` writes there), and it is queued in that bundle's queue (`akm proposal list --queue <bundle>`). An unknown, disabled or read-only bundle is refused, as for `akm remember --bundle`. Default: the working bundle |
 | `--task` | Inline task text |
 | `--file` | Read task text from a UTF-8 file |
-| `--engine` | Override the default execution engine. Any kind works: an LLM engine, an agent CLI or `opencode-sdk` |
-| `--timeout-ms` | Override the selected engine timeout for this call |
+| `--connection` / `--harness` | Override the default connection or harness, by name, a harness also by platform (mutually exclusive) |
+| `--model` | Override the model: an alias or an exact name |
+| `--timeout-ms` | Override the selected connection's or harness's timeout for this call |
 
 Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 
-Every engine kind returns the proposal the same way: as one JSON object on
-stdout with the asset's `ref`, its full `content` and a self-rated
-`confidence`. akm sends the object's JSON Schema with the request, as
-`response_format` to an LLM engine and as an instruction at the end of the
-prompt to an agent engine (codex also gets it as `--output-schema`). akm
-captures the reply; an agent CLI runs headless, with no live terminal session.
-A harness's own JSON envelope, such as claude's
-`--output-format json` result, is unwrapped first.
+`proposal new` is agent work: it runs on the default harness, else akm's own
+runtime over the default connection, and `--connection` or `--harness` choose
+another. The agent returns the proposal as one JSON object on stdout with the
+asset's `ref`, its full `content` and a self-rated `confidence`. akm sends the
+object's JSON Schema as an instruction at the end of the prompt, and captures the
+reply, which is the agent's plain-text output; a harness runs headless, with no
+live terminal session.
 A reply that is not a valid proposal gets one corrective retry that says what
 was wrong. If that reply is not valid either, the command exits 1 with
-`reason: "parse_error"` and an error that names the engine, for example
-`Engine "local" reply was not valid proposal JSON after 2 attempts: …`.
+`reason: "parse_error"` and an error that names the connection or harness, for
+example `Engine "local" reply was not valid proposal JSON after 2 attempts: …`.
 
-**Prompt-task `timeoutMs`:** a version-2 prompt task may set `timeoutMs` to
-override its selected engine timeout. Set it to `null` to disable the timer, or
-to a positive integer (milliseconds) to apply a task-specific limit.
 
 #### proposal list
 
@@ -3517,7 +3593,7 @@ akm search --type task                       # List tasks (cross-bundle)
 akm show tasks/<id>                          # Inspect one task
 akm task add <id> --schedule "@daily" \     # Register a new task and install it
   --command "akm improve --strategy default"
-akm task add review --schedule "@daily" --prompt "Review recent changes" --engine reviewer
+akm task add review --schedule "@daily" --prompt "Review recent changes" --harness reviewer
 akm task add nightly --schedule "@daily" --command "akm improve" --disabled  # register but leave off
 akm task add nightly --schedule "@daily" --command "akm improve" --force    # overwrite an existing task id
 akm task enable team//tasks/nightly       # Add local activation and sync its bundle
@@ -3652,9 +3728,9 @@ fail-closed migration behavior.
 file and its `logs.db` rows — is scrubbed before it is written. Two passes run:
 credential *shapes* (`Bearer …`, `sk-…`, webhook URLs) are matched by pattern,
 and exact secret values are matched by value. akm knows a value is secret when
-the config declares it (`engines.<name>.apiKey`, `embedding.apiKey`, and the
-`AKM_ENGINE_<NAME>_API_KEY` / `AKM_LLM_API_KEY` / `AKM_EMBED_API_KEY` recipes),
-and it infers others from the variable name (`*_TOKEN`, `*_SECRET`, `*_API_KEY`,
+the config declares it (the key every connection, `embedding` and
+`search.curateRerank` resolves to: a `$VAR`'s value, or the `credentials.json`
+entry), and it infers others from the variable name (`*_TOKEN`, `*_SECRET`, `*_API_KEY`,
 `*_PASSWORD`, …) provided the value is at least 8 characters — a short one is
 far more likely to be a flag than a credential, and redaction replaces
 substrings, so guessing wrong mangles the log.
@@ -3673,8 +3749,7 @@ akm looks each name up in the environment the run is given; a name that is unset
 contributes nothing. **Names only.** A literal secret in a task file would leak
 far more widely than the redaction closes: task files are indexed into the search
 database, can be sent to an embedding provider, are printed verbatim by `akm
-show`, and ship inside bundles over git and npm. This is the same rule exec
-units' `pass_env:` follows.
+show`, and ship inside bundles over git and npm.
 
 A workflow-target task executes the same native orchestration as `akm workflow
 run`; it does not stop after creating a run. Completion maps to task

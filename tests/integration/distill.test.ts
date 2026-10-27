@@ -24,13 +24,13 @@ import {
 } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { type AkmConfig, saveConfig } from "../../src/core/config/config";
-import { ConfigError } from "../../src/core/errors";
 import { readEvents } from "../../src/core/events";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
-import { LlmFeatureTimeoutError } from "../../src/llm/feature-gate";
+import { LlmCallError } from "../../src/llm/client";
 import { listImproveLedgerRows } from "../../src/storage/repositories/improve-ledger-repository";
+import { testLlmRunner } from "../_helpers/llm-runner";
 import {
   type Cleanup,
   mutateScopedEnv,
@@ -66,15 +66,13 @@ function distillConfig(stashDir: string, distill: Record<string, unknown>): AkmC
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
     defaultWriteTarget: "stash",
-    engines: {
+    connections: {
       default: {
-        kind: "llm",
         endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
+        models: { fast: "test-model" },
       },
     },
-    improve: { strategies: { test: { processes: { distill } } } },
-    defaults: { llmEngine: "default", improveStrategy: "test" },
+    improve: { strategy: "test", strategies: { test: { processes: { distill } } } },
   } as AkmConfig;
 }
 
@@ -136,11 +134,10 @@ Connect the VPN before production deploys.
 `;
 
 /** A judgment-tier runner; the drain's injected `chat` seam ignores its connection. */
-const JUDGMENT_RUNNER: RunnerSpec = {
-  kind: "llm",
-  engine: "judgment",
-  connection: { endpoint: "http://fake.invalid/v1/chat/completions", model: "judgment-model" },
-};
+const JUDGMENT_RUNNER: RunnerSpec = testLlmRunner(
+  { endpoint: "http://fake.invalid/v1/chat/completions", model: "judgment-model" },
+  "judgment",
+);
 
 const noopLookup = async () => null;
 const emptyEvents = (() => ({ events: [], nextOffset: 0 })) as unknown as typeof readEvents;
@@ -516,40 +513,6 @@ describe("akmDistill — feature gate", () => {
 // ── Acceptance: LLM throws ──────────────────────────────────────────────────
 
 describe("akmDistill — LLM error paths", () => {
-  test("missing required credential leaves source salience, proposals, and state untouched", async () => {
-    const stash = makeStashDir();
-    const inputPath = path.join(stash, "skills", "credential-boundary.md");
-    const original = "---\ndescription: Deploy safely\n---\n\nUse the checklist.\n";
-    fs.writeFileSync(inputPath, original, "utf8");
-    const config = configEnabled(stash);
-    config.engines = {
-      ...config.engines,
-      default: {
-        kind: "llm",
-        endpoint: "http://127.0.0.1:1/v1/chat/completions",
-        model: "never-dispatched",
-        apiKey: "$AKM_DISTILL_REQUIRED_KEY",
-      },
-    };
-    const stateDbPath = getStateDbPath();
-
-    await withEnv({ AKM_DISTILL_REQUIRED_KEY: undefined }, async () => {
-      await expect(
-        akmDistill({
-          ref: "skills/credential-boundary",
-          config,
-          stashDir: stash,
-          lookupFn: async () => inputPath,
-          readEventsFn: emptyEvents,
-          fetchRelatedFn: async () => [],
-        }),
-      ).rejects.toBeInstanceOf(ConfigError);
-    });
-
-    expect(fs.readFileSync(inputPath, "utf8")).toBe(original);
-    expect(fs.existsSync(stateDbPath)).toBe(false);
-  });
-
   test("chat throws → llm_failed outcome, no proposal, event emitted", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
@@ -592,9 +555,7 @@ describe("akmDistill — LLM error paths", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => {
-        // The wrapper only wraps tryLlmFeature's own timer, but the chat seam
-        // throwing a timeout-shaped error is observably the same path.
-        throw new LlmFeatureTimeoutError("distill", 30_000);
+        throw new LlmCallError("Request timed out after 30000ms", "timeout");
       },
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
@@ -610,8 +571,7 @@ describe("akmDistill — LLM error paths", () => {
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
       // 0.8.0: the distill gate defaults to true; with no llm profile wired,
-      // the inner call throws ConfigError(LLM_NOT_CONFIGURED) which the
-      // tryLlmFeature wrapper folds into llm_failed.
+      // the inner call throws ConfigError(LLM_NOT_CONFIGURED) which folds into llm_failed.
     } as unknown as AkmConfig;
     const result = await akmDistill({
       ref: "skills/deploy",
@@ -669,9 +629,8 @@ describe("akmDistill — Item 1: precise gate-off vs LLM-failed outcomes", () =>
   test("gate enabled + LLM returns null → outcome 'llm_failed', event IS emitted", async () => {
     const stash = makeStashDir();
     // configEnabled flips distill: true. The chat seam throws
-    // (simulating a transport failure); tryLlmFeature catches it with
-    // reason "error" → outcome resolves to llm_failed AND the event fires
-    // so the failure is observable on the events stream.
+    // (simulating a transport failure); the failed call resolves to llm_failed
+    // AND the event fires so the failure is observable on the events stream.
     const result = await akmDistill({
       ref: "skills/deploy",
       config: configEnabled(stash),
@@ -991,9 +950,9 @@ describe("akmDistill — queued proposal", () => {
       "utf8",
     );
     const config = configAbsentFeature(stash);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("expected LLM fixture engine");
-    engine.apiKey = "$AKM_UNUSED_DISTILL_PROMOTION_KEY";
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("expected the default connection fixture");
+    connection.apiKey = "$AKM_UNUSED_DISTILL_PROMOTION_KEY";
     let chatCalls = 0;
 
     const result = await withEnv({ AKM_UNUSED_DISTILL_PROMOTION_KEY: undefined }, () =>
@@ -1036,18 +995,17 @@ describe("akmDistill — queued proposal", () => {
       ].join("\n"),
       "utf8",
     );
-    const config = distillConfig(stash, { qualityGate: { enabled: true, engine: "judge" } });
-    config.engines = {
+    const config = distillConfig(stash, { qualityGate: { enabled: true } });
+    config.improve = { ...config.improve, qualityGate: { connection: "judge" } };
+    config.connections = {
       default: {
-        kind: "llm",
         endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
+        models: { fast: "test-model" },
         apiKey: "$AKM_UNUSED_PROMOTION_GENERATOR_KEY",
       },
       judge: {
-        kind: "llm",
         endpoint: "http://localhost:11435/v1/chat/completions",
-        model: "judge-model",
+        models: { fast: "judge-model" },
         apiKey: "$AKM_PROMOTION_JUDGE_KEY",
       },
     };
@@ -1499,8 +1457,7 @@ describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
     // Validation in parseLlmFeatures requires `llm`; we bypass that by
     // assembling the shape directly (this mimics a partial / racy config).
     // The gate is OPEN (distill: true) but the inner LLM call
-    // throws ConfigError("LLM_NOT_CONFIGURED") → tryLlmFeature catches it
-    // with reason "error" → outcome resolves to `llm_failed`.
+    // throws ConfigError("LLM_NOT_CONFIGURED") → outcome resolves to `llm_failed`.
     // Gate is open (distill enabled) but no llm profile is wired.
     const config: AkmConfig = {
       semanticSearchMode: "auto",
@@ -2038,9 +1995,9 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     const sourcePath = path.join(stash, "skills", "deploy.md");
     fs.writeFileSync(sourcePath, "---\ndescription: Deploy safely\n---\n\nCheck deployment prerequisites.\n");
     const config = configJudgeEnabled(stash);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = "$AKM_DISTILL_ROTATING_KEY";
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    connection.apiKey = "$AKM_DISTILL_ROTATING_KEY";
     const secret = "distill-original-092";
     const rotated = "distill-rotated-092";
     const observed: Array<string | undefined> = [];
@@ -2072,12 +2029,13 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     expect(persisted).not.toContain(rotated);
   });
 
-  test("qualityGate.engine judges the lesson on its own engine; generation stays on the default", async () => {
+  test("improve.qualityGate.connection judges the lesson on its own connection; generation stays on the default", async () => {
     const stash = makeStashDir();
-    const config = distillConfig(stash, { enabled: true, qualityGate: { enabled: true, engine: "judge" } });
-    config.engines = {
-      ...config.engines,
-      judge: { kind: "llm", endpoint: "http://localhost:11435/v1/chat/completions", model: "judge-model" },
+    const config = distillConfig(stash, { enabled: true, qualityGate: { enabled: true } });
+    config.improve = { ...config.improve, qualityGate: { connection: "judge" } };
+    config.connections = {
+      ...config.connections,
+      judge: { endpoint: "http://localhost:11435/v1/chat/completions", models: { fast: "judge-model" } },
     };
     const calls: string[] = [];
 
@@ -2298,10 +2256,9 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
       ].join("\n"),
       "utf8",
     );
-    // The gate is on and no engine exists to judge with; a reinforced memory needs no engine to be promoted.
+    // The gate is on and no connection exists to judge with; a reinforced memory needs none to be promoted.
     const config = configJudgeEnabled(stash);
-    delete config.engines;
-    config.defaults = { improveStrategy: "test" };
+    delete config.connections;
 
     const result = await akmDistill({
       ref: "memories/no-judge-promotion",
@@ -2320,7 +2277,7 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
       source: "distill",
       gateDecision: { outcome: "deferred", reason: "quality-review", gate: "quality-gate" },
     });
-    expect(proposals[0]?.gateDecision?.judgeReason).toContain("no engine configured");
+    expect(proposals[0]?.gateDecision?.judgeReason).toContain("no connection or harness configured");
     const db = openStateDatabase();
     try {
       const row = listImproveLedgerRows(db, stash, ["distill"]).find(

@@ -3,17 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm agent [--engine <name>] [--prompt <text>]`
+ * `akm agent [--connection <name> | --harness <name>] [--prompt <text>]`
  *
- * Dispatch an agent by named engine, optionally injecting an inline prompt.
+ * Dispatch an agent on a named harness (or connection), optionally injecting an inline prompt.
  * Stored commands execute only through `akm command run`; workflows execute
  * only through the workflow runtime.
  *
- * When no prompt, agent selector, or model is given, the
- * native agent is launched interactively with no dispatch payload.
+ * With a prompt the agent runs it and its reply is printed. Without one the harness
+ * is started interactively (a model may be named); a connection has nothing to start,
+ * and a persona, inference or output schema needs a task to apply to.
  *
- * Every noninteractive arm uses the canonical command invocation path. The
- * prompt-free arm uses the shared payload-free interactive execution lowerer.
+ * The prompt arm uses the canonical command invocation path; the prompt-free arm starts
+ * the harness itself (`executeInteractiveAgentInvocation`).
  */
 
 import type { AkmConfig } from "../../core/config/config";
@@ -21,29 +22,25 @@ import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
-import {
-  fallbackAnnouncement,
-  NO_ENGINE_MESSAGE_SUFFIX,
-  NO_ENGINE_REMEDY,
-  withEngineFallback,
-} from "../../integrations/agent/engine-fallback";
 import { executeInteractiveAgentInvocation } from "../../integrations/agent/runner-dispatch";
 import { executeCommandInvocation, type PrepareCommandInvocationOptions } from "../command/command-execution";
 
 export interface AkmAgentDispatchOptions {
-  engine?: string;
   prompt?: string;
   /** Portable agent asset ref used by the canonical command path. */
   agentRef?: string;
   agentConfig?: AkmConfig;
   timeoutMs?: number;
   /**
-   * Working directory resolved into the canonical execution runtime. The SDK
-   * forwards it as its per-session directory query.
+   * Working directory resolved into the canonical execution runtime: the
+   * directory the run's process starts in.
    */
   cwd?: string;
   /** Current invocation-layer selections consumed by the execution cascade. */
-  selection?: Pick<UnresolvedExecutionDefaults, "model" | "inference" | "outputSchema" | "tools">;
+  selection?: Pick<
+    UnresolvedExecutionDefaults,
+    "connection" | "harness" | "engine" | "model" | "inference" | "outputSchema"
+  >;
 }
 
 export interface AkmAgentDispatchSeams {
@@ -64,24 +61,21 @@ export interface AkmAgentDispatchResult {
   reason?: string;
   /** The harness's own session id when it exposes one (kept in the harness's history, #1100). */
   sessionId?: string;
-  /**
-   * Non-fatal announcements — today only the implicit `opencode-sdk` engine
-   * fallback (`integrations/agent/engine-fallback.ts`), surfaced here so JSON
-   * consumers see it alongside the stderr `warn()`.
-   */
+  /** Non-fatal announcements, surfaced here so JSON consumers see them alongside the stderr `warn()`. */
   warnings?: readonly string[];
-  /** Secret-free optimistic-lowering diagnostics from the selected engine adapter. */
+  /** Secret-free optimistic-lowering diagnostics from the selected harness adapter. */
   notices?: readonly Readonly<LoweringNotice>[];
 }
 
 function canonicalCurrent(options: AkmAgentDispatchOptions): UnresolvedExecutionDefaults {
   const current: Record<string, unknown> = {};
   if (options.agentRef !== undefined) current.agent = options.agentRef;
-  if (options.engine !== undefined) current.engine = options.engine;
+  if (options.selection?.connection !== undefined) current.connection = options.selection.connection;
+  if (options.selection?.harness !== undefined) current.harness = options.selection.harness;
+  if (options.selection?.engine !== undefined) current.engine = options.selection.engine;
   if (options.selection?.model !== undefined) current.model = options.selection.model;
   if (Object.hasOwn(options.selection ?? {}, "inference")) current.inference = options.selection?.inference;
   if (options.selection?.outputSchema !== undefined) current.outputSchema = options.selection.outputSchema;
-  if (options.selection?.tools !== undefined) current.tools = options.selection.tools;
   if (options.timeoutMs !== undefined) current.timeout = options.timeoutMs;
   if (options.cwd !== undefined) current.workspace = options.cwd;
   return current as UnresolvedExecutionDefaults;
@@ -123,35 +117,28 @@ export async function akmAgentDispatch(
   seams: AkmAgentDispatchSeams = {},
 ): Promise<AkmAgentDispatchResult> {
   if (!options.agentConfig)
-    throw new UsageError("agent requires a valid config with an agent engine.", "MISSING_REQUIRED_ARGUMENT");
+    throw new UsageError("agent requires a valid config with a harness or connection.", "MISSING_REQUIRED_ARGUMENT");
 
   rejectInvalidAgentRef(options.agentRef);
 
-  const hasResolvedSelection = options.agentRef !== undefined || options.selection !== undefined;
-  if (options.prompt !== undefined || hasResolvedSelection) {
-    if (options.prompt === undefined) {
-      throw new UsageError(
-        "Agent persona/model/tool/schema/inference selection requires an explicit task from --prompt or --prompt-stdin; it cannot fabricate an empty command. Omit those selections for a prompt-free interactive launch.",
-        "MISSING_REQUIRED_ARGUMENT",
-      );
-    }
-    return delegateCanonicalCommand(options, seams, { content: options.prompt });
+  if (options.prompt !== undefined) return delegateCanonicalCommand(options, seams, { content: options.prompt });
+
+  // No prompt: the harness is started for a person. Only where and which model ride along; the rest needs a task.
+  const { connection, harness, engine, model, ...needsTask } = options.selection ?? {};
+  if (options.agentRef !== undefined || Object.keys(needsTask).length > 0) {
+    throw new UsageError(
+      "An agent persona, inference setting or output schema applies to a task: pass --prompt or --prompt-stdin. Without a prompt only the harness (and a model) is started.",
+      "MISSING_REQUIRED_ARGUMENT",
+    );
   }
 
-  // Same implicit opencode-sdk fallback the workflow and task surfaces apply,
-  // so an engine-less install is usable everywhere or nowhere — not a mix.
-  const { config: agentConfig, fallbackEngineName } = withEngineFallback(options.agentConfig);
-  const engineName = options.engine ?? agentConfig.defaults?.engine;
-  // Announced, never silent: `options.engine` outranks the default, so the
-  // fallback is only reportable when it is the engine actually selected.
-  const engineAnnouncement = fallbackAnnouncement(fallbackEngineName, engineName);
-  if (engineAnnouncement) warn(engineAnnouncement);
-  if (!engineName)
-    throw new UsageError(`agent ${NO_ENGINE_MESSAGE_SUFFIX} ${NO_ENGINE_REMEDY}`, "MISSING_REQUIRED_ARGUMENT");
   const executeInteractive = seams.executeInteractive ?? executeInteractiveAgentInvocation;
   const execution = await executeInteractive({
-    config: agentConfig,
-    engine: engineName,
+    config: options.agentConfig,
+    ...(typeof connection === "string" ? { connection } : {}),
+    ...(typeof harness === "string" ? { harness } : {}),
+    ...(typeof engine === "string" ? { engine } : {}),
+    ...(typeof model === "string" ? { model } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
   });
@@ -168,6 +155,5 @@ export async function akmAgentDispatch(
     durationMs: result.durationMs,
     ...(result.error !== undefined ? { error: result.error } : {}),
     ...(result.reason !== undefined ? { reason: result.reason } : {}),
-    ...(engineAnnouncement ? { warnings: [engineAnnouncement] } : {}),
   };
 }

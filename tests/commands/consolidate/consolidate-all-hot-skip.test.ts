@@ -13,7 +13,6 @@ import path from "node:path";
 
 import { akmConsolidate } from "../../../src/commands/improve/consolidate";
 import type { AkmConfig } from "../../../src/core/config/config";
-import { ConfigError } from "../../../src/core/errors";
 import { getStateDbPath } from "../../../src/core/state-db";
 import type { LoweringNotice } from "../../../src/execution/resolved-request";
 import {
@@ -55,7 +54,7 @@ const CONFIG = {
 } as unknown as AkmConfig;
 
 describe("akmConsolidate — all-hot chunk", () => {
-  test("missing required credential does not eagerly create consolidation state", async () => {
+  test("nothing configured does not eagerly create consolidation state", async () => {
     writeMemory("cold-a", { hot: false });
     const config = {
       configVersion: "0.9.0",
@@ -63,23 +62,13 @@ describe("akmConsolidate — all-hot chunk", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: {
-        planner: {
-          kind: "llm",
-          endpoint: "http://127.0.0.1:1/v1/chat/completions",
-          model: "never-dispatched",
-          apiKey: "$AKM_CONSOLIDATE_REQUIRED_KEY",
-        },
-      },
-      defaults: { llmEngine: "planner", improveStrategy: "default" },
-      improve: { strategies: { default: { processes: { consolidate: { enabled: true } } } } },
+      improve: { strategy: "default", strategies: { default: { processes: { consolidate: { enabled: true } } } } },
     } as AkmConfig;
     const stateDbPath = getStateDbPath();
 
-    await withEnv({ AKM_CONSOLIDATE_REQUIRED_KEY: undefined }, async () => {
-      await expect(akmConsolidate({ stashDir, config })).rejects.toBeInstanceOf(ConfigError);
-    });
+    const result = await akmConsolidate({ stashDir, config });
 
+    expect(result.warnings).toContain("No LLM configured for consolidation");
     expect(fs.existsSync(stateDbPath)).toBe(false);
   });
 
@@ -95,16 +84,14 @@ describe("akmConsolidate — all-hot chunk", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: {
+      connections: {
         planner: {
-          kind: "llm",
           endpoint: "https://consolidate.example.test/v1/chat/completions",
-          model: "planner",
+          models: { fast: "planner" },
           apiKey: "$AKM_CONSOLIDATE_ROTATING_KEY",
         },
       },
-      defaults: { llmEngine: "planner", improveStrategy: "default" },
-      improve: { strategies: { default: { processes: { consolidate: { enabled: true } } } } },
+      improve: { strategy: "default", strategies: { default: { processes: { consolidate: { enabled: true } } } } },
     } as AkmConfig;
     const original = "consolidate-original-secret";
     const rotated = "consolidate-rotated-secret";
@@ -152,11 +139,10 @@ describe("akmConsolidate — all-hot chunk", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: {
-        planner: { kind: "llm", endpoint: "https://consolidate.example.test/v1/chat/completions", model: "planner" },
+      connections: {
+        planner: { endpoint: "https://consolidate.example.test/v1/chat/completions", models: { fast: "planner" } },
       },
-      defaults: { llmEngine: "planner", improveStrategy: "default" },
-      improve: { strategies: { default: { processes: { consolidate: { enabled: true } } } } },
+      improve: { strategy: "default", strategies: { default: { processes: { consolidate: { enabled: true } } } } },
     } as AkmConfig;
     let calls = 0;
 
@@ -214,24 +200,15 @@ describe("akmConsolidate — all-hot chunk", () => {
     const config = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      defaults: { improveStrategy: "freeze-once", llmEngine: "planner" },
       improve: {
-        strategies: {
-          "freeze-once": {
-            processes: {
-              consolidate: {
-                enabled: true,
-                llm: { unsupportedPlannerField: true },
-              },
-            },
-          },
-        },
+        strategy: "freeze-once",
+        processes: { consolidate: { llm: { unsupportedPlannerField: true } } },
+        strategies: { "freeze-once": { processes: { consolidate: { enabled: true } } } },
       },
-      engines: {
+      connections: {
         planner: {
-          kind: "llm",
           endpoint: "https://example.test/v1/chat/completions",
-          model: "planner-model",
+          models: { fast: "planner-model" },
         },
       },
     } as unknown as AkmConfig;
@@ -246,7 +223,7 @@ describe("akmConsolidate — all-hot chunk", () => {
     expect(reported).toEqual([
       expect.objectContaining({
         code: "untranslated-field",
-        adapter: "llm",
+        adapter: "connection",
         field: "inference.unsupportedPlannerField",
       }),
     ]);

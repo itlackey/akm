@@ -58,7 +58,7 @@ export interface ExecContextLimits {
 // Per-var: Win32 `SetEnvironmentVariable` caps one variable at 32 767 UTF-16
 // code units; measuring UTF-8 bytes is conservative in the right direction.
 // Total: akm's own share of the `CreateProcess` `lpEnvironment` block, which it
-// shares with the allowlist, the unit's `env:` bindings and the argv.
+// shares with the rest of the environment, the unit's `env:` bindings and the argv.
 const EXEC_CONTEXT_LIMITS_WIN32: ExecContextLimits = {
   perVarBytes: 32_767,
   totalBytes: 64_000,
@@ -69,7 +69,7 @@ const EXEC_CONTEXT_LIMITS_WIN32: ExecContextLimits = {
 // margin for the name, `=`, NUL and the kernel's own accounting — the guard must
 // never reject a spawn the platform would have accepted.
 // Total: half of macOS's 256 KiB `ARG_MAX` (the tightest supported total), so
-// the other half remains for the argv, the allowlist and the `env:` bindings.
+// the other half remains for the argv, the rest of the environment and the `env:` bindings.
 const EXEC_CONTEXT_LIMITS_POSIX: ExecContextLimits = {
   perVarBytes: 96 * 1024,
   totalBytes: 128 * 1024,

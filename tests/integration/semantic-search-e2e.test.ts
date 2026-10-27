@@ -1,6 +1,6 @@
 /**
- * End-to-end semantic search test that uses the external Transformers.js dependency
- * embeddings and verifies vector search produces meaningful results.
+ * End-to-end semantic search test that embeds with the real local model on
+ * onnxruntime-node and verifies vector search produces meaningful results.
  *
  * Gated behind AKM_SEMANTIC_TESTS=1 because first run downloads the model.
  * Subsequent runs use the cached model and complete in ~1-2 seconds.
@@ -17,6 +17,7 @@ import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
 import { searchLocal } from "../../src/indexer/search/db-search";
 import { clearEmbeddingCache } from "../../src/llm/embedder";
+import { LocalEmbedder } from "../../src/llm/embedders/local";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getEmbeddableEntryCount, getEntryCount } from "../../src/storage/repositories/index-entries-repository";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
@@ -267,7 +268,7 @@ function restoreEnv(): void {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Gated tests — require the real Transformers.js dependency and model runtime
+// Gated tests — require the real local model and its runtime
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)", () => {
@@ -318,6 +319,8 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
     // index verifies ok and lands in a ready status.
     expect(result.verification.ok).toBe(true);
     expect(result.verification.semanticStatus).toBe("ready-js");
+    // The native runtime embedded, not a WASM fallback.
+    expect(result.verification.embeddingRuntime).toBe("onnxruntime-node");
     // Every indexed entry is embeddable, so the verification entry count equals
     // the embedding count.
     expect(result.verification.entryCount).toBe(result.verification.embeddingCount);
@@ -335,6 +338,23 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
   afterAll(() => {
     restoreEnv();
     clearEmbeddingCache();
+  });
+
+  test("the embedder reproduces the reference vectors", async () => {
+    // Indexes built before the embedder moved to onnxruntime-node hold vectors
+    // from Transformers.js (tests/fixtures/embedder-reference-vectors.json says how
+    // they were made). A new vector must match them, or an old index and a new
+    // query would no longer compare.
+    const { cases } = JSON.parse(
+      fs.readFileSync(path.resolve(import.meta.dir, "../fixtures/embedder-reference-vectors.json"), "utf8"),
+    ) as { cases: Array<{ text: string; vector: number[] }> };
+
+    const vectors = await new LocalEmbedder().embedBatch(cases.map((c) => c.text));
+
+    cases.forEach((c, i) => {
+      const maxAbsDiff = Math.max(...c.vector.map((value, k) => Math.abs(value - (vectors[i] as number[])[k]!)));
+      expect(maxAbsDiff, `case ${i}`).toBeLessThan(1e-6);
+    });
   });
 
   test("index stores embeddings with correct metadata", () => {

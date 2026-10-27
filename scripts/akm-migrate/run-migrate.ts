@@ -4,24 +4,37 @@
 
 /**
  * The whole migration, in order, as one plan: config.json in its current
- * shape, pending state.db migrations, task files to task source v4, then the
- * residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
+ * shape, pending state.db migrations, task files to task source v4, assets'
+ * retired `engine:` keys, then the residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
  * this; `akm migrate` and `akm upgrade` spawn that executable and re-emit
  * it. Every historical shape lives here or under `./migrate/`, so the CLI
  * proper only ever reads current schemas.
  */
 
 import { resolveStashDir } from "../../src/core/common";
-import { type ConfigFileNormalization, normalizeConfigFile, resetConfigCache } from "../../src/core/config/config";
+import {
+  bundleKeyForContentRoot,
+  type ConfigFileNormalization,
+  isBundleEnabled,
+  loadConfig,
+  normalizeConfigFile,
+  resetConfigCache,
+} from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
+import { resolveSecretFromStore } from "../../src/sources/snapshot-fetchers/secret-seam";
 import {
   type DeadResidueEntry,
   type DeadResidueRemoval,
   findDeadResidueEntries,
   removeDeadResidue,
 } from "./migrate/dead-residue";
+import {
+  applyEngineKeysMigration,
+  type EngineKeysMigrationStatus,
+  inspectEngineKeysMigration,
+} from "./engine-key-migrate";
 import { applyTaskFilesMigration, inspectTaskFilesMigration, type TaskFilesMigrationStatus } from "./task-migrate";
 
 export type MigrationStatus = "current" | "ready" | "blocked";
@@ -55,6 +68,8 @@ export interface CombinedMigrationPlan {
   configFile?: ConfigFileNormalization;
   stateMigrations?: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
   taskFiles?: TaskFilesMigrationStatus["taskFiles"];
+  /** Assets whose retired `engine:` key becomes `connection:` or `harness:`. */
+  assetEngineKeys?: EngineKeysMigrationStatus["assetEngineKeys"];
   /** Present after a real apply that rewrote at least one task file: the run's backup directory. */
   backupPath?: string;
   applied?: number;
@@ -118,10 +133,16 @@ export async function migrationStep<T>(
   }
 }
 
-/** No configured bundle is an empty domain, not an error: migrate works before `akm bundle create`. */
+/**
+ * The stash the residue sweep runs under. No configured bundle is an empty domain, not an error: migrate works
+ * before `akm bundle create`. A stash a disabled bundle owns is left as written, as the task and asset steps leave it.
+ */
 function stashDirIfConfigured(): string | undefined {
   try {
-    return resolveStashDir();
+    const stashDir = resolveStashDir();
+    const config = loadConfig();
+    const owner = bundleKeyForContentRoot(config, stashDir);
+    return owner !== undefined && !isBundleEnabled(config, owner) ? undefined : stashDir;
   } catch (error) {
     if (error instanceof ConfigError && error.code === "STASH_DIR_NOT_FOUND") return undefined;
     throw error;
@@ -143,8 +164,10 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const configFile = await migrationStep(
     failedSteps,
     "configFile",
-    () => normalizeConfigFile(configPath, { apply }),
-    apply ? () => normalizeConfigFile(configPath, { apply: false }) : undefined,
+    () => normalizeConfigFile(configPath, { apply, resolveFromStore: resolveSecretFromStore }),
+    apply
+      ? () => normalizeConfigFile(configPath, { apply: false, resolveFromStore: resolveSecretFromStore })
+      : undefined,
   );
   if (apply && configFile?.applied) resetConfigCache();
   const stateMigrations = await migrationStep(
@@ -159,6 +182,19 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? applyTaskFilesMigration() : inspectTaskFilesMigration()),
     apply ? () => inspectTaskFilesMigration() : undefined,
   );
+  // After the task files (a v2/v3 task file may still carry `engine:` until it is rewritten) and the
+  // config (the names an engine had before its conversion come from that step's result).
+  // A config the step could not read or write leaves the names unsettled, so the assets wait for a run that can.
+  const configFailed = failedSteps.some((failure) => failure.step.startsWith("configFile"));
+  const engineTargets = configFile?.engineTargets;
+  const assetEngineKeys = configFailed
+    ? undefined
+    : await migrationStep(
+        failedSteps,
+        "assetEngineKeys",
+        () => (apply ? applyEngineKeysMigration(engineTargets) : inspectEngineKeysMigration(engineTargets)),
+        apply ? () => inspectEngineKeysMigration(engineTargets) : undefined,
+      );
   // Resolving the stash dir runs as its own step: a config that fails to
   // load here is this step's own failure, not an uncaught throw out of
   // `runMigration`.
@@ -175,10 +211,11 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const stateStatus: MigrationStatus =
     stateMigrations && "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
   const configFileStatus: MigrationStatus = configFile?.changed && !configFile.applied ? "ready" : "current";
+  const engineKeysStatus: MigrationStatus = assetEngineKeys?.status ?? "current";
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
-      worstStatus(worstStatus(taskFiles?.status ?? "blocked", stateStatus), configFileStatus),
+      worstStatus(worstStatus(worstStatus(taskFiles?.status ?? "blocked", stateStatus), configFileStatus), engineKeysStatus),
       failedSteps,
     ),
     blockers: [...(taskFiles?.blockers ?? []), ...failedStepBlockers(failedSteps)],
@@ -188,6 +225,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     ...(taskFiles !== undefined ? { taskFiles: taskFiles.taskFiles } : {}),
     ...(taskFiles?.backupPath !== undefined ? { backupPath: taskFiles.backupPath } : {}),
     ...(taskFiles?.applied !== undefined ? { applied: taskFiles.applied } : {}),
+    ...(assetEngineKeys !== undefined ? { assetEngineKeys: assetEngineKeys.assetEngineKeys } : {}),
     ...(deadResidue !== undefined ? { deadResidue } : {}),
   };
 }

@@ -9,14 +9,15 @@
  * split-and-retry for RemoteEmbedder.embedBatch.
  *
  * All network I/O here is mocked via `withMockedFetch` (no real socket
- * opened), so this stays a pure unit test rather than an integration test —
- * see AGENTS.md's tests/integration/ classification rule. The real-server
+ * opened), so this stays a pure unit test rather than an integration test.
+ * The real-server
  * variants of the concurrency and context-split behavior live in
  * tests/integration/embedder.test.ts.
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import type { EmbeddingConnectionConfig } from "../src/core/config/config";
+import { writeCredential } from "../src/core/config/credentials";
 import { EmbeddingConnectionConfigSchema } from "../src/core/config/schema/embedding";
 import { _setWarnSinkForTests } from "../src/core/warn";
 import {
@@ -32,6 +33,7 @@ import {
   resolveEmbeddingTimeoutMs,
 } from "../src/llm/embedders/remote";
 import type { EmbeddingVector } from "../src/llm/embedders/types";
+import { clearCredentials } from "./_helpers/credentials";
 import { withMockedFetch } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
@@ -691,25 +693,31 @@ describe("RemoteEmbedder.embedBatch: stops dispatching after the first onBatch f
 });
 
 describe("describeEmbeddingCredential (#953)", () => {
-  test("undefined/empty apiKey reports 'none configured'", () => {
-    expect(describeEmbeddingCredential(undefined)).toBe("none configured");
-    expect(describeEmbeddingCredential("")).toBe("none configured");
+  afterEach(() => {
+    clearCredentials();
   });
 
-  test("a secrets ref reference names the reference and its source, never a resolved value", () => {
-    expect(describeEmbeddingCredential("${secrets/lab-api-key}")).toBe("${secrets/lab-api-key} (store)");
+  test("no apiKey with nothing stored reports 'none configured'", () => {
+    expect(describeEmbeddingCredential({ endpoint: "http://embed.invalid/v1" })).toBe("none configured");
+  });
+
+  test("a stored key reports 'credentials.json', never the value", () => {
+    writeCredential({ service: "embedding" }, "sk-super-secret-value-do-not-log", "http://embed.invalid/v1");
+    const description = describeEmbeddingCredential({ endpoint: "http://embed.invalid/v1" });
+    expect(description).toBe("credentials.json");
+    expect(description).not.toContain("sk-super-secret-value-do-not-log");
+  });
+
+  test("an embedding on a connection reads the key stored under the connection's name", () => {
+    writeCredential({ connection: "default" }, "connection-key", "http://embed.invalid/v1");
+    const endpoint = "http://embed.invalid/v1";
+    expect(describeEmbeddingCredential({ endpoint, credentialName: "default" })).toBe("credentials.json");
+    expect(describeEmbeddingCredential({ endpoint })).toBe("none configured");
   });
 
   test("a $VAR-style reference names the reference and its source", () => {
-    expect(describeEmbeddingCredential("$LAB_API_KEY")).toBe("$LAB_API_KEY (env)");
+    expect(describeEmbeddingCredential({ apiKey: "$LAB_API_KEY" })).toBe("$LAB_API_KEY (env)");
     const braced = "$" + "{LAB_API_KEY}";
-    expect(describeEmbeddingCredential(braced)).toBe(`${braced} (env)`);
-  });
-
-  test("a literal key reports only 'literal apiKey' — the value itself is never included", () => {
-    const literal = "sk-super-secret-value-do-not-log";
-    const description = describeEmbeddingCredential(literal);
-    expect(description).toBe("literal apiKey");
-    expect(description).not.toContain(literal);
+    expect(describeEmbeddingCredential({ apiKey: braced })).toBe(`${braced} (env)`);
   });
 });

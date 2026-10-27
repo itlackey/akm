@@ -3,45 +3,27 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * OpenHands CLI harness (P2 integration, plan §"The adapter contract").
- *
- * Per-harness barrel gathering the OpenHands integration surfaces:
- *   - agent command builder → ./agent-builder.ts    (openhandsBuilder)
- *   - result extractor      → ./result-extractor.ts (openhandsResultExtractor)
- *
- * It also defines {@link OpenhandsHarness}, the {@link AkmHarness} descriptor
- * that `HARNESS_REGISTRY` registers. Dispatch-only: no native session-log
- * reader or config importer yet.
+ * OpenHands CLI (`openhands`). `--headless --task` runs one task. Like aider the
+ * task is a flag value, glued on with `=` so a task that starts with `-` is not
+ * read as an option. The CLI takes its model from `LLM_MODEL`, not a flag.
  */
 
-import { caps } from "../shared";
-import { BaseHarness } from "../types";
-import { openhandsBuilder } from "./agent-builder";
-import { openhandsResultExtractor } from "./result-extractor";
+import type { AgentDispatchRequest, AkmHarness, BuiltCommand, HarnessSpawn } from "../harness";
 
-export { OPENHANDS_MODEL_ENV, OPENHANDS_PLATFORM, openhandsBuilder } from "./agent-builder";
-export { openhandsResultExtractor } from "./result-extractor";
+/** The environment variable OpenHands reads its model from. */
+const MODEL_ENV = "LLM_MODEL";
 
-/**
- * OpenHands CLI.
- *
- * Canonical id is `'openhands'`; no alias or distinct runtime identity.
- */
-export class OpenhandsHarness extends BaseHarness {
+export class OpenhandsHarness implements AkmHarness {
   readonly id = "openhands" as const;
   readonly displayName = "OpenHands";
-  readonly agentBuilder = openhandsBuilder;
-  readonly profile = { bin: "openhands", args: [], envPassthrough: ["LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL"] };
-  readonly resultExtractor = openhandsResultExtractor;
-  // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // No flag-shaped resume: per the matrix OpenHands resumes from workspace state, not a
-  // session-id flag. The extractor still captures a conversation id
-  // opportunistically; akm's `workflow_run_units` remains the durable source
-  // of truth.
-  // No `identityEnv`: the matrix lists OpenHands' identity markers as
-  // uncertain, and it stamps no session var onto child processes.
-  readonly capabilities = caps({
-    agentDispatch: true,
-    detection: true,
-  });
+  readonly profile = { bin: "openhands", args: [] };
+  readonly systemPrompt = false;
+  readonly nativeAgent = false;
+  readonly confinable = false;
+
+  build({ bin, args }: HarnessSpawn, req: AgentDispatchRequest): BuiltCommand {
+    const argv = [bin, ...args];
+    if (req.prompt !== undefined) argv.push("--headless", `--task=${req.prompt}`);
+    return { argv, ...(req.model ? { env: { [MODEL_ENV]: req.model } } : {}) };
+  }
 }

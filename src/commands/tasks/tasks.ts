@@ -24,7 +24,13 @@ import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
-import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
+import {
+  defaultConnection,
+  defaultHarness,
+  loadConfig,
+  mutateConfig,
+  resetConfigCache,
+} from "../../core/config/config";
 import { bundleKeyForContentRoot, resolveConfiguredSources } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
@@ -43,7 +49,7 @@ import {
 } from "../../core/write-source";
 import type { InputFlag } from "../../execution/input-contract";
 import { deriveInstallations } from "../../indexer/installations";
-import { withEngineFallback } from "../../integrations/agent/engine-fallback";
+import { retiredEngineSelection } from "../../integrations/agent/resolution";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
@@ -102,6 +108,10 @@ export interface TasksAddInput {
    * `workflow` and `prompt`.
    */
   command?: string | string[];
+  /** Where a prompt target runs and on which model (`--connection`, `--harness`, `--model`), written into the task. */
+  connection?: string;
+  harness?: string;
+  /** The retired `--engine`: written into the task as a connection by that name, else a harness. */
   engine?: string;
   model?: string;
   timeoutMs?: number;
@@ -159,13 +169,15 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     throw new UsageError(`Resolved task path escapes the stash: "${id}".`, "PATH_ESCAPE_VIOLATION");
   }
 
+  const engineAs = input.engine === undefined ? undefined : retiredEngineSelection(bundle.config, input.engine);
   const yaml = renderTaskYaml({
     id,
     schedule: input.schedule,
     workflow: input.workflow,
     prompt: input.prompt,
     command: input.command,
-    engine: input.engine,
+    connection: input.connection ?? (engineAs?.kind === "connection" ? engineAs.name : undefined),
+    harness: input.harness ?? (engineAs?.kind === "harness" ? engineAs.name : undefined),
     model: input.model,
     timeoutMs: input.timeoutMs,
     params: input.params,
@@ -266,16 +278,24 @@ function assertTaskAddTargetShape(input: TasksAddInput): void {
       "INVALID_FLAG_VALUE",
     );
   }
-  // `--timeout-ms` is the workflow's whole-run bound. Engine and model stay
-  // prompt-only because workflow engines come from the frozen plan.
-  if (input.workflow && (input.engine !== undefined || input.model !== undefined)) {
+  // `--timeout-ms` is the workflow's whole-run bound. Connection, harness and
+  // model stay prompt-only because a workflow's connections and harnesses come from the frozen plan.
+  const selects =
+    input.connection !== undefined ||
+    input.harness !== undefined ||
+    input.engine !== undefined ||
+    input.model !== undefined;
+  if (input.workflow && selects) {
     throw new UsageError(
-      "Workflow tasks accept --params and --timeout-ms; engine and model are prompt-task fields.",
+      "Workflow tasks accept --params and --timeout-ms; connection, harness and model are prompt-task fields.",
       "INVALID_FLAG_VALUE",
     );
   }
-  if (hasCommand && (input.engine !== undefined || input.model !== undefined)) {
-    throw new UsageError("Command tasks accept --timeout-ms but not --engine or --model.", "INVALID_FLAG_VALUE");
+  if (hasCommand && selects) {
+    throw new UsageError(
+      "Command tasks accept --timeout-ms but not --connection, --harness or --model.",
+      "INVALID_FLAG_VALUE",
+    );
   }
   if (input.prompt !== undefined) assertInlineTaskPrompt(input.prompt);
 }
@@ -295,24 +315,18 @@ export async function akmTasksRun(
   const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
   const resolvedId = taskIdForAdapter(parsed.id, adapterId);
   const scheduled = options.scheduled === true;
-  // D5 "Construction" (spec docs/plans/specs/p1b-model-extraction.md §1.2/
-  // §5.2): built ONCE at this invocation boundary. eventSource is "task"
-  // whether or not --scheduled was passed (§1.6 D5-N1) — scheduled stays a
+  // Built ONCE at this invocation boundary. eventSource is "task"
+  // whether or not --scheduled was passed — scheduled stays a
   // separate field carrying its own pre-existing meaning (activation policy,
   // scheduler env), never selecting the event source.
   const provenance = createExecutionProvenanceContext(scheduled);
-  // F-3 (spec §5.4): RunTaskOptions.stashDir renamed to bundleDir — VALUE-
-  // preserving, no CLI flag change.
-  //
-  // P2a Lane C (spec docs/plans/specs/p2a-task-source-v4.md §5.1): the raw,
-  // exact-name input flags `tasks-cli.ts`'s Stage 1 captures ride through
-  // unchanged to `runTask` -> `loadPreparedTask`'s Stage 2 materializer,
+  // The raw, exact-name input flags `tasks-cli.ts`'s Stage 1 captures ride
+  // through unchanged to `runTask` -> `loadPreparedTask`'s Stage 2 materializer,
   // which owns declaring `inputFlags` on `RunTaskOptions` and attaching the
   // materialized literals to the constructed `TaskInvocation`. This is only
-  // the pass-through surface: a valid flag set stays byte-identical to the
-  // same run without flags (§0), and P2a delivers nothing to the target.
+  // the pass-through surface.
   //
-  // No `as` cast (test-review finding, spec §6 F-5): `RunTaskOptions` (this
+  // No `as` cast: `RunTaskOptions` (this
   // literal's inferred type is checked directly against it, below) declares
   // every one of these fields, so the compiler — not a suppressed excess-
   // property check — enforces this seam. A future rename or removal on
@@ -328,11 +342,9 @@ export async function akmTasksRun(
   // The runner owns the prepare-before-reserve boundary. Invalid source,
   // projectability, and resolver failures therefore create no history row.
   const result = await runTask(resolvedId, runOptions);
-  // C-7 (spec §5.6): after D8's result-vocabulary re-code, "command" means
-  // the agent/LLM arm — the native shell/script arm now reports "shell" /
-  // "script". Rewired in the SAME commit as the vocabulary re-code so a
-  // shell/script task's process exit 78 still passes through as CLI exit 78
-  // (documented behavior, src/assets/hints/cli-hints-short.md:95).
+  // "command" means the agent/LLM arm — the native shell/script arm reports
+  // "shell" / "script" — so a shell/script task's process exit 78 still passes
+  // through as CLI exit 78 (documented behavior, src/assets/hints/cli-hints-short.md).
   const exitCode =
     result.status === "failed" &&
     (result.target.kind === "shell" || result.target.kind === "script") &&
@@ -862,21 +874,19 @@ export async function akmTasksDoctor(
     }
   }
   const bindings = groupInstalledBindings(installed);
-  // Report the EFFECTIVE engine view — the same one the runner resolves —
-  // so doctor never says "no engine" on an install where tasks actually run.
-  const { config } = withEngineFallback(loadConfig());
-  const defaultEngine = config.defaults?.engine;
-  const engines = Object.keys(config.engines ?? {});
+  // Report the EFFECTIVE view — the default harness (else connection) agent work runs on, and what is configured.
+  const config = loadConfig();
+  const defaultEngine = (defaultHarness(config) ?? defaultConnection(config))?.name;
+  const engines = [...Object.keys(config.connections ?? {}), ...Object.keys(config.harnesses ?? {})];
 
   // §6.1: surface the effective triage settings for the default improve
   // strategy. The struct is a fixed shape, so this is a deliberate addition.
-  const improveStrategyName =
-    typeof config.defaults?.improveStrategy === "string" ? config.defaults.improveStrategy : "default";
+  const improveStrategyName = config.improve?.strategy ?? "default";
   // D8 — report the EFFECTIVE strategy, not the raw one. Resolving the raw
   // strategy here would report `applyMode: "promote"` for a promote strategy
   // under a review-first config, while the run actually uses "queue" — a doctor
   // command lying about the thing it exists to diagnose.
-  const rawStrategy = resolveImproveStrategy(config.defaults?.improveStrategy, config).config;
+  const rawStrategy = resolveImproveStrategy(config.improve?.strategy, config).config;
   const { config: effectiveStrategy, gated } = applyAutonomyGate(rawStrategy, config);
   const autonomyEnabled = isImproveAutonomyEnabled(config);
   // Memory cleanup has no strategy flag to downgrade, so add that direct lane
@@ -981,8 +991,7 @@ function taskProjectionAssetResolver(
 }
 
 /**
- * Exported for `src/commands/tasks/explain.ts` (P2b Lane B, spec
- * docs/plans/specs/p2b-input-bindings.md §4.5, B-N4): `akm task explain`
+ * Exported for `src/commands/tasks/explain.ts`: `akm task explain`
  * resolves its `--bundle` axis identically to every other read-only task
  * verb here (`akm task history`, `akm task run`) — the SAME resolver, not a
  * second one.
@@ -1052,7 +1061,8 @@ interface RenderInput {
   workflow?: string;
   prompt?: string;
   command?: string | string[];
-  engine?: string;
+  connection?: string;
+  harness?: string;
   model?: string;
   timeoutMs?: number;
   params?: string;
@@ -1064,8 +1074,7 @@ interface RenderInput {
 
 /**
  * Infer a JSON-Schema-subset `type` keyword from one `--params` value's
- * runtime shape (spec docs/plans/specs/p4-deletions-closeout.md §3.2.6, row
- * B-20). `null` is not one of the five runtime types the spec enumerates
+ * runtime shape. `null` is not one of the five runtime types
  * (string/number/boolean/object/array) but is a value JSON.parse can still
  * produce for a param; `src/core/json-schema.ts`'s subset validator accepts
  * `"null"` as a `type`, so it is handled rather than mis-typed.
@@ -1114,7 +1123,8 @@ function renderTaskYaml(input: RenderInput): string {
   if (input.description !== undefined) obj.description = input.description;
   if (input.when_to_use !== undefined) obj.when_to_use = input.when_to_use;
   if (input.tags && input.tags.length > 0) obj.tags = input.tags;
-  if (input.engine !== undefined) obj.engine = input.engine;
+  if (input.connection !== undefined) obj.connection = input.connection;
+  if (input.harness !== undefined) obj.harness = input.harness;
   if (input.model !== undefined) obj.model = input.model;
   if (input.timeoutMs !== undefined) obj.timeout = input.timeoutMs;
   if (input.schedule.length > 0) obj.schedule = input.schedule;

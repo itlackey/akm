@@ -3,7 +3,7 @@
  *
  * Covers the three non-interactive write paths (`runSetupFromConfig` and
  * `runSetupWithDefaults`) and their merge / backup guarantees:
- *   - `--file` / `--config` deep-merge: a partial input only updates the keys
+ *   - `--from` deep-merge: a partial input only updates the keys
  *     it carries and never drops sibling subkeys.
  *   - `--yes` idempotency: running N times == running once (fill-missing-only,
  *     never overwrite an existing value).
@@ -24,6 +24,8 @@ import { getConfigLockPath } from "../../src/core/config/config-io";
 import { getConfigPath } from "../../src/core/paths";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { rebaseSetupChanges, runSetupFromConfig, runSetupWithDefaults } from "../../src/setup/setup";
+import { parseSetupFlags } from "../../src/setup/setup-flags";
+import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import {
   type Cleanup,
   sandboxXdgCacheHome,
@@ -37,6 +39,9 @@ import {
 import { overrideSeam } from "../_helpers/seams";
 
 let cleanup: Cleanup | undefined;
+
+// Setup asks the PATH `opencode` which major it is; no suite runs a real one.
+beforeEach(() => fakeOpencodeMajor(1));
 
 beforeEach(() => {
   // Chain isolated XDG dirs so config (write), cache (backups), data & state
@@ -79,8 +84,7 @@ function seedFullConfig(): void {
   writeSandboxConfig({
     semanticSearchMode: "off",
     output: { format: "json", detail: "full" },
-    engines: { claude: { kind: "agent", platform: "claude", bin: "claude" } },
-    defaults: { engine: "claude" },
+    harnesses: { claude: { bin: "claude" } },
     bundles: { akm: { path: "/home/tester/akm", writable: true } },
     defaultBundle: "akm",
     registries: [{ name: "default", url: "https://example.com/registry" }],
@@ -104,17 +108,6 @@ describe("runSetupFromConfig — deep merge", () => {
 
   test("detects a same-field race before stash initialization", async () => {
     seedFullConfig();
-    const seeded = readWrittenConfig();
-    seeded.engines = {
-      ...(seeded.engines as Record<string, unknown>),
-      fast: {
-        kind: "llm",
-        endpoint: "https://example.test/v1/chat/completions",
-        model: "test-model",
-      },
-    };
-    seeded.defaults = { ...(seeded.defaults as Record<string, unknown>), llmEngine: "fast" };
-    fs.writeFileSync(getConfigPath(), `${JSON.stringify(seeded)}\n`);
     resetConfigCache();
     let initCalls = 0;
     _setAkmInitForTests(async () => {
@@ -122,20 +115,23 @@ describe("runSetupFromConfig — deep merge", () => {
       return { bundleDir: "/unused", created: true, configPath: getConfigPath(), defaultBundleUpdated: false };
     });
 
+    // Another process edits the same field while setup is listing the endpoint's models.
     await withMockedFetch(
       async () => {
         await expect(
-          runSetupFromConfig({ configJson: JSON.stringify({ output: { format: "text" } }), probe: true }),
+          runSetupFromConfig({
+            configJson: JSON.stringify({ output: { format: "text" } }),
+            applyDefaults: true,
+            flags: parseSetupFlags({ endpoint: "https://example.test/v1" }),
+          }),
         ).rejects.toThrow(/Setup config conflict at output\.format/);
       },
-      () => {
+      (url) => {
+        if (!url.startsWith("https://example.test/")) throw new Error("unreachable");
         const concurrent = readWrittenConfig();
         concurrent.output = { ...(concurrent.output as Record<string, unknown>), format: "yaml" };
         fs.writeFileSync(getConfigPath(), `${JSON.stringify(concurrent)}\n`);
-        return new Response(
-          JSON.stringify({ choices: [{ message: { content: '{"ok":true,"ingest":true,"lint":true}' } }] }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+        return Response.json({ data: [{ id: "test-model" }] });
       },
     );
 
@@ -143,7 +139,7 @@ describe("runSetupFromConfig — deep merge", () => {
     expect((readWrittenConfig().output as Record<string, unknown>).format).toBe("yaml");
   });
 
-  test("partial --file updates a nested key but preserves sibling subkeys", async () => {
+  test("a partial file updates a nested key but preserves sibling subkeys", async () => {
     seedFullConfig();
 
     await runSetupFromConfig({
@@ -158,44 +154,40 @@ describe("runSetupFromConfig — deep merge", () => {
     // ...but its sibling survived (the bug this fixes: shallow replace dropped it).
     expect(output.detail).toBe("full");
     // And unrelated top-level keys are untouched.
-    expect(written.engines).toEqual({ claude: { kind: "agent", platform: "claude", bin: "claude" } });
-    expect(written.defaults).toEqual({ engine: "claude" });
+    expect(written.harnesses).toEqual({ claude: { bin: "claude" } });
     expect(written.bundles).toEqual({ akm: { path: "/home/tester/akm", writable: true } });
     expect(written.registries).toEqual([{ name: "default", url: "https://example.com/registry" }]);
   });
 
-  test("--config follows the identical deep-merge semantics as --file", async () => {
+  test("an embedding model served by a connection needs no endpoint of its own", async () => {
     seedFullConfig();
 
-    // --config and --file share runSetupFromConfig; this asserts the JSON-blob
-    // path deep-merges too (sibling subkey survives).
-    await runSetupFromConfig({
-      configJson: JSON.stringify({ output: { detail: "brief" } }),
-      noInit: true,
-    });
-
-    const output = readWrittenConfig().output as Record<string, unknown>;
-    expect(output.detail).toBe("brief");
-    expect(output.format).toBe("json");
-  });
-
-  test("nested engines merge key-by-key (sibling agent engine survives)", async () => {
-    seedFullConfig();
-
-    // Adding a second agent engine must not drop the seeded `claude` engine.
     await runSetupFromConfig({
       configJson: JSON.stringify({
-        engines: { opencode: { kind: "agent", platform: "opencode", bin: "opencode" } },
+        connections: { default: { endpoint: "https://example.test/v1", models: { fast: "m" } } },
+        embedding: { model: "nomic-embed-text" },
       }),
       noInit: true,
     });
 
-    const engines = readWrittenConfig().engines as Record<string, unknown>;
-    expect(engines.claude).toEqual({ kind: "agent", platform: "claude", bin: "claude" });
-    expect(engines.opencode).toEqual({ kind: "agent", platform: "opencode", bin: "opencode" });
+    expect(readWrittenConfig().embedding).toEqual({ model: "nomic-embed-text" });
   });
 
-  test("an empty --config drops no pre-existing key", async () => {
+  test("nested harnesses merge key-by-key (sibling harness survives)", async () => {
+    seedFullConfig();
+
+    // Adding a second harness must not drop the seeded `claude` harness.
+    await runSetupFromConfig({
+      configJson: JSON.stringify({ harnesses: { opencode: { bin: "opencode" } } }),
+      noInit: true,
+    });
+
+    const harnesses = readWrittenConfig().harnesses as Record<string, unknown>;
+    expect(harnesses.claude).toEqual({ bin: "claude" });
+    expect(harnesses.opencode).toEqual({ bin: "opencode" });
+  });
+
+  test("an empty file drops no pre-existing key", async () => {
     seedFullConfig();
     const before = readWrittenConfig();
 
@@ -328,7 +320,7 @@ describe("runSetupFromConfig — --yes (applyDefaults) deep-merge + fill", () =>
     expect(output.detail).toBe("full");
     // Existing values preserved; defaults only fill what was missing.
     expect((written.bundles as Record<string, { path: string }>).akm!.path).toBe("/home/tester/akm");
-    expect(written.defaults).toEqual({ engine: "claude" });
+    expect(written.harnesses).toEqual({ claude: { bin: "claude" } });
   });
 });
 
@@ -343,11 +335,11 @@ describe("runSetupWithDefaults — idempotency", () => {
     const second = fs.readFileSync(getConfigPath(), "utf8");
 
     // Idempotency contract: running N times == running once. Detection
-    // (#514) may legitimately inject engines (e.g. a live local LLM), so the
+    // (#514) may legitimately inject a connection (e.g. a live local LLM), so the
     // first run is not a no-op — but the SECOND run must add/change nothing.
     // Compare structurally rather than byte-for-byte: JSON object key
     // insertion order is not part of the config's identity, and the apply
-    // helpers can reorder `engines`/`defaults` keys without altering content.
+    // helpers can reorder `connections`/`harnesses` keys without altering content.
     expect(JSON.parse(second)).toEqual(JSON.parse(first));
 
     // No pre-existing value was overwritten by a default.
@@ -356,10 +348,10 @@ describe("runSetupWithDefaults — idempotency", () => {
     expect(written.output).toEqual({ format: "json", detail: "full" });
     expect(written.bundles).toEqual({ akm: { path: "/home/tester/akm", writable: true } });
     expect(written.registries).toEqual([{ name: "default", url: "https://example.com/registry" }]);
-    // The pre-existing agent default must survive untouched. Detection (#514)
-    // may ADD other defaults (e.g. an LLM engine when a live local server is
-    // present on the host), but it must never overwrite the seeded agent engine.
-    expect((written.defaults as Record<string, unknown>).engine).toBe("claude");
+    // The pre-existing harness must survive untouched. Detection (#514)
+    // may ADD a connection (e.g. a live local server on the host), but it must
+    // never overwrite the seeded harness.
+    expect((written.harnesses as Record<string, unknown>).claude).toEqual({ bin: "claude" });
   });
 
   test("on a fresh install writes config and takes no backup", async () => {
@@ -381,18 +373,15 @@ describe("runSetupWithDefaults — idempotency", () => {
     expect(fs.existsSync(backupDir())).toBe(false);
   });
 
-  test("rejects an engine that cannot run model work before config or stash side effects", async () => {
+  test("rejects an invalid connection before config or stash side effects", async () => {
     const stashDir = path.join(process.env.HOME as string, "akm");
     fs.rmSync(stashDir, { recursive: true, force: true });
     await expect(
       runSetupFromConfig({
-        configJson: JSON.stringify({
-          engines: { agent: { kind: "agent", platform: "pi" } },
-          defaults: { llmEngine: "agent" },
-        }),
+        configJson: JSON.stringify({ connections: { default: { endpoint: "ftp://example.test/v1" } } }),
         noInit: false,
       }),
-    ).rejects.toThrow(/cannot confine the model-work tool policy/);
+    ).rejects.toThrow(/endpoint must use http/);
     expect(fs.existsSync(getConfigPath())).toBe(false);
     expect(fs.existsSync(stashDir)).toBe(false);
   });

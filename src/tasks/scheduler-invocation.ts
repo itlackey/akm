@@ -62,11 +62,7 @@ export type ScheduledRowEnvironment = Readonly<Partial<Record<ScheduledTaskConte
  */
 const EXPLICIT_CONTEXT_KEYS = ["AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"] as const;
 
-/**
- * The AKM directory context of the current process. Child environments that
- * are built from an allowlist must forward this closed set explicitly so
- * nested AKM commands stay in the same installation.
- */
+/** The AKM directory context of the current process, so nested AKM commands stay in the same installation. */
 export function scheduledTaskContextEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of SCHEDULED_TASK_CONTEXT_KEYS) {
@@ -230,11 +226,10 @@ function parsePublicSchedulerInvocation(
       index += 2;
     }
     if (invocation[index] !== "--scheduled") return undefined;
-    // P2b Lane B (spec §4.4, §1.7 B-N3): zero or more `--<name> <value>`
-    // schedule-supplied input flags may follow `--scheduled` — the same
-    // trailing tail `compileTaskSchedulerBindings` compiles from
-    // `schedule[i].inputs`. Absent/empty is the pre-P2b shape, byte-identical
-    // (B-03).
+    // Zero or more `--<name> <value>` schedule-supplied input flags may follow
+    // `--scheduled` — the same trailing tail `compileTaskSchedulerBindings`
+    // compiles from `schedule[i].inputs`. Absent/empty is the earlier,
+    // byte-identical shape.
     if (!isValidSchedulerInputFlagTail(invocation.slice(index + 1))) return undefined;
     return { invocation: [...invocation], ...(target !== undefined ? { target } : {}) };
   }
@@ -253,23 +248,23 @@ function parsePublicSchedulerInvocation(
 }
 
 /**
- * Validate an OPTIONAL trailing schedule-input flag tail (spec §1.7 B-N3):
- * empty is valid (the pre-P2b shape). Otherwise the tail is a sequence of
+ * Validate an OPTIONAL trailing schedule-input flag tail: empty is valid
+ * (the earlier shape). Otherwise the tail is a sequence of
  * entries, each EITHER:
  *
- *   - a single inline `--<name>=<value>` token (code-review finding,
- *     scheduler-binding.ts:536 — the ONLY encoding a dash-leading value's
- *     exact text can round-trip through, since `<value>` here is everything
- *     after the first `=`, whatever its leading character); or
+ *   - a single inline `--<name>=<value>` token (the ONLY encoding a
+ *     dash-leading value's exact text can round-trip through, since `<value>`
+ *     here is everything after the first `=`, whatever its leading character);
+ *     or
  *   - a `(--<name>, <value>)` pair, where `<value>` is a single non-flag
- *     token (does not start with `-`) — the pre-P2b shape.
+ *     token (does not start with `-`) — the earlier shape.
  *
  * In both forms `<name>` matches {@link INPUT_NAME_PATTERN} and no name
  * repeats. A bare flag, a repeated name, a flag-shaped value in the pair
  * form, or a malformed token are all refused. This validates SHAPE only;
  * the real materialization against the task's declared contract happens
  * through the same `parseTaskInputFlags` + `materializeInputFlags` path
- * `akm task run --<name>` already uses (B-48) — `parseTaskInputFlags`
+ * `akm task run --<name>` already uses — `parseTaskInputFlags`
  * accepts both forms natively (its inline-`=` branch never inspects the
  * value's leading character).
  */

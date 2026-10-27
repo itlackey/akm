@@ -16,13 +16,14 @@ git (the 08-F1 recovery pattern — see step 3).
    `~/.config/akm/config.json` (`%APPDATA%\akm\config.json` on Windows;
    override with `AKM_CONFIG_DIR`). This file is gitignored on the host, so the
    recovery source is the ONE versioned copy committed to the bundle git
-   (08-F1 pattern). Copy that file into place; it carries named `engines`,
-   `defaults.engine` / `defaults.llmEngine`, and cron-load-bearing improve
+   (08-F1 pattern). Copy that file into place; it carries the `connections`,
+   `harnesses`, and cron-load-bearing improve
    strategies that are otherwise unrecoverable.
-4. **Provide secrets/env.** `config.json` references API keys via `${VAR}`
-   placeholders; export those environment variables (or restore your env/secret
-   assets) so named engines and the embedding connection resolve. Never commit
-   the resolved values.
+4. **Provide secrets/env.** `config.json` references API keys via `$VAR`
+   placeholders; export those environment variables (or restore
+   `credentials.json` from your own backup; it is never part of `config.json`)
+   so the connections and the embedding endpoint resolve. Never commit the
+   resolved values.
 5. **Restore the working bundle.** Clone your bundle git remote to the path
    named by your working bundle's entry under `bundles` in the restored
    config (`defaultBundle` selects which one; default path `~/akm`). There is

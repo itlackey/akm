@@ -5,16 +5,16 @@
 /**
  * The `generic-files` adapter — akm 0.9.0 format-family work item (#46).
  *
- * The AKM-native FALLBACK family (spec §7). Any leftover file is classified by
- * extension (open-question-5, RESOLVED — maintainer 2026-07):
+ * The AKM-native FALLBACK family. Any leftover file is classified by
+ * extension:
  *   - a SCRIPT_EXTENSIONS extension → `script` (conceptId KEEPS the extension);
  *   - markdown / plain-text → `document` (conceptId STRIPS the extension);
  *   - everything else → `file` (conceptId keeps the extension).
  * Placement is IDENTITY: `document` appends `.md`, `script`/`file` keep their
- * natural path. D-R6 reserved files (`index.md`/`log.md`) are excluded from the
+ * natural path. Reserved files (`index.md`/`log.md`) are excluded from the
  * catch-all so a structural listing is never indexed as a `document`.
  *
- * EXPLICIT-CONFIG ONLY: `generic-files` is never in the §1.2 auto-probe order —
+ * EXPLICIT-CONFIG ONLY: `generic-files` is never in the auto-probe order —
  * a user opts in deliberately — so `looksLikeRoot` NEVER fires. It has no
  * type-specific validators (`validate` runs base checks only).
  *
@@ -90,7 +90,7 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
     if (typeof raw !== "string") continue;
-    // No type-specific validators — base checks only (spec §6 script/document/file rows).
+    // No type-specific validators — base checks only.
     diagnostics.push(...(await runBaseValidateChecks(toPosix(change.path), parseFrontmatter(raw), c.root, ctx)));
   }
   return diagnostics;

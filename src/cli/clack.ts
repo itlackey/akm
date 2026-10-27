@@ -8,7 +8,7 @@
  * All src code imports the clack prompt API from this module (never from
  * `@clack/prompts` directly), so tests can swap the interactive surface via
  * `_setClackForTests` instead of `mock.module` — the same third-party seam
- * pattern as the `@huggingface/transformers` loader in
+ * pattern as the model loader in
  * `src/llm/embedders/local.ts`. Production behavior is byte-identical: every
  * export delegates to the real package unless a test installed a fake.
  *
@@ -25,6 +25,7 @@ import {
   multiselect as realMultiselect,
   note as realNote,
   outro as realOutro,
+  password as realPassword,
   select as realSelect,
   spinner as realSpinner,
   text as realText,
@@ -48,6 +49,7 @@ export interface ClackFakeForTests {
   select?: FakeFn;
   multiselect?: FakeFn;
   text?: FakeFn;
+  password?: FakeFn;
   spinner?: FakeFn;
   note?: FakeFn;
   isCancel?: (value: unknown) => boolean;
@@ -72,6 +74,7 @@ const realFns = {
   select: realSelect,
   multiselect: realMultiselect,
   text: realText,
+  password: realPassword,
   spinner: realSpinner,
   note: realNote,
   isCancel: realIsCancel,
@@ -99,6 +102,7 @@ export const confirm = bind("confirm");
 export const select = bind("select");
 export const multiselect = bind("multiselect");
 export const text = bind("text");
+export const password = bind("password");
 export const spinner = bind("spinner");
 export const note = bind("note");
 export const isCancel = bind("isCancel");

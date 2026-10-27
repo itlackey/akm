@@ -68,7 +68,7 @@ akm show knowledge/my-doc                     # Show materialized local content
 | script | `run`, `setup`, `cwd` |
 | skill | `content` (full SKILL.md) |
 | command | `template`, `description`, `parameters` |
-| agent | `prompt`, `description`, `modelHint`, `toolPolicy` |
+| agent | `prompt`, `description`, `modelHint` |
 | knowledge | `content` (whole document, or one section via `#fragment`) |
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` (recalled context) |
@@ -306,15 +306,18 @@ akm config list                               # Show current config
 akm config get <key>                          # Read a value
 akm config set <key> <value>                  # Set a value
 akm config unset <key>                        # Remove a key
+akm models                                    # Which model answers each alias, then what the endpoint lists
+akm models set <alias> <model>                # Change one (--connection <name> for another connection)
 ```
 
 ## Other Commands
 
 ```sh
 akm bundle create                                      # Initialize working bundle (scaffold only)
-akm setup                                     # Interactive wizard: bundle + LLM/embedding + agent + registry config
+akm setup                                     # Interactive wizard: agent programs, model connection, embeddings, bundle + registry config
 akm setup --dir ~/custom-bundle                # Run the wizard against a custom bundle path
 akm setup --yes                               # Non-interactive, accepts all defaults
+akm setup --endpoint <url> --yes              # Non-interactive, adds a model connection (an OpenAI-compatible endpoint)
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
 akm bundle list                                      # List all sources
@@ -332,8 +335,8 @@ akm completions --install                     # Install completions
 ```
 
 `akm bundle create` only scaffolds the bundle directory and registers it in config;
-`akm setup` additionally walks through embedding/LLM connections, agent
-profiles, sources, and registries. Use `setup` for first-time onboarding,
+`akm setup` additionally walks through agent programs, a model connection,
+embeddings, sources, and registries. Use `setup` for first-time onboarding,
 `bundle create` when you just need a bare bundle.
 
 ## Proposals & Improvement (0.8.0+)
@@ -377,7 +380,7 @@ akm search --type task                         # Enumerate task assets
 ```
 
 Task files use task source v4 (`version: 4`). There is no `akm:` options bag
-or `on:` block — every control (`schedule`, `timeout`, `engine`, `model`,
+or `on:` block — every control (`schedule`, `timeout`, `connection`, `harness`, `model`,
 `redact`, `maxSteps`, `maxRetries`, …) is a top-level key now. Typed
 `inputs:` declarations and a bounded `output:` schema work like a
 workflow's (`output:` replaces v3's `akm.outputSchema`). Task source never
@@ -385,23 +388,24 @@ controls activation: use `akm task enable` / `disable`, which update the
 host-local config allow-list and sync. To remove one, delete the YAML and run
 `akm task sync` — the scheduler entry is unbound. Top-level
 `timeout:` may be `null` (disable the invocation timer) or a duration/number
-overriding the selected engine invocation timeout. Preview old task-v2/v3
+overriding the selected connection's or harness's timeout. Preview old task-v2/v3
 conversion with `akm migrate apply --dry-run`.
 
 ## Agent Dispatch
 
 ```sh
-akm agent --prompt "summarize open proposals"   # Dispatch the configured agent CLI
-akm agent agents/architect --prompt "..."       # Embody a bundle agent asset (system prompt, model, tool policy)
+akm agent --prompt "summarize open proposals"   # Run an agent on your default harness (else akm's own runtime over your connection)
+akm agent agents/architect --prompt "..."       # Embody a bundle agent asset (system prompt, model)
 akm command run commands/release                # Canonical reusable-command dispatch
-akm agent --model sonnet --prompt "..."         # Model override (aliases or exact IDs)
+akm agent --model reasoning --prompt "..."      # Model override (alias fast|balanced|reasoning, or an exact name)
+akm agent --harness claude --prompt "..."       # Run on a named harness (or --connection <name>)
 ```
 
 ## Health, Info, and the Event Log
 
 ```sh
-akm info                                       # Capabilities, bundle dir, index stats, semantic-search status
-akm health                                     # Runtime diagnostics; exit 0 ok / 4 warn / 1 fail
+akm info                                       # Capabilities, bundle dir, index stats, semantic-search status, connections and harnesses
+akm health                                     # Runtime diagnostics, connections and harnesses; exit 0 ok / 4 warn / 1 fail
 akm health --report                            # Adds accept-rate metrics
 akm metrics                                    # Usage, feedback, utility, LLM tokens, tasks, workflows (last 30d, read-only)
 akm metrics --since 7d                         # Narrow the window

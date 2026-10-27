@@ -43,28 +43,23 @@ echo "akm setup complete"
 Node.js >= 22; a working Bun >= 1.0 is optional and preferred for execution
 after Node starts the package launcher.
 
-**Setup.** `akm setup --yes` accepts every default with no prompts. To
-pre-configure an LLM or agent engine at the same time instead of accepting
-defaults, pass `--config` with a JSON object, optionally followed by
-`--probe` to verify connectivity:
+**Setup.** `akm setup --yes` takes the detected default for every question:
+each agent program found on `PATH` is enabled and the first is the default. When
+akm can limit that program to reading and searching it takes akm's own model
+calls too; otherwise a local model server setup finds becomes the connection. To give akm an endpoint
+yourself, answer the question with a flag; the key is named by the environment variable that holds
+it and never appears on the command line:
 
 ```sh
-akm setup --config '{
-  "engines": {
-    "default": {
-      "kind": "llm",
-      "endpoint": "http://localhost:11434/v1/chat/completions",
-      "model": "llama3.2"
-    }
-  },
-  "defaults": { "llmEngine": "default" }
-}' --probe
+akm setup --yes --endpoint https://api.example.com/v1 --api-key-env EXAMPLE_API_KEY
 ```
 
-For the full set of accepted top-level `--config` keys and their meaning,
+`--no-probe` keeps the run offline (the endpoint's model list is not fetched), so a
+new connection has no model until `akm models set` names one.
+For the full set of flags, see `akm setup --help`; for the config they write,
 see [configuration.md](../../reference/configuration.md).
 
-**Semantic search.** Headless setups (`--yes` or `--config`, no wizard
+**Semantic search.** Headless setups (`--yes` or `--from`, no wizard
 prompts) defer the embedding-model download to the first `akm index` run,
 unlike the interactive wizard which downloads immediately during `akm
 setup`. Set the mode explicitly rather than relying on the implicit default:

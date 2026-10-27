@@ -22,8 +22,8 @@ split by what you're doing:
   someone else's bundle.
 - **[Author's Guide: Writing Workflows](https://github.com/itlackey/akm/blob/main/docs/guides/author-workflows.md)** —
   writing and testing a workflow definition: choosing a source format, the Markdown structure, a
-  minimal complete example, common authoring mistakes, choosing engines and
-  models, and engine-selection troubleshooting.
+  minimal complete example, common authoring mistakes, choosing where a step
+  runs and which model, and troubleshooting a missing harness or connection.
 - **[Workflow Schema](../reference/workflow-schema.md)** — the exhaustive,
   authoritative reference: every frontmatter key, the bare-reference grammar,
   failure policy, gates, and budget ceilings, with exact syntax.
@@ -39,7 +39,7 @@ For task- or schedule-driven workflow runs — an `akm task` bound to
 
 Markdown `.md` is the one workflow source format; it preserves AKM's full prose,
 gates, maps, typed artifacts, and exec vocabulary. New starts resolve source
-owners and executable targets, then freeze durable plan `irVersion` 5. A
+owners and executable targets, then freeze durable plan `irVersion` 8. A
 stored plan is read back as it is: one frozen at another `irVersion` that
 still decodes runs, and one this akm cannot decode is abandoned by
 `akm workflow run` with a message naming how to start a new run. See

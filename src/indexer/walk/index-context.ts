@@ -23,8 +23,30 @@ export interface IndexVerification {
   semanticSearchMode: "off" | "auto";
   semanticStatus: "disabled" | SemanticSearchRuntimeStatus;
   embeddingProvider: "local" | "remote";
+  /** The runtime the local embedder embedded with in this run; absent for a remote provider or when nothing was embedded locally. */
+  embeddingRuntime?: "onnxruntime-node";
   entryCount: number;
   embeddingCount: number;
+}
+
+/** The `index_meta` key holding the last index run's {@link SemanticSearchRecord}. */
+export const SEMANTIC_SEARCH_META_KEY = "semanticSearch";
+
+/**
+ * What the last index run found about semantic search, kept beside `hasEmbeddings`
+ * for `akm health`'s `semantic-search` check. A record, not a gate: search never
+ * reads it (#873). `unavailable` is a `blocked` run whose local embedding runtime
+ * could not load on this machine.
+ */
+export interface SemanticSearchRecord {
+  status: IndexVerification["semanticStatus"] | "unavailable";
+  /** For `unavailable`: `platform` when onnxruntime-node has no native library for this machine, `load` when it has one that did not load. */
+  unavailable?: "platform" | "load";
+  provider: IndexVerification["embeddingProvider"];
+  /** The runtime the local embedder embedded with in that run; absent when it embedded nothing. */
+  runtime?: string;
+  /** Why semantic search is blocked or unavailable. */
+  reason?: string;
 }
 
 /** Canonical configured owner that disappeared or moved since the last complete scan. */

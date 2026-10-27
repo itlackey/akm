@@ -112,7 +112,7 @@ function walkCommandTree(cmd: AnyCmd, parentPath = ""): CommandInfo[] {
 
   if (cmd.args) {
     for (const [flagName, arg] of Object.entries(cmd.args as Record<string, AnyCmd>)) {
-      if (arg.type === "positional") continue;
+      if (arg.type === "positional" || arg.hidden === true) continue;
       flags.push(`--${flagName}`);
       if (arg.type === "boolean" && arg.default === true) flags.push(`--no-${flagName}`);
       if (arg.type !== "boolean") valueFlags.push(`--${flagName}`);

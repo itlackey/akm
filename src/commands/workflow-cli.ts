@@ -415,10 +415,9 @@ function parseWorkflowTimeout(raw: string | undefined): number | undefined {
   return timeoutMs;
 }
 
-// P3b Lane B (spec docs/plans/specs/p3b-child-executor.md §4.6): read-only
-// compile+freeze introspection — zero durable writes, zero usage/event rows
-// (row B-48). `--json` is deliberately NOT a flag anywhere in this CLI
-// (B-N9); the global `--format json` is spliced on by `defineJsonCommand`.
+// Read-only compile+freeze introspection — zero durable writes, zero
+// usage/event rows. `--json` is deliberately NOT a flag anywhere in this CLI;
+// the global `--format json` is spliced on by `defineJsonCommand`.
 const workflowPlanCommand = defineJsonCommand({
   meta: {
     name: "plan",

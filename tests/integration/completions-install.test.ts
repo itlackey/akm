@@ -8,7 +8,7 @@
  * Lives in tests/integration because it spawns the actual CLI: it asserts the
  * install-path message emitted via `warn()` → stderr, which the in-process
  * harness does not surface under the suite-wide test preload. Real spawns are
- * banned from the unit suite (scripts/lint-tests-isolation.ts) — a stalled
+ * kept out of the unit suite — a stalled
  * synchronous spawn blocks the whole runtime past every JS-level timeout,
  * which is exactly how the 2026-07-02 release run lost a unit shard to two
  * 300s hard-kills.

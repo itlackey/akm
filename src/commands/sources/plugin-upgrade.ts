@@ -17,14 +17,14 @@ import os from "node:os";
 import path from "node:path";
 import { IS_WINDOWS, parseJsonc } from "../../core/common";
 import { moveToTrash } from "../../core/trash";
-import { OPENCODE_SDK_SERVER_BIN } from "../../integrations/agent/profiles";
 import {
   OPENCODE_V1,
   OPENCODE_V2,
   type OpenCodeFlavor,
   readPackageVersion,
 } from "../../integrations/harnesses/opencode/plugin-layout";
-import { detectOpencodeMajor, resolveOpencodeBin } from "../../integrations/harnesses/opencode/version";
+import { opencodeCacheDir, opencodeConfigDir } from "../../integrations/harnesses/opencode/roots";
+import { detectOpencodeMajor, OPENCODE_BIN, resolveOpencodeBin } from "../../integrations/harnesses/opencode/version";
 import { semverOrder } from "../../runtime";
 import type {
   PluginUpgradeEntry,
@@ -202,15 +202,6 @@ export interface OpenCodeCache {
 
 export type OpenCodeLatest = { version: string; akmCli: string | undefined } | { error: string };
 
-function homeDir(): string {
-  return process.env.HOME?.trim() || process.env.USERPROFILE?.trim() || os.homedir();
-}
-
-function openCodeCacheHome(): string {
-  const cacheHome = process.env.XDG_CACHE_HOME?.trim() || path.join(homeDir(), ".cache");
-  return path.join(cacheHome, "opencode");
-}
-
 /** The spec in a config's plugin entry (a spec string or a `[spec, options]` pair). */
 function entrySpec(entry: unknown): string | undefined {
   const spec = Array.isArray(entry) ? entry[0] : entry;
@@ -228,11 +219,11 @@ const namesPackage = (spec: string, pkg: string) => spec === pkg || spec.startsW
  * OpenCode runs in).
  */
 export function openCodeConfigSpec(flavor: OpenCodeFlavor): { spec: string; key: string } | undefined {
-  const configHome = process.env.XDG_CONFIG_HOME?.trim() || path.join(homeDir(), ".config");
+  const configDir = opencodeConfigDir();
   const files = [
     flavor.globalConfigOnly ? undefined : process.env.OPENCODE_CONFIG?.trim(),
-    path.join(configHome, "opencode", "opencode.json"),
-    path.join(configHome, "opencode", "opencode.jsonc"),
+    path.join(configDir, "opencode.json"),
+    path.join(configDir, "opencode.jsonc"),
   ];
   for (const file of files) {
     if (!file) continue;
@@ -257,7 +248,7 @@ export function openCodeConfigSpec(flavor: OpenCodeFlavor): { spec: string; key:
 function openCodeV2Cached(): boolean {
   try {
     return fs
-      .readdirSync(path.join(openCodeCacheHome(), OPENCODE_V2.cacheFolder("")))
+      .readdirSync(path.join(opencodeCacheDir(), OPENCODE_V2.cacheFolder("")))
       .some((name) => name.startsWith(`${OPENCODE_V2.pkg}@`));
   } catch {
     return false;
@@ -270,7 +261,7 @@ function openCodeV2Cached(): boolean {
  * lands in `@latest` and `<pkg>@next` in `@next`.
  */
 export function detectOpenCodeCache(tag: UpgradeChannel, flavor: OpenCodeFlavor): OpenCodeCache | undefined {
-  const dir = path.join(openCodeCacheHome(), flavor.cacheFolder(`${flavor.pkg}@${tag}`));
+  const dir = path.join(opencodeCacheDir(), flavor.cacheFolder(`${flavor.pkg}@${tag}`));
   if (!fs.existsSync(dir)) return undefined;
   const nodeModules = flavor.nodeModulesDir(dir);
   return { dir, version: nodeModules && readPackageVersion(path.join(nodeModules, flavor.pkg, "package.json")) };
@@ -384,7 +375,7 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
   // OpenCode must be runnable before anything changes: only the major that owns this plugin's cache can
   // refresh it. akm never installs or replaces the binary.
   // OpenCode 2 may sit beside an OpenCode 1 `opencode` as `opencode2`; OpenCode 1 is only ever `opencode`.
-  const bin = flavor.major === 2 ? resolveOpencodeBin() : OPENCODE_SDK_SERVER_BIN;
+  const bin = flavor.major === 2 ? resolveOpencodeBin() : OPENCODE_BIN;
   const detected = detectOpencodeMajor(bin);
   if (!detected.runnable) return skipped(harness, `${bin} is not on PATH or \`${bin} --version\` failed`);
   const major = detected.reportedMajor;

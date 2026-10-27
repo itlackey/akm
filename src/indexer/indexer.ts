@@ -16,6 +16,8 @@ import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
+import { localEmbeddingRuntime } from "../llm/embedder";
+import { effectiveEmbedding } from "../llm/embedders/connection";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 /**
  * Index consistency.
@@ -93,7 +95,12 @@ import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
 import type { FileContext } from "./walk/file-context";
-import type { IndexVerification, RemovedIndexSource } from "./walk/index-context";
+import {
+  type IndexVerification,
+  type RemovedIndexSource,
+  SEMANTIC_SEARCH_META_KEY,
+  type SemanticSearchRecord,
+} from "./walk/index-context";
 import { walkStashFlatWithStatus } from "./walk/walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -183,8 +190,8 @@ interface IndexOptions {
    * Whether this run may materialize (clone/pull/fetch) cache-backed sources.
    * Default `true` — the sanctioned materialization callers (`akm index`,
    * source add/update/sync, improve's blocking preflight). A READ command's
-   * inline auto-index passes `false` so query time never touches the network
-   * (spec §14.3 / D11): absent source caches are skipped with a warning instead
+   * inline auto-index passes `false` so query time never touches the network:
+   * absent source caches are skipped with a warning instead
    * of cloned.
    */
   hydrateSources?: boolean;
@@ -304,7 +311,7 @@ export interface EmbeddingPassResult {
 /**
  * The embedding phase (#954): generate and store vectors for every entry
  * missing one, then compute the `hasEmbeddings` fact and the semantic-search
- * verification off the result. `db` must have no ambient transaction open —
+ * verification off the result, and record it for `akm health`. `db` must have no ambient transaction open —
  * each per-batch commit is its own durable write.
  */
 export async function runEmbeddingPass(params: {
@@ -322,6 +329,15 @@ export async function runEmbeddingPass(params: {
   const semanticEntryCount = getEmbeddableEntryCount(db);
   onProgress({ phase: "finalize", message: "Verifying semantic search state." });
   const verification = verifyIndexState(db, config, semanticEntryCount, embeddingResult);
+  const unavailable = verification.semanticStatus === "blocked" ? embeddingResult.runtimeUnavailable : undefined;
+  const record: SemanticSearchRecord = {
+    status: unavailable ? "unavailable" : verification.semanticStatus,
+    ...(unavailable ? { unavailable } : {}),
+    provider: verification.embeddingProvider,
+    ...(verification.embeddingRuntime ? { runtime: verification.embeddingRuntime } : {}),
+    ...(verification.ok ? {} : { reason: verification.message }),
+  };
+  setMeta(db, SEMANTIC_SEARCH_META_KEY, JSON.stringify(record));
   onProgress({ phase: "verify", message: verification.message });
   return { embeddingResult, verification };
 }
@@ -688,7 +704,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
         mode,
         sourcesCount: sourceDirs.length,
         semanticSearchMode: config.semanticSearchMode,
-        embeddingProvider: getEmbeddingProvider(config.embedding),
+        embeddingProvider: getEmbeddingProvider(effectiveEmbedding(config)),
       }),
     });
 
@@ -1378,7 +1394,7 @@ function persistDirRecords(
         continue;
       }
 
-      // Diff-persist (F4a M-core-2, spec §14.2): upsert the current file set
+      // Diff-persist: upsert the current file set
       // FIRST (ON CONFLICT preserving `entries.id` so embeddings / utility /
       // usage stay attached to unchanged rows), tracking every upserted
       // durable `item_ref`, then prune only the departed rows below. Replaces the old
@@ -1541,7 +1557,8 @@ function verifyIndexState(
   embeddingResult: EmbeddingGenerationResult,
 ): IndexVerification {
   const embeddingCount = getEmbeddingCount(db);
-  const embeddingProvider = getEmbeddingProvider(config.embedding);
+  const embeddingProvider = getEmbeddingProvider(effectiveEmbedding(config));
+  const embeddingRuntime = embeddingProvider === "local" ? localEmbeddingRuntime() : undefined;
   const verification = (
     ok: boolean,
     message: string,
@@ -1556,6 +1573,7 @@ function verifyIndexState(
     semanticSearchMode: config.semanticSearchMode,
     semanticStatus,
     embeddingProvider,
+    ...(embeddingRuntime !== undefined ? { embeddingRuntime } : {}),
     entryCount: embeddableEntries,
     embeddingCount,
   });
@@ -1800,7 +1818,7 @@ function readLookupEntry(db: Database, id: number, fallbackConceptId: string, so
 }
 
 /**
- * Look up a single asset by ref. Spec §6.2 — `akm show` queries this and
+ * Look up a single asset by ref. `akm show` queries this and
  * reads the file from disk. The index is the source of truth for which
  * file corresponds to which ref; the indexer walks `provider.path()` for
  * every configured source, so this query covers all source kinds.

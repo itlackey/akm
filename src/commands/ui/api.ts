@@ -361,16 +361,25 @@ function config() {
     value,
     source: configSource(path),
   }));
-  const engines = Object.entries((effective.engines ?? {}) as Record<string, unknown>).map(([name, engine]) => ({
-    name,
-    ...(engine as Record<string, unknown>),
-  }));
+  const named = (entries: unknown) =>
+    Object.entries((entries ?? {}) as Record<string, unknown>).map(([name, entry]) => ({
+      name,
+      ...(entry as Record<string, unknown>),
+    }));
   const env = Object.keys(process.env)
     .filter((name) => name.startsWith("AKM_"))
     .sort()
     .map((name) => ({ name, value: isSecretEnvName(name) ? "[redacted]" : (process.env[name] ?? "") }));
   const configPath = getConfigPath();
-  return { path: configPath, exists: fs.existsSync(configPath), config: effective, entries, engines, env };
+  return {
+    path: configPath,
+    exists: fs.existsSync(configPath),
+    config: effective,
+    entries,
+    connections: named(effective.connections),
+    harnesses: named(effective.harnesses),
+    env,
+  };
 }
 
 // ── /api/proposals ───────────────────────────────────────────────────────────

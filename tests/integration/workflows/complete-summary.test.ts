@@ -9,7 +9,6 @@ import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError, UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
 import { openStateDatabase } from "../../../src/core/state-db";
-import { __setTestServer } from "../../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import {
   completeWorkflowStep,
   getWorkflowStatus,
@@ -115,7 +114,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  __setTestServer(null);
   cleanup();
 });
 
@@ -123,14 +121,14 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
   test("manual completion dispatches a frozen CLI judge with its exact model and never reads live config", async () => {
     const argvPath = path.join(tmpDir, "judge-argv.bin");
     const cwdPath = path.join(tmpDir, "judge-cwd.txt");
-    const judgeBin = path.join(tmpDir, "frozen-codex-judge");
+    const judgeBin = path.join(tmpDir, "frozen-claude-judge");
     fs.writeFileSync(
       judgeBin,
       [
         "#!/bin/sh",
         `printf '%s\\0' "$@" > '${argvPath}'`,
         `pwd -P > '${cwdPath}'`,
-        `printf '%s\\n' '{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"{\\"complete\\":true,\\"missing\\":[]}"}}'`,
+        `printf '%s\\n' '{"complete":true,"missing":[]}'`,
       ].join("\n"),
       "utf8",
     );
@@ -139,17 +137,15 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
       manualJudgePlan({
         configVersion: "0.9.0",
         semanticSearchMode: "off",
-        engines: {
-          reviewer: { kind: "agent", platform: "codex", bin: judgeBin, model: "frozen/exact-judge-model" },
+        harnesses: {
+          reviewer: { platform: "claude", bin: judgeBin, models: { fast: "frozen/exact-judge-model" } },
         },
-        defaults: { engine: "reviewer" },
-        workflow: { judgeEngine: "reviewer" },
       }),
     );
 
     const config = sandboxXdgConfigHome();
     try {
-      // The live config names no engine, so any live engine lookup would fail
+      // The live config names no connection or harness, so any live lookup would fail
       // before dispatch. The frozen plan is the sole authority for the judge.
       fs.writeFileSync(
         path.join(config.dir, "akm", "config.json"),
@@ -165,99 +161,89 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
       expect("run" in result).toBe(true);
       const argv = fs.readFileSync(argvPath).toString("utf8").split("\0").filter(Boolean);
       expect(argv[argv.indexOf("--model") + 1]).toBe("frozen/exact-judge-model");
-      // The judge works in the root of the run's bundle, like every other agent dispatch.
-      expect(fs.readFileSync(cwdPath, "utf8").trim()).toBe(fs.realpathSync(bundleDir));
+      // The judge is model work: it runs confined in a scratch directory, not in the run's bundle.
+      expect(fs.readFileSync(cwdPath, "utf8").trim()).not.toBe(fs.realpathSync(bundleDir));
     } finally {
       config.cleanup();
     }
   });
 
-  test("manual completion redacts a frozen SDK fallback credential from corrective feedback", async () => {
-    const credentialName = "AKM_MANUAL_JUDGE_FALLBACK_KEY";
-    const secret = "sk-manual-sdk-fallback-must-not-leak";
-    replaceFrozenPlan(
-      manualJudgePlan({
-        configVersion: "0.9.0",
-        semanticSearchMode: "off",
-        engines: {
-          reviewer: { kind: "agent", platform: "opencode-sdk", llmEngine: "fallback" },
-          fallback: {
-            kind: "llm",
-            endpoint: "https://frozen.invalid/v1/chat/completions",
-            model: "frozen/fallback-model",
-            apiKey: `$${credentialName}`,
-          },
-        },
-        defaults: { engine: "reviewer", llmEngine: "fallback" },
-        workflow: { judgeEngine: "reviewer" },
-      }),
-    );
-    __setTestServer({
-      client: {
-        session: {
-          create: async () => ({ data: { id: "manual-judge-session" } }),
-          prompt: async () => ({
-            data: {
-              parts: [
-                {
-                  type: "text",
-                  text: `{"complete":false,"missing":["Tests pass"],"feedback":"provider echoed ${secret}"}`,
-                },
-              ],
+  test("manual completion redacts a frozen connection credential from corrective feedback", async () => {
+    const credentialName = "AKM_MANUAL_JUDGE_KEY";
+    const secret = "sk-manual-judge-must-not-leak";
+    const provider = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () =>
+        Response.json({
+          choices: [
+            {
+              message: {
+                content: `{"complete":false,"missing":["Tests pass"],"feedback":"provider echoed ${secret}"}`,
+              },
             },
-          }),
-          delete: async () => ({}),
-        },
-      },
-      server: { close() {} },
-    } as never);
+          ],
+        }),
+    });
+    try {
+      replaceFrozenPlan(
+        manualJudgePlan({
+          configVersion: "0.9.0",
+          semanticSearchMode: "off",
+          connections: {
+            reviewer: {
+              endpoint: `http://127.0.0.1:${provider.port}/v1`,
+              apiKey: `$${credentialName}`,
+              models: { fast: "frozen/judge-model" },
+            },
+          },
+        }),
+      );
 
-    await withEnv({ [credentialName]: secret }, async () => {
-      const result = (await completeWorkflowStep({
+      await withEnv({ [credentialName]: secret }, async () => {
+        const result = (await completeWorkflowStep({
+          runId: RUN_ID,
+          stepId: "step-1",
+          status: "completed",
+          summary: "Thing is done.",
+        })) as SummaryValidationFailure;
+        expect(result.ok).toBe(false);
+        expect(result.feedback).toContain("[REDACTED]");
+        expect(JSON.stringify(result)).not.toContain(secret);
+        expect((await getWorkflowStatus(RUN_ID)).workflow.steps[0]?.status).toBe("pending");
+      });
+    } finally {
+      provider.stop(true);
+    }
+  });
+
+  test("manual completion cancellation reaches the frozen connection's request", async () => {
+    const provider = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Promise<Response>(() => {}) });
+    try {
+      replaceFrozenPlan(
+        manualJudgePlan({
+          configVersion: "0.9.0",
+          semanticSearchMode: "off",
+          connections: {
+            reviewer: { endpoint: `http://127.0.0.1:${provider.port}/v1`, models: { fast: "frozen/judge-model" } },
+          },
+        }),
+      );
+      const controller = new AbortController();
+      const completing = completeWorkflowStep({
         runId: RUN_ID,
         stepId: "step-1",
         status: "completed",
         summary: "Thing is done.",
-      })) as SummaryValidationFailure;
-      expect(result.ok).toBe(false);
-      expect(result.feedback).toContain("[REDACTED]");
-      expect(JSON.stringify(result)).not.toContain(secret);
+        signal: controller.signal,
+      });
+      setTimeout(() => controller.abort(new Error("manual judge cancelled")), 50);
+
+      await expect(completing).rejects.toThrow(/abort|cancel/i);
       expect((await getWorkflowStatus(RUN_ID)).workflow.steps[0]?.status).toBe("pending");
-    });
-  });
-
-  test("manual completion cancellation reaches the frozen common SDK dispatcher", async () => {
-    replaceFrozenPlan(
-      manualJudgePlan({
-        configVersion: "0.9.0",
-        semanticSearchMode: "off",
-        engines: { reviewer: { kind: "agent", platform: "opencode-sdk" } },
-        defaults: { engine: "reviewer" },
-        workflow: { judgeEngine: "reviewer" },
-      }),
-    );
-    __setTestServer({
-      client: {
-        session: {
-          create: async () => ({ data: { id: "manual-cancel-session" } }),
-          prompt: async () => new Promise(() => {}),
-          delete: async () => ({}),
-        },
-      },
-      server: { close() {} },
-    } as never);
-    const controller = new AbortController();
-    const completing = completeWorkflowStep({
-      runId: RUN_ID,
-      stepId: "step-1",
-      status: "completed",
-      summary: "Thing is done.",
-      signal: controller.signal,
-    });
-    setTimeout(() => controller.abort(new Error("manual judge cancelled")), 10);
-
-    await expect(completing).rejects.toThrow(/abort|cancel/i);
-    expect((await getWorkflowStatus(RUN_ID)).workflow.steps[0]?.status).toBe("pending");
+    } finally {
+      provider.stop(true);
+    }
   });
 
   test("requires a summary when completing a step", async () => {

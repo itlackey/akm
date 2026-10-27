@@ -1,5 +1,5 @@
 # Alpine 3.19 — bun install method (musl libc)
-FROM node:22-alpine AS node-runtime
+FROM node:24-alpine AS node-runtime
 FROM alpine:3.19
 
 RUN apk add --no-cache curl unzip bash git ca-certificates gcompat libstdc++

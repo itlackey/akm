@@ -53,7 +53,7 @@ const PROMOTING = {
 
 describe("tasks doctor autonomy reporting", () => {
   test("reports autonomy off and names the gated lanes and the config key", async () => {
-    saveConfig({ semanticSearchMode: "off", defaults: { improveStrategy: "consolidate" } });
+    saveConfig({ semanticSearchMode: "off", improve: { strategy: "consolidate" } });
     resetConfigCache();
 
     const result = await akmTasksDoctor();
@@ -65,7 +65,7 @@ describe("tasks doctor autonomy reporting", () => {
   });
 
   test("reports the task log directory and no history directory (run history lives in state.db)", async () => {
-    saveConfig({ semanticSearchMode: "off", defaults: { improveStrategy: "consolidate" } });
+    saveConfig({ semanticSearchMode: "off" });
     resetConfigCache();
 
     const result = await akmTasksDoctor();
@@ -77,8 +77,8 @@ describe("tasks doctor autonomy reporting", () => {
   test("does not report advisory consolidation operations as gated writers", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      defaults: { improveStrategy: "contradiction-report" },
       improve: {
+        strategy: "contradiction-report",
         strategies: {
           "contradiction-report": {
             processes: {
@@ -105,7 +105,7 @@ describe("tasks doctor autonomy reporting", () => {
   test("reports autonomy on with no gated lanes", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      defaults: { improveStrategy: "consolidate" },
+      improve: { strategy: "consolidate" },
       experimental: { improveAutonomy: true },
     });
     resetConfigCache();
@@ -119,7 +119,7 @@ describe("tasks doctor autonomy reporting", () => {
   test("improveTriage.applyMode reports the effective mode, not the strategy's raw value", async () => {
     // A strategy that enables triage in promote mode WITH judgment. With autonomy
     // off the run uses queue, so doctor must say queue.
-    saveConfig({ semanticSearchMode: "off", defaults: { improveStrategy: "promoting" }, improve: PROMOTING });
+    saveConfig({ semanticSearchMode: "off", improve: { ...PROMOTING, strategy: "promoting" } });
     resetConfigCache();
 
     const result = await akmTasksDoctor();
@@ -143,8 +143,7 @@ describe("tasks doctor autonomy reporting", () => {
   test("improveTriage.applyMode reports promote once autonomy is opted into", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      defaults: { improveStrategy: "promoting" },
-      improve: PROMOTING,
+      improve: { ...PROMOTING, strategy: "promoting" },
       experimental: { improveAutonomy: true },
     });
     resetConfigCache();

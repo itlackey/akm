@@ -34,6 +34,8 @@ export interface TaskFileRoot {
 
 export interface AppliedTaskFilesPlan {
   readonly changed: readonly string[];
+  /** Files that changed after they were planned: left as they now are. */
+  readonly conflicts: readonly string[];
 }
 
 function migrationError(detail: string): ConfigError {
@@ -60,26 +62,55 @@ function isWritable(filePath: string): boolean {
   }
 }
 
-function walkTasks(root: TaskFileRoot, tasksDir: string, out: TaskToV4FileInput[]): void {
+/**
+ * Visit every file ending in `extension` under `directory`, depth first in name
+ * order, never leaving the root's own bundle. A symbolic link is not followed:
+ * `onLink` says what it means (a task migration refuses one, an asset migration
+ * reads one that leads to a file and never rewrites it).
+ */
+export function walkRootFiles(
+  root: TaskFileRoot,
+  directory: string,
+  extension: string,
+  onLink: (link: string) => void,
+  visit: (file: string, parent: string) => void,
+): void {
   const physicalRoot = realDirectory(root.root);
   const physicalBundleRoot = realDirectory(root.bundleRoot ?? root.root);
   if (!contained(physicalBundleRoot, physicalRoot)) {
     throw migrationError(`${root.root} resolves outside bundle ${root.bundleId}.`);
   }
 
-  const visit = (directory: string): void => {
-    const physicalDirectory = fs.realpathSync(directory);
+  const walk = (current: string): void => {
+    const physicalDirectory = fs.realpathSync(current);
     if (!contained(physicalRoot, physicalDirectory)) {
-      throw migrationError(`${directory} resolves outside bundle ${root.bundleId}.`);
+      throw migrationError(`${current} resolves outside bundle ${root.bundleId}.`);
     }
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const candidate = path.join(directory, entry.name);
-      if (entry.isSymbolicLink()) throw migrationError(`task migration does not follow symbolic link ${candidate}.`);
-      if (entry.isDirectory()) {
-        visit(candidate);
+    for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const candidate = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) {
+        onLink(candidate);
         continue;
       }
-      if (!entry.isFile() || !entry.name.endsWith(".yml")) continue;
+      if (entry.isDirectory()) {
+        walk(candidate);
+        continue;
+      }
+      if (entry.isFile() && entry.name.endsWith(extension)) visit(candidate, current);
+    }
+  };
+  walk(directory);
+}
+
+function walkTasks(root: TaskFileRoot, tasksDir: string, out: TaskToV4FileInput[]): void {
+  walkRootFiles(
+    root,
+    tasksDir,
+    ".yml",
+    (link) => {
+      throw migrationError(`task migration does not follow symbolic link ${link}.`);
+    },
+    (candidate, directory) => {
       const stat = fs.lstatSync(candidate);
       const mode = stat.mode & 0o777;
       out.push({
@@ -89,9 +120,8 @@ function walkTasks(root: TaskFileRoot, tasksDir: string, out: TaskToV4FileInput[
         writable: root.writable,
         onDiskWritable: isWritable(candidate) && isWritable(directory) && (mode & 0o222) !== 0,
       });
-    }
-  };
-  visit(tasksDir);
+    },
+  );
 }
 
 /** Every `.yml` under each root's task directory, as planner input. Read-only. */
@@ -162,12 +192,85 @@ function replaceAtomically(filePath: string, bytes: Buffer, mode: number): void 
   }
 }
 
+/** A file to replace: its path, its bytes before and after, and its mode. */
+export interface FileReplacement {
+  readonly filePath: string;
+  readonly before: Buffer;
+  readonly after: Buffer;
+  readonly mode: number;
+}
+
+/** Whether the file on disk holds exactly `bytes` now; a file that cannot be read holds nothing. */
+function holds(filePath: string, bytes: Buffer): boolean {
+  try {
+    return fs.readFileSync(filePath).equals(bytes);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Replace each file with its new bytes. A file whose bytes are no longer the
+ * ones it was planned from (an editor or a bundle sync wrote it since) is a
+ * conflict: it is neither backed up nor replaced, and the paths are returned.
+ * The bytes are checked before the backup and again immediately before the
+ * file is replaced, so a backup is always what was replaced. Every original is
+ * backed up under `backupRoot` before any file is touched, and a failed replace
+ * restores the files already replaced from those backups, except one that has
+ * changed since it was replaced, which is left as it is and named.
+ */
+export function replaceFilesWithBackups(
+  changes: readonly FileReplacement[],
+  backupRoot: string,
+): { readonly replaced: readonly string[]; readonly conflicts: readonly string[] } {
+  const conflicts: string[] = [];
+  const backedUp: FileReplacement[] = [];
+  for (const change of changes) {
+    if (!holds(change.filePath, change.before)) {
+      conflicts.push(change.filePath);
+      continue;
+    }
+    writeDurable(taskFileBackupPath(backupRoot, change.filePath), change.before, change.mode, true);
+    backedUp.push(change);
+  }
+  const replaced: FileReplacement[] = [];
+  try {
+    for (const change of backedUp) {
+      if (!holds(change.filePath, change.before)) {
+        fs.rmSync(taskFileBackupPath(backupRoot, change.filePath), { force: true });
+        conflicts.push(change.filePath);
+        continue;
+      }
+      replaceAtomically(change.filePath, change.after, change.mode);
+      replaced.push(change);
+    }
+  } catch (cause) {
+    const unrestored: string[] = [];
+    for (const change of [...replaced].reverse()) {
+      if (holds(change.filePath, change.after)) {
+        replaceAtomically(
+          change.filePath,
+          fs.readFileSync(taskFileBackupPath(backupRoot, change.filePath)),
+          change.mode,
+        );
+      } else {
+        unrestored.push(change.filePath);
+      }
+    }
+    if (unrestored.length === 0) throw cause;
+    throw new Error(
+      `${cause instanceof Error ? cause.message : String(cause)}; not restored from the backup, because it changed after it was replaced: ${unrestored.join(", ")}`,
+      { cause },
+    );
+  }
+  return { replaced: replaced.map((change) => change.filePath), conflicts };
+}
+
 /**
  * Write every `changed` file in its v4 shape. Each emitted document is
  * re-parsed by the runtime v4 parser first, so nothing the runtime cannot
- * read reaches disk; every original is backed up under `backupRoot` before
- * any file is touched; a failed replace restores the files already replaced
- * from those backups. Blocked files are left alone.
+ * read reaches disk; the replacement is {@link replaceFilesWithBackups}.
+ * Blocked files are left alone.
  */
 export function applyTaskFilesPlan(
   plan: TaskToV4MigrationPlan,
@@ -180,24 +283,6 @@ export function applyTaskFilesPlan(
       filePath: change.filePath,
     });
   }
-  for (const change of changes) {
-    writeDurable(taskFileBackupPath(options.backupRoot, change.filePath), change.before, change.mode, true);
-  }
-  const replaced: TaskToV4Changed[] = [];
-  try {
-    for (const change of changes) {
-      replaceAtomically(change.filePath, change.after, change.mode);
-      replaced.push(change);
-    }
-  } catch (cause) {
-    for (const change of [...replaced].reverse()) {
-      replaceAtomically(
-        change.filePath,
-        fs.readFileSync(taskFileBackupPath(options.backupRoot, change.filePath)),
-        change.mode,
-      );
-    }
-    throw cause;
-  }
-  return { changed: changes.map((file) => file.filePath) };
+  const { replaced, conflicts } = replaceFilesWithBackups(changes, options.backupRoot);
+  return { changed: replaced, conflicts };
 }

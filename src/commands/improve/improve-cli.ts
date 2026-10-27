@@ -5,25 +5,18 @@
 import path from "node:path";
 import { defineCommand } from "citty";
 import { findCittyTopLevelCommandIndex, getStringArg, hasSubcommand, parsePositiveIntFlag } from "../../cli/parse-args";
+import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { type AssetRef, isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
-import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
+import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
+import { collectCredentialValues } from "../../core/config/credentials";
 import { ConfigError, UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
 import { getRunLogDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
-import { clearLogFile, setLogFile } from "../../core/warn";
+import { clearLogFile, setLogFile, warnOnce } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
-import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
-import { defaultWhich } from "../../integrations/agent/detect";
-import {
-  collectEngineCredentialValues,
-  materializeLlmConnection,
-  type ResolvedLlmUse,
-} from "../../integrations/agent/engine-resolution";
-import { llmUseFromRunner, sdkFallbackUseFromRunner } from "../../integrations/agent/runner";
-import { probeLlmReachable } from "../../llm/client";
 import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/html-render";
 import { readStdin } from "../../runtime";
@@ -36,14 +29,7 @@ import {
   type TerminationReason,
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
-import {
-  type EngineProbeOutcome,
-  type EngineUnavailableProcessName,
-  type ResolvedImprovePlan,
-  type ResolvedImproveProcess,
-  resolveImprovePlan,
-  resolveImproveStrategy,
-} from "./improve-strategies";
+import { type ResolvedImprovePlan, resolveImprovePlan, resolveImproveStrategy } from "./improve-strategies";
 import { formatUsageReportTable } from "./improve-usage-report";
 import { renderReflectPromptPreview } from "./reflect";
 import { resolveQualityGateJudge, runReflectQualityJudge } from "./stage";
@@ -53,148 +39,6 @@ let akmImproveForRun: typeof akmImprove = akmImprove;
 /** Swap the CLI's improve work implementation in deterministic subprocess tests. */
 export function _setAkmImproveForTests(fake?: typeof akmImprove): void {
   akmImproveForRun = fake ?? akmImprove;
-}
-
-/**
- * `--require-engines` (#957): fail before any side effect when an enabled
- * process cannot run, naming what each is missing — a scheduled run would
- * rather fail loudly than index and then skip everything.
- */
-function assertRequiredEnginesAvailable(plan: ResolvedImprovePlan): void {
-  if (plan.engineUnavailable.length === 0) return;
-  const lines = plan.engineUnavailable.map((item) => `  - ${item.process} (${item.configKey}): ${item.reason}`);
-  throw new ConfigError(
-    `--require-engines: ${plan.engineUnavailable.length} improve process${plan.engineUnavailable.length === 1 ? "" : "es"} cannot run because ${plan.engineUnavailable.length === 1 ? "its" : "their"} engine is unavailable:\n${lines.join("\n")}`,
-    "LLM_NOT_CONFIGURED",
-  );
-}
-
-/**
- * One engine `--require-engines` must prove usable, in the way its kind
- * allows: an LLM connection gets one short completion, and an agent harness
- * must resolve on PATH. An `opencode-sdk` engine needs both, its binary and
- * its LLM fallback, when it has one.
- */
-interface RequiredEngineTarget {
-  process: EngineUnavailableProcessName;
-  engine: string;
-  connection?: LlmConnectionConfig;
-  bin?: string;
-  /** Why the connection could not be built: its credential is required and missing. */
-  error?: string;
-}
-
-/** Every engine the plan would dispatch to, triage's judgment engine included. */
-function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngineTarget[] {
-  const runners = (Object.entries(plan.processes) as [EngineUnavailableProcessName, ResolvedImproveProcess][])
-    .flatMap(([processName, process]) => (process.runner ? [[processName, process.runner] as const] : []))
-    .concat(plan.triageJudgment ? [["triage.judgment", plan.triageJudgment] as const] : []);
-  return runners.map(([processName, runner]) => {
-    // The runner's own timeout, else the connection's (sdkFallbackUseFromRunner already does this).
-    const use =
-      runner.kind === "llm"
-        ? {
-            ...llmUseFromRunner(runner),
-            timeoutMs: runner.timeoutMs !== undefined ? runner.timeoutMs : (runner.connection.timeoutMs ?? null),
-          }
-        : runner.kind === "sdk"
-          ? sdkFallbackUseFromRunner(runner)
-          : undefined;
-    return {
-      process: processName,
-      engine: runner.engine,
-      ...(runner.kind === "llm" ? {} : { bin: runner.profile.bin }),
-      ...(use ? probeConnection(use) : {}),
-    };
-  });
-}
-
-/**
- * The connection the probe sends, built as a dispatch builds it: the runner
- * keeps its credential symbolic, so the key is read and injected here, or the
- * probe would go out without one.
- */
-function probeConnection(
-  use: ResolvedLlmUse,
-): { connection: LlmConnectionConfig } | { connection: LlmConnectionConfig; error: string } {
-  try {
-    return { connection: materializeLlmConnection(use) };
-  } catch (err) {
-    return { connection: use.connection, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-/**
- * The bound on `--require-engines`' probe: the connection's own request
- * timeout, at most two minutes. A local server busy with another job queues
- * the probe behind that job, and a fixed 3s bound failed every scheduled
- * improve run on 2026-09-27 against a reachable endpoint; the cap still ends a
- * hung endpoint (#957) long before a run's own multi-minute calls would.
- */
-export function requiredEngineProbeTimeoutMs(connection: LlmConnectionConfig): number {
-  return Math.min(connection.timeoutMs ?? DEFAULT_LLM_TIMEOUT_MS, REQUIRED_ENGINE_PROBE_MAX_MS);
-}
-
-const REQUIRED_ENGINE_PROBE_MAX_MS = 120_000;
-
-/**
- * `--require-engines`, live: probe each connection's real completion path
- * (a gateway can list a model whose completion route is dead, #980), once per
- * endpoint + model, within {@link requiredEngineProbeTimeoutMs}, and look each
- * agent harness's binary up on PATH. Returns each target's latency for the run
- * result (R17); an unreachable one fails the run.
- */
-export async function assertRequiredEnginesReachable(
-  plan: ResolvedImprovePlan,
-  probeReachable: (connection: LlmConnectionConfig) => Promise<{ reachable: boolean; error?: string }> = (connection) =>
-    probeLlmReachable(connection, requiredEngineProbeTimeoutMs(connection)),
-  which: (bin: string) => string | undefined = defaultWhich,
-): Promise<EngineProbeOutcome[]> {
-  const targets = collectRequiredEngineTargets(plan);
-  if (targets.length === 0) return [];
-  const probesByConnection = new Map<
-    string,
-    Promise<{ reach: { reachable: boolean; error?: string }; latencyMs: number }>
-  >();
-  const probeConnectionOnce = (connection: LlmConnectionConfig) => {
-    const key = `${connection.endpoint.replace(/\/+$/, "")}|${connection.model}`;
-    let pending = probesByConnection.get(key);
-    if (!pending) {
-      const probeStartedAt = Date.now();
-      pending = probeReachable(connection).then((reach) => ({ reach, latencyMs: Date.now() - probeStartedAt }));
-      probesByConnection.set(key, pending);
-    }
-    return pending;
-  };
-  const probed = await Promise.all(
-    targets.map(async (target) => {
-      if (target.bin !== undefined && which(target.bin) === undefined) {
-        return { ...target, reach: { reachable: false, error: `${target.bin} is not on PATH` }, latencyMs: 0 };
-      }
-      if (!target.connection) return { ...target, reach: { reachable: true }, latencyMs: 0 };
-      if (target.error) return { ...target, reach: { reachable: false, error: target.error }, latencyMs: 0 };
-      return { ...target, ...(await probeConnectionOnce(target.connection)) };
-    }),
-  );
-  const unreachable = probed.filter((item) => !item.reach.reachable);
-  if (unreachable.length > 0) {
-    const lines = unreachable.map(
-      (item) =>
-        `  - ${item.process} (engine "${item.engine}", ${item.connection?.endpoint ?? item.bin}): ${item.reach.error ?? "did not respond"}`,
-    );
-    throw new ConfigError(
-      `--require-engines: ${unreachable.length} improve process${unreachable.length === 1 ? "" : "es"} cannot run because ${unreachable.length === 1 ? "its" : "their"} engine completion path is not reachable:\n${lines.join("\n")}`,
-      "LLM_NOT_CONFIGURED",
-      "Check that each listed endpoint is up and serves its model, and that each listed agent binary is installed. The endpoint probe is one short completion, bounded by the engine's timeoutMs (at most two minutes).",
-    );
-  }
-  return probed.map((item) => ({
-    process: item.process,
-    engine: item.engine,
-    endpoint: item.connection?.endpoint ?? (item.bin as string),
-    reachable: item.reach.reachable,
-    latencyMs: item.latencyMs,
-  }));
 }
 
 /** `--show-prompt` (#952): print reflect's composed prompt for one ref — no lock, write or dispatch. */
@@ -211,6 +55,9 @@ async function runShowPromptCli(
     ...(taskArg ? { task: taskArg } : {}),
     improveProfile: resolvedPlan.strategy.config,
     config: resolvedPlan.config as AkmConfig,
+    // A strategy that turns reflect off froze no runner for it; the preview resolves its own.
+    ...(resolvedPlan.processes.reflect.runner ? { llmRunner: resolvedPlan.processes.reflect.runner } : {}),
+    ...(resolvedPlan.run ? { run: resolvedPlan.run } : {}),
     stashDir: readSource.source.path,
   });
   const outputMode = getOutputMode();
@@ -254,7 +101,7 @@ const improveReportCommand = defineJsonCommand({
 
 /**
  * `akm improve judge`: reflect's quality judge on one revision, read as
- * `{"source", "candidate", "feedback"}` JSON from stdin, with the engine the
+ * `{"source", "candidate", "feedback"}` JSON from stdin, on the connection or harness the
  * strategy's reflect quality gate names. It writes nothing.
  */
 const improveJudgeCommand = defineJsonCommand({
@@ -288,7 +135,7 @@ const improveJudgeCommand = defineJsonCommand({
     );
     if (!judge) {
       throw new ConfigError(
-        "`akm improve judge` judges with the reflect quality gate's engine. Set processes.reflect.qualityGate.engine.",
+        "`akm improve judge` judges with the reflect quality gate's connection or harness. Set improve.qualityGate.connection.",
         "INVALID_CONFIG_FILE",
       );
     }
@@ -298,7 +145,7 @@ const improveJudgeCommand = defineJsonCommand({
       llmRunner: judge,
       ...(typeof ref === "string" && ref ? { ref } : {}),
     });
-    output("improve-judge", { engine: judge.engine, ...verdict });
+    output("improve-judge", { engine: judge.name, ...verdict });
   },
 });
 
@@ -368,23 +215,20 @@ export const improveCommand = defineCommand({
         "If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with 'already running' (exit 75). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress.",
       default: false,
     },
-    "require-engines": {
-      type: "boolean",
-      description:
-        "Abort before any indexing, lock, or log side effect (exit 78) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe (the same probe akm health runs). Without this flag, improve degrades gracefully instead: it skips the affected processes and reports them in the result's skippedProcesses. Recommended alongside --skip-if-locked for scheduled runs.",
-      default: false,
-    },
+    // Retired: a run already stops at planning (exit 78) when no process has a connection or harness to run on.
+    "require-engines": { type: "boolean", hidden: true, description: "Retired: has no effect." },
     "show-prompt": {
       type: "boolean",
       description:
-        "Print the composed reflect prompt for one asset ref and exit — no lock, index write, or engine dispatch (#952). Requires a fully-qualified asset ref as the scope positional (e.g. `akm improve lessons/my-lesson --show-prompt`). JSON/yaml format carries the prompt as a `prompt` field; text format prints it directly.",
+        "Print the composed reflect prompt for one asset ref and exit — no lock, index write, or model call (#952). Requires a fully-qualified asset ref as the scope positional (e.g. `akm improve lessons/my-lesson --show-prompt`). JSON/yaml format carries the prompt as a `prompt` field; text format prints it directly.",
       default: false,
     },
     strategy: {
       type: "string",
       description:
-        "Named improve strategy from improve.strategies or built-in strategies (consolidate, default). Controls which sub-processes run and which asset types are processed.",
+        "Named improve strategy from improve.strategies or built-in strategies (consolidate, default). Controls which sub-processes run and which asset types are processed, never where they run.",
     },
+    ...SELECTION_ARGS,
     sync: {
       type: "boolean",
       description:
@@ -400,6 +244,12 @@ export const improveCommand = defineCommand({
     await runWithJsonErrors(async () => {
       // citty runs this body after a subcommand it dispatched too.
       if (hasSubcommand(args, new Set(Object.keys(IMPROVE_SUBCOMMANDS)))) return;
+      if (args["require-engines"]) {
+        warnOnce(
+          "retired-flag:--require-engines",
+          "--require-engines is retired and has no effect: akm improve already stops at planning (exit 78) when no process has a connection or harness to run on, and `akm health` checks the connections and harnesses.",
+        );
+      }
       const jsonToStdout = args["json-to-stdout"];
       const targetArg = getStringArg(args, "bundle");
       const taskArg = getStringArg(args, "task");
@@ -410,6 +260,8 @@ export const improveCommand = defineCommand({
       const requireFeedbackSignal = args["require-feedback-signal"];
       const skipIfLocked = args["skip-if-locked"];
       const strategyArg = getStringArg(args, "strategy");
+      // What the run selected is the nearest layer of every call in it, judges included.
+      const run = selectionFromArgs(args);
       const effectiveConfig = loadConfig();
       const scopeArg = getStringArg(args, "scope");
       const scopeRef = scopeArg && isFullRefInput(scopeArg) ? parseRefInput(scopeArg) : undefined;
@@ -420,7 +272,7 @@ export const improveCommand = defineCommand({
           : resolveWriteTarget(effectiveConfig, targetArg, { flag: IMPROVE_TARGET_FLAG });
       // Every model-backed process resolves before any side effect; a dry run
       // never dispatches, so it tolerates every process being disabled.
-      const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig, { allowAllDisabled: Boolean(dryRun) });
+      const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig, Object.keys(run).length > 0 ? { run } : {});
       if (args["show-prompt"]) {
         if (!scopeArg || !scopeRef) {
           throw new UsageError(
@@ -431,13 +283,8 @@ export const improveCommand = defineCommand({
         await runShowPromptCli(scopeArg, scopeRef, taskArg, targetArg, resolvedPlan);
         return;
       }
-      let engineProbe: EngineProbeOutcome[] | undefined;
-      if (args["require-engines"]) {
-        assertRequiredEnginesAvailable(resolvedPlan);
-        engineProbe = await assertRequiredEnginesReachable(resolvedPlan);
-      }
       const selectedStrategyName = resolvedPlan.strategy.name;
-      const sensitiveValues = collectEngineCredentialValues(effectiveConfig);
+      const sensitiveValues = collectCredentialValues(effectiveConfig);
       // Only flags actually passed override the strategy's `sync` block.
       const syncFlag = args.sync;
       const pushFlag = args.push;
@@ -501,7 +348,6 @@ export const improveCommand = defineCommand({
                 ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
                 ...(skipIfLocked ? { skipIfLocked } : {}),
                 ...(strategyArg !== undefined ? { strategy: strategyArg } : {}),
-                ...(engineProbe !== undefined ? { engineProbe } : {}),
                 onBudgetHardKill: () => persistTerminated("budget_exhausted"),
                 ...(Object.keys(syncOverride).length > 0 ? { sync: syncOverride } : {}),
               }),

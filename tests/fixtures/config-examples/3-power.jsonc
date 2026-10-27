@@ -1,0 +1,64 @@
+// 3. Power user — two connections, three harnesses, per-process choices, per-model settings.
+// Hand-edited after setup (or several `akm config set` calls).
+{
+  "connections": {
+    // The default: a local server for cheap background work.
+    // akm owns endpoint, apiKey, models, contextLength and timeoutMs. Every other key is a
+    // request field in the endpoint's own spelling, sent as written. Keys on the connection
+    // apply to all its models; a model entry overrides them.
+    "default": {
+      "endpoint": "http://lab:8080/v1",
+      "timeoutMs": 900000,
+      "contextLength": 131072,
+      "chat_template_kwargs": { "enable_thinking": false },
+      "models": {
+        "fast": "qwen3-8b",
+        "balanced": "qwen3-32b",
+        "reasoning": {
+          "model": "glm-5",
+          "chat_template_kwargs": { "enable_thinking": true, "thinking_budget": 8192 },
+          "reasoning_effort": "high",
+          "max_tokens": 16384,
+          "top_p": 0.95
+        },
+        "coder": { "model": "qwen3-coder", "temperature": 0.1 }
+      }
+    },
+    // A cloud endpoint; its key lives in the environment.
+    "anthropic": {
+      "endpoint": "https://api.anthropic.com/v1",
+      "apiKey": "$ANTHROPIC_API_KEY",
+      "models": {
+        "fast": "claude-haiku-4-5",
+        "balanced": "claude-sonnet-4-5",
+        "reasoning": { "model": "claude-opus-4-7", "reasoning_effort": "high" }
+      }
+    }
+  },
+  "harnesses": {
+    // The default harness: the user's own OpenCode, config and logins included.
+    "default": { "platform": "opencode" },
+    "claude": {},
+    // A second Claude install: the key is the name, platform says what it is.
+    "claude-work": { "platform": "claude", "bin": "/opt/claude-work/bin/claude" }
+  },
+
+  // Judging on the stronger connection; improve otherwise stays on default/fast.
+  "improve": {
+    "processes": {
+      "distill": { "model": "balanced" },
+      "triage": { "connection": "anthropic", "model": "reasoning" }
+    },
+    "qualityGate": { "connection": "anthropic" }
+  },
+  "index": { "model": "fast" },
+  "embedding": { "model": "nomic-embed-text" },
+
+  // Assets pick with the same words and keep their own portable settings, unchanged:
+  //   agents/reviewer.md      → harness: claude-work, model: reasoning
+  //   commands/summarize.md   → model: fast, akm.inference: { temperature: 0, reasoningEffort: low }
+  //   workflows/nightly.md    → unit: { connection: anthropic, model: coder, llm: { temperature: 0.2 } }
+  // Asset settings win over the model entry, which wins over the connection.
+  // An asset naming a harness this machine lacks warns once and uses the default harness.
+  "workflow": { "maxConcurrency": 4 }
+}

@@ -36,15 +36,14 @@ import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString } from "../../../core/common";
 import { concurrentMap } from "../../../core/concurrent";
-import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
+import type { AkmConfig } from "../../../core/config/config";
 import type { ConsolidatePairJudgeLabel, ConsolidatePairPassResult } from "../../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../../core/parse";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { warnOnce } from "../../../core/warn";
 import { sameScope, scopeFromFrontmatter } from "../../../indexer/passes/metadata";
-import { type RunnerSpec, runnerLlmConnection } from "../../../integrations/agent/runner";
-import { assertRunnerCredentials } from "../../../integrations/agent/runner-dispatch";
-import type { ChatCompletionOptions, ChatMessage } from "../../../llm/client";
+import type { RunnerSpec } from "../../../integrations/agent/runner";
+import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../../../llm/client";
 import { runGit } from "../../../sources/providers/git-install";
 import type { Database } from "../../../storage/database";
 import {
@@ -635,7 +634,7 @@ export function decideRetirement(
 
 /** Transport override for tests (matches `CallStructuredRequest["chat"]`); production callers leave it unset. */
 export type PairJudgeChat = (
-  connection: LlmConnectionConfig,
+  connection: ChatCompletionConfig,
   messages: ChatMessage[],
   options?: ChatCompletionOptions,
 ) => Promise<string>;
@@ -700,15 +699,12 @@ function checkSection(label: string, side: PairSide): string {
  */
 async function confirmNothingLost(ctx: PairPassContext, retired: PairSide, successor: PairSide): Promise<boolean> {
   const outcome = await callStage({
-    feature: "memory_consolidation",
     runner: ctx.llmRunner,
     system: consolidatePairCheckPrompt,
     prompt: `${checkSection("X (to delete)", retired)}\n${checkSection("Y (kept)", successor)}\n${termHints([`Tokens only in X: ${exclusiveTerms(retired, successor)}`])}${Date.parse(retired.createdIso) === Date.parse(successor.createdIso) ? `\n${consolidatePairSameAge}` : ""}`,
-    gate: { config: ctx.config, enabled: true },
     request: {
       responseSchema: PAIR_CHECK_JSON_SCHEMA,
       enableThinking: false,
-      ...(Object.hasOwn(ctx.llmRunner, "timeoutMs") ? { timeoutMs: ctx.llmRunner.timeoutMs } : {}),
       signal: ctx.opts.signal,
       ...(ctx.chat ? { chat: ctx.chat } : {}),
     },
@@ -755,15 +751,12 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   const { older, newer } = orderByAge(initiatorSide, otherSide);
 
   const outcome = await callStage({
-    feature: "memory_consolidation",
     runner: ctx.llmRunner,
     system: consolidatePairPrompt,
     prompt: buildPairUserPrompt(older, newer),
-    gate: { config: ctx.config, enabled: true },
     request: {
       responseSchema: PAIR_JUDGE_JSON_SCHEMA,
       enableThinking: false,
-      ...(Object.hasOwn(ctx.llmRunner, "timeoutMs") ? { timeoutMs: ctx.llmRunner.timeoutMs } : {}),
       signal: ctx.opts.signal,
       ...(ctx.chat ? { chat: ctx.chat } : {}),
     },
@@ -806,7 +799,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   // durable half).
   const retiredKey = stripBundle(retired.asset.ref);
   const successorKey = stripBundle(successor.asset.ref);
-  // Must-fix 1 (third review round): a retire-worthy verdict the same-run
+  // A retire-worthy verdict the same-run
   // chain guard drops is not a settled "no action" — a LATER run, once the
   // conflicting retirement has been reviewed, may well mint it. Counted as
   // failed so its initiator gets no row (real data: night 1 alone judged 177
@@ -901,7 +894,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     ctx.warnings.push(
       `Pair pass: could not mint a retire proposal for ${retired.asset.ref}: ${error instanceof Error ? error.message : String(error)}`,
     );
-    // Must-fix 1: a mint failure is transient (a lock, a disk error, a
+    // A mint failure is transient (a lock, a disk error, a
     // validation hiccup) — treated the same as a same-run drop, so no row is
     // written and the pair is retried next run instead of abandoned.
     return { failed: true };
@@ -920,8 +913,8 @@ const emptyLabelCounts = (): Record<ConsolidatePairJudgeLabel, number> => ({
 /**
  * The pair pass (alpha.9): initiators -> candidates -> one judge call per
  * pair -> retire proposals for the calibrated classes. Runs alongside the
- * promote pass, sharing its gate, its frozen LLM runner and its engine
- * concurrency. `bundleId` is the target bundle's id (`undefined` skips the
+ * promote pass, sharing its gate, its frozen LLM runner and its
+ * connection's concurrency. `bundleId` is the target bundle's id (`undefined` skips the
  * pass — nothing to scope candidates to).
  */
 export async function runConsolidatePairPass(
@@ -990,7 +983,7 @@ export async function runConsolidatePairPass(
 
   const rejectedPairKeys = loadRejectedPairKeys(stashDir, opts.proposalsCtx);
 
-  // Blocker 2: admit WHOLE initiators under MAX_PAIRS_PER_RUN, never
+  // Admit WHOLE initiators under MAX_PAIRS_PER_RUN, never
   // individual pairs — the old flat "top 300 candidates by cosine" cap let a
   // pending-blocked pair spend a budget slot doing nothing, and left
   // whichever initiators landed past slot 300 partially judged forever (no
@@ -1046,25 +1039,19 @@ export async function runConsolidatePairPass(
   };
 
   let failedJudgments = 0;
-  // Should-fix 3: an initiator with any failed (or never-sent) judge call
+  // An initiator with any failed (or never-sent) judge call
   // gets no ledger row — a failure attempted nothing conclusive, so writing
   // one would mean the pair is never retried.
   const failedInitiators = new Set<string>();
   if (judgeable.length > 0) {
-    // The promote pass validates opts.llmRunner's credentials once, but only
-    // when it has memories to dispatch — the pair pass can still have work
-    // when that pool is empty, so it validates independently before its
-    // first real dispatch. A test-injected chat seam bypasses the transport
-    // entirely and needs no credential.
-    if (!seams.chat) assertRunnerCredentials(llmRunner);
     const results = await concurrentMap(
       judgeable,
       (candidate) => judgeOne(ctx, candidate),
-      runnerLlmConnection(llmRunner)?.concurrency ?? 1,
+      (llmRunner.kind === "connection" ? llmRunner.concurrency : undefined) ?? 1,
       { signal: opts.signal },
     );
     results.forEach((r, idx) => {
-      // Must-fix 3: `concurrentMap` leaves an entry `undefined` for a call an
+      // `concurrentMap` leaves an entry `undefined` for a call an
       // aborted run never sent at all — `r?.failed === true` reads that as
       // `undefined === true` (false), so an unsent call counted as a clean
       // "no action" verdict. Explicit `undefined` check closes that gap.
@@ -1079,7 +1066,7 @@ export async function runConsolidatePairPass(
   // candidates were admitted (whole-initiator admission above makes this a
   // simple membership check: judgeable either has every one of an
   // initiator's candidates, or none of them) and none of them failed
-  // (should-fix 3) — including an initiator with zero candidates, which
+  // — including an initiator with zero candidates, which
   // trivially satisfies both. One left out by the cap or a pending-proposal
   // collision gets no row at all, so the next run reconsiders it rather
   // than treating it as settled.
@@ -1108,7 +1095,7 @@ export async function runConsolidatePairPass(
     initiators: initiators.length,
     initiatorsBacklog,
     pairsConsidered: candidates.length,
-    // Must-fix 3: parsed verdicts only — judgeable.length counted pairs that
+    // Parsed verdicts only — judgeable.length counted pairs that
     // were admitted, not pairs a verdict actually came back for.
     pairsJudged: judgeable.length - failedJudgments,
     labelCounts: ctx.labelCounts,

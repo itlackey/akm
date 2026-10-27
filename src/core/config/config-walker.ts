@@ -26,9 +26,9 @@ import { isRecord } from "../common";
 import { UsageError } from "../errors";
 import { hasRegistryUrlCredentials, REGISTRY_CREDENTIALS_UNSUPPORTED } from "../registry-url";
 import { warnOnce } from "../warn";
-import { AkmConfigBaseSchema, type AkmConfigShape, EngineConfigSchema, listTopLevelConfigKeys } from "./config-schema";
+import { AkmConfigBaseSchema, type AkmConfigShape, listTopLevelConfigKeys } from "./config-schema";
 import { deepMergeConfig } from "./deep-merge";
-import { isApiKeyReference } from "./schema/primitives";
+import { isEnvReference } from "./schema/primitives";
 
 type Path = string[];
 
@@ -77,6 +77,11 @@ function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
   }
 }
 
+/** True for a schema that accepts any value (`z.unknown()`): its contents are not keys akm defines. */
+export function isOpaqueSchema(schema: z.ZodTypeAny): boolean {
+  return unwrap(schema) instanceof z.ZodUnknown;
+}
+
 /**
  * Resolve the Zod schema for a given dotted path, walking from the top-level
  * AkmConfig schema. Returns `undefined` if any path segment doesn't match a
@@ -101,7 +106,7 @@ export function resolveSchemaAt(path: Path, config?: Record<string, unknown>, ra
         schema = next;
       }
     } else if (schema instanceof z.ZodRecord) {
-      // Named records (engines, improve.strategies, sources, etc.)
+      // Named records (connections, harnesses, improve.strategies, sources, etc.)
       // accept any string key — descend into the value schema.
       schema = schema._def.valueType;
     } else if (schema instanceof z.ZodUnion) {
@@ -112,7 +117,7 @@ export function resolveSchemaAt(path: Path, config?: Record<string, unknown>, ra
         index === path.length - 1 ? raw : undefined,
       );
       if (!option) return undefined;
-      schema = option.shape[segment] as z.ZodTypeAny;
+      schema = (option.shape[segment] ?? option._def.catchall) as z.ZodTypeAny;
     } else {
       // Cannot descend into a non-object schema.
       return undefined;
@@ -153,7 +158,11 @@ function selectUnionObjectOption(
     if (selected) return segment in selected.shape ? selected : undefined;
   }
 
-  return options.find((option) => segment in option.shape);
+  return (
+    options.find((option) => segment in option.shape) ??
+    // A model entry such as `{ model, reasoning_effort }` holds request fields the object does not name.
+    options.find((option) => !(option._def.catchall instanceof z.ZodNever))
+  );
 }
 
 /**
@@ -191,15 +200,12 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
     throw new UsageError("configVersion cannot be changed through config set.", "INVALID_FLAG_VALUE");
   }
 
-  // #454: apiKey paths are not persistable. Throw at set time.
-  rejectApiKeyPath(path, dotted);
+  // #454: a literal apiKey is not persistable. Throw at set time.
+  rejectApiKeyPath(path, raw, dotted);
   rejectLiteralApiKeyInWholeObjectSet(path, raw, dotted);
 
   const schema = resolveSchemaAt(path, config, raw);
-  const symbolicApiKey =
-    (path[0] === "engines" && path[2] === "apiKey") ||
-    (path[0] === "embedding" && path.length === 2 && path[1] === "apiKey");
-  const isUnknownKey = !schema && !symbolicApiKey;
+  const isUnknownKey = !schema;
   if (isUnknownKey) {
     warnOnce(
       `config-set:unknown-key:${dotted}`,
@@ -211,13 +217,9 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
   const value =
     judgmentObjectPath && raw === "null"
       ? undefined
-      : path[0] === "engines" && path.length === 2
-        ? parseObjectPatch(raw, dotted)
-        : symbolicApiKey
-          ? raw
-          : isUnknownKey
-            ? bestEffortJsonValue(raw)
-            : coerceForSchema(schema as z.ZodTypeAny, raw, dotted);
+      : isUnknownKey
+        ? bestEffortJsonValue(raw)
+        : coerceForSchema(schema as z.ZodTypeAny, raw, dotted);
 
   if (path[0] === "registries") rejectRegistryCredentialValue(value, dotted);
 
@@ -236,19 +238,7 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
   // mismatches, out-of-range numbers, schema-level shape errors (writable
   // npm/website sources via .superRefine, strict-mode unknown keys in nested
   // objects, etc.) BEFORE we apply the patch.
-  const parsed =
-    path[0] === "engines" && path.length === 2
-      ? EngineConfigSchema.safeParse(value)
-      : symbolicApiKey
-        ? isApiKeyReference(raw)
-          ? { success: true as const, data: value }
-          : {
-              success: false as const,
-              error: { issues: [{ path: [], message: "apiKey must be $VAR, ${VAR}, or ${secrets/<name>}" }] },
-            }
-        : isUnknownKey
-          ? { success: true as const, data: value }
-          : (schema as z.ZodTypeAny).safeParse(candidate);
+  const parsed = isUnknownKey ? { success: true as const, data: value } : (schema as z.ZodTypeAny).safeParse(candidate);
   if (!parsed.success) {
     const lines = parsed.error.issues
       .map((i) => {
@@ -294,8 +284,10 @@ function isTriageJudgmentPath(path: Path): boolean {
 }
 
 /**
- * Unset the value at the dotted path. Removes the leaf key (and prunes empty
- * parent objects if they become empty). Returns a new config object.
+ * Unset the value at the dotted path. Removes the leaf key and leaves its
+ * parent objects in place, even when they become empty: `{}` is a value here
+ * (`harnesses.opencode: {}` is how a harness is enabled). Returns a new config
+ * object.
  */
 export function configUnset(config: Record<string, unknown>, dotted: string): Record<string, unknown> {
   const path = parsePath(dotted);
@@ -312,41 +304,58 @@ export function configUnset(config: Record<string, unknown>, dotted: string): Re
 
 // ── apiKey rejection (#454) ─────────────────────────────────────────────────
 
+const LITERAL_API_KEY_RECIPE =
+  "use a $VAR reference (and set that variable), or put the key in credentials.json under the block's name";
+const LITERAL_API_KEY_HINT =
+  "Storing API keys in config.json leaks them through backups, logs, and version control. " +
+  "akm keeps keys in the environment or in credentials.json.";
+
+/** The three config blocks that carry an `apiKey` akm resolves at request time. */
+function isCredentialPath(path: Path): boolean {
+  return (
+    (path[0] === "connections" && path.length === 3) ||
+    (path[0] === "embedding" && path.length === 2) ||
+    (path[0] === "search" && path[1] === "curateRerank" && path.length === 3)
+  );
+}
+
 /**
- * Embedding credentials are never persisted. Engine credentials are symbolic
- * configuration and are validated by the engine schema below.
+ * A literal `apiKey` is never persisted: on the three credential blocks only a
+ * `$VAR` reference is accepted, and an `apiKey` anywhere else is not a key akm
+ * defines.
  */
-function rejectApiKeyPath(path: Path, dotted: string): void {
-  if (path[0] === "engines" && path[2] === "apiKey") return;
-  if (path[0] === "embedding" && path.length === 2 && path[1] === "apiKey") return;
-  const last = path[path.length - 1];
-  if (last !== "apiKey") return;
-  const recipe = recipeForApiKey(path, dotted);
+function rejectApiKeyPath(path: Path, raw: string, dotted: string): void {
+  if (path[path.length - 1] !== "apiKey") return;
+  if (isCredentialPath(path) && isEnvReference(raw)) return;
   throw new UsageError(
-    `apiKey cannot be persisted in config; export ${recipe} instead. (key: ${dotted})`,
+    `apiKey cannot be a literal in config; ${LITERAL_API_KEY_RECIPE}. (key: ${dotted})`,
     "INVALID_FLAG_VALUE",
-    "Storing API keys in config.json leaks them through backups, logs, and version control. " +
-      "Use the corresponding environment variable. AKM reads it at request time.",
+    LITERAL_API_KEY_HINT,
+  );
+}
+
+/** Whether `value` holds a string `apiKey` that is not a `$VAR` reference, at any depth. */
+function holdsLiteralApiKey(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, child]) =>
+    key === "apiKey" ? typeof child === "string" && !isEnvReference(child) : holdsLiteralApiKey(child),
   );
 }
 
 function rejectLiteralApiKeyInWholeObjectSet(path: Path, raw: string, dotted: string): void {
-  const isWholeEngineSet = path[0] === "engines" && path.length === 2;
-  const isWholeEmbeddingSet = path.length === 1 && path[0] === "embedding";
-  if (!isWholeEngineSet && !isWholeEmbeddingSet) return;
+  const wholeObject = ["connections", "embedding", "search"].includes(path[0] as string) && !isCredentialPath(path);
+  if (!wholeObject) return;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
     return; // Malformed JSON — the caller's own parse/coercion reports this.
   }
-  if (!isRecord(parsed) || typeof parsed.apiKey !== "string") return;
-  if (isApiKeyReference(parsed.apiKey)) return;
+  if (!holdsLiteralApiKey(parsed)) return;
   throw new UsageError(
-    `apiKey cannot be persisted in config; export ${recipeForApiKey([...path, "apiKey"], `${dotted}.apiKey`)} instead. (key: ${dotted}.apiKey)`,
+    `apiKey cannot be a literal in config; ${LITERAL_API_KEY_RECIPE}. (key: ${dotted})`,
     "INVALID_FLAG_VALUE",
-    "Storing API keys in config.json leaks them through backups, logs, and version control. " +
-      "Use the corresponding environment variable. AKM reads it at request time.",
+    LITERAL_API_KEY_HINT,
   );
 }
 
@@ -370,27 +379,6 @@ function bestEffortJsonValue(raw: string): unknown {
   } catch {
     return raw;
   }
-}
-
-function parseObjectPatch(raw: string, key: string): Record<string, unknown> {
-  try {
-    const value = JSON.parse(raw);
-    if (!isRecord(value)) throw new Error("expected an object");
-    return value;
-  } catch (err) {
-    throw new UsageError(
-      `Invalid JSON object for ${key}: ${err instanceof Error ? err.message : String(err)}`,
-      "INVALID_JSON_CONFIG_VALUE",
-    );
-  }
-}
-
-function recipeForApiKey(path: Path, _dotted: string): string {
-  if (path[0] === "embedding") return "AKM_EMBED_API_KEY";
-  if (path[0] === "engines" && typeof path[1] === "string") {
-    return `AKM_ENGINE_${path[1].toUpperCase().replaceAll("-", "_")}_API_KEY`;
-  }
-  return "AKM_LLM_API_KEY / AKM_EMBED_API_KEY";
 }
 
 // ── Coercion ────────────────────────────────────────────────────────────────
@@ -501,12 +489,7 @@ function unsetPath(config: Record<string, unknown>, path: Path): Record<string, 
   if (typeof existing !== "object" || existing === null || Array.isArray(existing)) {
     return next; // nothing to unset
   }
-  const updated = unsetPath(existing as Record<string, unknown>, rest);
-  if (Object.keys(updated).length === 0) {
-    delete next[head];
-  } else {
-    next[head] = updated;
-  }
+  next[head] = unsetPath(existing as Record<string, unknown>, rest);
   return next;
 }
 
@@ -514,7 +497,7 @@ function unsetPath(config: Record<string, unknown>, path: Path): Record<string, 
 
 export function unknownKeyHint(): string {
   const keys = listTopLevelConfigKeys();
-  return `Valid top-level keys: ${keys.join(", ")}. Use dotted paths for nested values (e.g. embedding.endpoint, engines.<name>.model).`;
+  return `Valid top-level keys: ${keys.join(", ")}. Use dotted paths for nested values (e.g. embedding.endpoint, connections.<name>.endpoint).`;
 }
 
 // ── Re-exports for the CLI ──────────────────────────────────────────────────

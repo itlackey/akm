@@ -3,47 +3,28 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * OpenCode 2 session-store adapter. V2 keeps one `session_v2` row per session
- * and the ordered conversation as `session_message` rows (`type` + JSON `data`
- * minus `id`/`type`, shapes from `@opencode/client` `SessionMessageInfo`).
- * Read-only: the database is never migrated; V1 rows a native upgrade copied
- * here arrive as the same shapes under the same session id.
+ * OpenCode 2 session store: the `session_v2` and `session_message` tables, read
+ * with SQLite only. Nothing here starts OpenCode (which would migrate the file
+ * and resume its suspended sessions); it reads the rows as they are.
  *
- * Mapping into the session-log contract follows the Codex reader: user and
- * assistant text become events of that role, a tool call becomes
- * `[tool:<name>] <input>` and its outcome a `tool` event
- * `[tool_result] <output>`, so the inline-ref scanner sees shell commands.
- * Reasoning, compaction, synthetic/system and bookkeeping messages are skipped.
+ * A message row is `(id, type, data)`; OpenCode decodes it as `{ ...data, id, type }`,
+ * which is rebuilt here. Only top-level sessions are read, and akm's own
+ * model-work sessions are left out: OpenCode 2 stores the agent a session ran as,
+ * and akm runs model work as one agent (`./agent-builder.ts`).
+ *
+ * Mapping to events follows the Codex reader: user and assistant text become events of
+ * that role, a tool call becomes `[tool:<name>] <input>` and its outcome a
+ * `tool` event `[tool_result] <output>`, so the inline-ref scanner sees shell
+ * commands. Reasoning, compaction, synthetic/system and bookkeeping messages
+ * are skipped.
  */
 
 import { asRecord, tryParseJson } from "../../../core/common";
-import { warnOnce } from "../../../core/warn";
 import type { Database } from "../../../storage/database";
 import { extractInlineRefMentions } from "../../session-logs/inline-refs";
 import type { InlineRefMention, SessionEvent } from "../../session-logs/types";
-import { type OpenCodeSessionMeta, type OpenCodeSessionRead, type SessionRow, toMeta } from "./session-log-types";
-
-export const V2_TABLES = ["session_v2", "session_message"] as const;
-
-/** Every V2 session updated at or after `sinceMs`, newest first. Throws on an incompatible schema. */
-export function listV2Sessions(db: Database, sinceMs: number): OpenCodeSessionMeta[] {
-  const rows = db
-    .prepare<SessionRow>(
-      "SELECT id, title, directory, time_created, time_updated FROM session_v2 WHERE time_updated >= ? ORDER BY time_updated DESC",
-    )
-    .all(sinceMs);
-  return rows.map((r) => toMeta(r, r.id));
-}
-
-/** Whether `sessionId` has a `session_v2` row, and how many `session_message` rows it owns. */
-export function v2SessionState(db: Database, sessionId: string): { exists: boolean; messages: number } {
-  const row = db
-    .prepare<{ n: number }>(
-      "SELECT (SELECT COUNT(*) FROM session_message WHERE session_id = s.id) AS n FROM session_v2 s WHERE s.id = ?",
-    )
-    .get(sessionId);
-  return row ? { exists: true, messages: row.n } : { exists: false, messages: 0 };
-}
+import { MODEL_WORK_AGENT } from "./agent-builder";
+import { type OpenCodeSessionMeta, type OpenCodeSessionRead, toMeta } from "./session-log-v1";
 
 type Json = Record<string, unknown>;
 const asObject = asRecord;
@@ -80,20 +61,13 @@ function structuredErrorText(err: unknown): string {
   return typeof e?.type === "string" ? e.type : "error";
 }
 
-/**
- * Rebuild one session's events in `seq` order. Throws on an incompatible
- * schema; a message whose JSON cannot be read is skipped with one warning.
- */
-export function readV2Session(db: Database, harness: string, sessionId: string, filePath: string): OpenCodeSessionRead {
-  const meta = db
-    .prepare<Omit<SessionRow, "id">>("SELECT title, directory, time_created, time_updated FROM session_v2 WHERE id = ?")
-    .get(sessionId);
-  const rows = db
-    .prepare<{ id: string; type: string; data: string; time_created: number | null }>(
-      "SELECT id, type, data, time_created FROM session_message WHERE session_id = ? ORDER BY seq ASC, time_created ASC, id ASC",
-    )
-    .all(sessionId);
-
+/** One session's events and inline refs, from its messages oldest first. A message that is not an object is skipped. */
+export function opencodeMessageEvents(
+  messages: readonly unknown[],
+  harness: string,
+  sessionId: string,
+  filePath: string,
+): { events: SessionEvent[]; inlineRefs: InlineRefMention[] } {
   const events: SessionEvent[] = [];
   const inlineRefs: InlineRefMention[] = [];
   const push = (role: SessionEvent["role"], text: string, ts: number | undefined) => {
@@ -103,20 +77,14 @@ export function readV2Session(db: Database, harness: string, sessionId: string, 
     inlineRefs.push(...extractInlineRefMentions(trimmed, ts));
   };
 
-  for (const row of rows) {
-    const data = asObject(tryParseJson(row.data));
-    if (!data) {
-      warnOnce(
-        `opencode-v2-message:${filePath}:${row.id}`,
-        `OpenCode 2 history: skipped unreadable message ${row.id} in session ${sessionId} (${filePath}).`,
-      );
-      continue;
-    }
-    const ts = asNumber(asObject(data.time)?.created) ?? asNumber(row.time_created);
+  for (const message of messages) {
+    const data = asObject(message);
+    if (!data) continue;
+    const ts = asNumber(asObject(data.time)?.created);
 
-    if (row.type === "user") {
+    if (data.type === "user") {
       if (typeof data.text === "string") push("user", data.text, ts);
-    } else if (row.type === "assistant") {
+    } else if (data.type === "assistant") {
       const content = Array.isArray(data.content) ? data.content : [];
       const text = content
         .map((c) => asObject(c))
@@ -141,12 +109,85 @@ export function readV2Session(db: Database, harness: string, sessionId: string, 
           push("tool", `[tool_result] ${body}`, doneTs);
         }
       }
-    } else if (row.type === "shell") {
+    } else if (data.type === "shell") {
       if (typeof data.command === "string") push("assistant", `[tool:shell] ${data.command}`, ts);
       const out = asObject(data.output)?.output;
       if (typeof out === "string") push("tool", `[tool_result] ${out}`, ts);
     }
   }
 
-  return { meta: meta ? toMeta(meta, sessionId) : { sessionId }, events, inlineRefs };
+  return { events, inlineRefs };
+}
+
+/** The columns of each table akm reads; a file lacking one is a schema akm does not support. */
+const V2_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  session_v2: ["id", "parent_id", "title", "directory", "agent", "time_created", "time_updated"],
+  session_message: ["id", "session_id", "type", "seq", "data"],
+};
+
+/** Whether `db` has the OpenCode 2 session tables with the columns akm reads. */
+export function hasV2Tables(db: Database): boolean {
+  return Object.entries(V2_COLUMNS).every(([table, columns]) => {
+    const present = new Set(
+      db
+        .prepare<{ name: string }>(`PRAGMA table_info(${table})`)
+        .all()
+        .map((c) => c.name),
+    );
+    return columns.every((column) => present.has(column));
+  });
+}
+
+/** Top-level sessions that are not akm's model work. */
+const AKM_USER_SESSIONS = `parent_id IS NULL AND (agent IS NULL OR agent != '${MODEL_WORK_AGENT}')`;
+
+type V2SessionRow = {
+  id: string;
+  title: string | null;
+  directory: string | null;
+  time_created: number | null;
+  time_updated: number | null;
+};
+
+/** Every top-level OpenCode 2 session updated at or after `sinceMs`, newest first. Throws on an incompatible schema. */
+export function listV2Sessions(db: Database, sinceMs: number): OpenCodeSessionMeta[] {
+  return db
+    .prepare<V2SessionRow>(
+      `SELECT id, title, directory, time_created, time_updated FROM session_v2 WHERE ${AKM_USER_SESSIONS} AND time_updated >= ? ORDER BY time_updated DESC`,
+    )
+    .all(sinceMs)
+    .map((row) => toMeta(row, row.id));
+}
+
+/**
+ * The tokens one session's turns used: OpenCode records them on each assistant message and keeps their sums on the
+ * session row (equal, measured on 2.1.4). Undefined when the session is not in the file.
+ */
+export function v2SessionTokens(
+  db: Database,
+  sessionId: string,
+): { readonly input: number; readonly output: number; readonly reasoning: number } | undefined {
+  const row = db
+    .prepare<{ tokens_input: number; tokens_output: number; tokens_reasoning: number }>(
+      "SELECT tokens_input, tokens_output, tokens_reasoning FROM session_v2 WHERE id = ?",
+    )
+    .get(sessionId);
+  return row ? { input: row.tokens_input, output: row.tokens_output, reasoning: row.tokens_reasoning } : undefined;
+}
+
+/** One session's events, from its messages in order. Throws when the session is not in the file. */
+export function readV2Session(db: Database, harness: string, sessionId: string, filePath: string): OpenCodeSessionRead {
+  const row = db
+    .prepare<Omit<V2SessionRow, "id">>(
+      "SELECT title, directory, time_created, time_updated FROM session_v2 WHERE id = ?",
+    )
+    .get(sessionId);
+  if (!row) throw new Error(`session ${sessionId} is not in the file`);
+  const messages = db
+    .prepare<{ id: string; type: string; data: string }>(
+      "SELECT id, type, data FROM session_message WHERE session_id = ? ORDER BY seq ASC",
+    )
+    .all(sessionId)
+    .map((message) => ({ ...asRecord(tryParseJson(message.data)), id: message.id, type: message.type }));
+  return { meta: toMeta(row, sessionId), ...opencodeMessageEvents(messages, harness, sessionId, filePath) };
 }

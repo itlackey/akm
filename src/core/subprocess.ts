@@ -12,8 +12,10 @@
  *   • Process-GROUP spawn (`detached: true` when capturing ON POSIX) so a
  *     negative-pid kill reaps the whole descendant tree — no orphaned children.
  *     See {@link spawnsOwnProcessGroup} for why Windows is excluded.
- *   • A SIGTERM→SIGKILL kill ladder on timeout/abort — a child that ignores
- *     SIGTERM is force-killed after a grace period instead of wedging forever.
+ *   • A SIGINT→SIGTERM→SIGKILL kill ladder on timeout/abort — SIGINT first, as
+ *     a Ctrl-C would, so a program that treats an interrupt as a stop can wind
+ *     the run down; a child that ignores it is terminated, and one that ignores
+ *     that is force-killed, each after a grace period, instead of wedging forever.
  *   • Time-bounded output capture ({@link readStream}) that cannot block past
  *     the wall budget even when the child leaves a pipe endpoint open, plus an
  *     OPT-IN RETENTION cap (`maxOutputBytes`); see {@link readStream} for what
@@ -115,7 +117,7 @@ export function buildSpawnOptions(
   };
 }
 
-export function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"): void {
+export function killGroup(proc: SpawnedSubprocess, signal: "SIGINT" | "SIGTERM" | "SIGKILL"): void {
   if (typeof proc.pid === "number") {
     try {
       process.kill(-proc.pid, signal);
@@ -131,14 +133,34 @@ export function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"
   }
 }
 
+/** Whether anything still runs in `proc`'s process group (the leader included), or the leader has not exited. */
+function groupRunning(proc: SpawnedSubprocess): boolean {
+  if (typeof proc.pid === "number") {
+    try {
+      process.kill(-proc.pid, 0);
+      return true;
+    } catch {
+      // No member is left, or the child leads no group of its own: only the leader's own exit tells.
+    }
+  }
+  return proc.exitCode === null;
+}
+
 /**
- * SIGTERM→SIGKILL kill ladder shared by the timeout and abort paths (§4.6
- * dedup, H3). No-op when the child has already exited; otherwise runs
- * `onKill` (the caller's reason flag — `timedOut` / `aborted` — set BEFORE
- * the first signal, exactly as the inlined copies did), SIGTERMs the
- * process group, and schedules a follow-up SIGKILL after `graceMs` in case
- * the process ignores SIGTERM. The SIGKILL timer is unref'ed so it never
- * pins the event loop.
+ * SIGINT→SIGTERM→SIGKILL kill ladder shared by the timeout and abort paths.
+ * No-op when the child has already exited; otherwise runs `onKill`
+ * (the caller's reason flag — `timedOut` / `aborted` — set BEFORE the first
+ * signal, exactly as the inlined copies did) and interrupts the process group.
+ * SIGTERM follows when `graceMs` runs out or as soon as the leader exits,
+ * whichever is first, because members of the group can outlive it: a job a
+ * shell started in the background ignores SIGINT. SIGKILL follows another
+ * `graceMs` later if anything in the group still runs. The timers are unref'ed
+ * so they never pin the event loop.
+ *
+ * SIGINT goes first because it is what a person's Ctrl-C sends, and a program
+ * that records how a run ended acts on it: the OpenCode 2 CLI marks its session
+ * interrupted and releases its claim, where on SIGTERM or SIGKILL the session
+ * stays suspended and OpenCode's own service may resume it later.
  */
 export function scheduleKillLadder(
   proc: SpawnedSubprocess,
@@ -146,12 +168,22 @@ export function scheduleKillLadder(
 ): void {
   if (!proc || proc.exitCode !== null) return;
   opts.onKill();
-  killGroup(proc, "SIGTERM");
-  const sigkillTimer = opts.setTimeoutFn(() => {
-    if (!proc || proc.exitCode !== null) return;
-    killGroup(proc, "SIGKILL");
-  }, opts.graceMs ?? 5000);
-  if (typeof sigkillTimer !== "number") sigkillTimer.unref?.();
+  const afterGrace = (run: () => void): void => {
+    const timer = opts.setTimeoutFn(run, opts.graceMs ?? 5000);
+    if (typeof timer !== "number") timer.unref?.();
+  };
+  killGroup(proc, "SIGINT");
+  let terminated = false;
+  const terminate = (): void => {
+    if (terminated || !groupRunning(proc)) return;
+    terminated = true;
+    killGroup(proc, "SIGTERM");
+    afterGrace(() => {
+      if (groupRunning(proc)) killGroup(proc, "SIGKILL");
+    });
+  };
+  afterGrace(terminate);
+  proc.exited.then(terminate, terminate);
 }
 
 /**
@@ -160,7 +192,7 @@ export function scheduleKillLadder(
  */
 interface LiveGroupChild {
   proc: SpawnedSubprocess;
-  /** Run the same SIGTERM→SIGKILL ladder the timeout and abort paths run. */
+  /** Run the same SIGINT→SIGTERM→SIGKILL ladder the timeout and abort paths run. */
   terminate: () => void;
 }
 
@@ -281,7 +313,7 @@ function utf8BoundaryAtOrBefore(value: Uint8Array, limit: number): number {
 
 /**
  * Drain a readable stream to text, optionally racing each read against a
- * timeout so a process that is killed via SIGTERM/SIGKILL but whose pipe
+ * timeout so a process that is killed via SIGINT/SIGTERM/SIGKILL but whose pipe
  * endpoints stay open (e.g. background threads still holding the fd) cannot
  * block the caller indefinitely. On timeout we return whatever was decoded
  * before the pipe stopped draining.
@@ -452,9 +484,9 @@ export interface RunManagedSubprocessOptions {
    * {@link StreamReadResult.overflowed} flag says which pipe crossed it.
    */
   maxOutputBytes?: number;
-  /** Cooperative cancellation. Aborting runs the same TERM→KILL ladder. */
+  /** Cooperative cancellation. Aborting runs the same SIGINT→SIGTERM→SIGKILL ladder. */
   signal?: AbortSignal;
-  /** SIGTERM→SIGKILL grace period (ms). Defaults to 5000. */
+  /** Grace period (ms) after SIGINT, and again after SIGTERM, before the next signal. Defaults to 5000. */
   graceMs?: number;
   /**
    * Windows only: forwarded to the spawn call. Set when `cmd` is itself a
@@ -519,7 +551,7 @@ function toError(err: unknown): Error {
 
 /**
  * Spawn `cmd` and manage its lifecycle: process-group spawn, hard timeout and
- * cooperative abort (both via the SIGTERM→SIGKILL {@link scheduleKillLadder}),
+ * cooperative abort (both via the SIGINT→SIGTERM→SIGKILL {@link scheduleKillLadder}),
  * bounded output capture, and an optional stdin payload. Never throws for a
  * spawn/exit failure — those surface as {@link ManagedSubprocessResult.spawnError}.
  */
@@ -567,7 +599,7 @@ export async function runManagedSubprocess(
   }
   opts.onSpawn?.(proc);
 
-  // Hard timeout: SIGTERM now, SIGKILL after the grace period if ignored.
+  // Hard timeout: SIGINT now, SIGTERM and SIGKILL after each grace period if ignored.
   // Skipped entirely when timeoutMs is null.
   let timedOut = false;
   let timer: ReturnType<typeof setTimeoutImpl> | undefined;
@@ -652,9 +684,16 @@ export async function runManagedSubprocess(
     const stdinStream = proc.stdin;
     const stdinDone = (async () => {
       try {
-        const writer = stdinStream.getWriter();
-        await writer.write(new TextEncoder().encode(stdinPayload));
-        await writer.close();
+        // Bun.spawn's pipe is a FileSink (write/end), not a WritableStream.
+        const sink = stdinStream as unknown as { write?: (data: string) => unknown; end?: () => unknown };
+        if (typeof sink.write === "function" && typeof sink.end === "function" && !("getWriter" in stdinStream)) {
+          sink.write(stdinPayload);
+          await sink.end();
+        } else {
+          const writer = stdinStream.getWriter();
+          await writer.write(new TextEncoder().encode(stdinPayload));
+          await writer.close();
+        }
       } catch {
         // Best-effort: ignore stdin write failures, the child will get EOF.
       }

@@ -85,21 +85,21 @@ export const RegistryConfigEntrySchema = z
   })
   .passthrough();
 
-// ── Bundles (0.9.0 config-shape cutover, spec §10.1 / D-R5) ─────────────────
+// ── Bundles ─────────────────────────────────────────────────────────────────
 //
 // `bundles` + `defaultBundle` are the desired-configuration shape. Each bundle
 // entry carries ONE source descriptor (`path` | `git` | `website` | `npm`
 // — mirroring today's source types), an optional `writable`, an optional
 // `registryId` locator (the original registry install id, preserved verbatim so
 // a non-slug-legal id like `github:owner/repo` is not lost when its slug-legal
-// bundle KEY is derived), and an optional single-entry `components` map (spec
-// §10.1; the transitional one-component-per-bundle coupling — NOT multi-component
-// machinery). The map KEY is the workspace bundle slug (spec §11.1 charset: no
+// bundle KEY is derived), and an optional single-entry `components` map (the
+// transitional one-component-per-bundle coupling — NOT multi-component
+// machinery). The map KEY is the workspace bundle slug (charset: no
 // `/`, `:`, `.`, `#`, whitespace), validated with {@link isBundleSlug}.
 //
 // `bindings` is not accepted here; the top-level schema rejects it.
 
-/** Website source descriptor for a bundle entry (spec §10.1). */
+/** Website source descriptor for a bundle entry. */
 const BundleWebsiteDescriptorSchema = z
   .object({
     url: httpUrl,
@@ -120,7 +120,7 @@ const BundleWebsiteDescriptorSchema = z
   })
   .passthrough();
 
-/** One component of a bundle (spec §10.1). Single-entry, transitional. */
+/** One component of a bundle. Single-entry, transitional. */
 const BundleComponentConfigSchema = z
   .object({
     root: z.string().min(1).optional(),
@@ -227,7 +227,7 @@ export const BundleConfigEntrySchema = z
   });
 
 /**
- * `bundles` map. Keys are workspace bundle slugs (spec §11.1 / D-R5 charset).
+ * `bundles` map. Keys are workspace bundle slugs.
  * The key charset is validated with {@link isBundleSlug} so a key can never carry
  * `/`, `:`, `.`, `#`, or whitespace (which would break the `bundle//conceptId`
  * ref grammar).

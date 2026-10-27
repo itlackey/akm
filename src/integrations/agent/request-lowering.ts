@@ -5,36 +5,9 @@
 import { ConfigError } from "../../core/errors";
 import { withSchemaInstruction } from "../../core/structured";
 import type { LoweringNotice, ResolvedExecutionRequestV1 } from "../../execution/resolved-request";
-import { MODEL_WORK_POLICY_ID, type ToolSelection } from "../../execution/source";
-import { getHarness } from "../harnesses";
-import type { AgentDispatchRequest, LoweredAgentDispatch } from "./builder-shared";
+import type { AgentDispatchRequest, LoweredAgentDispatch, LowerTarget } from "../harnesses/harness";
 import { composeConversationFallbackPrompt } from "./conversation-fallback";
 import { composePersonaFallbackPrompt } from "./persona-fallback";
-import type { AgentProfile } from "./profiles";
-
-export type ToolTranslation = "all" | "flat" | "sdk" | "none";
-
-/** What one harness can carry natively; everything else is composed into the prompt or noted. */
-export interface AgentLowererOptions {
-  readonly adapter: string;
-  readonly personaChannel: "native" | "prompt";
-  readonly tools: ToolTranslation;
-  /** Inference keys this harness's model-work dispatch carries; a dispatch of any other kind reports every key. */
-  readonly inference?: readonly string[];
-}
-
-/** A tool selection that actually names tools (not omitted, null, or empty). */
-export function hasToolSelection(value: ToolSelection | undefined): value is Exclude<ToolSelection, null> {
-  if (value === null || value === undefined) return false;
-  if (typeof value === "string" || Array.isArray(value)) return value.length > 0;
-  return Object.keys(value).length > 0;
-}
-
-function translatesTools(mode: ToolTranslation, value: ToolSelection): boolean {
-  if (mode === "all") return true;
-  if (typeof value === "string" || Array.isArray(value)) return mode === "flat" || mode === "sdk";
-  return mode === "sdk" && value !== null && Object.values(value).every((entry) => typeof entry === "boolean");
-}
 
 /** The notice for a request field a transport does not carry; dispatch continues. */
 export function untranslated(adapter: string, field: string): Readonly<LoweringNotice> {
@@ -47,103 +20,74 @@ export function untranslated(adapter: string, field: string): Readonly<LoweringN
   };
 }
 
-/** Request fields carrying adapter-owned extensions, which no transport translates. */
-export function extensionFields(request: ResolvedExecutionRequestV1): string[] {
-  return [
-    ...(request.extensions ? ["extensions"] : []),
-    ...(request.command.extensions ? ["command.extensions"] : []),
-    ...(request.persona?.extensions ? ["persona.extensions"] : []),
-    ...(request.engine.extensions ? ["engine.extensions"] : []),
-    ...(request.runtime.extensions ? ["runtime.extensions"] : []),
-  ];
-}
-
 /**
- * Build one harness's request builder: map a resolved request onto the
- * harness-neutral {@link AgentDispatchRequest} its argv builder consumes,
- * composing into the prompt what the harness has no channel for.
+ * Lower a resolved request for one target (a harness, or akm's own runtime): map
+ * it onto the harness-neutral {@link AgentDispatchRequest} its builder consumes,
+ * composing into the prompt what the target has no channel for.
  */
-export function createAgentRequestLowerer(
-  options: AgentLowererOptions,
-): (profile: AgentProfile, request: ResolvedExecutionRequestV1) => LoweredAgentDispatch {
-  const supportedInference = new Set(options.inference ?? []);
-  return (_profile, request) => {
-    const modelWork = request.authorization.policy?.id === MODEL_WORK_POLICY_ID;
-    const notices: Readonly<LoweringNotice>[] = [];
-    const skip = (field: string): void => {
-      notices.push(untranslated(options.adapter, field));
-    };
+export function lowerRequest(target: LowerTarget, request: ResolvedExecutionRequestV1): LoweredAgentDispatch {
+  const supportedInference = new Set(target.inference ?? []);
+  const adapter = target.id;
+  const notices: Readonly<LoweringNotice>[] = [];
+  const skip = (field: string): void => {
+    notices.push(untranslated(adapter, field));
+  };
 
-    let prompt = request.command.content;
-    if (request.conversation && request.conversation.length > 0) {
-      prompt = composeConversationFallbackPrompt(request.conversation, prompt);
+  let prompt = request.command.content;
+  if (request.conversation && request.conversation.length > 0) {
+    prompt = composeConversationFallbackPrompt(request.conversation, prompt);
+    notices.push({
+      code: "conversation-prompt-composed",
+      severity: "warning",
+      adapter,
+      field: "conversation",
+      message: `The ${adapter} transport has no native multi-message channel; AKM composed the conversation prefix into one deterministic JSON prompt block.`,
+    });
+  }
+  const dispatch: AgentDispatchRequest = { prompt };
+  if (request.persona) {
+    if (target.systemPrompt) dispatch.systemPrompt = request.persona.content;
+    else {
+      const composed = composePersonaFallbackPrompt(request.persona.content, prompt, adapter);
+      prompt = composed.prompt;
+      notices.push(...composed.notices);
+    }
+  } else if (typeof request.agent === "string" && request.modelWork) {
+    // Model work is not agent work: a native agent would replace the confined run.
+    notices.push({
+      code: "model-work-agent-ignored",
+      severity: "warning",
+      adapter,
+      field: "agent",
+      message: `The ${adapter} transport ignores native agent ${JSON.stringify(request.agent)} for model work.`,
+    });
+  } else if (typeof request.agent === "string") {
+    if (!target.nativeAgent) {
+      throw new ConfigError(
+        `The ${adapter} transport cannot consume native agent selector ${JSON.stringify(request.agent)}.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    dispatch.agent = request.agent;
+  }
+  // Every agent transport gets the schema as the one instruction.
+  if (request.outputSchema) prompt = withSchemaInstruction(prompt, request.outputSchema);
+  dispatch.prompt = prompt;
+  if (request.model) dispatch.model = request.model.model;
+  for (const key of Object.keys(request.inference ?? {}).sort()) {
+    if (!supportedInference.has(key)) skip(`inference.${key}`);
+  }
+  if (request.modelWork) {
+    if (target.confinable) dispatch.modelWork = true;
+    else {
       notices.push({
-        code: "conversation-prompt-composed",
-        severity: "warning",
-        adapter: options.adapter,
-        field: "conversation",
-        message: `The ${options.adapter} transport has no native multi-message channel; AKM composed the conversation prefix into one deterministic JSON prompt block.`,
+        code: "model-work-unrestricted",
+        severity: "info",
+        adapter,
+        field: "modelWork",
+        message: `The ${adapter} transport cannot restrict its tools for model work; the run is unrestricted, in a scratch directory.`,
       });
     }
-    const dispatch: AgentDispatchRequest = { prompt };
-    if (request.persona) {
-      if (options.personaChannel === "native") dispatch.systemPrompt = request.persona.content;
-      else {
-        const composed = composePersonaFallbackPrompt(request.persona.content, prompt, options.adapter);
-        prompt = composed.prompt;
-        notices.push(...composed.notices);
-      }
-    } else if (typeof request.agent === "string") {
-      if (!getHarness(options.adapter)?.capabilities.nativeAgent) {
-        throw new ConfigError(
-          `The ${options.adapter} transport cannot consume native agent selector ${JSON.stringify(request.agent)}.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
-      dispatch.agent = request.agent;
-    }
-    // Every agent transport gets the schema as the one instruction; a harness
-    // with a native channel (codex --output-schema) also reads dispatch.schema.
-    if (request.outputSchema) {
-      prompt = withSchemaInstruction(prompt, request.outputSchema);
-      dispatch.schema = request.outputSchema as Record<string, unknown>;
-    }
-    dispatch.prompt = prompt;
-    if (request.model) dispatch.model = request.model.resolved;
-    if (Object.hasOwn(request, "inference")) {
-      dispatch.inference = request.inference ?? null;
-      for (const key of Object.keys(request.inference ?? {}).sort()) {
-        if (!(modelWork && supportedInference.has(key))) skip(`inference.${key}`);
-      }
-    }
-    if (modelWork) {
-      if (!getHarness(options.adapter)?.capabilities.modelWork) {
-        throw new ConfigError(
-          `The ${options.adapter} transport cannot enforce the model-work tool policy.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
-      // The builder selects its own confined agent or flags; another agent would replace them.
-      if (dispatch.agent) {
-        throw new ConfigError(
-          `The ${options.adapter} transport cannot run native agent ${JSON.stringify(dispatch.agent)} under the model-work tool policy.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
-      dispatch.modelWork = true;
-    } else if (request.tools !== undefined) {
-      // An explicit empty selection still reaches the builder (e.g. an empty allowlist).
-      if (hasToolSelection(request.tools) && !translatesTools(options.tools, request.tools)) {
-        throw new ConfigError(
-          `The ${options.adapter} transport cannot enforce the resolved tool policy.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
-      dispatch.tools = request.tools as AgentDispatchRequest["tools"];
-    }
-    const settings = request.runtime.settings;
-    if (settings && Object.keys(settings).length > 0) skip("runtime.settings");
-    for (const field of extensionFields(request)) skip(field);
-    return { prompt, dispatch, notices };
-  };
+  }
+  return { dispatch, notices };
 }

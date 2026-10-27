@@ -60,7 +60,6 @@ export interface ResolvedDispatch {
   readonly environment: readonly FrozenWorkflowEnvironmentBinding[];
   readonly unit: BaseUnit;
   readonly instructions: string;
-  readonly engineAnnouncement?: string;
 }
 
 /** The unit's authored settings plus its source span and argv, before any target resolution. */
@@ -86,22 +85,9 @@ export function freezeExecSpec(source: FreezeStep, exec: WorkflowExec, context: 
   };
 }
 
-export function targetConcurrency(runner: RunnerSpec, config: AkmConfig): number | undefined {
-  if (runner.kind === "llm") {
-    const configured = typeof runner.engine === "string" ? config.engines?.[runner.engine] : undefined;
-    return defaultLlmEngineConcurrency(
-      runner.connection.endpoint,
-      configured?.kind === "llm" ? configured.concurrency : undefined,
-    );
-  }
-  if (runner.kind !== "sdk" || !runner.fallbackConnection) return undefined;
-  const selected = typeof runner.engine === "string" ? config.engines?.[runner.engine] : undefined;
-  const fallbackName = selected?.kind === "agent" ? selected.llmEngine : undefined;
-  const fallback = fallbackName ? config.engines?.[fallbackName] : undefined;
-  return defaultLlmEngineConcurrency(
-    runner.fallbackConnection.endpoint,
-    fallback?.kind === "llm" ? fallback.concurrency : undefined,
-  );
+/** The fan-out a connection supports (its `concurrency`, else the endpoint's default); a harness sets none. */
+export function targetConcurrency(runner: RunnerSpec): number | undefined {
+  return runner.kind === "connection" ? defaultLlmEngineConcurrency(runner.endpoint, runner.concurrency) : undefined;
 }
 
 /** The request as it may be persisted: its live runtime environment removed. */
@@ -117,6 +103,8 @@ export function executionUnitValues(
   unit: WorkflowUnitSettings | WorkflowPlan["defaults"],
 ): UnresolvedExecutionDefaults {
   return Object.freeze({
+    ...(unit && Object.hasOwn(unit, "connection") ? { connection: unit.connection } : {}),
+    ...(unit && Object.hasOwn(unit, "harness") ? { harness: unit.harness } : {}),
     ...(unit && Object.hasOwn(unit, "engine") ? { engine: unit.engine } : {}),
     ...(unit && Object.hasOwn(unit, "model") ? { model: unit.model } : {}),
     ...(unit && Object.hasOwn(unit, "llm") ? { inference: unit.llm } : {}),

@@ -37,12 +37,13 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { openStateDatabase } from "../../core/state-db";
 import { warn, warnVerbose } from "../../core/warn";
 import { type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-source";
+import { type NoticeSink, noticeSet } from "../../execution/notices";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
-import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
-import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
+import type { RunnerSpec } from "../../integrations/agent/runner";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
+import { effectiveEmbedding } from "../../llm/embedders/connection";
 import type { Database } from "../../storage/database";
 import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
 import {
@@ -61,7 +62,7 @@ import { contentHash } from "./content-hash";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { isContentDrivenRow, isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt } from "./ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "./retrieval-scope";
-import { callStage, mintProposal, type NoticeSink, noticeSet, stageRunner } from "./stage";
+import { callStage, mintProposal, stageRunner } from "./stage";
 
 export interface MemoryEntry {
   name: string;
@@ -200,8 +201,9 @@ async function clusterMemoriesBySimilarity(
   signal?: AbortSignal,
 ): Promise<{ ordered: MemoryEntry[]; embedTelemetry: ClusterEmbedTelemetry }> {
   const telemetry: ClusterEmbedTelemetry = { embedMs: 0, cacheHits: 0, cacheMisses: 0 };
-  if (memories.length < 3 || !config.embedding) return { ordered: memories, embedTelemetry: telemetry };
-  const modelId = resolveEmbeddingModelId(config.embedding);
+  const embedding = effectiveEmbedding(config);
+  if (memories.length < 3 || !embedding) return { ordered: memories, embedTelemetry: telemetry };
+  const modelId = resolveEmbeddingModelId(embedding);
   const texts = memories.map((m) => [m.description, m.tags.join(" ")].filter(Boolean).join(". ") || m.name);
   const hashes = texts.map((t) => contentHash(t));
   let cached = new Map<string, number[]>();
@@ -222,7 +224,7 @@ async function clusterMemoriesBySimilarity(
     try {
       missVecs = await embedBatch(
         missIndices.map((i) => texts[i] as string),
-        config.embedding,
+        embedding,
         signal,
       );
     } catch {
@@ -407,7 +409,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const stashDir = writeTarget.source.path;
   const notices = noticeSet(opts.onNotices);
   const enabled = resolveProcessEnabled("consolidate", profile);
-  const runner = enabled ? stageRunner(opts, config, profile, "consolidate", notices.add) : undefined;
+  const runner = enabled ? stageRunner(opts, config, "consolidate", notices.add) : undefined;
   opts = {
     ...opts,
     target: writeTarget.source.name,
@@ -647,14 +649,13 @@ const ABORT_FAILURE_RATE = 0.5;
 async function judgeConsolidationChunks(args: {
   chunks: MemoryEntry[][];
   opts: AkmConsolidateOptions;
-  config: AkmConfig;
   sourceName: string;
   bodyTruncation: number;
   pendingProposalBodyHashes: Set<string>;
   warnings: string[];
   acc: ConsolidateAccounting;
 }): Promise<ConsolidatePromoteOp[][]> {
-  const { chunks, opts, config, warnings, acc } = args;
+  const { chunks, opts, warnings, acc } = args;
   const llmRunner = opts.llmRunner ?? undefined;
   const memRef = (m: MemoryEntry) => conceptIdFromTypeName("memory", m.name);
   const failChunk = (message: string, chunk: MemoryEntry[]) => {
@@ -696,7 +697,6 @@ async function judgeConsolidationChunks(args: {
     }
     // The transport already retries once; a failed chunk is not retried here.
     const outcome = await callStage({
-      feature: "memory_consolidation",
       runner: llmRunner,
       system: consolidateSystemPrompt,
       prompt: buildChunkPrompt(
@@ -707,11 +707,9 @@ async function judgeConsolidationChunks(args: {
         args.bodyTruncation,
         args.pendingProposalBodyHashes,
       ),
-      gate: { config, enabled: true },
       request: {
         responseSchema: CONSOLIDATE_PLAN_JSON_SCHEMA,
         enableThinking: false,
-        ...(Object.hasOwn(llmRunner, "timeoutMs") ? { timeoutMs: llmRunner.timeoutMs } : {}),
         signal: opts.signal,
       },
       parse: parsePlan,
@@ -773,7 +771,7 @@ async function planConsolidation(
   // 500 body chars per memory keep the judgement useful; chunk size varies instead.
   const bodyTruncation = 500;
   const chunkSize = computeSafeChunkSize(
-    (llmRunner && runnerLlmConnection(llmRunner)?.contextLength) ?? DEFAULT_CONTEXT_LENGTH_TOKENS,
+    (llmRunner?.kind === "connection" ? llmRunner.contextLength : undefined) ?? DEFAULT_CONTEXT_LENGTH_TOKENS,
     bodyTruncation,
     opts.maxChunkSize,
   );
@@ -795,7 +793,6 @@ async function planConsolidation(
     Array.from({ length: Math.ceil(list.length / chunkSize) }, (_, i) =>
       list.slice(i * chunkSize, (i + 1) * chunkSize),
     );
-  if (llmRunner && budgeted.length > 0) assertRunnerCredentials(llmRunner);
   const { ordered, embedTelemetry } = await clusterMemoriesBySimilarity(budgeted, config, stateDb, opts.signal);
   const chunks = slice(ordered);
   const pendingProposalBodyHashes = loadPendingConsolidateProposalHashes(stashDir, opts.proposalsCtx);
@@ -806,7 +803,6 @@ async function planConsolidation(
   const planned = await judgeConsolidationChunks({
     chunks,
     opts,
-    config,
     sourceName,
     bodyTruncation,
     pendingProposalBodyHashes,

@@ -120,7 +120,7 @@ export interface WorkflowUnitDiagnostic {
    * tokens resolve to right now.
    */
   orchestration?: WorkflowStepOrchestrationSummary;
-  /** Journaled resolved runtime kind for a frozen-engine unit. */
+  /** Journaled resolved runtime kind for a frozen unit. */
   runtimeKind: WorkflowRuntimeKind | null;
   platform: string | null;
 }
@@ -130,10 +130,19 @@ export interface WorkflowUnitDiagnostic {
  * The `Record<WorkflowRuntimeKind, …>` is exhaustiveness-checked, so a new runtime
  * kind cannot be added to the union without being accepted here too.
  */
-const IR_RUNTIME_KINDS: Record<WorkflowRuntimeKind, true> = { llm: true, agent: true, sdk: true, exec: true };
+const IR_RUNTIME_KINDS: Record<WorkflowRuntimeKind, true> = { connection: true, harness: true, exec: true };
+
+/** What a run of an earlier release journaled for the runner kinds that were renamed. */
+const EARLIER_RUNTIME_KINDS: Record<string, WorkflowRuntimeKind> = {
+  llm: "connection",
+  agent: "harness",
+  sdk: "harness",
+};
 
 function runtimeKindOf(runner: string | null): WorkflowRuntimeKind | null {
-  return runner !== null && Object.hasOwn(IR_RUNTIME_KINDS, runner) ? (runner as WorkflowRuntimeKind) : null;
+  if (runner === null) return null;
+  if (Object.hasOwn(IR_RUNTIME_KINDS, runner)) return runner as WorkflowRuntimeKind;
+  return EARLIER_RUNTIME_KINDS[runner] ?? null;
 }
 
 function toUnitDiagnostic(row: WorkflowRunUnitRow): WorkflowUnitDiagnostic {
@@ -182,8 +191,8 @@ export interface WorkflowNextResult {
   done?: true;
   autoStarted?: true;
   /**
-   * Non-fatal notices produced when THIS invocation created the run (e.g. the
-   * implicit engine fallback). Only present on the auto-start path — a resume
+   * Non-fatal notices produced when THIS invocation created the run (a param
+   * that looks like a secret). Only present on the auto-start path — a resume
    * never re-surfaces a decision it did not make.
    */
   startWarnings?: string[];
@@ -202,7 +211,7 @@ export interface CompleteWorkflowStepInput {
    */
   summary?: string;
   /**
-   * Optional override for the summary-validation judge. When omitted the engine
+   * Optional override for the summary-validation judge. When omitted the run loop
    * builds one from the judge frozen into the run plan.
    * Injected primarily for tests.
    */
@@ -324,10 +333,6 @@ export async function startWorkflowRun(
     // the start.
     const secretWarnings = detectSecretShapedParams(effectiveParams);
     if (secretWarnings.length > 0) result.warnings = [...(result.warnings ?? []), ...secretWarnings];
-    // The implicit engine fallback is announced ONCE, here at run creation —
-    // the frozen plan records the engine actually used, so a resume never
-    // re-announces a decision it did not make.
-    if (frozen.engineAnnouncement) result.warnings = [...(result.warnings ?? []), frozen.engineAnnouncement];
     return result;
   });
 }
@@ -584,7 +589,7 @@ export async function completeWorkflowStep(
     if (criteria.length > 0 && !judge) {
       throw new ConfigError(
         `Workflow run ${input.runId} has completion criteria for step "${input.stepId}" but its frozen plan has no judge. ` +
-          "Set workflow.judgeEngine, abandon this run, and create a new one with `akm workflow run <ref>`.",
+          "Run `akm setup` to add a connection or harness, abandon this run, and create a new one with `akm workflow run <ref>`.",
         "INVALID_CONFIG_FILE",
       );
     }
@@ -855,7 +860,7 @@ function toChildRunNode(repo: WorkflowRunsRepository, rootRunId: string, row: Wo
       ? {
           resume: {
             command: `akm workflow resume ${row.id}`,
-            // biome-ignore lint/suspicious/noThenProperty: mirrors spec §4.5's real WorkflowChildRunNode.resume.then field name
+            // biome-ignore lint/suspicious/noThenProperty: mirrors the real WorkflowChildRunNode.resume.then field name
             then: `akm workflow resume ${rootRunId} && akm workflow run ${rootRunId}`,
           },
         }

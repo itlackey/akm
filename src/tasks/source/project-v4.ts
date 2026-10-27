@@ -3,16 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `projectTaskSourceV4()` — the task source v4 -> prepare-seam projection
- * (spec docs/plans/specs/p2a-task-source-v4.md §3.5).
+ * `projectTaskSourceV4()` — the task source v4 -> prepare-seam projection.
  *
  * `prepareTaskV3Execution` (`src/tasks/prepare/prepare.ts`) has never needed
  * to change. This is a pure, typed transform from an already-parsed
  * `TaskSourceV4Document` into a `PreparableTaskDocument` (a name for
  * `TaskV3SourceDocument` that is not version-bound,
  * `src/tasks/prepare/prepared-execution.ts`) — no YAML string is fabricated
- * and nothing is re-parsed (the P1b §4.3 invariant this phase carries
- * forward: no file under `src/` may spell out a fabricated task-v3 header
+ * and nothing is re-parsed (no file under `src/` may spell out a fabricated task-v3 header
  * line immediately followed by a synthetic executable-selector line — see
  * `tests/workflows/direct-script-typed.test.ts`'s source-text scan, which
  * this file's own prose is careful not to trip by literally reproducing
@@ -24,19 +22,16 @@
  *     anywhere — input delivery reads the ORIGINAL parsed document directly
  *     (`src/tasks/run/load-task.ts`), not this projection.
  *   - `schedule[i].inputs` (per-binding literal overrides) is NOT projected
- *     onto `triggers.schedules[i]` — same reason (B-38).
+ *     onto `triggers.schedules[i]` — same reason.
  *   - `schedule.length === 0` projects to `triggers = { manual: true,
- *     schedules: [] }` (D2-N6) — v3's OWN spelling for "no cron, dispatch
+ *     schedules: [] }` — v3's OWN spelling for "no cron, dispatch
  *     only", so no downstream consumer of `PreparableTaskDocument` learns a
  *     new shape.
  *   - the projected `version` is the LITERAL `3` — the prepare contract's
- *     discriminant, not a re-assertion that the source was v3
- *     (spec docs/plans/specs/p4-deletions-closeout.md §3.2.7). P4 deleted
- *     `TASK_V3_SCHEMA_VERSION` (task v3 acceptance is gone from `src`) but
- *     left `PreparableTaskDocument`'s NAME and shape alone (§0, R-R1 —
- *     the rename is deferred to a follow-up commit after the sweep), so
- *     this recorded wart persists; see the literal's own inline comment
- *     below.
+ *     discriminant, not a re-assertion that the source was v3. Task v3
+ *     acceptance is gone from `src` (`TASK_V3_SCHEMA_VERSION` no longer
+ *     exists), but `PreparableTaskDocument`'s name and shape are unchanged, so
+ *     the literal stays; see its own inline comment below.
  */
 
 import type { PreparableTaskDocument } from "../prepare/prepared-execution";
@@ -60,10 +55,11 @@ function projectAkm(document: TaskSourceV4Document): Readonly<TaskV3AkmOptions> 
 
   const execution = document.execution;
   if (execution.agent !== undefined) out.agent = execution.agent;
+  if (execution.connection !== undefined) out.connection = execution.connection;
+  if (execution.harness !== undefined) out.harness = execution.harness;
   if (execution.engine !== undefined) out.engine = execution.engine;
   if (execution.model !== undefined) out.model = execution.model;
   if (execution.inference !== undefined) out.inference = execution.inference;
-  if (execution.tools !== undefined) out.tools = execution.tools;
   if (execution.timeout !== undefined) out.timeout = execution.timeout;
   if (execution.redact !== undefined) out.redact = execution.redact;
   if (execution.maxSteps !== undefined) out.maxSteps = execution.maxSteps;
@@ -74,7 +70,7 @@ function projectAkm(document: TaskSourceV4Document): Readonly<TaskV3AkmOptions> 
   return Object.keys(out).length > 0 ? (Object.freeze(out) as Readonly<TaskV3AkmOptions>) : undefined;
 }
 
-/** Project one parsed task source v4 document into the prepare seam's existing input shape (spec §3.5). */
+/** Project one parsed task source v4 document into the prepare seam's existing input shape. */
 export function projectTaskSourceV4(document: TaskSourceV4Document): PreparableTaskDocument {
   const akm = projectAkm(document);
   const schedules = Object.freeze(

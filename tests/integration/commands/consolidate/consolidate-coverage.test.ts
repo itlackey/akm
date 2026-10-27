@@ -32,6 +32,7 @@ import { closeDatabase, openIndexDatabase } from "../../../../src/storage/reposi
 import { upsertEntry } from "../../../../src/storage/repositories/index-entries-repository";
 import { upsertEmbedding } from "../../../../src/storage/repositories/index-vec-repository";
 import { makeConfig } from "../../../_helpers/factories";
+import { testLlmRunner } from "../../../_helpers/llm-runner";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, withMockedFetch } from "../../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -340,11 +341,10 @@ describe("akmConsolidate — a covered memory is not promoted, an uncovered one 
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: {
-        planner: { kind: "llm", endpoint: "https://consolidate.example.test/v1/chat/completions", model: "planner" },
+      connections: {
+        planner: { endpoint: "https://consolidate.example.test/v1/chat/completions", models: { fast: "planner" } },
       },
-      defaults: { llmEngine: "planner", improveStrategy: "default" },
-      improve: { strategies: { default: { processes: { consolidate: { enabled: true } } } } },
+      improve: { strategy: "default", strategies: { default: { processes: { consolidate: { enabled: true } } } } },
     } as AkmConfig;
     const reply = (content: unknown) =>
       new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }), {
@@ -418,11 +418,10 @@ describe("akmConsolidate — a covered memory is not promoted, an uncovered one 
 });
 
 describe("the drain's judge sees the knowledge a promotion may duplicate", () => {
-  const RUNNER = {
-    kind: "llm",
-    engine: "fake-judge",
-    connection: { endpoint: "http://fake.invalid/v1/chat/completions", model: "judge", contextLength: 8_192 },
-  } as const;
+  const RUNNER = testLlmRunner(
+    { endpoint: "http://fake.invalid/v1/chat/completions", model: "judge", contextLength: 8_192 },
+    "fake-judge",
+  );
 
   function promotionOf(memory: string, knowledgeRef: string) {
     return createProposal(stash, {

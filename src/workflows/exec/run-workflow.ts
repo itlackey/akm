@@ -7,9 +7,7 @@
  * execute path. akm walks the frozen plan (read from `plan_json`, never live
  * source) and dispatches every unit itself; every step advances through
  * `completeWorkflowStep`; one O_EXCL lock file per run keeps a second driver
- * off (a dead holder's lock is reclaimed); gate loops are bounded; and the
- * SDK dispatch registry is drained on every exit so the process can exit.
- * See docs/architecture/decisions/0011-engine-run-loop-invariants.md.
+ * off (a dead holder's lock is reclaimed); and gate loops are bounded.
  */
 
 import { createHash } from "node:crypto";
@@ -18,8 +16,8 @@ import path from "node:path";
 import { TransientError, UsageError } from "../../core/errors";
 import { type LockOwnership, probeLock, releaseLock } from "../../core/file-lock";
 import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
+import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { disposeDispatchResources } from "../../integrations/agent/runner-dispatch";
 import type { WorkflowRunStepState, WorkflowRunSummary } from "../../sources/types";
 import { resolveStorageLocations } from "../../storage/locations";
 import { withWorkflowRunsConnection, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
@@ -38,7 +36,6 @@ import {
 import { loadWorkflowAsset } from "../runtime/workflow-asset-loader";
 import type { SummaryJudge } from "../validate-summary";
 import { frozenSummaryJudge, resolveJudgeCwd } from "./frozen-judge";
-import { mergeLoweringNotices } from "./lowering-notices";
 import {
   defaultUnitDispatcher,
   executeStepPlan,
@@ -88,12 +85,6 @@ export interface RunWorkflowOptions {
    * step. Injected primarily for tests.
    */
   summaryJudge?: SummaryJudge | null;
-  /**
-   * Drains cached `opencode serve` child processes on every exit path — a live
-   * child keeps the event loop open and would hang the CLI. Defaults to
-   * {@link disposeDispatchResources}; injected by tests.
-   */
-  disposeDispatchResources?: () => void | Promise<void>;
   /**
    * The task runner's provenance event source, stamped as `AKM_EVENT_SOURCE`
    * into every unit's and the gate judge's child environment (an authored
@@ -145,8 +136,8 @@ export interface RunWorkflowResult {
   /** Deduped safe diagnostics from work lowered during this invocation only. */
   notices?: readonly Readonly<LoweringNotice>[];
   /**
-   * Non-fatal notices from THIS invocation: creating the run (the implicit
-   * engine fallback announcement — never re-surfaced on a resume), resuming a
+   * Non-fatal notices from THIS invocation: creating the run (a param that
+   * looks like a secret — never re-surfaced on a resume), resuming a
    * run whose authored source changed since it was frozen (the run continues
    * on the frozen plan), or abandoning a run whose frozen plan this akm can
    * no longer decode (the message names the recovery).
@@ -181,7 +172,7 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
     );
     executed.push(...result.executed);
     stepsProcessed += result.stepsProcessed;
-    const notices = mergeLoweringNotices(...executed.map((step) => step.notices));
+    const notices = mergeNotices(...executed.map((step) => step.notices));
     const aggregate = { ...result, executed, stepsProcessed, ...(notices ? { notices } : {}) };
     // An attempt that executed nothing (an abandoned, undecodable plan) has no
     // failed step for a retry to re-open.
@@ -274,19 +265,7 @@ async function runWorkflowAttempt(
       ...(warnings.length > 0 ? { warnings } : {}),
     };
   } finally {
-    try {
-      if (lock) releaseLock(lock);
-    } finally {
-      // Process-lifecycle drain (owner finding 4): release any cached SDK server
-      // child processes so a one-shot CLI invocation exits cleanly instead of
-      // hanging on the leaked handle. Runs even if the lock release itself
-      // fails; a teardown-time error must not skip dispatch cleanup.
-      try {
-        await (options.disposeDispatchResources ?? disposeDispatchResources)();
-      } catch {
-        /* disposal is best-effort; never let cleanup mask the run outcome */
-      }
-    }
+    if (lock) releaseLock(lock);
   }
 }
 
@@ -729,7 +708,7 @@ async function driveRun(
     }
 
     // Judge-outage contract: resolve the step's frozen completion judge BEFORE
-    // any dispatch. An unresolvable judge (missing frozen engine, no dispatcher
+    // any dispatch. An unresolvable judge (missing frozen connection or harness, no dispatcher
     // for an agent judge) is verifier INFRASTRUCTURE failure — block the step
     // for `akm workflow resume` instead of spending on units the gate can never
     // verify. No gate loop is consumed and nothing is dispatched.
@@ -793,7 +772,7 @@ async function driveRun(
 
   // Re-read for the freshest run state (the loop may have exited on maxSteps).
   const finalState = await getNextWorkflowStep(next.run.id);
-  const notices = mergeLoweringNotices(...executed.map((step) => step.notices));
+  const notices = mergeNotices(...executed.map((step) => step.notices));
   return {
     run: finalState.run,
     executed,

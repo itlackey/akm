@@ -21,6 +21,7 @@ import { openStateDatabase } from "../../../src/core/state-db";
 import { resolveStorageLocations } from "../../../src/storage/locations";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
+import { WORKFLOW_PLAN_VERSION } from "../../../src/workflows/plan";
 import { resolveOrchestrationRefs } from "../../../src/workflows/renderer";
 import { getWorkflowStatus, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import {
@@ -102,12 +103,19 @@ async function drive(ref: string, options: { maxSteps?: number } = {}) {
   return { runId: started.run.id, result };
 }
 
+/** Every property name anywhere in a parsed JSON value: the plan's own fields, not the strings it holds. */
+function propertyNames(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(propertyNames);
+  if (typeof value !== "object" || value === null) return [];
+  return Object.entries(value).flatMap(([name, child]) => [name, ...propertyNames(child)]);
+}
+
 function realpath(file: string): string {
   return fs.realpathSync(file);
 }
 
 describe("a frozen plan carries no location", () => {
-  test("irVersion 7: no frozen directory, no frozen workspace, and an env ref that is a bundle-qualified ref only", async () => {
+  test("irVersion 7 and later: no frozen directory, no frozen workspace, and an env ref that is a bundle-qualified ref only", async () => {
     const team = bundle("team");
     write(team, "env/prod.env", "REGION=east\nTOKEN=${secrets/t}\n");
     write(
@@ -121,8 +129,8 @@ describe("a frozen plan carries no location", () => {
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
     const plan = JSON.parse(row?.plan_json ?? "{}");
 
-    expect(plan.irVersion).toBe(7);
-    expect(row?.plan_ir_version).toBe(7);
+    expect(plan.irVersion).toBe(WORKFLOW_PLAN_VERSION);
+    expect(row?.plan_ir_version).toBe(WORKFLOW_PLAN_VERSION);
     const [run, ask] = plan.steps;
     expect(run.root.environment).toEqual([{ kind: "env-ref", ref: "team//env/prod", precedence: 0 }]);
     expect(run.root.frozenTarget.cwdIdentity).toBeUndefined();
@@ -130,7 +138,31 @@ describe("a frozen plan carries no location", () => {
     // A command target freezes an empty cwdIdentity: not a location, but akm 0.10.0 and earlier refuse it at dispatch.
     expect(ask.root.frozenTarget.cwdIdentity).toEqual({});
     expect(ask.root.frozenTarget.request.runtime.workspace).toBeUndefined();
-    expect(row?.plan_json).not.toMatch(/requestedRoot|realCwd|workspace|secretNames/);
+    for (const location of ["requestedRoot", "realCwd", "workspace", "secretNames"]) {
+      expect(propertyNames(plan)).not.toContain(location);
+    }
+  });
+
+  test("a value that merely contains a location's name is not a location: an executable under /workspace/ is frozen as written", async () => {
+    const team = bundle("team");
+    const tool = "/workspace/review-tools/bin/bun.exe";
+    write(
+      team,
+      "workflows/frozen.md",
+      workflowSource([execStep("run", [tool, "-e", "0", "--workspace=/workspace/x"])]),
+    );
+    configureBundles({ team });
+
+    const started = await startWorkflowRun("team//workflows/frozen", {});
+    const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
+    const plan = JSON.parse(row?.plan_json ?? "{}");
+
+    expect(row?.plan_json).toContain(tool);
+    // A search of the serialized text for a location's name would find this value; the plan's own fields are what count.
+    expect(row?.plan_json).toMatch(/workspace/);
+    for (const location of ["requestedRoot", "realCwd", "workspace", "secretNames"]) {
+      expect(propertyNames(plan)).not.toContain(location);
+    }
   });
 });
 

@@ -3,102 +3,68 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Local embedder backed by the external @huggingface/transformers package.
+ * Local embedder: a BERT-family embedding model run with onnxruntime-node,
+ * its text encoded by @huggingface/tokenizers, mean-pooled over the attention
+ * mask and L2-normalised.
  *
- * Encapsulates the transformer pipeline lifecycle as instance state on a
- * `LocalEmbedder` so tests can construct fresh instances without leaking
- * pipelines across tests. The facade in `../embedder.ts` keeps a single
- * shared instance for the production code path.
+ * Encapsulates the model's lifecycle as instance state on a `LocalEmbedder` so
+ * tests can construct fresh instances without leaking loaded models across
+ * tests. The facade in `../embedder.ts` keeps a single shared instance for the
+ * production code path.
  */
 
+import fs from "node:fs";
 import path from "node:path";
-import { getCacheDir } from "../../core/paths";
-import { warn } from "../../core/warn";
+import { preloadOnnxRuntimeLibrary } from "../../standalone/onnxruntime-library";
+import { ensureLocalModelFiles } from "./local-model-files";
 import type { Embedder, EmbeddingVector } from "./types";
 
 /**
- * Default local transformer model for embeddings.
+ * Default local model for embeddings.
  * `bge-small-en-v1.5` scores higher on MTEB benchmarks than the previous
  * `all-MiniLM-L6-v2` at the same 384-dimension footprint.
  */
 export const DEFAULT_LOCAL_MODEL = "Xenova/bge-small-en-v1.5";
 
+/** The runtime the local embedder reports once its model has loaded. */
+export const LOCAL_EMBEDDING_RUNTIME = "onnxruntime-node";
+
+/** The loaded model: one L2-normalised vector per text, in order. */
+type LocalPipeline = (texts: string[]) => Promise<Float32Array[]>;
+
 /**
- * Batch Tensor shape returned by @huggingface/transformers feature-extraction
- * when given a string[]. The pipeline returns a single Tensor object (NOT an
- * Array<{data}>). The flat `.data` Float32Array has `batch * dim` elements;
- * `.dims` is [batch, dim] so each row is `dims[1]` floats wide.
+ * The embedding runtime is not usable on this machine. `platform`: onnxruntime-node
+ * has no native library for it, so keyword search is all there is. `load`: it has
+ * one, which did not load (a missing package or addon, a `noexec` temp or cache
+ * directory).
  */
-interface TransformerBatchTensor {
-  data: Float32Array;
-  dims: readonly [number, number];
-}
-
-/** Exact @huggingface/transformers 4.2 feature-extraction result overloads. */
-interface TransformerPipeline {
-  (input: string, options: { pooling: string; normalize: boolean }): Promise<{ data: Float32Array }>;
-  (input: string[], options: { pooling: string; normalize: boolean }): Promise<TransformerBatchTensor>;
-}
-
-type TransformerPipelineFactory = (
-  task: string,
-  model: string,
-  options?: { dtype?: string },
-) => Promise<TransformerPipeline>;
-
-/** Type-guard: true when the value looks like a batch Tensor (has .dims). */
-function isBatchTensor(v: unknown): v is TransformerBatchTensor {
-  return (
-    v !== null &&
-    typeof v === "object" &&
-    (v as TransformerBatchTensor).data instanceof Float32Array &&
-    "dims" in (v as object) &&
-    Array.isArray((v as TransformerBatchTensor).dims) &&
-    (v as TransformerBatchTensor).dims.length === 2 &&
-    (v as TransformerBatchTensor).dims.every((dim) => Number.isInteger(dim) && dim > 0)
-  );
+export class LocalRuntimeUnavailableError extends Error {
+  constructor(
+    message: string,
+    readonly kind: "platform" | "load",
+  ) {
+    super(message);
+  }
 }
 
 // ── Test seam ────────────────────────────────────────────────────────────────
-// Swap-and-restore override for the dynamic Transformers.js import.
+// Swap-and-restore override for the model loader (model files, runtime, tokenizer).
 // Inert in production; only tests install fakes, via tests/_helpers/seams.ts
 // (which restores them automatically). See docs/architecture/specs/di-seams-plan.md.
 
-interface TransformersEnvironment {
-  allowRemoteModels?: boolean;
-  backends?: unknown;
-  cacheDir?: string | null;
+export type LocalPipelineLoader = (modelName: string) => Promise<LocalPipeline>;
+
+let pipelineLoader: LocalPipelineLoader = loadOnnxPipeline;
+
+/** TEST-ONLY. Swap the model loader; pass undefined to restore. */
+export function _setLocalPipelineLoaderForTests(fake?: LocalPipelineLoader): void {
+  pipelineLoader = fake ?? loadOnnxPipeline;
 }
-
-function isEnabledEnvironmentFlag(value: string | undefined): boolean {
-  return /^(?:1|true|yes|on)$/i.test(value?.trim() ?? "");
-}
-
-interface TransformersModule {
-  env: TransformersEnvironment;
-  pipeline: unknown;
-}
-
-export type TransformersLoader = () => Promise<TransformersModule>;
-
-const realTransformersLoader: TransformersLoader = () =>
-  import("@huggingface/transformers") as Promise<TransformersModule>;
-
-let transformersLoader: TransformersLoader = realTransformersLoader;
-
-/** TEST-ONLY. Swap the transformers module loader; pass undefined to restore. */
-export function _setTransformersLoaderForTests(fake?: TransformersLoader): void {
-  transformersLoader = fake ?? realTransformersLoader;
-}
-
-const LOCAL_EMBEDDER_DTYPE = "fp32";
-const LOCAL_EMBEDDER_FALLBACK_DTYPE = "auto";
 
 /**
- * Maximum texts per batch for the local transformers pipeline. The pipeline
- * can run genuine batched inference over a string array; 32 is a safe default
- * that fits well inside most model context budgets while providing 10–50×
- * throughput improvement over one-at-a-time calls on the cold minority.
+ * Maximum texts per batch for the local model. 32 is a safe default that fits
+ * well inside most model context budgets while providing 10–50× throughput
+ * improvement over one-at-a-time calls on the cold minority.
  */
 const LOCAL_BATCH_SIZE = 32;
 
@@ -111,14 +77,125 @@ function resolveLocalModelName(overrideModel?: string): string {
   return overrideModel || DEFAULT_LOCAL_MODEL;
 }
 
+/**
+ * A standalone binary built for a target with no native library (`none`) must not
+ * bundle the package: its addon for that platform does not exist. The bundler
+ * drops only the branch a build constant rules out, so the import sits in an
+ * `else`, not after the `throw`.
+ */
+async function importOnnxRuntime(): Promise<typeof import("onnxruntime-node")> {
+  if (typeof AKM_STANDALONE_NATIVE_MODULE !== "undefined" && AKM_STANDALONE_NATIVE_MODULE === "./native/none") {
+    throw new Error("no native library is available for this platform");
+  } else {
+    await preloadOnnxRuntimeLibrary();
+    return import("onnxruntime-node");
+  }
+}
+
+/**
+ * Whether onnxruntime-node has a native library for this machine. A standalone
+ * binary knows from its build (`none`). The package has one for glibc Linux
+ * x64/arm64, Apple-silicon macOS and Windows x64/arm64, and none for musl Linux
+ * or Intel macOS.
+ */
+function hasNativeLibrary(): boolean {
+  if (typeof AKM_STANDALONE_NATIVE_MODULE !== "undefined") return AKM_STANDALONE_NATIVE_MODULE !== "./native/none";
+  if (process.platform === "linux") {
+    const header = (process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined)?.header;
+    if (!header?.glibcVersionRuntime) return false;
+  }
+  return ["linux-x64", "linux-arm64", "darwin-arm64", "win32-x64", "win32-arm64"].includes(
+    `${process.platform}-${process.arch}`,
+  );
+}
+
+async function loadOnnxRuntime(): Promise<typeof import("onnxruntime-node")> {
+  try {
+    return await importOnnxRuntime();
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    const kind = hasNativeLibrary() ? "load" : "platform";
+    // Only the package itself missing calls for a reinstall; a platform it ships no addon for (Intel macOS) fails on
+    // `../bin/napi-v6/<platform>/<arch>/onnxruntime_binding.node` and is reported below.
+    if (kind === "load" && /Cannot find (?:module|package) ['"]onnxruntime-node['"]/.test(msg)) {
+      throw new LocalRuntimeUnavailableError("Semantic search requires onnxruntime-node. Reinstall akm-cli.", kind);
+    }
+    throw new LocalRuntimeUnavailableError(
+      `Failed to load the embedding runtime (onnxruntime-node): ${msg}. Semantic search with the local model is unavailable; keyword search still works.`,
+      kind,
+    );
+  }
+}
+
+/** The mean of one text's token vectors (padding excluded), scaled to unit length. */
+function meanPooled(hidden: Float32Array, offset: number, tokens: number, dim: number): Float32Array {
+  const vector = new Float32Array(dim);
+  for (let token = 0; token < tokens; token++) {
+    for (let k = 0; k < dim; k++) vector[k] = vector[k]! + hidden[offset + token * dim + k]!;
+  }
+  let norm = 0;
+  for (let k = 0; k < dim; k++) {
+    vector[k] = vector[k]! / tokens;
+    norm += vector[k]! ** 2;
+  }
+  return vector.map((value) => value / Math.sqrt(norm));
+}
+
+async function loadOnnxPipeline(modelName: string): Promise<LocalPipeline> {
+  const ort = await loadOnnxRuntime();
+  const { Tokenizer } = await import("@huggingface/tokenizers");
+  const modelDir = await ensureLocalModelFiles(modelName);
+  const readJson = (file: string): object => JSON.parse(fs.readFileSync(path.join(modelDir, file), "utf8"));
+  const tokenizerConfig = readJson("tokenizer_config.json") as { model_max_length?: unknown };
+  const tokenizer = new Tokenizer(readJson("tokenizer.json"), tokenizerConfig);
+  const maxLength =
+    typeof tokenizerConfig.model_max_length === "number" ? tokenizerConfig.model_max_length : Number.POSITIVE_INFINITY;
+  const session = await ort.InferenceSession.create(path.join(modelDir, "onnx", "model.onnx"), {
+    executionProviders: ["cpu"],
+    logSeverityLevel: 3,
+  });
+
+  return async (texts) => {
+    // A text longer than the model's maximum is cut to it. Shorter ones are padded
+    // to the longest in the batch; the mask keeps padding out of the pooling.
+    const encoded = texts.map((text) => tokenizer.encode(text).ids.slice(0, maxLength));
+    const length = Math.max(...encoded.map((row) => row.length));
+    const ids = new BigInt64Array(texts.length * length);
+    const mask = new BigInt64Array(texts.length * length);
+    encoded.forEach((row, i) => {
+      row.forEach((id, j) => {
+        ids[i * length + j] = BigInt(id);
+        mask[i * length + j] = 1n;
+      });
+    });
+    const dims = [texts.length, length];
+    const inputs: Record<string, import("onnxruntime-node").Tensor> = {
+      input_ids: new ort.Tensor("int64", ids, dims),
+      attention_mask: new ort.Tensor("int64", mask, dims),
+      token_type_ids: new ort.Tensor("int64", new BigInt64Array(texts.length * length), dims),
+    };
+    // Models that take fewer inputs (no token_type_ids) are fed only theirs.
+    const feeds = Object.fromEntries(
+      session.inputNames.flatMap((name) => (inputs[name] ? [[name, inputs[name]]] : [])),
+    );
+    const outputs = await session.run(feeds);
+    const hidden = (outputs.last_hidden_state ?? outputs.token_embeddings ?? outputs.logits)?.data as Float32Array;
+    const dim = hidden.length / (texts.length * length);
+    return encoded.map((row, i) => meanPooled(hidden, i * length * dim, row.length, dim));
+  };
+}
+
 export class LocalEmbedder implements Embedder {
   /**
    * Cache the *promise* (not the resolved result) so concurrent calls share
    * the same initialisation work and never download the model twice. Keyed
    * by model name so switching models gets a fresh pipeline.
    */
-  private pipelinePromise?: Promise<TransformerPipeline>;
+  private pipelinePromise?: Promise<LocalPipeline>;
   private pipelineModelName?: string;
+
+  /** The runtime this embedder embeds with: set once a model has loaded, `undefined` before. */
+  runtime?: typeof LOCAL_EMBEDDING_RUNTIME;
 
   constructor(private readonly defaultModel?: string) {}
 
@@ -126,6 +203,7 @@ export class LocalEmbedder implements Embedder {
   reset(): void {
     this.pipelinePromise = undefined;
     this.pipelineModelName = undefined;
+    this.runtime = undefined;
   }
 
   async embed(text: string, signal?: AbortSignal): Promise<EmbeddingVector> {
@@ -137,8 +215,8 @@ export class LocalEmbedder implements Embedder {
 
   /**
    * Embed a batch of texts. Processes in chunks of `LOCAL_BATCH_SIZE` (32) so
-   * the transformers pipeline can run genuine batched inference rather than one
-   * call per text. Each chunk is checked against the AbortSignal between calls.
+   * the model can run genuine batched inference rather than one call per text.
+   * Each chunk is checked against the AbortSignal between calls.
    *
    * `onBatch`, when given, fires once per chunk (indices into `texts` + the
    * chunk's embeddings) as it completes (#954) — parity with
@@ -162,24 +240,7 @@ export class LocalEmbedder implements Embedder {
         throw signal.reason instanceof Error ? signal.reason : new Error("embedding interrupted");
       }
       const chunk = texts.slice(i, i + LOCAL_BATCH_SIZE);
-      // @huggingface/transformers 4.2 returns a single batch Tensor. Validate
-      // that exact shape and propagate inference failures without re-executing
-      // the same inputs through a second runtime path.
-      const batchResult = await pipeline(chunk, {
-        pooling: "mean",
-        normalize: true,
-      });
-      if (!isBatchTensor(batchResult)) {
-        throw new Error("unexpected pipeline return shape for batch input");
-      }
-      const [batch, dim] = batchResult.dims;
-      if (batch !== chunk.length || batchResult.data.length !== batch * dim) {
-        throw new Error("unexpected pipeline return shape for batch input");
-      }
-      const chunkEmbeddings: EmbeddingVector[] = [];
-      for (let row = 0; row < chunk.length; row++) {
-        chunkEmbeddings.push(Array.from(batchResult.data.subarray(row * dim, (row + 1) * dim)) as number[]);
-      }
+      const chunkEmbeddings = (await pipeline(chunk)).map((vector) => Array.from(vector));
       results.push(...chunkEmbeddings);
       onBatch?.(
         Array.from({ length: chunk.length }, (_, row) => i + row),
@@ -192,16 +253,16 @@ export class LocalEmbedder implements Embedder {
   /** Embed using a model name override (used by the facade for per-call model overrides). */
   async embedWithModel(text: string, modelName?: string): Promise<EmbeddingVector> {
     const pipeline = await this.getPipeline(modelName);
-    const result = await pipeline(text, { pooling: "mean", normalize: true });
-    return Array.from(result.data) as number[];
+    const [vector] = await pipeline([text]);
+    return Array.from(vector as Float32Array);
   }
 
   /**
-   * Eagerly load (or return the cached) underlying pipeline. Used by
-   * availability checks that want to surface model-download failures
-   * without performing a real embed call.
+   * Eagerly load (or return the cached) model. Used by availability checks
+   * that want to surface model-download and runtime failures without
+   * performing a real embed call.
    */
-  async getPipeline(modelName?: string): Promise<TransformerPipeline> {
+  async getPipeline(modelName?: string): Promise<LocalPipeline> {
     const resolvedModel = resolveLocalModelName(modelName);
     if (this.pipelinePromise && this.pipelineModelName !== resolvedModel) {
       this.pipelinePromise = undefined;
@@ -209,36 +270,10 @@ export class LocalEmbedder implements Embedder {
     }
     if (!this.pipelinePromise) {
       this.pipelineModelName = resolvedModel;
-      this.pipelinePromise = (async () => {
-        // Ensure HuggingFace model cache lives in a stable location outside
-        // node_modules so it survives package reinstalls.
-        if (!process.env.HF_HOME) {
-          process.env.HF_HOME = path.join(getCacheDir(), "models");
-        }
-
-        let pipeline: unknown;
-        try {
-          const mod = await transformersLoader();
-          // Transformers.js 4.x defaults its filesystem cache underneath the
-          // installed package and no longer derives it from HF_HOME. Point the
-          // public runtime setting at our stable cache explicitly so package
-          // reinstalls and test-sandbox HOME rotation do not re-download the
-          // model. The exact pinned 4.2 module owns this public environment.
-          mod.env.cacheDir = process.env.HF_HOME;
-          if (isEnabledEnvironmentFlag(process.env.HF_HUB_OFFLINE)) {
-            mod.env.allowRemoteModels = false;
-          }
-          pipeline = mod.pipeline;
-        } catch (importError) {
-          const msg = importError instanceof Error ? importError.message : String(importError);
-          if (/Cannot find (?:module|package)|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND|Cannot resolve/i.test(msg)) {
-            throw new Error("Semantic search requires @huggingface/transformers. Reinstall akm-cli.");
-          }
-          throw new Error(`Failed to load embedding runtime: ${msg}. Check platform compatibility.`);
-        }
-        const pipelineFn = pipeline as TransformerPipelineFactory;
-        return createLocalPipeline(pipelineFn, resolvedModel);
-      })();
+      this.pipelinePromise = pipelineLoader(resolvedModel).then((pipeline) => {
+        this.runtime = LOCAL_EMBEDDING_RUNTIME;
+        return pipeline;
+      });
       // HI-13: Clear the cached promise on failure so the next call retries
       // instead of permanently rejecting every subsequent call with the same error.
       this.pipelinePromise.catch(() => {
@@ -247,44 +282,5 @@ export class LocalEmbedder implements Embedder {
       });
     }
     return this.pipelinePromise;
-  }
-}
-
-async function createLocalPipeline(
-  pipelineFn: TransformerPipelineFactory,
-  modelName: string,
-): Promise<TransformerPipeline> {
-  try {
-    return await pipelineFn("feature-extraction", modelName, { dtype: LOCAL_EMBEDDER_DTYPE });
-  } catch (error) {
-    if (!shouldRetryWithoutExplicitDtype(error)) {
-      throw error;
-    }
-
-    warn(
-      'Local embedding model "%s" rejected explicit dtype "%s"; retrying with explicit fallback dtype "%s".',
-      modelName,
-      LOCAL_EMBEDDER_DTYPE,
-      LOCAL_EMBEDDER_FALLBACK_DTYPE,
-    );
-    return pipelineFn("feature-extraction", modelName, { dtype: LOCAL_EMBEDDER_FALLBACK_DTYPE });
-  }
-}
-
-function shouldRetryWithoutExplicitDtype(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /dtype|fp32|precision|quant/i.test(message);
-}
-
-/**
- * Check whether the declared Transformers dependency can be resolved without
- * loading a model.
- */
-export function isTransformersAvailable(): boolean {
-  try {
-    import.meta.resolve("@huggingface/transformers");
-    return true;
-  } catch {
-    return false;
   }
 }

@@ -3,61 +3,45 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Supporting type family for the amended `BundleAdapter` interface
- * (`./bundle-adapter.ts`), minted per akm 0.9.0 chunk-1 decision D1-1
- * (chunk-1 brief).
- *
- * Provenance, per type:
+ * Supporting type family for the `BundleAdapter` interface
+ * (`./bundle-adapter.ts`):
  *
  *  - `BundleId` / `ComponentId` / `ItemRef` / `BundleInstallation` /
- *    `BundleComponent` — transcribed verbatim from
- *    `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §1.1 (lines 56-75).
+ *    `BundleComponent` and `IndexDocument` — the full shapes, each documented
+ *    at its declaration.
  *
- *  - `IndexDocument` — transcribed verbatim from the same doc, §3 (lines
- *    205-241). Per D1-1 this is the FULL/real shape, not a deferred
- *    placeholder: Chunk 5 later reconciles it with the `IndexDocument` ->
- *    `IndexDocument` rename (a merge into this type, not a re-creation of
- *    it).
+ *  - `ValidateContext` — the read-only context `validate` receives.
  *
- *  - `ValidateContext` — NOT restated in the adapter spec's own §2 code
- *    block (chunk-1 anchors.md §A.1); defined only in the normative spec,
- *    `docs/architecture/specs/akm-format-neutral-bundle-workspace-spec.md:562-569`.
- *    Transcribed verbatim from there.
- *
- *  - `Diagnostic` — referenced as `validate`'s `Promise<Diagnostic[]>`
- *    return type by both spec documents, but its shape is declared
- *    NOWHERE (adapter spec, normative spec, plan, and decision-history all
- *    searched — 0 hits). Per D1-1, MINTED here modeled on the existing
- *    `LintIssue` (`src/commands/lint/types.ts:19-25`:
+ *  - `Diagnostic` — `validate`'s `Promise<Diagnostic[]>` return type, modeled
+ *    on the existing `LintIssue` (`src/commands/lint/types.ts`:
  *    `{ file, issue, detail, fixed }`), with one deliberate generalization:
  *    `issue` is an open `string` here rather than `LintIssueType` (a closed
  *    union of 12 lint-command-specific codes) — `Diagnostic` is produced by
  *    arbitrary adapters' `validate()`, not scoped to the lint command's
- *    vocabulary. Flagged for the maintainer per the brief.
+ *    vocabulary.
  *
- * DEFERRED (not declared here): the spec's OPTIONAL authoring (§12.2), export
- * (§12.3), and memory (§12.4) facet methods reference a type family
+ * Not declared here: the OPTIONAL authoring, export, and memory facet methods
+ * reference a type family
  * (`AuthoringTarget`/`AuthoringContext`/`CreateRequest`/`BundleExport`/
- * `BindingRequest`/`BindingPlan`/`MemoryRecord`/`MemorySemanticPlan`) that NO
- * spec document shapes. Those facets are Tier-B ("no 0.9.0 adapter implements
- * these"); rather than commit 8 meaningless `Record<string, unknown>`
- * placeholders on the foundational contract, both the facet methods (on
- * `BundleAdapter`) and these types are DROPPED from chunk 1 — the owning chunk
- * of each facet adds its method + a REAL type shape when it is built. Refines
- * D1-1 (0.9.0 core contract only); flagged for the maintainer.
+ * `BindingRequest`/`BindingPlan`/`MemoryRecord`/`MemorySemanticPlan`) that is
+ * shaped nowhere. No adapter implements those facets; rather than commit 8
+ * meaningless `Record<string, unknown>` placeholders on the foundational
+ * contract, both the facet methods (on `BundleAdapter`) and these types are
+ * left out — the owning facet adds its method + a REAL type shape when it is
+ * built.
  */
 
 import type { TocHeading } from "../asset/markdown";
 
 // ── §1.1 — bundle / component / installation model ─────────────────────────
 
-/** Stable bundle name (workspace identity); the optional ref prefix. Spec §1.1. */
+/** Stable bundle name (workspace identity); the optional ref prefix. */
 export type BundleId = string;
 
-/** A configured root under one adapter; PROVENANCE, not a ref segment. Spec §1.1/§1.3. */
+/** A configured root under one adapter; PROVENANCE, not a ref segment. */
 export type ComponentId = string;
 
-/** `"[<bundle>//]<concept-id>"` — the ref grammar, spec §1.3. */
+/** `"[<bundle>//]<concept-id>"` — the ref grammar. */
 export type ItemRef = string;
 
 export interface BundleInstallation {
@@ -137,8 +121,8 @@ export type ScopeKey = keyof StashEntryScope;
 // IndexDocument shape wins — the durable truth.
 
 export interface IndexDocument {
-  // ── Provenance (spec §3) — OPTIONAL for the IndexDocument alias; see header ──
-  /** Fully-qualified "<bundle>//<concept-id>" (canonical stored spelling, §1.3). */
+  // ── Provenance — OPTIONAL for the IndexDocument alias; see header ──
+  /** Fully-qualified "<bundle>//<concept-id>" (canonical stored spelling). */
   ref?: ItemRef;
   bundle?: BundleId;
   /** PROVENANCE from the bundle's single configured component, not a ref segment. */
@@ -184,7 +168,7 @@ export interface IndexDocument {
   intent?: StashIntent;
   filename?: string;
   /**
-   * Asset quality marker (v1 spec §4.2). Four values are well-known:
+   * Asset quality marker. Four values are well-known:
    * `"generated"` and `"curated"` are included in default search;
    * `"enriched"` marks entries the now-retired LLM metadata-enhancement pass
    * (0.9.17-alpha.9) rewrote (also included in default search; nothing sets
@@ -324,8 +308,7 @@ export interface IndexDocument {
 //     an incompatible shape that would silently drop to `[]` if folded onto
 //     this field (the exact collision this namespacing avoids).
 //   - `quality: "generated"` (above) — an existing enum VALUE, unrelated.
-// See D1.3 (`docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §0.1)
-// and `docs/architecture/specs/okf-support.md`'s v0.2 note.
+// See `docs/architecture/specs/okf-support.md`'s v0.2 note.
 
 /** One `sources:` entry (OKF v0.2). Only `resource` is required upstream; the rest are optional credibility signals, read verbatim and never validated/scored. */
 export interface OkfSourceEntry {

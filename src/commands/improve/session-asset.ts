@@ -136,8 +136,9 @@ export function buildSessionAccessInstructions(harness: string, logPath: string,
   if (harness === "opencode") {
     return [
       `Open the SQLite database at ${JSON.stringify(logPath)} in read-only mode.`,
-      "Query: SELECT m.data, p.data FROM message AS m JOIN part AS p ON p.message_id = m.id WHERE m.session_id = ? AND p.session_id = ? ORDER BY m.time_created, p.time_created;",
-      `Bind both parameters to ${JSON.stringify(sessionId)}.`,
+      "If it has a session_v2 table (OpenCode 2), query: SELECT type, data FROM session_message WHERE session_id = ? ORDER BY seq;",
+      "otherwise (OpenCode 1), query: SELECT m.data, p.data FROM message AS m JOIN part AS p ON p.message_id = m.id WHERE m.session_id = ? AND p.session_id = ? ORDER BY m.time_created, p.time_created;",
+      `Bind the session parameters (one in the first query, both in the second) to ${JSON.stringify(sessionId)}.`,
     ].join("\n");
   }
   return `Read with: cat ${logPath}`;

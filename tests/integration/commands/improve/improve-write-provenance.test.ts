@@ -53,8 +53,8 @@ afterEach(() => {
 
 const config = {
   semanticSearchMode: "off",
-  defaults: { improveStrategy: "provenance-test" },
   improve: {
+    strategy: "provenance-test",
     strategies: {
       "provenance-test": {
         processes: Object.fromEntries(

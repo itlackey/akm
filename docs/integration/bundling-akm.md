@@ -29,12 +29,17 @@ akm migrate apply
 
 In order, every run applies (or, under `status`/`--dry-run`, plans):
 
-1. **config.json in its current shape** (`configFile`): retired and unknown
-   keys dropped, `configVersion` set. Config loading already does this in
-   memory; this persists it under a backup. A config older than 0.9.15 (the
-   legacy `stashDir`/`sources[]`/`installed` layout, an `extraParams` key
-   that shadows a first-class field) is not converted by 0.10: it blocks
-   with a message to run `akm migrate apply` under akm 0.9.x first.
+1. **config.json in its current shape** (`configFile`): unknown keys dropped,
+   `configVersion` set, and the `engines` / `defaults` form converted to
+   `connections` / `harnesses`. Config loading already does this in memory;
+   this persists it under a backup. The API keys a config still holds in any
+   form akm no longer reads move to `credentials.json` (`configFile.credentials`
+   lists the entry names, never a value), and a leftover `models.json` is folded
+   into the `models` of the connections and harnesses it names. A config older
+   than 0.9.15 (the legacy `stashDir`/`sources[]`/`installed` layout) is not
+   converted by 0.10: it blocks with a message to run `akm migrate apply` under
+   akm 0.9.x first. What each retired key becomes is the table in
+   [Configuration](../reference/configuration.md#the-engines-form).
 2. **Pending `state.db` migrations**, historical-destructive ones included
    (`stateMigrations`). This is the only path (besides `akm upgrade`, which
    calls the same code) that is allowed to apply a destructive migration to an
@@ -45,7 +50,11 @@ In order, every run applies (or, under `status`/`--dry-run`, plans):
    task source v4 (`taskFiles`) under one backup directory per run. A file
    the planner cannot convert unambiguously is reported `blocked` and left
    alone; the rest still convert.
-4. **Residue sweep**: superseded pre-0.9.0 `.akm` files in the stash and the
+4. **Asset `engine:` keys** (`assetEngineKeys`): the retired `engine:` key on
+   commands, agents, workflows and task sources rewritten to `connection:` or
+   `harness:` by what the name is now, under one backup directory per run. A
+   bundle akm may not change is skipped.
+5. **Residue sweep**: superseded pre-0.9.0 `.akm` files in the stash and the
    transaction-journal, maintenance-barrier, lock-mutex and version-stamp
    files older releases kept under `$DATA`/`$STATE`/`$CONFIG` (`deadResidue`).
 
@@ -67,6 +76,7 @@ same step names):
   "configFile": { "keys": [], "changed": false, "applied": false },
   "stateMigrations": { "pending": [] },
   "taskFiles": { "schemaVersion": 1, "changed": 0, "skipped": 0, "blocked": 0, "files": [] },
+  "assetEngineKeys": { "schemaVersion": 1, "changed": 0, "skipped": 0, "files": [] },
   "deadResidue": { "pending": [] }
 }
 ```
@@ -104,8 +114,7 @@ same step names):
   conflict; a real `apply` will clear them.
 - **`blocked`** — at least one item cannot be applied automatically (a
   genuine authoring problem, e.g. a task file the migrator can't rewrite
-  unambiguously, or a config `extraParams` value that conflicts with its
-  first-class field). `blockers` names each one. `apply` still applies
+  unambiguously, or a config that fails validation). `blockers` names each one. `apply` still applies
   everything it *can*, then reports `blocked` and exits non-zero.
 
 A pending `state.db` migration needs no human decision, so it is never
@@ -119,6 +128,7 @@ Key fields:
 | --- | --- |
 | `stateMigrations` | `{ pending: string[] }` under `status`/`--dry-run`; `{ applied: string[], safetyCopyPath?: string }` after a real `apply`. `safetyCopyPath` is present only when a historical-destructive migration ran — see below. |
 | `taskFiles` | `changed`/`skipped`/`blocked` counts and a `files[]` array with each file's `status` and `reason`. |
+| `assetEngineKeys` | `changed`/`skipped` counts and a `files[]` array with each rewritten file's `rewrites` (`at`, `from`, `to`). |
 | `backupPath` / `applied` | Present after a real apply that rewrote at least one task file: the run's backup directory and how many files it rewrote. |
 | `deadResidue` | `{ pending: [...] }` under a read-only run, `{ removed: [...] }` / `{ recovered: [...], quarantined: [...], deferred: [...] }` after apply. An untrusted journal (unreadable `journal.json`, or a fence violation) is quarantined to `$DATA/txn-quarantine`; a trusted, fenced journal whose `rollback`/`finalize` throws is deferred, left in place under `$DATA/txn/<rootNs>/`. Neither is thrown, and neither sets `status` to `blocked`. `staleTxns.pending` entries carry `wouldQuarantine: { reason }` when the journal's read-only fence check alone (not a `rollback`/`finalize` run) already shows it would be quarantined by a real apply. |
 

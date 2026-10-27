@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import type { TargetRow } from "../commands/targets";
 import type { OkfProvenance } from "../core/adapter/types";
 import type { StashEntryScope } from "../indexer/passes/metadata";
 import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
@@ -71,13 +72,13 @@ export interface SourceSearchHit {
    */
   estimatedTokens?: number;
   /**
-   * Non-fatal hit-level warnings surfaced by the indexer or a registry provider
-   * (v1 spec §4.2). Optional; absent when there is nothing to surface. Adding
+   * Non-fatal hit-level warnings surfaced by the indexer or a registry provider.
+   * Optional; absent when there is nothing to surface. Adding
    * a value here MUST NOT change ranking — warnings are informational only.
    */
   warnings?: string[];
   /**
-   * Optional asset quality marker (v1 spec §4.2). One of `generated`,
+   * Optional asset quality marker. One of `generated`,
    * `curated`, `proposed`, or any other string the source emits. Surfaced
    * verbatim from the underlying entry. Absent when the entry has no
    * `quality` field.
@@ -116,8 +117,8 @@ export interface RegistrySearchResultHit {
   /** Name of the registry that provided this hit (provenance tracking) */
   registryName?: string;
   /**
-   * Non-fatal hit-level warnings surfaced by the registry provider (v1 spec
-   * §4.2). Optional; absent when there is nothing to surface. Adding a value
+   * Non-fatal hit-level warnings surfaced by the registry provider.
+   * Optional; absent when there is nothing to surface. Adding a value
    * here MUST NOT change ranking — warnings are informational only.
    */
   warnings?: string[];
@@ -154,7 +155,7 @@ export interface WorkflowParameter {
  * The step's dispatch kind is carried by FIELD PRESENCE, the same way `fanOut`
  * carries the step kind: `exec` present means the step runs a shell
  * command, and `engine`/`model` are then absent because an exec unit names no
- * engine — it must never be described as running on the workflow's default one.
+ * connection or harness — it must never be described as running on the workflow's default one.
  */
 export interface WorkflowStepOrchestrationSummary {
   engine?: string;
@@ -163,8 +164,8 @@ export interface WorkflowStepOrchestrationSummary {
   /**
    * An exec (shell) unit's dispatch. `command` is the argv verbatim — the
    * words that will actually be spawned, never shell-parsed and never clipped,
-   * so what `show` prints is what runs. `passEnv`/`inheritEnv` describe the
-   * child's environment SCOPE by variable name; no value is ever projected.
+   * so what `show` prints is what runs. `passEnv` is the variable names the
+   * author listed; no value is ever projected.
    *
    * The SHARED projection shape (`WorkflowExec`, `workflows/plan.ts`), not a mirror
    * of it: a field added there must not be able to reach the frozen plan while
@@ -486,12 +487,6 @@ export interface ShowResponse extends FragmentProvenance {
   prompt?: string;
   description?: string;
   tags?: string[];
-  /**
-   * Tool access policy for agent assets. Mapped from the frontmatter `tools` key.
-   * Can be a single tool name, a list of tool names, or a structured policy object
-   * (e.g. `{ read: "allow", write: "deny" }`).
-   */
-  toolPolicy?: string | string[] | Record<string, unknown>;
   modelHint?: string;
   /** For commands: which agent should execute this command (OpenCode convention) */
   agent?: string;
@@ -617,7 +612,7 @@ export interface UpgradeResponse {
 export interface InfoResponse {
   schemaVersion: number;
   version: string;
-  /** Primary bundle directory (spec §10.1), same resolution `akm sources list` uses (R-057). */
+  /** Primary bundle directory, same resolution `akm sources list` uses. */
   bundleDir: string;
   /** Name of the primary bundle from config, or `null` when none is configured (R-057). */
   defaultBundle: string | null;
@@ -658,6 +653,12 @@ export interface InfoResponse {
     status: "disabled" | "pending" | "ready-js";
   };
   registries: Array<{ url: string; name?: string; provider?: string; enabled?: boolean }>;
+  /**
+   * The connections, harnesses and work that run on them (`akm health` adds
+   * reachability and versions; here nothing is contacted). Each connection's key
+   * is reported as held, never its value.
+   */
+  connectionsAndHarnesses: TargetRow[];
   sourceProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
   indexStats: {
     entryCount: number;

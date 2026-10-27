@@ -7,21 +7,16 @@
  * shell-command builders (`shellCommand`, `resolveLeadingBareAkmCommand`,
  * `quoteShellArgument`).
  *
- * Moved from src/tasks/runner.ts (spec docs/plans/specs/p1b-model-extraction.md
- * §5.1, §9, runner.ts:294-455).
+ * The child env's `AKM_EVENT_SOURCE` stamp reads `provenance.eventSource`
+ * (`"task"` under the default provenance context, run/provenance.ts).
  *
- * F-1 (spec §5.2 point 1): the child env's `AKM_EVENT_SOURCE` stamp now reads
- * `provenance.eventSource` instead of the hardcoded literal `"task"` — with
- * the default provenance context (run/provenance.ts) this is byte-equivalent
- * to before (P-06 stays green unchanged).
- *
- * F-2 (D8, spec §5.3): the result's `target` is now `{kind:"shell", cmd}` or
- * `{kind:"script", cmd}` — formerly one shared `{kind:"command", cmd}`.
+ * The result's `target` is `{kind:"shell", cmd}` or `{kind:"script", cmd}`.
  */
 
 import path from "node:path";
 import { assertNever } from "../../core/assert";
 import type { TaskLogLineInput } from "../../core/logs-db";
+import { childProcessEnv } from "../../core/paths";
 import { runManagedSubprocess, type SpawnFn, streamCaptureFailure } from "../../core/subprocess";
 import { cleanupFrozenScript, frozenScriptCommand, materializeFrozenScript } from "../frozen-script";
 import type { ExecutionProvenanceContext } from "../model/invocation";
@@ -184,7 +179,7 @@ export async function runNativeTask(input: {
   // above) — a timeout or SIGTERM to the direct child would reap the whole
   // group, but nothing tied THIS process's own termination to that same
   // ladder, so a signal to the runner left its child running as an orphan.
-  // Aborting `runManagedSubprocess` here runs its normal SIGTERM→SIGKILL
+  // Aborting `runManagedSubprocess` here runs its normal SIGINT→SIGTERM→SIGKILL
   // kill ladder against the child's process group.
   const abortController = new AbortController();
   const forwardTerminationSignal = (signal: NodeJS.Signals): void => {
@@ -201,8 +196,8 @@ export async function runNativeTask(input: {
       cmd = frozenScriptCommand(task, materialized.file);
     }
     // Managed spawn (src/core/subprocess.ts): process-GROUP kill so a timeout
-    // reaps the whole command tree (no orphans), and a SIGTERM→SIGKILL ladder
-    // so a child that ignores SIGTERM can't wedge the run forever. `signal`
+    // reaps the whole command tree (no orphans), and a SIGINT→SIGTERM→SIGKILL
+    // ladder so a child that ignores both can't wedge the run forever. `signal`
     // ties that same ladder to a termination signal received by this
     // process itself (#956), not only to the timeout.
     const result = await runManagedSubprocess(cmd, {
@@ -213,7 +208,7 @@ export async function runNativeTask(input: {
       // A more specific stamp already in the environment (e.g. improve's
       // AKM_EVENT_SOURCE=improve on its child spawns) still wins in children.
       env: {
-        ...process.env,
+        ...childProcessEnv(),
         ...task.environment,
         AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE ?? provenance.eventSource,
       },

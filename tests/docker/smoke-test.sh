@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # smoke-test.sh — Runs inside a Docker container to verify akm works.
-# Validates: init, index, search, show, list, info
+# Validates: init, index, search, show, list, info, models, health
 set -euo pipefail
 
 PASS=0
@@ -39,6 +39,33 @@ assert_output_contains() {
 	set -e
 	if [ "$status" -ne 0 ]; then
 		fail "$desc — command exited $status: ${out:0:200}"
+		return
+	fi
+	if echo "$out" | grep -qi "$needle"; then
+		pass "$desc"
+	else
+		fail "$desc — expected '$needle' in output"
+		echo "    actual output: ${out:0:200}"
+	fi
+}
+
+# Like assert_output_contains, for a command that may exit with one of several
+# statuses (`akm health` is 0 pass / 4 warn / 1 fail; `akm models` is 78 with
+# nothing to list). `statuses` is a space-separated list.
+assert_status_output_contains() {
+	local desc="$1"
+	shift
+	local statuses="$1"
+	shift
+	local needle="$1"
+	shift
+	local out status
+	set +e
+	out=$("$@" 2>&1)
+	status=$?
+	set -e
+	if [[ " $statuses " != *" $status "* ]]; then
+		fail "$desc — command exited $status, expected one of: $statuses: ${out:0:200}"
 		return
 	fi
 	if echo "$out" | grep -qi "$needle"; then
@@ -93,12 +120,6 @@ echo ""
 echo "--- Basic CLI ---"
 assert_exit_zero "akm --help exits 0" akm --help
 assert_output_contains "akm --help shows usage" "usage\|Usage\|akm" akm --help
-assert_exit_zero "installed models.json copies through the runtime" akm models copy-defaults
-if [ -f "$CONFIG_DIR/akm/models.json" ] && grep -q '"fast"' "$CONFIG_DIR/akm/models.json" && grep -q '"reasoning"' "$CONFIG_DIR/akm/models.json"; then
-	pass "copied models.json contains installed intent aliases"
-else
-	fail "copied models.json is missing installed intent aliases"
-fi
 
 # ── 2. Init ──────────────────────────────────────────────────────────────────
 
@@ -234,13 +255,42 @@ echo "--- Info ---"
 assert_exit_zero "akm info exits 0" akm info
 assert_json_field "info has indexStats" "indexStats" akm info --format json
 
-# ── 8. List ──────────────────────────────────────────────────────────────────
+# ── 8. Models ────────────────────────────────────────────────────────────────
+
+# Two configs, each in its own config directory: one with a connection, one
+# with only a harness. Nothing contacts the network: the endpoint is a discard
+# port and every command that would ask it passes --no-probe.
+echo "--- Models ---"
+CONNECTION_CONFIG="$(mktemp -d)"
+HARNESS_CONFIG="$(mktemp -d)"
+
+assert_json_field "setup --endpoint writes a connection" "runs" \
+	env XDG_CONFIG_HOME="$CONNECTION_CONFIG" akm setup --yes --no-init --no-probe --endpoint http://127.0.0.1:9/v1
+assert_output_contains "models set changes an alias" "smoke-model" \
+	env XDG_CONFIG_HOME="$CONNECTION_CONFIG" akm models set fast smoke-model --no-probe
+assert_output_contains "models shows the alias on the connection" "smoke-model" \
+	env XDG_CONFIG_HOME="$CONNECTION_CONFIG" akm models --no-probe
+assert_status_output_contains "health --no-probe reports the connection" "0 4" '"type": "connection"' \
+	env XDG_CONFIG_HOME="$CONNECTION_CONFIG" akm health --no-probe
+assert_output_contains "info reports the connection" '"type": "connection"' \
+	env XDG_CONFIG_HOME="$CONNECTION_CONFIG" akm info
+
+assert_exit_zero "config set enables a harness with no connection" \
+	env XDG_CONFIG_HOME="$HARNESS_CONFIG" akm config set harnesses.claude '{}' --silent
+assert_status_output_contains "models with no connection points at setup" "78" "akm setup" \
+	env XDG_CONFIG_HOME="$HARNESS_CONFIG" akm models --no-probe
+assert_status_output_contains "health --no-probe reports the harness" "0 4" '"type": "harness"' \
+	env XDG_CONFIG_HOME="$HARNESS_CONFIG" akm health --no-probe
+assert_output_contains "info reports the harness" '"type": "harness"' \
+	env XDG_CONFIG_HOME="$HARNESS_CONFIG" akm info
+
+# ── 9. List ──────────────────────────────────────────────────────────────────
 
 echo "--- List ---"
 # list may return empty but should not error
 assert_exit_zero "akm bundle list does not crash" akm bundle list
 
-# ── 9. Re-index (incremental) ───────────────────────────────────────────────
+# ── 10. Re-index (incremental) ──────────────────────────────────────────────
 
 echo "--- Re-index ---"
 

@@ -25,6 +25,7 @@
 import fs from "node:fs";
 import { defineCommand } from "citty";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
+import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -42,14 +43,13 @@ export const agentCommand = defineCommand({
   meta: {
     name: "agent",
     description:
-      "Dispatch an agent CLI (opencode, claude, …) with an optional agent persona and model defaults. Use --prompt for work; stored commands run through akm command run. Nonempty tool requests require separate operator authorization and are rejected by the current CLI.",
+      "Dispatch an agent CLI (opencode, claude, …) with an optional agent persona and model defaults. Use --prompt for work; without one the harness starts interactively. Stored commands run through akm command run.",
   },
   args: {
     ...GLOBAL_OUTPUT_ARGS,
     "agent-ref": {
       type: "positional",
-      description:
-        "Optional agent asset ref (e.g. agents/code-reviewer). Resolves persona and model defaults; the current CLI rejects a nonempty tool request without separate operator authorization.",
+      description: "Optional agent asset ref (e.g. agents/code-reviewer). Resolves persona and model defaults.",
       required: false,
     },
     prompt: { type: "string", description: "Task prompt to pass to the agent" },
@@ -58,11 +58,11 @@ export const agentCommand = defineCommand({
       description: "Read the task prompt from stdin (mutually exclusive with --prompt)",
       default: false,
     },
-    engine: { type: "string", description: "Agent engine to use (default: defaults.engine)" },
+    ...SELECTION_ARGS,
+    ...RETIRED_ENGINE_ARG,
     model: {
-      type: "string",
-      description:
-        "Model override — accepts aliases (opus, sonnet, haiku) or exact platform model IDs. Overrides the model specified in the agent asset.",
+      ...SELECTION_ARGS.model,
+      description: `${SELECTION_ARGS.model.description}. Overrides the model specified in the agent asset.`,
     },
     "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
     cwd: {
@@ -89,16 +89,15 @@ export const agentCommand = defineCommand({
 
       // The common invocation resolver loads a selected agent through its
       // owning bundle adapter. This CLI never re-reads/show-projects the file.
-      const model = getStringArg(args, "model");
+      const selection = selectionFromArgs(args);
 
       const stdinPrompt = promptStdin ? readPromptStdin() : undefined;
 
       const result = await akmAgentDispatch({
-        engine: getStringArg(args, "engine"),
         prompt: stdinPrompt ?? promptText,
         ...(agentRef === undefined ? {} : { agentRef }),
         agentConfig,
-        ...(model === undefined ? {} : { selection: { model } }),
+        ...(Object.keys(selection).length === 0 ? {} : { selection }),
         ...(cwd ? { cwd } : {}),
         ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
       });

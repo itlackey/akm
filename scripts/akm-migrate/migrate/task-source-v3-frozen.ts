@@ -56,7 +56,6 @@ import {
   parseEnvironment,
   parseStringArray,
   parseTimeout,
-  parseTools,
   presentJsonValue,
   readBoundedTaskSourceYaml,
   sourceError,
@@ -64,6 +63,21 @@ import {
   TASK_V3_MAX_REDACT_NAMES,
   TASK_V3_MAX_SCHEDULES,
 } from "../../../src/tasks/source/bounded-document";
+
+/** `akm.tools` — retired in task source v4; validated here as v3 did, then dropped by the migration. */
+function parseTools(
+  value: ExecutionJsonValue,
+  ctx: BoundedDocumentContext,
+): string | readonly string[] | ExecutionJsonObject | null {
+  if (value === null || typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    if (value.some((entry) => typeof entry !== "string"))
+      sourceError(ctx, ["akm", "tools"], "array values must be strings.");
+    return value as readonly string[];
+  }
+  if (typeof value === "object") return value as ExecutionJsonObject;
+  sourceError(ctx, ["akm", "tools"], "must be a string, string array, mapping, or null.");
+}
 
 export const TASK_V3_SCHEMA_VERSION = 3 as const;
 

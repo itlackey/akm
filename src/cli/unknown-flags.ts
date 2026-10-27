@@ -27,6 +27,7 @@
  * validation) — conservative by design.
  */
 
+import { closestMatch } from "../core/closest-match";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import {
@@ -47,7 +48,10 @@ const UNKNOWN_FLAG_TOLERANT_COMMANDS: ReadonlySet<string> = new Set(["info"]);
 
 /** The structural subset of a citty command this module reads. */
 export interface FlagScanCommand {
-  readonly args?: Record<string, { readonly type?: string; readonly alias?: string | readonly string[] }>;
+  readonly args?: Record<
+    string,
+    { readonly type?: string; readonly alias?: string | readonly string[]; readonly hidden?: boolean }
+  >;
   readonly subCommands?: Record<string, FlagScanCommand> | undefined;
 }
 
@@ -61,7 +65,7 @@ interface KnownArgs {
   readonly valueFlags: ReadonlySet<string>;
   /** Comparable names of boolean flags — the only ones `--no-` may negate. */
   readonly booleanFlags: ReadonlySet<string>;
-  /** Human-readable spellings, for the did-you-mean suggestion. */
+  /** Human-readable spellings, for the did-you-mean suggestion. Hidden flags are accepted but never suggested. */
   readonly displayNames: readonly string[];
   /** Resolved command path tokens (e.g. ["proposal", "accept"]). */
   readonly path: readonly string[];
@@ -98,7 +102,7 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
       // Shared args (GLOBAL_OUTPUT_ARGS) recur at every level; suggest each once.
       if (!names.has(comparable)) {
         names.add(comparable);
-        displayNames.push(`--${key}`);
+        if (def.hidden !== true) displayNames.push(`--${key}`);
       }
       if (def.type === "string" || def.type === "enum") valueFlags.add(comparable);
       if (def.type === "boolean") booleanFlags.add(comparable);
@@ -130,39 +134,6 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
   }
 
   return { names, valueFlags, booleanFlags, displayNames, path, resolved: true };
-}
-
-/** Single-row-at-a-time edit-distance DP (inputs are short flag/command names). */
-function editDistance(a: string, b: string): number {
-  let previous: number[] = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i += 1) {
-    const current: number[] = [i];
-    for (let j = 1; j <= b.length; j += 1) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      current.push(Math.min((previous[j] ?? 0) + 1, (current[j - 1] ?? 0) + 1, (previous[j - 1] ?? 0) + cost));
-    }
-    previous = current;
-  }
-  return previous[b.length] ?? 0;
-}
-
-/**
- * Closest candidate within `threshold` edit distance, or undefined when
- * nothing is close enough to be worth suggesting. Shared by the unknown-flag
- * and unknown-command (src/cli.ts) did-you-mean paths, which pick different
- * thresholds.
- */
-export function closestMatch(attempted: string, candidates: readonly string[], threshold: number): string | undefined {
-  let best: string | undefined;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const candidate of candidates) {
-    const distance = editDistance(attempted, candidate);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = candidate;
-    }
-  }
-  return best !== undefined && bestDistance <= threshold ? best : undefined;
 }
 
 /**
@@ -203,13 +174,11 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
   // `workflow run`, `task run`, and `task explain` each own one deliberately
   // dynamic namespace: long options become exact-name parameter/input flags
   // and are checked against the frozen plan / task source's own contract
-  // before this gate would otherwise reject them (spec
-  // docs/plans/specs/p2a-task-source-v4.md §5.1 — task run's
+  // before this gate would otherwise reject them (task run's
   // UNKNOWN_FLAG/INPUT_BINDING_INVALID must be raised from INSIDE the command
   // body, where runWithJsonErrors renders the JSON envelope, not from this
-  // generic pre-dispatch gate; docs/plans/specs/p2b-input-bindings.md §4.5,
-  // B-55 — `task explain` reuses the identical `parseTaskInputFlags`
-  // scanner, so it needs the identical exemption).
+  // generic pre-dispatch gate; `task explain` reuses the identical
+  // `parseTaskInputFlags` scanner, so it needs the identical exemption).
   const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain"]);
   const dynamicWorkflowParams = dynamicNamedFlagCommands.has(known.path.join(" "));
   const tolerant = UNKNOWN_FLAG_TOLERANT_COMMANDS.has(known.path.join(" "));

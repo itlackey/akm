@@ -31,8 +31,8 @@ akm hints --detail brief >> AGENTS.md
 
 The output is stable across patch releases and designed for agents rather
 than humans: it describes the lookup workflow (`curate` → `show` →
-`feedback`) and explains how refs work. It prints a short guide by default;
-pass `--full` for the complete one.
+`feedback`) and explains how refs work. It prints the complete guide by default;
+`--detail brief` prints the short one.
 
 ## The retrieval loop: curate, show, feedback
 
@@ -81,7 +81,7 @@ which formats are read-only versus writable in the current release.
 The native directory remains the source of truth: AKM translates recognized
 assets while reading the bundle and does not synchronize, copy, or write them
 back. Execution of these translated agents and commands is described in
-[Architecture: Engine Boundary](../architecture/architecture.md#engine-boundary).
+[Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses).
 
 ## AKM complements, rather than replaces
 
@@ -97,15 +97,15 @@ than replacing either.
 
 - **Tab completion.** `akm completions --install` sets up shell completions
   for subcommands and flags. See [CLI Reference](../reference/cli.md#completions).
-- **Dispatching a bundle agent asset.** `akm agent agents/<name> --engine
-  <engine> --prompt "..."` runs a bundle `agents/<name>` persona and model
-  defaults through a named engine — including built-in model aliases like
-  `sonnet` and `opus` that resolve per platform. The current CLI rejects a
-  nonempty tool request at its separate authorization boundary; asset metadata
-  is never authorization by itself. See
-  [Configuration](../reference/configuration.md#engines) for the alias table
-  and [Architecture](../architecture/architecture.md) for how dispatch is
-  built into platform-specific CLI argv per backend.
+- **Dispatching a bundle agent asset.** `akm agent agents/<name> --harness
+  <harness> --prompt "..."` runs a bundle `agents/<name>` persona and model
+  default on a harness (or on akm's own runtime over a connection, with
+  `--connection <name>`), with the aliases `fast`, `balanced` and `reasoning`
+  resolved on whichever you select. See
+  [Configuration](../reference/configuration.md#aliases) for the aliases and
+  [Architecture](../architecture/architecture.md#connections-and-harnesses)
+  for how dispatch reaches each harness. The harness runs as you would run it by
+  hand ([how](../reference/configuration.md#how-akm-runs-a-harness)).
 - **Install refs vs. asset refs.** `npm:@scope/pkg` and `github:owner/repo`
   are install refs, accepted only by `akm bundle add`/`akm clone`, and are a
   different grammar from the `[bundle//]conceptId` refs `show`/`search` use.
@@ -155,16 +155,15 @@ config to follow prereleases. The exact rules are in the
 [`akm upgrade` reference](../reference/cli.md#harness-plugins). `akm health`
 warns when either plugin's bundled `akm-cli` differs from the running CLI.
 
-**Which OpenCode akm drives** is detected, not configured: an `opencode` or
-`opencode-sdk` agent engine runs the most recent OpenCode on `PATH` (or its own
-`bin`) and uses the adapters for the major that binary reports; OpenCode 1 logs a
-warning recommending OpenCode 2 (see
-[Configuration](../reference/configuration.md#engines)). It does not change
-which plugin you install, and the plugin choice does not change it.
+**Which OpenCode akm runs** does not depend on the plugin: the `opencode`
+harness runs your OpenCode through its CLI (OpenCode 1 and 2), and akm's own
+runtime fetches and runs its own pinned one (see
+[Configuration](../reference/configuration.md#without-a-harness)). Install the plugin for
+the OpenCode you use yourself.
 
 ## See also
 
-- [Configuration](../reference/configuration.md#engines) — named agent engines and model aliases
+- [Configuration](../reference/configuration.md#connections) — connections, harnesses and model aliases
 - [Discover and Load](discover-and-load.md) — the full curate → show retrieval path
 - [Capture Knowledge](capture-knowledge.md) — capturing agent-generated memories
 - [Improve the Library](improve-the-library.md) — feeding back usage signals

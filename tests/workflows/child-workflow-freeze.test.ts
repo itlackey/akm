@@ -20,6 +20,7 @@ import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-ru
 import { freezeWorkflow } from "../../src/workflows/freeze/freeze";
 import { computePlanHash } from "../../src/workflows/ir/plan-hash";
 import type { FrozenWorkflowTarget } from "../../src/workflows/plan";
+import { WORKFLOW_PLAN_VERSION } from "../../src/workflows/plan";
 import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import { listWorkflowRuns, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
@@ -176,7 +177,7 @@ describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", 
     const fields = childWorkflowFields(target);
     expect(fields.ref).toMatch(/\/\/workflows\/child$/);
     expect(fields.planHash).toBe(expectedChildPlanHash);
-    expect(fields.frozenPlanIrVersion).toBe(7);
+    expect(fields.frozenPlanIrVersion).toBe(WORKFLOW_PLAN_VERSION);
   });
 
   test("B-08: with: on the direct step naming a declared child param freezes as an inputBindings entry", async () => {

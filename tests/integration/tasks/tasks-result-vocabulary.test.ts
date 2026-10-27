@@ -63,8 +63,7 @@ beforeEach(() => {
     bundles: { fixture: { path: storage.stashDir, writable: true } },
     defaultBundle: "fixture",
     semanticSearchMode: "off",
-    engines: { opencode: { kind: "agent", platform: "opencode" } },
-    defaults: { engine: "opencode" },
+    harnesses: { opencode: { platform: "opencode" } },
   });
 });
 

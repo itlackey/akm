@@ -20,22 +20,22 @@ async function runCli(args: string[]): Promise<{ status: number; stdout: string;
   return { status: code, stdout, stderr };
 }
 
-describe("standalone extract CLI engine boundary", () => {
-  test("rejects --engine with --strategy before resolving either selection", async () => {
+describe("standalone extract CLI selection boundary", () => {
+  test("rejects --connection with --harness before resolving either selection", async () => {
     const result = await runCli([
       "proposal",
       "extract",
       "--type",
       "claude",
-      "--engine",
+      "--connection",
       "fast",
-      "--strategy",
-      "thorough",
+      "--harness",
+      "claude",
     ]);
     expect(result.status).toBe(2);
     const parsed = JSON.parse(result.stderr) as { error: string; code?: string };
     expect(parsed.code).toBe("INVALID_FLAG_VALUE");
-    expect(parsed.error).toContain("--engine and --strategy are mutually exclusive");
+    expect(parsed.error).toContain("--connection and --harness are mutually exclusive");
   });
 
   test("embedded extract task satisfies the live required mode selection", async () => {

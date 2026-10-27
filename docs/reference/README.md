@@ -6,7 +6,7 @@ Authoritative reference documentation for the akm CLI and its data.
 - [Bundle Types](bundle-types.md) -- Supported bundle formats and compatibility
 - [CLI](cli.md) -- All `akm` commands and flags
 - [UI API](ui-api.md) -- The read-only JSON API behind `akm ui`
-- [Configuration](configuration.md) -- Engines, strategies, bundles, and settings
+- [Configuration](configuration.md) -- Connections, harnesses, strategies, bundles, and settings
 - [Supported Formats](supported-formats.md) -- Formats akm can index, from its own bundle layout to other tools' existing asset directories
 - [Tasks](tasks.md) -- Task source v4 grammar, executable targets, scheduling, migration, and scheduler operations
 - [Workflow Schema](workflow-schema.md) -- Authoritative reference for a workflow asset's exact frontmatter and body syntax

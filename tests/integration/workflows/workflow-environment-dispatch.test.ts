@@ -13,9 +13,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { readEvents } from "../../../src/core/events";
-import { buildExecution, resolveExecution } from "../../../src/integrations/agent/execution";
-import type { AgentProfile } from "../../../src/integrations/agent/profiles";
-import { getBuiltinAgentProfile } from "../../../src/integrations/agent/profiles";
+import { buildExecution, currentLayer, resolveExecution } from "../../../src/integrations/agent/execution";
 import { runExecution } from "../../../src/integrations/agent/runner-dispatch";
 import {
   collectWorkflowDispatchSensitiveValues,
@@ -69,14 +67,17 @@ describe("materializing a frozen environment at dispatch", () => {
     write(storage.stashDir, "secrets/hook-token", "tok-123\n");
     const materialized = materializeFrozenWorkflowEnvironment([envRef("env/hook")]);
     const runner = {
-      kind: "agent" as const,
-      engine: "agent",
-      profile: { ...(getBuiltinAgentProfile("opencode") as AgentProfile), envPassthrough: [] },
+      kind: "harness" as const,
+      name: "agent",
+      platform: "opencode",
+      bin: "opencode",
+      args: [],
+      timeoutMs: null,
     };
     const resolved = resolveExecution({
       content: "post it",
       runner,
-      current: { environment: materialized.values },
+      layers: [currentLayer({ environment: materialized.values })],
     });
     const echoed = `posted to ${materialized.values.HOOK_URL} with ${materialized.values.HOOK_TOKEN}`;
 

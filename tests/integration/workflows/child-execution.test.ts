@@ -56,8 +56,6 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import type { TaskInputBinding } from "../../../src/execution/input-contract";
-import * as runnerDispatchModule from "../../../src/integrations/agent/runner-dispatch";
-import { disposeDispatchResources } from "../../../src/integrations/agent/runner-dispatch";
 import { readStateEvents } from "../../../src/storage/repositories/events-repository";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { computeChildInvocationKey } from "../../../src/workflows/exec/child-invocation";
@@ -73,6 +71,7 @@ import type {
   WorkflowPlan,
   WorkflowPlanStep,
 } from "../../../src/workflows/plan";
+import { WORKFLOW_PLAN_VERSION } from "../../../src/workflows/plan";
 import { frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 import { freezeWorkflow, plantRunLock, runWorkflowSteps, WORKFLOW_FIXTURE_ROOT } from "../../_helpers/workflow";
@@ -389,7 +388,7 @@ describe("A-07, A-08, A-09 — first publication of a child run", () => {
     expect(child?.parent_run_id).toBe(parent.runId);
     expect(child?.parent_unit_id).toBe(parentUnitId(parent.stepId));
     expect(child?.scope_key).toBeNull();
-    expect(child?.plan_ir_version).toBe(7);
+    expect(child?.plan_ir_version).toBe(WORKFLOW_PLAN_VERSION);
     // B-N14: a child run's workflow_entry_id is NULL — the index lookup
     // publishChildWorkflowRun has no access to.
     expect(child?.workflow_entry_id).toBeNull();
@@ -963,137 +962,9 @@ describe("A-27 — a child whose run lock is already held busies the parent unit
   });
 });
 
-// ── A-24, A-25: the exact reuse-seam call shape (B-N6, B-N7) ────────────────
+// ── A-25: the exact reuse-seam call shape (B-N7) ────────────────────────────
 
-describe("A-24, A-25 — the child drive passes a no-op disposeDispatchResources and no maxSteps/maxRetries", () => {
-  test("A-24a: disposeDispatchResources is passed as a no-op — a DIFFERENT function object from the real registry drain", async () => {
-    const parent = await seedParentRun();
-    const target = buildChildTarget(leafChildPlan());
-    const spy = spyOn(runWorkflowModule, "runWorkflowSteps").mockImplementation(
-      async (options: { disposeDispatchResources?: () => void | Promise<void> }) => {
-        expect(typeof options.disposeDispatchResources).toBe("function");
-        // B-N6: forwarding the REAL registry drain here is the exact defect
-        // this row exists to catch — it would kill `opencode serve` processes
-        // a parent's sibling map units are still dispatching against.
-        // Identity, not merely "it's a function", is what catches that.
-        expect(options.disposeDispatchResources).not.toBe(disposeDispatchResources);
-        // The no-op must still be safely callable and do nothing observable.
-        await options.disposeDispatchResources?.();
-        return {
-          run: { id: "child-run-id", workflowRef: target.ref, status: "completed" },
-          executed: [],
-          stepsProcessed: 0,
-          done: true,
-        } as unknown as ReturnType<typeof runWorkflowSteps> extends Promise<infer R> ? R : never;
-      },
-    );
-    try {
-      await driveChildWorkflowUnit(buildDriveInput({ parent, target, dispatcher: successDispatcher() }));
-      expect(spy).toHaveBeenCalledTimes(1);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  test("A-24b: the real registry drain is invoked zero times while a child drive runs end to end", async () => {
-    const parent = await seedParentRun();
-    const target = buildChildTarget(leafChildPlan());
-    // runWorkflowSteps is NOT mocked here: the child is driven for real,
-    // through its OWN runWorkflowAttempt/finally. If driveChildWorkflowUnit
-    // forgot to pass a no-op disposeDispatchResources, run-workflow.ts's
-    // `options.disposeDispatchResources ?? disposeDispatchResources` fallback
-    // would reach for the REAL drain — and this spy, on the real function
-    // itself rather than on a mocked runWorkflowSteps call's captured options,
-    // would record it.
-    const drainSpy = spyOn(runnerDispatchModule, "disposeDispatchResources");
-    try {
-      const outcome = await driveChildWorkflowUnit(
-        buildDriveInput({ parent, target, dispatcher: successDispatcher() }),
-      );
-      expect(outcome.ok).toBe(true);
-      expect(drainSpy).toHaveBeenCalledTimes(0);
-    } finally {
-      drainSpy.mockRestore();
-    }
-  });
-
-  test("A-24c: a full parent drive composing a child invokes the real registry drain exactly once, in the PARENT's own finally", async () => {
-    const parentRunId = randomUUID();
-    const parentStepId = "compose";
-    const target = buildChildTarget(leafChildPlan(), { ref: "workflows/drain-child" });
-    const parentPlan: WorkflowPlan = {
-      irVersion: 5,
-      title: "Parent",
-      execution: { maxConcurrency: 1 },
-      steps: [
-        {
-          stepId: parentStepId,
-          title: parentStepId,
-          sequenceIndex: 0,
-          root: {
-            kind: "unit",
-            id: parentStepId,
-            instructions: "Compose the child workflow.",
-            onError: "fail",
-            frozenTarget: target as FrozenWorkflowTarget,
-            environment: [],
-          },
-          gate: {
-            kind: "gate",
-            id: `${parentStepId}.gate`,
-            stepId: parentStepId,
-            criteria: [],
-            maxLoops: 1,
-            frozenJudge: null,
-          },
-        },
-      ],
-    };
-    const now = new Date().toISOString();
-    const db = openStateDatabase(getStateDbPath());
-    try {
-      db.prepare(
-        `INSERT INTO workflow_runs
-           (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
-            params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version)
-         VALUES (?, 'workflows/parent', 'dir:v1:parent', NULL, 'Parent', 'active', '{}', ?, ?, ?, ?, ?, 5)`,
-      ).run(parentRunId, parentStepId, now, now, canonicalJson(parentPlan), computePlanHash(parentPlan));
-      const parentStepRow = frozenStepRows(parentPlan)[0]!;
-      db.prepare(
-        `INSERT INTO workflow_run_steps
-           (run_id, step_id, step_title, instructions, completion_json, sequence_index, status)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
-      ).run(
-        parentRunId,
-        parentStepRow.stepId,
-        parentStepRow.stepTitle,
-        parentStepRow.instructions,
-        parentStepRow.completionJson,
-        parentStepRow.sequenceIndex,
-      );
-    } finally {
-      db.close();
-    }
-
-    // Neither runWorkflowSteps nor driveChildWorkflowUnit is mocked: this is a
-    // genuine top-level drive (`akm workflow run`'s own entry point) composing
-    // a real child. That triggers TWO runWorkflowAttempt invocations — one for
-    // the parent, one nested (via driveChildWorkflowUnit) for the child — and
-    // because the child's own drive must pass a no-op, only the PARENT's own
-    // `finally` may reach the real drain.
-    const drainSpy = spyOn(runnerDispatchModule, "disposeDispatchResources");
-    try {
-      const result = await runWorkflowSteps({
-        target: parentRunId,
-        dispatcher: successDispatcher(),
-      });
-      expect(result.run.status).toBe("completed");
-      expect(drainSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      drainSpy.mockRestore();
-    }
-  });
-
+describe("A-25 — the child drive passes no maxSteps/maxRetries", () => {
   test("A-25: maxSteps and maxRetries are never forwarded into the child drive's runWorkflowSteps call", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());

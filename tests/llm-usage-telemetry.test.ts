@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import type { LlmConnectionConfig } from "../src/core/config/config";
+import type { ChatCompletionConfig } from "../src/llm/client";
 import { chatCompletion, LlmCallError } from "../src/llm/client";
 import {
   clearLlmUsageSink,
@@ -18,7 +18,7 @@ import {
 } from "../src/llm/usage-telemetry";
 import { withMockedFetch } from "./_helpers/sandbox";
 
-const CONFIG: LlmConnectionConfig = {
+const CONFIG: ChatCompletionConfig = {
   endpoint: "http://test.local/v1/chat/completions",
   model: "configured-model",
 };

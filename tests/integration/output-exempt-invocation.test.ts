@@ -138,12 +138,11 @@ console.log(JSON.stringify({ before: before ?? null, after: process.exitCode }))
       JSON.stringify({
         configVersion: "0.9.0",
         semanticSearchMode: "off",
-        engines: { test: { kind: "agent", platform: "aider", bin } },
-        defaults: { engine: "test" },
+        harnesses: { test: { platform: "aider", bin } },
       }),
     );
 
-    const result = spawnCli(["--format", "text", "agent", "--engine", "test"], {
+    const result = spawnCli(["--format", "text", "agent", "--harness", "test"], {
       AKM_BUNDLE_DIR: stash,
       XDG_CONFIG_HOME: configHome,
     });

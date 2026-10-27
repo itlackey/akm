@@ -5,17 +5,16 @@
 /**
  * Freeze a compiled workflow plan into the plan a run executes. Every step's
  * authored spec resolves through the shared command/task authorities into a
- * frozen `root` (engine, model, timeout, concurrency, dispatch target and
+ * frozen `root` (connection or harness, model, timeout, concurrency, dispatch target and
  * environment descriptors); gates get their judge; the compile-only fields are
  * dropped; the source file's sha256 is recorded. Nothing is published here.
  */
 
 import { createHash } from "node:crypto";
 import type { AkmConfig } from "../../core/config/config";
-import { ConfigError, UsageError } from "../../core/errors";
-import { warn } from "../../core/warn";
-import { NO_ENGINE_MESSAGE_SUFFIX } from "../../integrations/agent/engine-fallback";
-import { resolveExecution } from "../../integrations/agent/execution";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
+import { UsageError } from "../../core/errors";
+import { resolveExecution, shippedAlias } from "../../integrations/agent/execution";
 import { checkWorkflowPlan } from "../compile";
 import { defaultMapConcurrency, workflowMaxConcurrency } from "../concurrency-policy";
 import { canonicalJson } from "../ir/plan-hash";
@@ -38,8 +37,6 @@ export interface FrozenWorkflow {
   readonly plan: WorkflowPlan;
   /** Non-fatal advisories from `checkWorkflowPlan`. */
   readonly warnings: WorkflowError[];
-  /** The implicit engine fallback, announced once at run creation. */
-  readonly engineAnnouncement?: string;
 }
 
 /** Resolve and freeze one workflow (and, recursively, every child it composes). */
@@ -63,27 +60,16 @@ export async function freezeWorkflow(
     refPath,
     freezeChild: (child, childRefPath) => freezeWorkflow(child, config, childRefPath),
   };
-  let engineAnnouncement: string | undefined;
   const steps: WorkflowPlanStep[] = [];
   for (const step of compiled.steps) {
     const { spec, ...frozenStep } = step;
     const source: FreezeStep = { ...(spec ?? { source: { path: asset.path, start: 1, end: 1 } }), id: step.stepId };
     const resolved = await resolveStep(source, context);
-    engineAnnouncement ??= resolved.engineAnnouncement;
     const root = frozenRoot(step.stepId, source, resolved, compiled, config);
     let frozenJudge: FrozenWorkflowCommandTarget | null = null;
     if (step.gate.criteria.length > 0) {
       const judge = resolveJudge(source, step.gate.criteria[0] ?? "", context);
-      if (judge) {
-        frozenJudge = judge.target as FrozenWorkflowCommandTarget;
-        engineAnnouncement ??= judge.engineAnnouncement;
-      } else {
-        warn(
-          `Workflow step "${step.stepId}" has completion criteria but no verification engine is available ` +
-            "(set workflow.judgeEngine, defaults.engine, or install an opencode-sdk binary). The step will block " +
-            "for `akm workflow resume` once it is reached.",
-        );
-      }
+      frozenJudge = judge.target as FrozenWorkflowCommandTarget;
     }
     steps.push({ ...frozenStep, root, gate: { ...step.gate, frozenJudge } });
   }
@@ -97,7 +83,7 @@ export async function freezeWorkflow(
     sourceHash: asset.sourceHash,
     steps,
   };
-  return { plan, warnings: checked.warnings, ...(engineAnnouncement ? { engineAnnouncement } : {}) };
+  return { plan, warnings: checked.warnings };
 }
 
 async function resolveStep(source: FreezeStep, context: ResolutionContext): Promise<ResolvedDispatch> {
@@ -110,20 +96,15 @@ async function resolveStep(source: FreezeStep, context: ResolutionContext): Prom
   return commandDispatch(source, baseUnit, source.with, context);
 }
 
-/** The gate judge's frozen command target, or undefined when no engine is available and none is configured. */
-function resolveJudge(source: FreezeStep, rubric: string, context: ResolutionContext): ResolvedDispatch | undefined {
-  const configuredEngine = context.config.workflow?.judgeEngine;
-  try {
-    const prepared = resolveExecution({
-      content: rubric.trim() || "Judge workflow completion.",
-      config: context.config,
-      ...(configuredEngine ? { current: { engine: configuredEngine } } : {}),
-    });
-    return commandResult(source, { onError: "fail", source: source.source }, prepared, context);
-  } catch (err) {
-    if (configuredEngine || !(err instanceof ConfigError && err.message.includes(NO_ENGINE_MESSAGE_SUFFIX))) throw err;
-    return undefined;
-  }
+/** The gate judge's frozen command target: a model call, so it runs where model work runs. */
+function resolveJudge(source: FreezeStep, rubric: string, context: ResolutionContext): ResolvedDispatch {
+  const prepared = resolveExecution({
+    content: rubric.trim() || "Judge workflow completion.",
+    config: context.config,
+    layers: [shippedAlias(SHIPPED_ALIAS.judge)],
+    modelWork: true,
+  });
+  return commandResult(source, { onError: "fail", source: source.source }, prepared, context);
 }
 
 function frozenRoot(

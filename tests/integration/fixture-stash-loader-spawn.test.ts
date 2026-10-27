@@ -6,7 +6,7 @@
  * `{ skipIndex: true }` runs a real `akm index` CLI subprocess
  * (tests/fixtures/stashes/load.ts:135-148, `Bun.spawnSync`). A stalled
  * synchronous spawn blocks the whole JS runtime past every JS-level test
- * timeout (see scripts/lint-tests-isolation.ts Rule 5), so this test —
+ * timeout, so this test —
  * the ONLY call site anywhere in the repo that exercises the default,
  * spawning path — lives in tests/integration/ rather than alongside its
  * sibling smoke tests in tests/fixture-stash-loader.test.ts (unit scope).

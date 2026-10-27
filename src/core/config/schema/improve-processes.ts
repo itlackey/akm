@@ -8,7 +8,7 @@
  */
 import { z } from "zod";
 import { IMPROVE_PROCESS_NAMES } from "../engine-semantics";
-import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt } from "./primitives";
+import { nonEmptyString, positiveInt } from "./primitives";
 
 // ── Improve profile / process ──────────────────────────────────────────────
 //
@@ -16,7 +16,7 @@ import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt }
 // consolidate, memoryInference, extract, validation, triage,
 // proactiveMaintenance — graphExtraction had one too, until the LLM
 // entity-graph it ran was retired in 0.9.17-alpha.9) gets its OWN schema
-// below — a shared base (engine, model, llm, enabled, timeoutMs) extended
+// below — a shared base (`enabled`) extended
 // with only the fields meaningful on that process — replacing the prior
 // single ImproveProcessConfigSchema reused via `.optional()` for all of them
 // (which accepted, and silently ignored, any field on any process). Field→process assignment is derived from each
@@ -37,12 +37,10 @@ import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt }
 // {@link ImproveProfileProcessesSchema} below — setting a field on the wrong
 // process there is now rejected (the intended §4.2 improvement).
 
+// A strategy says which processes run and how; where a process runs (connection,
+// harness, model, inference, timeout) is `improve.processes.<name>`, never here.
 const IMPROVE_PROCESS_BASE_FIELDS = {
-  engine: engineName.optional(),
-  model: nonEmptyString.optional(),
-  llm: LlmInvocationOverridesSchema.optional(),
   enabled: z.boolean().optional(),
-  timeoutMs: z.union([positiveInt, z.null()]).optional(),
 };
 
 /** Reflect/distill/consolidate: process-level asset-type filter (see improve-strategies.ts shouldSkipRef/DEFAULT_ALLOWED_TYPES). */
@@ -68,17 +66,11 @@ const processLimitField = positiveInt.optional();
  * The distill and reflect LLM-as-judge quality gates. Default ON; set
  * `enabled: false` on the process to opt out. A judge error, timeout or
  * unparsable reply never passes: distill and reflect both send the content
- * to a person. `engine`, `model`, `timeoutMs` and `llm` give the
- * gate a judge of its own (#1011), resolved over the process's own settings;
- * with none set, the gate judges with the generator's runner.
+ * to a person. Where the judge runs is `improve.qualityGate`.
  */
 const qualityGateField = z
   .object({
     enabled: z.boolean().optional(),
-    engine: engineName.optional(),
-    model: nonEmptyString.optional(),
-    timeoutMs: z.union([positiveInt, z.null()]).optional(),
-    llm: LlmInvocationOverridesSchema.passthrough().optional(),
   })
   .passthrough()
   .optional();
@@ -131,22 +123,14 @@ const extractTriageGateField = z
   .passthrough()
   .optional();
 
-// Unknown keys pass through here like every other nested surface (the loader
-// names them once); `extraParams` remains the arbitrary provider-parameter
-// escape hatch.
-const triageJudgmentLlmOverridesField = LlmInvocationOverridesSchema.passthrough();
-
+// Unknown keys pass through here like every other nested surface (the loader names them once).
 const triageJudgmentObjectField = z
   .object({
     enabled: z.boolean().optional(),
-    engine: engineName.optional(),
-    model: nonEmptyString.optional(),
-    timeoutMs: z.union([positiveInt, z.null()]).optional(),
-    llm: triageJudgmentLlmOverridesField.optional(),
   })
   .passthrough();
 
-/** Triage process: explicit LLM-as-judge enablement and execution overrides. */
+/** Triage process: whether the LLM-as-judge runs; it runs where `improve.processes.triage` says. */
 const triageJudgmentField = z
   .union([z.boolean(), triageJudgmentObjectField])
   .transform(
@@ -292,8 +276,8 @@ export const ProactiveMaintenanceProcessConfigSchema = z
 /**
  * Process names that once had a dedicated schema and are now gone. Setting
  * one, even with `enabled: true`, is tolerated rather than rejected by the
- * "unknown enabled process" check below — an old config must keep loading
- * (AGENTS.md "Reading persisted data"). `graphExtraction`: the LLM
+ * "unknown enabled process" check below — an old config must keep loading.
+ * `graphExtraction`: the LLM
  * entity-graph extraction it ran was retired in 0.9.17-alpha.9.
  * `feedbackDistillation`: a wrapper of `processes.distill.enabled`, removed in
  * 0.8.0.
@@ -335,10 +319,6 @@ const ImproveProfileProcessesSchema = z
 
 export const ImproveProfileConfigSchema = z
   .object({
-    engine: engineName.optional(),
-    model: nonEmptyString.optional(),
-    timeoutMs: z.union([positiveInt, z.null()]).optional(),
-    llm: LlmInvocationOverridesSchema.optional(),
     description: z.string().min(1).optional(),
     processes: ImproveProfileProcessesSchema.optional(),
     limit: positiveInt.optional(),

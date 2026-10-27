@@ -1,4 +1,4 @@
 version: 4
-run: akm improve --require-engines
+run: akm improve
 description: Run improve pipeline nightly
 schedule: "0 2 * * *"

@@ -5,12 +5,12 @@
 /**
  * Native executor — executes one frozen step subgraph (`WorkflowPlanStep.root`)
  * locally: fan-out through the scheduler, structured output through
- * `runStructured`, per-unit journaling through the serialized writer queue,
+ * `structuredLoop`, per-unit journaling through the serialized writer queue,
  * and `workflow_unit_*` events. It never writes step rows; advancing the spine
  * is `run-workflow.ts`'s job.
  *
  *  - Data flow: instructions are the step's prose byte-exact; data reaches a
- *    unit as attached context (docs/architecture/decisions/0001-…).
+ *    unit as attached context.
  *  - An empty successful free-text output is journaled as absent, so a live
  *    run and a resume promote the same artifact.
  *  - A declared step `output` schema is validated before the step completes;
@@ -30,9 +30,10 @@ import { isInstalledBundle } from "../../core/env-secret-ref";
 import { NotFoundError } from "../../core/errors";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { substituteRefTokens } from "../../core/ref-token";
-import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
+import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
+import { type Dispatched, isRefused, jsonParser, structuredLoop } from "../../llm/structured";
 import {
   type WorkflowRunUnitAttemptRowV4,
   type WorkflowRunUnitRow,
@@ -46,15 +47,13 @@ import { resolveRunBundleRoot } from "../runtime/workflow-asset-loader";
 // `child-workflow`-targeted unit; this module's dispatch seam is its only
 // production caller.
 import { driveChildWorkflowUnit } from "./child-workflow";
-// The ONE dispatch redaction contract, shared with the gate-judge path
-// (exec/frozen-judge.ts). Consumers import the leaf directly — this module is
+// The unit outcome scrub. Consumers import the leaf directly — this module is
 // not a second front door onto the seam.
 import { collectWorkflowDispatchSensitiveValues, redactUnitOutcome } from "./dispatch-redaction";
 import { materializeFrozenWorkflowEnvironment } from "./environment";
 // The exec (shell) unit runner — a leaf that owns argv spawning, containment,
 // and the process-outcome → failure-reason mapping.
 import { runExecUnit } from "./exec-unit";
-import { mergeLoweringNotices } from "./lowering-notices";
 import { secretShapedParamValues } from "./param-secrets";
 import { scheduleUnits } from "./scheduler";
 // Shared step semantics — the ONE implementation consumed by the engine
@@ -454,7 +453,7 @@ async function executeStepPlanInConnection(
   // list with a failed-step envelope. Budget/cap and journal-write failures
   // must not erase notices already observed from real dispatches; durable row
   // reuses naturally contribute none.
-  const notices = mergeLoweringNotices(...outcomes.map((outcome) => outcome?.notices));
+  const notices = mergeNotices(...outcomes.map((outcome) => outcome?.notices));
 
   // A declared budget ceiling is a hard backstop: a step that hit one FAILS
   // regardless of on_error policy (a capped run must never quietly pass its
@@ -674,8 +673,8 @@ async function reserveJournaledDispatch(
         parentUnitId: workUnit.isFanOut ? `${plan.stepId}.map` : null,
         phase: "unit",
         runner: workUnit.runner,
-        engine: target.kind === "command" ? target.request.engine.name : null,
-        model: target.kind === "command" ? (target.request.model?.resolved ?? null) : null,
+        engine: target.kind === "command" ? target.request.target.name : null,
+        model: target.kind === "command" ? (target.request.model?.model ?? null) : null,
         inputHash,
         now: startedAt,
       }).attempt;
@@ -766,7 +765,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
         })
       : await dispatchUnit(request, dispatcher, resolvedSecrets);
   // Credential and passthrough values are intentionally sampled only AFTER
-  // the default dispatcher has authorized/lowered the frozen request and
+  // the default dispatcher has lowered the frozen request and
   // materialized credentials at its terminal dispatch boundary. Custom test
   // dispatchers receive the same post-dispatch journal scrub. Secret-shaped
   // run params join the set: they must reach the prompt in clear (the unit
@@ -828,7 +827,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
  * and hunts for a JSON island inside prose, which is the right forgiving
  * behavior for an LLM and the wrong one for a command, where it would silently
  * promote a JSON fragment found in unrelated log noise as the typed artifact.
- * Returning `undefined` makes `runStructured` report `parse_error` (a real
+ * Returning `undefined` makes the structured loop report `parse_error` (a real
  * member of the retry taxonomy), so `retry.on: [parse_error]` still works.
  */
 function parseExecJson(raw: string): unknown {
@@ -841,12 +840,11 @@ function parseExecJson(raw: string): unknown {
   }
 }
 
-/** Transport failures surface as this sentinel so runStructured doesn't retry them. */
-class UnitTransportError extends Error {
-  constructor(readonly result: UnitDispatchResult) {
-    super(result.error ?? "unit dispatch failed");
-    this.name = "UnitTransportError";
-  }
+/** How a unit's dispatch failed, in the unit's own vocabulary (`retry.on` names these reasons). */
+interface UnitTransportFailure {
+  failureReason: string;
+  error: string;
+  text?: string;
 }
 
 async function dispatchUnit(
@@ -863,7 +861,7 @@ async function dispatchUnit(
   // UnitOutcome and gets journaled by finishUnitAttempt — the seam's
   // contract ("stored opportunistically on the unit row for resume").
   let sessionId: string | undefined;
-  const dispatchOnce = async (feedback?: string): Promise<string> => {
+  const dispatchOnce = async (feedback?: string): Promise<Dispatched<UnitTransportFailure>> => {
     const result = await dispatcher(request, feedback);
     for (const value of result.sensitiveValues ?? []) resolvedSecrets.add(value);
     if (result.usage) {
@@ -871,13 +869,28 @@ async function dispatchUnit(
       tokens +=
         (result.usage.inputTokens ?? 0) + (result.usage.outputTokens ?? 0) + (result.usage.reasoningTokens ?? 0);
     }
-    loweringNotices = mergeLoweringNotices(loweringNotices, result.notices);
+    loweringNotices = mergeNotices(loweringNotices, result.notices);
     // Capture before the ok-check: a failed attempt can still have configured
     // a session (e.g. codex `session_configured` then a tool crash).
     if (result.sessionId !== undefined) sessionId = result.sessionId;
-    if (!result.ok) throw new UnitTransportError(result);
-    return result.text;
+    if (!result.ok) {
+      return {
+        ok: false,
+        failureReason: result.failureReason ?? "dispatch_error",
+        error: result.error ?? "unit dispatch failed",
+        text: result.text,
+      };
+    }
+    return { ok: true, raw: result.text };
   };
+  const transportFailed = (failure: UnitTransportFailure): UnitOutcome => ({
+    unitId: request.unitId,
+    ok: false,
+    failureReason: failure.failureReason,
+    error: failure.error,
+    text: failure.text,
+    ...captured(),
+  });
   const captured = (): Partial<UnitOutcome> => ({
     ...(sawUsage ? { tokens } : {}),
     ...(sessionId !== undefined ? { sessionId } : {}),
@@ -887,28 +900,41 @@ async function dispatchUnit(
   try {
     if (request.schema) {
       const schema = request.schema;
-      const structured = await runStructured<unknown>({
-        dispatch: dispatchOnce,
+      const validate = (candidate: unknown) => {
+        const errors = validateJsonSchemaSubset(candidate, schema);
+        return errors.length === 0
+          ? ({ ok: true, value: candidate } as const)
+          : ({ ok: false, errors, reason: "validation_error" } as const);
+      };
+      const structured = await structuredLoop<unknown, UnitTransportFailure>({
+        dispatch: (correction) => dispatchOnce(correction?.text),
         // A command is not re-promptable. Its stdout must be EXACTLY one JSON
         // value: the default embedded-JSON scan (fences, think-blocks, "find the
         // JSON inside the prose") is right for an LLM and wrong for a command,
         // where it would pluck a JSON fragment out of unrelated log noise and
-        // promote it as the typed artifact. And it gets exactly ONE attempt —
-        // `runStructured`'s corrective retry re-dispatches with feedback, which
+        // promote it as the typed artifact. And it gets exactly ONE attempt:
+        // the loop's corrective retry re-dispatches with feedback, which
         // for a command means running a SIDE-EFFECTING process a second time
         // with byte-identical argv: it cannot produce different output, and it
         // can produce a second deployment. Declared `retry:` still applies (the
         // executor's own loop), because that is a policy the author opted into
         // per failure reason.
-        ...(request.frozenTarget.kind !== "command" ? { parse: parseExecJson, maxAttempts: 1 } : {}),
-        validate: (candidate) => {
-          const errors = validateJsonSchemaSubset(candidate, schema);
-          return errors.length === 0 ? { ok: true, value: candidate } : { ok: false, errors };
-        },
+        ...(request.frozenTarget.kind !== "command"
+          ? {
+              attempts: 1,
+              parse: (raw: string) => {
+                const candidate = parseExecJson(raw);
+                return candidate === undefined
+                  ? ({ ok: false, errors: ["no JSON structure found in response"], reason: "parse_error" } as const)
+                  : validate(candidate);
+              },
+            }
+          : { parse: jsonParser(validate) }),
       });
       if (structured.ok) {
         return { unitId: request.unitId, ok: true, result: structured.value, ...captured() };
       }
+      if (!isRefused(structured)) return transportFailed(structured);
       return {
         unitId: request.unitId,
         ok: false,
@@ -927,7 +953,9 @@ async function dispatchUnit(
       };
     }
 
-    const text = await dispatchOnce();
+    const dispatched = await dispatchOnce();
+    if (!dispatched.ok) return transportFailed(dispatched);
+    const text = dispatched.raw;
     // Normalize an EMPTY successful output to "no text". `finishUnitAttempt` journals
     // result_json = NULL for a falsy text, so durable-reuse rehydrates NO text
     // from the row (unitOutcomeFromRow). Preserving `text: ""` only in this live
@@ -937,16 +965,6 @@ async function dispatchUnit(
     // dispatch and engine resume identical.
     return { unitId: request.unitId, ok: true, ...(text ? { text } : {}), ...captured() };
   } catch (err) {
-    if (err instanceof UnitTransportError) {
-      return {
-        unitId: request.unitId,
-        ok: false,
-        failureReason: err.result.failureReason ?? "dispatch_error",
-        error: err.result.error ?? "unit dispatch failed",
-        text: err.result.text,
-        ...captured(),
-      };
-    }
     return {
       unitId: request.unitId,
       ok: false,
@@ -960,7 +978,7 @@ async function dispatchUnit(
 // ── Default dispatcher (production substrate) ───────────────────────────────
 
 /**
- * Dispatch a frozen engine through the common prepare → lower → dispatch seam.
+ * Dispatch a frozen connection or harness through the common prepare → lower → dispatch seam.
  * No live profile/default/model map is consulted, and credentials remain
  * symbolic until the final dispatch boundary.
  */

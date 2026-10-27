@@ -113,7 +113,7 @@ function projectStep(
     gate: {
       criteria: step.gate.criteria,
       maxLoops: step.gate.maxLoops,
-      judgeEngine: step.gate.frozenJudge ? step.gate.frozenJudge.request.engine.name : null,
+      judgeEngine: step.gate.frozenJudge ? step.gate.frozenJudge.request.target.name : null,
     },
     ...(step.outputSchema !== undefined ? { outputSchema: step.outputSchema } : {}),
     expansion: stepExpansion(frozenTarget),

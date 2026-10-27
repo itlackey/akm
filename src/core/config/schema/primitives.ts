@@ -9,7 +9,8 @@
  */
 import { z } from "zod";
 import { validateExtraParams } from "../../extra-params";
-import { isRefToken, isSecretRefToken } from "../../ref-token";
+import { redactUrlCredentials } from "../../redaction";
+import { isSecretRefToken } from "../../ref-token";
 import { warnOnce } from "../../warn";
 import { ENGINE_NAME_PATTERN_SOURCE } from "../engine-semantics";
 
@@ -43,29 +44,58 @@ export const engineName = z
   .max(63)
   .regex(ENGINE_NAME_PATTERN, "names must be lowercase kebab-case and must not begin with reserved akm-");
 
-/** The two symbolic credential forms akm accepts in config: an env-var reference (`$VAR`, `${VAR}`) or a `secrets/` ref (`${secrets/name}`). Never matches a literal key. */
+/** The two symbolic credential forms akm accepts in a bundle source's `credential`: an env-var reference (`$VAR`, `${VAR}`) or a `secrets/` ref (`${secrets/name}`). Never matches a literal key. */
 export function isApiKeyReference(value: string): boolean {
   return ENV_REFERENCE_PATTERN.test(value) || isSecretRefToken(value);
 }
 
-export function symbolicOrWarnApiKey(label: string) {
-  return z.string().superRefine((value, ctx) => {
-    if (isApiKeyReference(value)) return;
-    if (isRefToken(value)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `a ${label} accepts only a \${secrets/<name>} ref (or a $VAR reference); "${value}" names another kind of asset`,
-      });
-      return;
-    }
-    warnOnce(
-      `config:literal-api-key:${label}`,
-      `A ${label} in config.json is a literal API key, not a $VAR/\${VAR} or \${secrets/<name>} reference; using it as configured. Prefer \`akm config set ...apiKey '$VAR'\` (with the corresponding env var set) or \`'\${secrets/<name>}'\` (with \`akm secret set secrets/<name> ...\`) — see docs/reference/data-and-telemetry.md.`,
-    );
-  });
+/** A `$VAR` / `${VAR}` reference to an environment variable. */
+export function isEnvReference(value: string): boolean {
+  return ENV_REFERENCE_PATTERN.test(value);
 }
 
-export const chatCompletionsEndpoint = z.string().superRefine((value, ctx) => {
+/** The variable a `$VAR` / `${VAR}` reference names. */
+export function envReferenceName(value: string): string | undefined {
+  return /^\$(?:\{)?([A-Za-z_][A-Za-z0-9_]*)(?:\})?$/.exec(value)?.[1];
+}
+
+/**
+ * The `apiKey` of a connection, `embedding` or `search.curateRerank`: a `$VAR` /
+ * `${VAR}` reference, or absent (the key is then `credentials.json`'s under the
+ * block's name). Anything else is never read or sent: it is warned about once,
+ * never a load error, and kept as written so an ordinary write does not delete
+ * the user's key from their file (`akm migrate apply` moves it).
+ */
+export const envReferenceApiKey = z.string().transform((value) => {
+  if (isEnvReference(value)) return value;
+  if (isSecretRefToken(value)) {
+    warnOnce(
+      "config:secret-ref-api-key",
+      "An apiKey that is a secret-store reference is ignored: akm reads a key from a $VAR or credentials.json. `akm migrate apply` moves it into credentials.json.",
+    );
+  } else {
+    warnOnce(
+      "config:literal-api-key",
+      "A literal apiKey in config.json is ignored: akm does not read keys from config. Use a $VAR reference, or run `akm migrate apply` to move the key into credentials.json.",
+    );
+  }
+  return value;
+});
+
+/**
+ * The retired `apiKeyFile` of an engine that `akm migrate apply` could not read yet: kept as written so a
+ * later run can move the key it names, never read, sent or printed by akm.
+ */
+export const retiredApiKeyFile = z.string().transform((value) => {
+  warnOnce(
+    "config:api-key-file",
+    "An apiKeyFile in config.json is ignored: akm reads a key from a $VAR or credentials.json. `akm migrate apply` moves the key the file holds once it can be read.",
+  );
+  return value;
+});
+
+/** A connection endpoint: a complete http(s) URL, the OpenAI-compatible base (`…/v1`) or the chat-completions URL itself. */
+export const connectionEndpoint = z.string().superRefine((value, ctx) => {
   let url: URL;
   try {
     url = new URL(value);
@@ -78,15 +108,11 @@ export const chatCompletionsEndpoint = z.string().superRefine((value, ctx) => {
     return;
   }
   if (url.username || url.password) {
+    // The warning names the endpoint without the credential it is about, and is keyed by that too.
+    const shown = redactUrlCredentials(value);
     warnOnce(
-      `chatCompletionsEndpoint:userinfo:${value}`,
-      `Config endpoint "${value}" embeds a username/password; consider moving the credential to the engine's apiKey field instead.`,
-    );
-  }
-  if (!url.pathname.endsWith("/chat/completions")) {
-    warnOnce(
-      `chatCompletionsEndpoint:path:${value}`,
-      `Config endpoint "${value}" does not end in /chat/completions; using it as configured.`,
+      `connectionEndpoint:userinfo:${shown}`,
+      `Config endpoint "${shown}" embeds a username/password; move the credential out of the URL (apiKey: "$VAR", or credentials.json).`,
     );
   }
 });
@@ -103,9 +129,7 @@ export const LlmInvocationOverridesSchema = z
   .object({
     temperature: z.number().finite().optional(),
     maxTokens: positiveInt.optional(),
-    supportsJsonSchema: z.boolean().optional(),
     extraParams: ExtraParamsSchema.optional(),
-    contextLength: positiveInt.optional(),
     enableThinking: z.boolean().optional(),
     reasoningEffort: nonEmptyString.optional(),
   })

@@ -34,6 +34,45 @@ Or download a standalone binary directly from the
 Hitting a PowerShell execution-policy error on Windows? See
 [Troubleshooting](#troubleshooting) at the end of this guide.
 
+### Standalone binary and semantic search
+
+Local semantic search (`semanticSearchMode: auto`) runs its embedding model on
+ONNX Runtime. A standalone binary carries the library for its platform. The
+first time it embeds, it copies that library once into akm's cache directory,
+under `onnxruntime/<version>-<platform>-<arch>/` (18 to 34 MB depending on the
+platform; `akm info` prints the cache directory), and loads it from there. Two
+limits follow:
+
+- A standalone binary writes its native addon to the system temp directory and
+  loads it from there, so a temp directory mounted `noexec` blocks semantic
+  search (`akm index` reports it `blocked`; keyword search works). Set `TMPDIR`
+  to a writable, executable directory. The cache directory must be on
+  an executable mount too.
+- Alpine/musl and Intel macOS have no native ONNX Runtime library. Semantic
+  search is unavailable there: `akm index` reports it `blocked` with the reason
+  and search stays keyword-only. A remote `embedding.endpoint` still works.
+
+### akm's own agent runtime
+
+With a connection and no harness, `akm agent` and the other agent work run on
+akm's own runtime, a pinned OpenCode 2 binary that akm runs as a process. This
+is the same for the npm package and the standalone binary: nothing of OpenCode
+is installed with akm, and the first time the runtime runs, akm downloads the
+OpenCode binary for your platform from the npm registry (one package, about
+114 MB, 240 MB on disk), checks it against the registry's integrity hash and
+keeps it in the cache directory under `opencode/<version>/`. It is fetched once.
+Three limits follow:
+
+- That step needs the npm registry. Without network access for it, enable the
+  `opencode` harness with an OpenCode 2 you have installed instead; no setting
+  points akm's runtime at a binary of your own.
+- Alpine/musl runs the musl build of that binary, which needs `libstdc++` and
+  `libgcc`. The Alpine Node image already has them; on a bare Alpine install them
+  with `apk add libstdc++ libgcc`.
+- The binary runs from the cache directory and unpacks its own native pieces
+  into `opencode-runtime/tmp/` in the data directory, so neither may be mounted
+  `noexec`.
+
 **Success check:**
 
 ```sh
@@ -48,17 +87,24 @@ Guided, interactive setup is the default:
 akm setup
 ```
 
-`akm setup` walks through bundle location, embedding/LLM settings, semantic
-search asset preparation, registries, sources, and task definitions. It also
+`akm setup` walks through the bundle location, the agent programs akm may use
+(Claude Code, Codex, OpenCode, ...), a model connection (an OpenAI-compatible
+endpoint, and which of its models answers each of `fast`, `balanced` and
+`reasoning`), embeddings, semantic search asset preparation, registries,
+sources, and task definitions. The model steps are optional: with no connection
+and no agent program, everything that needs no model still works. Setup also
 reviews your scheduled task definitions and asks whether to activate them in
 the OS scheduler — that part of the flow, plus how to migrate or repair
 scheduler bindings later, is covered in [Scheduling](scheduling.md).
 
 For non-interactive use — scripting, CI, or when you just want a working
-bundle fast — use `--yes`:
+bundle fast — use `--yes`. A flag answers one question, so
+`--endpoint` adds a model connection without prompting (see the
+[CLI reference](../reference/cli.md#setup) for the rest):
 
 ```sh
 akm setup --yes
+akm setup --endpoint http://localhost:11434/v1 --yes   # also add a model endpoint
 akm setup --dir ~/custom-bundle   # optional: a non-default bundle location
 ```
 

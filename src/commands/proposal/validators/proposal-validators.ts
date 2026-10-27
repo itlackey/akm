@@ -73,8 +73,8 @@ const canonicalProposalValidators: Readonly<Record<string, CanonicalProposalVali
   task(proposal, ctx) {
     const name = ctx.parsedRef?.name;
     if (!name) return [];
-    // Version-routing seam (spec docs/plans/specs/p2a-task-source-v4.md
-    // §3.6): a proposal body is validated by parsing alone — neither arm's
+    // Version-routing seam: a proposal body is validated by parsing alone —
+    // neither arm's
     // parsed document is inspected further, so routing through the union is
     // a pure swap; any parse failure (either version) is turned into an
     // `invalid-task-structure` finding by the try/catch this call sits in.

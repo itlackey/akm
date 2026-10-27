@@ -24,8 +24,8 @@ let stashDir = "";
 function quietConfig(): AkmConfig {
   return {
     semanticSearchMode: "off",
-    defaults: { improveStrategy: "quiet-test" },
     improve: {
+      strategy: "quiet-test",
       strategies: {
         "quiet-test": {
           processes: {

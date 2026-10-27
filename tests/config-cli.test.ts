@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "../src/commands/config-cli";
 import type { AkmConfig } from "../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+import { resolveTarget } from "../src/integrations/agent/resolution";
 
 function captureWarnings(fn: () => void): string[] {
   const warnings: string[] = [];
@@ -18,10 +19,11 @@ function captureWarnings(fn: () => void): string[] {
 }
 
 describe("config CLI helpers", () => {
-  test("listConfig omits unconfigured embedding and engines", () => {
+  test("listConfig omits unconfigured embedding, connections and harnesses", () => {
     const config = listConfig({ configVersion: "0.9.0", semanticSearchMode: "auto" });
     expect(config.embedding).toBeUndefined();
-    expect(config.engines).toBeUndefined();
+    expect(config.connections).toBeUndefined();
+    expect(config.harnesses).toBeUndefined();
     expect(config.output).toEqual({ format: "json", detail: "brief" });
   });
 
@@ -53,30 +55,36 @@ describe("config CLI helpers", () => {
     });
   });
 
-  test("setConfigValue supports an LLM engine JSON with sampling fields", () => {
+  test("setConfigValue supports a connection JSON with request fields and per-model settings", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    expect(
-      setConfigValue(
-        base,
-        "engines.fast",
-        '{"kind":"llm","endpoint":"https://api.openai.com/v1/chat/completions","model":"gpt-4o-mini","temperature":0.6,"maxTokens":300}',
-      ).engines,
-    ).toEqual({
-      fast: {
-        kind: "llm",
-        endpoint: "https://api.openai.com/v1/chat/completions",
-        model: "gpt-4o-mini",
-        temperature: 0.6,
-        maxTokens: 300,
-      },
+    const connection = {
+      endpoint: "https://api.openai.com/v1",
+      models: { fast: "gpt-4o-mini", reasoning: { model: "gpt-5", reasoning_effort: "high" } },
+      temperature: 0.6,
+      max_tokens: 300,
+    };
+    expect(setConfigValue(base, "connections.fast", JSON.stringify(connection)).connections).toEqual({
+      fast: connection,
     });
   });
 
-  test("setConfigValue rejects an LLM engine JSON with endpoint and omitted model", () => {
+  test("setConfigValue rejects a connection JSON with no endpoint", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    expect(() =>
-      setConfigValue(base, "engines.fast", '{"kind":"llm","endpoint":"http://localhost:11434/v1/chat/completions"}'),
-    ).toThrow(/Invalid input/);
+    expect(() => setConfigValue(base, "connections.fast", '{"models":{"fast":"m"}}')).toThrow(/endpoint/);
+  });
+
+  test("setConfigValue takes a model alias as a name or as a JSON entry", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const named = setConfigValue(base, "connections.lab.models.fast", "qwen3-8b");
+    expect(named.connections?.lab?.models).toEqual({ fast: "qwen3-8b" });
+    const entry = setConfigValue(base, "connections.lab.models.reasoning", '{"model":"glm-5","top_p":0.9}');
+    expect(entry.connections?.lab?.models).toEqual({ reasoning: { model: "glm-5", top_p: 0.9 } });
+  });
+
+  test("setConfigValue stores a request field on a connection as written", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const updated = setConfigValue(base, "connections.lab.chat_template_kwargs", '{"enable_thinking":false}');
+    expect(updated.connections?.lab?.chat_template_kwargs).toEqual({ enable_thinking: false });
   });
 
   test("setConfigValue warns and stores an unrecognized retired key like sources instead of rejecting it (#37)", () => {
@@ -139,31 +147,22 @@ describe("config CLI helpers", () => {
     });
   });
 
-  test("setConfigValue sets an LLM engine via JSON", () => {
+  test("setConfigValue sets a harness via JSON", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    const updated = setConfigValue(
-      base,
-      "engines.local",
-      '{"kind":"llm","endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2","temperature":0.3}',
-    );
-    expect(updated.engines?.local).toMatchObject({
-      kind: "llm",
-      endpoint: "http://localhost:11434/v1/chat/completions",
-      model: "llama3.2",
-      temperature: 0.3,
-    });
+    const updated = setConfigValue(base, "harnesses.claude-work", '{"platform":"claude","bin":"/opt/claude"}');
+    expect(updated.harnesses?.["claude-work"]).toEqual({ platform: "claude", bin: "/opt/claude" });
   });
 
-  test("getConfigValue returns null for unconfigured embedding/engine", () => {
+  test("getConfigValue returns null for unconfigured embedding/connection", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     expect(getConfigValue(base, "embedding")).toBeNull();
-    expect(getConfigValue(base, "engines.default")).toBeNull();
+    expect(getConfigValue(base, "connections.default")).toBeNull();
   });
 
-  test("getConfigValue returns configured embedding/engine objects", () => {
+  test("getConfigValue returns configured embedding/connection objects", () => {
     const llm = {
-      endpoint: "http://localhost:11434/v1/chat/completions",
-      model: "llama3.2",
+      endpoint: "http://localhost:11434/v1",
+      models: { fast: "llama3.2" },
       temperature: 0.3,
     };
     const base: AkmConfig = {
@@ -173,14 +172,13 @@ describe("config CLI helpers", () => {
         endpoint: "https://api.openai.com/v1/embeddings",
         model: "text-embedding-3-small",
       },
-      engines: { default: { kind: "llm", ...llm } },
-      defaults: { llmEngine: "default" },
+      connections: { default: llm },
     };
     expect(getConfigValue(base, "embedding")).toEqual(base.embedding);
-    expect(getConfigValue(base, "engines.default")).toEqual({ kind: "llm", ...llm });
+    expect(getConfigValue(base, "connections.default")).toEqual(llm);
   });
 
-  test("unsetConfigValue clears embedding and an engine", () => {
+  test("unsetConfigValue clears embedding and a connection", () => {
     const base: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
@@ -188,14 +186,26 @@ describe("config CLI helpers", () => {
         endpoint: "https://api.openai.com/v1/embeddings",
         model: "text-embedding-3-small",
       },
-      engines: { default: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "llama3.2" } },
-      defaults: { llmEngine: "default" },
+      connections: { default: { endpoint: "http://localhost:11434/v1", models: { fast: "llama3.2" } } },
     };
     const noEmbed = unsetConfigValue(base, "embedding");
     expect(noEmbed.embedding).toBeUndefined();
 
-    const noLlm = unsetConfigValue(base, "engines.default");
-    expect(noLlm.engines?.default).toBeUndefined();
+    const noLlm = unsetConfigValue(base, "connections.default");
+    expect(noLlm.connections?.default).toBeUndefined();
+  });
+
+  test("unsetConfigValue leaves a parent object in place when its last key goes: {} is how a harness is enabled", () => {
+    const base: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "auto",
+      harnesses: { opencode: { modelWork: false } },
+    };
+    const unset = unsetConfigValue(base, "harnesses.opencode.modelWork");
+    expect(unset.harnesses).toEqual({ opencode: {} });
+    const target = resolveTarget({ config: unset, layers: [] });
+    expect(target.kind).toBe("harness");
+    expect(target.name).toBe("opencode");
   });
 
   test("setConfigValue merges output format and detail", () => {
@@ -230,8 +240,8 @@ describe("config CLI helpers", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     const withProvider = setConfigValue(base, "embedding.provider", "ollama");
     expect(withProvider.embedding?.provider).toBe("ollama");
-    const withTemp = setConfigValue(base, "engines.local.temperature", "0.5");
-    expect(withTemp.engines?.local?.temperature).toBe(0.5);
+    const withTimeout = setConfigValue(base, "connections.local.timeoutMs", "5000");
+    expect(withTimeout.connections?.local?.timeoutMs).toBe(5000);
   });
 
   test("setConfigValue warns and stores a key not in the schema instead of rejecting it (#16)", () => {
@@ -302,71 +312,53 @@ describe("config CLI helpers", () => {
 // ── #454: apiKey rejection at set time ──────────────────────────────────────
 
 describe("apiKey rejection (#454)", () => {
-  test("setConfigValue rejects llm.apiKey and points at AKM_LLM_API_KEY", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    expect(() => setConfigValue(base, "engines.fast.apiKey", "sk-test")).toThrow(/apiKey must be \$VAR/);
+  const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+
+  test("a literal apiKey is refused on every block that has one, pointing at $VAR and credentials.json", () => {
+    for (const key of ["connections.fast.apiKey", "embedding.apiKey", "search.curateRerank.apiKey"]) {
+      expect(() => setConfigValue(base, key, "sk-test")).toThrow(/use a \$VAR reference.*credentials\.json/);
+    }
   });
 
-  test("setConfigValue accepts symbolic embedding apiKey and rejects literals", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    expect(setConfigValue(base, "embedding.apiKey", "$AKM_EMBED_API_KEY").embedding?.apiKey).toBe("$AKM_EMBED_API_KEY");
-    expect(() => setConfigValue(base, "embedding.apiKey", "sk-test")).toThrow(/apiKey must be \$VAR/);
-  });
-
-  test("setConfigValue accepts symbolic engine apiKey values only", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    expect(setConfigValue(base, "engines.local.apiKey", "$LOCAL_API_KEY").engines?.local?.apiKey).toBe(
+  test("a $VAR or ${VAR} reference is accepted", () => {
+    expect(setConfigValue(base, "connections.local.apiKey", "$LOCAL_API_KEY").connections?.local?.apiKey).toBe(
       "$LOCAL_API_KEY",
     );
-  });
-
-  test("setConfigValue accepts a secrets ref store reference for engine and embedding apiKey", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    expect(setConfigValue(base, "engines.lab.apiKey", "${secrets/lab-api-key}").engines?.lab?.apiKey).toBe(
-      "${secrets/lab-api-key}",
-    );
-    expect(setConfigValue(base, "embedding.apiKey", "${secrets/embed-key}").embedding?.apiKey).toBe(
-      "${secrets/embed-key}",
+    expect(setConfigValue(base, "embedding.apiKey", "${EMBED_KEY}").embedding?.apiKey).toBe("${EMBED_KEY}");
+    expect(setConfigValue(base, "search.curateRerank.apiKey", "$RERANK_KEY").search?.curateRerank?.apiKey).toBe(
+      "$RERANK_KEY",
     );
   });
 
-  test("setConfigValue whole-engine-object set accepts a secrets ref apiKey and still rejects a literal", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    const withSecretRef = setConfigValue(
+  test("a secrets ref is not a key akm reads, so it is refused too", () => {
+    expect(() => setConfigValue(base, "connections.lab.apiKey", "${secrets/lab-api-key}")).toThrow(/apiKey cannot be/);
+  });
+
+  test("a whole-object set accepts a $VAR apiKey and still refuses a literal", () => {
+    const withReference = setConfigValue(
       base,
-      "engines.lab",
-      JSON.stringify({
-        kind: "llm",
-        endpoint: "https://lab.example/v1/chat/completions",
-        model: "x",
-        apiKey: "${secrets/lab-api-key}",
-      }),
+      "connections.lab",
+      JSON.stringify({ endpoint: "https://lab.example/v1", models: { fast: "x" }, apiKey: "$LAB_KEY" }),
     );
-    expect(withSecretRef.engines?.lab?.apiKey).toBe("${secrets/lab-api-key}");
-    expect(() =>
-      setConfigValue(
-        base,
-        "engines.lab",
-        JSON.stringify({
-          kind: "llm",
-          endpoint: "https://lab.example/v1/chat/completions",
-          model: "x",
-          apiKey: "sk-literal",
-        }),
-      ),
-    ).toThrow(/apiKey cannot be persisted/);
+    expect(withReference.connections?.lab?.apiKey).toBe("$LAB_KEY");
+    for (const [key, value] of [
+      ["connections.lab", { endpoint: "https://lab.example/v1", models: { fast: "x" }, apiKey: "sk-literal" }],
+      ["connections", { lab: { endpoint: "https://lab.example/v1", apiKey: "sk-literal" } }],
+      ["embedding", { endpoint: "https://e.example/v1", apiKey: "sk-literal" }],
+    ] as const) {
+      expect(() => setConfigValue(base, key, JSON.stringify(value))).toThrow(/apiKey cannot be a literal/);
+    }
   });
 });
 
 // ── #455: every nested schema key is settable ───────────────────────────────
 
 describe("nested schema keys are all settable via zod walker (#455)", () => {
-  test("canonical defaults are settable", () => {
+  test("improve's strategy, connection and harness are settable", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    const withAgent = setConfigValue(base, "defaults.engine", "claude");
-    expect(withAgent.defaults?.engine).toBe("claude");
-    const withImprove = setConfigValue(base, "defaults.improveStrategy", "fast");
-    expect(withImprove.defaults?.improveStrategy).toBe("fast");
+    expect(setConfigValue(base, "improve.strategy", "fast").improve?.strategy).toBe("fast");
+    expect(setConfigValue(base, "improve.connection", "lab").improve?.connection).toBe("lab");
+    expect(setConfigValue(base, "improve.harness", "claude").improve?.harness).toBe("claude");
   });
 
   test("search.curateRerank.topN is settable", () => {
@@ -385,12 +377,12 @@ describe("nested schema keys are all settable via zod walker (#455)", () => {
     expect(c.improve?.eventRetentionDays).toBe(180);
   });
 
-  test("LLM engine invocation fields are settable", () => {
+  test("a request field and the owned timeout are settable on a connection", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    const c1 = setConfigValue(base, "engines.local.temperature", "0.7");
-    expect(c1.engines?.local?.temperature).toBe(0.7);
-    const c2 = setConfigValue(base, "engines.local.timeoutMs", "30000");
-    expect(c2.engines?.local?.timeoutMs).toBe(30000);
+    const c1 = setConfigValue(base, "connections.local.temperature", "0.7");
+    expect(c1.connections?.local?.temperature).toBe(0.7);
+    const c2 = setConfigValue(base, "connections.local.timeoutMs", "30000");
+    expect(c2.connections?.local?.timeoutMs).toBe(30000);
   });
 });
 
@@ -404,12 +396,12 @@ describe("unknown-key hint stays in sync with schema (#460)", () => {
       throw new Error("should have thrown");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // The schema-driven hint must include `defaults` and `engines`, but not
+      // The schema-driven hint must include `connections` and `harnesses`, but not
       // the retired top-level profile vocabulary.
       // Hint may be on .hint() if it's a UsageError; concatenate everything.
       const combined = `${message} ${(err as { hint?: () => string }).hint?.() ?? ""}`;
-      expect(combined).toContain("defaults");
-      expect(combined).toContain("engines");
+      expect(combined).toContain("connections");
+      expect(combined).toContain("harnesses");
       expect(combined).not.toContain("profiles");
     }
   });

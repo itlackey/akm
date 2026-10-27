@@ -8,18 +8,12 @@
  * (`DEFAULT_WORKFLOW_TASK_TIMEOUT_MS`, `DEFAULT_SCHEDULED_TASK_TIMEOUT_MS`)
  * every arm reads.
  *
- * Moved from src/tasks/runner.ts (spec docs/plans/specs/p1b-model-extraction.md
- * §5.1, §9, runner.ts:456-675).
- *
- * F-1 (spec §5.2 point 2): the global `process.env.AKM_EVENT_SOURCE` stamp
- * and its `finally` restore are DELETED outright — `process.env` is never
- * written by this arm any more. The resolved event source is instead passed
- * into `runWorkflowStepsImpl` via a new optional `eventSource` option,
- * `process.env.AKM_EVENT_SOURCE ?? provenance.eventSource` (ambient still
- * wins, matching the native arm's own precedence — D5 clause d). Threading
- * that option to an exec-unit child's env is owned by
- * src/workflows/exec/run-workflow.ts / step-work.ts / exec-unit.ts, not this
- * file.
+ * `process.env` is never written by this arm. The resolved event source is
+ * passed into `runWorkflowStepsImpl` via the optional `eventSource` option,
+ * `process.env.AKM_EVENT_SOURCE ?? provenance.eventSource` (ambient wins,
+ * matching the native arm's own precedence). Threading that option to an
+ * exec-unit child's env is owned by src/workflows/exec/run-workflow.ts /
+ * step-work.ts / exec-unit.ts, not this file.
  */
 
 import { armAbortDeadline } from "../../core/abort-deadline";
@@ -108,13 +102,12 @@ export async function runWorkflowTask(input: {
   // The prompt path logs the engine-fallback announcement; a workflow-backed
   // task must leave the same trace rather than silently using a chosen engine.
   let runWarnings: string[] = [];
-  // F-1 (D5, spec §5.2 point 2): thread the resolved event source through
-  // explicitly instead of stamping process.env — this arm executes IN-PROCESS,
-  // so a global stamp used to be how child akm invocations made by workflow
-  // steps inherited it; the explicit eventSource option (threaded to
-  // src/workflows/exec/run-workflow.ts -> step-work.ts -> exec-unit.ts's
-  // childEnv) now does that job without ever mutating process.env. A more
-  // specific ambient stamp already present still wins, matching the native arm.
+  // Thread the resolved event source through explicitly instead of stamping
+  // process.env — this arm executes IN-PROCESS, so the explicit eventSource option
+  // (threaded to src/workflows/exec/run-workflow.ts -> step-work.ts -> exec-unit.ts's
+  // childEnv) is how child akm invocations made by workflow steps inherit it,
+  // without ever mutating process.env. A more specific ambient stamp already
+  // present still wins, matching the native arm.
   const eventSource = process.env.AKM_EVENT_SOURCE ?? provenance.eventSource;
   try {
     const execution = await runWorkflowStepsImpl({

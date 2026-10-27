@@ -74,15 +74,14 @@ Wherever akm substitutes a reference into a string it hands to a process or a
 provider, the token is `${[bundle//]conceptId}`:
 
 - an env value: `DISCORD_BOT_TOKEN=${team//secrets/discord_bot_token}`;
-- a config credential (`engines.<name>.apiKey`, `embedding.apiKey`, a git
-  bundle's `credential`): `"${secrets/openai}"`.
+- a git bundle's config `credential`: `"${secrets/gitea_token}"`.
 
 Where the token may appear decides what it may name:
 
 - **In an env value**, any asset ref substitutes. A `secrets/...` ref stands for
   the secret's value; any other asset ref (for example
   `${scripts/lab/fetch.sh}`) stands for the asset's absolute path.
-- **In a config credential**, only a `secrets/...` ref is accepted. A `${...}`
+- **In a git bundle's `credential`**, only a `secrets/...` ref is accepted. A `${...}`
   naming any other kind of asset is rejected when the config loads.
 
 The ref is resolved with the one ref walk, so it may name any bundle and any
@@ -94,13 +93,20 @@ run` and a workflow unit's `env:` binding replace the tokens in an env file's
 values; `env export` writes them verbatim. A `${...}` body that is not an akm
 ref (`${HOME}`, `${PATH//:/ }`, and shell substitution such as `${v//-/_}`
 unless a bundle named `v` is installed) is plain text: it is left untouched in an env
-value, and in a config credential a `${NAME}` that is a valid variable name is
+value, and in a git bundle's `credential` a `${NAME}` that is a valid variable name is
 expanded from the process environment. A ref no bundle owns is an error and
 nothing is injected. Each read records an `env_access` event. See
 [Workflow Schema: Binding a secret to a unit](workflow-schema.md#binding-a-secret-to-a-unit).
 
+The API keys of model connections, `embedding` and `search.curateRerank` are
+not secrets-store references: they are a `$VAR` environment reference or an
+entry of `credentials.json` stored for the endpoint, and a `${secrets/...}` in an `apiKey` is ignored
+with a warning (see [Configuration: Credentials](configuration.md#credentials)).
+The `secrets/` store is for the secrets your own agents, tasks and bundle
+sources need.
+
 A secret's value is its file content with surrounding whitespace trimmed. That
-one read is used by `akm secret run`, env tokens, config credentials and the
+one read is used by `akm secret run`, env tokens, bundle credentials and the
 website fetchers, so a hand-written file's trailing newline never lands in an
 HTTP header.
 

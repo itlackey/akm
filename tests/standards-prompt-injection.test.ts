@@ -25,8 +25,7 @@
  *
  * Pure string assertions + a temp stash for the tie-through. No real DB,
  * network, or spawned process, so this file lives under tests/ (unit
- * target), not tests/integration/ (ORG-05, 0.9.8 stabilization; see
- * AGENTS.md's tests/integration/ classification rule).
+ * target), not tests/integration/.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

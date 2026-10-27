@@ -39,7 +39,7 @@ function writeChild(name = "child"): void {
   write(name, [
     "---",
     "type: workflow",
-    "defaults: { engine: test-agent }",
+    "defaults: { engine: test-llm }",
     "params:",
     "  topic: { type: string }",
     "steps:",
@@ -71,7 +71,7 @@ describe("child workflows — markdown form", () => {
     write("parent", [
       "---",
       "type: workflow",
-      "defaults: { engine: test-agent }",
+      "defaults: { engine: test-llm }",
       "params:",
       "  topic: { type: string }",
       "steps:",
@@ -115,7 +115,7 @@ describe("child workflows — markdown form", () => {
     write("parent-fails", [
       "---",
       "type: workflow",
-      "defaults: { engine: test-agent }",
+      "defaults: { engine: test-llm }",
       "steps:",
       "  - id: investigate",
       "    unit:",

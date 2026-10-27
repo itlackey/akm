@@ -2,35 +2,29 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { AkmConfigSchema } from "../../src/core/config/config-schema";
-import {
-  activeMarkdownDocs,
-  CONFIG_DOC_PATH,
-  extractSection,
-  readDoc,
-  retiredExecutionExamples,
-} from "./contract-helpers";
+import { activeMarkdownDocs, readDoc, retiredExecutionExamples } from "./contract-helpers";
 
-describe("current engine and strategy configuration contract", () => {
-  const docs = readDoc(CONFIG_DOC_PATH);
+describe("current connection, harness and strategy configuration contract", () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..");
 
-  test("accepts named LLM/agent engines and improve strategies", () => {
+  test("accepts connections, harnesses and improve strategies", () => {
     expect(() =>
       AkmConfigSchema.parse({
         configVersion: "0.9.0",
-        engines: {
-          fast: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "qwen3" },
-          reviewer: { kind: "agent", platform: "opencode" },
+        connections: { fast: { endpoint: "https://example.test/v1", models: { fast: "qwen3" } } },
+        harnesses: { opencode: {} },
+        improve: {
+          strategy: "nightly",
+          connection: "fast",
+          strategies: { nightly: { processes: { reflect: {} } } },
         },
-        defaults: { engine: "reviewer", llmEngine: "fast", improveStrategy: "nightly" },
-        improve: { strategies: { nightly: { engine: "fast", processes: { reflect: {} } } } },
       }),
     ).not.toThrow();
   });
 
-  test("rejects retired profile-based execution configuration", () => {
-    expect(AkmConfigSchema.safeParse({ profiles: { llm: {} } }).success).toBe(false);
-    expect(AkmConfigSchema.safeParse({ defaults: { agent: "reviewer" } }).success).toBe(false);
+  test("retired profile-based execution configuration is an unknown key", () => {
+    // `profiles` is an unknown key: warned about by the loader and ignored, never a schema error.
+    expect(AkmConfigSchema.safeParse({ configVersion: "0.9.0", profiles: { llm: {} } }).success).toBe(true);
   });
 
   test("rejects writable cache-backed website and npm bundles (#37: sources key itself is retired)", () => {
@@ -44,12 +38,6 @@ describe("current engine and strategy configuration contract", () => {
     expect(AkmConfigSchema.safeParse({ sources: [] }).success).toBe(false);
     expect(AkmConfigSchema.safeParse({ stashDir: "/tmp/x" }).success).toBe(false);
     expect(AkmConfigSchema.safeParse({ installed: [] }).success).toBe(false);
-  });
-
-  test("current docs define engines, strategies, and retired profile keys", () => {
-    expect(extractSection(docs, "## Engines")).toContain("`engines` is the only public execution map");
-    expect(extractSection(docs, "## Strategies")).toContain("improve.strategies");
-    expect(extractSection(docs, "## Retired Configuration")).toContain("`profiles`");
   });
 
   test("active documentation does not use retired execution selectors", () => {
@@ -107,11 +95,10 @@ describe("current engine and strategy configuration contract", () => {
   test("retired execution scan ignores ordinary words, current selectors, and explicit retirement sections", () => {
     const example = [
       "Use your shell profile with the workflow runner.",
-      "Configure `engines.fast.endpoint`, `defaults.engine`, and `--engine fast`.",
+      "Configure `connections.fast.endpoint`, `improve.connection`, and `--connection fast`.",
       "## Retired Configuration",
       "`llm.endpoint`, `defaults.agent`, `--profile`, and `runner:` are retired.",
     ].join("\n");
     expect(retiredExecutionExamples(example)).toEqual([]);
-    expect(retiredExecutionExamples(extractSection(docs, "## Retired Configuration"))).toEqual([]);
   });
 });

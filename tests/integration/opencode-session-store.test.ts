@@ -1,35 +1,45 @@
-// Integration: opens real SQLite databases (clause: opens a real database; the
-// gated cases also spawn a real `opencode` binary).
+// Integration: opens real SQLite databases (and, to write the OpenCode 2 fixture,
+// runs the real OpenCode binary through akm's own runtime against a loopback model;
+// no network once the binary is cached).
 //
-// OpenCode session history is read from the stored schema, never from the
-// installed binary's version: a V1 file (session/message/part), a V2 file
-// (session_v2/session_message), a natively upgraded file holding both, WAL
-// content, and unsupported/corrupt files that must be reported, not look empty.
-// Fixtures are built in-test from SQL scripts shaped like the real DDL
-// (observed from OpenCode 1.18.34 and 2.0.26).
+// OpenCode session history is read from the database's tables with SQLite alone,
+// by the file's layout: the OpenCode 2 tables or the OpenCode 1 ones. Nothing
+// starts OpenCode on a file being read. Unsupported and corrupt files are
+// reported, never presented as empty. OpenCode 2 files are written by OpenCode
+// itself, through akm's runtime; the OpenCode 1 layout is covered in
+// tests/session-logs-providers.test.ts.
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { hashSessionContent } from "../../src/commands/improve/extract";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
+import { runtimeProfile } from "../../src/integrations/agent/profiles";
+import type { ConnectionRunner } from "../../src/integrations/agent/runner";
+import { buildChildEnv, runBuiltCommand } from "../../src/integrations/agent/spawn";
+import { opencodeBuilder } from "../../src/integrations/harnesses/opencode/agent-builder";
+import { akmOpencodeDatabasePath, akmRuntimeDir } from "../../src/integrations/harnesses/opencode/roots";
+import { opencodeRuntime } from "../../src/integrations/harnesses/opencode/runtime";
+import { runtimeBinaryPath } from "../../src/integrations/harnesses/opencode/runtime/binary";
+import { runtimeConfig, runtimeEnv } from "../../src/integrations/harnesses/opencode/runtime/command";
 import { OpenCodeProvider } from "../../src/integrations/harnesses/opencode/session-log";
+import { opencodeMessageEvents } from "../../src/integrations/harnesses/opencode/session-log-v2";
 import { openDatabase } from "../../src/storage/database";
+import { type FakeModelServer, startFakeModel } from "../_helpers/fake-model-server";
+import { useRealOpencodeRuntime } from "../_helpers/fake-opencode-runtime";
+import { fetchSharedOpencode, linkSharedOpencode } from "../_helpers/opencode-binary";
+import { withEnv } from "../_helpers/sandbox";
+import { overrideSeam } from "../_helpers/seams";
 
-const V1_DDL = `
-CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, title TEXT NOT NULL, directory TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL);
-CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
-CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
-`;
-
-const V2_DDL = `
-CREATE TABLE session_v2 (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, fork_session_id TEXT, directory TEXT NOT NULL, title TEXT, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL);
-CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
-`;
+const unavailable = await fetchSharedOpencode();
+if (unavailable) console.warn(`[opencode-session-store] skipped: the OpenCode binary is not available: ${unavailable}`);
 
 const tempDirs: string[] = [];
 let warnings: string[] = [];
+let model: FakeModelServer;
+/** The OpenCode 2 database akm's runtime wrote, and the sessions in it. */
+let fixture: OpenCode2Fixture | undefined;
 
 function makeBase(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-opencode-store-"));
@@ -37,67 +47,26 @@ function makeBase(): string {
   return dir;
 }
 
+beforeAll(async () => {
+  if (unavailable !== undefined) return;
+  model = startFakeModel();
+  fixture = await writeOpenCode2Store();
+}, 120_000);
+
+afterAll(() => {
+  model?.stop();
+  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 beforeEach(() => {
   warnings = [];
   _resetWarnOnceForTests();
-  _setWarnSinkForTests((level, args) => {
+  overrideSeam(_setWarnSinkForTests, (level, args) => {
     if (level === "warn") warnings.push(args.map(String).join(" "));
   });
 });
 
-afterEach(() => {
-  _setWarnSinkForTests();
-  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
-});
-
 type Db = ReturnType<typeof openDatabase>;
-
-function firstSession(provider: OpenCodeProvider, location: string) {
-  const summary = provider.listSessions({ location })[0];
-  if (!summary) throw new Error("fixture lists no session");
-  return summary;
-}
-
-function v1Session(db: Db, id: string, directory: string, created: number, texts: Array<[string, string]>): void {
-  db.run("INSERT INTO session VALUES (?, 'p', ?, ?, ?, ?)", id, `v1 ${id}`, directory, created, created + 100);
-  texts.forEach(([role, text], i) => {
-    const mid = `msg_${id}_${i}`;
-    db.run(
-      "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
-      mid,
-      id,
-      created + i,
-      created + i,
-      JSON.stringify({ role, time: { created: created + i } }),
-    );
-    db.run(
-      "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)",
-      `prt_${mid}`,
-      mid,
-      id,
-      created + i,
-      created + i,
-      JSON.stringify({ type: "text", text }),
-    );
-  });
-}
-
-function v2Message(db: Db, session: string, seq: number, type: string, data: Record<string, unknown>): void {
-  db.run(
-    "INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)",
-    `msg_${session}_${seq}`,
-    session,
-    type,
-    seq,
-    1000 + seq,
-    1000 + seq,
-    JSON.stringify(data),
-  );
-}
-
-function v2Session(db: Db, id: string, directory: string, updated = 5000): void {
-  db.run("INSERT INTO session_v2 VALUES (?, 'p', NULL, NULL, ?, NULL, 1000, ?)", id, directory, updated);
-}
 
 function build(base: string, ddl: string, fill: (db: Db) => void): string {
   const dbPath = path.join(base, "opencode.db");
@@ -108,76 +77,243 @@ function build(base: string, ddl: string, fill: (db: Db) => void): string {
   return dbPath;
 }
 
-describe("OpenCode V1 store", () => {
-  test("lists and reads a V1-only file", () => {
+interface OpenCode2Fixture {
+  /** The directory holding the runtime's `opencode.db`. */
+  readonly directory: string;
+  /** The "the work" session, which ran a shell command. */
+  readonly first: string;
+  /** Every top-level session that is not akm's model work. */
+  readonly ids: string[];
+}
+
+/**
+ * An OpenCode 2 database written by OpenCode itself, through akm's runtime: sessions that ran a shell command, wrote a
+ * file, were compacted mid-turn, were cut at the output limit and named an agent, one that started a subagent, then a
+ * model-work session, run the way the opencode harness runs model work on a user's OpenCode 2. The model-work session
+ * and the subagent's are not history.
+ */
+async function writeOpenCode2Store(): Promise<OpenCode2Fixture> {
+  const root = makeBase();
+  const work = path.join(root, "work");
+  fs.mkdirSync(work, { recursive: true });
+  const cache = path.join(root, "cache");
+  linkSharedOpencode(cache);
+  const profile = runtimeProfile({ name: "lab" } as ConnectionRunner);
+  // A declared window lets the model's "compact" mode make OpenCode compact the conversation.
+  const connection = {
+    endpoint: model.url,
+    model: "fake-model",
+    contextLength: 40_000,
+    request: { max_tokens: 4_000 },
+  };
+  return withEnv(
+    { AKM_DATA_DIR: path.join(root, "data"), AKM_CACHE_DIR: cache, AKM_STATE_DIR: path.join(root, "state") },
+    async () => {
+      useRealOpencodeRuntime();
+      const directory = path.dirname(akmOpencodeDatabasePath());
+      const ids: string[] = [];
+      const turn = async (mode: string, dispatch: { agent?: string } = {}): Promise<void> => {
+        const result = await opencodeRuntime.run(
+          profile,
+          { cwd: work, timeoutMs: 90_000, dispatch: { prompt: `MODE:${mode} go`, ...dispatch } },
+          connection,
+        );
+        if (!result.ok) throw new Error(`the fixture run MODE:${mode} failed: ${result.error}\n${result.stderr}`);
+      };
+      /** The sessions in the database, oldest first. */
+      const sessions = () => {
+        const db = openDatabase(path.join(directory, "opencode.db"), { readonly: true, create: false });
+        try {
+          return db
+            .prepare<{ id: string; agent: string | null; parent_id: string | null }>(
+              "SELECT id, agent, parent_id FROM session_v2 ORDER BY time_created",
+            )
+            .all();
+        } finally {
+          db.close();
+        }
+      };
+      await turn("shell");
+      const first = sessions()[0]?.id as string;
+      await turn("write");
+      await turn("compact");
+      await turn("length");
+      await turn("answer", { agent: "build" });
+      await turn("subagent");
+      // The opencode harness's model work, on the same binary and database: its read-only agent, over the runtime's provider.
+      const locations = {
+        binary: runtimeBinaryPath(),
+        directory: akmRuntimeDir(),
+        pluginDirectory: path.join(akmRuntimeDir(), "config", "akm-plugin"),
+        akm: [],
+      };
+      const runtime = runtimeEnv(runtimeConfig(connection, locations.pluginDirectory, ""), locations);
+      const modelWork = await withEnv(runtime, () =>
+        opencodeBuilder.build(
+          { bin: locations.binary, args: [] },
+          { prompt: "MODE:answer go", model: "akm/fake-model", modelWork: true },
+        ),
+      );
+      const result = await runBuiltCommand(
+        "model work",
+        { argv: modelWork.argv, env: { ...buildChildEnv({}), ...runtime, ...modelWork.env }, stdin: modelWork.stdin },
+        { cwd: work, timeoutMs: 90_000 },
+      );
+      if (!result.ok) throw new Error(`the fixture's model work failed: ${result.error}\n${result.stderr}`);
+      for (const session of sessions())
+        if (session.agent !== "akm-model-work" && session.parent_id === null) ids.push(session.id);
+      return { directory, first, ids };
+    },
+  );
+}
+
+/** The fixture's database files, copied to `base` (a database a reader can be pointed at and compared with). */
+function copyFixtureTo(base: string): void {
+  const source = (fixture as OpenCode2Fixture).directory;
+  fs.mkdirSync(base, { recursive: true });
+  for (const name of ["opencode.db", "opencode.db-wal", "opencode.db-shm"]) {
+    if (fs.existsSync(path.join(source, name))) fs.copyFileSync(path.join(source, name), path.join(base, name));
+  }
+}
+
+const fileBytes = (file: string): string => (fs.existsSync(file) ? fs.readFileSync(file).toString("base64") : "");
+
+describe.skipIf(unavailable !== undefined)("OpenCode 2 store (read with SQLite alone)", () => {
+  test("lists top-level sessions without akm's model work, and reads one with its tool calls", async () => {
+    const { first, ids } = fixture as OpenCode2Fixture;
     const base = makeBase();
-    build(base, V1_DDL, (db) =>
-      v1Session(db, "ses_v1", "/work/a", 2000, [
-        ["user", "hi"],
-        ["assistant", "hello"],
-      ]),
-    );
+    copyFixtureTo(base);
+    // The file holds the model-work session, one of another agent and a subagent's, so the listing below is not vacuous.
+    const store = openDatabase(path.join(base, "opencode.db"), { readonly: true, create: false });
+    const agents = store
+      .prepare<{ agent: string }>("SELECT DISTINCT agent FROM session_v2 WHERE agent IS NOT NULL")
+      .all();
+    const children = store.prepare<{ id: string }>("SELECT id FROM session_v2 WHERE parent_id IS NOT NULL").all();
+    store.close();
+    expect(agents.map((row) => row.agent).sort()).toEqual(["akm-model-work", "build", "general"]);
+    expect(children.length).toBeGreaterThan(0);
     const provider = new OpenCodeProvider();
-    expect(provider.inspectStore(base)).toEqual({ kind: "ok", v1: true, v2: false });
-    const summary = firstSession(provider, base);
-    expect(summary).toMatchObject({ sessionId: "ses_v1", projectHint: "/work/a", title: "v1 ses_v1" });
-    expect(provider.readSession(summary).events.map((e) => [e.role, e.text])).toEqual([
-      ["user", "hi"],
-      ["assistant", "hello"],
-    ]);
+    const sessions = await provider.listSessions({ location: base });
+    expect(sessions.map((s) => s.sessionId).sort()).toEqual([...ids].sort());
+    expect(sessions.find((s) => s.sessionId === first)).toMatchObject({
+      title: "akm",
+      filePath: path.join(base, "opencode.db"),
+    });
+
+    const data = await provider.readSession(sessions.find((s) => s.sessionId === first) as never);
+    const texts = data.events.map((e) => [e.role, e.text]);
+    expect(texts[0]).toEqual(["user", "MODE:shell go"]);
+    expect(texts).toContainEqual(["assistant", "[tool:shell] echo HELLO"]);
+    expect(texts.some(([role, text]) => role === "tool" && text?.startsWith("[tool_result] HELLO"))).toBe(true);
+    expect(data.ref).toMatchObject({ sessionId: first, title: "akm" });
     expect(warnings).toEqual([]);
   });
-});
 
-describe("OpenCode V2 store", () => {
-  test("rebuilds ordered messages, tool calls and results by seq", () => {
+  test("every session reads to events, and reading it again gives the same content hash", async () => {
+    // The hash is the skip authority for "already extracted": a reader that changed it would extract every session again.
     const base = makeBase();
-    build(base, V2_DDL, (db) => {
-      v2Session(db, "ses_v2", "/work/b");
-      // Inserted out of seq order on purpose.
-      v2Message(db, "ses_v2", 2, "assistant", {
-        time: { created: 1002 },
-        agent: "build",
-        content: [
-          { type: "reasoning", text: "thinking" },
-          { type: "text", text: "Saving that." },
-          {
-            type: "tool",
-            id: "call_1",
-            name: "shell",
-            time: { created: 1003, completed: 1004 },
-            state: {
-              status: "completed",
-              input: { command: 'akm remember "vpn needs the corp cert"' },
-              content: [{ type: "text", text: "saved" }],
-            },
-          },
-          {
-            type: "tool",
-            id: "call_2",
-            name: "read",
-            time: { created: 1005 },
-            state: { status: "running", input: { path: "a.ts" }, metadata: {} },
-          },
-          {
-            type: "tool",
-            id: "call_3",
-            name: "write",
-            time: { created: 1006, completed: 1007 },
-            state: { status: "error", input: { path: "b.ts" }, error: { type: "tool.failed", message: "denied" } },
-          },
-        ],
-      });
-      v2Message(db, "ses_v2", 1, "user", { time: { created: 1001 }, text: "remember the vpn thing", files: [] });
-      v2Message(db, "ses_v2", 3, "idle", { time: { created: 1008 }, outcome: "succeeded" });
-      db.run("INSERT INTO session_message VALUES ('bad', 'ses_v2', 'user', 9, 1, 1, '{not json')");
-    });
+    copyFixtureTo(base);
+    const store = openDatabase(path.join(base, "opencode.db"), { readonly: true, create: false });
+    const types = store.prepare<{ type: string }>("SELECT DISTINCT type FROM session_message").all();
+    store.close();
+    expect(types.map((row) => row.type)).toEqual(expect.arrayContaining(["user", "assistant", "compaction", "idle"]));
     const provider = new OpenCodeProvider();
-    expect(provider.inspectStore(base)).toEqual({ kind: "ok", v1: false, v2: true });
-    const summary = firstSession(provider, base);
-    expect(summary).toMatchObject({ sessionId: "ses_v2", projectHint: "/work/b" });
-    const data = provider.readSession(summary);
-    expect(data.events.map((e) => [e.role, e.text])).toEqual([
+    const sessions = await provider.listSessions({ location: base });
+    expect(sessions).toHaveLength((fixture as OpenCode2Fixture).ids.length);
+    for (const session of sessions) {
+      const once = await provider.readSession(session as never);
+      const again = await provider.readSession(session as never);
+      expect(once.events.length).toBeGreaterThan(0);
+      expect(hashSessionContent(once)).toBe(hashSessionContent(again));
+    }
+  });
+
+  test("reading leaves the database as it was", async () => {
+    const base = makeBase();
+    copyFixtureTo(base);
+    const db = path.join(base, "opencode.db");
+    const before = [fileBytes(db), fileBytes(`${db}-wal`)];
+    const provider = new OpenCodeProvider();
+    for (const session of await provider.listSessions({ location: base })) await provider.readSession(session as never);
+    await provider.listSessions({ location: base, isolatedSnapshot: true });
+    expect([fileBytes(db), fileBytes(`${db}-wal`)]).toEqual(before);
+  });
+
+  test("a planning listing reads a private copy and lists the same sessions", async () => {
+    const base = makeBase();
+    copyFixtureTo(base);
+    const sessions = await new OpenCodeProvider().listSessions({ location: base, isolatedSnapshot: true });
+    expect(sessions.map((s) => s.sessionId).sort()).toEqual([...(fixture as OpenCode2Fixture).ids].sort());
+  });
+
+  test("without a location, akm's own OpenCode database is read too", async () => {
+    const { first } = fixture as OpenCode2Fixture;
+    const own = path.dirname(akmOpencodeDatabasePath());
+    copyFixtureTo(own);
+    try {
+      const sessions = await new OpenCodeProvider().listSessions();
+      expect(sessions.map((s) => s.sessionId)).toContain(first);
+    } finally {
+      fs.rmSync(path.dirname(own), { recursive: true, force: true });
+    }
+  });
+
+  test("a session that is not in the file, or a file with no session tables, fails to read", async () => {
+    const base = makeBase();
+    copyFixtureTo(base);
+    const { first } = fixture as OpenCode2Fixture;
+    const provider = new OpenCodeProvider();
+    const ref = { harness: "opencode", sessionId: first, filePath: path.join(base, "opencode.db") };
+    await expect(provider.readSession({ ...ref, sessionId: "ses_missing" })).rejects.toThrow("is not in the file");
+    const other = makeBase();
+    build(other, "CREATE TABLE unrelated (x TEXT);", () => {});
+    await expect(provider.readSession({ ...ref, filePath: path.join(other, "opencode.db") })).rejects.toThrow(
+      "no supported OpenCode 1 or OpenCode 2 session tables",
+    );
+  });
+
+  test("messages map to events: text, tool calls and their results, in order", () => {
+    const { events, inlineRefs } = opencodeMessageEvents(
+      [
+        { type: "user", time: { created: 1001 }, text: "remember the vpn thing", files: [] },
+        {
+          type: "assistant",
+          time: { created: 1002 },
+          content: [
+            { type: "reasoning", text: "thinking" },
+            { type: "text", text: "Saving that." },
+            {
+              type: "tool",
+              name: "shell",
+              time: { created: 1003, completed: 1004 },
+              state: {
+                status: "completed",
+                input: { command: 'akm remember "vpn needs the corp cert"' },
+                content: [{ type: "text", text: "saved" }],
+              },
+            },
+            {
+              type: "tool",
+              name: "read",
+              time: { created: 1005 },
+              state: { status: "running", input: { path: "a.ts" } },
+            },
+            {
+              type: "tool",
+              name: "write",
+              time: { created: 1006, completed: 1007 },
+              state: { status: "error", input: { path: "b.ts" }, error: { type: "tool.failed", message: "denied" } },
+            },
+          ],
+        },
+        { type: "idle", time: { created: 1008 }, outcome: "succeeded" },
+        "not a message",
+      ],
+      "opencode",
+      "ses_x",
+      "/db",
+    );
+    expect(events.map((e) => [e.role, e.text])).toEqual([
       ["user", "remember the vpn thing"],
       ["assistant", "Saving that."],
       ["assistant", '[tool:shell] akm remember "vpn needs the corp cert"'],
@@ -186,139 +322,27 @@ describe("OpenCode V2 store", () => {
       ["assistant", '[tool:write] {"path":"b.ts"}'],
       ["tool", "[tool_result] denied"],
     ]);
-    expect(data.inlineRefs).toEqual([{ kind: "remember", text: "vpn needs the corp cert", ts: 1003 }]);
-    // One unreadable message degrades with a warning; it does not abort the session.
-    expect(warnings.some((w) => w.includes("skipped unreadable message bad"))).toBe(true);
-  });
-
-  test("reads WAL content that is not yet checkpointed", () => {
-    const base = makeBase();
-    const dbPath = path.join(base, "opencode.db");
-    const writer = openDatabase(dbPath, { create: true });
-    try {
-      writer.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0");
-      writer.exec(V2_DDL);
-      v2Session(writer, "ses_wal", "/work/w");
-      v2Message(writer, "ses_wal", 1, "user", { time: { created: 1001 }, text: "only in the wal" });
-      expect(fs.statSync(`${dbPath}-wal`).size).toBeGreaterThan(0);
-      const provider = new OpenCodeProvider();
-      const summary = firstSession(provider, base);
-      expect(provider.readSession(summary).events.map((e) => e.text)).toEqual(["only in the wal"]);
-    } finally {
-      writer.close();
-    }
-  });
-});
-
-describe("natively upgraded store (V1 and V2 tables in one file)", () => {
-  test("merges by session id, V2 wins, V1-only history stays readable", () => {
-    const base = makeBase();
-    build(base, V1_DDL + V2_DDL, (db) => {
-      // Copied by the upgrade: same id in both, messages present in V2.
-      v1Session(db, "ses_copied", "/work/c", 2000, [["user", "old text"]]);
-      v2Session(db, "ses_copied", "/work/c", 2100);
-      v2Message(db, "ses_copied", 0, "user", { time: { created: 2000 }, text: "migrated text" });
-      // Not copied (or copied without messages): only the V1 rows hold the history.
-      v1Session(db, "ses_retained", "/work/d", 1000, [["user", "retained v1 text"]]);
-      v2Session(db, "ses_empty_copy", "/work/e", 1500);
-      v1Session(db, "ses_empty_copy", "/work/e", 1400, [["user", "v1 side of empty copy"]]);
-      // Created natively on V2.
-      v2Session(db, "ses_new", "/work/f", 9000);
-      v2Message(db, "ses_new", 0, "user", { time: { created: 8000 }, text: "new on v2" });
-    });
-    const provider = new OpenCodeProvider();
-    expect(provider.inspectStore(base)).toEqual({ kind: "ok", v1: true, v2: true });
-    const sessions = provider.listSessions({ location: base });
-    expect(sessions.map((s) => s.sessionId)).toEqual(["ses_new", "ses_copied", "ses_empty_copy", "ses_retained"]);
-    const text = (id: string) =>
-      provider.readSession(sessions.find((s) => s.sessionId === id) as never).events.map((e) => e.text);
-    expect(text("ses_copied")).toEqual(["migrated text"]);
-    expect(text("ses_retained")).toEqual(["retained v1 text"]);
-    expect(text("ses_empty_copy")).toEqual(["v1 side of empty copy"]);
-    expect(text("ses_new")).toEqual(["new on v2"]);
-    expect(warnings).toEqual([]);
-  });
-
-  test("a broken V2 half degrades with a warning and still lists V1 sessions", () => {
-    const base = makeBase();
-    build(base, V1_DDL + "CREATE TABLE session_v2 (id TEXT); CREATE TABLE session_message (id TEXT);", (db) =>
-      v1Session(db, "ses_ok", "/work/g", 1000, [["user", "still here"]]),
-    );
-    const sessions = new OpenCodeProvider().listSessions({ location: base });
-    expect(sessions.map((s) => s.sessionId)).toEqual(["ses_ok"]);
-    expect(warnings.some((w) => w.includes("OpenCode 2 session tables cannot be queried"))).toBe(true);
+    expect(inlineRefs).toEqual([{ kind: "remember", text: "vpn needs the corp cert", ts: 1003 }]);
   });
 });
 
 describe("missing versus incompatible history", () => {
-  test("no database file is silently empty", () => {
-    const base = makeBase();
-    const provider = new OpenCodeProvider();
-    expect(provider.inspectStore(base)).toEqual({ kind: "missing" });
-    expect(provider.listSessions({ location: base })).toEqual([]);
+  test("no database file is silently empty", async () => {
+    expect(await new OpenCodeProvider().listSessions({ location: makeBase() })).toEqual([]);
     expect(warnings).toEqual([]);
   });
 
-  test("an unknown schema is reported, not presented as an empty list", () => {
+  test("an unknown schema is reported, not presented as an empty list", async () => {
     const base = makeBase();
     build(base, "CREATE TABLE unrelated (x TEXT);", () => {});
-    const provider = new OpenCodeProvider();
-    expect(provider.inspectStore(base)).toEqual({ kind: "unsupported", tables: ["unrelated"] });
-    expect(provider.listSessions({ location: base })).toEqual([]);
+    expect(await new OpenCodeProvider().listSessions({ location: base })).toEqual([]);
     expect(warnings.some((w) => w.includes("not an empty history"))).toBe(true);
   });
 
-  test("a corrupt file is reported as unreadable", () => {
+  test("a corrupt file is reported", async () => {
     const base = makeBase();
     fs.writeFileSync(path.join(base, "opencode.db"), "this is not a sqlite database".repeat(50));
-    const provider = new OpenCodeProvider();
-    expect(provider.inspectStore(base).kind).toBe("unreadable");
-    expect(provider.listSessions({ location: base })).toEqual([]);
+    expect(await new OpenCodeProvider().listSessions({ location: base })).toEqual([]);
     expect(warnings.some((w) => w.includes("not an empty history"))).toBe(true);
   });
-});
-
-// Real binaries, gated: set AKM_OPENCODE_V1_BIN / AKM_OPENCODE_V2_BIN. A prompt
-// fails without model credentials, but the session and its messages are still stored.
-function realBinaryStore(bin: string | undefined, extraArgs: string[]) {
-  const home = makeBase();
-  const env = {
-    PATH: process.env.PATH ?? "",
-    HOME: home,
-    XDG_CONFIG_HOME: path.join(home, ".config"),
-    XDG_DATA_HOME: path.join(home, ".local", "share"),
-    XDG_CACHE_HOME: path.join(home, ".cache"),
-    XDG_STATE_HOME: path.join(home, ".local", "state"),
-  };
-  spawnSync(bin as string, ["run", ...extraArgs, "hello from akm"], { cwd: home, env, timeout: 90_000 });
-  return path.join(home, ".local", "share", "opencode");
-}
-
-describe("real OpenCode binaries", () => {
-  const v1 = process.env.AKM_OPENCODE_V1_BIN;
-  const v2 = process.env.AKM_OPENCODE_V2_BIN;
-
-  test.skipIf(!v1)(
-    "history written by OpenCode 1 is read through the V1 layout",
-    () => {
-      const dir = realBinaryStore(v1, []);
-      const provider = new OpenCodeProvider();
-      expect(provider.inspectStore(dir)).toMatchObject({ kind: "ok", v1: true, v2: false });
-      const summary = firstSession(provider, dir);
-      expect(provider.readSession(summary).events[0]?.text).toContain("hello from akm");
-    },
-    120_000,
-  );
-
-  test.skipIf(!v2)(
-    "history written by OpenCode 2 is read through the V2 layout",
-    () => {
-      const dir = realBinaryStore(v2, ["--standalone"]);
-      const provider = new OpenCodeProvider();
-      expect(provider.inspectStore(dir)).toMatchObject({ kind: "ok", v1: false, v2: true });
-      const summary = firstSession(provider, dir);
-      expect(provider.readSession(summary).events[0]?.text).toContain("hello from akm");
-    },
-    120_000,
-  );
 });

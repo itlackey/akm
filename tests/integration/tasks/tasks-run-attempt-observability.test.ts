@@ -298,8 +298,7 @@ describe("tasks run attempt observability", () => {
     writeRawConfig(
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: { opencode: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "opencode" },
+        harnesses: { opencode: { platform: "opencode" } },
       }),
     );
     const dispatchError = new Error(errorSecret);

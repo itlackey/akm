@@ -3,25 +3,22 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `deriveInstallations` — akm 0.9.0 Chunk 5, milestone M-a.
+ * `deriveInstallations`.
  *
  * Bridges the `SearchSource[]` model (the live indexer's source list,
  * `search-source.ts`) onto the durable `BundleInstallation[]` /
- * `BundleComponent[]` model (spec §1.1). LIVE: called from the indexer
+ * `BundleComponent[]` model. Called from the indexer
  * (provenance derivation), the proposal repository, and written-asset
- * indexing. The originally-planned full "Step-3" `scanComponent`-driven scan
- * swap was superseded by the narrower Chunk-5 F4a drain-dir engine swap; the
- * shadow-parity scaffolding module (`scan/scan-installations.ts`) was deleted
- * as dead in the 0.9.0 close-out.
+ * indexing.
  *
  * Per source → one installation:
  *   - `id`       = `source.registryId` ?? a deterministic slug of `source.path`
- *                  (the `<bundle>` prefix of every ref this installation emits,
- *                  spec §1.3). Slugs are made unique WITHIN a derivation batch
+ *                  (the `<bundle>` prefix of every ref this installation emits).
+ *                  Slugs are made unique WITHIN a derivation batch
  *                  by appending a short path-hash suffix on collision, so two
  *                  sources sharing a basename never mint the same bundle id.
  *   - components = ONE component for the current single-root akm layout
- *                  (spec §1.2 rule 5): `{ id, root: source.path, adapter }`. The
+ *                  `{ id, root: source.path, adapter }`. The
  *                  akm layout's type dirs (`knowledge/`, `skills/`, …) are NOT
  *                  separate components — they are type-derived leading path
  *                  segments of the conceptId within the one component.
@@ -37,11 +34,11 @@
  * from the installation) is a downstream contract refinement — nothing in the
  * live path reads `IndexDocument.component` as distinct from `bundle` today.
  *
- * ── Adapter selection (spec §1.2 ordered probe) ──
+ * ── Adapter selection (ordered probe) ──
  *
  * The adapter is chosen by the ordered `looksLikeRoot` probe over the built-in
  * adapters (`getAdapters()`), first match wins. The registry is now a STATIC
- * FROZEN map (normative §12.6) populated at module load, so this probe runs in
+ * FROZEN map populated at module load, so this probe runs in
  * production with the full 11-family set — no registration call is required
  * first. Array order (`BUILTIN_ADAPTERS`) is the probe precedence, most-specific
  * first, so a `.claude`/dotenv/wiki root is claimed by its tight probe before
@@ -65,9 +62,9 @@ export { deriveBundleId, deriveBundleIds, slugForPath };
 /**
  * The no-probe-match fallback adapter id.
  *
- * The status-quo-preserving default from spec §1.2(3):
+ * The status-quo-preserving default:
  *
- *  - Behavior discipline (spec line 267): the AKM workspace root's own indexing
+ *  - Behavior discipline: the AKM workspace root's own indexing
  *    MUST stay classified `akm`. In this transitional model there is no
  *    depends on either explicit adapter configuration, `akm.looksLikeRoot`
  *    firing (type dirs / `.stash` present), or this fallback. A genuinely empty
@@ -80,7 +77,7 @@ const FALLBACK_ADAPTER_ID = "akm";
 
 /**
  * Resolve the adapter id for a component root via the ordered `looksLikeRoot`
- * probe (spec §1.2), first match wins; falls back to `akm` when no probe fires.
+ * probe, first match wins; falls back to `akm` when no probe fires.
  */
 export { detectAdapterId } from "../core/adapter/detect-adapter";
 

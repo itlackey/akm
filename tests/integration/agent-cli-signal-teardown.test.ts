@@ -4,7 +4,7 @@
 
 /**
  * Killing a dispatching `akm agent` command must not leave the CLI harness it
- * spawned (and that harness's own children) running. The CLI engines
+ * spawned (and that harness's own children) running. The CLI harnesses
  * (`opencode run`, `claude`, `codex`) are spawned in their own process group by
  * the managed-subprocess primitive; a timeout reaped that group, but a SIGTERM
  * or SIGINT to akm itself killed akm and left the group behind. This runs the
@@ -68,18 +68,18 @@ function alive(pid: number): boolean {
 const CASES: ReadonlyArray<{
   platform: "opencode" | "claude" | "codex";
   signal: "SIGTERM" | "SIGINT";
-  ignoresTerm: boolean;
+  stubborn: boolean;
 }> = [
-  { platform: "opencode", signal: "SIGTERM", ignoresTerm: false },
-  { platform: "opencode", signal: "SIGINT", ignoresTerm: false },
-  { platform: "opencode", signal: "SIGTERM", ignoresTerm: true },
-  { platform: "claude", signal: "SIGTERM", ignoresTerm: false },
-  { platform: "codex", signal: "SIGTERM", ignoresTerm: false },
+  { platform: "opencode", signal: "SIGTERM", stubborn: false },
+  { platform: "opencode", signal: "SIGINT", stubborn: false },
+  { platform: "opencode", signal: "SIGTERM", stubborn: true },
+  { platform: "claude", signal: "SIGTERM", stubborn: false },
+  { platform: "codex", signal: "SIGTERM", stubborn: false },
 ];
 
-for (const { platform, signal, ignoresTerm } of CASES) {
+for (const { platform, signal, stubborn } of CASES) {
   test.skipIf(process.platform === "win32")(
-    `a dispatching command killed by ${signal} leaves no ${platform} CLI process behind${ignoresTerm ? " (harness ignores SIGTERM)" : ""}`,
+    `a dispatching command killed by ${signal} leaves no ${platform} CLI process behind${stubborn ? " (harness ignores SIGINT and SIGTERM)" : ""}`,
     async () => {
       const leaderPidFile = path.join(fakeDir.dir, "leader.pid");
       const childPidFile = path.join(fakeDir.dir, "child.pid");
@@ -90,7 +90,7 @@ for (const { platform, signal, ignoresTerm } of CASES) {
         [
           "#!/bin/sh",
           `[ "$1" = "--version" ] && { echo 1.18.34; exit 0; }`,
-          ignoresTerm ? `trap '' TERM` : "",
+          stubborn ? `trap '' INT TERM` : "",
           `echo $$ > ${JSON.stringify(leaderPidFile)}`,
           `sleep 300 &`,
           `echo $! > ${JSON.stringify(childPidFile)}`,
@@ -100,13 +100,12 @@ for (const { platform, signal, ignoresTerm } of CASES) {
         { mode: 0o755 },
       );
       writeSandboxConfig({
-        engines: { fake: { kind: "agent", platform, bin } },
-        defaults: { engine: "fake" },
+        harnesses: { fake: { platform, bin } },
       });
 
       const cli = spawn(
         process.execPath,
-        [path.join(REPO_ROOT, "src/cli.ts"), "agent", "--engine", "fake", "--prompt", "hi"],
+        [path.join(REPO_ROOT, "src/cli.ts"), "agent", "--harness", "fake", "--prompt", "hi"],
         { cwd: REPO_ROOT, stdio: ["ignore", "pipe", "pipe"] },
       );
       let output = "";

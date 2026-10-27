@@ -99,7 +99,7 @@ function extractHint(error: unknown): string | undefined {
  * R-067: this used to call `process.exit(exitCode)` directly, which
  * terminates the process synchronously and skips every pending `finally`
  * block up the call stack — including `src/cli.ts`'s own
- * `disposeDispatchResources()` cleanup and citty's per-command `cleanup`
+ * `disposeLlmUsageSink()` cleanup and citty's per-command `cleanup`
  * hooks. `process.exitCode = exitCode; return;` is equivalent for every
  * caller here: Node/Bun exits with that code once the event loop drains
  * naturally, but cleanup on the way there still runs.
@@ -204,6 +204,19 @@ export const GLOBAL_OUTPUT_ARGS = {
     default: false,
   },
 } as const satisfies ArgsDef;
+
+/**
+ * A command with the args marked `hidden` left out: what `--help` renders. A
+ * hidden arg parses like any other and is simply not advertised, the way
+ * `meta.hidden` keeps a command out of the COMMANDS list. It is for a retired
+ * spelling that still works, so a scheduled command written for an earlier
+ * release keeps running.
+ */
+export function withoutHiddenArgs<T extends object>(command: T): T {
+  const args = (command as { args?: Record<string, { hidden?: boolean }> }).args;
+  if (!args) return command;
+  return { ...command, args: Object.fromEntries(Object.entries(args).filter(([, def]) => def.hidden !== true)) };
+}
 
 /**
  * Define a citty command whose `run` body is automatically wrapped in

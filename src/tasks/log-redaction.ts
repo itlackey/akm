@@ -18,13 +18,10 @@
  *
  * # Why the obvious fix is wrong
  *
- * The issue proposed reusing {@link isEnvPassthroughValueSafeToExpose} — the
- * filter the prompt path uses — over the env handed to the child. That filter
- * fails CLOSED for any name outside a 22-entry allowlist, which is right where
- * it currently runs: the prompt path filters `envPassthrough`, a short list the
- * operator explicitly declared. A command task inherits the WHOLE ambient
- * environment, so the same rule classifies essentially everything as secret.
- * Measured on a developer machine: 127 of 132 variables, 25 of them with
+ * The issue proposed treating every value of the env handed to the child as
+ * secret unless its name is known to be harmless. A command task inherits the
+ * WHOLE ambient environment, so that rule classifies essentially everything as
+ * secret. Measured on a developer machine: 127 of 132 variables, 25 of them with
  * one-character values (`SHLVL=1`, `OLDPWD=/`, `GIT_TERMINAL_PROMPT=0`).
  * Redaction is substring replacement, so those become live needles:
  *
@@ -39,9 +36,9 @@
  * Three sources, and the distinction between them is the whole design:
  *
  *  1. **Declared by config** — the config names which variables hold
- *     credentials (`engines.<n>.apiKey: ${VAR}`, `embedding.apiKey`, and the
- *     implicit `AKM_ENGINE_<NAME>_API_KEY` / `AKM_LLM_API_KEY` /
- *     `AKM_EMBED_API_KEY` recipes). akm KNOWS these are secret.
+ *     credentials (a connection's `apiKey: $VAR`, `embedding.apiKey`, the
+ *     reranker's) and which keys sit in `credentials.json`. akm KNOWS these
+ *     are secret.
  *  2. **Declared by the task** — the `redact:` list, names only.
  *  3. **Inferred** — a name-shape heuristic over the remaining environment, for
  *     the ambient credential akm was never told about.
@@ -63,63 +60,14 @@
  * name none of the rules recognise.
  */
 
-import { collectSensitiveValues, isEnvPassthroughValueSafeToExpose } from "../core/redaction";
-import { collectEngineCredentialValues, type EngineResolutionConfig } from "../integrations/agent/engine-resolution";
+import type { AkmConfig } from "../core/config/config-types";
+import { collectCredentialValues } from "../core/config/credentials";
+import { collectInferredSecretValues, collectSensitiveValues } from "../core/redaction";
 
-/**
- * Shortest value an INFERRED (name-heuristic) match may contribute as a
- * redaction needle. Declared secrets bypass this entirely.
- *
- * Redaction replaces substrings, so a short needle is not merely useless — it
- * corrupts unrelated output. Below 8 the noise tier is fully intact (`1`, `0`,
- * `/`, `80`, `true`, `xhigh`, `31999`); at 8 a chance collision with ordinary
- * log vocabulary is negligible, and every credential format in real use is far
- * longer. It also matches the conventional minimum password length, so a
- * secret shorter than this is already outside normal policy.
- */
-export const MIN_INFERRED_SECRET_LENGTH = 8;
+export { isInferredSecretName, MIN_INFERRED_SECRET_LENGTH } from "../core/redaction";
 
-/**
- * Environment names whose VALUE is treated as a credential on shape alone.
- *
- * The keyword must be a whole `_`-delimited word. Anchoring on only one side
- * would drag in ordinary configuration from whichever side is left open:
- * a leading anchor alone matches `KEYBOARD_LAYOUT` and `AUTHOR`, a trailing one
- * matches `MONKEY` and `BYPASS`. Whole-word matching gets `GH_TOKEN`,
- * `NPM_AUTH_TOKEN`, `MY_API_KEY`, `DB_PASS` and `AWS_SECRET_ACCESS_KEY` right.
- */
-const INFERRED_SECRET_NAME = /(?:^|_)(?:API_?KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|CREDENTIALS?|AUTH)(?:_|$)/i;
-
-/**
- * Credential variables whose name is a single glued word, which no
- * word-boundary rule can see. Enumerated rather than matched: loosening the
- * pattern enough to catch `PGPASSWORD` also catches `MONKEY`.
- *
- * `PWD` cannot be a keyword above for the same reason it appears here as part
- * of `MYSQL_PWD` — on its own it is the working directory.
- */
-const KNOWN_SECRET_NAMES = new Set(["PGPASSWORD", "MYSQL_PWD"]);
-
-/** True when the NAME alone marks this variable as holding a credential. */
-export function isInferredSecretName(name: string): boolean {
-  return KNOWN_SECRET_NAMES.has(name.toUpperCase()) || INFERRED_SECRET_NAME.test(name);
-}
-
-/**
- * The config this module reads: engine resolution's own view (so the engine
- * credential recipes stay defined in exactly one place), plus the embedding key
- * that view does not cover.
- */
-export interface TaskLogRedactionConfig extends EngineResolutionConfig {
-  embedding?: { apiKey?: string };
-}
-
-/** Resolve `${VAR}` / `$VAR` to the variable NAME, or undefined for anything else. */
-function envRefName(spec: string | undefined): string | undefined {
-  if (!spec) return undefined;
-  const match = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/.exec(spec.trim());
-  return match?.[1];
-}
+/** The config this module reads: the blocks that hold an `apiKey`. */
+export type TaskLogRedactionConfig = Pick<AkmConfig, "connections" | "embedding" | "search">;
 
 /**
  * Every value that must be scrubbed from one task's persisted output.
@@ -145,25 +93,16 @@ export function collectTaskLogSensitiveValues(input: {
     if (trimmed.length > 0) values.add(trimmed);
   };
 
-  // (1) Declared by config — engine credentials, via the collector the prompt
-  // path already uses, plus the embedding key it does not cover.
+  // (1) Declared by config — every key a connection, the embedder or the reranker can resolve.
   if (config) {
-    for (const value of collectEngineCredentialValues(config, env)) values.add(value);
-    addDeclared(env[envRefName(config.embedding?.apiKey) ?? "AKM_EMBED_API_KEY"]);
+    for (const value of collectCredentialValues(config, env)) values.add(value);
   }
 
   // (2) Declared by the task's `redact:` list — names only, never values.
   for (const name of declaredNames ?? []) addDeclared(env[name]);
 
-  // (3) Inferred from the name shape. The only guessing tier, so the only one
-  // with a length floor — and still subject to the value-level check that keeps
-  // an allowlisted name from being treated as secret.
-  for (const [name, value] of Object.entries(env)) {
-    if (value === undefined || value.length < MIN_INFERRED_SECRET_LENGTH) continue;
-    if (!isInferredSecretName(name)) continue;
-    if (isEnvPassthroughValueSafeToExpose(name, value)) continue;
-    values.add(value);
-  }
+  // (3) Inferred from the name shape, the one guessing tier (`collectInferredSecretValues`).
+  for (const value of collectInferredSecretValues(env)) values.add(value);
 
   // Expands credential-bearing URLs into their embedded components. Can yield
   // needles shorter than the floor (a URL's password), which is correct: the

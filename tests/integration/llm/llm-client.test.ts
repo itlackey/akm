@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, jest, setSystemTime, test } from "bun:test";
-import type { LlmConnectionConfig } from "../../../src/core/config/config";
 import { parseEmbeddedJsonResponse, parseJsonResponse } from "../../../src/core/parse";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
+import type { ChatCompletionConfig } from "../../../src/llm/client";
 import {
   _resetEndpointSupportTrackersForTests,
   chatCompletion,
@@ -41,7 +41,7 @@ describe("chatCompletion JSON Schema payload", () => {
       return Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
     });
     try {
-      await chatCompletion({ endpoint: url, model: "test-model", supportsJsonSchema: true }, messages, {
+      await chatCompletion({ endpoint: url, model: "test-model" }, messages, {
         responseSchema,
       });
       expect(requestBody).toEqual({
@@ -62,38 +62,15 @@ describe("chatCompletion JSON Schema payload", () => {
     }
   });
 
-  test("attempts the schema by default — no cached verdict gates the first request", async () => {
+  test("attempts the schema on the first request — nothing configured gates it", async () => {
     let requestBody: Record<string, unknown> | undefined;
     const { url, server } = createRequestServer((body) => {
       requestBody = body;
       return Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
     });
     try {
-      // No `supportsJsonSchema` set at all — the old design required an
-      // explicit `true`, sourced from a persisted setup-time probe. Now the
-      // absence of an opinion means "try it", not "assume unsupported".
       await chatCompletion({ endpoint: url, model: "test-model" }, messages, { responseSchema });
       expect(requestBody?.response_format).toBeDefined();
-    } finally {
-      server.stop(true);
-    }
-  });
-
-  test("an explicit supportsJsonSchema: false skips the schema attempt entirely", async () => {
-    let requestBody: Record<string, unknown> | undefined;
-    const { url, server } = createRequestServer((body) => {
-      requestBody = body;
-      return Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
-    });
-    try {
-      await chatCompletion({ endpoint: url, model: "test-model", supportsJsonSchema: false }, messages, {
-        responseSchema,
-      });
-      expect(requestBody).toEqual({
-        model: "test-model",
-        messages,
-        temperature: 0.3,
-      });
     } finally {
       server.stop(true);
     }
@@ -122,7 +99,7 @@ describe("chatCompletion structured-output attempt-then-fallback", () => {
       }
       return Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "test-model" };
     try {
       expect(isJsonSchemaKnownUnsupported(config)).toBe(false);
       const result = await chatCompletion(config, messages, { responseSchema });
@@ -146,7 +123,7 @@ describe("chatCompletion structured-output attempt-then-fallback", () => {
       }
       return Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "test-model" };
     try {
       await chatCompletion(config, messages, { responseSchema });
       requestBodies.length = 0;
@@ -165,7 +142,7 @@ describe("chatCompletion structured-output attempt-then-fallback", () => {
       requestBodies.push(body);
       return Response.json({ error: "rate limited" }, { status: 429 });
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "test-model" };
     try {
       await expect(chatCompletion(config, messages, { responseSchema })).rejects.toThrow(LlmCallError);
       expect(requestBodies).toHaveLength(1);
@@ -201,7 +178,7 @@ describe("chatCompletion 5xx that names the response format (#1150)", () => {
       }
       return ok();
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "test-model" };
     try {
       expect(await chatCompletion(config, messages, { responseSchema })).toBe('{"result":"ok"}');
       expect(requestBodies).toHaveLength(2);
@@ -224,7 +201,7 @@ describe("chatCompletion 5xx that names the response format (#1150)", () => {
       requestBodies.push(body);
       return Response.json({ error: "bad gateway" }, { status: 502 });
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "test-model" };
     try {
       await expect(
         chatCompletion(config, messages, { responseSchema, sleep: async () => {} } as Parameters<
@@ -285,7 +262,7 @@ describe("chatCompletion against an OpenAI reasoning model (temperature and max_
       requestBodies.push(body);
       return strict(body) ?? ok();
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "gpt-test" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "gpt-test" };
     try {
       expect(await chatCompletion(config, messages, { maxTokens: 64, temperature: 0 })).toBe("ok");
       expect(requestBodies).toHaveLength(3);
@@ -351,7 +328,7 @@ describe("chatCompletion against an API that rejects the thinking-control fields
       requestBodies.push(body);
       return rejectsThinking(body) ?? ok();
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "gpt-test" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "gpt-test" };
     try {
       expect(await chatCompletion(config, messages, { enableThinking: false })).toBe('{"result":"ok"}');
       expect(requestBodies).toHaveLength(2);
@@ -380,7 +357,7 @@ describe("chatCompletion against an API that rejects the thinking-control fields
       return rejectsThinking(body) ?? ok();
     });
     try {
-      await chatCompletion({ endpoint: url, model: "gpt-test", enableThinking: true }, messages);
+      await chatCompletion({ endpoint: url, model: "gpt-test", inference: { enableThinking: true } }, messages);
       expect(requestBodies).toHaveLength(2);
       expect(requestBodies[1]).not.toHaveProperty("chat_template_kwargs");
     } finally {
@@ -407,7 +384,7 @@ describe("chatCompletion against an API that rejects the thinking-control fields
       }
       return ok();
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "gpt-test" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "gpt-test" };
     try {
       expect(await chatCompletion(config, messages, { enableThinking: false, responseSchema })).toBe('{"result":"ok"}');
       expect(requestBodies.map((body) => [body.response_format !== undefined, "chat_template_kwargs" in body])).toEqual(
@@ -430,7 +407,7 @@ describe("chatCompletion against an API that rejects the thinking-control fields
       requestBodies.push(body);
       return Response.json({ error: { message: "Incorrect API key provided." } }, { status: 401 });
     });
-    const config: LlmConnectionConfig = { endpoint: url, model: "gpt-test" };
+    const config: ChatCompletionConfig = { endpoint: url, model: "gpt-test" };
     try {
       await expect(chatCompletion(config, messages, { enableThinking: false })).rejects.toThrow(LlmCallError);
       expect(requestBodies).toHaveLength(1);
@@ -444,25 +421,18 @@ describe("chatCompletion against an API that rejects the thinking-control fields
 describe("chatCompletion thinking controls", () => {
   const messages = [{ role: "user" as const, content: "Return a result" }];
 
-  // #949: which wire form a backend honors depends on the backend, not on
-  // akm's own `provider` label — a gateway in front of a local model can drop
-  // one form or the other, and `provider` says nothing about what actually
-  // sits behind the endpoint. Both `chat_template_kwargs.enable_thinking` and
-  // top-level `enable_thinking` are sent whenever `enableThinking` is
-  // resolved, for every `provider` value (including none at all).
-  test.each([
-    ["vllm"],
-    ["openai"],
-    ["lmstudio"],
-    [undefined],
-  ])("sends both thinking-control wire forms regardless of provider (provider: %s)", async (provider) => {
+  // #949: which wire form a backend honors depends on the backend — a gateway
+  // in front of a local model can drop one form or the other. Both
+  // `chat_template_kwargs.enable_thinking` and top-level `enable_thinking` are
+  // sent whenever `enableThinking` is resolved.
+  test("sends both thinking-control wire forms", async () => {
     let requestBody: Record<string, unknown> | undefined;
     const { url, server } = createRequestServer((body) => {
       requestBody = body;
       return Response.json({ choices: [{ message: { content: "ok" } }] });
     });
     try {
-      await chatCompletion({ endpoint: url, model: "test-model", provider }, messages, {
+      await chatCompletion({ endpoint: url, model: "test-model" }, messages, {
         enableThinking: false,
       });
       expect(requestBody).toEqual({
@@ -484,11 +454,9 @@ describe("chatCompletion thinking controls", () => {
       return Response.json({ choices: [{ message: { content: "ok" } }] });
     });
     try {
-      await chatCompletion(
-        { endpoint: url, model: "test-model", provider: "vllm", reasoningEffort: "none" },
-        messages,
-        { enableThinking: false },
-      );
+      await chatCompletion({ endpoint: url, model: "test-model", inference: { reasoningEffort: "none" } }, messages, {
+        enableThinking: false,
+      });
       expect(requestBody).toEqual({
         model: "test-model",
         messages,
@@ -514,8 +482,7 @@ describe("chatCompletion thinking controls", () => {
           {
             endpoint: url,
             model: "test-model",
-            provider: "vllm",
-            extraParams: { chat_template_kwargs: { enable_thinking: true } },
+            inference: { extraParams: { chat_template_kwargs: { enable_thinking: true } } },
           },
           messages,
           { enableThinking: false },
@@ -539,8 +506,7 @@ describe("chatCompletion thinking controls", () => {
           {
             endpoint: url,
             model: "test-model",
-            reasoningEffort: "none",
-            extraParams: { reasoning_effort: "high" },
+            inference: { reasoningEffort: "none", extraParams: { reasoning_effort: "high" } },
           },
           messages,
         ),
@@ -558,7 +524,7 @@ describe("chatCompletion thinking controls", () => {
       return Response.json({ choices: [{ message: { content: "ok" } }] });
     });
     try {
-      await chatCompletion({ endpoint: url, model: "test-model", provider: "lmstudio" }, messages);
+      await chatCompletion({ endpoint: url, model: "test-model" }, messages);
       expect(requestBody).toEqual({
         model: "test-model",
         messages,
@@ -581,8 +547,8 @@ describe("chatCompletion thinking controls", () => {
       }),
     );
     try {
-      await chatCompletion({ endpoint: url, model: "test-model", enableThinking: false }, messages);
-      expect(warnings).toEqual([expect.stringContaining("returned 17 reasoning tokens despite enableThinking: false")]);
+      await chatCompletion({ endpoint: url, model: "test-model", inference: { enableThinking: false } }, messages);
+      expect(warnings).toEqual([expect.stringContaining("returned 17 reasoning tokens despite thinking being off")]);
     } finally {
       server.stop(true);
     }
@@ -668,7 +634,7 @@ describe("chatCompletion error redaction", () => {
     const leakBody = '{"error":{"message":"Invalid API key sk-proj-LEAKYKEYABCDEF12345"}}';
     const { url, server } = createErrorServer(401, leakBody);
     try {
-      const config: LlmConnectionConfig = {
+      const config: ChatCompletionConfig = {
         endpoint: url,
         model: "test-model",
         apiKey: "sk-proj-LEAKYKEYABCDEF12345",
@@ -693,7 +659,7 @@ describe("chatCompletion error redaction", () => {
     const huge = "A".repeat(5000);
     const { url, server } = createErrorServer(503, huge);
     try {
-      const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+      const config: ChatCompletionConfig = { endpoint: url, model: "test-model" };
       let caught: Error | undefined;
       try {
         await chatCompletion(config, [{ role: "user", content: "hi" }]);
@@ -713,7 +679,7 @@ describe("chatCompletion error redaction", () => {
     const body = "Got header Authorization: Bearer abcXYZsupersecret999";
     const { url, server } = createErrorServer(403, body);
     try {
-      const config: LlmConnectionConfig = { endpoint: url, model: "test-model", apiKey: "abcXYZsupersecret999" };
+      const config: ChatCompletionConfig = { endpoint: url, model: "test-model", apiKey: "abcXYZsupersecret999" };
       let caught: Error | undefined;
       try {
         await chatCompletion(config, [{ role: "user", content: "hi" }]);
@@ -746,7 +712,7 @@ describe("chatCompletion error redaction", () => {
       });
     }) as unknown as typeof fetch;
     try {
-      const config: LlmConnectionConfig = {
+      const config: ChatCompletionConfig = {
         endpoint: "http://localhost:0/v1/chat/completions",
         model: "test-model",
         timeoutMs: 250,
@@ -777,7 +743,7 @@ describe("chatCompletion error redaction", () => {
       });
     }) as unknown as typeof fetch;
     try {
-      const config: LlmConnectionConfig = {
+      const config: ChatCompletionConfig = {
         endpoint: "http://localhost:0/v1/chat/completions",
         model: "test-model",
         timeoutMs: 250,
@@ -897,7 +863,7 @@ const LM_STUDIO_HTML =
   '<body><div id="app">Loading…</div></body></html>';
 
 describe("chatCompletion HTML response categorization", () => {
-  async function callExpectingError(config: LlmConnectionConfig): Promise<LlmCallError> {
+  async function callExpectingError(config: ChatCompletionConfig): Promise<LlmCallError> {
     let caught: unknown;
     try {
       await chatCompletion(config, [{ role: "user", content: "hi" }]);
@@ -1001,7 +967,7 @@ type RetryTestOptions = Parameters<typeof chatCompletion>[2] & { sleep?: (ms: nu
 const fastSleep = async () => {};
 
 describe("chatCompletion single bounded retry", () => {
-  const baseConfig: LlmConnectionConfig = {
+  const baseConfig: ChatCompletionConfig = {
     endpoint: "http://localhost:0/v1/chat/completions",
     model: "test-model",
     timeoutMs: 5000,
@@ -1255,6 +1221,47 @@ describe("chatCompletion single bounded retry", () => {
     expect(caught?.code).toBe("provider_error");
     expect(retries).toBe(0);
     expect(calls).toBe(1);
+  });
+
+  // The call's retries and fallbacks share its one timeout: the attempt after a slow rejection is given
+  // what is left, and the error says so.
+  test.each([
+    ["a transient 5xx retry", new Response("boom", { status: 500 }), undefined],
+    ["a response_format fallback", Response.json({ error: "unsupported" }, { status: 400 }), { type: "object" }],
+  ])("%s spends what is left of the timeout, not a fresh one", async (_name, firstResponse, responseSchema) => {
+    _resetEndpointSupportTrackersForTests();
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) {
+        // The first answer arrives 300ms into a 500ms budget.
+        setSystemTime(new Date(Date.now() + 300));
+        return firstResponse;
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+          once: true,
+        });
+      });
+    }) as unknown as typeof fetch;
+    let caught: LlmCallError | undefined;
+    try {
+      await chatCompletion({ ...baseConfig, timeoutMs: 500 }, [{ role: "user", content: "hi" }], {
+        sleep: fastSleep,
+        ...(responseSchema ? { responseSchema } : {}),
+      } as RetryTestOptions);
+    } catch (err) {
+      caught = err as LlmCallError;
+    } finally {
+      globalThis.fetch = originalFetch;
+      setSystemTime();
+    }
+    expect(calls).toBe(2);
+    expect(caught?.code).toBe("timeout");
+    const allowed = Number(/timed out after (\d+)ms/.exec(caught?.message ?? "")?.[1]);
+    expect(allowed).toBeGreaterThan(0);
+    expect(allowed).toBeLessThanOrEqual(200);
   });
 
   test("backoff jitter stays within the 200-800ms window", async () => {

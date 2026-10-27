@@ -956,10 +956,10 @@ export function isRefLiveInSnapshot(snapshot: LiveRefSnapshot, ref: string): boo
 
 /**
  * The fully-qualified `item_ref` (`<bundle>//<conceptId>`, the durable stored
- * spelling — spec §11.1 D-R3) for an entry `id`, or `null` when the row is gone
+ * spelling) for an entry `id`, or `null` when the row is gone.
  * The usage-event / salience / feedback writers derive the durable
  * key from this so a stored key is always the resolved entry's canonical ref,
- * never raw input (D-R3: durable keys are never derived from input).
+ * never raw input (durable keys are never derived from input).
  */
 export function getItemRefById(db: Database, id: number): string | null {
   const row = db.prepare("SELECT item_ref FROM entries WHERE id = ?").get(id) as { item_ref: string } | undefined;

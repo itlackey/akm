@@ -9,8 +9,7 @@
  * - Body truncation is applied at 500 chars
  *
  * Pure unit tests — no real DB, network, or spawned process — so this file
- * lives under tests/commands/ (unit target), not tests/integration/ (ORG-05,
- * 0.9.8 stabilization; see AGENTS.md's tests/integration/ classification rule).
+ * lives under tests/commands/ (unit target), not tests/integration/.
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import fs from "node:fs";

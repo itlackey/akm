@@ -1,12 +1,12 @@
 import type { AkmConfig } from "../../src/core/config/config";
 
-const TEST_LLM_ENGINE = "test-improve-llm";
+const TEST_LLM_ENGINE = "default";
 
 /**
  * Add a non-networked LLM selection for improve orchestration tests that inject
  * their model calls.
  *
- * This helper wires ENGINES ONLY. It deliberately does not touch
+ * This helper wires CONNECTIONS ONLY. It deliberately does not touch
  * `experimental.improveAutonomy`: an earlier revision granted autonomy here,
  * which silently ran every one of its ~20 caller suites — most of them testing
  * behaviour unrelated to the gated lanes — under a non-default config. A suite
@@ -17,17 +17,12 @@ const TEST_LLM_ENGINE = "test-improve-llm";
 export function withTestImproveLlm(config: AkmConfig): AkmConfig {
   return {
     ...config,
-    engines: {
+    connections: {
       [TEST_LLM_ENGINE]: {
-        kind: "llm",
-        endpoint: "http://127.0.0.1:1/v1/chat/completions",
-        model: "test-model",
+        endpoint: "http://127.0.0.1:1/v1",
+        models: { fast: "test-model", balanced: "test-model", reasoning: "test-model" },
       },
-      ...config.engines,
-    },
-    defaults: {
-      llmEngine: TEST_LLM_ENGINE,
-      ...config.defaults,
+      ...config.connections,
     },
   };
 }

@@ -1,95 +1,69 @@
 import { describe, expect, test } from "bun:test";
 import { resolveProcessEnabled } from "../../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../../src/core/config/config";
-import { resolveEngine } from "../../src/integrations/agent/engine-resolution";
-import { isProcessEnabled } from "../../src/llm/feature-gate";
+import { type ConnectionRunner, decodeFrozenRunnerSpec } from "../../src/integrations/agent/runner";
 
-function makeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
+const lab: ConnectionRunner = {
+  kind: "connection",
+  name: "lab",
+  endpoint: "https://lab.invalid/v1",
+  model: "qwen",
+  request: { top_p: 0.9 },
+  apiKey: "$LAB_KEY",
+  timeoutMs: 600_000,
+};
+
+describe("decodeFrozenRunnerSpec", () => {
+  test("a connection runner is kept as stored, and a harness runner gets the args it lacks", () => {
+    expect(decodeFrozenRunnerSpec(lab)).toEqual(lab);
+    expect(
+      decodeFrozenRunnerSpec({ kind: "harness", name: "pi", platform: "pi", bin: "pi", timeoutMs: null, futureKey: 1 }),
+    ).toMatchObject({ kind: "harness", name: "pi", platform: "pi", bin: "pi", args: [], timeoutMs: null });
+  });
+
+  test("a runner missing what it needs is refused", () => {
+    expect(() => decodeFrozenRunnerSpec(null)).toThrow(/must be an object/);
+    expect(() => decodeFrozenRunnerSpec({ kind: "connection", name: "lab" })).toThrow(/name, endpoint and model/);
+    expect(() => decodeFrozenRunnerSpec({ kind: "harness", name: "pi" })).toThrow(/name, platform and bin/);
+    expect(() => decodeFrozenRunnerSpec({ kind: "teleport" })).toThrow(/connection or harness/);
+  });
+
+  test("an earlier release's llm, agent and sdk runners are refused, so the run starts afresh", () => {
+    for (const kind of ["llm", "agent", "sdk"]) {
+      expect(() => decodeFrozenRunnerSpec({ kind, engine: "lab" }), kind).toThrow(/connection or harness/);
+    }
+  });
+});
+
+function makeConfig(): AkmConfig {
   return {
     semanticSearchMode: "auto",
-    ...overrides,
-  };
-}
-
-function makeEngineConfig(): AkmConfig {
-  return makeConfig({
     configVersion: "0.9.0",
-    engines: {
-      "openai-mini": {
-        kind: "llm",
-        endpoint: "https://api.openai.com/v1/chat/completions",
-        model: "gpt-4o-mini",
-        temperature: 0.3,
-        supportsJsonSchema: true,
-      },
-      "openai-judge": {
-        kind: "llm",
-        endpoint: "https://api.openai.com/v1/chat/completions",
-        model: "gpt-4o",
-      },
-      "opencode-default": { kind: "agent", platform: "opencode", bin: "opencode", args: ["run"] },
-      "opencode-sdk": {
-        kind: "agent",
-        platform: "opencode-sdk",
-        workspace: "/tmp",
-        model: "anthropic/claude-sonnet-4-5",
-        llmEngine: "openai-mini",
-      },
-      "claude-cli": { kind: "agent", platform: "claude", bin: "claude", args: ["--print"] },
+    connections: {
+      default: { endpoint: "https://api.openai.com/v1", models: { fast: "gpt-4o-mini", balanced: "gpt-4o" } },
     },
+    harnesses: { opencode: {}, claude: {} },
     improve: {
+      strategy: "default",
       strategies: {
         default: {
           processes: {
-            reflect: { enabled: true, engine: "openai-mini", timeoutMs: 60000 },
-            distill: { enabled: true, engine: "openai-judge" },
+            reflect: { enabled: true, connection: "default", timeoutMs: 60000 },
+            distill: { enabled: true },
             consolidate: { enabled: false },
             memoryInference: { enabled: true },
           },
         },
       },
     },
-    defaults: { llmEngine: "openai-mini", engine: "opencode-default", improveStrategy: "default" },
-  });
+  } as AkmConfig;
 }
 
-describe("resolveEngine", () => {
-  test("builds an agent runner for a configured named opencode engine", () => {
-    const config = makeEngineConfig();
-    const spec = resolveEngine("opencode-default", config);
-    expect(spec.kind).toBe("agent");
-    if (spec.kind === "agent") {
-      expect(spec.profile.bin).toBe("opencode");
-    }
-  });
-
-  test("builds an sdk runner for a configured named opencode-sdk engine", () => {
-    const config = makeEngineConfig();
-    const spec = resolveEngine("opencode-sdk", config);
-    expect(spec.kind).toBe("sdk");
-  });
-});
-
-describe("isProcessEnabled", () => {
+describe("resolveProcessEnabled", () => {
   test("reflects the configured enabled flag on improve strategy processes", () => {
-    const strategy = makeEngineConfig().improve?.strategies?.default ?? {};
+    const strategy = makeConfig().improve?.strategies?.default ?? {};
     expect(resolveProcessEnabled("reflect", strategy)).toBe(true);
     expect(resolveProcessEnabled("consolidate", strategy)).toBe(false);
     expect(resolveProcessEnabled("distill", strategy)).toBe(true);
-  });
-
-  test("reflects the configured enabled flag on improve processes", () => {
-    const config = makeEngineConfig();
-    expect(isProcessEnabled("index", "memoryInference", config)).toBe(true);
-    const off: AkmConfig = { ...config, index: { memory: { enabled: false } } };
-    expect(isProcessEnabled("index", "memoryInference", off)).toBe(false);
-  });
-
-  // 0.9.17-alpha.9: the LLM entity-graph extraction pass this once gated is
-  // retired — graphExtraction/graph_extraction are no longer recognized names.
-  test("graphExtraction is no longer a recognized isProcessEnabled process name (retired 0.9.17-alpha.9)", () => {
-    const config = makeEngineConfig();
-    expect(isProcessEnabled("index", "graphExtraction", config)).toBe(false);
-    expect(isProcessEnabled("index", "graph_extraction", config)).toBe(false);
   });
 });

@@ -252,28 +252,20 @@ describe("akmShow sensitive fragments", () => {
   });
 });
 
-// ── Agent toolPolicy is honoured for every bundle (#1237) ────────────────────
+// ── Agents resolve from every bundle (#1237) ─────────────────────────────────
 
-describe("akmShow agent toolPolicy", () => {
-  const AGENT_MD = [
-    "---",
-    "name: helper",
-    "description: A helper agent",
-    "tools: [Read, Write, Bash]",
-    "---",
-    "Do the thing.",
-  ].join("\n");
+describe("akmShow agents across bundles", () => {
+  const AGENT_MD = ["---", "name: helper", "description: A helper agent", "---", "Do the thing."].join("\n");
 
-  test("own-stash agent keeps its self-declared toolPolicy", async () => {
+  test("own-stash agent resolves without an origin", async () => {
     writeFile(path.join(stashDir, "agents", "helper.md"), AGENT_MD);
     const result = await akmShow({ ref: "agents/helper" });
     expect(result.type).toBe("agent");
-    // Own stash → no registry origin → the operator's declared policy stands.
+    // Own stash → no registry origin.
     expect(result.origin ?? null).toBeNull();
-    expect(result.toolPolicy).toEqual(["Read", "Write", "Bash"]);
   });
 
-  test("registry-installed bundle agent keeps its self-declared tools", async () => {
+  test("registry-installed bundle agent resolves with its origin", async () => {
     const installedStashRoot = createTmpDir("akm-show-tp-agent-");
     writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
     saveConfig({
@@ -292,12 +284,9 @@ describe("akmShow agent toolPolicy", () => {
     const result = await akmShow({ ref: "pack//agents/tools/agents/helper" });
     expect(result.type).toBe("agent");
     expect(result.origin).toBe("pack");
-    // Installing a bundle is the trust decision; `execution.allowedTools` caps
-    // what dispatch will actually grant.
-    expect(result.toolPolicy).toEqual(["Read", "Write", "Bash"]);
   });
 
-  test("a --writable installed pack keeps its toolPolicy", async () => {
+  test("a --writable installed pack resolves its agent", async () => {
     const installedStashRoot = createTmpDir("akm-show-writable-pack-");
     writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
     saveConfig({
@@ -315,7 +304,6 @@ describe("akmShow agent toolPolicy", () => {
     ]);
     const result = await akmShow({ ref: "pack//agents/tools/agents/helper" });
     expect(result.type).toBe("agent");
-    expect(result.toolPolicy).toEqual(["Read", "Write", "Bash"]);
   });
 
   test("a read against a cold git bundle (no cache, no lock) skips it fast with a warning — never clones (spec §14.3)", async () => {
@@ -349,9 +337,7 @@ describe("akmShow agent toolPolicy", () => {
     }
   }, 5000);
 
-  test("a configured secondary source keeps its toolPolicy", async () => {
-    // Location is not a trust signal: a configured secondary source honours
-    // its agent's `tools` like any other bundle.
+  test("a configured secondary source resolves its agent", async () => {
     const thirdPartyDir = createTmpDir("akm-show-secondary-src-");
     writeFile(path.join(thirdPartyDir, "agents", "helper.md"), AGENT_MD);
     // No `name` — the setup-wizard "add a source and leave the name blank" shape.
@@ -360,17 +346,15 @@ describe("akmShow agent toolPolicy", () => {
     const result = await akmShow({ ref: "agents/helper" });
     expect(result.type).toBe("agent");
     expect(result.editable).toBe(true);
-    expect(result.toolPolicy).toEqual(["Read", "Write", "Bash"]);
   });
 
-  test("a source NESTED inside the primary stash keeps its toolPolicy", async () => {
+  test("a source NESTED inside the primary stash resolves its agent", async () => {
     const nestedDir = path.join(stashDir, "vendor");
     writeFile(path.join(nestedDir, "agents", "helper.md"), AGENT_MD);
     saveConfig({ semanticSearchMode: "off", bundles: { vendor: { path: nestedDir } } });
 
     const result = await akmShow({ ref: "agents/vendor/agents/helper" });
     expect(result.type).toBe("agent");
-    expect(result.toolPolicy).toEqual(["Read", "Write", "Bash"]);
   });
 });
 
@@ -493,38 +477,6 @@ describe("akmShow content-based classification", () => {
     expect(result.template).toBe("Deploy $ARGUMENTS.");
     expect(result.modelHint).toBe("gpt-4");
     expect(result.parameters).toEqual(["ARGUMENTS"]);
-  });
-
-  test("tools frontmatter in commands/ overrides to agent (strong signal)", async () => {
-    // tools is an agent-exclusive signal at specificity 20, which beats the
-    // commands/ directory matcher at 10. The indexer classifies this as an
-    // agent, so the ref uses agent: type.
-    writeFile(
-      path.join(stashDir, "commands", "hybrid.md"),
-      ["---", "tools:", "  read: allow", "model: gpt-4", "---", "You are a hybrid agent."].join("\n"),
-    );
-
-    saveConfig({ semanticSearchMode: "off" });
-
-    const result = await akmShow({ ref: "agents/commands/hybrid" });
-
-    expect(result.type).toBe("agent");
-    expect(result.action).toContain("verbatim");
-    expect(result.prompt).toContain("You are a hybrid agent.");
-  });
-
-  test("toolPolicy frontmatter is not an authoring alias for tools", async () => {
-    writeFile(
-      path.join(stashDir, "agents", "legacy-policy.md"),
-      ["---", "toolPolicy:", "  - Read", "  - Write", "---", "You are a legacy agent."].join("\n"),
-    );
-
-    saveConfig({ semanticSearchMode: "off" });
-
-    const result = await akmShow({ ref: "agents/legacy-policy" });
-
-    expect(result.type).toBe("agent");
-    expect(result.toolPolicy).toBeUndefined();
   });
 
   test("command in commands/ directory extracts OpenCode-style frontmatter", async () => {

@@ -46,6 +46,14 @@ describe("rejects undeclared flags", () => {
     expect(errorFor(["search", "foo", "--limt", "3"]).hint()).toContain("--limit");
   });
 
+  test("a hidden flag is accepted but never suggested", () => {
+    // `--require-engines` is a hidden no-op on `improve`: pointing a typo at it would send the user to a flag that does nothing.
+    expect(() => check(["improve", "--require-engines"])).not.toThrow();
+    const err = errorFor(["improve", "--require-targets"]);
+    expect(err.code).toBe("UNKNOWN_FLAG");
+    expect(err.hint()).not.toContain("--require-engines");
+  });
+
   test("rejects a flag that exists on a DIFFERENT command", () => {
     // `--full` is akm index's flag; `akm search` never declared it.
     expect(errorFor(["search", "foo", "--full"]).code).toBe("UNKNOWN_FLAG");

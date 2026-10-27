@@ -8,7 +8,7 @@
  * bin) and `akm-cli/dist/*` (published `akm-opencode` versions deep-import
  * `akm-cli/dist/commands/read/*.js`).
  *
- * Classification (AGENTS.md ORG-03): spawns a real `npm pack --dry-run`.
+ * Classification: spawns a real `npm pack --dry-run`.
  * The end-to-end check that an installed tarball resolves and runs these
  * under Node and Bun is `bun run test:package` (scripts/package-install.ts).
  */

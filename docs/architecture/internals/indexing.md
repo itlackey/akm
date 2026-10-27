@@ -6,8 +6,9 @@ By default it builds the local index and keeps metadata in the index.
 Metadata is generated deterministically (`src/indexer/passes/metadata.ts`);
 the LLM metadata-enhancement pass that used to run during indexing is
 retired (0.9.17-alpha.9, see CHANGELOG). There is no top-level `llm` config
-key in 0.9 — it is retired and hard-rejected at load; per-call tuning lives
-on each named engine under `engines.<name>.*`.
+key: it is an unknown key, named once and ignored; per-call tuning lives on a
+named connection under `connections.<name>.*` (see
+[Configuration](../../reference/configuration.md#connections)).
 
 ## High-Level Flow
 
@@ -492,7 +493,6 @@ Utility scores are rebuilt from `usage_events`.
 
 When semantic search is enabled:
 
-- semantic readiness is tracked in `semantic-status.json`
 - provider fingerprints include model/dimension for remote configs, deliberately EXCLUDING the endpoint — moving the same model+dimension to a different host does not force a rebuild
 - fingerprint changes force semantic status back to pending until a rebuild
 - vector search is an exact cosine scan of `embeddings` in JavaScript; no extension is needed

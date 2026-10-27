@@ -129,11 +129,11 @@ function gatedChildPlan(): WorkflowPlan {
 function fanOutChildPlan(ownMaxConcurrency: number): WorkflowPlan {
   const config = {
     ...WORKFLOW_TEST_CONFIG,
-    engines: {
-      ...WORKFLOW_TEST_CONFIG.engines,
-      "test-llm": { ...WORKFLOW_TEST_CONFIG.engines["test-llm"], concurrency: ownMaxConcurrency },
+    connections: {
+      ...WORKFLOW_TEST_CONFIG.connections,
+      "test-llm": { ...WORKFLOW_TEST_CONFIG.connections["test-llm"], concurrency: ownMaxConcurrency },
     },
-    workflow: { ...WORKFLOW_TEST_CONFIG.workflow, maxConcurrency: ownMaxConcurrency },
+    workflow: { maxConcurrency: ownMaxConcurrency },
   };
   return freezeWorkflow(
     [

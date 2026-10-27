@@ -44,12 +44,11 @@ export { opencodeAdapter } from "./opencode-adapter";
 export { websiteSnapshotAdapter } from "./website-snapshot-adapter";
 
 /**
- * Every built-in adapter, frozen in the §1.2 install-time probe order: the first
+ * Every built-in adapter, frozen in the install-time probe order: the first
  * adapter whose `looksLikeRoot` fires claims a root, so MORE-SPECIFIC probes
  * come FIRST. This ARRAY ORDER is the executable probe order (`getAdapters()`
  * returns it verbatim) and is pinned by the conformance suite's ordered-owner
- * matrix — it, not the spec §1.2(3) 5-adapter prose listing, is authoritative
- * for the implemented 11-family set.
+ * matrix, and is authoritative for the implemented 11-family set.
  *
  * Probe-precedence rationale (grounds "cannot shadow the existing three"):
  *
@@ -68,7 +67,7 @@ export { websiteSnapshotAdapter } from "./website-snapshot-adapter";
  *    package), `akm-workflow` (a workflow-shaped top-level file), and `akm-task`
  *    (a schedule-bearing top-level `.yml`) carry disjoint, specific markers that
  *    fire on none of the other roots; they come at the front for clarity.
- *  - `generic-files` is EXPLICIT-CONFIG ONLY (§1.2) — its `looksLikeRoot` never
+ *  - `generic-files` is EXPLICIT-CONFIG ONLY — its `looksLikeRoot` never
  *    fires — so it is LAST and can never shadow anything.
  */
 export const BUILTIN_ADAPTERS: readonly BundleAdapter[] = Object.freeze([

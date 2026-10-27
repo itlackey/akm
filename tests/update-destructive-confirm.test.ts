@@ -67,9 +67,8 @@ function withTTY<T>(isTTY: boolean, fn: () => Promise<T>): Promise<T> {
   });
 }
 
-// Env/temp-dir isolation goes through the allowlisted sandbox helpers rather
-// than raw mkdtempSync + process.env writes — `scripts/lint-tests-isolation.ts`
-// rejects the hand-rolled form, and the helpers already restore a previously
+// Env/temp-dir isolation goes through the sandbox helpers rather than raw
+// mkdtempSync + process.env writes — the helpers restore a previously
 // ABSENT var by deleting it rather than setting it to "undefined".
 // `sandboxStashDir` also creates the stash skeleton subdirs for us.
 let envCleanup: Cleanup = () => {};

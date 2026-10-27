@@ -411,16 +411,14 @@ describe("akm workflow plan <ref> — compile warnings surface in warnings[] (B-
 });
 
 describe("akm workflow plan <ref> — lowering notices from freeze surface in notices[] (B-57)", () => {
-  // The unit opts its `test-llm` engine out of json_schema
-  // (`supports_json_schema: false`), so the direct-LLM builder
-  // (src/integrations/agent/execution.ts's buildLlm) cannot carry this step's
-  // declared unit output: schema and emits a real "untranslated-field"
-  // notice. That notice is computed at freeze time
-  // (freeze/targets/command.ts's commandResult builds the execution) and was
-  // once silently discarded — it is exactly the
-  // freeze-time notice row B-57 requires `akm workflow plan` to surface,
-  // through the same {code, severity, adapter, field, message} projection
-  // `akm workflow run` already renders (tests/output-workflow-lowering-notices.test.ts).
+  // The unit runs on the `pi` harness, whose CLI has no flag for a sampling
+  // temperature, so the lowering cannot carry this step's `llm.temperature` and
+  // emits a real "untranslated-field" notice. That notice is computed at freeze
+  // time (freeze/targets/command.ts's commandResult builds the execution) and was
+  // once silently discarded — it is exactly the freeze-time notice row B-57
+  // requires `akm workflow plan` to surface, through the same
+  // {code, severity, adapter, field, message} projection `akm workflow run`
+  // already renders (tests/output-workflow-lowering-notices.test.ts).
   function writeLoweringNoticeWorkflow(): void {
     write(
       "workflows/plan-lowering-notice.md",
@@ -430,14 +428,9 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
         "steps:",
         "  - id: notify",
         "    unit:",
-        "      engine: test-llm",
+        "      harness: pi",
         "      llm:",
-        "        supports_json_schema: false",
-        "      output:",
-        "        type: object",
-        "        properties:",
-        "          ok:",
-        "            type: boolean",
+        "        temperature: 0.2",
         "---",
         "",
         "## notify",
@@ -449,6 +442,7 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
   }
 
   test("the notice's code/adapter/message reach notices[] in JSON mode and render as a lowering[] line in text mode", async () => {
+    writeSandboxConfig({ harnesses: { pi: {} } });
     writeLoweringNoticeWorkflow();
     await index();
 
@@ -458,8 +452,8 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
     expect(envelope.notices.length).toBeGreaterThan(0);
     const notice = envelope.notices.find((n) => n.code === "untranslated-field");
     expect(notice).toBeDefined();
-    expect(notice?.adapter).toBe("llm");
-    expect(String(notice?.message)).toContain("outputSchema");
+    expect(notice?.adapter).toBe("pi");
+    expect(notice?.field).toBe("inference.temperature");
 
     const text = await runCliCapture(["workflow", "plan", "workflows/plan-lowering-notice", "--format", "text"]);
     expect(text.code).toBe(0);
@@ -467,8 +461,8 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
     // §4.6's exact line shape: `! lowering[<severity>] <code> (<adapter>): <message>`.
     expect(text.stdout).toContain("! lowering[");
     expect(text.stdout).toContain("untranslated-field");
-    expect(text.stdout).toContain("llm");
-    expect(text.stdout).toContain("does not translate resolved field outputSchema");
+    expect(text.stdout).toContain("(pi; inference.temperature)");
+    expect(text.stdout).toContain("does not translate resolved field inference.temperature");
   });
 });
 

@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
+import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { isVerbose, setVerbose, warn, warnVerbose } from "../../core/warn";
@@ -39,8 +40,8 @@ export const commandRunCommand = defineJsonCommand({
       type: "string",
       description: "Override the command's agent selector with a portable agent ref or native harness selector",
     },
-    engine: { type: "string", description: "Override the selected execution engine" },
-    model: { type: "string", description: "Override the selected model alias or exact model identifier" },
+    ...SELECTION_ARGS,
+    ...RETIRED_ENGINE_ARG,
     "timeout-ms": { type: "string", description: "Override the execution timeout in milliseconds" },
     cwd: { type: "string", description: "Override the execution workspace/current working directory" },
     "dry-run": {
@@ -54,12 +55,9 @@ export const commandRunCommand = defineJsonCommand({
     const timeoutMs = parsePositiveIntFlag(exactStringArg(args, "timeout-ms"), "--timeout-ms");
     const current: Record<string, unknown> = {};
     const agent = getStringArg(args, "agent");
-    const engine = getStringArg(args, "engine");
-    const model = getStringArg(args, "model");
     const workspace = getStringArg(args, "cwd");
     if (agent !== undefined) current.agent = agent;
-    if (engine !== undefined) current.engine = engine;
-    if (model !== undefined) current.model = model;
+    Object.assign(current, selectionFromArgs(args));
     if (timeoutMs !== undefined) current.timeout = timeoutMs;
     if (workspace !== undefined) current.workspace = workspace;
 

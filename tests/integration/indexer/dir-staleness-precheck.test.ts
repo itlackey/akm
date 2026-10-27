@@ -8,7 +8,7 @@
  * never drained" behavior).
  *
  * Lives under tests/integration/ because it opens a real index database via
- * `openIndexDatabase` (AGENTS.md classification rule).
+ * `openIndexDatabase`.
  */
 
 import { afterAll, describe, expect, test } from "bun:test";

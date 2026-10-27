@@ -90,8 +90,8 @@ export interface RegistrySearchHit {
   /** Name of the registry that provided this hit (provenance tracking) */
   registryName?: string;
   /**
-   * Non-fatal hit-level warnings surfaced by the registry provider (v1 spec
-   * §4.2). Optional; absent when there is nothing to surface. Adding a value
+   * Non-fatal hit-level warnings surfaced by the registry provider.
+   * Optional; absent when there is nothing to surface. Adding a value
    * here MUST NOT change ranking — warnings are informational only.
    */
   warnings?: string[];

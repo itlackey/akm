@@ -3,17 +3,22 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import type { LlmConnectionConfig } from "../../src/core/config/config";
 import type { UnresolvedExecutionDefaults } from "../../src/execution/source";
 import type { AgentRunResult } from "../../src/integrations/agent";
-import { type BuiltExecution, buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
-import { type AgentProfile, getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
-import type { RunnerSpec } from "../../src/integrations/agent/runner";
+import {
+  type BuiltExecution,
+  buildExecution,
+  currentLayer,
+  resolveExecution,
+} from "../../src/integrations/agent/execution";
+import type { AgentProfile } from "../../src/integrations/agent/profiles";
+import type { ConnectionRunner, HarnessRunner, RunnerSpec } from "../../src/integrations/agent/runner";
 import {
   collectDispatchSensitiveValues,
   type RunExecutionOptions,
   runExecution,
 } from "../../src/integrations/agent/runner-dispatch";
+import type { ChatCompletionConfig } from "../../src/llm/client";
 import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink } from "../../src/llm/usage-telemetry";
 import { withEnv } from "../_helpers/sandbox";
 
@@ -21,34 +26,45 @@ function okResult(stdout: string): AgentRunResult {
   return { ok: true, exitCode: 0, stdout, stderr: "", durationMs: 1 };
 }
 
-const agentProfile: AgentProfile = {
+const opencodeHarness: HarnessRunner = {
+  kind: "harness",
   name: "opencode-default",
   platform: "opencode",
   bin: "opencode",
   args: ["run"],
-  stdio: "captured",
-  envPassthrough: [],
-  parseOutput: "text",
+  timeoutMs: null,
 };
 
-const sdkProfile: AgentProfile = {
-  name: "opencode-sdk",
-  platform: "opencode-sdk",
-  bin: "opencode",
+const claudeHarness: HarnessRunner = {
+  kind: "harness",
+  name: "claude-default",
+  platform: "claude",
+  bin: "claude",
   args: [],
-  stdio: "captured",
-  envPassthrough: [],
-  parseOutput: "text",
-  model: "anthropic/claude-sonnet-4-5",
+  timeoutMs: null,
 };
 
-const llmConnection: LlmConnectionConfig = {
+const lab: ConnectionRunner = {
+  kind: "connection",
+  name: "lab",
   endpoint: "https://api.openai.com/v1/chat/completions",
   model: "gpt-4o-mini",
-} as LlmConnectionConfig;
+  request: {},
+  timeoutMs: null,
+};
 
-function built(runner: RunnerSpec, content = "prompt", current?: UnresolvedExecutionDefaults): BuiltExecution {
-  const resolved = resolveExecution({ content, runner, ...(current ? { current } : {}) });
+function built(
+  runner: RunnerSpec,
+  content = "prompt",
+  current?: UnresolvedExecutionDefaults,
+  modelWork = false,
+): BuiltExecution {
+  const resolved = resolveExecution({
+    content,
+    runner,
+    modelWork,
+    ...(current ? { layers: [currentLayer(current)] } : {}),
+  });
   return buildExecution(resolved.request, resolved.runner);
 }
 
@@ -56,15 +72,49 @@ const refuse = (kind: string) => async (): Promise<AgentRunResult> => {
   throw new Error(`the ${kind} transport must not be called`);
 };
 
+describe("the event source a dispatch is stamped with", () => {
+  /** The AKM_EVENT_SOURCE the harness was run with. */
+  async function stamped(execution: BuiltExecution, options: RunExecutionOptions = {}): Promise<string | undefined> {
+    let seen: string | undefined;
+    await runExecution(execution, {
+      ...options,
+      runAgent: async (_profile, opts) => {
+        seen = opts.env?.AKM_EVENT_SOURCE;
+        return okResult("ok");
+      },
+    });
+    return seen;
+  }
+
+  test("model work is the improve pipeline's when its caller names no source", async () => {
+    expect(await stamped(built(claudeHarness, "p", undefined, true))).toBe("improve");
+  });
+
+  test("a source the caller names wins", async () => {
+    expect(await stamped(built(claudeHarness, "p", undefined, true), { eventSource: "task" })).toBe("task");
+  });
+
+  test("a source the unit's own environment binds wins", async () => {
+    const execution = built(claudeHarness, "p", { environment: { AKM_EVENT_SOURCE: "audit" } }, true);
+    expect(await stamped(execution)).toBe("audit");
+  });
+
+  test("other work is stamped only when its caller names a source", async () => {
+    expect(await stamped(built(claudeHarness, "p"))).toBeUndefined();
+    expect(await stamped(built(claudeHarness, "p"), { eventSource: "task" })).toBe("task");
+  });
+});
+
 describe("runExecution routes each runner kind to its transport", () => {
-  test("an agent runner goes to runAgent with its profile and prompt", async () => {
-    const calls: Array<{ profile: AgentProfile; prompt: string }> = [];
-    const result = await runExecution(built({ kind: "agent", engine: "agent", profile: agentProfile }, "hello"), {
-      runAgent: async (profile, prompt) => {
-        calls.push({ profile, prompt });
+  test("a harness runner goes to runAgent with its profile and prompt", async () => {
+    const calls: Array<{ profile: AgentProfile; prompt?: string }> = [];
+    const result = await runExecution(built(opencodeHarness, "hello"), {
+      runAgent: async (profile, opts) => {
+        calls.push({ profile, ...(opts.dispatch?.prompt !== undefined ? { prompt: opts.dispatch.prompt } : {}) });
         return okResult("from-agent");
       },
       runSdk: refuse("sdk"),
+      chat: refuse("chat") as never,
     });
     expect(result.stdout).toBe("from-agent");
     expect(calls).toHaveLength(1);
@@ -72,29 +122,31 @@ describe("runExecution routes each runner kind to its transport", () => {
     expect(calls[0]?.prompt).toBe("hello");
   });
 
-  test("an sdk runner goes to runSdk with its timeout and LLM fallback connection", async () => {
-    const fallbackConnection = { endpoint: "https://example.test/v1/chat/completions", model: "fallback" };
-    let received: { prompt: string; timeoutMs?: number | null; fallback?: LlmConnectionConfig } | undefined;
-    await runExecution(
-      built({ kind: "sdk", engine: "sdk", profile: sdkProfile, timeoutMs: null, fallbackConnection }, "sdk-prompt"),
-      {
-        runAgent: refuse("agent"),
-        runSdk: async (_profile, prompt, opts, fallback) => {
-          received = { prompt, timeoutMs: opts.timeoutMs, fallback };
-          return okResult("from-sdk");
-        },
+  test("a connection running agent work goes to runSdk with its timeout and the connection", async () => {
+    let received: { prompt: string; timeoutMs?: number | null; connection?: ChatCompletionConfig } | undefined;
+    await runExecution(built({ ...lab, request: { top_p: 0.9 } }, "sdk-prompt"), {
+      runAgent: refuse("agent"),
+      chat: refuse("chat") as never,
+      runSdk: async (_profile, opts, connection) => {
+        received = { prompt: opts.dispatch?.prompt ?? "", timeoutMs: opts.timeoutMs, connection };
+        return okResult("from-sdk");
       },
-    );
+    });
     expect(received).toEqual({
       prompt: "sdk-prompt",
       timeoutMs: null,
-      fallback: { ...fallbackConnection, timeoutMs: null },
+      connection: {
+        endpoint: lab.endpoint,
+        model: lab.model,
+        request: { top_p: 0.9 },
+        timeoutMs: null,
+      },
     });
   });
 
-  test("an llm runner goes to chat with the connection and the user message", async () => {
-    const calls: Array<{ connection: LlmConnectionConfig; messages: unknown }> = [];
-    const result = await runExecution(built({ kind: "llm", engine: "llm", connection: llmConnection }, "llm-prompt"), {
+  test("a connection running model work goes to chat with the connection and the user message", async () => {
+    const calls: Array<{ connection: ChatCompletionConfig; messages: unknown }> = [];
+    const result = await runExecution(built(lab, "llm-prompt", undefined, true), {
       runAgent: refuse("agent"),
       runSdk: refuse("sdk"),
       chat: async (connection, messages) => {
@@ -103,20 +155,19 @@ describe("runExecution routes each runner kind to its transport", () => {
       },
     });
     expect(result.stdout).toBe("from-llm");
-    expect(calls[0]?.connection).toEqual({ ...llmConnection, timeoutMs: null });
+    expect(calls[0]?.connection).toEqual({
+      endpoint: lab.endpoint,
+      model: lab.model,
+      request: {},
+      timeoutMs: null,
+    });
     expect(calls[0]?.messages).toEqual([{ role: "user", content: "llm-prompt" }]);
   });
 
   test("reads the current symbolic credential at every dispatch", async () => {
     const seen: string[] = [];
-    const runner: RunnerSpec = {
-      kind: "llm",
-      engine: "rotating",
-      connection: llmConnection,
-      credential: { names: ["ROTATING_RUNNER_API_KEY"], required: true },
-      timeoutMs: 1234,
-    };
-    const execution = built(runner);
+    const runner: ConnectionRunner = { ...lab, name: "rotating", apiKey: "$ROTATING_RUNNER_API_KEY", timeoutMs: 1234 };
+    const execution = built(runner, "prompt", undefined, true);
     const options: RunExecutionOptions = {
       chat: async (connection) => {
         seen.push(connection.apiKey ?? "");
@@ -133,167 +184,46 @@ describe("runExecution routes each runner kind to its transport", () => {
 });
 
 describe("collectDispatchSensitiveValues", () => {
-  test("an agent unit's bound env is configuration; the credential and an unsafe passthrough value still count", () => {
-    const runner: RunnerSpec = {
-      kind: "sdk",
-      engine: "sdk",
-      profile: { ...sdkProfile, envPassthrough: ["PATH", "CUSTOM_AGENT_TOKEN"] },
-      fallbackConnection: { ...llmConnection, apiKey: "ENGINE-CREDENTIAL" },
-    };
-    const values = collectDispatchSensitiveValues(
-      runner,
-      { env: { HOOK_URL: "https://hooks.example.test/inbox/7", CHANNEL_ID: "1234567890" } },
-      { PATH: "/safe/bin", CUSTOM_AGENT_TOKEN: "UNSAFE-PASSTHROUGH" },
-    );
+  test("the key of the connection a dispatch runs on counts, and so does a credential-named variable the child inherits", () => {
+    expect(collectDispatchSensitiveValues({ ...lab, apiKey: "$LAB_KEY" }, { LAB_KEY: "ENGINE-CREDENTIAL" })).toEqual([
+      "ENGINE-CREDENTIAL",
+    ]);
+    expect(
+      collectDispatchSensitiveValues(claudeHarness, { ANTHROPIC_API_KEY: "THE-USERS-OWN-KEY", EDITOR: "vi" }),
+    ).toEqual(["THE-USERS-OWN-KEY"]);
+  });
 
-    expect(values).toContain("ENGINE-CREDENTIAL");
-    expect(values).toContain("UNSAFE-PASSTHROUGH");
-    expect(values).not.toContain("https://hooks.example.test/inbox/7");
-    expect(values).not.toContain("1234567890");
+  test("a connection's stored key counts too, and reading it for redaction does not warn", () => {
+    expect(collectDispatchSensitiveValues({ ...lab, apiKey: "$ABSENT_KEY" }, {})).toEqual([]);
   });
 });
 
-describe("runExecution redacts what the child could have seen", () => {
-  test("engine credentials, profile env and non-allowlisted passthrough values, but not bound env", async () => {
-    const values = {
-      engine: "ENGINE-ECHO-SENTINEL",
-      binding: "BINDING-ECHO-SENTINEL",
-      asset: "ENV-ASSET-ECHO-SENTINEL",
-      passthrough: "PASSTHROUGH-ECHO-SENTINEL",
-      safePath: "/safe/runtime/path",
-      safeProfile: "developer-profile",
-      safeRegion: "us-test-1",
-      safeModel: "local-model",
-      safeBaseUrl: "http://localhost:1234/v1",
-      safeOpencodeConfig: "/safe/opencode.json",
-      safeClaudeConfig: "/safe/claude.json",
-      safeCodexConfig: "/safe/codex.toml",
-      safeEventSource: "improve",
-    };
-    const profile: AgentProfile = {
-      ...sdkProfile,
-      env: { ENV_ASSET_VALUE: values.asset },
-      envPassthrough: [
-        "PATH",
-        "CUSTOM_AGENT_TOKEN",
-        "AWS_PROFILE",
-        "AWS_REGION",
-        "LLM_MODEL",
-        "LLM_BASE_URL",
-        "OPENCODE_CONFIG",
-        "CLAUDE_CONFIG",
-        "CODEX_CONFIG",
-      ],
-    };
-    const runner: RunnerSpec = {
-      kind: "sdk",
-      engine: "sdk",
-      profile,
-      fallbackConnection: { ...llmConnection, apiKey: values.engine },
-    };
+describe("runExecution redacts the key of the connection it ran on", () => {
+  test("from every field of the result, and not the unit's bound env", async () => {
+    const values = { credential: "CREDENTIAL-ECHO-SENTINEL", binding: "BINDING-ECHO-SENTINEL" };
     const echoed = Object.values(values).join(" | ");
-    const result = await runExecution(
-      built(runner, "p", { environment: { BOUND_VALUE: values.binding, AKM_EVENT_SOURCE: values.safeEventSource } }),
-      {
-        runOptions: {
-          envSource: {
-            PATH: values.safePath,
-            CUSTOM_AGENT_TOKEN: values.passthrough,
-            AWS_PROFILE: values.safeProfile,
-            AWS_REGION: values.safeRegion,
-            LLM_MODEL: values.safeModel,
-            LLM_BASE_URL: values.safeBaseUrl,
-            OPENCODE_CONFIG: values.safeOpencodeConfig,
-            CLAUDE_CONFIG: values.safeClaudeConfig,
-            CODEX_CONFIG: values.safeCodexConfig,
-          },
-        },
-        runSdk: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed, parsed: { echoed } }),
-      },
+    const result = await withEnv({ LAB_KEY: values.credential }, () =>
+      runExecution(built({ ...lab, apiKey: "$LAB_KEY" }, "p", { environment: { BOUND_VALUE: values.binding } }), {
+        runSdk: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed }),
+      }),
     );
-
-    for (const secret of [values.engine, values.asset, values.passthrough]) {
-      expect(JSON.stringify(result)).not.toContain(secret);
-    }
-    for (const nonsecret of [
-      values.binding,
-      values.safePath,
-      values.safeProfile,
-      values.safeRegion,
-      values.safeModel,
-      values.safeBaseUrl,
-      values.safeOpencodeConfig,
-      values.safeClaudeConfig,
-      values.safeCodexConfig,
-      values.safeEventSource,
-    ]) {
-      expect(JSON.stringify(result)).toContain(nonsecret);
-    }
-    expect(result.stdout.match(/\[REDACTED\]/g)).toHaveLength(3);
+    expect(JSON.stringify(result)).not.toContain(values.credential);
+    expect(JSON.stringify(result)).toContain(values.binding);
+    expect(result.stdout.match(/\[REDACTED\]/g)).toHaveLength(1);
   });
 
-  // The XDG directories are paths, like HOME and TMPDIR: an opencode child that echoes the config
-  // directory it read (in an error, say) must not have it scrubbed to [REDACTED].
-  test("not the XDG base directories an opencode child was given", async () => {
-    const opencode = getBuiltinAgentProfile("opencode") as AgentProfile;
-    const directories = {
-      XDG_CONFIG_HOME: "/sandbox/xdg-config",
-      XDG_DATA_HOME: "/sandbox/xdg-data",
-      XDG_CACHE_HOME: "/sandbox/xdg-cache",
-      XDG_STATE_HOME: "/sandbox/xdg-state",
-    };
-    const echoed = Object.values(directories).join(" | ");
-    const result = await runExecution(
-      built({ kind: "agent", engine: "oc", profile: { ...opencode, platform: "opencode" } }),
-      {
-        runOptions: { envSource: { PATH: "/safe/bin", ...directories } },
-        runAgent: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed, parsed: { echoed } }),
-      },
+  test("a harness's output keeps what the program wrote, except a credential the child inherited", async () => {
+    const echoed = "THE-USERS-OWN-KEY | /their/claude/config";
+    const result = await withEnv({ ANTHROPIC_API_KEY: "THE-USERS-OWN-KEY" }, () =>
+      runExecution(built(claudeHarness), { runAgent: async () => okResult(echoed) }),
     );
-
-    expect(result.stdout).toBe(echoed);
-    expect(result.stderr).toBe(echoed);
-    expect(result.error).toBe(echoed);
-    expect(result.stdout).not.toContain("[REDACTED]");
-  });
-
-  test("credential-bearing values even when their passthrough names are allowlisted", async () => {
-    const userinfo = "https://user:password@example.test/v1";
-    const signed = "https://example.test/object?X-Amz-Credential=owner&X-Amz-Signature=signed-secret";
-    const clientAssertion = "https://example.test/token?client_assertion=RUNNER%2BASSERTION%2BSENTINEL";
-    const codeVerifier = "https://example.test/#/oauth/callback?code_verifier=RUNNER%20PKCE%20SENTINEL";
-    const profile: AgentProfile = {
-      ...sdkProfile,
-      envPassthrough: ["LLM_BASE_URL", "AWS_PROFILE", "OPENCODE_CONFIG", "CLAUDE_CONFIG"],
-    };
-    const partialCredentials = ["password", "signed-secret", "RUNNER+ASSERTION+SENTINEL", "RUNNER PKCE SENTINEL"];
-    const echoed = partialCredentials.join(" | ");
-    const result = await runExecution(built({ kind: "sdk", engine: "sdk", profile }), {
-      runOptions: {
-        envSource: {
-          LLM_BASE_URL: userinfo,
-          AWS_PROFILE: signed,
-          OPENCODE_CONFIG: clientAssertion,
-          CLAUDE_CONFIG: codeVerifier,
-        },
-      },
-      runSdk: async () => ({ ...okResult(echoed), parsed: { echoed } }),
-    });
-
-    for (const url of [userinfo, signed, clientAssertion, codeVerifier]) {
-      expect(JSON.stringify(result)).not.toContain(url);
-    }
-    for (const secret of partialCredentials) expect(JSON.stringify(result)).not.toContain(secret);
-    expect(result.stdout).toBe("[REDACTED] | [REDACTED] | [REDACTED] | [REDACTED]");
+    expect(result.stdout).not.toContain("THE-USERS-OWN-KEY");
+    expect(result.stdout).toContain("/their/claude/config");
   });
 });
 
 describe("runExecution's usage record names the model the dispatch ran", () => {
-  const agentRunner = (args: string[]): RunnerSpec => ({
-    kind: "agent",
-    engine: "oc",
-    profile: { ...agentProfile, args },
-  });
+  const harnessRunner = (args: string[]): HarnessRunner => ({ ...opencodeHarness, args });
 
   /** The usage records one dispatch of `runner` leaves. */
   async function usageOf(runner: RunnerSpec, current?: UnresolvedExecutionDefaults): Promise<LlmUsageRecord[]> {
@@ -310,43 +240,38 @@ describe("runExecution's usage record names the model the dispatch ran", () => {
     return records;
   }
 
-  test("an agent engine that names its model only in args is attributed to it", async () => {
-    const records = await usageOf(agentRunner(["run", "--model", "krang/chat/qwen3.8-27b"]));
+  test("a harness that names its model only in args is attributed to it", async () => {
+    const records = await usageOf(harnessRunner(["run", "--model", "krang/chat/qwen3.8-27b"]));
 
     expect(records).toHaveLength(1);
     expect(records[0]?.model).toBe("krang/chat/qwen3.8-27b");
   });
 
   test("the --model=<id> form is read too, and the last --model wins", async () => {
-    const equals = await usageOf(agentRunner(["run", "--model=krang/chat/qwen3.8-27b"]));
-    const twice = await usageOf(agentRunner(["--model", "first/model", "run", "--model=second/model"]));
+    const equals = await usageOf(harnessRunner(["run", "--model=krang/chat/qwen3.8-27b"]));
+    const twice = await usageOf(harnessRunner(["--model", "first/model", "run", "--model=second/model"]));
 
     expect(equals[0]?.model).toBe("krang/chat/qwen3.8-27b");
     expect(twice[0]?.model).toBe("second/model");
   });
 
   test("a model the request names wins over the one in args", async () => {
-    const records = await usageOf(agentRunner(["run", "--model", "from/args"]), { model: "from/request" });
+    const records = await usageOf(harnessRunner(["run", "--model", "from/args"]), { model: "from/request" });
 
     expect(records[0]?.model).toBe("from/request");
   });
 
-  test("an agent engine that names no model stays unattributed", async () => {
-    const records = await usageOf(agentRunner(["run"]));
+  test("a harness that names no model stays unattributed", async () => {
+    const records = await usageOf(harnessRunner(["run"]));
 
     expect(records).toHaveLength(1);
     expect(records[0]).not.toHaveProperty("model");
   });
 
-  test("an sdk engine's args are not read: its server never sees them", async () => {
-    const { model: _model, ...unmodelled } = sdkProfile;
-    const records = await usageOf({
-      kind: "sdk",
-      engine: "sdk",
-      profile: { ...unmodelled, args: ["--model", "from/args"] },
-    });
+  test("a connection running agent work is attributed to its model", async () => {
+    const records = await usageOf(lab);
 
     expect(records).toHaveLength(1);
-    expect(records[0]).not.toHaveProperty("model");
+    expect(records[0]?.model).toBe("gpt-4o-mini");
   });
 });

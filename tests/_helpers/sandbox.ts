@@ -26,6 +26,7 @@ import { spyOn } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { registerTestRoot } from "../../scripts/sweep-test-tmp";
 
 export type Cleanup = () => void;
 
@@ -205,6 +206,7 @@ export async function withTTY<T>(isTTY: boolean, fn: () => T | Promise<T>): Prom
 
 export function makeStashDir(): SandboxedDir {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `akm-sb-stash2-${sandboxCounter++}-`));
+  registerTestRoot(dir);
   for (const sub of STASH_SKELETON_SUBDIRS) {
     fs.mkdirSync(path.join(dir, sub), { recursive: true });
   }
@@ -218,6 +220,7 @@ export function makeStashDir(): SandboxedDir {
  */
 export function makeSandboxDir(prefix = "akm-sb-dir"): SandboxedDir {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-${sandboxCounter++}-`));
+  registerTestRoot(dir);
   return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -233,6 +236,7 @@ export function makeSandboxDir(prefix = "akm-sb-dir"): SandboxedDir {
  */
 export function sandboxEnvDir(prefix: string, envVar: string, chain?: Cleanup): { dir: string; cleanup: Cleanup } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  registerTestRoot(dir);
   const previous = process.env[envVar];
   process.env[envVar] = dir;
 
@@ -294,12 +298,12 @@ export function sandboxHome(chain?: Cleanup): { dir: string; cleanup: Cleanup } 
  * hit a symlink mismatch, e.g. `/tmp` -> `/private/tmp` on macOS). `cleanup`
  * restores the spy and removes the temp directory — this is the file that
  * owns the `node:fs` removal call paired with a real `os.homedir()` read, so
- * call sites of this helper don't have to (see
- * `scripts/lint-tests-isolation.ts`'s `real-home-delete` rule, which flags a
- * test file that combines the two directly).
+ * call sites of this helper don't have to.
  */
 export function mockHomedir(): { dir: string; cleanup: Cleanup } {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "akm-mock-home-")));
+  const made = fs.mkdtempSync(path.join(os.tmpdir(), "akm-mock-home-"));
+  registerTestRoot(made);
+  const dir = fs.realpathSync(made);
   const spy = spyOn(os, "homedir").mockReturnValue(dir);
   return {
     dir,
@@ -404,6 +408,7 @@ export interface IsolatedAkmStorage {
  */
 export function withIsolatedAkmStorage(overrides?: Record<string, string | undefined>): IsolatedAkmStorage {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `akm-iso-${sandboxCounter++}-`));
+  registerTestRoot(root);
 
   const stashDir = path.join(root, "stash");
   const dataDir = path.join(root, "data");
@@ -528,15 +533,15 @@ export function writeSandboxConfig(partial: Record<string, unknown>): void {
   );
 }
 
-/** Install deterministic named engines for tests that freeze workflow plans. */
+/** Install a deterministic connection for tests that freeze workflow plans. */
 export function writeWorkflowTestConfig(): void {
   writeSandboxConfig({
-    engines: {
-      "test-agent": { kind: "agent", platform: "opencode-sdk", llmEngine: "test-llm" },
-      "test-llm": { kind: "llm", endpoint: "http://localhost:1/v1/chat/completions", model: "test-model" },
+    connections: {
+      "test-llm": {
+        endpoint: "http://localhost:1/v1",
+        models: { fast: "test-model", balanced: "test-model", reasoning: "test-model" },
+      },
     },
-    defaults: { engine: "test-agent", llmEngine: "test-llm" },
-    workflow: { judgeEngine: "test-llm" },
   });
 }
 

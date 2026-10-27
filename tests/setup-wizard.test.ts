@@ -2,6 +2,7 @@
  * Tests for setup wizard interactive logic:
  * - onCancel: Escape on confirmation should stay, not exit
  * - stepAddSources: recommended GitHub repos multiselect, cancel returns to menu
+ * (the harness, connection and embedding steps are in tests/setup/setup-steps.test.ts)
  */
 import { beforeEach, describe, expect, test } from "bun:test";
 import { _setClackForTests } from "../src/cli/clack";
@@ -10,10 +11,7 @@ import { _setLoadSetupStashesForTests } from "../src/setup/registry-stash-loader
 import { describeSemanticSearchAssets } from "../src/setup/semantic-assets";
 import { buildSetupSteps } from "../src/setup/setup";
 import * as stepsModule from "../src/setup/steps";
-import { stepLlm } from "../src/setup/steps/connection";
 import { stepOutputConfig } from "../src/setup/steps/output";
-import { stepAgentSelection } from "../src/setup/steps/platforms";
-import { stepSemanticSearch } from "../src/setup/steps/semantic";
 import { stepAddSources, stepRegistries } from "../src/setup/steps/sources";
 import { seedLockEntries } from "./_helpers/lockfile";
 import { overrideSeam } from "./_helpers/seams";
@@ -338,73 +336,8 @@ describe("stepAddSources – recommended GitHub repos", () => {
   });
 });
 
-describe("agent and output setup steps", () => {
+describe("output setup step", () => {
   beforeEach(resetHarness);
-
-  test("stepAgentSelection lets the user choose a detected default agent", async () => {
-    q.selects.push("codex");
-
-    const result = await stepAgentSelection(
-      {
-        configVersion: "0.9.0",
-        semanticSearchMode: "auto",
-        engines: { claude: { kind: "agent", platform: "claude" } },
-        defaults: { engine: "claude" },
-      } as never,
-      [
-        { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
-        { name: "codex", bin: "codex", available: true, resolvedPath: "/usr/bin/codex" },
-      ],
-    );
-
-    expect(result).toEqual({
-      default: "codex",
-      engines: { claude: { kind: "agent", platform: "claude" } },
-    });
-  });
-
-  test("stepAgentSelection allows disabling the default agent", async () => {
-    q.selects.push("disabled");
-
-    const result = await stepAgentSelection(
-      {
-        configVersion: "0.9.0",
-        semanticSearchMode: "auto",
-        engines: { claude: { kind: "agent", platform: "claude" } },
-        defaults: { engine: "claude" },
-      } as never,
-      [
-        { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
-        { name: "opencode", bin: "opencode", available: true, resolvedPath: "/usr/bin/opencode" },
-      ],
-    );
-
-    expect(result).toEqual({
-      default: undefined,
-      engines: { claude: { kind: "agent", platform: "claude" } },
-    });
-  });
-
-  test("stepLlm keep current preserves the existing endpoint", async () => {
-    q.selects.push("keep");
-
-    const existingLlm = {
-      provider: "lmstudio",
-      endpoint: "http://localhost:7200/v1/chat/completions",
-      model: "qwen/qwen3.5-9b",
-    };
-    const current = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "auto",
-      engines: { default: { kind: "llm", ...existingLlm, supportsJsonSchema: true } },
-      defaults: { llmEngine: "default" },
-    };
-
-    const result = await stepLlm(current as never, "http://localhost:11434", ["llama3.2"]);
-
-    expect(result).toMatchObject({ endpoint: existingLlm.endpoint, model: existingLlm.model });
-    expect(result).not.toBe(existingLlm);
-  });
 
   test("stepOutputConfig prompts for format and detail", async () => {
     q.selects.push("text", "full");
@@ -418,9 +351,7 @@ describe("agent and output setup steps", () => {
   });
 });
 
-describe("semantic search setup", () => {
-  beforeEach(resetHarness);
-
+describe("semantic search assets", () => {
   test("should list the local model download when describing semantic search assets", async () => {
     const assets = describeSemanticSearchAssets();
 
@@ -429,53 +360,12 @@ describe("semantic search setup", () => {
     expect(assets[0]).toContain("download");
   });
 
-  test("stepSemanticSearch returns disabled when user opts out", async () => {
-    q.confirms.push(false);
-
-    const result = await stepSemanticSearch({ semanticSearchMode: "auto" } as never);
-    expect(result).toEqual({ mode: "off", prepareAssets: false });
-  });
-
-  test("stepSemanticSearch shows assets and allows asset preparation", async () => {
-    q.confirms.push(true, true);
-
-    const result = await stepSemanticSearch({ semanticSearchMode: "auto" } as never);
-    expect(result).toEqual({ mode: "auto", prepareAssets: true });
-    expect(q.logged.some((entry) => entry.includes("Semantic Search Assets"))).toBe(true);
-  });
-
-  // Owner ruling 9 (R-039), split default: the *runtime* default flipped to
-  // "off" (see tests/integration/config.test.ts), but the interactive wizard
-  // must still pre-select semantic search ON — a human is present to read
-  // the warning and decide. Regression guard: even when the in-progress
-  // setup config already carries the new "off" runtime default (e.g. a
-  // fresh install with no config.json yet), the wizard's "Enable semantic
-  // search?" prompt must still default to checked, and the asset/download
-  // warning must be shown before that prompt is asked.
-  test("pre-selects semantic search ON in the wizard even though the runtime default is now off (R-039)", async () => {
-    q.confirms.push(false);
-
-    await stepSemanticSearch({ semanticSearchMode: "off" } as never);
-
-    expect(q.confirmConfigs).toEqual([{ message: "Enable semantic search?", initialValue: true }]);
-    const noteIndex = q.logged.findIndex((entry) => entry.includes("Semantic Search Assets"));
-    expect(noteIndex).toBeGreaterThanOrEqual(0);
-  });
-
-  test("warns that opting in downloads the model, unless a remote embedding config is provided", async () => {
-    q.confirms.push(false);
-    await stepSemanticSearch({ semanticSearchMode: "off" } as never, undefined);
-    const localWarning = q.logged.find((entry) => entry.includes("Semantic Search Assets"));
-    expect(localWarning).toContain("download");
-
-    reset();
-    q.confirms.push(false);
-    await stepSemanticSearch({ semanticSearchMode: "off" } as never, {
+  test("a remote embedding config downloads no local model", () => {
+    const assets = describeSemanticSearchAssets({
       endpoint: "https://embed.example.com/v1",
       model: "text-embedding-3-small",
     });
-    const remoteWarning = q.logged.find((entry) => entry.includes("Semantic Search Assets"));
-    expect(remoteWarning).toContain("no local model download");
+    expect(assets[0]).toContain("no local model download");
   });
 });
 
@@ -487,7 +377,6 @@ describe("non-interactive setup stash dir", () => {
 
     const ctx = createSetupContext({ semanticSearchMode: "auto" } as never, { nonInteractive: true });
     const { steps } = buildSetupSteps({
-      online: false,
       semanticSearchOutcome: { mode: "off", prepareAssets: false },
       preferredStashDir: "/tmp/noninteractive-stash",
     });

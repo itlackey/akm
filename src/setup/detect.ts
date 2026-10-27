@@ -13,21 +13,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { HarnessId } from "../core/config/config";
-import { runManagedSubprocess } from "../core/subprocess";
-import { defaultWhich, type WhichFn } from "../integrations/agent/detect";
-import { getBuiltinAgentProfile, OPENCODE_SDK_SERVER_BIN } from "../integrations/agent/profiles";
-import { AGENT_DISPATCH_HARNESSES, SESSION_LOG_HARNESSES } from "../integrations/harnesses";
-import { detectOpencodeMajor, resolveOpencodeBin } from "../integrations/harnesses/opencode/version";
-import type { HarnessLLMConfig } from "../integrations/harnesses/shared";
-import { detectHarnessConfigs } from "./harness-config-import";
+import { defaultWhich, detectAgentCliProfiles, type WhichFn } from "../integrations/agent/detect";
+import { HARNESS_CONFIG_PLATFORMS, SESSION_LOG_HARNESSES } from "../integrations/harnesses";
+import { listEndpointModels } from "../llm/model-list";
 
 // ── Types ───────────────────────────────────────────────────────────────────
-
-export interface OllamaDetectionResult {
-  available: boolean;
-  models: string[];
-  endpoint: string;
-}
 
 export interface AgentPlatform {
   name: string;
@@ -38,7 +28,6 @@ export interface AgentPlatform {
 // Swap-and-restore override. Inert in production; only tests call the setter.
 
 interface DetectOverridesForTests {
-  detectOllama?: typeof detectOllama;
   detectAgentPlatforms?: typeof detectAgentPlatforms;
 }
 
@@ -47,101 +36,6 @@ let detectOverrides: DetectOverridesForTests | undefined;
 /** TEST-ONLY. Swap the network/host probes; pass undefined to restore. */
 export function _setDetectForTests(fakes?: DetectOverridesForTests): void {
   detectOverrides = fakes;
-}
-
-// ── Ollama Detection ────────────────────────────────────────────────────────
-
-const OLLAMA_BASE = "http://localhost:11434";
-
-/**
- * Detect if Ollama is running and list available models.
- *
- * Tries the HTTP API first (`/api/tags`), then falls back to `ollama list`
- * via subprocess. Returns available models sorted alphabetically.
- */
-export async function detectOllama(): Promise<OllamaDetectionResult> {
-  if (detectOverrides?.detectOllama) return detectOverrides.detectOllama();
-  const result: OllamaDetectionResult = { available: false, models: [], endpoint: OLLAMA_BASE };
-
-  // Try HTTP API first
-  try {
-    const response = await fetch(`${OLLAMA_BASE}/api/tags`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    if (response.ok) {
-      const data = (await response.json()) as { models?: Array<{ name?: string }> };
-      if (Array.isArray(data.models)) {
-        result.models = data.models
-          .map((m) => (typeof m.name === "string" ? m.name.replace(/:latest$/, "") : ""))
-          .filter(Boolean)
-          .sort();
-        result.available = true;
-        return result;
-      }
-    }
-  } catch {
-    // HTTP failed — try CLI fallback
-  }
-
-  // CLI fallback — bounded (10 s) so a wedged `ollama` can't hang detection.
-  try {
-    const { stdout: text, exitCode } = await runManagedSubprocess(["ollama", "list"], {
-      capture: true,
-      timeoutMs: 10_000,
-    });
-
-    if (exitCode === 0 && text.trim()) {
-      const lines = text.trim().split("\n").slice(1); // skip header
-      result.models = lines
-        .map((line) => {
-          const name = line.split(/\s+/)[0]?.replace(/:latest$/, "");
-          return name || "";
-        })
-        .filter(Boolean)
-        .sort();
-      result.available = true;
-    }
-  } catch {
-    // Ollama not installed or not in PATH
-  }
-
-  return result;
-}
-
-// ── LM Studio Detection ────────────────────────────────────────────────────
-
-export interface LMStudioDetectionResult {
-  available: boolean;
-  models: string[];
-  endpoint: string;
-}
-
-const LMSTUDIO_BASE = "http://localhost:1234";
-
-/**
- * Detect if LM Studio is running and list available models.
- * Probes the OpenAI-compatible /v1/models endpoint.
- */
-export async function detectLMStudio(): Promise<LMStudioDetectionResult> {
-  const result: LMStudioDetectionResult = { available: false, models: [], endpoint: LMSTUDIO_BASE };
-  try {
-    const response = await fetch(`${LMSTUDIO_BASE}/v1/models`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    if (response.ok) {
-      const data = (await response.json()) as { data?: Array<{ id?: string }> };
-      if (Array.isArray(data.data)) {
-        result.models = data.data
-          .map((m) => (typeof m.id === "string" ? m.id : ""))
-          .filter(Boolean)
-          .sort();
-        result.available = true;
-      }
-    }
-  } catch {
-    // LM Studio not running or not accessible
-  }
-  return result;
 }
 
 // ── Agent Platform Detection ────────────────────────────────────────────────
@@ -157,7 +51,7 @@ export async function detectLMStudio(): Promise<LMStudioDetectionResult> {
  * "detection trap" (sessions never reached the improve pipeline).
  *
  * The registry is now the single source of which harnesses are real stash
- * sources: a candidate must (a) have `capabilities.sessionLogs === true` AND
+ * sources: a candidate must (a) register a `sessionLogProvider` AND
  * (b) declare a `setupDetectionDir`. `SESSION_LOG_HARNESSES` already filters by
  * (a), so dropping the four dead options is automatic — they aren't even in the
  * registry. Adding a new session-log harness with a detection dir makes it
@@ -189,69 +83,6 @@ export function detectAgentPlatforms(): AgentPlatform[] {
   }));
 }
 
-// ── Provider Env-Var Scan ────────────────────────────────────────────────────
-
-/**
- * An inferred provider derived from an environment variable NAME.
- *
- * SAFETY INVARIANT: This type intentionally has no field for an API key
- * value. Only the env var NAME is ever recorded. Values are never read,
- * stored, logged, or emitted.
- */
-export interface InferredProviderEnv {
-  /** Provider identifier, e.g. "anthropic", "openai", "ollama". */
-  provider: string;
-  /**
-   * Env var NAME that was present (never its value), e.g. "ANTHROPIC_API_KEY".
-   */
-  envVar: string;
-  /** What the env var configures: an API key or an endpoint/base URL. */
-  kind: "apiKey" | "endpoint";
-}
-
-/**
- * Map of env var NAME → { provider, kind }. The key NAMES are the only thing
- * this module ever inspects from `process.env`; values are never touched.
- */
-const PROVIDER_ENV_VARS: Array<{ name: string; provider: string; kind: "apiKey" | "endpoint" }> = [
-  { name: "ANTHROPIC_API_KEY", provider: "anthropic", kind: "apiKey" },
-  { name: "OPENAI_API_KEY", provider: "openai", kind: "apiKey" },
-  { name: "GEMINI_API_KEY", provider: "gemini", kind: "apiKey" },
-  { name: "GOOGLE_API_KEY", provider: "gemini", kind: "apiKey" },
-  { name: "GROQ_API_KEY", provider: "groq", kind: "apiKey" },
-  { name: "OLLAMA_HOST", provider: "ollama", kind: "endpoint" },
-  { name: "OLLAMA_BASE_URL", provider: "ollama", kind: "endpoint" },
-  { name: "LM_STUDIO_BASE_URL", provider: "lmstudio", kind: "endpoint" },
-  { name: "LM_STUDIO_API_BASE", provider: "lmstudio", kind: "endpoint" },
-  { name: "LMSTUDIO_BASE_URL", provider: "lmstudio", kind: "endpoint" },
-  { name: "LMSTUDIO_API_BASE", provider: "lmstudio", kind: "endpoint" },
-  { name: "AKM_LLM_API_KEY", provider: "akm-llm", kind: "apiKey" },
-  { name: "AKM_LLM_ENDPOINT", provider: "akm-llm", kind: "endpoint" },
-  { name: "AKM_LLM_BASE_URL", provider: "akm-llm", kind: "endpoint" },
-];
-
-/**
- * Scan `process.env` for the presence of known provider configuration env var
- * NAMES and return inferred providers.
- *
- * Pure function — no network, no filesystem. It reads only whether each known
- * key is *defined and non-empty*; it never reads, returns, or logs the value.
- *
- * @param envSource  Env to inspect. Defaults to `process.env`. Tests inject a
- *                   fake env so a real API key is never required.
- * @returns Inferred providers, each carrying the env var NAME only.
- */
-export function scanProviderEnvVars(envSource: NodeJS.ProcessEnv = process.env): InferredProviderEnv[] {
-  const results: InferredProviderEnv[] = [];
-  for (const entry of PROVIDER_ENV_VARS) {
-    const value = envSource[entry.name];
-    const present = typeof value === "string" && value.trim().length > 0;
-    if (!present) continue;
-    results.push({ provider: entry.provider, envVar: entry.name, kind: entry.kind });
-  }
-  return results;
-}
-
 // ── Generic Local Endpoint Probe ─────────────────────────────────────────────
 
 export interface LocalServerResult {
@@ -261,35 +92,16 @@ export interface LocalServerResult {
   available: boolean;
   /** Models advertised by the endpoint (may be empty). */
   models: string[];
-  /** Suggested default model picked by {@link pickDefaultModel}. */
-  defaultModel?: string;
   /** Human-readable label, e.g. "Ollama", "LM Studio", "Local (8080)". */
   label: string;
 }
 
-/** Default endpoints probed in addition to any harness-config base URLs. */
+/** Local servers that usually speak the OpenAI-compatible API. */
 const DEFAULT_LOCAL_ENDPOINTS: Array<{ baseUrl: string; label: string }> = [
   { baseUrl: "http://localhost:11434", label: "Ollama" },
   { baseUrl: "http://localhost:1234", label: "LM Studio" },
   { baseUrl: "http://localhost:8080", label: "Local (8080)" },
 ];
-
-/**
- * Pick a sensible default model from a list via a name heuristic.
- *
- * Preference order: an explicit "instruct" variant, then the longest name
- * (a rough proxy for the larger / more-capable variant), then the first.
- * Returns `undefined` for an empty list.
- */
-export function pickDefaultModel(models: string[]): string | undefined {
-  const cleaned = models.filter((m) => typeof m === "string" && m.trim().length > 0);
-  if (cleaned.length === 0) return undefined;
-  const instruct = cleaned.filter((m) => /instruct/i.test(m));
-  const pool = instruct.length > 0 ? instruct : cleaned;
-  // Prefer the longest name as a proxy for the larger/most-specific variant,
-  // breaking ties by sort order for determinism.
-  return [...pool].sort((a, b) => b.length - a.length || a.localeCompare(b))[0];
-}
 
 /**
  * Probe a single OpenAI-compatible `/v1/models` endpoint.
@@ -298,47 +110,20 @@ export function pickDefaultModel(models: string[]): string | undefined {
  * `available: false` result rather than throwing.
  */
 export async function probeLocalEndpoint(baseUrl: string, label: string, timeoutMs = 2000): Promise<LocalServerResult> {
-  const result: LocalServerResult = { baseUrl, label, available: false, models: [] };
-  const url = `${baseUrl.replace(/\/$/, "")}/v1/models`;
-  try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-    if (response.ok) {
-      const data = (await response.json()) as { data?: Array<{ id?: string }> };
-      if (Array.isArray(data.data)) {
-        result.models = data.data
-          .map((m) => (typeof m.id === "string" ? m.id : ""))
-          .filter(Boolean)
-          .sort();
-        result.available = true;
-        result.defaultModel = pickDefaultModel(result.models);
-      }
-    }
-  } catch {
-    // Endpoint down/unreachable — leave available=false.
-  }
-  return result;
+  const listed = await listEndpointModels({ endpoint: `${baseUrl.replace(/\/$/, "")}/v1` }, timeoutMs);
+  return listed.ok
+    ? { baseUrl, label, available: true, models: [...listed.models].sort() }
+    : { baseUrl, label, available: false, models: [] };
 }
 
 /**
- * Probe the default local endpoints (Ollama 11434, LM Studio 1234, generic
- * 8080) plus any base URLs found in imported harness configs.
+ * Probe the default local endpoints (Ollama 11434, LM Studio 1234, generic 8080).
  *
  * Never throws: every endpoint being down yields a list of unavailable
  * results, not an error.
- *
- * @param harnessBaseUrls  Extra base URLs to probe (e.g. from harness configs).
  */
-export async function detectLocalServers(harnessBaseUrls: string[] = []): Promise<LocalServerResult[]> {
-  const endpoints: Array<{ baseUrl: string; label: string }> = [...DEFAULT_LOCAL_ENDPOINTS];
-  for (const raw of harnessBaseUrls) {
-    if (typeof raw !== "string" || raw.trim().length === 0) continue;
-    // Strip a trailing /v1 (and trailing slash) so we probe consistently.
-    const baseUrl = raw.replace(/\/$/, "").replace(/\/v1$/, "");
-    if (!endpoints.some((e) => e.baseUrl === baseUrl)) {
-      endpoints.push({ baseUrl, label: `Harness (${baseUrl})` });
-    }
-  }
-  return Promise.all(endpoints.map((e) => probeLocalEndpoint(e.baseUrl, e.label)));
+export async function detectLocalServers(): Promise<LocalServerResult[]> {
+  return Promise.all(DEFAULT_LOCAL_ENDPOINTS.map((e) => probeLocalEndpoint(e.baseUrl, e.label)));
 }
 
 // ── Stash Directory Detection ────────────────────────────────────────────────
@@ -429,19 +214,35 @@ function findGitRepoRoot(start: string): string | undefined {
   }
 }
 
+// ── Harness Detection ────────────────────────────────────────────────────────
+
+/** An agent program akm can run as a harness, found on PATH. */
+export interface InstalledHarness {
+  platform: HarnessId;
+  bin: string;
+  /** Where the binary was found. */
+  path: string;
+}
+
+/**
+ * The agent programs on PATH that can be enabled as a harness, in registry
+ * order. A harness is installed when its binary is found; OpenCode is detected
+ * like any other.
+ */
+export function detectInstalledHarnesses(whichFn: WhichFn = defaultWhich): InstalledHarness[] {
+  const enableable = new Set<string>(HARNESS_CONFIG_PLATFORMS);
+  return detectAgentCliProfiles(undefined, whichFn).flatMap((found) =>
+    found.available && found.resolvedPath && enableable.has(found.name)
+      ? [{ platform: found.name as HarnessId, bin: found.bin, path: found.resolvedPath }]
+      : [],
+  );
+}
+
 // ── Aggregate Environment Detection ──────────────────────────────────────────
 
-// Derives from the canonical harness-id source of truth (#565) plus the
-// "none" fallback for when no harness is detected.
-export type DetectedHarness = HarnessId | "none";
-
 export interface DetectedEnvironment {
-  /** Best available agent harness, in priority order. */
-  harness: DetectedHarness;
-  /** Inferred providers from env var NAMES (never values). */
-  providers: InferredProviderEnv[];
-  /** Imported harness LLM configs (env-var names only — never key values). */
-  harnessConfigs: HarnessLLMConfig[];
+  /** Agent programs on PATH that can be enabled as harnesses, in registry order. */
+  harnesses: InstalledHarness[];
   /** Local OpenAI-compatible servers that responded. */
   localServers: LocalServerResult[];
   /** Ranked stash directory suggestions. */
@@ -451,89 +252,24 @@ export interface DetectedEnvironment {
 }
 
 /**
- * Detect the best agent harness, preferring in-process/SDK dispatch over CLI
- * subprocess dispatch:
- *   1. `opencode-sdk` — the embedded SDK, when the server binary it spawns is
- *      on PATH.
- *   2. the first dispatch-capable CLI harness whose binary is on PATH, in
- *      registry order (`opencode`, `claude`, `codex`, ...).
- *   3. none.
- *
- * The SDK import resolving is NOT evidence the SDK path can run: `@opencode-ai/sdk`
- * (OpenCode 1) and `@opencode/client` (OpenCode 2; the binary's detected major
- * selects) are hard dependencies of akm-cli itself, so `import()` always succeeds and an
- * import-only check would report `opencode-sdk` on every machine — including
- * ones where the first agentic command then dies with spawn ENOENT. The SDK
- * runner spawns `opencode serve` (see `harnesses/opencode-sdk/sdk-runner.ts`),
- * so the binary probe is what actually decides. The package cannot substitute
- * for the binary under any driver: it declares `"dependencies": {}` and its
- * own `createOpencodeServer` spawns the same `opencode serve`.
- *
- * Pure aside from the dynamic import resolution (which performs no network).
- */
-export async function detectHarness(whichFn: WhichFn = defaultWhich): Promise<DetectedHarness> {
-  // Probed once; reused below so the `opencode` CLI fallback doesn't repeat
-  // the identical full-PATH walk this just performed.
-  const opencodePath = whichFn(resolveOpencodeBin(undefined, whichFn));
-  if (opencodePath) {
-    try {
-      // The client package of the major the binary reports.
-      if (detectOpencodeMajor(opencodePath).major === 1) await import("@opencode-ai/sdk");
-      else await import("@opencode/client");
-      return "opencode-sdk";
-    } catch {
-      // SDK genuinely unavailable (e.g. externalized in a standalone build).
-      // Fall through — the `opencode` CLI harness is probed below.
-    }
-  }
-  for (const harness of AGENT_DISPATCH_HARNESSES) {
-    // The SDK harness dispatches without a CLI profile and was decided above;
-    // an explicit skip so a future `profile` for it can't silently
-    // reintroduce it here after the import guard already rejected it.
-    if (harness.id === "opencode-sdk") continue;
-    const bin = getBuiltinAgentProfile(harness.id)?.bin;
-    if (!bin) continue;
-    const found = bin === OPENCODE_SDK_SERVER_BIN ? opencodePath : whichFn(bin);
-    if (found) return harness.id;
-  }
-  return "none";
-}
-
-/**
  * Run the full environment-detection pipeline once and return a single typed
- * result. Orchestrates env-var scan, harness config import, harness selection,
- * local-server probes, and stash-dir suggestions.
- *
- * SAFETY: No API key VALUE is ever read, stored, logged, or returned — only
- * env var NAMES. Tolerant of every detector failing.
+ * result. Orchestrates harness detection, local-server probes, and stash-dir
+ * suggestions. Tolerant of every detector failing.
  *
  * @param opts.existingStashDir  Current config stashDir (no-op suggestion).
- * @param opts.envSource  Env to scan. Defaults to `process.env`.
  * @param opts.whichFn  Binary lookup. Tests inject a stub.
+ * @param opts.probe  Contact the local servers. False for an offline run.
  */
 export async function detectEnvironment(opts?: {
   existingStashDir?: string;
-  envSource?: NodeJS.ProcessEnv;
   whichFn?: WhichFn;
   cwd?: string;
   home?: string;
+  probe?: boolean;
 }): Promise<DetectedEnvironment> {
-  const envSource = opts?.envSource ?? process.env;
   const whichFn = opts?.whichFn ?? defaultWhich;
 
-  let harnessConfigs: HarnessLLMConfig[] = [];
-  try {
-    harnessConfigs = detectHarnessConfigs();
-  } catch {
-    harnessConfigs = [];
-  }
-
-  const harnessBaseUrls = harnessConfigs.map((c) => c.baseUrl).filter((u): u is string => typeof u === "string");
-
-  const [harness, localServers] = await Promise.all([
-    detectHarness(whichFn),
-    detectLocalServers(harnessBaseUrls).catch(() => [] as LocalServerResult[]),
-  ]);
+  const localServers = opts?.probe === false ? [] : await detectLocalServers().catch(() => [] as LocalServerResult[]);
 
   let agentPlatforms: AgentPlatform[] = [];
   try {
@@ -543,9 +279,7 @@ export async function detectEnvironment(opts?: {
   }
 
   return {
-    harness,
-    providers: scanProviderEnvVars(envSource),
-    harnessConfigs,
+    harnesses: detectInstalledHarnesses(whichFn),
     localServers,
     stashSuggestions: detectStashDir({
       existingStashDir: opts?.existingStashDir,
@@ -556,30 +290,18 @@ export async function detectEnvironment(opts?: {
   };
 }
 
-/**
- * Render a compact, human-readable "Detected environment" summary block.
- * Contains env var NAMES only — never any value.
- */
+/** Render a compact, human-readable "Detected environment" summary block. */
 export function renderDetectionSummary(env: DetectedEnvironment): string {
   const lines: string[] = ["Detected environment:"];
-  lines.push(`  Harness:        ${env.harness}`);
+  lines.push(
+    `  Harnesses:      ${env.harnesses.length > 0 ? env.harnesses.map((h) => h.platform).join(", ") : "none on PATH"}`,
+  );
 
   const liveServers = env.localServers.filter((s) => s.available);
   if (liveServers.length > 0) {
-    lines.push(
-      `  Local servers:  ${liveServers
-        .map((s) => `${s.label}${s.defaultModel ? ` (${s.defaultModel})` : ""}`)
-        .join(", ")}`,
-    );
+    lines.push(`  Local servers:  ${liveServers.map((s) => s.label).join(", ")}`);
   } else {
     lines.push("  Local servers:  none reachable");
-  }
-
-  if (env.providers.length > 0) {
-    // NAMES only — never values.
-    lines.push(`  Provider keys:  ${env.providers.map((p) => `${p.provider}:${p.envVar}`).join(", ")}`);
-  } else {
-    lines.push("  Provider keys:  none in environment");
   }
 
   const topStash = env.stashSuggestions[0];

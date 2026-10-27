@@ -7,7 +7,7 @@
  *
  * A native akm workflow bundle: Markdown workflow sources.
  *
- * ── validate (spec §6 workflow row) ──
+ * ── validate ──
  *
  * Reuses the akm adapter's per-type workflow checks (shared base checks +
  * `placeholder-stub` + `invalid-workflow-structure`). Delegates to the SAME
@@ -47,8 +47,8 @@ function isReservedDocFile(fileName: string): boolean {
 
 /**
  * Recognition gate: any `.md` file in this bundle IS a workflow (this
- * adapter's entire domain is workflows — spec §2.5, "residence under
- * workflows/"), UNLESS its frontmatter declares a DIFFERENT non-empty
+ * adapter's entire domain is workflows), UNLESS its frontmatter declares a
+ * DIFFERENT non-empty
  * `type:` (an explicit opt-out, e.g. a README-shaped doc that wants to be
  * something else). No content sniffing.
  */
@@ -123,8 +123,8 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
  * looksLikeRoot). Unlike `isWorkflowFile` (which admits an absent `type:` —
  * the lenient default ONCE a source is already known to be this bundle),
  * this requires an EXPLICIT `type: workflow` — the install-time probe is
- * choosing WHICH adapter owns an unconfigured root among several candidates
- * (spec §1.2), and an incidental `.md` with no frontmatter type at all
+ * choosing WHICH adapter owns an unconfigured root among several candidates,
+ * and an incidental `.md` with no frontmatter type at all
  * (common in an OKF or llm-wiki bundle) must not misclassify that root as
  * akm-workflow's.
  */

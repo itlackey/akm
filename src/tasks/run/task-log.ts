@@ -7,14 +7,10 @@
  * structured logs.db rows, and the shared redaction pass both sinks go
  * through before either is written.
  *
- * Moved body-intact from src/tasks/runner.ts (spec
- * docs/plans/specs/p1b-model-extraction.md §5.1, runner.ts:779-968).
- *
  * A DAG leaf with respect to the rest of src/tasks/run/**: nothing here
  * imports ./task-result, ./task-history, or ./attempt-lifecycle, so every
  * other run/** module can depend on this one without risking an import
- * cycle (tests/architecture/import-cycle-ratchet.test.ts counts type-only
- * imports as real edges too).
+ * cycle.
  */
 
 import fs from "node:fs";

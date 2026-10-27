@@ -6,10 +6,10 @@
  * The `website-snapshot` adapter — akm 0.9.0 format-family work item (#46).
  *
  * A READ-ONLY (Mode A) view over a materialized crawl snapshot written by
- * `src/sources/snapshot-fetchers/website-ingest.ts` (spec §6/§7). The on-disk
+ * `src/sources/snapshot-fetchers/website-ingest.ts`. The on-disk
  * pages are KNOWLEDGE-shaped markdown under `stash/knowledge/**` with no `type:`
- * field; this adapter RE-TYPES them to the open `type: website`. Per
- * open-question-3 (RESOLVED, maintainer 2026-07) the re-type is GATED — it
+ * field; this adapter RE-TYPES them to the open `type: website`. The re-type
+ * is GATED — it
  * applies only to a page carrying the `website` tag / a `sourceUrl` (a page
  * lacking both is not re-typed); the document KEEPS its `sourceUrl` (surfaced as
  * `sourceRef` on `documentJson`); and the conceptId STRIPS the

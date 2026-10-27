@@ -679,16 +679,12 @@ describe("OKF first-class conformance", () => {
       semanticSearchMode: "off",
       defaultBundle: "native",
       defaultWriteTarget: "native",
-      engines: {
-        "test-agent": { kind: "agent", platform: "opencode-sdk" },
+      connections: {
         "test-llm": {
-          kind: "llm",
           endpoint: "http://localhost:1/v1/chat/completions",
-          model: "test-model",
+          models: { fast: "test-model" },
         },
       },
-      defaults: { engine: "test-agent", llmEngine: "test-llm" },
-      workflow: { judgeEngine: "test-llm" },
       bundles: {
         local: { path: storage.stashDir },
         native: {
@@ -735,16 +731,12 @@ describe("OKF first-class conformance", () => {
       semanticSearchMode: "off",
       defaultBundle: "local",
       defaultWriteTarget: "local",
-      engines: {
-        "test-agent": { kind: "agent", platform: "opencode-sdk" },
+      connections: {
         "test-llm": {
-          kind: "llm",
           endpoint: "http://localhost:1/v1/chat/completions",
-          model: "test-model",
+          models: { fast: "test-model" },
         },
       },
-      defaults: { engine: "test-agent", llmEngine: "test-llm" },
-      workflow: { judgeEngine: "test-llm" },
       bundles: { local: { path: storage.stashDir, writable: true } },
     });
     resetConfigCache();
@@ -810,16 +802,12 @@ describe("OKF first-class conformance", () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "local",
-      engines: {
-        "test-agent": { kind: "agent", platform: "opencode-sdk" },
+      connections: {
         "test-llm": {
-          kind: "llm",
           endpoint: "http://localhost:1/v1/chat/completions",
-          model: "test-model",
+          models: { fast: "test-model" },
         },
       },
-      defaults: { engine: "test-agent", llmEngine: "test-llm" },
-      workflow: { judgeEngine: "test-llm" },
       bundles: {
         local: {
           path: storage.stashDir,

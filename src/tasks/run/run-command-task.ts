@@ -6,27 +6,20 @@
  * The common command (agent/LLM) dispatch arm: `runPreparedCommandTask`,
  * `renderPromptLog`.
  *
- * Moved from src/tasks/runner.ts (spec docs/plans/specs/p1b-model-extraction.md
- * §5.1, §9, runner.ts:677-778).
+ * `runPreparedCommandTask` passes the resolved provenance into
+ * `dispatchPreparedCommandInvocation` via the `eventSource` option, so a
+ * command task run stamps `AKM_EVENT_SOURCE` and its nested usage is not
+ * recorded as user demand. The dispatched harness's child env carries the stamp
+ * too, matching the native arm.
  *
- * F-1 (R-07 fix, spec §5.2 point 3): `runPreparedCommandTask` now passes the
- * resolved provenance into `dispatchPreparedCommandInvocation` via a new
- * `eventSource` option — the fix for R-07 (a command task run
- * previously never stamped `AKM_EVENT_SOURCE` anywhere, so its nested usage
- * was recorded as user demand). The dispatched engine's child env now carries
- * the stamp too, matching the native arm.
- *
- * F-2 (D8, spec §5.3): the result's `target` is now `{kind:"command", engine}`
- * — formerly `{kind:"prompt", engine}`.
+ * The result's `target` is `{kind:"command", engine}`.
  */
 
 import type { CommandDispatchResult, DispatchPreparedCommandOptions } from "../../commands/command/command-execution";
 import { dispatchPreparedCommandInvocation } from "../../commands/command/command-execution";
 import type { TaskLogLineInput } from "../../core/logs-db";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import type { RunAgentOptions } from "../../integrations/agent";
 import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
-import type { chatCompletion } from "../../llm/client";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskV3Command } from "../prepare/prepared-execution";
 import { finishAttempt } from "./attempt-lifecycle";
@@ -41,26 +34,29 @@ export async function runPreparedCommandTask(input: {
   startedAt: Date;
   now: () => Date;
   runAgentImpl?: RunExecutionOptions["runAgent"];
-  chatCompletionImpl?: typeof chatCompletion;
-  agentOptions?: Partial<RunAgentOptions>;
   historyReserved: boolean;
   provenance: ExecutionProvenanceContext;
 }): Promise<TaskRunResult> {
-  const { task, logPath, startedAt, now, agentOptions, provenance } = input;
+  const { task, logPath, startedAt, now, provenance } = input;
   const dispatchOptions: DispatchPreparedCommandOptions = {
     ...(input.runAgentImpl ? { runAgent: input.runAgentImpl } : {}),
-    ...(input.chatCompletionImpl ? { chat: input.chatCompletionImpl } : {}),
-    ...(agentOptions ? { runOptions: agentOptions } : {}),
-    // F-1 (R-07 fix, spec §5.2 point 3): threads the resolved event source
-    // into the dispatched engine's child env and the recorded usage events.
+    // Threads the resolved event source into the dispatched harness's child env
+    // and the recorded usage events.
     eventSource: provenance.eventSource,
   };
-  // Unset anywhere (task `timeout:`, command asset, engine) → the unattended
-  // default; an explicit value or `null` (opt-out) already sits on the request.
-  const { request, runner } = task.invocation;
-  const unset = !Object.hasOwn(request.runtime, "timeoutMs") && runner.timeoutMs === undefined;
+  // Unset anywhere (task `timeout:`, command asset, connection or harness) → the
+  // unattended default; an explicit value or `null` (opt-out) was set by one of them.
+  const { runner, request, provenance: provenances } = task.invocation;
+  const unset = provenances["runtime.timeoutMs"]?.via === "default";
   const invocation = unset
-    ? { ...task.invocation, runner: { ...runner, timeoutMs: DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } }
+    ? {
+        ...task.invocation,
+        request: {
+          ...request,
+          runtime: { ...request.runtime, timeoutMs: DEFAULT_SCHEDULED_TASK_TIMEOUT_MS },
+        },
+        runner: { ...runner, timeoutMs: DEFAULT_SCHEDULED_TASK_TIMEOUT_MS },
+      }
     : task.invocation;
   const result = await dispatchPreparedCommandInvocation(invocation, dispatchOptions);
   const engineName = result.engine;

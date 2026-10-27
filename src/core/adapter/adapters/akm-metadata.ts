@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Index-time metadata fold for the `akm` adapter's `recognize` — akm 0.9.0
- * chunk-2, WI-C, implementing spec §2 ("the nine index-time metadata
- * contributors move into recognize") + the workflow contributor.
+ * Index-time metadata fold for the `akm` adapter's `recognize`: the nine
+ * index-time metadata contributors plus the workflow contributor.
  *
  * This leaf reproduces the 11 `registerMetadataContributor` sites keyed on the
  * winning RENDERER name (exactly how each contributor's `appliesTo({ rendererName })`

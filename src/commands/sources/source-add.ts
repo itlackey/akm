@@ -371,7 +371,7 @@ async function addRegistryStash(
 
 /**
  * Persist or replace a registry-installed source as a 0.9.0 `bundles` entry
- * (spec §10.1 / §10.2 desired/resolved split). The bundle carries ONLY the
+ * (the desired/resolved split). The bundle carries ONLY the
  * desired descriptor (git/npm locator + preserved `registryId` + `writable`);
  * the resolved cache root belongs exclusively in the lock (written by callers
  * via {@link upsertLockEntry} with the returned `bundleId`). A new install is
@@ -419,7 +419,7 @@ export function upsertInstalledRegistryEntry(
 
 /**
  * Remove a registry-installed source: delete its `bundles` entry and its lock
- * entry (spec §10.2). Matches the bundle by preserved `registryId` or by a
+ * entry. Matches the bundle by preserved `registryId` or by a
  * slug-legal install id used verbatim as the key. Idempotent.
  */
 export async function removeInstalledRegistryEntry(id: string): Promise<AkmConfig> {

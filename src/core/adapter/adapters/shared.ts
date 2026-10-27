@@ -110,11 +110,11 @@ function stripFencedBlocksSimple(body: string): string {
 }
 
 // Ref-token grammar — copied from `base-linter.ts`'s `BUNDLE_REF_RE`
-// (`core/asset/asset-ref.ts`, spec §11.1 / ref-grammar decision D-R3) as a VALUE,
+// (`core/asset/asset-ref.ts`) as a VALUE,
 // not an import (same cycle-avoidance rationale as the file header — the source
 // string is duplicated so no new `core/adapter` -> `core/asset` edge is added for
 // this scan). Recognizes the 0.9.0 FULLY-QUALIFIED `<bundle>//<concept-id>
-// [#fragment]` prose body-ref anchored form ONLY. Per D-R3, a bare short
+// [#fragment]` prose body-ref anchored form ONLY. A bare short
 // conceptId in prose is NOT a ref, so it is never flagged here (it is a ref only
 // in the ref-LIST channels — {@link refTokenFromListValue}). The pre-0.9.0
 // `<type>:<slug>` colon grammar is gone from every recognition surface.
@@ -195,7 +195,7 @@ export interface ParsedForValidate {
 
 /**
  * Port of `BaseLinter.runBaseChecks`, adapted to the read-only
- * `ValidateContext`/`Diagnostic` shapes (adapter spec §12.1). Reproduces
+ * `ValidateContext`/`Diagnostic` shapes. Reproduces
  * unquoted-colon / missing-updated / stale-path / missing-ref for ONE file's
  * already-parsed content.
  *

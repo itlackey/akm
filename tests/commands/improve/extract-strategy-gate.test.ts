@@ -5,7 +5,7 @@
 /**
  * #593/#594 — the extract gate must respect the active improve strategy.
  *
- * `isLlmFeatureEnabled(config, "session_extraction")` hardcoded a lookup
+ * The feature-gate lookup for `session_extraction` (since removed) hardcoded a lookup
  * against `profiles.improve.default.processes.extract.enabled`, so the default
  * profile acted as a global override: a non-default profile setting
  * `extract.enabled` (true OR false) was silently ignored. The fix gates solely
@@ -79,8 +79,7 @@ function makeConfig(args: { defaultExtractEnabled: boolean; strategy?: { name: s
     config: withTestImproveLlm({
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      improve: { strategies: improve },
-      defaults: { improveStrategy: "default" },
+      improve: { strategy: "default", strategies: improve },
     } as AkmConfig),
   };
 }

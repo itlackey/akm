@@ -77,23 +77,25 @@ describe("bug 9 — parser enforces the decoder's bounds with line anchors", () 
     expect(parseErrors(workflowWith([`    unit: { timeout: ${WORKFLOW_MAX_TIMEOUT_MS} }`]))).toHaveLength(0);
   });
 
-  test("an engine name outside the frozen-plan grammar is a line-anchored parser error (unit and defaults)", () => {
-    const unitCase = parseErrors(workflowWith([`    unit: { engine: My_Engine }`]));
-    expect(unitCase).toHaveLength(1);
-    expect(unitCase[0]!.line).toBe(5);
-    expect(unitCase[0]!.message).toContain(`invalid engine name "My_Engine"`);
-    expect(unitCase[0]!.message).toContain("lowercase");
+  test("a connection, harness or engine name outside the frozen-plan grammar is a line-anchored parser error (unit and defaults)", () => {
+    for (const key of ["connection", "harness", "engine"]) {
+      const unitCase = parseErrors(workflowWith([`    unit: { ${key}: My_Engine }`]));
+      expect(unitCase).toHaveLength(1);
+      expect(unitCase[0]!.line).toBe(5);
+      expect(unitCase[0]!.message).toContain(`"${key}" has an invalid name "My_Engine"`);
+      expect(unitCase[0]!.message).toContain("lowercase");
 
-    const markdown = workflowWith([], undefined, ["defaults:", "  engine: UPPER"]);
-    const defaultsCase = parseErrors(markdown);
-    expect(defaultsCase).toHaveLength(1);
-    expect(defaultsCase[0]!.line).toBe(4);
-    expect(defaultsCase[0]!.message).toContain(`"defaults.engine" has an invalid engine name "UPPER"`);
+      const markdown = workflowWith([], undefined, ["defaults:", `  ${key}: UPPER`]);
+      const defaultsCase = parseErrors(markdown);
+      expect(defaultsCase).toHaveLength(1);
+      expect(defaultsCase[0]!.line).toBe(4);
+      expect(defaultsCase[0]!.message).toContain(`"defaults.${key}" has an invalid name "UPPER"`);
+    }
   });
 
-  test("an over-long engine name is rejected; a valid dash-separated name passes", () => {
+  test("an over-long name is rejected; a valid dash-separated name passes", () => {
     const longName = `a${"-b".repeat(40)}`; // 81 chars, pattern-valid but over 63
-    expect(parseErrors(workflowWith([`    unit: { engine: ${longName} }`]))).toHaveLength(1);
-    expect(parseErrors(workflowWith([`    unit: { engine: code-review-llm }`]))).toHaveLength(0);
+    expect(parseErrors(workflowWith([`    unit: { connection: ${longName} }`]))).toHaveLength(1);
+    expect(parseErrors(workflowWith([`    unit: { connection: code-review-llm }`]))).toHaveLength(0);
   });
 });

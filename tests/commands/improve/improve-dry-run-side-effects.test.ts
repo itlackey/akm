@@ -40,10 +40,9 @@ const TIMEOUT_MS = 15_000;
 const dryRunConfig = {
   configVersion: "0.9.0" as const,
   semanticSearchMode: "off" as const,
-  engines: {
-    test: { kind: "llm" as const, endpoint: "https://example.test/v1/chat/completions", model: "test" },
+  connections: {
+    test: { endpoint: "https://example.test/v1/chat/completions", models: { fast: "test" } },
   },
-  defaults: { llmEngine: "test" },
 };
 
 const disposers: SandboxedDir[] = [];
@@ -165,14 +164,12 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
             semanticSearchMode: "off",
             bundles: { stash: { path: stashDir, writable: true } },
             defaultBundle: "stash",
-            engines: {
+            connections: {
               repair: {
-                kind: "llm",
                 endpoint: "https://example.test/v1/chat/completions",
-                model: "repair",
+                models: { fast: "repair" },
               },
             },
-            defaults: { llmEngine: "repair" },
             improve: {
               strategies: {
                 "dry-schema": {
@@ -182,7 +179,7 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
                     consolidate: { enabled: false },
                     memoryInference: { enabled: false },
                     extract: { enabled: false },
-                    validation: { enabled: true, engine: "repair" },
+                    validation: { enabled: true, connection: "repair" },
                     triage: { enabled: false },
                     proactiveMaintenance: { enabled: false },
                     recombine: { enabled: false },
@@ -343,14 +340,12 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
             semanticSearchMode: "off",
             bundles: { stash: { path: stashDir, writable: true } },
             defaultBundle: "stash",
-            engines: {
+            connections: {
               judge: {
-                kind: "llm",
                 endpoint: "https://example.test/v1/chat/completions",
-                model: "judge",
+                models: { fast: "judge" },
               },
             },
-            defaults: { llmEngine: "judge" },
             improve: {
               strategies: {
                 "dry-safe": {

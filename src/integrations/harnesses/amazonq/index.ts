@@ -3,42 +3,33 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Amazon Q Developer CLI harness (P2 integration, plan §"The adapter
- * contract").
- *
- * Per-harness barrel gathering the Amazon Q integration surfaces:
- *   - agent command builder → ./agent-builder.ts    (amazonqBuilder)
- *   - result extractor      → ./result-extractor.ts (amazonqResultExtractor)
- *
- * It also defines {@link AmazonqHarness}, the {@link AkmHarness} descriptor
- * that `HARNESS_REGISTRY` registers. Dispatch-only: no native session-log
- * reader or config importer yet.
+ * Amazon Q Developer CLI (`q`). Headless is `q chat --no-interactive`, which
+ * prints the reply and exits; `--trust-all-tools` stops it asking before each
+ * tool. The prompt is the trailing positional, after `--`.
  */
 
-import { caps } from "../shared";
-import { BaseHarness } from "../types";
-import { amazonqBuilder } from "./agent-builder";
-import { amazonqResultExtractor } from "./result-extractor";
+import {
+  type AgentDispatchRequest,
+  type AkmHarness,
+  type BuiltCommand,
+  type HarnessSpawn,
+  withoutLeading,
+  withoutModelFlag,
+} from "../harness";
 
-export { AMAZONQ_PLATFORM, amazonqBuilder } from "./agent-builder";
-export { amazonqResultExtractor, stripTerminalFraming } from "./result-extractor";
-
-/**
- * Amazon Q Developer CLI (`q`).
- *
- * Canonical id is `'amazonq'`; no alias or distinct runtime identity.
- */
-export class AmazonqHarness extends BaseHarness {
+export class AmazonqHarness implements AkmHarness {
   readonly id = "amazonq" as const;
   readonly displayName = "Amazon Q Developer CLI";
-  readonly agentBuilder = amazonqBuilder;
-  readonly profile = { bin: "q", args: [], envPassthrough: ["AWS_PROFILE", "AWS_REGION"] };
-  readonly resultExtractor = amazonqResultExtractor;
-  // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // No `identityEnv`: the matrix lists Q's identity markers as uncertain, and
-  // Q stamps no session var onto child processes.
-  readonly capabilities = caps({
-    agentDispatch: true,
-    detection: true,
-  });
+  readonly profile = { bin: "q", args: [] };
+  readonly systemPrompt = false;
+  readonly nativeAgent = false;
+  readonly confinable = false;
+
+  build({ bin, args }: HarnessSpawn, req: AgentDispatchRequest): BuiltCommand {
+    const authored = withoutLeading(args, "chat");
+    const base = [bin, "chat", ...(req.model ? withoutModelFlag(authored) : authored)];
+    const model = req.model ? ["--model", req.model] : [];
+    if (req.prompt === undefined) return { argv: [...base, ...model] };
+    return { argv: [...base, "--no-interactive", "--trust-all-tools", ...model, "--", req.prompt] };
+  }
 }

@@ -19,15 +19,10 @@
  * with `inferenceProcessed: true`. A subsequent `akm index` therefore skips
  * the parent without re-running the LLM.
  *
- * Disabling — two orthogonal gates:
- *   1. The selected strategy sets `processes.memoryInference.enabled = false`
- *      blocks the pass at the feature-flag layer (no network call may ever
- *      issue). Historically the v1 spec §14 gate, superseded by the 0.8.0
- *      profile shape.
- *   2. `index.memory.llm = false` (or no resolvable LLM profile) opts the
- *      pass out at the per-pass layer (#208).
- *   A pass runs iff both layers allow it. Existing inferred children are
- *   NEVER deleted — the user keeps what was already produced.
+ * Disabling — one gate: `index.memory.enabled = false` (or no resolvable
+ * connection or harness) leaves the pass with no runner, and no model call is
+ * made (#208). Existing inferred children are NEVER deleted — the user keeps
+ * what was already produced.
  *
  * Scope sync: on every run, an existing derived child (`<name>.derived.md`,
  * `inferred: true`, `derivedFrom` naming its parent) whose normalized scope
@@ -63,10 +58,9 @@ import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { beginWriteProvenance, recordWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
 import { type WriteTargetSource, writeAssetToSource } from "../../core/write-source";
+import { type NoticeSink, noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
-import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
-import { isProcessEnabled } from "../../llm/feature-gate";
+import type { RunnerSpec } from "../../integrations/agent/runner";
 import { type ResolvedIndexPassExecution, resolveIndexPassExecution } from "../../llm/index-passes";
 import type { DerivedMemoryDraft, MemoryInferNoChange, MemoryInferTelemetry } from "../../llm/memory-infer";
 import * as memoryInfer from "../../llm/memory-infer";
@@ -295,31 +289,19 @@ function memoryExecutionForContext(
 async function inferPendingMemoryRecord(
   plan: MemoryInferencePlan,
   ctx: {
-    config: MemoryInferencePassContext["config"];
-    featureConfig: MemoryInferencePassContext["config"];
     signal?: AbortSignal;
     db?: MemoryInferencePassContext["db"];
     reEnrich?: boolean;
     llmRunner: RunnerSpec;
     inferTelemetry: MemoryInferTelemetry;
     compressMemoryToDerivedMemory: typeof memoryInfer.compressMemoryToDerivedMemory;
-    onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
+    onNotices: NoticeSink;
     onConfigFailure: (error: ConfigError) => void;
   },
 ) {
   const { record } = plan;
-  const {
-    config,
-    featureConfig,
-    signal,
-    db,
-    reEnrich,
-    llmRunner,
-    inferTelemetry,
-    compressMemoryToDerivedMemory,
-    onNotices,
-    onConfigFailure,
-  } = ctx;
+  const { signal, db, reEnrich, llmRunner, inferTelemetry, compressMemoryToDerivedMemory, onNotices, onConfigFailure } =
+    ctx;
   if (signal?.aborted || plan.kind === "aborted") return { aborted: true } as const;
 
   // Existing children are complete, but the parent may be unmarked after a
@@ -350,16 +332,7 @@ async function inferPendingMemoryRecord(
     retryAttempts += 1;
   };
   const infer = () =>
-    compressMemoryToDerivedMemory(
-      llmRunner,
-      record.effectiveInput,
-      signal,
-      featureConfig,
-      (event) => warn(`[akm] LLM fallback for ${event.feature}: ${event.reason}`),
-      inferTelemetry,
-      onRetryAttempt,
-      onNotices,
-    );
+    compressMemoryToDerivedMemory(llmRunner, record.effectiveInput, signal, inferTelemetry, onRetryAttempt, onNotices);
   let derived: MemoryInferDecision | undefined = plan.kind === "cache-hit" ? plan.decision : undefined;
   try {
     if (plan.kind === "model") {
@@ -383,8 +356,6 @@ async function inferPendingMemoryRecord(
             llmRunner,
             record.effectiveInput,
             signal,
-            config,
-            (event) => warn(`[akm] LLM fallback for ${event.feature}: ${event.reason}`),
             inferTelemetry,
             onRetryAttempt,
             onNotices,
@@ -456,7 +427,6 @@ async function runMemoryInferencePassBody(
   provenance: WriteProvenanceJournal,
 ): Promise<MemoryInferenceResult> {
   const { config, sources, signal, db, reEnrich, onProgress, options = {} } = ctx;
-  const invocationOwnsRunner = Object.hasOwn(ctx, "llmRunner");
   const compressMemoryToDerivedMemory =
     options.compressMemoryToDerivedMemory ?? memoryInfer.compressMemoryToDerivedMemory;
   const result: MemoryInferenceResult = {
@@ -476,34 +446,23 @@ async function runMemoryInferencePassBody(
   };
 
   // Mutable sink threaded into compressMemoryToDerivedMemory so the per-call
-  // HTML-error categorization (which is otherwise swallowed inside the feature
-  // gate) bubbles up into the pass result.
+  // HTML-error categorization (which is otherwise logged and dropped as a
+  // skipped memory) bubbles up into the pass result.
   const inferTelemetry: MemoryInferTelemetry = {};
-  const noticesByKey = new Map<string, Readonly<LoweringNotice>>();
-  const onNotices = (notices: readonly Readonly<LoweringNotice>[]): void => {
-    for (const notice of notices) noticesByKey.set(JSON.stringify(notice), notice);
-  };
+  const notices = noticeSet();
   const completeResult = (): MemoryInferenceResult => {
-    if (noticesByKey.size > 0) result.notices = Object.freeze([...noticesByKey.values()]);
+    Object.assign(result, notices.fields());
     // Non-destructive read — the wrapper's `finally` owns closing the journal.
     result.writtenPaths = provenance.writtenPaths();
     return result;
   };
 
-  // Gate 1 — feature gate via isProcessEnabled, which reads the 0.8.0 path
-  // (selected strategy's processes.memoryInference.enabled). Defaults to
-  // enabled when the key is absent.
-  if (!invocationOwnsRunner && !isProcessEnabled("index", "memory_inference", config)) return completeResult();
-
-  // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or
-  // `undefined` when the pass should not run.
+  // The one gate — per-pass opt-out (#208): no runner when `index.memory.enabled` is false or nothing is
+  // configured. A caller that owns the runner has decided to run.
   const execution = memoryExecutionForContext(ctx, config);
-  onNotices(execution.notices);
+  notices.add(execution.notices);
   const llmRunner = execution.runner;
   if (!llmRunner) return completeResult();
-  const featureConfig = invocationOwnsRunner
-    ? { ...config, index: { ...config.index, memory: { ...config.index?.memory, enabled: true } } }
-    : config;
 
   // The pass only writes to the default (working) stash, found by its
   // `isDefault` flag and never by array position. Read-only caches (git, npm,
@@ -530,12 +489,8 @@ async function runMemoryInferencePassBody(
   result.considered = pending.length;
   if (pending.length === 0) return completeResult();
 
-  // Classify the whole batch without mutation. Required credentials are
-  // materialized only when at least one record will actually dispatch; this
-  // keeps aborted, existing-child, and validated-cache-only batches available
-  // offline while preserving all-or-nothing preflight for mixed batches.
+  // Classify the whole batch without mutation.
   const plans = pending.map((record) => planPendingMemoryRecord(record, { signal, db, reEnrich }));
-  if (plans.some((plan) => plan.kind === "model")) assertRunnerCredentials(llmRunner);
 
   let processed = 0;
   const total = pending.length;
@@ -546,22 +501,19 @@ async function runMemoryInferencePassBody(
     plans,
     (plan) =>
       inferPendingMemoryRecord(plan, {
-        config,
-        featureConfig,
         signal,
         db,
         reEnrich,
         llmRunner,
         inferTelemetry,
         compressMemoryToDerivedMemory,
-        onNotices,
+        onNotices: notices.add,
         onConfigFailure: (error) => {
           configFailure ??= error;
         },
       }),
-    // Caller-set connection concurrency or 1: `resolveLlmEngineUse` does
-    // not forward `engines.<name>.concurrency`, so config cannot raise this.
-    runnerLlmConnection(llmRunner)?.concurrency ?? 1,
+    // The connection's own `concurrency` when it sets one, else 1.
+    (llmRunner.kind === "connection" ? llmRunner.concurrency : undefined) ?? 1,
   );
   if (configFailure) throw configFailure;
 
@@ -913,8 +865,8 @@ function markParentProcessed(parent: MemoryRecord): void {
   // Frontmatter-only rewrite of an existing asset: not a new asset write,
   // so writeAssetToSource isn't a fit here (it would round-trip the body
   // through the asset-spec rendering layer instead of preserving the
-  // user's original markdown bytes verbatim). The narrow exception is
-  // documented in v1 spec §10 step 5 and CLAUDE.md write-source rules.
+  // user's original markdown bytes verbatim). This is the narrow exception
+  // to routing asset writes through writeAssetToSource.
   let raw: string;
   try {
     raw = fs.readFileSync(parent.filePath, "utf8");

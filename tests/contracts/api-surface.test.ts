@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm-cli/api` is the one supported programmatic entry point (AGENTS.md,
+ * `akm-cli/api` is the one supported programmatic entry point (see
  * docs/reference/api.md). This pins its runtime export list, the shape of
  * `curate()`'s rejections, and that the hand-written `dist/api.d.ts` source
  * stays assignable both ways to what `src/api.ts` really exports.

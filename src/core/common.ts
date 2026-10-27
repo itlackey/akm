@@ -97,8 +97,9 @@ export function readTextFile(filePath: string, label = "File"): string {
  */
 /**
  * Strip JavaScript-style comments from a JSON string (JSONC support).
- * Handles `//` line comments and `/* *​/` block comments while preserving
- * comment-like sequences inside quoted strings.
+ * Handles `//` line comments, which end at a line feed or a carriage return,
+ * and `/* *​/` block comments while preserving comment-like sequences inside
+ * quoted strings.
  */
 export function stripJsonComments(text: string): string {
   let result = "";
@@ -125,7 +126,7 @@ export function stripJsonComments(text: string): string {
       continue;
     }
     if (text[i] === "/" && text[i + 1] === "/") {
-      while (i < text.length && text[i] !== "\n") i++;
+      while (i < text.length && text[i] !== "\n" && text[i] !== "\r") i++;
       continue;
     }
     if (text[i] === "/" && text[i + 1] === "*") {
@@ -315,7 +316,7 @@ function readStashDirFromConfig(): string | undefined {
     const parsed = JSON.parse(stripJsonComments(text));
     if (typeof parsed !== "object" || parsed === null) return undefined;
     const raw = parsed as Record<string, unknown>;
-    // 0.9.0 config-shape cutover (spec §10.1): the primary stash is the
+    // The primary stash is the
     // `defaultBundle`'s filesystem `path`. Read it directly (no config module
     // import) so the primary-stash location survives the stashDir → bundles
     // migration without a runtime rewire.
@@ -943,6 +944,29 @@ export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
 
+/** Drop each comma that is followed, past whitespace, by `}` or `]`, outside string literals. */
+function stripTrailingCommas(text: string): string {
+  let result = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i] as string;
+    if (inString) {
+      result += char;
+      if (char === "\\") result += text[++i] ?? "";
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === ",") {
+      let next = i + 1;
+      while (next < text.length && /\s/.test(text[next] as string)) next++;
+      if (text[next] === "}" || text[next] === "]") continue;
+    }
+    result += char;
+  }
+  return result;
+}
+
 /**
  * Parse JSONC: comments stripped by {@link stripJsonComments}, and trailing
  * commas (`[a, b,]`, `{"k": 1,}`) tolerated, as OpenCode's own `.jsonc` reader does.
@@ -952,7 +976,7 @@ export function parseJsonc(text: string): unknown {
   try {
     return JSON.parse(stripped) as unknown;
   } catch {
-    return JSON.parse(stripped.replace(/,(\s*[}\]])/g, "$1")) as unknown;
+    return JSON.parse(stripTrailingCommas(stripped)) as unknown;
   }
 }
 

@@ -40,6 +40,7 @@ import {
   shouldSkipAlreadyExtractedSession,
   upsertExtractedSession,
 } from "../../src/storage/repositories/extract-sessions-repository";
+import { rejectJsonSchemaOn } from "../_helpers/json-schema-endpoint";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 // hashSessionContent (#602) is reached via the namespace import for ESM-safety;
@@ -74,15 +75,14 @@ function configEnabled(stashDir: string): AkmConfig {
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
     defaultWriteTarget: "stash",
-    engines: {
+    connections: {
       default: {
-        kind: "llm",
         endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test",
-        supportsJsonSchema: true,
+        models: { fast: "test" },
       },
     },
     improve: {
+      strategy: "tracking",
       strategies: {
         // #561 — disable session indexing so chat-call assertions count only the
         // distillation call (session indexing has dedicated coverage elsewhere).
@@ -91,7 +91,6 @@ function configEnabled(stashDir: string): AkmConfig {
         },
       },
     },
-    defaults: { llmEngine: "default", improveStrategy: "tracking" },
   } as AkmConfig;
 }
 
@@ -757,9 +756,9 @@ describe("akmExtract — skip-already-extracted (content-hash)", () => {
     const session = fakeSession("ses_malformed", Date.now());
     const db = openStateDatabase(":memory:");
     const config = configEnabled(stash);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.supportsJsonSchema = false;
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    await rejectJsonSchemaOn({ endpoint: connection.endpoint, model: "test-model" });
     const malformed = "PRIVATE_SENTINEL: prose without a JSON object";
     let chatCalls = 0;
 
@@ -864,7 +863,7 @@ describe("countNewExtractCandidates — row-presence approximation", () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_new", Date.now());
     const db = openStateDatabase(":memory:");
-    const n = countNewExtractCandidates(configEnabled(stash), {
+    const n = await countNewExtractCandidates(configEnabled(stash), {
       harnesses: [makeHarness([session])],
       stateDb: db,
     });
@@ -886,7 +885,7 @@ describe("countNewExtractCandidates — row-presence approximation", () => {
       proposalCount: 0,
       contentHash: null,
     });
-    const n = countNewExtractCandidates(configEnabled(stash), {
+    const n = await countNewExtractCandidates(configEnabled(stash), {
       harnesses: [makeHarness([session])],
       stateDb: db,
     });
@@ -908,7 +907,7 @@ describe("countNewExtractCandidates — row-presence approximation", () => {
       proposalCount: 0,
       contentHash: "some-non-null-hash",
     });
-    const n = countNewExtractCandidates(configEnabled(stash), {
+    const n = await countNewExtractCandidates(configEnabled(stash), {
       harnesses: [makeHarness([session])],
       stateDb: db,
     });
@@ -1122,7 +1121,7 @@ describe("akmExtract — R4 transient outcomes stay retryable (null content_hash
       config: configEnabled(stash),
       harnesses: [makeHarness([session])],
       stateDb: db,
-      // A throwing chat drives tryLlmFeature onto its fallback path → the
+      // A throwing chat is a failed call → the
       // session is skipped with skipReason "llm_unavailable".
       chat: async () => {
         throw new Error("llm endpoint unreachable");
@@ -1137,7 +1136,7 @@ describe("akmExtract — R4 transient outcomes stay retryable (null content_hash
   });
 
   // #913 — the ledger row's metadata carries `engine` alongside `skipReason` so
-  // #914's health check can attribute a run of skips to the engine that produced
+  // #914's health check can attribute a run of skips to the connection or harness that produced
   // them without re-deriving it from config.
   test("ledger row metadata carries engine and skipReason", async () => {
     const stash = makeStashDir();

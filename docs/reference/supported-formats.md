@@ -68,6 +68,6 @@ formats are writable today and why.
 
 - [Asset Types](https://github.com/itlackey/akm/blob/main/docs/reference/asset-types.md) — the 14 native asset types AKM's own format recognizes
 - [Adapters](https://github.com/itlackey/akm/blob/main/docs/architecture/adapters.md) — how AKM picks a format, the write-path internals, and current caveats
-- [Architecture: Engine Boundary](https://github.com/itlackey/akm/blob/main/docs/architecture/architecture.md#engine-boundary) — how translated native agents and commands are executed
+- [Architecture: Connections and Harnesses](https://github.com/itlackey/akm/blob/main/docs/architecture/architecture.md#connections-and-harnesses) — how translated native agents and commands are executed
 - [Concepts](https://github.com/itlackey/akm/blob/main/docs/guides/concepts.md) — the retrieval loop these formats feed
 - [Wikis](https://github.com/itlackey/akm/blob/main/docs/guides/wikis.md) — the `llm-wiki` authoring workflow

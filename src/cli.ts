@@ -87,8 +87,9 @@ import {
   GLOBAL_OUTPUT_ARGS,
   output,
   runWithJsonErrors,
+  withoutHiddenArgs,
 } from "./cli/shared";
-import { assertKnownFlags, closestMatch, type FlagScanCommand } from "./cli/unknown-flags";
+import { assertKnownFlags, type FlagScanCommand } from "./cli/unknown-flags";
 import { agentCommand, lintCommand } from "./commands/agent/contribute-cli";
 import { commandCommand } from "./commands/command/command-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
@@ -97,6 +98,7 @@ import { envCommand } from "./commands/env/env-cli";
 import { secretCommand } from "./commands/env/secret-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
 import { akmHealth } from "./commands/health";
+import { closestMatch } from "./core/closest-match";
 import "./commands/health/renderers";
 import "./commands/metrics/md-report";
 import type { WindowSpec } from "./commands/health/types";
@@ -125,7 +127,6 @@ import { getConfigPath } from "./core/paths";
 import { DURATION_UNITS, parseDuration } from "./core/time";
 import { plainize } from "./core/tty";
 import { info, isQuiet, setQuiet, setVerbose, warn } from "./core/warn";
-import { disposeDispatchResources } from "./integrations/agent/runner-dispatch";
 import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
 import { getOutputMode, initOutputMode, parseDetailLevel } from "./output/context";
@@ -153,21 +154,28 @@ function applyEarlyStderrFlags(argv: string[]): void {
  * Default --format is `json`, so a CI or piped consumer sees only the JSON on
  * stdout. But an interactive user running `akm setup --yes` would otherwise
  * see only the JSON blob with no obvious next step. When stderr is a TTY and
- * the JSON went to stdout, print a two-line summary to stderr telling the
- * user (a) where the stash landed and (b) what to run next.
+ * the JSON went to stdout, print a short summary to stderr telling the user
+ * (a) where the stash landed, (b) what runs where, and (c) what to run next.
  *
  * Silent when: stderr is not a TTY (CI, pipes), --format=text/yaml (the user
  * already gets readable output), --quiet, or the result is missing fields.
  */
-function printSetupTtyHint(result: { bundleDir?: string; configPath?: string }): void {
+function printSetupTtyHint(result: {
+  bundleDir?: string;
+  configPath?: string;
+  runs?: { modelCalls: string; agentWork: string; embeddings: string };
+}): void {
   if (!process.stderr.isTTY) return;
   const mode = getOutputMode();
   if (mode.format !== "json" && mode.format !== "jsonl") return;
   if (isQuiet()) return;
   if (!result?.bundleDir) return;
+  const runs = result.runs
+    ? `  Model calls:  ${result.runs.modelCalls}\n  Agent work:   ${result.runs.agentWork}\n  Embeddings:   ${result.runs.embeddings}\n`
+    : "";
   console.error(
     plainize(
-      `\n✓ Bundle created at ${result.bundleDir}\n` +
+      `\n✓ Bundle created at ${result.bundleDir}\n${runs}` +
         '  Next: `akm bundle add <source>`, `akm index`, `akm search "<query>"`, `akm hints`',
     ),
   );
@@ -184,7 +192,7 @@ const setupCommand = defineCommand({
   meta: {
     name: "setup",
     description:
-      "Interactive configuration wizard. Configures embeddings/LLM connections (for indexing/enrichment), agent profiles (CLI agent, embedded SDK, or none), sources, and registries. Shows which features are enabled at the end. Use --config <json> or --yes for non-interactive/scripting mode.",
+      "Interactive configuration wizard. Enables agent programs (Claude Code, Codex, OpenCode, ...), sets up a model connection and embeddings, and picks bundle sources and registries. Flags answer individual questions; --yes takes the detected default for the rest, for scripting.",
   },
   args: {
     // R-051/S11: `setup` is a raw `defineCommand` (not `defineJsonCommand`),
@@ -192,10 +200,35 @@ const setupCommand = defineCommand({
     // already had. Three of its four run branches call `output()`; spreading
     // this in is a `--help` visibility fix, not a behavior change.
     ...GLOBAL_OUTPUT_ARGS,
-    config: {
+    endpoint: {
       type: "string",
       description:
-        'Config JSON to apply non-interactively, e.g. \'{"engines":{"local":{"kind":"llm","endpoint":"...","model":"..."}},"defaults":{"llmEngine":"local"}}\'',
+        "OpenAI-compatible endpoint to add or update as a connection (the first is named default), e.g. http://localhost:11434/v1",
+    },
+    "api-key-env": {
+      type: "string",
+      description:
+        "Name of the environment variable holding the connection's API key; the connection gets apiKey: $NAME. Keys are never passed on the command line.",
+    },
+    name: {
+      type: "string",
+      description: "Name for a further connection (with --endpoint); the first connection is named default",
+    },
+    harness: {
+      type: "string",
+      description: "Agent programs to enable, comma-separated (claude,codex,opencode,...); the first is the default",
+    },
+    embedding: {
+      type: "string",
+      description: "Embeddings: a model the connection serves, local (the built-in embedder), or off",
+    },
+    "embedding-endpoint": {
+      type: "string",
+      description: "Another endpoint that serves the --embedding model",
+    },
+    "embedding-api-key-env": {
+      type: "string",
+      description: "Name of the environment variable holding the embedding endpoint's API key",
     },
     from: {
       type: "string",
@@ -205,11 +238,12 @@ const setupCommand = defineCommand({
     yes: {
       type: "boolean",
       default: false,
-      description: "Accept all defaults, skip all prompts. Idempotent — safe to run in CI.",
+      description:
+        "Take the detected default for every question no flag answers; no prompts. Idempotent — safe to run in CI.",
     },
     dir: {
       type: "string",
-      description: "Bundle directory path (overrides defaultBundle in config or --config JSON)",
+      description: "Bundle directory path (overrides defaultBundle in config)",
     },
     // Declared as the POSITIVE name with `default: true` so citty's native
     // `--no-<name>` negation (it strips a leading `--no-` from ANY token and
@@ -223,19 +257,36 @@ const setupCommand = defineCommand({
       default: true,
       description: "Scaffold the bundle directory. Use --no-init to write configuration without scaffolding it.",
     },
-    probe: {
+    // There is no `--probe`: probing is the default, so only the opt-out is declared. citty parses `--no-probe`
+    // as the negation of `probe` whether or not `probe` is declared, so the value is `args.probe === false`;
+    // declaring `no-probe` is what puts the flag in `--help` and keeps the unknown-flag check from refusing it.
+    "no-probe": {
       type: "boolean",
-      default: false,
-      description: "Probe LLM/embedding endpoints before writing config to verify connectivity",
+      description:
+        "Offline run: the endpoint is not contacted and its models are not listed. A connection added this way has no model until one is named with `akm models set`; the picks it already has are kept.",
     },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const noInit = !args.init;
-      if (args.from && args.config) {
-        throw new UsageError("Pass either --from <file> or --config <json>, not both.", "INVALID_FLAG_VALUE");
-      }
+      const noProbe = (args as { probe?: boolean }).probe === false;
+      const { hasSetupFlags, parseSetupFlags } = await import("./setup/setup-flags");
+      const flags = parseSetupFlags({
+        endpoint: args.endpoint,
+        apiKeyEnv: args["api-key-env"],
+        name: args.name,
+        harness: args.harness,
+        embedding: args.embedding,
+        embeddingEndpoint: args["embedding-endpoint"],
+        embeddingApiKeyEnv: args["embedding-api-key-env"],
+      });
       if (args.from) {
+        if (hasSetupFlags(flags) && !args.yes) {
+          throw new UsageError(
+            "--from takes --endpoint, --harness and the other answer flags only with --yes.",
+            "INVALID_FLAG_VALUE",
+          );
+        }
         // File-based bootstrap. `loadSetupConfigFromFile` expands a leading
         // `~`, resolves relative paths against cwd, picks the YAML or JSON
         // parser based on the file extension, and surfaces any
@@ -248,20 +299,8 @@ const setupCommand = defineCommand({
           configJson: loaded.configJson,
           dir: args.dir,
           noInit,
-          probe: args.probe,
-          applyDefaults: args.yes,
-        });
-        output("setup", result);
-        printSetupTtyHint(result);
-      } else if (args.config) {
-        // Non-interactive config mode. With `--yes`, defaults fill any keys
-        // the JSON blob leaves missing after the deep merge.
-        const { runSetupFromConfig } = await import("./setup/setup");
-        const result = await runSetupFromConfig({
-          configJson: args.config,
-          dir: args.dir,
-          noInit,
-          probe: args.probe,
+          noProbe,
+          flags,
           applyDefaults: args.yes,
         });
         output("setup", result);
@@ -269,11 +308,7 @@ const setupCommand = defineCommand({
       } else if (args.yes) {
         // Defaults mode — no prompts
         const { runSetupWithDefaults } = await import("./setup/setup");
-        const result = await runSetupWithDefaults({
-          dir: args.dir,
-          noInit,
-          probe: args.probe,
-        });
+        const result = await runSetupWithDefaults({ dir: args.dir, noInit, noProbe, flags });
         output("setup", result);
         printSetupTtyHint(result);
       } else {
@@ -283,12 +318,12 @@ const setupCommand = defineCommand({
         // setup` is the first command users automate.
         if (process.stdin.isTTY !== true) {
           throw new UsageError(
-            "Interactive setup requires a TTY. Pass --yes to accept defaults, or --config <json> / --from <file> to configure non-interactively.",
+            "Interactive setup requires a TTY. Pass --yes to take the detected defaults (flags such as --endpoint answer questions), or --from <file> to configure from a file.",
             "NON_INTERACTIVE_REQUIRES_YES",
           );
         }
         const { runSetupWizard } = await import("./setup/setup");
-        await runSetupWizard({ dir: args.dir, noInit });
+        await runSetupWizard({ dir: args.dir, noInit, noProbe, flags });
       }
     });
   },
@@ -339,9 +374,9 @@ const healthCommand = defineCommand({
       type: "boolean",
       default: true,
       description:
-        "Probe default-llm-engine / configured-engines reachability, check for a newer akm release, look up the newest Claude plugin tag, and check the scheduler's recorded akm binary version (on by default).",
+        "Probe configured connections for reachability and run each harness's `--version`, check for a newer akm release, look up the newest Claude plugin tag, and check the scheduler's recorded akm binary version (on by default).",
       negativeDescription:
-        "Skip the reachability probes, the update check, the Claude plugin tag lookup, and the scheduler-binary version check (for an offline or air-gapped host).",
+        "Skip the reachability probes, the harness `--version` runs, the update check, the Claude plugin tag lookup, and the scheduler-binary version check (for an offline or air-gapped host).",
     },
   },
   async run({ args }) {
@@ -512,6 +547,7 @@ const commands = {
   registry: registryCommand,
   migrate: migrateCommand,
   config: configCommand,
+  models: modelsCommand,
   feedback: feedbackCommand,
   log: logCommand,
   agent: agentCommand,
@@ -523,7 +559,6 @@ const commands = {
   env: envCommand,
   secret: secretCommand,
   task: taskCommand,
-  models: modelsCommand,
   hints: hintsCommand,
 };
 
@@ -531,7 +566,7 @@ function commandHelpTopic(name: string, command: AnyCittyCommand): AnyCittyComma
   return defineCommand({
     meta: { name, description: `Print help for akm ${name}` },
     async run() {
-      await showUsage(command as CommandDef, buildUsageParentForPath([name]) as CommandDef);
+      await showUsage(withoutHiddenArgs(command) as CommandDef, buildUsageParentForPath([name]) as CommandDef);
     },
   });
 }
@@ -636,8 +671,7 @@ export const main = defineCommand({
 const MAIN_TOP_LEVEL_ARGS = main.args as ArgsDef;
 
 /**
- * F-5 (spec docs/plans/specs/p2a-task-source-v4.md §6): exported so
- * `akm task run`'s input-flags coverage can pin that an undeclared,
+ * Exported so `akm task run`'s input-flags coverage can pin that an undeclared,
  * per-task dynamic flag (e.g. `--scope all`) does not change this
  * classification — it parses only `args.id` off the declared args and
  * tolerates extra tokens (citty's non-strict `parseArgs`).
@@ -1151,7 +1185,7 @@ export async function runCli(): Promise<void> {
         process.stdout.write(`${await renderSectionedRootHelp()}\n`);
       } else {
         const path = resolveCittyCommandPath(main, rawArgs);
-        await showUsage(resolved as CommandDef, buildUsageParentForPath(path) as CommandDef);
+        await showUsage(withoutHiddenArgs(resolved) as CommandDef, buildUsageParentForPath(path) as CommandDef);
       }
       return;
     }
@@ -1183,13 +1217,12 @@ export async function runCli(): Promise<void> {
     // could ever reach this boundary. Route it the same way rather than
     // hard-coding GENERAL(1): the CLI contract reserves 1 for general/not-found
     // and requires a non-`AkmError` throw to render the JSON failure envelope
-    // with INTERNAL(70) (AGENTS.md "CLI Contract"), which is what lets
+    // with INTERNAL(70), which is what lets
     // automation tell an internal defect apart from an ordinary failure.
     // `emitJsonError` classifies and sets `process.exitCode` itself.
     emitJsonError(error);
   } finally {
     disposeLlmUsageSink();
-    await disposeDispatchResources();
   }
 }
 

@@ -16,13 +16,15 @@ commands that drive a run, see [Running Workflows](../guides/run-workflows.md).
 ## Frozen plans
 
 The first `akm workflow run <ref>` compiles the Markdown source straight to
-the one plan type and stores it as durable plan **`irVersion` 7** on the run row
+the one plan type and stores it as durable plan **`irVersion` 8** on the run row
 (`plan_json` + `plan_hash`); a new start never emits an older version.
 `plan_ir_version` and `plan_hash` are recorded provenance, not gates: a stored
-plan is decoded as it is — irVersion 4, 5 and 6 plans included — and one frozen
-by an older or newer akm that still decodes simply runs (with one warning). A
-newer akm's plan that does not decode is refused with a message naming "Upgrade
-akm".
+plan is decoded as it is — irVersion 5, 6 and 7 plans that hold no model step
+included — and one frozen by an older or newer akm that still decodes simply
+runs (with one warning). A plan frozen before 8 with a model step recorded an
+engine where 8 records a connection or harness; it does not decode, and
+`akm workflow run` abandons it and starts afresh. A newer akm's plan that does
+not decode is refused with a message naming "Upgrade akm".
 
 The durable plan records `sourceHash`, the sha256 of the workflow source file
 at freeze. It is used only for the resume warning below, never to refuse a
@@ -44,7 +46,6 @@ Everything else is live, found again at dispatch through the one ref lookup
 | argv, `exec.cwd` and `pass_env` names as authored | the owner root of the run's workflow, which every exec unit and agent works in (`exec.cwd` joins it once) |
 | `env:` refs, bundle-qualified | the env file, its keys and every `${ref}` in it, and the secrets they name |
 | `${ref}` tokens in argv and `cwd`, as authored | the secret value or asset path each one names |
-| literal env bindings | pass-through bindings, read from the current process |
 
 The executable a unit runs is resolved at dispatch too, so upgrading a CLI (say,
 `claude`) never strands a run, and a `bundle update` that moves a bundle to a
@@ -52,7 +53,7 @@ new revision directory in the middle of a run is harmless: the next step runs
 from the new directory. Plans
 frozen as irVersion 5 or 6 also carry a `cwdIdentity` and env owner paths; the
 decoder drops them and such a run dispatches by ref. Durable plans never store
-secret values or enable whole-process `inheritEnv`.
+secret values.
 
 **A run executes the plan compiled at creation; edits to source need a new
 run.** Resuming a run re-reads its workflow source only to warn, once, when
@@ -116,9 +117,7 @@ decoding the stored plan, taking that run's own lock, and walking its spine
 through `completeWorkflowStep` are identical to the top-level path. That
 reuse is what makes child run locks arbitrate two-parent contention with no
 new mechanism, and what makes a resumed parent skip a completed child step
-with zero dispatcher calls. The child drive passes a no-op
-`disposeDispatchResources` (the parent's `finally` remains the sole owner of
-the process-lifecycle drain for the whole process) and no `maxSteps` or
+with zero dispatcher calls. The child drive passes no `maxSteps` or
 `maxRetries` (the parent's own budgets count only its own spine steps). The
 lower-level `driveRun` that `runWorkflowSteps` wraps stays module-private —
 reaching for it directly, instead of the public entry point, would be
@@ -191,9 +190,14 @@ the lock.
 
 Native fan-out (`akm workflow run`) uses the minimum of four limits: the
 map's declared `concurrency`, the run's frozen `workflow.maxConcurrency`, the
-selected frozen LLM engine's `concurrency` (including an SDK engine's
-fallback LLM), and the current host's CPU-derived safety limit. Reapplying
+selected frozen connection's `concurrency` (a harness has none), and the current host's CPU-derived safety limit. Reapplying
 host safety keeps a run safe when it resumes on a smaller machine.
+
+`targetConcurrency` (`src/workflows/freeze/step-values.ts`) freezes the
+connection's value as the target's `concurrency` in the plan, and
+`scheduleUnits` (`src/workflows/exec/scheduler.ts`) applies it as
+`llmConcurrency` to cap `map` and `over` fan-out. The scheduler's own default of
+one is a fail-safe for a caller that names no width, not the `map` default.
 
 - **Unset (default):** the CPU-derived value `min(16, max(1, cores − 2))` — a
   conservative default that leaves headroom on the host and matches the

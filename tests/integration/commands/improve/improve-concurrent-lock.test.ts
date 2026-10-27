@@ -33,9 +33,9 @@ const cliPath = path.join(repoRoot, "src", "cli.ts");
 
 /**
  * A strategy with every LLM-backed process disabled so a winning contender
- * finishes fast without needing a reachable engine — mirrors
+ * finishes fast without needing a reachable endpoint — mirrors
  * `improve-lock-invariants.test.ts`'s `quietConfig`. `triage` stays enabled:
- * it needs no engine call against an empty/near-empty memory scope.
+ * it makes no model call against an empty/near-empty memory scope.
  */
 function writeQuietConfig(configDir: string): void {
   const configPath = path.join(configDir, "akm", "config.json");
@@ -45,8 +45,8 @@ function writeQuietConfig(configDir: string): void {
     JSON.stringify({
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      defaults: { improveStrategy: "quiet-test" },
       improve: {
+        strategy: "quiet-test",
         strategies: {
           "quiet-test": {
             processes: {

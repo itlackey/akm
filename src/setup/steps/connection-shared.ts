@@ -3,155 +3,79 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Shared collect-input / probe / derive-config helpers for the wizard's
- * connection steps (§4.6 dedup of the three near-identical steps in
- * connection.ts). Prompt copy, validation messages, and the probe's spinner
- * text are shared VERBATIM so the wizard's observable flow is unchanged;
- * each step keeps its own option assembly and branching.
+ * Prompts the connection and embedding steps share: an endpoint, a key typed at
+ * a masked prompt (the one place a key is ever typed), and a model.
  */
 
 import * as p from "../../cli/clack";
-import type { LlmConnectionConfig } from "../../core/config/config";
-import { probeLlmReachable } from "../../llm/client";
-import type { LMStudioDetectionResult } from "../detect";
-import { prompt, promptOrBack } from "../prompt";
+import { redactUrlCredentials } from "../../core/redaction";
+import { warn } from "../../core/warn";
+import { listEndpointModels } from "../../llm/model-list";
+import { endpointProblem, normalizeEndpoint } from "../endpoint";
+import { prompt } from "../prompt";
 
-// ── Derive-config ───────────────────────────────────────────────────────────
+/** The endpoint typed at the prompt, as its base URL; a blank answer is `undefined`. */
+export async function promptEndpoint(opts: { message: string; initialValue?: string }): Promise<string | undefined> {
+  const answer = await prompt(() =>
+    p.text({
+      message: opts.message,
+      placeholder: "http://localhost:11434/v1",
+      ...(opts.initialValue ? { initialValue: opts.initialValue } : {}),
+      validate: (value) => (value?.trim() ? endpointProblem(value) : undefined),
+    }),
+  );
+  return answer.trim() ? normalizeEndpoint(answer) : undefined;
+}
 
-/** Standard chat-connection config shared by every provider branch. */
-export function llmConnection(
-  provider: LlmConnectionConfig["provider"],
+/** The key typed at the masked prompt; a blank answer is `undefined`. */
+export async function promptApiKey(message: string): Promise<string | undefined> {
+  const answer = await prompt(() => p.password({ message, mask: "*" }));
+  return answer.trim() || undefined;
+}
+
+/** A model name typed by hand: what the endpoint could not list. */
+export async function promptModelName(opts: { message: string; initialValue?: string }): Promise<string> {
+  const answer = await prompt(() =>
+    p.text({
+      message: opts.message,
+      ...(opts.initialValue ? { initialValue: opts.initialValue } : {}),
+      validate: (value) => (value?.trim() ? undefined : "Model name cannot be empty"),
+    }),
+  );
+  return answer.trim();
+}
+
+/** One model out of the endpoint's list. */
+export async function pickModel(message: string, models: readonly string[], initialValue?: string): Promise<string> {
+  return prompt(() =>
+    p.select({
+      message,
+      options: models.map((model) => ({ value: model, label: model })),
+      ...(initialValue !== undefined ? { initialValue } : {}),
+    }),
+  );
+}
+
+/** A warning for the user: in the wizard's own output when it is interactive, on stderr otherwise. */
+export function warnUser(message: string, interactive: boolean): void {
+  if (interactive) p.log.warn(message);
+  else warn(`[akm setup] ${message}`);
+}
+
+/** The models the endpoint lists, with a note when it cannot say; never throws. */
+export async function listModels(
   endpoint: string,
-  model: string,
-  extra?: Partial<LlmConnectionConfig>,
-): LlmConnectionConfig {
-  return {
-    provider,
-    endpoint,
-    model,
-    temperature: 0.3,
-    ...(extra ?? {}),
-  };
-}
-
-/** The "Keep current: ..." select option appended when a connection exists. */
-export function keepCurrentOption(current: LlmConnectionConfig): { value: string; label: string; hint?: string } {
-  return {
-    value: "keep",
-    label: `Keep current: ${current.provider ?? current.endpoint}`,
-    hint: current.model,
-  };
-}
-
-/** Hint text for the "LM Studio / local server" select option. */
-export function lmStudioOptionHint(lmStudio: LMStudioDetectionResult | undefined): string {
-  return lmStudio?.available
-    ? `${lmStudio.models.length} model${lmStudio.models.length === 1 ? "" : "s"} detected`
-    : "http://localhost:1234";
-}
-
-// ── Collect-input ───────────────────────────────────────────────────────────
-
-/** Non-empty model-name text prompt shared by every provider branch. */
-export async function promptModelName(opts: {
-  message?: string;
-  placeholder: string;
-  defaultValue?: string;
-}): Promise<string> {
-  return prompt(() =>
-    p.text({
-      message: opts.message ?? "Model name:",
-      placeholder: opts.placeholder,
-      ...(opts.defaultValue ? { defaultValue: opts.defaultValue } : {}),
-      validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
-    }),
-  );
-}
-
-/** http(s)-validated endpoint text prompt shared by every endpoint branch. */
-export async function promptEndpointUrl(opts: {
-  message?: string;
-  placeholder: string;
-  defaultValue?: string;
-  /** Scheme-validation message; the stepLlm custom branch words it differently. */
-  schemeMessage?: string;
-}): Promise<string> {
-  const schemeMessage = opts.schemeMessage ?? "Must start with http:// or https://";
-  return prompt(() =>
-    p.text({
-      message: opts.message ?? "Endpoint URL:",
-      placeholder: opts.placeholder,
-      ...(opts.defaultValue ? { defaultValue: opts.defaultValue } : {}),
-      validate: (v) => {
-        if (!v?.trim()) return "Endpoint cannot be empty";
-        if (!v.startsWith("http://") && !v.startsWith("https://")) return schemeMessage;
-      },
-    }),
-  );
-}
-
-/**
- * LM Studio model selection: pick from the detected models (with an
- * "Enter manually..." escape hatch) or fall back to a free-text prompt when
- * nothing was detected.
- */
-export async function promptLmStudioModel(
-  lmStudio: LMStudioDetectionResult | undefined,
-  currentModel: string | undefined,
-): Promise<string> {
-  const lmsModels = lmStudio?.available && lmStudio.models.length > 0 ? lmStudio.models : [];
-  if (lmsModels.length > 0) {
-    const modelChoice = await prompt(() =>
-      p.select({
-        message: "Model name:",
-        options: [
-          ...lmsModels.map((m) => ({ value: m, label: m })),
-          { value: "__manual__", label: "Enter manually..." },
-        ],
-        initialValue: currentModel && lmsModels.includes(currentModel) ? currentModel : lmsModels[0],
-      }),
-    );
-    if (modelChoice !== "__manual__") return modelChoice;
+  apiKey: string | undefined,
+  interactive: boolean,
+): Promise<string[]> {
+  const spin = interactive ? p.spinner() : undefined;
+  spin?.start("Listing the endpoint's models...");
+  const result = await listEndpointModels({ endpoint, ...(apiKey ? { apiKey } : {}) });
+  if (result.ok) {
+    spin?.stop(`The endpoint lists ${result.models.length} model${result.models.length === 1 ? "" : "s"}.`);
+    return result.models;
   }
-  return promptModelName({ placeholder: currentModel ?? "local-model", defaultValue: currentModel });
-}
-
-/**
- * Optional API-key ENV VAR NAME prompt (never the key value — saveConfig()
- * strips secrets). Escape backs out with `null`.
- */
-export async function promptApiKeyEnvVarName(): Promise<string | null> {
-  return promptOrBack(() =>
-    p.text({
-      message: "API key environment variable name (optional):",
-      placeholder: "CUSTOM_LLM_API_KEY",
-      validate: (value) =>
-        value && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)
-          ? "Use an environment variable name, not a key value"
-          : undefined,
-    }),
-  );
-}
-
-// ── Probe ───────────────────────────────────────────────────────────────────
-
-/**
- * Best-effort reachability probe — never blocks setup. Does NOT probe or
- * cache structured-output support: `chatCompletion` now attempts
- * `response_format: json_schema` fresh on every call that supplies a schema
- * and falls back once per call on a 4xx (see `llm/client.ts`), so there is
- * no verdict for setup to determine or persist here.
- */
-export async function probeLlmConnection(llm: LlmConnectionConfig): Promise<void> {
-  const probeSpin = p.spinner();
-  probeSpin.start("Probing LLM connectivity...");
-  const probe = await probeLlmReachable(llm);
-  if (probe.reachable) {
-    probeSpin.stop("LLM reachable.");
-  } else {
-    probeSpin.stop("LLM not reachable.");
-    p.log.warn(
-      `Could not reach the LLM endpoint${probe.error ? ` (${probe.error})` : ""}. Configuration was saved; verify your endpoint and API key, then retry.`,
-    );
-  }
+  spin?.stop("Could not list models.");
+  warnUser(`Could not list models from ${redactUrlCredentials(endpoint)} (${result.error}).`, interactive);
+  return [];
 }

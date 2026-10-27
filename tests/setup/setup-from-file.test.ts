@@ -11,7 +11,7 @@
  *
  * We test the helper directly here, plus one happy-path CLI subprocess test
  * to confirm the full `--from <file>` round-trip wires through correctly and
- * that `--from` and `--config` are mutually exclusive at the CLI layer.
+ * that the answer flags need `--yes` with `--from` at the CLI layer.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -39,8 +39,9 @@ describe("loadSetupConfigFromFile", () => {
   test("loads a JSON config file (happy path)", async () => {
     const filePath = path.join(workDir, "config.json");
     const payload = {
-      engines: { local: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "gpt-oss-20b" } },
-      defaults: { llmEngine: "local" },
+      connections: {
+        default: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "gpt-oss-20b" } },
+      },
       semanticSearchMode: "off",
     };
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf8");
@@ -56,13 +57,11 @@ describe("loadSetupConfigFromFile", () => {
     fs.writeFileSync(
       filePath,
       [
-        "engines:",
-        "  local:",
-        "    kind: llm",
+        "connections:",
+        "  default:",
         "    endpoint: http://localhost:11434/v1/chat/completions",
-        "    model: gpt-oss-20b",
-        "defaults:",
-        "  llmEngine: local",
+        "    models:",
+        "      fast: gpt-oss-20b",
         "semanticSearchMode: off",
         "",
       ].join("\n"),
@@ -72,8 +71,9 @@ describe("loadSetupConfigFromFile", () => {
     const result = await loadSetupConfigFromFile(filePath);
     expect(result.format).toBe("yaml");
     expect(JSON.parse(result.configJson)).toEqual({
-      engines: { local: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "gpt-oss-20b" } },
-      defaults: { llmEngine: "local" },
+      connections: {
+        default: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "gpt-oss-20b" } },
+      },
       semanticSearchMode: "off",
     });
   });
@@ -147,7 +147,7 @@ describe("loadSetupConfigFromFile", () => {
   test("throws ConfigError on malformed YAML", async () => {
     const filePath = path.join(workDir, "broken.yaml");
     // Inconsistent indentation breaks the YAML parser.
-    fs.writeFileSync(filePath, "engines:\n  local:\n    kind: llm\n   model: y\n", "utf8");
+    fs.writeFileSync(filePath, "connections:\n  default:\n    endpoint: http://x\n   models: y\n", "utf8");
 
     try {
       await loadSetupConfigFromFile(filePath);
@@ -198,8 +198,8 @@ describe("loadSetupConfigFromFile", () => {
 //
 // Migrated from per-test spawnSync("bun", ["src/cli.ts", ...]) to the shared
 // in-process harness (tests/_helpers/cli.ts). Both cases error before `setup`
-// reaches any interactive prompt or writes config — the --from/--config
-// mutual-exclusion guard and the loadSetupConfigFromFile "not found" check both
+// reaches any interactive prompt or writes config — the answer-flags guard
+// and the loadSetupConfigFromFile "not found" check both
 // throw early — so they run safely in-process with no prompt hang.
 
 /**
@@ -217,30 +217,28 @@ async function runCli(argv: string[], env: Record<string, string | undefined> = 
 }
 
 describe("akm setup --from <file> CLI integration", () => {
-  test("rejects --from and --config simultaneously with INVALID_FLAG_VALUE", async () => {
+  test("--from takes the answer flags only with --yes", async () => {
     const configFile = path.join(workDir, "config.json");
-    fs.writeFileSync(configFile, JSON.stringify({ stashDir: workDir }), "utf8");
+    fs.writeFileSync(configFile, JSON.stringify({ output: { format: "text" } }), "utf8");
 
     const xdgConfig = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-cli-cfg-"));
     const xdgData = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-cli-data-"));
     const xdgState = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-cli-state-"));
     try {
-      const result = await runCli(["setup", "--from", configFile, "--config", '{"stashDir":"/x"}'], {
+      const result = await runCli(["setup", "--from", configFile, "--endpoint", "http://localhost:11434/v1"], {
         XDG_CONFIG_HOME: xdgConfig,
         XDG_DATA_HOME: xdgData,
         XDG_STATE_HOME: xdgState,
         AKM_BUNDLE_DIR: workDir,
       });
 
-      // Usage error (--from and --config both given) -> exit 2 / INVALID_FLAG_VALUE.
-      // Ground-truthed by probing the actual CLI output before pinning.
+      // Usage error -> exit 2 / INVALID_FLAG_VALUE, before the file is read or anything is written.
       expect(result.status).toBe(2);
       const parsed = JSON.parse(result.stderr) as { code?: string };
       expect(parsed.code).toBe("INVALID_FLAG_VALUE");
       const combined = `${result.stdout}\n${result.stderr}`;
       expect(combined).toContain("--from");
-      expect(combined).toContain("--config");
-      expect(combined.toLowerCase()).toContain("not both");
+      expect(combined).toContain("--yes");
     } finally {
       for (const d of [xdgConfig, xdgData, xdgState]) fs.rmSync(d, { recursive: true, force: true });
     }

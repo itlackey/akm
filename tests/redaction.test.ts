@@ -5,8 +5,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   collectSensitiveValues,
-  ENV_PASSTHROUGH_REDACTION_ALLOWLIST,
-  isEnvPassthroughValueSafeToExpose,
   redactCredentialPatterns,
   redactSensitiveText,
   redactSensitiveValue,
@@ -209,14 +207,8 @@ describe("redactSensitiveText", () => {
   });
 });
 
-describe("environment passthrough redaction policy", () => {
-  test("keeps ordinary values for every explicitly classified allowlisted name", () => {
-    for (const name of ENV_PASSTHROUGH_REDACTION_ALLOWLIST) {
-      expect(isEnvPassthroughValueSafeToExpose(name, "ordinary-runtime-value"), name).toBe(true);
-    }
-  });
-
-  test("rejects URL userinfo and signed query credentials under every allowlisted name", () => {
+describe("collectSensitiveValues of a URL", () => {
+  test("collects URL userinfo and every signed or OAuth credential parameter, in a query or a fragment", () => {
     const oauthCredentialKeys = [
       "access_token",
       "actor_token",
@@ -246,36 +238,29 @@ describe("environment passthrough redaction policy", () => {
       "user_code",
       "verifier",
     ];
-    for (const name of ENV_PASSTHROUGH_REDACTION_ALLOWLIST) {
-      expect(isEnvPassthroughValueSafeToExpose(name, "https://user:password@example.test/v1"), name).toBe(false);
-      expect(
-        isEnvPassthroughValueSafeToExpose(
-          name,
-          "https://example.test/object?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=secret",
-        ),
-        name,
-      ).toBe(false);
-      for (const key of oauthCredentialKeys) {
-        for (const url of [
-          `https://example.test/oauth/callback?${key}=secret&state=public-state`,
-          `https://example.test/oauth/callback#${key}=secret&token_type=bearer`,
-          `https://example.test/#/nested/oauth/callback?mode=finish&${key}=secret`,
-        ]) {
-          expect(isEnvPassthroughValueSafeToExpose(name, url), `${name}: ${url}`).toBe(false);
-        }
+    expect(collectSensitiveValues(["https://user:password@example.test/v1"])).toContain("password");
+    expect(
+      collectSensitiveValues(["https://example.test/object?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=secret"]),
+    ).toContain("secret");
+    for (const key of oauthCredentialKeys) {
+      for (const url of [
+        `https://example.test/oauth/callback?${key}=secret&state=public-state`,
+        `https://example.test/oauth/callback#${key}=secret&token_type=bearer`,
+        `https://example.test/#/nested/oauth/callback?mode=finish&${key}=secret`,
+      ]) {
+        expect(collectSensitiveValues([url]), url).toContain("secret");
       }
     }
   });
 
-  test("allows unsigned endpoint queries but rejects non-allowlisted names", () => {
+  test("collects only the URL itself for an unsigned endpoint query", () => {
     for (const url of [
       "https://example.test/v1?api-version=2026-01-01",
       "https://example.test/public/docs?api-version=2026-01-01&language=en#authentication",
       "https://example.test/oauth/authorize?client_id=public-client&redirect_uri=https%3A%2F%2Fapp.test%2Fcallback&response_type=code&scope=openid&code_challenge=public-challenge&code_challenge_method=S256",
     ]) {
-      expect(isEnvPassthroughValueSafeToExpose("LLM_BASE_URL", url), url).toBe(true);
+      expect(collectSensitiveValues([url]), url).toEqual([url]);
     }
-    expect(isEnvPassthroughValueSafeToExpose("CUSTOM_VALUE", "ordinary-runtime-value")).toBe(false);
   });
 });
 

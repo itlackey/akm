@@ -334,9 +334,11 @@ explicit retention policy removes them.
 
 #### Table: `workflow_runs`
 
-New starts persist durable-v4-family plan `irVersion: 7`, the sole executable
+New starts persist durable-v4-family plan `irVersion: 8`, the sole executable
 plan format. Pre-`irVersion`-5 stored
-plans are rejected rather than upgraded or replayed through another runtime.
+plans are rejected rather than upgraded or replayed through another runtime, and
+so is any earlier plan with a model step, which froze an engine where 8 freezes a
+connection or harness.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -592,6 +594,33 @@ Indexes: `idx_task_logs_ts` on `ts`, `idx_task_logs_task_id` on `task_id`, `idx_
 
 ---
 
+### `$DATA/opencode-runtime/` — akm's own runtime and its OpenCode sessions
+
+The directory akm's own agent runtime keeps everything in
+(`src/integrations/harnesses/opencode/roots.ts`, `.../runtime/command.ts`). The
+runtime is a pinned OpenCode 2 binary that akm runs as a process, and these are the
+five directories it is started with as its `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+`XDG_CACHE_HOME`, `XDG_STATE_HOME` and `TMPDIR`: `config/` (OpenCode's own, and
+`akm-plugin/`, akm's plugin), `data/` (logs, repositories, shell output, and
+`data/opencode/opencode.db`), `cache/`, `state/` and `tmp/` (the binary's own native
+pieces, which it unpacks at start). akm creates them on the first run of the
+runtime. Beside them, `prepare.lock` is held while the first run of an OpenCode
+version prepares its database, `prepared-<version>` marks that it did, and
+`keys/` (0700) holds the connection key of each running run, one 0600 file named
+for its session, removed when the run ends.
+
+`data/opencode/opencode.db` is an OpenCode database (the OpenCode 2 layout) that
+keeps the sessions of akm's own agent runtime. It is separate from the user's own
+`opencode.db` under `$XDG_DATA_HOME/opencode` (on every platform;
+`~/.local/share/opencode` by default), which keeps the runs of the `opencode`
+harness and which akm never writes. `akm proposal extract --type opencode` and
+the improve extract stage read both with SQLite alone, read-only, and skip
+sessions that are subagents or akm's own model work (on OpenCode 2, the sessions
+that ran as the `akm-model-work` agent). The binary itself is in
+`$CACHE/opencode/<version>/`.
+
+---
+
 ## JSONL Event Streams
 
 ### `$CACHE/events.jsonl` — **Replaced by `events` table in `$DATA/state.db`**
@@ -689,12 +718,12 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 
 | Path | Contents | Retention |
 |---|---|---|
-| `$CONFIG/config.json` | User config (bundle dirs, sources, LLM endpoints, feature flags, registries). JSONC — `//` and `/* */` comments stripped at parse time. | Manual |
+| `$CONFIG/config.json` | User config (bundle dirs, sources, connections, harnesses, feature flags, registries). JSONC — `//` and `/* */` comments stripped at parse time. | Manual |
+| `$CONFIG/credentials.json` | The API keys akm holds, as `{ "connections": { "<name>": { "key", "endpoint" } }, "services": { "embedding" \| "curateRerank": { "key", "endpoint" } } }`: each key with the endpoint it was stored for. Written atomically with mode `0600` (directory `0700` when akm creates it) by `akm setup` and `akm migrate apply`; never part of `config.json`. See [Credentials](../../reference/configuration.md#credentials). | Manual |
 | `<cwd>/.akm/config.json` | Project-scoped config overrides. Walked up to filesystem root; all ancestors merged. | Manual |
 | `$CACHE/config-backups/config-<ISO-ts>.json` | Pre-save snapshot of `config.json`, written by `backupExistingConfig()` in `src/core/config/config-io.ts` before each config write. `config.latest.json` is a second copy (not a symlink) always overwritten with the newest snapshot. Dir created/chmod'd `0700`; both the timestamped file and `config.latest.json` are chmod'd `0600` (08-F4, mirroring the env-cli write-mode convention). This is the only live backup location — legacy `$DATA/config-backups/` and `$CONFIG/config-backups/` write paths have been removed. | Capped at `MAX_CONFIG_BACKUPS = 5` most-recent timestamped snapshots; `pruneOldBackups()` deletes the rest on every write |
 | `$CONFIG/akm.lock` | Legacy location. Removed in v0.8.0 — akm reads ONLY from `$DATA/akm.lock`. Run the migration script to copy this file to `$DATA/akm.lock` before upgrading. | Legacy |
 | `$DATA/akm.lock` | Installed bundle lockfile (moved from `$CONFIG`). Application-managed install state. Same format as `$CONFIG/akm.lock`. | Managed by `akm bundle add`/`akm bundle remove` |
-| `$CACHE/semantic-status.json` | Embedding provider health: `status` (pending/ready-js/ready-vec/blocked), `reason`, `providerFingerprint`, `lastCheckedAt`, `entryCount`, `embeddingCount`. Blocked status auto-expires after 24h. | Reset on `akm index --full` |
 | `$CACHE/registry-index/<slug>.json` | Removed in v0.8.0 — data now stored in `registry_index_cache` table in `$DATA/index.db`. Delete these files after running the migration script. | — |
 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | Skills.sh search result cache. Fresh 15min; stale 1d. Key = MD5 of `url + query + limit`. | TTL |
 | `$STASH/.akm/consolidate-journal.json` | Legacy consolidation journal; current advisory consolidation does not read or write it. | Dead residue (itlackey/akm#889); reported by `akm migrate status`, removed by `akm migrate apply` |
@@ -780,6 +809,7 @@ adapter recognizes — `schema.md` + `pages/` is the probe) contains:
 | `$CACHE/registry-build/build-<random>/` | Temp archive extraction for registry index building | Deleted in `finally` after each run |
 | `$CACHE/tasks/logs/<task-id>/` | Per-run stdout/stderr log files (`<ISO-ts>.log`) | No cleanup |
 | `$CACHE/bin/rg` | Auto-downloaded ripgrep binary | Permanent |
+| `$CACHE/opencode/<version>/opencode` | The OpenCode binary akm's own runtime runs (about 240 MB), fetched from the npm registry on its first use | Permanent; safe to delete (fetched again) |
 | `$CACHE/index/unresolved-sources/<stash>/<name>` | Synthetic placeholder path for a configured source whose content root did not resolve this run; never written to disk, only reported as a `SearchSource.path`. Moved out of `$STASH/.akm/unresolved-sources/` (itlackey/akm#890). | N/A (not a real directory) |
 
 Cache-backed bundles (`git`, `website`, `npm`) are materialised into `$CACHE`
@@ -858,8 +888,7 @@ These paths are read by `akm improve` to scan for repeated failure patterns in a
 | Path | Agent |
 |---|---|
 | `~/.claude/projects/**/*.jsonl` | Claude Code |
-| `~/.local/share/opencode/` (Linux) | OpenCode |
-| `~/Library/Application Support/opencode/` (macOS) | OpenCode |
+| `$XDG_DATA_HOME/opencode/opencode.db` (`~/.local/share/opencode/opencode.db` by default, on every platform) | OpenCode (your own install; akm's own sessions are in `$DATA/opencode-runtime/data/opencode/opencode.db`) |
 | `$CODEX_HOME/sessions/**/rollout-*.jsonl` (`~/.codex/sessions/` by default) | Codex |
 
 ---
@@ -909,11 +938,11 @@ not affect ranking, salience, real-query labels, or GRR.
 | 2 | `$DATA/state.db` | SQLite 3 (WAL) | Durable event and usage logs, proposals, task history, and workflow run state |
 | 3 | `$STASH/.akm/memory-cleanup/belief-transitions.jsonl` | JSONL | Belief state transition audit log |
 | 4 | `$CONFIG/config.json` | JSONC | User configuration |
+| 4a | `$CONFIG/credentials.json` | JSON | API keys by connection or service, each with its endpoint (0600) |
 | 5 | `<cwd>/.akm/config.json` | JSONC | Project-scoped config overrides |
 | 6 | `$CACHE/config-backups/config-<ts>.json` | JSON | Config pre-save backups (0600 files / 0700 dir; capped at 5) |
 | 7 | `$DATA/akm.lock` | JSON | Installed bundle lockfile |
 | 8 | `$DATA/akm.lock.lck` | Text (PID) | Write-lock sentinel for lockfile |
-| 9 | `$CACHE/semantic-status.json` | JSON | Embedding provider health cache |
 | 10 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | JSON | Skills.sh query result cache |
 | 12 | `$DATA/state.db` (`proposals` table) | SQLite | Proposal queue; archival is a `status` change, not a separate directory |
 | 19 | `$STASH/.akm/consolidate-backup/<ts>/<name>.md` | Markdown | Legacy consolidation backups; no longer created |
@@ -934,13 +963,15 @@ not affect ranking, salience, real-query labels, or GRR.
 | 34 | User crontab | Cron text | Linux scheduled tasks |
 | 35 | Windows Task Scheduler `\akm\<id>` | XML | Windows scheduled tasks |
 | 36 | `~/.claude/projects/**/*.jsonl` | JSONL | Claude Code session logs (read-only input) |
-| 37 | `~/.local/share/opencode/` | JSONL | OpenCode session logs (read-only input) |
+| 37 | `$XDG_DATA_HOME/opencode/opencode.db` | SQLite | OpenCode session history (read-only input) |
 | 38 | `$DATA/logs.db` | SQLite 3 (WAL) | Task/run log lines (`task_logs`); observed ~1 GB on live installs; 90d age-based purge only, not size-capped |
 | 39 | `$XDG_STATE_HOME/akm-claude/` | JSONL+Markdown+text | Claude Code plugin hook state (events, memory candidates, curated prompts, logs); written by akm-plugins, not core akm; no retention policy today |
 | 40 | `$XDG_STATE_HOME/akm-opencode/` | JSONL | OpenCode plugin hook state (events, memory candidates); written by akm-plugins, not core akm; no retention policy today |
 | 41 | `$STATE/improve/eval-cases/<stash>/<slug>.md` | FM+Markdown | Improve regression eval cases |
 | 42 | `$CACHE/index/unresolved-sources/<stash>/<name>` | N/A | Synthetic unresolved-source placeholder path (never written to disk) |
 | 43 | `$CODEX_HOME/sessions/**/rollout-*.jsonl` | JSONL | Codex session logs (read-only input; `~/.codex/sessions/` by default) |
+| 44 | `$DATA/opencode-runtime/data/opencode/opencode.db` | SQLite | Sessions of akm's own agent runtime |
+| 45 | `$DATA/opencode-runtime/`, `$CACHE/opencode/` | Directories | The OpenCode process akm's runtime runs: its working directories, and the binary |
 
 ---
 
