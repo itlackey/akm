@@ -262,6 +262,9 @@ const LS_REMOTE_TIMEOUT_MS = 5_000;
  * - **Any other branch** (a channel such as `next`): the release tags on that branch's head. A channel branch is
  *   reset to each build it publishes, so its head IS the newest build of the channel, whatever semver order says
  *   about other tags (retired build schemes can sort above current builds).
+ * - **No branch** (a marketplace added at a tag ref, which Claude Code clones detached): the release tag the clone
+ *   is pinned to. A pinned marketplace never offers anything newer, so `claude plugin update` could not act on a
+ *   newer tag elsewhere. A detached clone at an untagged commit reads like the default branch.
  *
  * Returns `undefined` (never throws) when the directory is not a git checkout, has no `origin` remote, or the
  * command fails/times out (e.g. offline): all "cannot determine availability", not "up to date". A channel head
@@ -302,10 +305,19 @@ const realListRemoteTags: ListRemoteTagsFn = (marketplaceDir) => {
         .replace(/^v/, ""),
     }))
     .filter((tag) => isExactSemver(tag.version));
+  const tagsAt = (sha: string | undefined) => [
+    ...new Set(tags.filter((tag) => tag.sha === sha).map((tag) => tag.version)),
+  ];
   const onChannelBranch = branch !== "" && defaultBranch !== undefined && branch !== defaultBranch;
-  if (onChannelBranch) {
-    const head = refs.find(([, name]) => name === `refs/heads/${branch}`)?.[0];
-    return [...new Set(tags.filter((tag) => tag.sha === head).map((tag) => tag.version))];
+  if (onChannelBranch) return tagsAt(refs.find(([, name]) => name === `refs/heads/${branch}`)?.[0]);
+  if (branch === "") {
+    const pinned = tagsAt(
+      spawnSync("git", ["-C", marketplaceDir, "rev-parse", "HEAD"], {
+        encoding: "utf8",
+        timeout: LS_REMOTE_TIMEOUT_MS,
+      }).stdout?.trim(),
+    );
+    if (pinned.length > 0) return pinned;
   }
   return [...new Set(tags.map((tag) => tag.version).filter((version) => !isPrerelease(version)))];
 };

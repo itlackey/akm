@@ -25,7 +25,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   plugin on the `next` channel as stale against the 0.9 stable release. It read
   the newest version with a semver rule that skips every prerelease. It now reads
   the channel the marketplace clone follows: on `next`, the release tag on that
-  branch's head; on the default branch, the newest stable tag.
+  branch's head; on the default branch, the newest stable tag; on a marketplace
+  added at a tag, that tag.
 - When `crontab -l` cannot read the crontab spool (permission denied), akm says
   why: `crontab` reads the spool through its setgid group, which a process
   started with no-new-privileges (an agent sandbox, a container, systemd

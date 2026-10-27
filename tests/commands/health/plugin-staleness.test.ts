@@ -573,9 +573,10 @@ function git(cwd: string, ...args: string[]): string {
 /**
  * A marketplace remote shaped like itlackey/akm-plugins: `main` at an untagged commit after the stable tag, `next`
  * reset to the newest build, and a retired 8-digit daily-build tag that semver sorts above every monthly build.
- * The plugins root's marketplace clone follows `branch`.
+ * The plugins root's marketplace clone is made the way Claude Code makes it (`git clone --branch <ref>`), so a tag
+ * `ref` leaves it detached at that tag. Returns the clone's path.
  */
-function makeMarketplaceRemote(pluginsRoot: string, branch: string): void {
+function makeMarketplaceRemote(pluginsRoot: string, ref: string): string {
   const work = path.join(pluginsRoot, "remote-work");
   fs.mkdirSync(work, { recursive: true });
   git(work, "init", "-q");
@@ -594,7 +595,8 @@ function makeMarketplaceRemote(pluginsRoot: string, branch: string): void {
   const bare = path.join(pluginsRoot, "remote.git");
   git(pluginsRoot, "clone", "-q", "--bare", work, bare);
   const clone = path.join(pluginsRoot, "marketplaces", "akm-plugins");
-  git(pluginsRoot, "clone", "-q", "--branch", branch, bare, clone);
+  git(pluginsRoot, "clone", "-q", "--branch", ref, bare, clone);
+  return clone;
 }
 
 describe("the real remote probe reads the channel the marketplace clone follows", () => {
@@ -641,6 +643,70 @@ describe("the real remote probe reads the channel the marketplace clone follows"
     });
 
     expect(adv?.evidence?.availableVersion).toBe("0.9.30202610090106");
+    expect(adv?.status).toBe("pass");
+  });
+
+  test("a clone pinned to a tag is compared with that tag, not the newest stable tag or the next head", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-real-pin-");
+    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261012-beta" });
+    makeMarketplaceRemote(pluginsRoot, "v0.10.261012-beta");
+
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.10.261015-beta",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(adv?.evidence?.availableVersion).toBe("0.10.261012-beta");
+    expect(adv?.status).toBe("pass");
+  });
+
+  test("a detached clone at an untagged commit is compared with the newest stable tag, as before", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-real-detached-");
+    installPlugin(pluginsRoot, { versionRange: null, version: "0.9.30202610090106" });
+    const clone = makeMarketplaceRemote(pluginsRoot, "main");
+    git(clone, "checkout", "-q", "--detach");
+
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.9.31",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(adv?.evidence?.availableVersion).toBe("0.9.30202610090106");
+    expect(adv?.status).toBe("pass");
+  });
+
+  test("a clone with no origin remote makes no staleness claim", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-real-noremote-");
+    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261012-beta" });
+    const clone = makeMarketplaceRemote(pluginsRoot, "next");
+    git(clone, "remote", "remove", "origin");
+
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.10.261015-beta",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(adv?.evidence?.availableVersion).toBeNull();
+    expect(adv?.status).toBe("pass");
+    expect(adv?.message).toBe("akm@akm-plugins: installed 0.10.261012-beta");
+  });
+
+  test("an unreachable remote (offline) makes no staleness claim", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-real-offline-");
+    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261012-beta" });
+    const clone = makeMarketplaceRemote(pluginsRoot, "next");
+    git(clone, "remote", "set-url", "origin", path.join(pluginsRoot, "gone.git"));
+
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.10.261015-beta",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(adv?.evidence?.availableVersion).toBeNull();
     expect(adv?.status).toBe("pass");
   });
 });
