@@ -124,10 +124,12 @@ const OPENCODE_PLUGIN_LOCATIONS: readonly OpencodePluginLocation[] = [
       // OpenCode caches each spec in its own folder, and a bare name is its `@latest`, as `akm upgrade` reads it. With
       // no config entry, or no folder for the spec, the bare `packages/akm-opencode` is read, as this check always has.
       const { pkg } = OPENCODE_V1;
-      const named = openCodeConfigSpec(OPENCODE_V1)?.spec ?? pkg;
+      const bare = { folder: path.join(cacheRoot, OPENCODE_V1.cacheFolder(pkg)) };
+      const named = openCodeConfigSpec(OPENCODE_V1)?.spec;
+      if (named === undefined) return [bare];
       const spec = named === pkg ? `${pkg}@latest` : named;
       const folder = path.join(cacheRoot, OPENCODE_V1.cacheFolder(spec));
-      if (!fs.existsSync(folder)) return [{ folder: path.join(cacheRoot, OPENCODE_V1.cacheFolder(pkg)) }];
+      if (!fs.existsSync(folder)) return [bare];
       const version = spec.slice(pkg.length + 1);
       return [{ spec, folder, ...(isExactSemver(version) ? { pinned: version } : {}) }];
     },

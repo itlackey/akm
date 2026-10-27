@@ -520,6 +520,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     test("no config entry does not scan the other cached specs", () => {
       const cacheRoot = cacheRootOf();
       cacheSpec(cacheRoot, "akm-opencode@next", "0.10.261012-beta");
+      cacheSpec(cacheRoot, "akm-opencode@latest", "0.9.15");
 
       expect(collect(undefined, "0.10.261013-beta", cacheRoot)).toEqual([]);
       expect(
