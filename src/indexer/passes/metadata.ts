@@ -884,6 +884,54 @@ function isMarkdownFenceClosing(line: string, fence: MarkdownFence): boolean {
   return /^[\t ]*$/.test(line.slice(cursor));
 }
 
+// ── SPIKE akm#1260: fenced code in the search projection ──────────────────
+// b1: identifier-like tokens only (quoted strings, assignment values, numbers
+//     and long token-like strings dropped; camelCase/snake_case also split).
+// b2: b1 plus each fence's info-string language.
+// b3: the full fenced lines.
+const FENCE_MODE = "b2" as "b1" | "b2" | "b3";
+
+function fencedSearchText(lines: string[], start: number): string[] {
+  const out: string[] = [];
+  let fence: MarkdownFence | undefined;
+  const htmlComment = { inComment: false };
+  for (let index = start; index < lines.length; index += 1) {
+    const rawLine = lines[index]!;
+    if (fence) {
+      if (isMarkdownFenceClosing(rawLine, fence)) fence = undefined;
+      else out.push(FENCE_MODE === "b3" ? rawLine.trim() : fenceIdentifiers(rawLine));
+      continue;
+    }
+    const leadingFence = htmlComment.inComment ? undefined : parseMarkdownFenceOpening(rawLine);
+    const opening = leadingFence ?? parseMarkdownFenceOpening(stripMarkdownHtmlComments(rawLine, htmlComment).trim());
+    if (opening) {
+      fence = opening;
+      if (FENCE_MODE === "b2") {
+        const lang = /^ {0,3}(?:`{3,}|~{3,})\s*([A-Za-z0-9_+-]+)/.exec(rawLine)?.[1];
+        if (lang) out.push(lang);
+      }
+    }
+  }
+  return out.filter(Boolean);
+}
+
+function fenceIdentifiers(line: string): string {
+  const cleaned = line
+    .replace(/(["'`])(?:\\.|(?!\1).)*\1/g, " ") // quoted literals
+    .replace(/([A-Za-z_][A-Za-z0-9_.-]*\s*[:=]\s*)\S+/g, "$1"); // assignment values
+  const words: string[] = [];
+  for (let token of cleaned.match(/--?[A-Za-z][A-Za-z0-9-]*|[A-Za-z_][A-Za-z0-9_.-]*/g) ?? []) {
+    token = token.replace(/[.-]+$/, "");
+    const bare = token.replace(/^-+/, "");
+    if (bare.length < 2) continue;
+    if (bare.length >= 20 && /\d/.test(bare)) continue; // token-like
+    words.push(token);
+    const parts = bare.split(/[_.-]|(?<=[a-z0-9])(?=[A-Z])/).filter((part) => part.length > 1);
+    if (parts.length > 1) words.push(...parts);
+  }
+  return words.join(" ");
+}
+
 function stripMarkdownHtmlComments(line: string, state: { inComment: boolean }): string {
   let cursor = 0;
   let visible = "";
@@ -1085,6 +1133,8 @@ export function projectMarkdownContent(body: string, truncationInfo?: { truncate
     if (trimmed) projected.push(trimmed);
   });
 
+  // SPIKE akm#1260: fenced code's search text, per FENCE_MODE.
+  projected.push(...fencedSearchText(lines, start));
   const text = projected.join(" ").replace(/\s+/g, " ").trim();
   if (!text) return undefined;
   if (truncationInfo) truncationInfo.truncated = text.length > MARKDOWN_CONTENT_MAX_CHARS;
