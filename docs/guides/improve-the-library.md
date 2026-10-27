@@ -3,8 +3,9 @@
 AKM learns from outcomes, but changes remain reviewable. When an agent reports
 whether a capability helped, akm records the report; when the report says the
 content was wrong, a later `akm improve` run drafts a concrete edit as a
-proposal. A proposal changes your bundle when you accept it, or when a policy
-you opted into does (see [Review-first](#review-first-and-the-autonomy-opt-in)).
+proposal. A proposal changes your bundle when you accept it, or when the
+improve run's triage pass accepts it (see
+[Review-first](#review-first-and-the-autonomy-opt-in)).
 
 ```text
 agent selects capability -> agent records outcome -> AKM updates utility and analyzes evidence ->
@@ -85,8 +86,8 @@ feedback and usage, then generates proposals for you to review. Its model calls
 run on your default connection, else your default harness (`--connection`,
 `--harness` and `--model` choose another for a run; see
 [Configuration](../reference/configuration.md#where-each-process-runs)). With
-neither, `akm improve` skips each process that needs a model, says so, and points
-at `akm setup`.
+neither, `akm improve` stops at planning (exit 78) and points at `akm setup`; a
+single process with nowhere to run is skipped and reported in `skippedProcesses`.
 
 ```sh
 akm improve                           # Full bundle pass
@@ -135,8 +136,13 @@ akm proposal list            # review what was generated
 
 ### Review-first, and the autonomy opt-in
 
-`akm improve` queues proposals; it does not edit your assets. Three lanes that
-would write without review stay off until you set `experimental.improveAutonomy`:
+`akm improve` writes its changes as proposals. With the `default` strategy, the
+triage pass at the start of each run (`applyMode: "promote"`) accepts pending
+proposals whose quality judge passed (not those the proactive-maintenance lane
+planned), plus retire proposals the consolidate pair pass staged with no
+continuity risk, at most 200 a run. A strategy whose `triage.applyMode` is
+`"queue"` leaves every proposal for you. Three lanes stay off until you set
+`experimental.improveAutonomy`:
 
 ```sh
 akm config set experimental.improveAutonomy true
@@ -145,12 +151,13 @@ akm config set experimental.improveAutonomy true
 - **Memory inference** writes `.derived.md` children next to memories.
 - **Memory cleanup** rewrites belief-state frontmatter and moves retired
   memories to an archive.
-- **Triage with `applyMode: "promote"`** (set in a strategy's `triage` block)
-  accepts queued proposals whose quality judge passed, plus retire proposals
-  the consolidate pair pass staged with no continuity risk.
+- **Triage promote with its judgment tier on** (`processes.triage.judgment`):
+  the judgment tier accepts consolidate promotions. A promote with judgment off,
+  as in `default`, is not gated.
 
-With the key off (the default), each lane is downgraded and the downgrade is
-reported on stderr and in `akm health`. `akm proposal drain --promote` is a
+With the key off (the default), memory inference is skipped, memory cleanup is
+analyzed but not applied, and a judged promote is downgraded to `queue`; each downgrade is reported on
+stderr and by `akm task doctor`. `akm proposal drain --promote` is a
 separate, explicit way to accept judged proposals and does not need the key.
 
 Some writes happen either way: session summaries under `sessions/**`, the purge

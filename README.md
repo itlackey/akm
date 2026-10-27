@@ -24,7 +24,7 @@ Search or curate a shortlist, then load full content by ref. No giant startup pr
 Install and share bundles containing skills, scripts, workflows, agents, instructions, memories, and knowledge — not just prompt snippets.
 
 ### Improve through evidence, with review
-Feedback re-ranks assets right away. A negative report can carry an exact text fix, and `akm improve` repairs metadata. Edits land as diffable proposals you accept, reject or revert, unless you opt in to automatic acceptance (`experimental.improveAutonomy`). Only writable bundles are changed.
+Feedback re-ranks assets right away. A negative report can carry an exact text fix, and `akm improve` repairs metadata. Edits land as diffable proposals: the default improve strategy accepts the ones its quality judge passed, the rest wait for you to accept or reject, and any accept can be reverted. Only writable bundles are changed.
 
 ### Turn knowledge into repeatable work
 Run persisted workflows with dispatch, gates, retries, budgets, and resume instead of reconstructing a process from prose every session. Workflows are Experimental.
