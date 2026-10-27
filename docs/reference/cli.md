@@ -2039,9 +2039,9 @@ multiplied by `1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))`
 exact fix stops counting once the fix is accepted, and counts again if
 `akm proposal revert` undoes it. The effect is small, and how far a vote moves
 a hit depends on the search. In keyword-only search every fused score is exactly
-`1/(60 + rank)`, so neighbouring hits sit 1.5 to 1.6 percent apart and one vote
-(about 2 percent) moves a hit one place whatever the keyword margin between
-them. When embeddings contribute too, the two channels' ranks spread the scores
+`1/(60 + rank)`, so neighbouring hits in the first 20 sit 1.3 to 1.6 percent
+apart and one vote (about 2 percent) moves a hit one place whatever the keyword
+margin between them. When embeddings contribute too, the two channels' ranks spread the scores
 and a vote breaks only near-ties. Only feedback recorded as the user counts, not
 feedback from improve, task or audit runs; the output's `rankingUpdate.applied`
 says which it was (`true`, or `false` with a `reason`).

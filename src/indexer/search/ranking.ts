@@ -66,8 +66,8 @@ export interface FeedbackCounts {
  * lists, 5 positives lift a hit from rank 10 by a median of 3 places (from rank 5,
  * by 2) and 20 by 4 to 5. What a vote can pass depends on the channels. In
  * keyword-only search every fused score is exactly 1 / (RRF_K + rank), so
- * neighbours sit 1.5 to 1.6% apart and one vote (about 2%) moves a hit one place
- * whatever the keyword margin between them. When both channels contribute, their
+ * neighbours in the first 20 sit 1.3 to 1.6% apart and one vote (about 2%) moves
+ * a hit one place (through rank 38) whatever the keyword margin between them. When both channels contribute, their
  * ranks spread the scores and a vote passes only near-ties. At 0.05 the same
  * votes lift it 4 to 5 and 6 to 7 places, and two wrong votes cost about 1.6
  * times the nDCG@10 they cost at 0.03.
