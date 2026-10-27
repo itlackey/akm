@@ -5,7 +5,7 @@ Thanks for your interest in contributing! This guide will help you get started.
 ## Prerequisites
 
 - [Bun](https://bun.sh/) >= 1.0
-- [Node.js](https://nodejs.org/) >= 24 and npm for npm package acceptance and global-install workflows
+- [Node.js](https://nodejs.org/) >= 22 and npm for npm package acceptance and global-install workflows
 
 ## Setting Up the Dev Environment
 

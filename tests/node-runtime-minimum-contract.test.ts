@@ -32,7 +32,7 @@ function runsBunInstall(run: string | undefined): boolean {
   });
 }
 
-describe("Node 24 runtime minimum contract", () => {
+describe("Node 22 runtime minimum contract", () => {
   test("selects Node 24 with setup-node v5 before every workflow Bun install", () => {
     const workflowsDirectory = path.join(ROOT, ".github", "workflows");
     const coveredInstallJobs: string[] = [];
@@ -62,8 +62,8 @@ describe("Node 24 runtime minimum contract", () => {
           expectPinnedVersion(filename, "actions/setup-node", "v5");
           const selected = String(nodeSetup?.with?.["node-version"]);
           expect(
-            ["24", "${{ matrix.node-version }}"],
-            `${label} must select a supported Node (the 24 floor, or the smoke matrix)`,
+            ["22", "24", "${{ matrix.node-version }}"],
+            `${label} must select a supported Node (22 floor, 24 current, or the smoke matrix)`,
           ).toContain(selected);
           expect(nodeSetup?.if, `${label} must not conditionally select Node`).toBeUndefined();
         }

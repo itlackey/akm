@@ -4,7 +4,7 @@ Use an explicit launcher for each kind of contributor check. This keeps live
 source, build output, packed-package behavior, and the machine-wide `akm`
 installation from being mistaken for one another.
 
-The npm package requires Node.js >= 24 and npm. A working Bun >= 1.0 is optional
+The npm package requires Node.js >= 22 and npm. A working Bun >= 1.0 is optional
 for the installed launcher and remains the repository's primary development and
 test runtime. The standalone binaries are runtime-free.
 

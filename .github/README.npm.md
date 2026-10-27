@@ -16,7 +16,7 @@ assistant, including [Claude Code](https://claude.ai/code),
 
 ## Install
 
-**Option 1 — npm package (recommended; requires [Node.js](https://nodejs.org) >= 24):**
+**Option 1 — npm package (recommended; requires [Node.js](https://nodejs.org) >= 22):**
 
 ```sh
 npm install -g akm-cli

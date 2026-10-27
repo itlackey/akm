@@ -65,8 +65,8 @@ process.env.AKM_LAUNCHER_PID = String(process.pid);
 
 if (!process.versions.bun) {
   const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
-  if (major < 24) {
-    console.error("The akm-cli npm package requires Node.js >= 24 to bootstrap.");
+  if (major < 22) {
+    console.error("The akm-cli npm package requires Node.js >= 22 to bootstrap.");
     process.exit(1);
   }
 }

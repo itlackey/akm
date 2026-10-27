@@ -97,7 +97,7 @@ for assets containing secrets or private notes.
 
 ## Known non-issues
 
-- **The `akm-cli` npm package requires Node.js >= 24 as its bootstrap.** A
+- **The `akm-cli` npm package requires Node.js >= 22 as its bootstrap.** A
   working Bun >= 1.0 is preferred for execution when it is also on `PATH`; old,
   unusable, or absent Bun installations fall back to Node.js. Bun does not
   remove the package's Node.js requirement. Standalone binaries are

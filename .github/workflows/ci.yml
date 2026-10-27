@@ -45,7 +45,7 @@ jobs:
           bun-version: 1.3.14
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
         with:
-          node-version: 24
+          node-version: 22
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: bun run build
@@ -57,7 +57,7 @@ jobs:
       fail-fast: false
       matrix:
         # A draft pull request runs the oldest supported Node only; a ready pull request and a push run both.
-        node-version: ${{ (github.event_name == 'pull_request' && github.event.pull_request.draft) && fromJSON('["24"]') || fromJSON('["24", "26"]') }}
+        node-version: ${{ (github.event_name == 'pull_request' && github.event.pull_request.draft) && fromJSON('["22"]') || fromJSON('["22", "24"]') }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
@@ -108,7 +108,7 @@ jobs:
           bun-version: 1.3.14
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
         with:
-          node-version: 24
+          node-version: 22
       - run: bun install --frozen-lockfile
       - run: bun run build
       - run: AKM_UPGRADE_REHEARSAL=1 AKM_UPGRADE_REHEARSAL_ORIGIN="${{ matrix.origin }}" TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/

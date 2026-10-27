@@ -216,7 +216,7 @@ live under `src/commands/`. The one programmatic entry point is `akm-cli/api`
 (`src/api.ts`, which exports only `curate`), so the akm plugins can recall
 in-process; the `exports` map in `package.json` lists only `./api`,
 `./package.json` and `./dist/*`, and there are no barrel exports. Bun is the
-preferred runtime and the toolchain. Node 24 is the floor (`engines.node`):
+preferred runtime and the toolchain. Node 22 is the floor (`engines.node`):
 the npm package bootstraps through Node, and its launcher falls back to Node
 when no usable Bun is on `PATH`. Anything that would become another API for
 other programs is a separate decision, not an incidental export.
@@ -226,7 +226,7 @@ Why: an accidental API is a compatibility promise nobody agreed to make.
 Enforced by: `tests/contracts/api-surface.test.ts` (the export list),
 `tests/integration/install/package-exports.test.ts` (the `exports` map),
 `package.json` (`engines.node` and the `preinstall` check), and the
-`node-smoke` job in `.github/workflows/ci.yml` (Node 24 and 26).
+`node-smoke` job in `.github/workflows/ci.yml` (Node 22 and 24).
 
 ### 10. Agent harnesses are thin, replaceable internals
 

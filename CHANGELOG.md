@@ -386,7 +386,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `GET /api/config` lists `connections` and `harnesses`, each a list of named
   entries, where it listed `engines`, and the config page shows the two as
   tables.
-- The npm package requires Node.js 24 or later (was 22). CI tests Node 24 and 26.
 - The npm package depends on no OpenCode library: akm's own runtime fetches one
   OpenCode binary on first use instead, so `npm install -g akm-cli` needs no
   compiler (the OpenCode libraries it replaces pulled in a native addon that
