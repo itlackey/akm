@@ -157,6 +157,14 @@ describe("akm search with recorded feedback", () => {
     expect(await order()).toEqual([second, first, third]);
   });
 
+  test("a negative without a fix still demotes after another negative's fix is applied", async () => {
+    const base = await order();
+    const [first, second, third] = base as [string, string, string];
+    await vote(first, "negative", 1);
+    expect((await fixNegative(first)).code).toBe(0);
+    expect(await order()).toEqual([second, first, third]);
+  });
+
   test("feedback that is not user-attributed does not move the ranking", async () => {
     const base = await order();
     const third = base[2] as string;
