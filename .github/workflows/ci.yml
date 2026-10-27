@@ -70,18 +70,14 @@ jobs:
       - run: bun run build
       # Installs the SPEC THE PACKAGE DECLARES, read back out of package.json so
       # the two cannot drift — this job exists to prove the binding npm users
-      # actually get works. Why it is pinned at all: package.json → pinNotes
-      # ["better-sqlite3@12.11.1"] (#790). scripts/node-smoke.ts preflights that
-      # what landed is that exact version and that it loads under this node.
+      # actually get works. Why it is pinned: package.json → pinNotes
+      # ["better-sqlite3@13.0.3"]. scripts/node-smoke.ts preflights that what
+      # landed is that exact version and that it loads under this node.
       - name: Verify the Node fallback
         run: |
           spec=$(node -p "require('./package.json').optionalDependencies['better-sqlite3']")
-          # Remove it first. `npm install pkg@version` is a NO-OP when that exact
-          # version is already present and does NOT re-run the install script, so
-          # the binding `bun install` built a moment ago — under whichever node
-          # its `prebuild-install` saw — would otherwise survive into this job
-          # with the wrong ABI. scripts/node-smoke.ts preflights that it loads.
-          rm -rf node_modules/better-sqlite3
+          # `bun install` leaves it out (Bun tries to build it and drops the optional
+          # dependency when that fails), so npm installs it here.
           npm install --no-save "better-sqlite3@$spec"
           bun run test:node-smoke
           bun run test:node-compat
