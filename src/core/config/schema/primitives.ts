@@ -14,6 +14,13 @@ import { isSecretRefToken } from "../../ref-token";
 import { warnOnce } from "../../warn";
 import { ENGINE_NAME_PATTERN_SOURCE } from "../engine-semantics";
 
+// Zod 4 reports a map key its key schema rejects as "Invalid key in record" and keeps that schema's own message
+// (the naming rule, the slug rule) inside the issue; config errors and warnings print only the outer message.
+z.config({
+  customError: (issue) =>
+    issue.code === "invalid_key" ? issue.issues.map((inner) => inner.message).join("; ") : undefined,
+});
+
 /** Persisted config schema version. Package prerelease/patch versions do not change this value. */
 export const CURRENT_CONFIG_VERSION = "0.9.0" as const;
 
