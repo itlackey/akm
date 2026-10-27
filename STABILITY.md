@@ -112,7 +112,7 @@ covers beyond the table.
 | `akm bundle rename` | Stable | |
 | `akm bundle remove` | Stable | |
 | `akm bundle update` | Stable | |
-| `akm upgrade` | Stable | Including the plugin step and `--next`. |
+| `akm upgrade` | Stable | Including the plugin step and `--next`. Checksum verification is not optional; the recovery hatch is the `AKM_UPGRADE_SKIP_CHECKSUM` environment variable (Internal), not a flag. |
 | `akm search` | Stable | |
 | `akm curate` | Stable | |
 | `akm show` | Stable | |
@@ -147,7 +147,7 @@ covers beyond the table.
 | `akm improve` | Evolving | Review-first by default; mutating lanes require `experimental.improveAutonomy` — see below. |
 | `akm improve report` | Evolving | Subcommand since 0.10 (was a magic `scope` value); owns `--run` and `--since`. |
 | `akm improve judge` | Evolving | Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. |
-| `akm proposal list` | Stable | See reconciliation note above. |
+| `akm proposal list` | Stable | |
 | `akm proposal show` | Evolving | |
 | `akm proposal diff` | Evolving | |
 | `akm proposal accept` | Evolving | |
@@ -198,8 +198,8 @@ covers beyond the table.
     the core resolves it as a section selector — `akm show <ref>#<heading-slug>`
     returns that one section, no fragment returns the whole item, and an
     unmatched fragment lists the available slugs. A whole document's `show`
-    carries `toc`, every heading with the slug that selects it. Elsewhere it is an
-    adapter-owned selector opaque to the core. See
+    carries `toc`, every heading with the slug that selects it. On any other item
+    `akm show` ignores the fragment with a warning and shows the whole item. See
     [`docs/architecture/specs/ref.md`](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/ref.md).
   - **Refs in prose** must be fully qualified (`bundle//conceptId`) or a native
     adapter link form. A bare conceptId in prose is ordinary text, not a ref.
@@ -320,9 +320,9 @@ CHANGELOG with a migration note.
   routine sessions left empty, planted instructions refused) is its gate. It
   is Evolving, not Stable, because 0.10 is still settling the improve
   defaults; what it extracts and its output may still be tuned.
-- **Tasks** — `akm task` subcommand surface (`add | run | sync | doctor |
-  history | explain | validate`; no alias, no
-  `list`/`remove`/`init`/`enable`/`disable`); task source v4 YAML (typed
+- **Tasks** — `akm task` subcommand surface (`add | enable | disable | run |
+  explain | history | sync | prune | doctor`; no alias, no
+  `list`/`remove`/`init`/`validate`); task source v4 YAML (typed
   `inputs:`, optional `schedule:`) is the only accepted version — task v3 and
   task v2 sources are converted by `akm migrate apply`. Command tasks use
   a named connection or harness, and task history metadata is versioned. Schema additions in
@@ -354,7 +354,7 @@ CHANGELOG with a migration note.
   `akm bundle list` / `akm bundle show <name>` and enumerated through
   `akm search "bundle//"`. (An earlier `akm bundle items` noun group was
   removed in 0.9.0 as duplicative of `akm search`; the current `akm bundle`
-  group — `create | add | list | show | remove | update` — is the
+  group — `create | add | list | show | rename | remove | update` — is the
   lifecycle-management surface consolidated from the former top-level
   `init`/`add`/`list`/`remove`/`update` commands, not a revival of that one.)
   OKF is the
@@ -384,11 +384,6 @@ CHANGELOG with a migration note.
   `akm search --from registry` (0.9.0: `registry search` was folded into
   `search`). Building a registry index is maintainer tooling (Internal) and
   lives outside the CLI, in `scripts/build-registry-index.ts`.
-- **Upgrade** — `akm upgrade`. Checksum verification is not optional; the
-  recovery hatch is the `AKM_UPGRADE_SKIP_CHECKSUM` environment variable
-  (Internal), not a flag. The harness plugin step and `--next` (new in 0.9.28)
-  are targeted to become Stable before the 0.9 series ends, once verified on
-  real hosts.
 - **Lint** — `akm lint`. The rule set and finding shapes iterate; the
   `--fail-on-flagged` CI contract and the exit codes are stable.
 - **Health** — `akm health` and its exit codes (0 pass / 4 warn / 1 fail) are
