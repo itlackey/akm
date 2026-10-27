@@ -675,11 +675,16 @@ characters, removes frontmatter, comments, and link destinations, and is never
 produced for secret, env, session, or session-checkpoint assets. From fenced
 code it keeps only the identifiers: names, CLI flags, keys, paths and dotted
 references, after the prose. Quoted strings (other than keys and absolute
-paths), assignment values, URLs and long token-like strings are dropped, so a
-fence's literal values are not indexed; a bare short word stays, as it does in
-prose. Search results return no `content`, so this changes what search finds,
-not what it hands an agent. Embedding input is cut to the embedding model's
-token limit, with structured metadata placed before body content.
+paths), assignment values, URLs and long token-like strings (base64 included)
+are dropped, so a fence's literal values are not indexed. Two kinds of value
+stay, as they do in prose: a bare short word (`-p hunter2`) and the words after
+the first of an unquoted value with spaces (`key: two words`). Indented code
+blocks, `<pre>` blocks and fences inside a blockquote are not read as code:
+they are indexed as prose, values included. Search results return no
+`content`, so this changes what search finds, not what it hands an agent.
+Embedding input is the head of the entry's search text, structured metadata
+first, cut at `embedding.maxInputTokens` (default 512 estimated tokens, about
+2,048 characters).
 
 ## Semantic search
 
