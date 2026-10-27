@@ -43,7 +43,6 @@ export const ONNXRUNTIME_VERSION = "1.24.3";
  */
 const LIBRARIES: Readonly<Record<string, string>> = {
   "linux-x64": "libonnxruntime.so.1",
-  "linux-arm64": "libonnxruntime.so.1",
   "darwin-arm64": `libonnxruntime.${ONNXRUNTIME_VERSION}.dylib`,
 };
 

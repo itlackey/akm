@@ -61,7 +61,7 @@ For the full set of flags, see `akm setup --help`; for the config they write,
 see [configuration.md](../../reference/configuration.md).
 
 **Semantic search.** `--embedding local` chooses the built-in embedder, offered
-on Linux x64 and arm64 (glibc) and Apple-silicon macOS; elsewhere it warns and
+on Linux x64 (glibc) and Apple-silicon macOS; elsewhere it warns and
 keeps keyword search. Once the config is saved, a headless setup (`--yes` or
 `--from`) downloads the embedder's runtime and model into akm's cache and
 reports `semanticAssets` in its result (`ready`, `blocked: <reason>`, or

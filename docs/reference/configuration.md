@@ -692,7 +692,7 @@ degraded.
 The local embedder runs its model (`Xenova/bge-small-en-v1.5` unless
 `embedding.localModel` names another) on ONNX Runtime, through
 `onnxruntime-node`'s native binding, with `@huggingface/tokenizers` for the token
-ids. akm offers local embeddings on Linux x64 and arm64 (glibc) and Apple-silicon
+ids. akm offers local embeddings on Linux x64 (glibc) and Apple-silicon
 macOS; on every other platform semantic search uses an embedding endpoint or
 stays keyword-only. akm does not install `onnxruntime-node`:
 `akm setup --embedding local` (or the wizard's built-in embedder) downloads that

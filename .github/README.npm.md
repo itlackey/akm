@@ -41,7 +41,7 @@ back to Node.js. Node.js remains required for the npm package. The standalone
 binaries are runtime-free.
 
 Local semantic search runs its embedding model on ONNX Runtime and is offered on
-Linux x64 and arm64 (glibc) and Apple-silicon macOS; every other platform uses
+Linux x64 (glibc) and Apple-silicon macOS; every other platform uses
 keyword search or an embedding endpoint. Choosing it in `akm setup`
 (`--embedding local`) downloads the runtime (about 86 MB) and the model (about
 127 MB) once into akm's cache: installing the package runs no install script and

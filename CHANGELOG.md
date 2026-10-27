@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   not, which is also how an install upgraded from an earlier release gets the
   runtime: its next `akm index` downloads it once. The vectors are unchanged,
   so no re-index is needed.
-- Local embeddings are offered on Linux x64 and arm64 (glibc) and Apple-silicon
+- Local embeddings are offered on Linux x64 (glibc) and Apple-silicon
   macOS. Every other platform uses keyword search or an embedding endpoint:
   setup offers only those, with one sentence saying why, `--embedding local`
   warns and saves keyword search, `--from` keeps the file's values, the index

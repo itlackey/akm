@@ -37,7 +37,7 @@ Hitting a PowerShell execution-policy error on Windows? See
 ### Local semantic search
 
 Local semantic search runs its embedding model on ONNX Runtime, and akm offers
-it on Linux x64 and arm64 (glibc) and Apple-silicon macOS; on every other
+it on Linux x64 (glibc) and Apple-silicon macOS; on every other
 platform search is keyword-only or uses an embedding endpoint you configure. Choosing the built-in embedder in
 `akm setup` (or `akm setup --yes --embedding local`) downloads what it needs once
 into akm's cache directory (`akm info` prints it): ONNX Runtime for your platform,

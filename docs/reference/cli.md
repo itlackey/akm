@@ -219,7 +219,7 @@ The wizard asks, in order:
    serve embeddings, its models are not offered, and with several connections
    none called `default`, `--embedding <model>` refuses and asks you to name one
    default or pass `--embedding-endpoint`. The built-in embedder is offered on
-   Linux x64 and arm64 (glibc) and Apple-silicon macOS only; elsewhere the step
+   Linux x64 (glibc) and Apple-silicon macOS only; elsewhere the step
    says so in one sentence and offers an endpoint or off, and `--embedding local`
    warns and saves off.
 5. **Save.** The config is written, the bundle directory initialized, and a
