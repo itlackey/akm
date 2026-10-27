@@ -20,7 +20,7 @@ The design and rationale are in [Improvement Loop](../improvement.md). This page
 | `--timeout-ms` | Wall-clock budget for the whole run. Default 7 200 000 ms (2 hours). |
 | `--skip-if-locked` | If another improve run holds the lock, return an exit-0 no-op. Without it, contention is `IMPROVE_LOCK_HELD`, exit 75. |
 | `--require-feedback-signal` | Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned. |
-| `--sync` / `--no-sync`, `--push` / `--no-push` | Override the strategy's `sync` block (end-of-run commit and push for a git-backed bundle). |
+| `--sync` / `--no-sync`, `--push` / `--no-push` | Override the strategy's `sync` block (the pre-run sync and the end-of-run commit and push for a git-backed bundle). |
 | `--json-to-stdout` | Also print the full persisted run result as JSON. |
 | `--run`, `--since` | Only for `akm improve report`. |
 
@@ -43,7 +43,7 @@ A live run:
    4. validation: a ref whose file is missing, or a lesson without a `description`, is excluded; schema repair tries to fix those when `validation` is enabled;
    5. selection: the signal-delta filter, the proactive-maintenance lane, salience ranking, a disk check, and `--limit`.
 7. The per-asset loop (`runImproveLoopStage`, `loop-stages.ts`): for each selected ref, reflect, then distill for a distillable memory. The wall-clock budget is checked before each ref.
-8. Post-loop maintenance (`runImprovePostLoopStage`), skipped when the budget is spent: memory inference (reindex if it wrote anything), proposal hygiene (orphan purge and expiry), orphaned-state GC, the retention purges (events, `improve_runs`, `logs.db`, task log files), and, for a whole-bundle scope, a dead-link check on URLs in knowledge bodies.
+8. Post-loop maintenance (`runImprovePostLoopStage`), skipped when the budget is spent: memory inference (reindex if it wrote anything), proposal hygiene (orphan purge and expiry), orphaned-state GC, the retention purges (events, `improve_runs`, `logs.db`, task log files, and the per-run improve and index log files under `$CACHE/logs/`; `improve.eventRetentionDays`, default 90), and, for a whole-bundle scope, a dead-link check on URLs in knowledge bodies.
 9. Assemble the result, emit `improve_completed`, run the end-of-run sync, release the lock.
 
 A dry run skips steps 2 to 4. It collects refs (step 5), evaluates the preparation gates read-only (`planOnly`), and reports the plan; nothing is dispatched or persisted.
@@ -61,7 +61,7 @@ Reflect changes only an asset's `description`, `when_to_use`, and title. The mod
 5. `applyReflectPatch` applies the patch; a non-null `title` becomes a `# <title>` heading only when the body has no level-1 heading. A patch that changes nothing is the `no_change` outcome (`reflect_skipped_noop`; `reflect_skipped_cosmetic` for a cosmetic-only change) and queues nothing.
 6. Defect filter (`findReflectDefect`): a revision that adds placeholder text, talks about its own edit, or copies frontmatter into the body is refused as `quality_rejected`. `processes.reflect.defectFilter` replaces or turns off the wording lists.
 7. Quality gate (`processes.reflect.qualityGate`, on unless disabled): a judge scores need, preservation, and quality from 1 to 5 and the revision passes only when every score is 4 or more ([Quality judge](../improvement.md#quality-judge)). A score that does not pass is refused (`quality_rejected`, no proposal) unless its mean is 3.5 or more: that is uncertain, not bad, and the proposal is deferred for a person (`judge-uncertain`, with the scores and the judge's reason) and records no rejection window. A judge that errors or times out defers the proposal for review (`judge-error`).
-8. The proposal is minted (`mintProposal`). A pass the judge passed is stamped `staged` and the triage drain may accept it; one with no judge, no verdict, or an uncertain verdict is deferred for a person, and the drain leaves every deferral.
+8. The proposal is minted (`mintProposal`). A pass the judge passed is stamped `staged` and the triage drain may accept it; with the gate off the proposal is minted unstamped for the drain to decide. One whose gate has no judge configured (`no-judge-configured`), no verdict, or an uncertain verdict is deferred for a person, and the drain leaves every deferral.
 
 A harness gets the asset content capped at `REFLECT_CONTENT_CAP` (12 000 characters) because it travels through argv; a connection derives its cap from its `contextLength`.
 
@@ -155,7 +155,7 @@ Every stage reads the improve ledger (`improve_ledger` in `state.db`; columns in
 | `proposed`, `review_needed`, `judged_no_action`, `unchanged` | 7 days |
 | `accepted`, `failed` | none |
 
-The consolidate pair pass, and a decided consolidate promotion that recorded a body hash, have no clock: the ref waits until its body differs. `rejected`, `quality_rejected`, and `expired` are hard windows. Every other window is a revisit cadence that a newer signal lifts (`isLedgerBlocked`).
+The consolidate pair pass, and a consolidate promote-pass row (`accepted`, `rejected`, or `judged_no_action`) that recorded a body hash, have no clock: the ref waits until its body differs. `rejected`, `quality_rejected`, and `expired` are hard windows. Every other window is a revisit cadence that a newer signal lifts (`isLedgerBlocked`).
 
 **Selection.** Before the loop, `buildSnapshotManifest` reads the feedback events and the ledger's reflect and distill rows once, and `partitionBySignalDelta` (both in `preparation.ts`) sorts the refs. A ref passes reflect when it has negative feedback dated within the last 30 days and newer than the ref's last reflect attempt, with no hard window blocking it. A positive or note-only signal never plans a reflect. Neither does a negative that came with an exact fix (`akm feedback --replace/--with`, `--outdated`, `--superseded-by`) once an accepted `feedback` proposal has applied the fix. A ref passes distill when it has feedback carrying a signal or a note, positive included, under the same date and ledger rules. Then:
 
