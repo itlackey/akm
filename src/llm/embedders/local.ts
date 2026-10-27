@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Local embedder: a BERT-family embedding model run with onnxruntime-node,
- * its text encoded by @huggingface/tokenizers, mean-pooled over the attention
- * mask and L2-normalised.
+ * Local embedder: a BERT-family embedding model run on onnxruntime-node's binding
+ * (`./onnx-runtime.ts`), its text encoded by @huggingface/tokenizers, mean-pooled
+ * over the attention mask and L2-normalised.
  *
  * Encapsulates the model's lifecycle as instance state on a `LocalEmbedder` so
  * tests can construct fresh instances without leaking loaded models across
@@ -15,8 +15,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { preloadOnnxRuntimeLibrary } from "../../standalone/onnxruntime-library";
+import { toErrorMessage } from "../../core/common";
 import { ensureLocalModelFiles } from "./local-model-files";
+import { hasLocalEmbeddings, loadOnnxRuntime, noLocalEmbeddingsReason, OnnxTensor } from "./onnx-runtime";
 import type { Embedder, EmbeddingVector } from "./types";
 
 /**
@@ -33,10 +34,10 @@ export const LOCAL_EMBEDDING_RUNTIME = "onnxruntime-node";
 type LocalPipeline = (texts: string[]) => Promise<Float32Array[]>;
 
 /**
- * The embedding runtime is not usable on this machine. `platform`: onnxruntime-node
- * has no native library for it, so keyword search is all there is. `load`: it has
- * one, which did not load (a missing package or addon, a `noexec` temp or cache
- * directory).
+ * The embedding runtime is not usable on this machine. `platform`: akm offers no
+ * local embeddings here, so keyword search and remote embeddings are what there
+ * is. `load`: it does, and the runtime could not be fetched or did not load (no
+ * network for the fetch, a `noexec` cache directory).
  */
 export class LocalRuntimeUnavailableError extends Error {
   constructor(
@@ -77,52 +78,17 @@ function resolveLocalModelName(overrideModel?: string): string {
   return overrideModel || DEFAULT_LOCAL_MODEL;
 }
 
-/**
- * A standalone binary built for a target with no native library (`none`) must not
- * bundle the package: its addon for that platform does not exist. The bundler
- * drops only the branch a build constant rules out, so the import sits in an
- * `else`, not after the `throw`.
- */
-async function importOnnxRuntime(): Promise<typeof import("onnxruntime-node")> {
-  if (typeof AKM_STANDALONE_NATIVE_MODULE !== "undefined" && AKM_STANDALONE_NATIVE_MODULE === "./native/none") {
-    throw new Error("no native library is available for this platform");
-  } else {
-    await preloadOnnxRuntimeLibrary();
-    return import("onnxruntime-node");
-  }
-}
-
-/**
- * Whether onnxruntime-node has a native library for this machine. A standalone
- * binary knows from its build (`none`). The package has one for glibc Linux
- * x64/arm64, Apple-silicon macOS and Windows x64/arm64, and none for musl Linux
- * or Intel macOS.
- */
-function hasNativeLibrary(): boolean {
-  if (typeof AKM_STANDALONE_NATIVE_MODULE !== "undefined") return AKM_STANDALONE_NATIVE_MODULE !== "./native/none";
-  if (process.platform === "linux") {
-    const header = (process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined)?.header;
-    if (!header?.glibcVersionRuntime) return false;
-  }
-  return ["linux-x64", "linux-arm64", "darwin-arm64", "win32-x64", "win32-arm64"].includes(
-    `${process.platform}-${process.arch}`,
-  );
-}
-
-async function loadOnnxRuntime(): Promise<typeof import("onnxruntime-node")> {
+async function loadRuntime(): ReturnType<typeof loadOnnxRuntime> {
+  if (!hasLocalEmbeddings()) throw new LocalRuntimeUnavailableError(noLocalEmbeddingsReason(), "platform");
   try {
-    return await importOnnxRuntime();
+    return await loadOnnxRuntime();
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    const kind = hasNativeLibrary() ? "load" : "platform";
-    // Only the package itself missing calls for a reinstall; a platform it ships no addon for (Intel macOS) fails on
-    // `../bin/napi-v6/<platform>/<arch>/onnxruntime_binding.node` and is reported below.
-    if (kind === "load" && /Cannot find (?:module|package) ['"]onnxruntime-node['"]/.test(msg)) {
-      throw new LocalRuntimeUnavailableError("Semantic search requires onnxruntime-node. Reinstall akm-cli.", kind);
-    }
+    const msg = toErrorMessage(error).replace(/\.$/, "");
+    // A `noexec` mount maps nothing executable, so the binding cannot load from the cache there.
+    const mount = /failed to map segment/.test(msg) ? " akm's cache directory must allow executing files." : "";
     throw new LocalRuntimeUnavailableError(
-      `Failed to load the embedding runtime (onnxruntime-node): ${msg}. Semantic search with the local model is unavailable; keyword search still works.`,
-      kind,
+      `Failed to load the embedding runtime (onnxruntime-node): ${msg}.${mount} Semantic search with the local model is unavailable; keyword search still works.`,
+      "load",
     );
   }
 }
@@ -142,7 +108,7 @@ function meanPooled(hidden: Float32Array, offset: number, tokens: number, dim: n
 }
 
 async function loadOnnxPipeline(modelName: string): Promise<LocalPipeline> {
-  const ort = await loadOnnxRuntime();
+  const ort = await loadRuntime();
   const { Tokenizer } = await import("@huggingface/tokenizers");
   const modelDir = await ensureLocalModelFiles(modelName);
   const readJson = (file: string): object => JSON.parse(fs.readFileSync(path.join(modelDir, file), "utf8"));
@@ -150,10 +116,7 @@ async function loadOnnxPipeline(modelName: string): Promise<LocalPipeline> {
   const tokenizer = new Tokenizer(readJson("tokenizer.json"), tokenizerConfig);
   const maxLength =
     typeof tokenizerConfig.model_max_length === "number" ? tokenizerConfig.model_max_length : Number.POSITIVE_INFINITY;
-  const session = await ort.InferenceSession.create(path.join(modelDir, "onnx", "model.onnx"), {
-    executionProviders: ["cpu"],
-    logSeverityLevel: 3,
-  });
+  const session = ort.createSession(path.join(modelDir, "onnx", "model.onnx"));
 
   return async (texts) => {
     // A text longer than the model's maximum is cut to it. Shorter ones are padded
@@ -169,16 +132,16 @@ async function loadOnnxPipeline(modelName: string): Promise<LocalPipeline> {
       });
     });
     const dims = [texts.length, length];
-    const inputs: Record<string, import("onnxruntime-node").Tensor> = {
-      input_ids: new ort.Tensor("int64", ids, dims),
-      attention_mask: new ort.Tensor("int64", mask, dims),
-      token_type_ids: new ort.Tensor("int64", new BigInt64Array(texts.length * length), dims),
+    const inputs: Record<string, OnnxTensor> = {
+      input_ids: new OnnxTensor("int64", ids, dims),
+      attention_mask: new OnnxTensor("int64", mask, dims),
+      token_type_ids: new OnnxTensor("int64", new BigInt64Array(texts.length * length), dims),
     };
     // Models that take fewer inputs (no token_type_ids) are fed only theirs.
     const feeds = Object.fromEntries(
       session.inputNames.flatMap((name) => (inputs[name] ? [[name, inputs[name]]] : [])),
     );
-    const outputs = await session.run(feeds);
+    const outputs = session.run(feeds);
     const hidden = (outputs.last_hidden_state ?? outputs.token_embeddings ?? outputs.logits)?.data as Float32Array;
     const dim = hidden.length / (texts.length * length);
     return encoded.map((row, i) => meanPooled(hidden, i * length * dim, row.length, dim));
