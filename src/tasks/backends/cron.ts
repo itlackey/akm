@@ -525,6 +525,18 @@ function readCrontab(exec: CronExec): string {
   // permission refusal) is reported as what it said.
   const stderr = (result.stderr ?? "").trim();
   if (((result.stdout ?? "").trim() === "" && stderr === "") || /no crontab/i.test(stderr)) return "";
+  // `crontab` reads the spool through its setgid `crontab` group. A process started with no-new-privileges (an agent
+  // sandbox, a container, systemd `NoNewPrivileges=`) runs it without that group, and the spool refuses the read.
+  // The crontab itself is fine, so say so instead of passing on a bare `fopen` error.
+  if (/permission denied/i.test(stderr)) {
+    throw new ConfigError(
+      "crontab -l could not read the crontab spool (permission denied). `crontab` reads it through its setgid " +
+        "group, which a process started with no-new-privileges (an agent sandbox, a container, systemd " +
+        "NoNewPrivileges=) does not get; run this from a normal shell to see the installed tasks.",
+      "INVALID_CONFIG_FILE",
+      "Run the command from a normal login shell or terminal, not from a sandboxed process.",
+    );
+  }
   throw new ConfigError(
     `crontab -l failed (exit ${result.status}): ${result.stderr || result.stdout || "no output"}.`,
     "INVALID_CONFIG_FILE",
