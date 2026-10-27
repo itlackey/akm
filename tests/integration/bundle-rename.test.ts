@@ -14,7 +14,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { buildSnapshotManifest } from "../../src/commands/improve/preparation";
 import type { Proposal } from "../../src/commands/proposal/proposal-types";
+import { akmSearch } from "../../src/commands/read/search";
 import { akmShowUnified as akmShow } from "../../src/commands/read/show";
 import { akmTasksSync, type TasksSyncResult } from "../../src/commands/tasks/tasks";
 import { renameBundle } from "../../src/core/bundle-rename";
@@ -22,14 +24,37 @@ import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { NotFoundError, UsageError } from "../../src/core/errors";
 import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
+import {
+  countFeedbackSignalsByRef,
+  insertUsageEventStrict,
+  renameUsageEventRefs,
+} from "../../src/indexer/usage/usage-events";
 import { readLockfile, upsertLockEntry } from "../../src/integrations/lockfile";
+import type { Database } from "../../src/storage/database";
+import { insertEventStrict, renameEventRefs } from "../../src/storage/repositories/events-repository";
+import {
+  getImproveLedgerRow,
+  recordImproveLedger,
+  renameImproveLedgerRefs,
+} from "../../src/storage/repositories/improve-ledger-repository";
 import { closeDatabase } from "../../src/storage/repositories/index-connection";
+import {
+  getAssetOutcome,
+  renameAssetOutcomeRefs,
+  upsertAssetOutcome,
+} from "../../src/storage/repositories/outcome-repository";
 import { renameProposalsBundleRef, upsertProposal } from "../../src/storage/repositories/proposals-repository";
+import {
+  getAssetSalience,
+  renameAssetSalienceRefs,
+  upsertAssetSalience,
+} from "../../src/storage/repositories/salience-repository";
 import { renameTaskHistoryTargetRefs, upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
 import { renameWorkflowRunRefs } from "../../src/storage/repositories/workflow-runs-repository";
 import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
 import type { SchedulerBackend } from "../../src/tasks/backends/types";
+import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { seedWorkflowRun } from "../_helpers/workflow";
 
@@ -97,6 +122,23 @@ async function seedBundleWithOneEntry(): Promise<void> {
     defaultWriteTarget: "original",
   });
   await akmIndex({ stashDir: storage.stashDir });
+}
+
+function seedSalience(db: Database, ref: string, rankScore: number): void {
+  upsertAssetSalience(db, ref, { encoding: 0.5, outcome: 0, retrieval: 0, rankScore });
+}
+
+function seedOutcome(db: Database, ref: string, outcomeScore: number): void {
+  upsertAssetOutcome(db, {
+    ref,
+    lastRetrievedAt: 0,
+    retrievalCount: 0,
+    expectedRetrievalRate: 0,
+    negativeFeedbackCount: 0,
+    acceptedChangeCount: 0,
+    outcomeScore,
+    updatedAt: 0,
+  });
 }
 
 function makeProposal(id: string, ref: string, targetSource: string): Proposal {
@@ -333,6 +375,296 @@ describe("akm bundle rename — applied", () => {
       expect(proposal.ref).toBe("team//knowledge/x");
     } finally {
       closeDatabase(stateDb);
+    }
+  });
+
+  test("feedback given before the rename still ranks the asset after it (#1250)", async () => {
+    for (const name of ["alpha", "beta", "gamma"]) {
+      writeKnowledgeAsset(storage.stashDir, name, `---\ndescription: zebra note\n---\nzebra ${name} stripes\n`);
+    }
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { original: { path: storage.stashDir, writable: true } },
+      defaultBundle: "original",
+      defaultWriteTarget: "original",
+    });
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+
+    const names = async (): Promise<string[]> =>
+      (await akmSearch({ query: "zebra", skipLogging: true })).hits.map((hit) => ("name" in hit ? hit.name : ""));
+    const base = await names();
+    const favourite = base[2] as string;
+    for (let i = 0; i < 3; i++) {
+      const { code, stderr } = await runCliCapture([
+        "feedback",
+        `knowledge/${favourite}`,
+        "--positive",
+        "--format=json",
+      ]);
+      expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+    }
+    expect((await names())[0]).toBe(favourite);
+
+    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+
+    expect((await names())[0]).toBe(favourite);
+  });
+
+  test("rewrites the usage events, events, ledger, salience and outcome rows of the renamed bundle only (#1250)", async () => {
+    await seedBundleWithOneEntry();
+    const stateDb = openStateDatabase();
+    try {
+      for (const [entry_ref, signal] of [
+        ["original//knowledge/hello", "positive"],
+        ["original//knowledge/hello", "negative"],
+        ["original2//knowledge/hello", "positive"],
+        ["knowledge/hello", "positive"],
+      ] as const) {
+        insertUsageEventStrict(stateDb, { event_type: "feedback", entry_ref, signal, source: "user" });
+        insertEventStrict(stateDb, { eventType: "feedback", ts: "2026-10-01T00:00:00.000Z", ref: entry_ref });
+      }
+      for (const [ref, at] of [
+        ["original//knowledge/hello", "2026-10-02T00:00:00.000Z"],
+        ["original2//knowledge/hello", "2026-10-03T00:00:00.000Z"],
+        // Left by a removed bundle that was also called "renamed": the renamed bundle's row replaces it.
+        ["renamed//knowledge/hello", "2026-01-01T00:00:00.000Z"],
+      ] as const) {
+        recordImproveLedger(stateDb, { stashDir: storage.stashDir, ref, source: "reflect", outcome: "unchanged", at });
+      }
+      for (const [ref, rankScore] of [
+        ["original//knowledge/hello", 0.9],
+        ["original2//knowledge/hello", 0.8],
+        // Left by a removed bundle that was also called "renamed": the renamed bundle's row replaces it.
+        ["renamed//knowledge/hello", 0.1],
+      ] as const) {
+        seedSalience(stateDb, ref, rankScore);
+      }
+      seedOutcome(stateDb, "original//knowledge/hello", 0.7);
+      seedOutcome(stateDb, "original2//knowledge/hello", 0.6);
+    } finally {
+      closeDatabase(stateDb);
+    }
+
+    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+
+    const readDb = openStateDatabase();
+    try {
+      const counts = countFeedbackSignalsByRef(readDb, [
+        "original//knowledge/hello",
+        "renamed//knowledge/hello",
+        "original2//knowledge/hello",
+      ]);
+      expect(counts.has("original//knowledge/hello")).toBe(false);
+      expect(counts.get("renamed//knowledge/hello")).toEqual({ pos: 1, neg: 1 });
+      expect(counts.get("original2//knowledge/hello")).toEqual({ pos: 1, neg: 0 });
+      expect(
+        readDb.prepare("SELECT COUNT(*) AS n FROM usage_events WHERE entry_ref = 'knowledge/hello'").get(),
+      ).toEqual({ n: 1 });
+
+      expect(getAssetSalience(readDb, "original//knowledge/hello")).toBeUndefined();
+      expect(getAssetSalience(readDb, "renamed//knowledge/hello")?.rank_score).toBe(0.9);
+      expect(getAssetSalience(readDb, "original2//knowledge/hello")?.rank_score).toBe(0.8);
+      expect(getAssetOutcome(readDb, "original//knowledge/hello")).toBeUndefined();
+      expect(getAssetOutcome(readDb, "renamed//knowledge/hello")?.outcome_score).toBe(0.7);
+      expect(getAssetOutcome(readDb, "original2//knowledge/hello")?.outcome_score).toBe(0.6);
+
+      expect(
+        (
+          readDb.prepare("SELECT ref FROM events WHERE event_type = 'feedback' ORDER BY id").all() as Array<{
+            ref: string;
+          }>
+        ).map((row) => row.ref),
+      ).toEqual([
+        "renamed//knowledge/hello",
+        "renamed//knowledge/hello",
+        "original2//knowledge/hello",
+        "knowledge/hello",
+      ]);
+      const ledgerAt = (ref: string) => getImproveLedgerRow(readDb, storage.stashDir, ref, "reflect")?.lastAttemptAt;
+      expect(ledgerAt("original//knowledge/hello")).toBeUndefined();
+      expect(ledgerAt("renamed//knowledge/hello")).toBe("2026-10-02T00:00:00.000Z");
+      expect(ledgerAt("original2//knowledge/hello")).toBe("2026-10-03T00:00:00.000Z");
+    } finally {
+      closeDatabase(readDb);
+    }
+  });
+
+  test("improve still reads the bundle's feedback and its own attempts after the rename (#1250)", async () => {
+    await seedBundleWithOneEntry();
+    const { code, stderr } = await runCliCapture([
+      "feedback",
+      "knowledge/hello",
+      "--negative",
+      "--reason",
+      "the greeting is wrong",
+      "--format=json",
+    ]);
+    expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+    const stateDb = openStateDatabase();
+    try {
+      recordImproveLedger(stateDb, {
+        stashDir: storage.stashDir,
+        ref: "original//knowledge/hello",
+        source: "reflect",
+        outcome: "unchanged",
+        at: "2026-10-01T00:00:00.000Z",
+      });
+    } finally {
+      closeDatabase(stateDb);
+    }
+
+    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+
+    const manifest = buildSnapshotManifest({
+      postCleanupRefs: [{ ref: "knowledge/hello", itemRef: "renamed//knowledge/hello", reason: "scope-type" }],
+      validationFailureRefs: new Set(),
+      stashDir: storage.stashDir,
+    });
+    expect(manifest.feedback.get("knowledge/hello")).toEqual({ hasSignal: true, positive: 0, negative: 1 });
+    expect(manifest.latestNegativeTs.has("knowledge/hello")).toBe(true);
+    expect(manifest.lastReflectAttemptAt.get("knowledge/hello")).toBe("2026-10-01T00:00:00.000Z");
+  });
+
+  test("a feedback event stays attached to its entry across the rename and the next index (#1250)", async () => {
+    await seedBundleWithOneEntry();
+    const { code, stderr } = await runCliCapture(["feedback", "knowledge/hello", "--positive", "--format=json"]);
+    expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+
+    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+    await akmIndex({ stashDir: storage.stashDir });
+
+    const readDb = openStateDatabase();
+    try {
+      const row = readDb
+        .prepare("SELECT entry_id, entry_ref FROM usage_events WHERE event_type = 'feedback'")
+        .get() as {
+        entry_id: number | null;
+        entry_ref: string;
+      };
+      expect(row.entry_ref).toBe("renamed//knowledge/hello");
+      expect(row.entry_id).not.toBeNull();
+    } finally {
+      closeDatabase(readDb);
+    }
+  });
+
+  test("a bundle id's `_`, `%` and astral characters match literally in the usage, events, ledger, salience and outcome rewrites (#1250)", () => {
+    const stateDb = openStateDatabase();
+    try {
+      for (const bundle of ["my_%💼", "myxy💼"]) {
+        insertUsageEventStrict(stateDb, {
+          event_type: "feedback",
+          entry_ref: `${bundle}//knowledge/x`,
+          signal: "positive",
+          source: "user",
+        });
+        insertEventStrict(stateDb, {
+          eventType: "feedback",
+          ts: "2026-10-01T00:00:00.000Z",
+          ref: `${bundle}//knowledge/x`,
+        });
+        recordImproveLedger(stateDb, {
+          stashDir: storage.stashDir,
+          ref: `${bundle}//knowledge/x`,
+          source: "reflect",
+          outcome: "unchanged",
+          at: "2026-10-01T00:00:00.000Z",
+        });
+        seedSalience(stateDb, `${bundle}//knowledge/x`, 0.5);
+        seedOutcome(stateDb, `${bundle}//knowledge/x`, 0.5);
+      }
+
+      expect(renameUsageEventRefs(stateDb, "my_%💼", "team")).toBe(1);
+      expect(renameEventRefs(stateDb, "my_%💼", "team")).toBe(1);
+      expect(renameImproveLedgerRefs(stateDb, "my_%💼", "team")).toBe(1);
+      expect(renameAssetSalienceRefs(stateDb, "my_%💼", "team")).toBe(1);
+      expect(renameAssetOutcomeRefs(stateDb, "my_%💼", "team")).toBe(1);
+
+      const refs = (sql: string) => (stateDb.prepare(sql).all() as Array<{ ref: string }>).map((row) => row.ref).sort();
+      const expected = ["myxy💼//knowledge/x", "team//knowledge/x"];
+      expect(refs("SELECT entry_ref AS ref FROM usage_events")).toEqual(expected);
+      expect(refs("SELECT ref FROM events WHERE event_type = 'feedback'")).toEqual(expected);
+      expect(refs("SELECT ref FROM improve_ledger")).toEqual(expected);
+      expect(refs("SELECT asset_ref AS ref FROM asset_salience")).toEqual(expected);
+      expect(refs("SELECT asset_ref AS ref FROM asset_outcome")).toEqual(expected);
+    } finally {
+      closeDatabase(stateDb);
+    }
+  });
+
+  test("renaming a bundle leaves the state rows of a bundle whose id differs only in case (#1250)", async () => {
+    // Bundle ids are case-sensitive config keys, so `team` and `Team` can both be configured.
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { team: { path: storage.stashDir }, Team: { path: "/tmp/other" } },
+    });
+    const stateDb = openStateDatabase();
+    try {
+      for (const bundle of ["team", "Team"]) {
+        upsertProposal(stateDb, makeProposal(`p-${bundle}`, `${bundle}//knowledge/x`, bundle), storage.stashDir);
+        upsertTaskHistory(stateDb, {
+          task_id: `wf-${bundle}`,
+          status: "completed",
+          started_at: "2026-01-01T00:00:00.000Z",
+          completed_at: "2026-01-01T00:01:00.000Z",
+          failed_at: null,
+          log_path: null,
+          target_kind: "workflow",
+          target_ref: `${bundle}//workflows/x`,
+          metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 60_000, detail: null }),
+        });
+        seedWorkflowRun(stateDb, { runId: `run-${bundle}`, steps: ["a"], workflowRef: `${bundle}//workflows/x` });
+        insertUsageEventStrict(stateDb, {
+          event_type: "feedback",
+          entry_ref: `${bundle}//knowledge/x`,
+          signal: "positive",
+          source: "user",
+        });
+        insertEventStrict(stateDb, {
+          eventType: "feedback",
+          ts: "2026-10-01T00:00:00.000Z",
+          ref: `${bundle}//knowledge/x`,
+        });
+        recordImproveLedger(stateDb, {
+          stashDir: storage.stashDir,
+          ref: `${bundle}//knowledge/x`,
+          source: "reflect",
+          outcome: "unchanged",
+          at: "2026-10-01T00:00:00.000Z",
+        });
+        seedSalience(stateDb, `${bundle}//knowledge/x`, 0.5);
+        seedOutcome(stateDb, `${bundle}//knowledge/x`, 0.5);
+      }
+    } finally {
+      closeDatabase(stateDb);
+    }
+    const deps = renameDeps(fakeCronBackend(memoryExec()));
+
+    const plan = await renameBundle("team", "other", { dryRun: true }, deps);
+    expect(plan.state).toEqual({ proposalRefs: 1, proposalTargets: 1, taskHistoryRefs: 1, workflowRunRefs: 1 });
+    expect(plan.activeWorkflowRuns.map((run) => run.id)).toEqual(["run-team"]);
+
+    await renameBundle("team", "other", {}, deps);
+
+    const readDb = openStateDatabase();
+    try {
+      const refs = (sql: string) => (readDb.prepare(sql).all() as Array<{ ref: string }>).map((row) => row.ref).sort();
+      expect(refs("SELECT ref FROM proposals")).toEqual(["Team//knowledge/x", "other//knowledge/x"]);
+      expect(refs("SELECT target_ref AS ref FROM task_history")).toEqual(["Team//workflows/x", "other//workflows/x"]);
+      expect(refs("SELECT workflow_ref AS ref FROM workflow_runs")).toEqual([
+        "Team//workflows/x",
+        "other//workflows/x",
+      ]);
+      expect(refs("SELECT entry_ref AS ref FROM usage_events")).toEqual(["Team//knowledge/x", "other//knowledge/x"]);
+      expect(refs("SELECT asset_ref AS ref FROM asset_salience")).toEqual(["Team//knowledge/x", "other//knowledge/x"]);
+      expect(refs("SELECT asset_ref AS ref FROM asset_outcome")).toEqual(["Team//knowledge/x", "other//knowledge/x"]);
+      expect(refs("SELECT ref FROM events WHERE event_type = 'feedback'")).toEqual([
+        "Team//knowledge/x",
+        "other//knowledge/x",
+      ]);
+      expect(refs("SELECT ref FROM improve_ledger")).toEqual(["Team//knowledge/x", "other//knowledge/x"]);
+    } finally {
+      closeDatabase(readDb);
     }
   });
 

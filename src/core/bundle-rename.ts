@@ -7,7 +7,9 @@
  * bundle's key. A bundle id is a mass identity prefix: every durable ref this
  * tool minted (`entries.item_ref`/`bundle_id`, `proposals.ref`, a pending
  * proposal's `proposedTarget.source`, a workflow task_history row's
- * `target_ref`, a `workflow_runs.workflow_ref`, `scheduler.enabled[].ref`) carries it, and a hand-edited
+ * `target_ref`, a `workflow_runs.workflow_ref`, a `usage_events.entry_ref`, an
+ * `events.ref`, an `asset_salience`/`asset_outcome` `asset_ref`, an
+ * `improve_ledger.ref`, `scheduler.enabled[].ref`) carries it, and a hand-edited
  * `bundles` key strands all of it (see `src/indexer/bundle-identity-guard.ts`
  * §11.5). This module is the rekey transaction that guard's docstring points
  * to.
@@ -21,23 +23,23 @@
  * `akm mv`/editing territory, not a config-identity rename. `--dry-run`
  * (and every real run) lists the indexed files that still spell the old
  * `<old>//` prefix so the operator can follow up.
- *
- * Left behind on purpose: `usage_events`/`asset_salience`/`asset_outcome`
- * keyed by the old bundle prefix (learned utility/outcome history) — outside
- * this item's scope; `warnOnBundleRenameDrift` already documents this class
- * of gap and `akm index --full` re-mints under the new id.
  */
 
 import fs from "node:fs";
 import type { TasksSyncResult } from "../commands/tasks/tasks";
+import { renameUsageEventRefs } from "../indexer/usage/usage-events";
 import { readLockfile, renameLockEntry } from "../integrations/lockfile";
+import { renameEventRefs } from "../storage/repositories/events-repository";
+import { renameImproveLedgerRefs } from "../storage/repositories/improve-ledger-repository";
 import {
   closeDatabase,
   openIndexDatabase,
   openReadonlyExistingDatabase,
 } from "../storage/repositories/index-connection";
 import { getFilePathsByBundle, renameEntriesBundleId } from "../storage/repositories/index-entries-repository";
+import { renameAssetOutcomeRefs } from "../storage/repositories/outcome-repository";
 import { countProposalsForBundleRename, renameProposalsBundleRef } from "../storage/repositories/proposals-repository";
+import { renameAssetSalienceRefs } from "../storage/repositories/salience-repository";
 import {
   countTaskHistoryTargetRefs,
   renameTaskHistoryTargetRefs,
@@ -342,12 +344,20 @@ export async function renameBundle(
   }
 
   // State: proposals.ref, a pending proposal's proposedTarget.source,
-  // workflow task_history.target_ref, and workflow_runs.workflow_ref.
+  // workflow task_history.target_ref, workflow_runs.workflow_ref, and the
+  // learned history keyed by item ref: usage_events.entry_ref (search ranking
+  // counts feedback by it), events.ref and improve_ledger.ref (improve reads
+  // feedback and its own attempts by them), and asset_salience/asset_outcome.asset_ref.
   if (fs.existsSync(getStateDbPath())) {
     withStateDb((db) => {
       renameProposalsBundleRef(db, oldId, newId);
       renameTaskHistoryTargetRefs(db, oldId, newId);
       renameWorkflowRunRefs(db, oldId, newId);
+      renameUsageEventRefs(db, oldId, newId);
+      renameEventRefs(db, oldId, newId);
+      renameImproveLedgerRefs(db, oldId, newId);
+      renameAssetSalienceRefs(db, oldId, newId);
+      renameAssetOutcomeRefs(db, oldId, newId);
     });
   }
 

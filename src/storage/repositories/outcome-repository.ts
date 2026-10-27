@@ -211,3 +211,20 @@ export function countAssetOutcomeMissing(db: Database): number {
   };
   return row.n;
 }
+
+/**
+ * Rewrite every `asset_outcome.asset_ref` naming `oldBundleId` to
+ * `newBundleId` (`akm bundle rename`). Same prefix match and orphan-replacing
+ * collision policy as `renameAssetSalienceRefs`. Returns the number of rows
+ * rewritten.
+ */
+export function renameAssetOutcomeRefs(db: Database, oldBundleId: string, newBundleId: string): number {
+  const prefix = `${oldBundleId}//`;
+  return Number(
+    db
+      .prepare(
+        `UPDATE OR REPLACE asset_outcome SET asset_ref = ? || substr(asset_ref, length(?) + 1) WHERE substr(asset_ref, 1, length(?)) = ?`,
+      )
+      .run(newBundleId, oldBundleId, prefix, prefix).changes,
+  );
+}

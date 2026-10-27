@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`akm bundle rename` keeps the bundle's recorded feedback** (#1250). It rewrote
+  proposals, task history and workflow refs but left `usage_events` under the old
+  prefix, so after a rename no feedback counted in search ranking for any asset
+  in the bundle, improve stopped reading its feedback, and the next `akm index`
+  cut the events off from their entries. It now moves the bundle's
+  `usage_events`, `events`, `improve_ledger`, `asset_salience` and
+  `asset_outcome` rows to the new name too, and matches the old name
+  case-sensitively, so renaming `team` no longer moves or overwrites the rows of
+  a bundle named `Team`.
 - A negative whose exact fix was applied no longer keeps demoting the corrected
   asset in `akm search` and `akm curate` (#1249). A negative recorded with
   `--replace`/`--with`, `--superseded-by` or `--outdated` stops counting against

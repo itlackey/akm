@@ -226,3 +226,22 @@ export function purgeOldUsageEvents(db: Database, retentionDays: number): void {
     /* Table may not exist yet */
   }
 }
+
+/**
+ * Rewrite every `usage_events.entry_ref` naming `oldBundleId` to `newBundleId`
+ * (`akm bundle rename`). Search ranking counts feedback by `entry_ref`, so an
+ * event left under the old prefix stops counting for the renamed bundle's
+ * assets. `entry_id` is untouched: the rename keeps every entry's row id. A
+ * legacy unqualified ref is not matched by the `<old>//` prefix and is left alone.
+ * Returns the number of rows rewritten.
+ */
+export function renameUsageEventRefs(db: Database, oldBundleId: string, newBundleId: string): number {
+  const prefix = `${oldBundleId}//`;
+  return Number(
+    db
+      .prepare(
+        `UPDATE usage_events SET entry_ref = ? || substr(entry_ref, length(?) + 1) WHERE substr(entry_ref, 1, length(?)) = ?`,
+      )
+      .run(newBundleId, oldBundleId, prefix, prefix).changes,
+  );
+}

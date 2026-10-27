@@ -589,9 +589,9 @@ export function listStateProposalIdsByPrefix(db: Database, stashDir: string, idP
  * rename --dry-run`: the same two `WHERE` predicates, read-only.
  */
 export function countProposalsForBundleRename(db: Database, oldBundleId: string): { refs: number; targets: number } {
-  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  const prefix = `${oldBundleId}//`;
   const refs = (
-    db.prepare(`SELECT COUNT(*) AS n FROM proposals WHERE ref LIKE ? ESCAPE '\\'`).get(`${prefix}%`) as {
+    db.prepare(`SELECT COUNT(*) AS n FROM proposals WHERE substr(ref, 1, length(?)) = ?`).get(prefix, prefix) as {
       n: number;
     }
   ).n;
@@ -618,12 +618,12 @@ export function renameProposalsBundleRef(
   oldBundleId: string,
   newBundleId: string,
 ): { refs: number; targets: number } {
-  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  const prefix = `${oldBundleId}//`;
   return db.transaction(() => {
     const refs = Number(
       db
-        .prepare(`UPDATE proposals SET ref = ? || substr(ref, length(?) + 1) WHERE ref LIKE ? ESCAPE '\\'`)
-        .run(newBundleId, oldBundleId, `${prefix}%`).changes,
+        .prepare(`UPDATE proposals SET ref = ? || substr(ref, length(?) + 1) WHERE substr(ref, 1, length(?)) = ?`)
+        .run(newBundleId, oldBundleId, prefix, prefix).changes,
     );
     const targets = Number(
       db

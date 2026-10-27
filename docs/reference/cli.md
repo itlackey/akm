@@ -1489,7 +1489,11 @@ config `bundles` key; `defaultBundle`/`defaultWriteTarget` when they name the
 old id; every `scheduler.enabled[].ref` with the old `<old>//` prefix; the
 lockfile entry id; every indexed entry's `bundle_id`/ref; and this tool's own
 state rows that name the old bundle (`proposals.ref`, a pending proposal's
-write target, workflow `task_history.target_ref`, and `workflow_runs.workflow_ref`). The result's
+write target, workflow `task_history.target_ref`, `workflow_runs.workflow_ref`,
+the recorded feedback and usage in `usage_events.entry_ref` and `events.ref`,
+and the improve loop's `improve_ledger`, `asset_salience` and `asset_outcome`
+rows, so search and improve keep counting the bundle's feedback; the old name
+is matched case-sensitively). The result's
 `activeWorkflowRuns` lists the active and blocked runs of the renamed bundle,
 each with its `status`: their frozen plans keep the old qualified refs, so
 continue them with `akm workflow run <id>` (after `akm workflow resume <id>` for
