@@ -670,11 +670,16 @@ bundled.
 ## Indexing
 
 AKM-native Markdown contributes a normalized body projection to the
-lowest-weight `content` search field. The projection is capped at 16,384
-characters, removes frontmatter, comments, fenced code, and link destinations,
-and is never produced for secret, env, session, or session-checkpoint assets.
-Embedding input is separately capped at 8,192 characters with structured
-metadata placed before body content.
+lowest-weight `content` search field. The projection is capped at 1,000,000
+characters, removes frontmatter, comments, and link destinations, and is never
+produced for secret, env, session, or session-checkpoint assets. From fenced
+code it keeps only the identifiers: names, CLI flags, keys, paths and dotted
+references, after the prose. Quoted strings (other than keys and absolute
+paths), assignment values, URLs and long token-like strings are dropped, so a
+fence's literal values are not indexed; a bare short word stays, as it does in
+prose. Search results return no `content`, so this changes what search finds,
+not what it hands an agent. Embedding input is cut to the embedding model's
+token limit, with structured metadata placed before body content.
 
 ## Semantic search
 
