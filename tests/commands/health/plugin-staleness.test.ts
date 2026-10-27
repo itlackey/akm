@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -82,6 +83,76 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     expect(adv?.evidence?.availableVersion).toBe("0.9.1202608250804");
     expect(adv?.message).toContain("STALE");
     expect(adv?.message).toContain("claude plugin update akm@akm-plugins");
+  });
+
+  test("on the next channel the build on the channel head is up to date, though stable tags exist", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-next-current-");
+    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261013-beta" });
+    makeMarketplaceDir(pluginsRoot);
+
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.10.261015-beta",
+      // What the real lister returns on `next`: the release tag on that branch's head.
+      listRemoteTags: fakeTags(["0.10.261013-beta"]),
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(adv?.status).toBe("pass");
+    expect(adv?.evidence?.stale).toBe(false);
+    expect(adv?.evidence?.availableVersion).toBe("0.10.261013-beta");
+    expect(adv?.message).not.toContain("STALE");
+  });
+
+  test("on the next channel an install behind the channel head is stale", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-next-stale-");
+    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261012-beta" });
+    makeMarketplaceDir(pluginsRoot);
+
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.10.261015-beta",
+      listRemoteTags: fakeTags(["0.10.261013-beta"]),
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(adv?.status).toBe("warn");
+    expect(adv?.evidence?.availableVersion).toBe("0.10.261013-beta");
+    expect(adv?.message).toContain("STALE");
+  });
+
+  test("on the default branch the newest stable tag counts", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-stable-channel-");
+    installPlugin(pluginsRoot, { version: "0.9.30202610090106" });
+    makeMarketplaceDir(pluginsRoot);
+
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.9.31",
+      // What the real lister returns on the default branch: stable tags only.
+      listRemoteTags: fakeTags(["0.9.1", "0.9.30202610090106"]),
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(adv?.status).toBe("pass");
+    expect(adv?.evidence?.availableVersion).toBe("0.9.30202610090106");
+  });
+
+  test("with several cached builds, the highest one counts as installed, prereleases included", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-cached-builds-");
+    installPlugin(pluginsRoot, { versionRange: null, version: "0.9.30202610090106" });
+    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261013-beta" });
+    makeMarketplaceDir(pluginsRoot);
+
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.10.261015-beta",
+      listRemoteTags: fakeTags(["0.9.30202610090106", "0.10.261013-beta"]),
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(adv?.message).toContain("installed 0.10.261013-beta");
+    expect(adv?.status).toBe("pass");
   });
 
   test("up-to-date plugin is not flagged", () => {
@@ -486,5 +557,90 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
         ["opencode-v2-plugin-version", "warn"],
       ]);
     });
+  });
+});
+
+/** Run git in `cwd`; throws on failure so a broken fixture fails loudly. */
+function git(cwd: string, ...args: string[]): string {
+  const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main", ...args], {
+    cwd,
+    encoding: "utf8",
+  });
+  if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+  return r.stdout.trim();
+}
+
+/**
+ * A marketplace remote shaped like itlackey/akm-plugins: `main` at an untagged commit after the stable tag, `next`
+ * reset to the newest build, and a retired 8-digit daily-build tag that semver sorts above every monthly build.
+ * The plugins root's marketplace clone follows `branch`.
+ */
+function makeMarketplaceRemote(pluginsRoot: string, branch: string): void {
+  const work = path.join(pluginsRoot, "remote-work");
+  fs.mkdirSync(work, { recursive: true });
+  git(work, "init", "-q");
+  const commit = (message: string) => git(work, "commit", "-q", "--allow-empty", "-m", message);
+  commit("0.9 stable");
+  git(work, "tag", "v0.9.30202610090106");
+  commit("retired daily build");
+  git(work, "tag", "v0.10.26101201-alpha");
+  git(work, "checkout", "-q", "-b", "next");
+  commit("next build 0.10.261012-beta");
+  git(work, "tag", "v0.10.261012-beta");
+  commit("next build 0.10.261013-beta");
+  git(work, "tag", "v0.10.261013-beta");
+  git(work, "checkout", "-q", "main");
+  commit("untagged work on main");
+  const bare = path.join(pluginsRoot, "remote.git");
+  git(pluginsRoot, "clone", "-q", "--bare", work, bare);
+  const clone = path.join(pluginsRoot, "marketplaces", "akm-plugins");
+  git(pluginsRoot, "clone", "-q", "--branch", branch, bare, clone);
+}
+
+describe("the real remote probe reads the channel the marketplace clone follows", () => {
+  test("a clone on next is compared with the tag on next's head, not the retired build that sorts higher", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-real-next-");
+    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261013-beta" });
+    makeMarketplaceRemote(pluginsRoot, "next");
+
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.10.261015-beta",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(adv?.evidence?.availableVersion).toBe("0.10.261013-beta");
+    expect(adv?.status).toBe("pass");
+  });
+
+  test("a clone on next behind the channel head is stale", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-real-next-behind-");
+    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261012-beta" });
+    makeMarketplaceRemote(pluginsRoot, "next");
+
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.10.261015-beta",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(adv?.evidence?.availableVersion).toBe("0.10.261013-beta");
+    expect(adv?.status).toBe("warn");
+    expect(adv?.message).toContain("STALE");
+  });
+
+  test("a clone on the default branch is compared with the newest stable tag only", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-real-main-");
+    installPlugin(pluginsRoot, { versionRange: null, version: "0.9.30202610090106" });
+    makeMarketplaceRemote(pluginsRoot, "main");
+
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.9.31",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(adv?.evidence?.availableVersion).toBe("0.9.30202610090106");
+    expect(adv?.status).toBe("pass");
   });
 });
