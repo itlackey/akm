@@ -92,9 +92,9 @@ describe("generateEmbeddingsForDb: embedding-credential diagnostics (#953)", () 
       expect(messages[diagnosticIndex]).toBe(
         "[embed] endpoint http://localhost:1/embeddings, model test-model; credential: credentials.json",
       );
-      // Before the first provider request — i.e. before the "Generating
-      // embeddings for N ..." line that precedes the actual embedBatch call.
-      const generatingIndex = messages.findIndex((m) => m.startsWith("Generating embeddings for"));
+      // Before the first provider request — i.e. before the "Embedding N
+      // changed entries ..." line that precedes the actual embedBatch call.
+      const generatingIndex = messages.findIndex((m) => m.startsWith("Embedding "));
       expect(generatingIndex).toBeGreaterThan(diagnosticIndex);
       // Never the resolved value — only ever where it came from.
       expect(messages[diagnosticIndex]).not.toContain("Bearer");

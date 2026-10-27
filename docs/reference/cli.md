@@ -307,9 +307,9 @@ which entries would be removed without modifying the database.
 
 **`--full` does not re-embed unchanged content:** a full run re-drains and
 re-persists every directory, but entry ids are kept, so a vector stays
-attached to its entry and only entries whose search text changed go back to
-the embedding provider. An incremental run re-persists only the files that
-changed.
+attached to its entry and only entries whose embedded text (the search text
+cut to `embedding.maxInputTokens`) changed go back to the embedding provider.
+An incremental run re-persists only the files that changed.
 
 **Embedding model changes:** every stored vector records the embedding model
 it was generated under (`embedding.model` plus dimension for a remote

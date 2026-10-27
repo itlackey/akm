@@ -68,6 +68,14 @@ export function deriveSemanticProviderFingerprint(embedding?: EmbeddingConnectio
   return `local:${embedding?.localModel ?? DEFAULT_LOCAL_MODEL}${template}`;
 }
 
+/**
+ * The most estimated tokens of an entry's search text that are embedded
+ * (`embedding.maxInputTokens`); the rest of the text never reaches the embedder.
+ */
+export function embeddingInputCap(config: AkmConfig): number {
+  return effectiveEmbedding(config)?.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
+}
+
 export interface EmbeddingProgressEvent {
   phase: "embeddings";
   message: string;
@@ -176,7 +184,7 @@ export async function generateEmbeddingsForDb(
   let targetEntryIds = entryIds;
   /** Set only when every entry is (re)embedded, so the up-front "Re-embedding N entries" line names why. */
   let rebuildReason: string | undefined;
-  const maxInputTokens = embedding?.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
+  const maxInputTokens = embeddingInputCap(config);
 
   if (opts?.forceReembed) {
     // The explicit operator override: purge and re-embed everything. The model
@@ -245,9 +253,12 @@ export async function generateEmbeddingsForDb(
       const message = `[embed] Re-embedding ${pendingEntries.length} entr${pendingEntries.length === 1 ? "y" : "ies"} because ${rebuildReason}`;
       onProgress({ phase: "embeddings", message });
     }
+    // Names the size of the work before the first request, so a first index after an upgrade that
+    // re-embeds part of the corpus is not mistaken for a hang.
+    const unchangedCount = Math.max(0, getEmbeddableEntryCount(db) - pendingEntries.length);
     onProgress({
       phase: "embeddings",
-      message: `Generating embeddings for ${pendingEntries.length} entr${pendingEntries.length === 1 ? "y" : "ies"}.`,
+      message: `Embedding ${pendingEntries.length.toLocaleString()} changed entr${pendingEntries.length === 1 ? "y" : "ies"} (${unchangedCount.toLocaleString()} unchanged)`,
     });
 
     // Per-document sizes; the provider's actual request grouping is reported

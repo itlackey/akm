@@ -22,6 +22,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The first `akm index` after upgrading re-embeds only the entries whose
+  embedded text changed (follow-up to #1260). The fenced-code identifiers now in
+  the search text come after the prose, past the first `embedding.maxInputTokens`
+  (default 512, about 2,048 characters) that are embedded, so a longer document
+  keeps its vector and only its keyword row is rewritten. The index prints how
+  many entries it is embedding (`Embedding 3,712 changed entries (15,050
+  unchanged)`), and `akm upgrade` shows that line and the rest of the index's
+  progress instead of waiting silently.
 - Documentation sentences that were false on 0.10 are corrected (review of
   #1273, #1251 follow-up). `asset-types.md` lists every way an env or secret
   value reaches a process. `classification.md` says that `akm`, `okf`, `claude`,

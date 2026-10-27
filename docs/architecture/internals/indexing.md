@@ -74,7 +74,7 @@ search returns the indexed file.
 `generateEmbeddingsForDb` (`src/indexer/materialize-embeddings.ts`) embeds each entry's own search text. Fragments are not embedded. Knobs are under `embedding.*` in [Configuration](../../reference/configuration.md).
 
 - **Model per row.** Each `embeddings` row records the fingerprint it was made under (`remote:<model>|<dimension>` for an endpoint, `local:<localModel>` otherwise; the endpoint URL is not part of it). `index_meta.embeddingFingerprint` holds the configured one. An entry is embedded when it has no row for that fingerprint, so a model change re-embeds entry by entry and an interrupted run resumes. Readers serve only the configured model's rows.
-- **Per-document cap.** Text is cut to `embedding.maxInputTokens` (default 512, estimated at 4 characters per token) before batching; the run reports how many entries were cut.
+- **Per-document cap.** Text is cut to `embedding.maxInputTokens` (default 512, estimated at 4 characters per token) before batching; the run reports how many entries were cut. Text past the cut never reaches the embedder, so a change there rewrites the entry's keyword rows and keeps its vector. The run opens with `Embedding N changed entries (M unchanged)`.
 - **Batching** (`RemoteEmbedder.embedBatch`, `src/llm/embedders/remote.ts`). Requests are bounded by `embedding.maxTokens` (default 6000 estimated tokens) and `embedding.batchSize` (default 100 documents).
 - **Concurrency.** `embedding.concurrency` (1 to 16); unset, it is 1 for a loopback endpoint and 2 for a remote one.
 - **Timeout.** `embedding.timeoutMs` (default 120000) is the budget for a full-size request; smaller requests get a proportionally smaller timeout, never below 30 seconds.

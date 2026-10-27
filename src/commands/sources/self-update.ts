@@ -496,7 +496,11 @@ async function runMigrationStep(runTool: typeof runMigrationTool): Promise<NonNu
 }
 
 /**
- * Rebuild the derived index after a successful upgrade.
+ * Rebuild the derived index after a successful upgrade. The first index after
+ * an upgrade can re-embed part of the corpus and take minutes, so the child's
+ * stderr (its progress lines) goes straight to the terminal; its stdout, never a
+ * terminal here, is captured. `--format json` keeps the progress on stderr
+ * whatever output format the user has configured.
  */
 function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullable<UpgradeResponse["postUpgrade"]> {
   if (opts.skip) {
@@ -507,10 +511,10 @@ function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullab
     };
   }
   try {
-    const result = childProcess.spawnSync(akmBin, ["index"], {
+    const result = childProcess.spawnSync(akmBin, ["index", "--format", "json"], {
       encoding: "utf8",
       env: process.env,
-      stdio: "pipe",
+      stdio: ["pipe", "pipe", "inherit"],
     });
     if (result.error) {
       return {

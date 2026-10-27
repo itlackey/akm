@@ -681,11 +681,72 @@ describe("performUpgrade", () => {
     expect(result.postUpgrade?.exitCode).toBe(0);
     // Install, version verification, then the post-upgrade `akm index`.
     expect(spawnSyncSpy).toHaveBeenCalledTimes(3);
+    // stderr is not piped, so the index's progress lines reach the terminal while it runs.
     expect(spawnSyncSpy).toHaveBeenLastCalledWith(
       "akm",
-      ["index"],
-      expect.objectContaining({ encoding: "utf8", stdio: "pipe" }),
+      ["index", "--format", "json"],
+      expect.objectContaining({ encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] }),
     );
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "the post-upgrade index's progress lines reach the terminal while its stdout is captured",
+    () => {
+      const dir = path.join(sandboxHome().dir, "fake-bin");
+      fs.mkdirSync(dir, { recursive: true });
+      const argvLog = path.join(dir, "index-argv");
+      fs.writeFileSync(path.join(dir, "npm"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(
+        path.join(dir, "akm"),
+        [
+          "#!/bin/sh",
+          'case "$1" in',
+          "  --version) echo 0.0.14 ;;",
+          `  index) echo "$@" > "${argvLog}"; echo "[index:embeddings] Embedding 3 changed entries (7 unchanged)" >&2; echo '{"totalEntries":10}' ;;`,
+          "esac",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const script = `
+        import { performUpgrade } from ${JSON.stringify(path.resolve("src/commands/sources/self-update.ts"))};
+        const result = await performUpgrade(
+          { currentVersion: "0.0.13", latestVersion: "0.0.14", updateAvailable: true, installMethod: "npm" },
+          undefined,
+          { runMigrationTool: async () => ({ status: 0, stdout: JSON.stringify({ status: "current" }), stderr: "" }) },
+        );
+        process.stdout.write(JSON.stringify(result.postUpgrade));
+      `;
+
+      const run = childProcess.spawnSync(process.execPath, ["-e", script], {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}` },
+      });
+
+      expect(run.status).toBe(0);
+      expect(JSON.parse(run.stdout)).toMatchObject({ ok: true, skipped: false, exitCode: 0 });
+      expect(run.stderr).toContain("[index:embeddings] Embedding 3 changed entries (7 unchanged)");
+      expect(fs.readFileSync(argvLog, "utf8").trim()).toBe("index --format json");
+    },
+  );
+
+  test("a failed post-upgrade index reports its exit code when its stderr went to the terminal", async () => {
+    let call = 0;
+    spyOn(childProcess, "spawnSync").mockImplementation((() => {
+      call++;
+      // Install and version verification succeed; the index fails with stderr not captured.
+      return (call < 3 ? { status: 0, stdout: "", stderr: "" } : { status: 1, stdout: "", stderr: null }) as never;
+    }) as never);
+
+    const result = await performUpgrade(
+      { currentVersion: "0.0.13", latestVersion: "0.0.14", updateAvailable: true, installMethod: "npm" },
+      undefined,
+      currentMigrator,
+    );
+
+    expect(result.postUpgrade?.ok).toBe(false);
+    expect(result.postUpgrade?.exitCode).toBe(1);
+    expect(result.postUpgrade?.message).toContain("exit code 1");
   });
 
   test("skips the post-upgrade `akm index` when skipPostUpgrade is set", async () => {
