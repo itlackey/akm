@@ -10,7 +10,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { z } from "zod";
 import {
   AkmConfigSchema,
   ConnectionSchema,
@@ -33,8 +33,7 @@ interface JsonSchema {
 
 function generate(): JsonSchema {
   // Top-level schema with $defs for the named sub-schemas the drift test pins.
-  // We generate each named sub-schema with its own name + target, then merge
-  // them into a single $defs map.
+  // Each named sub-schema is generated on its own, then merged into one $defs map.
   const targets = {
     AkmConfig: AkmConfigSchema,
     ConnectionConfig: ConnectionSchema,
@@ -46,19 +45,10 @@ function generate(): JsonSchema {
 
   const defs: Record<string, unknown> = {};
   for (const [name, schema] of Object.entries(targets)) {
-    const partial = zodToJsonSchema(schema, {
-      name,
-      $refStrategy: "none",
-      definitions: {},
-    }) as Record<string, unknown>;
-    // zod-to-json-schema (with `name`) returns `{ $ref: "#/definitions/<name>", definitions: { <name>: {...} } }`.
-    // We unwrap to the inner schema object.
-    const definitions = partial.definitions as Record<string, unknown> | undefined;
-    if (definitions?.[name]) {
-      defs[name] = definitions[name];
-    } else {
-      defs[name] = partial;
-    }
+    // `io: "input"` describes what a config file holds, before the schema's transforms; the document
+    // declares its own `$schema`, so the one `toJSONSchema` puts on each schema is dropped.
+    const { $schema: _dialect, ...def } = z.toJSONSchema(schema, { io: "input" });
+    defs[name] = def;
   }
 
   const top = defs.AkmConfig as Record<string, unknown>;

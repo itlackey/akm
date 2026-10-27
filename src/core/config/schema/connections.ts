@@ -18,6 +18,7 @@ import {
   engineName,
   envReferenceApiKey,
   nonEmptyString,
+  OpaqueFieldSchema,
   positiveInt,
   retiredApiKeyFile,
 } from "./primitives";
@@ -34,7 +35,10 @@ export const timeoutMsField = z.union([positiveInt.max(WORKFLOW_MAX_TIMEOUT_MS),
  * request fields of its own. The object is listed first so a JSON value given to
  * `akm config set` is read as one.
  */
-export const ModelEntrySchema = z.union([z.object({ model: nonEmptyString }).catchall(z.unknown()), nonEmptyString]);
+export const ModelEntrySchema = z.union([
+  z.object({ model: nonEmptyString }).catchall(OpaqueFieldSchema),
+  nonEmptyString,
+]);
 
 /** Alias (`fast`, `balanced`, `reasoning`, or any the user adds) to the model it names. */
 export const ModelAliasesSchema = z.record(nonEmptyString, ModelEntrySchema);
@@ -49,6 +53,6 @@ export const ConnectionSchema = z
     timeoutMs: timeoutMsField,
     concurrency: positiveInt.optional(),
   })
-  .catchall(z.unknown());
+  .catchall(OpaqueFieldSchema);
 
 export const ConnectionsSchema = z.record(engineName, ConnectionSchema);

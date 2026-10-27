@@ -28,7 +28,7 @@ import { hasRegistryUrlCredentials, REGISTRY_CREDENTIALS_UNSUPPORTED } from "../
 import { warnOnce } from "../warn";
 import { AkmConfigBaseSchema, type AkmConfigShape, listTopLevelConfigKeys } from "./config-schema";
 import { deepMergeConfig } from "./deep-merge";
-import { isEnvReference } from "./schema/primitives";
+import { isEnvReference, OpaqueFieldSchema } from "./schema/primitives";
 
 type Path = string[];
 
@@ -55,26 +55,37 @@ function parsePath(dotted: string): Path {
 function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
   let current = schema;
   while (true) {
-    if (current instanceof z.ZodOptional) {
-      current = current._def.innerType;
-    } else if (current instanceof z.ZodDefault) {
-      current = current._def.innerType;
-    } else if (current instanceof z.ZodNullable) {
-      current = current._def.innerType;
-    } else if (current instanceof z.ZodCatch) {
+    if (
+      current instanceof z.ZodOptional ||
+      current instanceof z.ZodDefault ||
+      current instanceof z.ZodNullable ||
       // `.catch(...)` wraps an inner schema with a fallback value.
-      current = current._def.innerType;
-    } else if (current instanceof z.ZodEffects) {
-      // `.refine()` / `.superRefine()` / `.transform()` / `.preprocess()` —
-      // descend into the inner schema (`schema` for refine/transform, `out`
-      // for preprocess — both are exposed at `_def.schema`).
-      current = current._def.schema;
-    } else if (current instanceof z.ZodReadonly) {
-      current = current._def.innerType;
+      current instanceof z.ZodCatch ||
+      current instanceof z.ZodReadonly
+    ) {
+      current = current.def.innerType as z.ZodTypeAny;
+    } else if (current instanceof z.ZodPipe) {
+      // `.transform()` pipes the schema into a transform and `z.preprocess()` pipes a transform into it:
+      // descend into the side that is a schema. (`.refine()` and `.superRefine()` wrap nothing.)
+      const { in: input, out } = current.def;
+      current = (input instanceof z.ZodTransform ? out : input) as z.ZodTypeAny;
     } else {
       return current;
     }
   }
+}
+
+/**
+ * The schema of the keys an object takes without naming them (`index.<passName>`,
+ * a connection's request fields), or `undefined` when its extra keys are not
+ * ones akm defines. `.passthrough()` gives an object an `unknown` catchall, so
+ * only `OpaqueFieldSchema` itself says "any key, contents left to the endpoint".
+ */
+function namedCatchall(object: z.ZodObject): z.ZodTypeAny | undefined {
+  const catchall = object.def.catchall as z.ZodTypeAny | undefined;
+  if (catchall === undefined || catchall instanceof z.ZodNever) return undefined;
+  if (catchall instanceof z.ZodUnknown && catchall !== OpaqueFieldSchema) return undefined;
+  return catchall;
 }
 
 /** True for a schema that accepts any value (`z.unknown()`): its contents are not keys akm defines. */
@@ -96,28 +107,25 @@ export function resolveSchemaAt(path: Path, config?: Record<string, unknown>, ra
       const next = (schema.shape as Record<string, z.ZodTypeAny>)[segment];
       if (!next) {
         // Catchall (e.g. index.<passName>) — descend into the catchall schema.
-        const catchall = (schema._def as { catchall?: z.ZodTypeAny }).catchall;
-        if (catchall && !(catchall instanceof z.ZodNever)) {
-          schema = catchall;
-        } else {
-          return undefined;
-        }
+        const catchall = namedCatchall(schema);
+        if (!catchall) return undefined;
+        schema = catchall;
       } else {
         schema = next;
       }
     } else if (schema instanceof z.ZodRecord) {
       // Named records (connections, harnesses, improve.strategies, sources, etc.)
       // accept any string key — descend into the value schema.
-      schema = schema._def.valueType;
+      schema = schema.def.valueType as z.ZodTypeAny;
     } else if (schema instanceof z.ZodUnion) {
       const option = selectUnionObjectOption(
-        schema._def.options as z.ZodTypeAny[],
+        schema.options as z.ZodTypeAny[],
         segment,
         existing,
         index === path.length - 1 ? raw : undefined,
       );
       if (!option) return undefined;
-      schema = (option.shape[segment] ?? option._def.catchall) as z.ZodTypeAny;
+      schema = (option.shape[segment] ?? namedCatchall(option)) as z.ZodTypeAny;
     } else {
       // Cannot descend into a non-object schema.
       return undefined;
@@ -134,10 +142,10 @@ function selectUnionObjectOption(
   segment: string,
   existing: unknown,
   raw?: string,
-): z.ZodObject<z.ZodRawShape> | undefined {
+): z.ZodObject<Record<string, z.ZodTypeAny>> | undefined {
   const options = candidates
     .map((candidate) => unwrap(candidate))
-    .filter((candidate): candidate is z.ZodObject<z.ZodRawShape> => candidate instanceof z.ZodObject);
+    .filter((candidate): candidate is z.ZodObject<Record<string, z.ZodTypeAny>> => candidate instanceof z.ZodObject);
 
   if (raw !== undefined) {
     const requested = options.find((option) => {
@@ -161,7 +169,7 @@ function selectUnionObjectOption(
   return (
     options.find((option) => segment in option.shape) ??
     // A model entry such as `{ model, reasoning_effort }` holds request fields the object does not name.
-    options.find((option) => !(option._def.catchall instanceof z.ZodNever))
+    options.find((option) => namedCatchall(option) !== undefined)
   );
 }
 
@@ -410,7 +418,7 @@ function coerceForSchema(schema: z.ZodTypeAny, raw: string, key: string): unknow
     return raw;
   }
   if (target instanceof z.ZodLiteral) {
-    return typeof target._def.value === "string" ? raw : target._def.value;
+    return typeof target.value === "string" ? raw : target.value;
   }
   if (target instanceof z.ZodArray || target instanceof z.ZodObject || target instanceof z.ZodRecord) {
     if (raw === "" || raw === "null") return undefined;
@@ -424,7 +432,7 @@ function coerceForSchema(schema: z.ZodTypeAny, raw: string, key: string): unknow
   if (target instanceof z.ZodUnion) {
     // Try each option in order. Use the first that the schema accepts after
     // coercion. Falls through to JSON parsing if all fail.
-    const options = target._def.options as z.ZodTypeAny[];
+    const options = target.options as z.ZodTypeAny[];
     let lastErr: unknown;
     for (const opt of options) {
       try {
