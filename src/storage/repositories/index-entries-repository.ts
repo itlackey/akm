@@ -24,6 +24,7 @@ import {
   type IndexDocument,
 } from "../../indexer/passes/metadata";
 import { buildSearchText } from "../../indexer/search/search-fields";
+import { capEmbeddingText, DEFAULT_MAX_INPUT_TOKENS } from "../../llm/embedders/remote";
 import { sha256Hex } from "../../runtime";
 import type { Database, SqlValue } from "../database";
 import { ENTRY_COLUMNS, type EntryRow, rowToIndexedEntry } from "./index-entry-mapper";
@@ -36,12 +37,21 @@ import { deleteEntryVectors } from "./index-vec-repository";
 // ── Entry operations ────────────────────────────────────────────────────────
 
 /**
- * Hash of the text an entry's vector is embedded from (`buildSearchText`),
- * stored as `entries.embed_hash`: a change deletes the entry's vector, and the
- * next embedding pass re-embeds it.
+ * Hash of an entry's whole search text (`buildSearchText`), stored as
+ * `entries.embed_hash`: text that hashes the same cannot change what the
+ * entry's vector is embedded from.
  */
 function embedHash(entry: IndexDocument): string {
   return sha256Hex(buildSearchText(entry));
+}
+
+/**
+ * The text an entry's vector is embedded from: its search text cut to the
+ * embedding cap (`embedding.maxInputTokens`). Text past the cut never reaches
+ * the embedder, so a change there leaves the vector as it is.
+ */
+function embeddedInput(entry: IndexDocument, maxInputTokens: number): string {
+  return capEmbeddingText(buildSearchText(entry), maxInputTokens).text;
 }
 
 /**
@@ -51,6 +61,11 @@ function embedHash(entry: IndexDocument): string {
  * The entries row, FTS projection, declared links, and stale-vector
  * invalidation commit as one SQLite transaction. Callers therefore cannot
  * publish an entry and forget a second FTS or links maintenance step.
+ *
+ * The entry's vector is deleted when the text it is embedded from changes,
+ * that is when the search text cut to `maxInputTokens` (the embedding cap,
+ * `embedding.maxInputTokens`) differs from the cut of the stored document. A
+ * change past the cut rewrites the keyword rows and keeps the vector.
  */
 export function upsertEntry(
   db: Database,
@@ -58,6 +73,7 @@ export function upsertEntry(
   entry: IndexDocument,
   provenance: EntryProvenance,
   contentHash?: string,
+  maxInputTokens: number = DEFAULT_MAX_INPUT_TOKENS,
 ): number {
   // Hot path during indexing — cache prepared statements per database
   // connection so we don't pay the SQL parse/compile cost on every call.
@@ -72,6 +88,11 @@ export function upsertEntry(
   // writer's current value.
   const apply = (): number => {
     const previous = stmts.findByItemRef.get(provenance.itemRef) as ExistingUpsertRow | undefined;
+    // Decided before the upsert overwrites the stored document it compares against.
+    const vectorStale =
+      previous != null &&
+      previous.embed_hash !== hash &&
+      !storedDocumentEmbedsAs(stmts, previous, embeddedInput(entry, maxInputTokens), maxInputTokens);
     const result = stmts.upsert.get(
       provenance.itemRef,
       provenance.bundleId,
@@ -87,7 +108,7 @@ export function upsertEntry(
     ) as { id: number } | undefined;
     if (!result) throw new Error("upsertEntry: item_ref not found after upsert");
 
-    if (previous?.id === result.id && previous.embed_hash !== hash) deleteEntryVectors(db, result.id);
+    if (previous?.id === result.id && vectorStale) deleteEntryVectors(db, result.id);
     replaceFtsEntry(
       db,
       result.id,
@@ -107,6 +128,30 @@ export function upsertEntry(
 interface UpsertStmts {
   upsert: ReturnType<Database["prepare"]>;
   findByItemRef: ReturnType<Database["prepare"]>;
+  documentById: ReturnType<Database["prepare"]>;
+}
+
+/**
+ * Whether the stored document of `previous` embeds as `input`. The stored
+ * document is what the entry's current vector was embedded from, so the
+ * previous input is derived from it and needs no column of its own. The stored
+ * hash vouches for that: a document that cannot be read, or whose search text
+ * no longer hashes to `embed_hash`, has no known input, and its vector goes.
+ */
+function storedDocumentEmbedsAs(
+  stmts: UpsertStmts,
+  previous: ExistingUpsertRow,
+  input: string,
+  maxInputTokens: number,
+): boolean {
+  const row = stmts.documentById.get(previous.id) as { document_json: string } | undefined | null;
+  if (!row) return false;
+  try {
+    const text = buildSearchText(JSON.parse(row.document_json) as IndexDocument);
+    return sha256Hex(text) === previous.embed_hash && capEmbeddingText(text, maxInputTokens).text === input;
+  } catch {
+    return false;
+  }
 }
 
 interface ExistingUpsertRow {
@@ -147,6 +192,7 @@ function getUpsertStmts(db: Database): UpsertStmts {
       RETURNING id
     `),
     findByItemRef: db.prepare("SELECT id, embed_hash FROM entries WHERE item_ref = ?"),
+    documentById: db.prepare("SELECT document_json FROM entries WHERE id = ?"),
   };
   upsertStmtsByDb.set(db, stmts);
   return stmts;

@@ -80,7 +80,7 @@ import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import { type AdapterConceptOwner, indexedPathMatchesOwner, resolveConceptOwner } from "./lookup/adapter-concept-owner";
-import { type EmbeddingGenerationResult, generateEmbeddingsForDb } from "./materialize-embeddings";
+import { type EmbeddingGenerationResult, embeddingInputCap, generateEmbeddingsForDb } from "./materialize-embeddings";
 import {
   canUseIncrementalSkip,
   computeDirFingerprint,
@@ -732,7 +732,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     // …then write it in one transaction: `item_ref = <bundle>//<conceptId>`
     // plus canonical component/adapter provenance per source root.
     const bundleByRoot = buildIndexedSourceOwners(sources);
-    persistDirRecords(db, dirRecords, warnings, bundleByRoot);
+    persistDirRecords(db, dirRecords, warnings, bundleByRoot, embeddingInputCap(config));
     onProgress({
       phase: "scan",
       message: `Scanned ${scannedDirs} ${scannedDirs === 1 ? "directory" : "directories"} and skipped ${skippedDirs}.`,
@@ -1357,6 +1357,7 @@ function persistDirRecords(
   dirRecords: DirRecord[],
   warnings: string[],
   bundleByRoot: ReadonlyMap<string, { bundleId: string; componentId: string; adapterId: string }>,
+  maxInputTokens: number,
 ): void {
   const deletedUsageEntryIds = new Set<number>();
   const findPersisted = db.prepare("SELECT id, content_hash, file_path, adapter_id FROM entries WHERE item_ref = ?");
@@ -1482,7 +1483,7 @@ function persistDirRecords(
             continue;
           }
 
-          upsertEntry(db, entryPath, withFileSize(entry, entryPath), provenance, contentHash);
+          upsertEntry(db, entryPath, withFileSize(entry, entryPath), provenance, contentHash, maxInputTokens);
         }
       }
 

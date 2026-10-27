@@ -90,7 +90,7 @@ cleared when `akm index` rebuilds the FTS table).
 | `content_hash` | TEXT | Change detection |
 | `document_json` | TEXT NOT NULL | The stored `IndexDocument` |
 | `derived_from` | TEXT | Set on entries derived from another asset (for example `.derived` memories) |
-| `embed_hash` | TEXT | SHA-256 of the text the entry is embedded from; a change deletes the vector |
+| `embed_hash` | TEXT | SHA-256 of the entry's whole search text. The vector is deleted when the search text cut to `embedding.maxInputTokens` differs from the stored document's; a change past the cut keeps it |
 
 Indexes: `idx_entries_bundle`, `idx_entries_type`, `idx_entries_file_path`,
 `idx_entries_derived_from`.

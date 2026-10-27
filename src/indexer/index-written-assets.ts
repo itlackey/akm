@@ -33,7 +33,7 @@ import { warn, warnVerbose } from "../core/warn";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import { deleteEntriesByIds, getEntryCount, upsertEntry } from "../storage/repositories/index-entries-repository";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
-import { generateEmbeddingsForDb, publishTargetedEmbeddingMeta } from "./materialize-embeddings";
+import { embeddingInputCap, generateEmbeddingsForDb, publishTargetedEmbeddingMeta } from "./materialize-embeddings";
 import { type IndexDocument, withFileSize } from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
 import { buildFileContext } from "./walk/file-context";
@@ -159,6 +159,7 @@ export async function indexWrittenAssets(
     try {
       db.exec(`PRAGMA busy_timeout = ${WRITE_PATH_INDEX_BUSY_TIMEOUT_MS}`);
       if (getEntryCount(db) === 0) return true;
+      const config = loadConfig();
       const targetEntryIds = new Set<number>();
       let mutated = false;
       db.transaction(() => {
@@ -210,12 +211,11 @@ export async function indexWrittenAssets(
             db,
             supersededIds.map((row) => row.id),
           );
-          targetEntryIds.add(upsertEntry(db, file, entryWithSize, provenance, contentHash));
+          targetEntryIds.add(upsertEntry(db, file, entryWithSize, provenance, contentHash, embeddingInputCap(config)));
           mutated = true;
         }
       })();
       if (mutated) {
-        const config = loadConfig();
         await generateEmbeddingsForDb(db, config, () => {}, undefined, [...targetEntryIds]);
         publishTargetedEmbeddingMeta(db, config);
       }
