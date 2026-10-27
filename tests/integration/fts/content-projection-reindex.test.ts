@@ -12,7 +12,6 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../../../src/commands/read/search";
 import { saveConfig } from "../../../src/core/config/config";
@@ -26,15 +25,22 @@ import {
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
+  sandboxXdgDataHome,
   withEnv,
 } from "../../_helpers/sandbox";
 
 let cleanup: Cleanup = () => {};
+let sandboxStash = "";
 
+// The index database lives in the data dir: without its own, the test would share the suite's database with the
+// other test files of its process, and rewrite their directories' rows too.
 beforeEach(() => {
   const cacheResult = sandboxXdgCacheHome();
   const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
-  cleanup = sandboxStashDir(cfgResult.cleanup).cleanup;
+  const dataResult = sandboxXdgDataHome(cfgResult.cleanup);
+  const stash = sandboxStashDir(dataResult.cleanup);
+  sandboxStash = stash.dir;
+  cleanup = stash.cleanup;
 });
 
 afterEach(() => {
@@ -43,8 +49,7 @@ afterEach(() => {
 });
 
 function stashWithFencedName(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-projection-reindex-"));
-  fs.mkdirSync(path.join(dir, "knowledge"), { recursive: true });
+  const dir = sandboxStash;
   fs.writeFileSync(
     path.join(dir, "knowledge", "provider-errors.md"),
     [
