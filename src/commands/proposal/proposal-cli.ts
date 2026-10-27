@@ -443,7 +443,8 @@ const proposalDrainCommand = defineJsonCommand({
     },
     promote: {
       type: "boolean",
-      description: "Promote (accept) matching proposals. Default is queue mode (stage only, no writes to assets).",
+      description:
+        "Promote (accept) matching proposals. Without it, the strategy's apply mode decides, and the default strategy's is promote (akm#1274).",
       default: false,
     },
     judgment: {

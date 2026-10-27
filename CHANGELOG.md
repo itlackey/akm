@@ -22,6 +22,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Documentation sentences that were false on 0.10 are corrected (review of
+  #1273, #1251 follow-up). `asset-types.md` lists every way an env or secret
+  value reaches a process. `classification.md` and `adapters.md` say that `akm`,
+  `okf`, `claude`, `opencode` and `generic-files` reserve `index.md` and `log.md`
+  at every depth and `llm-wiki` reserves `schema.md`, `index.md` and `log.md`
+  only at the wiki root, and that a `.yml` under `workflows/` is typed
+  `workflow`, then skipped at index time. `ref.md`, `workflow-engine.md` (no
+  isolated units; a plan from a newer akm is refused unread) and `workflows.md`
+  say 0.10. `configuration.md` and the stash skeleton's `backlinks.md` no longer
+  call `content` the lowest-weight search field: BM25 weighs the five fields
+  equally. `persisted-data-compat.md` has its downgrade warning for retire
+  proposals back. A bare `akm proposal drain` follows the default strategy's
+  apply mode, which promotes; the `--promote` help text, `cli.md` and the improve
+  guide said it queues (whether it should is #1274). The feedback pages say that
+  in keyword-only search one vote moves a hit one place whatever the keyword
+  margin, and that with embeddings it breaks only near-ties, where they said
+  feedback does not override relevance. The `AKM_REGISTRY_URL` rows say it
+  replaces the configured registries in every registry search, and the fixture
+  READMEs, the migration guide and the 0.10.0 release notes match the code.
 - **`akm bundle rename` keeps the bundle's recorded feedback** (#1250). It rewrote
   proposals, task history and workflow refs but left `usage_events` under the old
   prefix, so after a rename no feedback counted in search ranking for any asset

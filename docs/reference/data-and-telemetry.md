@@ -211,4 +211,4 @@ the config, data, state and cache directories.
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` | XDG bases; akm appends `/akm` |
 | `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE` or `TRUNCATE`. On a detected network filesystem the default falls back to `DELETE`. |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror. Replaces `registry.npmjs.org` for npm bundle resolution. |
-| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` for `akm search --from registry`. Prefix an entry with `<provider>::` (for example `skills-sh::https://skills.sh`) to choose a provider; the default is `static-index`. |
+| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm info` and the `egress-endpoints` health advisory still show the configured list. Prefix an entry with `<provider>::` (for example `skills-sh::https://skills.sh`) to choose a provider; the default is `static-index`. |

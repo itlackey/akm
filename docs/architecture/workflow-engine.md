@@ -3,11 +3,11 @@
 A workflow compiles to a frozen plan, persists run and unit state, dispatches
 its work, verifies declared gates, and resumes without replaying completed
 units. This page is the architecture-level reference for that engine — how a
-run's plan is frozen and stored, how dispatch and resume actually work, how
-one engine owns a run, and how isolated file-mutating units execute. For the
-exact frontmatter/body syntax that produces the plan, see
-[Workflow Schema](../reference/workflow-schema.md). For the day-to-day
-commands that drive a run, see [Running Workflows](../guides/run-workflows.md).
+run's plan is frozen and stored, how dispatch and resume actually work, and
+how one engine owns a run. For the exact frontmatter/body syntax that produces
+the plan, see [Workflow Schema](../reference/workflow-schema.md). For the
+day-to-day commands that drive a run, see
+[Running Workflows](../guides/run-workflows.md).
 
 > **`akm workflow run` is Experimental (see `STABILITY.md`), ungated, and the only
 > execution surface.** It is the canonical start/resume/execute command; there is
@@ -18,13 +18,13 @@ commands that drive a run, see [Running Workflows](../guides/run-workflows.md).
 The first `akm workflow run <ref>` compiles the Markdown source straight to
 the one plan type and stores it as durable plan **`irVersion` 8** on the run row
 (`plan_json` + `plan_hash`); a new start never emits an older version.
-`plan_ir_version` and `plan_hash` are recorded provenance, not gates: a stored
-plan is decoded as it is — irVersion 5, 6 and 7 plans that hold no model step
-included — and one frozen by an older or newer akm that still decodes simply
-runs (with one warning). A plan frozen before 8 with a model step recorded an
+`plan_ir_version` and `plan_hash` are recorded provenance: a stored plan is
+decoded as it is — irVersion 5, 6 and 7 plans that hold no model step included.
+One frozen by an older akm that still decodes runs with one warning. One frozen
+by a newer akm (`plan_ir_version` above 8) is refused unread with a message
+naming "Upgrade akm". A plan frozen before 8 with a model step recorded an
 engine where 8 records a connection or harness; it does not decode, and
-`akm workflow run` abandons it and starts afresh. A newer akm's plan that does
-not decode is refused with a message naming "Upgrade akm".
+`akm workflow run` abandons it and starts afresh.
 
 The durable plan records `sourceHash`, the sha256 of the workflow source file
 at freeze. It is used only for the resume warning below, never to refuse a

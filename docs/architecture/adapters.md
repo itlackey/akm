@@ -233,9 +233,9 @@ they actually work:
 - **Task adapters share one task source parser.** A standalone `akm-task`
   bundle and task files owned by the native `akm` adapter both route through
   `parseTaskSource` (see [Task adapter](#task-adapter)).
-- **`llm-wiki`, `akm`, and `okf` all reserve `index.md`/`log.md`** as
-  structural files — never indexed as concepts, never valid write targets —
-  at any depth.
+- **`akm` and `okf` reserve `index.md`/`log.md`** as structural files — never
+  indexed as concepts, never valid write targets — at any depth. `llm-wiki`
+  reserves `schema.md`, `index.md` and `log.md` only at the wiki root.
 - **`okf`'s lenient wording is not a lenient gate.** `missing-type` and
   broken-link findings are labelled `info:`/`warning:` in the diagnostic
   text, but diagnostics carry no severity field: `akm lint` funnels every

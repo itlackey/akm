@@ -54,8 +54,10 @@ emits fourteen types (`KNOWN_TYPES`, `src/core/recognition-util.ts`): `skill`,
 
 ## Reserved and skipped files
 
-`index.md` and `log.md` are reserved at every depth and are not items
-(`RESERVED_FILES`, `src/core/adapter/adapters/shared.ts`). The `akm` adapter also
+The `akm`, `okf`, `claude`, `opencode` and `generic-files` adapters reserve
+`index.md` and `log.md` at every depth, and neither is an item (`RESERVED_FILES`,
+`src/core/adapter/adapters/shared.ts`). `llm-wiki` reserves `schema.md`,
+`index.md` and `log.md` only at the wiki root. The `akm` adapter also
 skips, using path and `stat` checks (`akmStashAbstains`,
 `src/core/adapter/adapters/akm-adapter.ts`):
 
@@ -93,7 +95,7 @@ Directories that declare a type (`DIR_TYPE_MAP`) and the files they accept:
 | `scripts/` | `script` | script extensions |
 | `skills/` | `skill` | `SKILL.md` (other files under a skill are resources, not skills) |
 | `commands/`, `agents/`, `knowledge/`, `instructions/`, `memories/`, `lessons/`, `facts/`, `sessions/` | `command`, `agent`, `knowledge`, `instruction`, `memory`, `lesson`, `fact`, `session` | `.md` |
-| `workflows/` | `workflow` | `.md` |
+| `workflows/` | `workflow` | `.md` (a `.yml` is typed `workflow`, then skipped at index time with a warning that it must use `.md`) |
 | `tasks/` | `task` | `.yml` |
 | `env/` | `env` | `.env` and `*.env` |
 | `secrets/` | `secret` | any file except `.lock` and `.sensitive` |

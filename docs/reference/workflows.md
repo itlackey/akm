@@ -17,7 +17,7 @@ what you're doing:
   start, check status, resume a blocked run, abandon one, and follow its
   events.
 - **[Author's Guide: Writing Workflows](../guides/author-workflows.md)** —
-  writing and testing a workflow definition: choosing a source format, the Markdown structure, a
+  writing and testing a workflow definition: the Markdown structure, a
   minimal complete example, common authoring mistakes, choosing where a step
   runs and which model, and troubleshooting a missing harness or connection.
 - **[Workflow Schema](workflow-schema.md)** — the exhaustive,
