@@ -48,8 +48,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   candidates are taken, not from the fused list afterwards. The storage, indexing, registry
   and improve-guide pages no longer say that search ranking reads the utility score: improve
   and `akm metrics` read it, search does not.
-- `AKM_REGISTRY_URL` now takes effect in `akm search --from registry|all` and
-  `akm curate` (review of #1273). The variable is meant to replace the
+- `AKM_REGISTRY_URL` now takes effect in `akm search` and `akm curate` with
+  `--from registry` or `--from all` (#1275). The variable is meant to replace the
   configured registries, but search always passed the configured list, which
   won, so a mirror or CI override was never read and your `registries` were
   queried instead. When it is set, only its comma-separated URLs are searched.
