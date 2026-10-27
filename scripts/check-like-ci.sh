@@ -7,9 +7,11 @@
 # Bun, up to 8 shards, no CI), and a failure that depends on one of them only
 # showed up as a CI round.
 #
-# The checkout is mounted into a container, with its node_modules replaced by a
-# scratch tmpfs so the install leaves yours alone. The image is built from the
-# pinned base images on the first run and cached by Docker after that.
+# The checkout is mounted into a container, with its node_modules (and dist/, if
+# built) replaced by scratch tmpfs mounts: the install leaves yours alone, and a
+# built dist/ does not switch on tests that CI's fresh checkout skips. The image
+# is built from the pinned base images on the first run and cached by Docker
+# after that.
 #
 # Usage:  bun run check:ci
 set -euo pipefail
@@ -37,6 +39,13 @@ EOF
 # so that directory is mounted, read-only, at the same path.
 GIT_COMMON_DIR="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
 
+# Docker would create a missing mount point owned by root.
+mkdir -p "$ROOT/node_modules"
+scratch=(--tmpfs "$ROOT/node_modules:rw,exec,size=4g,uid=$(id -u),gid=$(id -g)")
+if [ -d "$ROOT/dist" ]; then
+  scratch+=(--tmpfs "$ROOT/dist:rw,exec,size=1g,uid=$(id -u),gid=$(id -g)")
+fi
+
 docker run --rm --init \
   --user "$(id -u):$(id -g)" \
   --env HOME=/tmp/home \
@@ -44,7 +53,7 @@ docker run --rm --init \
   --env TEST_SHARDS=4 \
   --volume "$ROOT:$ROOT" \
   --volume "$GIT_COMMON_DIR:$GIT_COMMON_DIR:ro" \
-  --tmpfs "$ROOT/node_modules:rw,exec,size=4g,uid=$(id -u),gid=$(id -g)" \
+  "${scratch[@]}" \
   --workdir "$ROOT" \
   "$IMAGE" \
   sh -c 'mkdir -p "$HOME" && bun install --frozen-lockfile && bun run check'
