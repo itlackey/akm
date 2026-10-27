@@ -225,8 +225,9 @@ Why: an accidental API is a compatibility promise nobody agreed to make.
 
 Enforced by: `tests/contracts/api-surface.test.ts` (the export list),
 `tests/integration/install/package-exports.test.ts` (the `exports` map),
-`package.json` (`engines.node` and the `preinstall` check), and the
-`node-smoke` job in `.github/workflows/ci.yml` (Node 22 and 24).
+`package.json` (`engines.node`), the Node version check in the launchers and
+`src/cli.ts`, and the `node-smoke` job in `.github/workflows/ci.yml` (Node 22
+and 24).
 
 ### 10. Agent harnesses are thin, replaceable internals
 

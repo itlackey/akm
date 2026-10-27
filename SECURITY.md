@@ -104,6 +104,6 @@ for assets containing secrets or private notes.
   runtime-free. This is a compatibility limitation, not a security risk.
 - **Workflows can read any file the akm process can read.** This is not a
   bug — see "Threat model" above.
-- **Installing `akm-cli` runs the preinstall hook.** The hook only validates
-  the runtime version and exits non-zero when it is unsupported; it does not
-  phone home or write outside the install directory.
+- **Installing `akm-cli` runs no install script.** Neither `akm-cli` nor any
+  package it depends on declares one. The Node.js version is checked when akm
+  starts, not when it installs.
