@@ -49,16 +49,11 @@ const LIBRARIES: Readonly<Record<string, string>> = {
 
 const BINDING = "onnxruntime_binding.node";
 
-let platformName: string | undefined;
-
 /** This machine as `<platform>-<arch>`, Linux without glibc as `linux-musl-<arch>`. */
 function thisPlatform(): string {
-  if (platformName === undefined) {
-    const header = (process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined)?.header;
-    const musl = process.platform === "linux" && !header?.glibcVersionRuntime;
-    platformName = `${process.platform}${musl ? "-musl" : ""}-${process.arch}`;
-  }
-  return platformName;
+  const header = (process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined)?.header;
+  const musl = process.platform === "linux" && !header?.glibcVersionRuntime;
+  return `${process.platform}${musl ? "-musl" : ""}-${process.arch}`;
 }
 
 /** Whether akm offers local embeddings on this machine. */

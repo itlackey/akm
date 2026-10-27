@@ -40,7 +40,7 @@ import {
 import type { LowerTarget } from "../../harness";
 import { akmOpencodeDatabasePath, akmRuntimeDir } from "../roots";
 import { v2SessionTokens } from "../session-log-v2";
-import { ensureRuntimeBinary, OPENCODE_RUNTIME_VERSION } from "./binary";
+import { ensureRuntimeBinary, OPENCODE_RUNTIME_VERSION, runtimeBinaryPath } from "./binary";
 import { type RuntimeLocations, runtimeArgv, runtimeConfig, runtimeEnv, runtimePrepareArgv } from "./command";
 
 /**
@@ -142,6 +142,11 @@ function sessionRecord(sessionId: string): Pick<AgentRunResult, "sessionId" | "u
 
 export const opencodeRuntime: AgentRuntime = {
   lowering: runtimeLowerer,
+  pendingFetch: () =>
+    fs.existsSync(runtimeBinaryPath()) ? undefined : `OpenCode ${OPENCODE_RUNTIME_VERSION} (about 114 MB, once)`,
+  async fetch() {
+    await ensureRuntimeBinary();
+  },
   async run(profile, opts, connection) {
     const label = `akm's runtime on connection "${profile.name}"`;
     const dispatch = opts.dispatch;

@@ -21,7 +21,9 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import * as p from "../cli/clack";
 import { akmInit } from "../commands/sources/init";
+import { type ProcessRow, targetRows } from "../commands/targets";
 import { deriveBundleIds } from "../core/bundle-id";
+import { toErrorMessage } from "../core/common";
 import type { AkmConfig, BundleConfigEntry, SourceConfigEntry } from "../core/config/config";
 import {
   bundleEntryToSourceEntry,
@@ -42,6 +44,8 @@ import { getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core
 import { warn, warnOnce } from "../core/warn";
 import { akmIndex } from "../indexer/indexer";
 import { readLockfile } from "../integrations/lockfile";
+import { checkEmbeddingAvailability } from "../llm/embedder";
+import { effectiveEmbedding } from "../llm/embedders/connection";
 import { type DetectedEnvironment, detectEnvironment, renderDetectionSummary } from "./detect";
 import { bail, prompt } from "./prompt";
 import { prepareSemanticSearchAssets } from "./semantic-assets";
@@ -113,6 +117,11 @@ export interface SetupSummary {
   fields: string[];
   /** What runs where once setup is done. */
   runs: SetupRuns;
+  /**
+   * When the saved config embeds locally: `ready` once the local embedder's runtime and model are fetched and load,
+   * `blocked: <reason>` when they do not, `skipped` for an offline run (`--no-probe`).
+   */
+  semanticAssets?: string;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -357,6 +366,48 @@ function finalizeSetupDraft(draft: SetupDraftConfig): AkmConfig {
   if (defaultBundle !== undefined) finalized.defaultBundle = defaultBundle;
   else delete finalized.defaultBundle;
   return finalized;
+}
+
+/** Where a process of `config` runs, as `akm info` and `akm health` say it. */
+function processRow(config: AkmConfig, process: "agents" | "embedding"): ProcessRow | undefined {
+  return targetRows({ config }).find((row): row is ProcessRow => row.type === "process" && row.process === process);
+}
+
+/**
+ * What `--yes` and `--from` do for local embeddings once the config is saved: fetch the local embedder's runtime and
+ * model and load them. Undefined when the saved config does not embed locally.
+ */
+async function prepareLocalEmbeddings(config: AkmConfig, noProbe: boolean | undefined): Promise<string | undefined> {
+  if (processRow(config, "embedding")?.kind !== "local") return undefined;
+  if (noProbe) return "skipped";
+  const result = await checkEmbeddingAvailability(effectiveEmbedding(config));
+  if (result.available) return "ready";
+  warn(`[akm setup] Semantic search is blocked: ${result.message}`);
+  return `blocked: ${result.message}`;
+}
+
+/** The wizard's offer to fetch what akm's own agent runtime runs, when the saved config runs agent work there. */
+async function offerAgentRuntimeFetch(config: AkmConfig): Promise<void> {
+  if (processRow(config, "agents")?.kind !== "connection") return;
+  const { agentRuntime } = await import("../integrations/agent/runtime");
+  const pending = agentRuntime.pendingFetch();
+  if (pending === undefined) return;
+  const fetchNow = await prompt(() =>
+    p.confirm({
+      message: `Agent work runs on akm's own runtime. Fetch ${pending} for it now, rather than on the first agent run?`,
+      initialValue: true,
+    }),
+  );
+  if (!fetchNow) return;
+  const spin = p.spinner();
+  spin.start(`Fetching ${pending}...`);
+  try {
+    await agentRuntime.fetch();
+    spin.stop("akm's own agent runtime is ready.");
+  } catch (error) {
+    spin.stop("akm's own agent runtime could not be fetched.");
+    p.log.warn(`${toErrorMessage(error)}\nThe first agent run tries again.`);
+  }
 }
 
 // ── Main Wizard ─────────────────────────────────────────────────────────────
@@ -646,6 +697,8 @@ export async function runSetupWizard(opts?: {
   p.log.step("Scheduled Tasks");
   await stepScheduledTasks();
 
+  if (opts?.noProbe !== true) await offerAgentRuntimeFetch(savedConfig);
+
   if (semanticSearchMode.mode === "auto") {
     if (semanticSearchMode.prepareAssets) {
       const ready = await prepareSemanticSearchAssets(savedConfig);
@@ -750,11 +803,12 @@ export async function runSetupWithDefaults(opts: {
 
   const finalConfig = finalizeSetupDraft(config);
   validateCompleteConfig(finalConfig);
-  const { precommit: initResult } = await saveSetupConfig(current, finalConfig, async () => {
+  const { config: savedConfig, precommit: initResult } = await saveSetupConfig(current, finalConfig, async () => {
     storeCredentials(credentials);
     if (opts.noInit) return undefined;
     return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
   });
+  const semanticAssets = await prepareLocalEmbeddings(savedConfig, opts.noProbe);
 
   return {
     configPath: getConfigPath(),
@@ -763,6 +817,7 @@ export async function runSetupWithDefaults(opts: {
     written: true,
     fields: Object.keys(finalConfig).filter((k) => finalConfig[k as keyof AkmConfig] !== undefined),
     runs: describeRuns(finalConfig),
+    ...(semanticAssets ? { semanticAssets } : {}),
   };
 }
 
@@ -887,11 +942,12 @@ export async function runSetupFromConfig(opts: {
 
   // Reject an invalid merged config before touching the stash.
   validateCompleteConfig(finalizedMerged);
-  const { precommit: initResult } = await saveSetupConfig(current, finalizedMerged, async () => {
+  const { config: savedConfig, precommit: initResult } = await saveSetupConfig(current, finalizedMerged, async () => {
     storeCredentials(credentials);
     if (opts.noInit) return undefined;
     return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
   });
+  const semanticAssets = await prepareLocalEmbeddings(savedConfig, opts.noProbe);
 
   return {
     configPath: getConfigPath(),
@@ -900,6 +956,7 @@ export async function runSetupFromConfig(opts: {
     written: true,
     fields: Object.keys(incoming).filter((k) => (incoming as Record<string, unknown>)[k] !== undefined),
     runs: describeRuns(finalizedMerged),
+    ...(semanticAssets ? { semanticAssets } : {}),
   };
 }
 

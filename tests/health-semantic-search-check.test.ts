@@ -86,7 +86,7 @@ describe("semantic-search check", () => {
     );
     expect(r.status).toBe("warn");
     expect(r.message).toBe(
-      'Semantic search is unavailable on this platform: no native library is available. Set semanticSearchMode to "off", or embedding.endpoint to a remote embedding service.',
+      "Semantic search is unavailable on this platform: no native library is available. For keyword search run `akm setup --embedding off`; for a remote endpoint, `akm setup --embedding <model> --embedding-endpoint <url>`.",
     );
     expect(r.evidence).toMatchObject({ status: "unavailable", unavailable: "platform" });
   });

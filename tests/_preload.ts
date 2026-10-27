@@ -181,6 +181,12 @@ function refuseRealOpencode(): void {
       "[harness-safety] this test reached akm's real OpenCode runtime; install installFakeOpencodeRuntime (tests/_helpers/fake-opencode-runtime.ts) or call useRealOpencodeRuntime()",
     );
   });
+  // `akm setup` offers to fetch the binary ahead of the first run; a test that says yes spies this itself.
+  spyOn(agentRuntime, "fetch").mockImplementation(async () => {
+    throw new Error(
+      "[harness-safety] this test reached the fetch of akm's real OpenCode runtime; spy agentRuntime.fetch",
+    );
+  });
 }
 refuseRealOpencode();
 
