@@ -218,7 +218,7 @@ function rejectExtraShowPositionals(positionals: unknown, ref: string): void {
     `akm show takes a single ref, but got ${extra.map((token) => `"${token}"`).join(" ")} after "${ref}". ` +
       `Use \`akm show ${ref}#<heading-slug>\` to read one section, or \`akm show ${ref}\` for the whole item.`,
     "INVALID_FLAG_VALUE",
-    "An unmatched #fragment lists the available slugs.",
+    `Run \`akm show ${ref} --detail brief\` for the document's outline (\`toc\`, no body).`,
   );
 }
 
@@ -231,7 +231,7 @@ export const showCommand = defineJsonCommand({
     ref: {
       type: "positional",
       description:
-        "Asset ref ([bundle//]conceptId[#fragment]). On a markdown document `#fragment` selects one section by heading slug, and an unmatched fragment lists the available slugs. Example: `akm show knowledge/guide.md#auth`.",
+        "Asset ref ([bundle//]conceptId[#fragment]). On a markdown document `#fragment` selects one section by heading slug; `--detail brief` returns the outline (`toc`, each heading's slug) without the body. Example: `akm show knowledge/guide.md#auth`.",
       required: true,
     },
     filter: {

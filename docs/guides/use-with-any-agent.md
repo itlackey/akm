@@ -52,7 +52,10 @@ akm feedback workflows/deploy-to-prod --positive --reason "Completed without iss
 
 **Get refs from search.** Agents should call `akm search --detail agent` or
 `akm curate` to discover refs — not guess them. The `ref` field in search
-results is the stable token to pass to `akm show`. Feedback closes the loop.
+results is the stable token to pass to `akm show`. For a long document,
+`akm show <ref> --detail brief` returns its outline (`toc`, no body), and
+`akm show <ref>#<slug>` then loads only the sections the task needs. Feedback
+closes the loop.
 Record `--negative` only when the asset's content is wrong or stale; a note that
 simply did not fit the task is not negative feedback, so record nothing for it.
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`

@@ -4,6 +4,7 @@
 
 import type { TargetRow } from "../commands/targets";
 import type { OkfProvenance } from "../core/adapter/types";
+import type { MarkdownTocEntry } from "../core/asset/markdown";
 import type { StashEntryScope } from "../indexer/passes/metadata";
 import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
@@ -485,6 +486,12 @@ export interface ShowResponse extends FragmentProvenance {
   content?: string;
   template?: string;
   prompt?: string;
+  /**
+   * A whole Markdown document's headings, read from the same bytes `#<slug>`
+   * resolves against. Omitted for a fragment show, non-Markdown assets and
+   * documents without headings.
+   */
+  toc?: MarkdownTocEntry[];
   description?: string;
   tags?: string[];
   modelHint?: string;

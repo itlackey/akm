@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `akm show` returns a Markdown document's outline as `toc` (#1259): one
+  `{ level, text, slug, startLine }` entry per heading, at every `--detail`
+  level. `akm show <ref> --detail brief` is the outline without the body, and
+  every `slug` selects its section with `akm show <ref>#<slug>`, repeated
+  headings included. The outline is read from the file the section is cut
+  from. Fragment shows, non-Markdown assets and documents with no headings
+  carry no `toc`. The knowledge `action`, `akm show --help`, the unmatched
+  fragment error, `akm hints` and the OpenCode runtime's `akm_show` tool (which
+  takes `detail: "brief"`) now point agents at the outline first, then the
+  sections they need.
+
 ### Security
 
 - Zod moves from 3.25.76 to 4.6.7 (`zod` `^4.6.6`), closing GHSA-mrhx-c7xc-m3w5 /

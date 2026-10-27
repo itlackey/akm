@@ -338,6 +338,15 @@ describe("shapeShowOutput", () => {
     }
   });
 
+  test("toc survives every show shape and detail level", () => {
+    const toc = [{ level: 2, text: "Install", slug: "install", startLine: 3 }];
+    for (const shape of ["human", "agent"] as const) {
+      for (const detail of ["brief", "normal", "full"] as const) {
+        expect(shapeShowOutput({ ...fullShow, toc }, detail, shape).toc).toEqual(toc);
+      }
+    }
+  });
+
   // D-14: `path` and `editable` are projected at every --detail level, not
   // gated behind --detail full — only `schemaVersion`/`editHint` are full-only.
   test("path and editable are present in shape=human at --detail brief (not full-gated)", () => {

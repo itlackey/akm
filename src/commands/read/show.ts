@@ -22,7 +22,7 @@ import { recognizeMatch } from "../../core/adapter/recognize-match";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { extractSection, markdownFragmentSlugs } from "../../core/asset/markdown";
+import { extractSection, markdownFragmentSlugs, markdownToc } from "../../core/asset/markdown";
 import {
   buildMarkdownLeadContext,
   fragmentForSelector,
@@ -408,8 +408,10 @@ export async function showLocal(input: {
   const indexedFragmentContent = opaqueFragmentSelector ? indexedFragment?.content : undefined;
   const indexedRenderer = rendererForIndexedEntry(indexedEntry, fileCtx);
   let response: ShowResponse;
+  let markdown = false;
   try {
     if (indexedRenderer === null) {
+      markdown = path.extname(assetPath).toLowerCase() === ".md";
       response = buildIndexedProjectionResponse(indexedEntry, assetPath, parsed.fragment, indexedFragmentContent);
     } else {
       const match =
@@ -432,8 +434,9 @@ export async function showLocal(input: {
       const renderDefaultBundle = config.defaultBundle ?? (source?.isDefault === true ? renderBundle : undefined);
       const renderCtx = buildRenderContext(fileCtx, match, allSourceDirs, renderBundle, renderDefaultBundle);
       response = renderer.buildShowResponse(renderCtx);
+      markdown = match.renderer.endsWith("-md");
       if (parsed.fragment !== undefined) {
-        if (!match.renderer.endsWith("-md")) {
+        if (!markdown) {
           warn(
             `Fragment "#${parsed.fragment}" was ignored: ${makeBundleRef(parsed.bundle, parsed.conceptId)} is not a Markdown document, so heading fragments do not apply. Showing the whole asset.`,
           );
@@ -441,6 +444,12 @@ export async function showLocal(input: {
           applyMarkdownFragment(response, fileCtx.content(), parsed.fragment, presentedName, indexedFragmentContent);
         }
       }
+    }
+    // The outline is read from the bytes `#<slug>` resolves against, so every
+    // listed slug selects its section even when the index is stale.
+    if (markdown && parsed.fragment === undefined) {
+      const toc = markdownToc(fileCtx.content());
+      if (toc.length > 0) response.toc = toc;
     }
   } catch (error) {
     throwIndexedPathNotFound(error, input.ref);
@@ -752,6 +761,9 @@ function applyMarkdownResponsePayload(response: ShowResponse, content: string): 
   else response.content = content;
 }
 
+const SHOW_OUTLINE_HINT =
+  "Run `akm show <ref> --detail brief` for the document's outline (`toc`, no body), then `akm show <ref>#<slug>` for one section.";
+
 function requireMarkdownSection(
   content: string,
   fragment: string,
@@ -768,6 +780,8 @@ function requireMarkdownSection(
   throw new NotFoundError(
     `Fragment "#${fragment}" not found in ${name}.` +
       (available.length > 0 ? ` Available fragments: ${available.map((slug) => `#${slug}`).join(", ")}.` : ""),
+    "ASSET_NOT_FOUND",
+    SHOW_OUTLINE_HINT,
   );
 }
 
@@ -785,6 +799,7 @@ function buildBriefResponse(full: ShowResponse, assetPath?: string): ShowRespons
     ...(summary.ref ? { ref: summary.ref } : {}),
     ...(summary.description ? { description: summary.description } : {}),
     ...(summary.action ? { action: summary.action } : {}),
+    ...(full.toc ? { toc: full.toc } : {}),
     ...(summary.run ? { run: summary.run } : {}),
     ...(summary.origin !== undefined ? { origin: summary.origin } : {}),
     ...(full.editable !== undefined ? { editable: full.editable } : {}),

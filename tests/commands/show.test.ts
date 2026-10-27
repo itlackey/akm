@@ -605,10 +605,122 @@ describe("akmShow markdown fragments", () => {
     );
   });
 
-  test("the knowledge action points large documents at #fragment", async () => {
+  test("an unmatched fragment's hint points at the outline", async () => {
+    const error = await akmShow({ ref: "knowledge/guide.md#nope" }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NotFoundError);
+    expect((error as NotFoundError).hint()).toContain("akm show <ref> --detail brief");
+  });
+
+  test("the knowledge action points large documents at the outline, then one section", async () => {
     const result = await akmShow({ ref: "knowledge/guide.md" });
-    expect(result.action).toContain("#fragment");
-    expect(result.action).not.toContain("toc");
+    expect(result.action).toContain("akm show <ref> --detail brief");
+    expect(result.action).toContain("`toc`");
+    expect(result.action).toContain("akm show <ref>#<slug>");
+  });
+});
+
+describe("akmShow markdown toc", () => {
+  const DOC = [
+    "---",
+    "description: Notes doc",
+    "---",
+    "# Guide",
+    "Intro.",
+    "",
+    "## Notes",
+    "First notes.",
+    "",
+    "## Notes",
+    "Second notes.",
+    "",
+    "## Notes 1",
+    "Third notes.",
+    "",
+    "### Deep",
+    "Deeper.",
+    "",
+    "## !!!",
+    "Unsluggable.",
+    "",
+    "```md",
+    "## Not a heading",
+    "```",
+  ].join("\n");
+
+  beforeEach(() => {
+    writeFile(path.join(stashDir, "knowledge", "notes.md"), DOC);
+    saveConfig({ semanticSearchMode: "off" });
+  });
+
+  test("a whole document lists its headings with the slug that selects each, duplicates suffixed", async () => {
+    const result = await akmShow({ ref: "knowledge/notes", skipLogging: true });
+    expect(result.content).toBe(DOC);
+    expect(result.toc).toEqual([
+      { level: 1, text: "Guide", slug: "guide", startLine: 4 },
+      { level: 2, text: "Notes", slug: "notes", startLine: 7 },
+      { level: 2, text: "Notes", slug: "notes-1", startLine: 10 },
+      { level: 2, text: "Notes 1", slug: "notes-1-1", startLine: 13 },
+      { level: 3, text: "Deep", slug: "deep", startLine: 16 },
+    ]);
+  });
+
+  test("every toc slug round-trips to the section starting at its line", async () => {
+    const lines = DOC.split("\n");
+    const { toc } = await akmShow({ ref: "knowledge/notes", skipLogging: true });
+    expect(toc?.length).toBeGreaterThan(0);
+    for (const heading of toc ?? []) {
+      const section = await akmShow({ ref: `knowledge/notes#${heading.slug}`, skipLogging: true });
+      expect(section.content?.split("\n")[0]).toBe(lines[heading.startLine - 1]);
+    }
+    expect((await akmShow({ ref: "knowledge/notes#notes-1", skipLogging: true })).content).toBe(
+      "## Notes\nSecond notes.\n",
+    );
+  });
+
+  test("the toc follows the file, not the index, so a heading added since indexing still resolves", async () => {
+    await akmShow({ ref: "knowledge/notes", skipLogging: true });
+    writeFile(path.join(stashDir, "knowledge", "notes.md"), `${DOC}\n\n## Added Later\nNew.\n`);
+
+    // readOnly skips the index refresh, so the indexed entry still predates the edit.
+    const { toc } = await akmShow({ ref: "knowledge/notes", readOnly: true });
+    const added = toc?.find((heading) => heading.text === "Added Later");
+    expect(added?.slug).toBe("added-later");
+    const section = await akmShow({ ref: `knowledge/notes#${added?.slug}`, readOnly: true });
+    expect(section.content).toBe("## Added Later\nNew.\n");
+  });
+
+  test("brief is the outline without the body", async () => {
+    const brief = await akmShow({ ref: "knowledge/notes", detail: "brief", skipLogging: true });
+    expect(brief.toc?.map((heading) => heading.slug)).toEqual(["guide", "notes", "notes-1", "notes-1-1", "deep"]);
+    expect(brief).not.toHaveProperty("content");
+  });
+
+  test("a fragment show carries no toc", async () => {
+    const section = await akmShow({ ref: "knowledge/notes#deep", skipLogging: true });
+    expect(section.content).toBe("### Deep\nDeeper.\n");
+    expect(section).not.toHaveProperty("toc");
+  });
+
+  test("other markdown assets carry it too", async () => {
+    writeFile(
+      path.join(stashDir, "skills", "deploy", "SKILL.md"),
+      "---\ndescription: Deploy\n---\n# Deploy\n\n## Steps\nGo.\n",
+    );
+    const result = await akmShow({ ref: "skills/deploy", skipLogging: true });
+    expect(result.toc).toEqual([
+      { level: 1, text: "Deploy", slug: "deploy", startLine: 4 },
+      { level: 2, text: "Steps", slug: "steps", startLine: 6 },
+    ]);
+  });
+
+  test("a document with no headings and a non-markdown asset carry no toc", async () => {
+    writeFile(path.join(stashDir, "knowledge", "plain.md"), "Just text.\n");
+    writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/bin/sh\n# Not a heading\necho hi\n");
+
+    expect(await akmShow({ ref: "knowledge/plain", skipLogging: true })).not.toHaveProperty("toc");
+    expect(await akmShow({ ref: "knowledge/plain", detail: "brief", skipLogging: true })).not.toHaveProperty("toc");
+    expect(await akmShow({ ref: "scripts/deploy.sh", skipLogging: true })).not.toHaveProperty("toc");
+    expect(await akmShow({ ref: "scripts/deploy.sh", detail: "brief", skipLogging: true })).not.toHaveProperty("toc");
   });
 });
 

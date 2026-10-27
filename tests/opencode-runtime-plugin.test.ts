@@ -122,6 +122,24 @@ describe.skipIf(process.platform === "win32")("akm's read tools", () => {
     });
   });
 
+  test('akm_show with detail "brief" asks akm for the outline, and tells the agent to read it first', async () => {
+    const { tools } = await load();
+    const akm = installAkm();
+    const show = tools.get("akm_show");
+
+    expect(show?.input.properties.detail).toMatchObject({ enum: ["brief"] });
+    expect(show?.description).toContain('detail "brief"');
+    expect(show?.description).toContain("ref#<slug>");
+    const result = await withEnv({ AKM_OPENCODE_CLI: akm, AKM_EVENT_SOURCE: undefined }, () =>
+      show?.execute({ ref: "knowledge/deploy", detail: "brief" }),
+    );
+
+    expect(JSON.parse(result?.content as string)).toEqual({
+      argv: ["show", "knowledge/deploy", "--detail", "brief", "--format", "json"],
+      source: null,
+    });
+  });
+
   test("akm run as a script is the runtime and the script, which needs neither a shebang nor the executable bit", async () => {
     const { tools } = await load();
     const script = path.join(scratch.dir, "akm.js");
