@@ -97,7 +97,19 @@ describe.skipIf(process.platform === "win32")("a run on akm's runtime", () => {
 
     expect(result.ok, result.stderr).toBe(true);
     const started = reported(result);
-    expect(started.argv).toEqual(["run", "--standalone", "--title", "akm", "--model", "akm/fake-model"]);
+    expect(started.argv).toEqual([
+      "run",
+      "--standalone",
+      "--title",
+      "akm",
+      "--session",
+      expect.stringMatching(/^ses_akm[0-9a-f]{32}$/),
+      "--model",
+      "akm/fake-model",
+    ]);
+    // The stand-in made no session, so the run reports none and no tokens.
+    expect(result).not.toHaveProperty("sessionId");
+    expect(result).not.toHaveProperty("usage");
     expect(started.stdin).toBe("MODE:answer hi");
     expect(fs.realpathSync(started.cwd)).toBe(cwd);
   });

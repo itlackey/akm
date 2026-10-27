@@ -114,6 +114,9 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     expect(first?.params).toMatchObject({ model: "fake-model", reasoning_effort: "high", top_p: 0.9 });
     expect(first?.params).not.toHaveProperty("max_tokens");
     expect(first?.params).not.toHaveProperty("max_completion_tokens");
+    // The run reports its session and the tokens its two model requests used (the fake model reports 11 in, 7 out each).
+    expect(result.sessionId).toMatch(/^ses_akm[0-9a-f]{32}$/);
+    expect(result.usage).toEqual({ inputTokens: 22, outputTokens: 14, reasoningTokens: 0 });
   });
 
   test("the agent's commands get the environment akm runs in, not the runtime's: no key, no runtime roots", async () => {
@@ -176,7 +179,7 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
   });
 
   test("the sessions are listed by the history reader, with their tool calls", async () => {
-    await run("akm");
+    const result = await run("akm");
 
     const database = akmOpencodeDatabasePath();
     expect(database).toBe(path.join(getDataDir(), "opencode-runtime", "data", "opencode", "opencode.db"));
@@ -185,7 +188,7 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     expect(provider.isAvailable()).toBe(true);
     const sessions = await provider.listSessions();
     expect(sessions).toHaveLength(1);
-    expect(sessions[0]).toMatchObject({ title: "akm", filePath: database });
+    expect(sessions[0]).toMatchObject({ sessionId: result.sessionId, title: "akm", filePath: database });
     const data = await provider.readSession(sessions[0] as never);
     const texts = data.events.map((event) => [event.role, event.text]);
     expect(texts[0]).toEqual(["user", "MODE:akm please"]);

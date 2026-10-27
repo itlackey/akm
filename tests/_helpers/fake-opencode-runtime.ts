@@ -18,7 +18,7 @@
 import { mock, spyOn } from "bun:test";
 import { effectiveRequestFields } from "../../src/core/llm-inference";
 import { agentRuntime } from "../../src/integrations/agent/runtime";
-import type { AgentRunResult } from "../../src/integrations/agent/spawn";
+import type { AgentRunResult, AgentTokenUsage } from "../../src/integrations/agent/spawn";
 import type { ChatCompletionConfig } from "../../src/llm/client";
 
 export interface FakeRuntimeCall {
@@ -39,6 +39,8 @@ export interface FakeRuntimeCall {
 
 export interface FakeRuntimeReply {
   readonly text?: string;
+  /** The tokens the run reports, as the real runtime reads them from the run's session. */
+  readonly usage?: AgentTokenUsage;
   /** A provider error: the run fails. */
   readonly error?: { readonly type: string; readonly message: string };
 }
@@ -96,7 +98,14 @@ export function installFakeOpencodeRuntime(options: FakeRuntimeOptions): FakeRun
         error: message,
       };
     }
-    return { ok: true, exitCode: 0, stdout: reply.text ?? "", stderr: "", durationMs: Date.now() - start };
+    return {
+      ok: true,
+      exitCode: 0,
+      stdout: reply.text ?? "",
+      stderr: "",
+      durationMs: Date.now() - start,
+      ...(reply.usage ? { usage: reply.usage } : {}),
+    };
   });
   return { calls };
 }

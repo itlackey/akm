@@ -14,6 +14,7 @@
  * sessions are (`../roots.ts`); nothing here reads config.
  */
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import akmPlugin from "../../../../assets/opencode/akm-plugin.js" with { type: "text" };
@@ -26,11 +27,19 @@ import {
   tryAcquireLockSync,
 } from "../../../../core/file-lock";
 import { PORTABLE_INFERENCE_KEYS } from "../../../../core/llm-inference";
+import { openDatabase } from "../../../../storage/database";
 import { resolveAkmInvocation } from "../../../../tasks/resolve-akm-bin";
 import type { AgentRuntime } from "../../../agent/runtime-port";
-import { buildChildEnv, type ReadyCommand, type RunAgentOptions, runBuiltCommand } from "../../../agent/spawn";
+import {
+  type AgentRunResult,
+  buildChildEnv,
+  type ReadyCommand,
+  type RunAgentOptions,
+  runBuiltCommand,
+} from "../../../agent/spawn";
 import type { LowerTarget } from "../../harness";
 import { akmOpencodeDatabasePath, akmRuntimeDir } from "../roots";
+import { v2SessionTokens } from "../session-log-v2";
 import { ensureRuntimeBinary, OPENCODE_RUNTIME_VERSION } from "./binary";
 import { type RuntimeLocations, runtimeArgv, runtimeConfig, runtimeEnv, runtimePrepareArgv } from "./command";
 
@@ -102,6 +111,29 @@ async function prepareDatabase(directory: string, command: ReadyCommand, opts: R
   }
 }
 
+/**
+ * The run's session as OpenCode recorded it, read once the process has ended: its id and the tokens its turn used,
+ * which a workflow's `budget.max_tokens` and the unit journal count. Nothing when the run made no session. Accounting
+ * is best-effort: a database that cannot be read leaves the run's result as it is.
+ */
+function sessionRecord(sessionId: string): Pick<AgentRunResult, "sessionId" | "usage"> {
+  try {
+    const db = openDatabase(akmOpencodeDatabasePath(), { readonly: true, create: false });
+    try {
+      const tokens = v2SessionTokens(db, sessionId);
+      if (!tokens) return {};
+      return {
+        sessionId,
+        usage: { inputTokens: tokens.input, outputTokens: tokens.output, reasoningTokens: tokens.reasoning },
+      };
+    } finally {
+      db.close();
+    }
+  } catch {
+    return {};
+  }
+}
+
 export const opencodeRuntime: AgentRuntime = {
   lowering: runtimeLowerer,
   async run(profile, opts, connection) {
@@ -128,12 +160,15 @@ export const opencodeRuntime: AgentRuntime = {
       const config = runtimeConfig(connection, where.pluginDirectory, ambient);
       const env = { ...ambient, ...runtimeEnv(config, where) };
       await prepareDatabase(directory, { argv: runtimePrepareArgv(binary), env }, opts);
-      return await runBuiltCommand(
+      // OpenCode's own ids start with `ses_`, which it requires of one it is given.
+      const session = `ses_akm${randomUUID().replaceAll("-", "")}`;
+      const result = await runBuiltCommand(
         label,
-        { argv: runtimeArgv(connection, dispatch, binary), env, stdin: dispatch.prompt },
+        { argv: runtimeArgv(connection, dispatch, binary, session), env, stdin: dispatch.prompt },
         opts,
         "captured",
       );
+      return { ...result, ...sessionRecord(session) };
     } catch (error) {
       return {
         ok: false,

@@ -298,9 +298,10 @@ default connection. The npm package and the standalone binary do the same.
   directories, and the config that holds the connection's key) is not in it:
   akm's plugin puts those variables back to what akm runs in, or removes them,
   for each command.
-- A run reports no token usage: the OpenCode process prints only the reply. A
-  failed run is a non-zero exit with OpenCode's own message (`non_zero_exit`), as
-  for a harness.
+- A run reports its session id and the tokens its turn used, read from that
+  session once the process has ended; a workflow's `budget.max_tokens` counts
+  them. A failed run is a non-zero exit with OpenCode's own message
+  (`non_zero_exit`), as for a harness.
 - Runs that start together, in one akm process or several, wait while the first
   run of this OpenCode version prepares its database alone.
 

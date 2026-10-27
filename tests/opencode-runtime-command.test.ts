@@ -165,21 +165,25 @@ describe("the environment", () => {
 });
 
 describe("the command line", () => {
-  test("a standalone run named akm, on the connection's model", () => {
-    expect(runtimeArgv(connection(), { prompt: "p" }, where.binary)).toEqual([
+  test("a standalone run named akm, in the session akm names, on the connection's model", () => {
+    expect(runtimeArgv(connection(), { prompt: "p" }, where.binary, "ses_akm1")).toEqual([
       where.binary,
       "run",
       "--standalone",
       "--title",
       "akm",
+      "--session",
+      "ses_akm1",
       "--model",
       "akm/org/model:7b",
     ]);
   });
 
   test("a native agent the request names runs", () => {
-    expect(runtimeArgv(connection(), { prompt: "p", agent: "plan" }, where.binary)).toContain("plan");
-    expect(runtimeArgv(connection(), { prompt: "p", agent: "plan" }, where.binary).join(" ")).toContain("--agent plan");
+    expect(runtimeArgv(connection(), { prompt: "p", agent: "plan" }, where.binary, "ses_akm1")).toContain("plan");
+    expect(runtimeArgv(connection(), { prompt: "p", agent: "plan" }, where.binary, "ses_akm1").join(" ")).toContain(
+      "--agent plan",
+    );
   });
 
   test("the database is prepared by a command that runs no model and starts no background service", () => {
@@ -187,9 +191,12 @@ describe("the command line", () => {
   });
 
   test("neither the prompt nor the key is on the command line", () => {
-    const argv = runtimeArgv(connection({ apiKey: "sk-secret" }), { prompt: "a secret prompt" }, where.binary).join(
-      " ",
-    );
+    const argv = runtimeArgv(
+      connection({ apiKey: "sk-secret" }),
+      { prompt: "a secret prompt" },
+      where.binary,
+      "ses_akm1",
+    ).join(" ");
 
     expect(argv).not.toContain("sk-secret");
     expect(argv).not.toContain("a secret prompt");

@@ -35,6 +35,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../../../src/core/config/config";
+import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { listWorkflowRuns } from "../../../src/workflows/runtime/runs";
 import { runCliCapture } from "../../_helpers/cli";
 import { installFakeOpencodeRuntime } from "../../_helpers/fake-opencode-runtime";
@@ -235,6 +236,30 @@ describe("core feature set: akm workflow run", () => {
     expect(status.code).toBe(0);
     const text = status.stdout;
     expect(text).toContain("three gadgets");
+  }, 30_000);
+
+  test("the tokens a unit's run on akm's own runtime reports are journaled and count against budget.max_tokens", async () => {
+    write("workflows/core.md", agentWorkflow({ gate: false }).replace("steps:", "budget: { max_tokens: 100 }\nsteps:"));
+    let dispatches = 0;
+    installFakeOpencodeRuntime({
+      reply: (call) => {
+        dispatches++;
+        return {
+          text: call.prompt.includes("STEP-COLLECT") ? collectReply("gadgets", ["alpha"]) : "{}",
+          usage: { inputTokens: 80, outputTokens: 40, reasoningTokens: 0 },
+        };
+      },
+    });
+
+    const result = await runCliCapture(["workflow", "run", "workflows/core"]);
+
+    // 120 tokens after the first step: the second step is refused.
+    expect(dispatches).toBe(1);
+    const envelope = parseEnvelope(result.stdout);
+    expect(envelope.run.status).toBe("failed");
+    expect(result.stdout).toContain("budget exceeded (max_tokens ceiling)");
+    const units = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(envelope.run.id));
+    expect(units.map((unit) => unit.tokens)).toEqual([120]);
   }, 30_000);
 
   test("an omitted param takes its frontmatter `default:` and the unit sees it", async () => {

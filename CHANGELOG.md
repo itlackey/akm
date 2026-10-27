@@ -159,8 +159,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     retries a failing endpoint with backoff for over a minute and has no config
     setting to shorten it, so a unit with no `timeout` waits that long.
   - OpenCode's headless `run` cancels questions and rejects permission requests,
-    and the model carries on. A run reports its reply only: no token usage and no
-    session id.
+    and the model carries on. A run reports its session id and the tokens its turn
+    used, read from the session OpenCode keeps in the runtime's database, so a
+    workflow's `budget.max_tokens` and the unit journal count them; a harness run
+    reports neither.
   - A failed run reports as a harness run does, a non-zero exit with OpenCode's
     own message: the `llm_rate_limit`, `llm_content_filter` and `parse_error`
     reasons the embedded runtime gave are not given.

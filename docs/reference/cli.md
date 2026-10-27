@@ -2771,9 +2771,9 @@ akm agent --connection local --prompt "summarize recent changes"
 
 Returns `{ ok, engine, exitCode, stdout, stderr, durationMs, reason?, error?, sessionId? }`.
 `engine` is the name of the connection or harness the run used. `sessionId` is
-the run's session id when it has one: akm's own runtime reports none; it keeps its
-sessions in `<akm data dir>/opencode-runtime/data/opencode/opencode.db`, so the run
-can be found there. On
+the run's session id when it has one: akm's own runtime reports the session it
+keeps in `<akm data dir>/opencode-runtime/data/opencode/opencode.db`, so the run
+can be found there; a harness run reports none. On
 failure, `reason` is a short code such as `timeout`, `spawn_failed`,
 `non_zero_exit` or `parse_error`. Captured dispatches render this final envelope
 using the selected akm format. Interactive child stdout/stderr remain inherited

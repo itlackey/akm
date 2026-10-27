@@ -159,6 +159,22 @@ export function listV2Sessions(db: Database, sinceMs: number): OpenCodeSessionMe
     .map((row) => toMeta(row, row.id));
 }
 
+/**
+ * The tokens one session's turns used: OpenCode records them on each assistant message and keeps their sums on the
+ * session row (equal, measured on 2.1.4). Undefined when the session is not in the file.
+ */
+export function v2SessionTokens(
+  db: Database,
+  sessionId: string,
+): { readonly input: number; readonly output: number; readonly reasoning: number } | undefined {
+  const row = db
+    .prepare<{ tokens_input: number; tokens_output: number; tokens_reasoning: number }>(
+      "SELECT tokens_input, tokens_output, tokens_reasoning FROM session_v2 WHERE id = ?",
+    )
+    .get(sessionId);
+  return row ? { input: row.tokens_input, output: row.tokens_output, reasoning: row.tokens_reasoning } : undefined;
+}
+
 /** One session's events, from its messages in order. Throws when the session is not in the file. */
 export function readV2Session(db: Database, harness: string, sessionId: string, filePath: string): OpenCodeSessionRead {
   const row = db

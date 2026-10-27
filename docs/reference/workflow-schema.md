@@ -1177,7 +1177,9 @@ across resumes**, not just the current invocation. Hitting a ceiling aborts
 the step's still-pending dispatches and fails the step with a
 `budget exceeded (<which> ceiling)` summary — budget exhaustion is a hard
 stop that ignores `on_error: continue`. Because the plan is frozen, raising a
-budget means starting a new run.
+budget means starting a new run. Only units that run on akm's own runtime
+report token usage; a unit on a harness or a direct model call reports none
+and adds nothing to `max_tokens`.
 
 ## Model references
 

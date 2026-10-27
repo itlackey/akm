@@ -96,6 +96,18 @@ export interface RunAgentOptions {
   dispatch?: AgentDispatchRequest;
 }
 
+/**
+ * Best-effort token accounting for one agent run. Harness-neutral shape;
+ * fields are only set when the run reported them (0 is a real value, absent
+ * means unknown). akm's own runtime reports them, from the session OpenCode
+ * keeps; a harness run, through the CLI spawn path, has no usage contract.
+ */
+export interface AgentTokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+}
+
 /** Result envelope. `ok=false` always carries a `reason`. */
 export interface AgentRunResult {
   ok: boolean;
@@ -108,6 +120,10 @@ export interface AgentRunResult {
   llmErrorCode?: Exclude<import("../../llm/usage-telemetry").LlmUsageErrorCode, "unknown_error">;
   /** Human-readable error message paired with `reason`. */
   error?: string;
+  /** Token accounting, when the run reported it (akm's own runtime). */
+  usage?: AgentTokenUsage;
+  /** The session id of the run, when it exposes one (akm's own runtime). */
+  sessionId?: string;
 }
 
 /**

@@ -148,11 +148,15 @@ export function runtimePrepareArgv(binary: string): string[] {
   return [binary, "session", "list", "--standalone"];
 }
 
-/** The command line of a run; the prompt is not on it, it goes on stdin. */
+/**
+ * The command line of a run; the prompt is not on it, it goes on stdin. `session` is the id the run's session is made
+ * with (`--session` makes a session of that id when none has it), so akm finds the session the run left.
+ */
 export function runtimeArgv(
   connection: ChatCompletionConfig,
   dispatch: AgentDispatchRequest,
   binary: string,
+  session: string,
 ): string[] {
   return [
     binary,
@@ -160,6 +164,8 @@ export function runtimeArgv(
     "--standalone",
     "--title",
     "akm",
+    "--session",
+    session,
     ...(dispatch.agent ? ["--agent", dispatch.agent] : []),
     "--model",
     `${PROVIDER}/${connection.model}`,
