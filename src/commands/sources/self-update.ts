@@ -14,7 +14,7 @@ import {
   readChunkWithDeadline,
 } from "../../core/common";
 import { ConfigError } from "../../core/errors";
-import { warn } from "../../core/warn";
+import { isQuiet, warn } from "../../core/warn";
 import { githubHeaders } from "../../integrations/github";
 import { getDirname, mainPath, semverOrder } from "../../runtime";
 import type { UpgradeChannel, UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
@@ -500,7 +500,7 @@ async function runMigrationStep(runTool: typeof runMigrationTool): Promise<NonNu
  * an upgrade can re-embed part of the corpus and take minutes, so the child's
  * stderr (its progress lines) goes straight to the terminal; its stdout, never a
  * terminal here, is captured. `--format json` keeps the progress on stderr
- * whatever output format the user has configured.
+ * whatever output format the user has configured, and `--quiet` is passed on.
  */
 function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullable<UpgradeResponse["postUpgrade"]> {
   if (opts.skip) {
@@ -511,7 +511,7 @@ function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullab
     };
   }
   try {
-    const result = childProcess.spawnSync(akmBin, ["index", "--format", "json"], {
+    const result = childProcess.spawnSync(akmBin, ["index", "--format", "json", ...(isQuiet() ? ["--quiet"] : [])], {
       encoding: "utf8",
       env: process.env,
       stdio: ["pipe", "pipe", "inherit"],

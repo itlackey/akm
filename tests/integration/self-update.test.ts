@@ -14,7 +14,7 @@ import {
   streamResponseToFile,
 } from "../../src/commands/sources/self-update";
 import { upgradeCommand } from "../../src/commands/sources/sources-cli";
-import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
+import { _resetWarnOnceForTests, _setWarnSinkForTests, setQuiet } from "../../src/core/warn";
 import { sandboxHome, withEnv } from "../_helpers/sandbox";
 
 // ── Fetch mocking helper ────────────────────────────────────────────────────
@@ -657,6 +657,8 @@ describe("performUpgrade", () => {
   });
 
   test("runs `akm index` post-upgrade after a successful pkg-manager install", async () => {
+    // The test harness runs quiet; a plain `akm upgrade` does not.
+    setQuiet(false);
     const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: "",
@@ -687,6 +689,22 @@ describe("performUpgrade", () => {
       ["index", "--format", "json"],
       expect.objectContaining({ encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] }),
     );
+  });
+
+  test("`akm upgrade --quiet` passes --quiet to the post-upgrade index", async () => {
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+    setQuiet(true);
+    await performUpgrade(
+      { currentVersion: "0.0.13", latestVersion: "0.0.14", updateAvailable: true, installMethod: "npm" },
+      undefined,
+      currentMigrator,
+    );
+
+    expect(spawnSyncSpy).toHaveBeenLastCalledWith("akm", ["index", "--format", "json", "--quiet"], expect.anything());
   });
 
   test.skipIf(process.platform === "win32")(
