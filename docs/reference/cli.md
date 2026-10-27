@@ -676,24 +676,29 @@ instead of treating keyword fallback as healthy semantic ranking.
 
 Ranking fuses two candidate lists by reciprocal rank (k = 60, equal weights):
 BM25 over whole documents matching any non-stopword query word, and the
-document vectors nearest to the query embedding, 100 candidates each. A hit's
-`score` is its fused score, and equal scores are ordered by ref. The query is
-embedded with the model's query template (see `embedding.queryTemplate` in
-[`configuration.md`](configuration.md)); when the embedding takes longer than
-`embedding.queryTimeoutMs` (default 3000) or fails, the search is served by
-keyword ranking alone with `fts-fallback` and a warning. Filters (`--type`,
-`--from`, `--filter`, `--belief`, the default session exclusion, proposed
-quality) and one-hit-per-file deduplication narrow the fused list without
-reordering it. Of entries with identical indexed content (the same body
-saved under another name or in another bundle), only the highest-ranked is
-kept.
+document vectors nearest to the query embedding, 100 candidates each. Filters
+(`--type`, `--from`, `--filter`, `--belief`, the default session exclusion,
+proposed quality) drop ineligible entries from each list before its 100
+candidates are taken. The fused score is then multiplied by
+`1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))` over the user's recorded
+feedback for the asset (see [`akm feedback`](#feedback)), and hits are ordered
+by that score, equal scores by ref. A hit's `score` is the adjusted score. If
+`state.db` cannot be read, the search ranks without feedback and adds a
+warning. The query is embedded with the model's query template (see
+`embedding.queryTemplate` in [`configuration.md`](configuration.md)); when the
+embedding takes longer than `embedding.queryTimeoutMs` (default 3000) or fails,
+the search is served by keyword ranking alone with `fts-fallback` and a
+warning. One-hit-per-file deduplication, and keeping only the highest-ranked of
+entries with identical indexed content (the same body saved under another name
+or in another bundle), drop entries from the ordered list without reordering
+it.
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter by asset type. Free-form and unvalidated — an unknown type returns no hits. Also accepts any adapter-defined type (e.g. `website`) — see [Bundle Types](bundle-types.md) for the open types each adapter emits. |
 | `--limit` | number | `20` | Maximum results |
 | `--from` | `local`, `registry`, `all` | `local` | Where to search |
-| `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
+| `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the candidates before ranking. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--belief` | `all`, `current`, `historical` | `current` | Belief filter on any asset. `current` keeps unflagged/active/asserted assets; `historical` keeps deprecated/contradicted/superseded/archived assets. Labels do not establish truth. |
 | `--include-sessions` | flag | `false` | Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
