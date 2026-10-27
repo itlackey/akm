@@ -3588,9 +3588,10 @@ accepted unsafe retirements, applied exact fixes unreviewed and changed notes
 nobody had touched: 6 to 14 harmed items a night on two models (#1132). A reflect revision that changes the body, and
 every distill lesson or knowledge promotion, is deferred for review even when
 its judge passes it. A bare `akm proposal drain` follows the apply mode of the
-default strategy's triage block, which is promote, so it accepts (and asks for
-confirmation first). A strategy whose apply mode is `queue` stages decisions
-instead and writes nothing to assets; `--promote` always accepts. Whether a
+triage block of your improve strategy (`improve.strategy`, `default` unless
+set). `default`'s is promote, so it accepts (and asks for confirmation first).
+A strategy whose apply mode is `queue` stages decisions instead and writes
+nothing to assets; `--promote` always accepts. Whether a
 bare drain should promote is an open question
 ([#1274](https://github.com/itlackey/akm/issues/1274)).
 
