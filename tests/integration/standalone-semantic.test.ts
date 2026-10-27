@@ -1,19 +1,20 @@
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
-
 /**
- * The compiled standalone binary embeds with the real model on the native ONNX
- * Runtime. It is built here (`scripts/build-standalone.ts`, for the host) and
- * run on a small generated stash: `akm index --full` must report a ready
- * semantic status, a vector for every entry, and the `onnxruntime-node`
- * runtime, with the shared library it preloaded on disk in akm's cache.
+ * The compiled standalone binary's semantic search, built here
+ * (`scripts/build-standalone.ts`, for the host) and run on a small generated
+ * stash. The binary embeds no native file. Where akm offers local embeddings,
+ * `akm setup --yes --embedding local` gets onnxruntime-node's binding and library
+ * into akm's cache (from the shared copy in `.ci-cache/akm/onnxruntime/` when a
+ * run has kept one, else from the npm registry) and the model, and
+ * `akm index --full` reports a ready status, a vector for every entry and the
+ * `onnxruntime-node` runtime. Everywhere else the same setup warns and saves
+ * keyword search; with semantic search turned on anyway the index reports it
+ * unavailable for the platform, `akm health` warns, and search is keyword.
  *
  * Gated behind AKM_SEMANTIC_TESTS=1 like semantic-search-e2e.test.ts, because it
  * needs the model (the first run downloads it into HF_HOME, or the same
  * repo-local `.ci-cache/huggingface` the end-to-end test uses). The gated
- * workflows run it on Linux, macOS and Windows, the only places the preload of
- * each platform's library is exercised.
+ * workflows run it on Linux, macOS and Windows, the only places the binary runs
+ * on each.
  *
  * Usage:
  *   AKM_SEMANTIC_TESTS=1 bun test tests/integration/standalone-semantic.test.ts
@@ -23,11 +24,26 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { makeSandboxDir, type SandboxedDir, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import { hasLocalEmbeddings, ONNXRUNTIME_VERSION } from "../../src/llm/embedders/onnx-runtime";
+import { keepOnnxRuntime, seedOnnxRuntime } from "../_helpers/onnx-runtime-cache";
+import {
+  type IsolatedAkmStorage,
+  makeSandboxDir,
+  type SandboxedDir,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+} from "../_helpers/sandbox";
 
 const SEMANTIC_TESTS = process.env.AKM_SEMANTIC_TESTS === "1";
 const PROJECT_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const HF_HOME = process.env.HF_HOME ?? path.join(PROJECT_ROOT, ".ci-cache", "huggingface");
+
+interface Verification {
+  semanticStatus: string;
+  entryCount: number;
+  embeddingCount: number;
+  embeddingRuntime?: string;
+}
 
 describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () => {
   let build: SandboxedDir;
@@ -48,52 +64,113 @@ describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () =
     build.cleanup();
   });
 
-  test("indexes a small stash with a vector per entry on onnxruntime-node", () => {
+  /** A sandbox with five notes, and `akm` run in it as the binary with akm's directories under it. */
+  function sandbox(): {
+    storage: IsolatedAkmStorage;
+    cacheDir: string;
+    akm(...args: string[]): ReturnType<typeof spawnSync>;
+  } {
     const storage = withIsolatedAkmStorage();
-    try {
-      for (let note = 1; note <= 5; note++) {
-        fs.writeFileSync(
-          path.join(storage.stashDir, "knowledge", `note-${note}.md`),
-          `---\ndescription: Note ${note} about topic ${note}\n---\n# Note ${note}\n\nThe quick brown fox number ${note} jumps over the lazy dog.\n`,
-        );
-      }
-      writeSandboxConfig({ semanticSearchMode: "auto" });
-      // The sandbox isolates this process through XDG_*; on Windows the binary would resolve its directories from
-      // %APPDATA% and %LOCALAPPDATA% ahead of them and never see the config above (the gated run reported
-      // `disabled`). The AKM_*_DIR overrides win on every platform, so the binary gets the sandbox's directories
-      // explicitly, and the library-cache assertion below reads the same cache directory.
-      const akmDirs = {
-        AKM_CONFIG_DIR: path.join(process.env.XDG_CONFIG_HOME as string, "akm"),
-        AKM_DATA_DIR: path.join(process.env.XDG_DATA_HOME as string, "akm"),
-        AKM_CACHE_DIR: path.join(process.env.XDG_CACHE_HOME as string, "akm"),
-        AKM_STATE_DIR: path.join(process.env.XDG_STATE_HOME as string, "akm"),
-      };
-
-      const run = spawnSync(binary, ["index", "--full", "--format", "json"], {
-        env: { ...process.env, ...akmDirs, HF_HOME },
-        encoding: "utf8",
-        timeout: 600_000,
-      });
-
-      expect(run.status, `stdout:\n${run.stdout}\nstderr:\n${run.stderr}`).toBe(0);
-      const { verification } = JSON.parse(run.stdout) as {
-        verification: {
-          semanticStatus: string;
-          entryCount: number;
-          embeddingCount: number;
-          embeddingRuntime?: string;
-        };
-      };
-      expect(verification.semanticStatus).toBe("ready-js");
-      expect(verification.entryCount).toBeGreaterThan(0);
-      expect(verification.embeddingCount).toBe(verification.entryCount);
-      expect(verification.embeddingRuntime).toBe("onnxruntime-node");
-      // The binary copied its embedded library into the cache: one version/platform directory holding one file.
-      const [libraryDir, ...otherDirs] = fs.readdirSync(path.join(akmDirs.AKM_CACHE_DIR, "onnxruntime"));
-      expect(otherDirs).toEqual([]);
-      expect(fs.readdirSync(path.join(akmDirs.AKM_CACHE_DIR, "onnxruntime", libraryDir as string))).toHaveLength(1);
-    } finally {
-      storage.cleanup();
+    for (let note = 1; note <= 5; note++) {
+      fs.writeFileSync(
+        path.join(storage.stashDir, "knowledge", `note-${note}.md`),
+        `---\ndescription: Note ${note} about topic ${note}\n---\n# Note ${note}\n\nThe quick brown fox number ${note} jumps over the lazy dog.\n`,
+      );
     }
-  }, 620_000);
+    const akmDirs = {
+      AKM_CONFIG_DIR: path.join(process.env.XDG_CONFIG_HOME as string, "akm"),
+      AKM_DATA_DIR: path.join(process.env.XDG_DATA_HOME as string, "akm"),
+      AKM_CACHE_DIR: path.join(process.env.XDG_CACHE_HOME as string, "akm"),
+      AKM_STATE_DIR: path.join(process.env.XDG_STATE_HOME as string, "akm"),
+    };
+    const akm = (...args: string[]) =>
+      spawnSync(binary, args, { env: { ...process.env, ...akmDirs, HF_HOME }, encoding: "utf8", timeout: 600_000 });
+    return { storage, cacheDir: akmDirs.AKM_CACHE_DIR, akm };
+  }
+
+  const shown = (run: ReturnType<typeof spawnSync>) => `stdout:\n${run.stdout}\nstderr:\n${run.stderr}`;
+
+  test("embeds no native file", () => {
+    const text = fs.readFileSync(binary).toString("latin1");
+    // Bun keeps an embedded file under `/$bunfs/root/` (`B:/~BUN/root/` on Windows) and writes a `.node` one to the temp directory to load it.
+    expect(text.match(/(?:\$bunfs|~BUN)[\\/]root[\\/][^\0"'\s]*\.node/g) ?? []).toEqual([]);
+  });
+
+  test.skipIf(!hasLocalEmbeddings())(
+    "setup gets the runtime and the model, and the index embeds a vector per entry on onnxruntime-node",
+    () => {
+      const { storage, cacheDir, akm } = sandbox();
+      try {
+        seedOnnxRuntime(cacheDir);
+
+        const setup = akm("setup", "--yes", "--no-init", "--embedding", "local", "--format", "json");
+        expect(setup.status, shown(setup)).toBe(0);
+        expect(JSON.parse(setup.stdout as string).semanticAssets).toBe("ready");
+        keepOnnxRuntime(cacheDir);
+        const folder = path.join(cacheDir, "onnxruntime", `${ONNXRUNTIME_VERSION}-${process.platform}-${process.arch}`);
+        expect(fs.readdirSync(folder).sort()).toEqual(
+          [
+            "onnxruntime_binding.node",
+            process.platform === "darwin" ? `libonnxruntime.${ONNXRUNTIME_VERSION}.dylib` : "libonnxruntime.so.1",
+          ].sort(),
+        );
+
+        const index = akm("index", "--full", "--format", "json");
+        expect(index.status, shown(index)).toBe(0);
+        const { verification } = JSON.parse(index.stdout as string) as { verification: Verification };
+        expect(verification.semanticStatus).toBe("ready-js");
+        expect(verification.entryCount).toBeGreaterThan(0);
+        expect(verification.embeddingCount).toBe(verification.entryCount);
+        expect(verification.embeddingRuntime).toBe("onnxruntime-node");
+      } finally {
+        storage.cleanup();
+      }
+    },
+    620_000,
+  );
+
+  test.skipIf(hasLocalEmbeddings())(
+    "everywhere else: setup saves keyword search, the index reports the platform, health warns, search works",
+    () => {
+      const { storage, cacheDir, akm } = sandbox();
+      try {
+        const setup = akm("setup", "--yes", "--no-init", "--embedding", "local", "--format", "json");
+        expect(setup.status, shown(setup)).toBe(0);
+        expect(setup.stderr).toMatch(
+          /Local embeddings are not available on \S+; choose a remote endpoint or keyword search\./,
+        );
+        expect(JSON.parse(setup.stdout as string).semanticAssets).toBeUndefined();
+        const config = JSON.parse(
+          fs.readFileSync(path.join(process.env.XDG_CONFIG_HOME as string, "akm", "config.json"), "utf8"),
+        );
+        expect(config.semanticSearchMode).toBe("off");
+
+        // A config that turns semantic search on anyway, as one copied from another machine does.
+        writeSandboxConfig({ semanticSearchMode: "auto" });
+        const index = akm("index", "--full", "--format", "json");
+        expect(index.status, shown(index)).toBe(0);
+        const { verification } = JSON.parse(index.stdout as string) as { verification: Verification };
+        expect(verification.semanticStatus).toBe("blocked");
+        expect(verification.embeddingCount).toBe(0);
+
+        const health = akm("health", "--no-probe", "--format", "json");
+        const check = (
+          JSON.parse(health.stdout as string) as {
+            hardChecks: { name: string; status: string; evidence?: { unavailable?: string } }[];
+          }
+        ).hardChecks.find((c) => c.name === "semantic-search");
+        expect(check?.status, shown(health)).toBe("warn");
+        expect(check?.evidence?.unavailable).toBe("platform");
+
+        const search = akm("search", "quick brown fox", "--format", "json");
+        expect(search.status, shown(search)).toBe(0);
+        expect((JSON.parse(search.stdout as string) as { searchMode?: string }).searchMode).toBe("keyword");
+        expect(search.stdout as string).toContain("note-");
+        expect(fs.existsSync(path.join(cacheDir, "onnxruntime"))).toBe(false);
+      } finally {
+        storage.cleanup();
+      }
+    },
+    620_000,
+  );
 });

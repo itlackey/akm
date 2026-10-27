@@ -33,6 +33,11 @@ entry for a package installed under another name that nothing declares as an
 Every exact pin (a version with no `^` or `~`) gets a line in `package.json`'s
 `pinNotes` saying why it is pinned and what to check before moving it.
 
+No package in the tree may declare an install-time script (`preinstall`,
+`install`, `postinstall`, or a `binding.gyp` npm would build by default). npm 12
+runs none by default, and `tests/docker/Dockerfile.debian-npm` installs with
+`--ignore-scripts`.
+
 ## Development Workflow
 
 Run the CLI from source during development:
