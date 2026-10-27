@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261017] - 2026-10-27
+
 ### Changed
 
 - `akm search` finds knowledge whose answer sits in fenced code (#1260). The
