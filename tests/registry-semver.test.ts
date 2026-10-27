@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { isExactSemver, isSemverRange, maxSatisfying } from "../src/registry/semver";
+import { highestVersion, isExactSemver, isSemverRange, maxSatisfying } from "../src/registry/semver";
 
 describe("isExactSemver", () => {
   test("true for exact versions", () => {
@@ -94,5 +94,29 @@ describe("maxSatisfying — resolves a satisfiable version for every previously-
 
   test("hyphen range with only a partial upper bound", () => {
     expect(maxSatisfying(versions, "1.0.0 - 1.2.5")).toBe("1.2.5");
+  });
+});
+
+describe("highestVersion — orders known versions with prereleases included", () => {
+  test("stable, beta and alpha of the same month: the stable release is highest, then beta, then alpha", () => {
+    expect(highestVersion(["0.10.261013-alpha", "0.10.261013", "0.10.261013-beta"])).toBe("0.10.261013");
+    expect(highestVersion(["0.10.261013-alpha", "0.10.261013-beta"])).toBe("0.10.261013-beta");
+  });
+
+  test("across months a later build is highest whatever its stage", () => {
+    expect(highestVersion(["0.10.261013", "0.10.261015-beta", "0.10.261101-alpha"])).toBe("0.10.261101-alpha");
+    expect(highestVersion(["0.10.261101-alpha", "0.10.261015", "0.10.261015-beta"])).toBe("0.10.261101-alpha");
+  });
+
+  test("a 0.10 prerelease sorts above the 0.9 stable line, which maxSatisfying '*' would skip", () => {
+    const versions = ["0.9.30202610090106", "0.10.261013-beta"];
+    expect(maxSatisfying(versions, "*")).toBe("0.9.30202610090106");
+    expect(highestVersion(versions)).toBe("0.10.261013-beta");
+  });
+
+  test("invalid entries are ignored; none valid is undefined", () => {
+    expect(highestVersion(["latest", "0.9.1", "not-a-version"])).toBe("0.9.1");
+    expect(highestVersion(["latest"])).toBeUndefined();
+    expect(highestVersion([])).toBeUndefined();
   });
 });

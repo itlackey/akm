@@ -19,6 +19,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   takes `detail: "brief"`) now point agents at the outline first, then the
   sections they need.
 
+### Fixed
+
+- `akm health`'s `plugin-version` advisory no longer reports a Claude Code
+  plugin on the `next` channel as stale against the 0.9 stable release. It read
+  the newest version with a semver rule that skips every prerelease. It now reads
+  the channel the marketplace clone follows: on `next`, the release tag on that
+  branch's head; on the default branch, the newest stable tag; on a marketplace
+  added at a tag, that tag.
+- When `crontab -l` cannot read the crontab spool (permission denied) in a
+  process started with no-new-privileges (an agent sandbox, a container, systemd
+  `NoNewPrivileges=`), akm says why: `crontab` reads the spool through its setgid
+  (or setuid) bit, which such a process does not grant. `akm health` and
+  `akm task` commands run from such a process used to repeat a bare
+  `fopen: Permission denied`. A refusal without no-new-privileges is reported as
+  before.
+
 ### Security
 
 - Zod moves from 3.25.76 to 4.6.7 (`zod` `^4.6.6`), closing GHSA-mrhx-c7xc-m3w5 /

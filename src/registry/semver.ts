@@ -47,6 +47,20 @@ export function maxSatisfying(versions: string[], range: string): string | undef
   return semver.maxSatisfying(versions, range) ?? undefined;
 }
 
+/**
+ * Highest of `versions` in semver order, prereleases included (`0.10.1-beta` sorts above `0.9.30`). Invalid entries
+ * are ignored; `undefined` when none is valid. Use this to order known versions, not `maxSatisfying(versions, "*")`,
+ * which skips every prerelease.
+ */
+export function highestVersion(versions: string[]): string | undefined {
+  return semver.rsort(versions.filter((version) => semver.valid(version) !== null))[0];
+}
+
+/** True when `version` is a valid semver prerelease (`1.2.3-beta`). */
+export function isPrerelease(version: string): boolean {
+  return semver.valid(version) !== null && semver.prerelease(version) !== null;
+}
+
 /** True when `version` satisfies `range` (both real semver forms). False for an invalid version or range. */
 export function satisfiesRange(version: string, range: string): boolean {
   return semver.satisfies(version, range);

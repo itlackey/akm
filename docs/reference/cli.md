@@ -435,6 +435,10 @@ to each connection's endpoint, one probe per distinct endpoint, checks the
 installed akm-cli version against the latest GitHub release (`cli-version`),
 runs the scheduler's recorded akm binary with `--version` to check it
 against the running CLI (`scheduler-binary`).
+The `plugin-version` advisory compares the installed Claude Code plugin with the
+channel its marketplace clone follows: the newest stable tag on the remote's
+default branch, the release tag on the branch head for another branch such as
+`next`, and the pinned tag for a marketplace added at a tag.
 
 Primary result fields:
 
