@@ -36,7 +36,7 @@
  * local marketplace clone is not proof of what is newest upstream — the
  * incident above involved a clone that hadn't seen the fix's tag at all — so
  * the only way to ever detect drift is to ask the remote what tags exist.
- * That query is a `git ls-remote --tags` (lists refs; fetches nothing,
+ * That query is a `git ls-remote --symref` (lists refs; fetches nothing,
  * writes nothing) with a short timeout, and any failure (offline, no
  * remote, timeout) degrades to "installed version reported, no staleness
  * claim" rather than a false positive or a hang. Like `cli-version`, this
@@ -61,7 +61,7 @@ import {
   readPackageVersion,
 } from "../../integrations/harnesses/opencode/plugin-layout";
 import { opencodeCacheDir } from "../../integrations/harnesses/opencode/roots";
-import { isExactSemver, isSemverRange, maxSatisfying, satisfiesRange } from "../../registry/semver";
+import { highestVersion, isExactSemver, isPrerelease, isSemverRange, satisfiesRange } from "../../registry/semver";
 import type { HealthCheckResult } from "./types";
 
 /**
@@ -207,7 +207,7 @@ function detectInstalledPlugins(pluginsRoot: string): DetectedPlugin[] {
       continue;
     }
     if (versions.length === 0) continue;
-    const latest = maxSatisfying(versions, "*") ?? versions.sort().at(-1);
+    const latest = highestVersion(versions);
     if (!latest) continue;
     const versionDir = path.join(pluginDir, latest);
     const manifestPath = path.join(versionDir, ".claude-plugin", "plugin.json");
@@ -246,22 +246,40 @@ function readVersionRange(pluginDir: string): string | undefined {
   return match?.[1];
 }
 
-/** Injectable seam for the one network read this module performs. Real impl below; tests supply a fake. */
+/**
+ * Injectable seam for the one network read this module performs: the release versions the marketplace channel the
+ * clone follows offers now. Real impl below; tests supply a fake.
+ */
 export type ListRemoteTagsFn = (marketplaceDir: string) => string[] | undefined;
 
 const LS_REMOTE_TIMEOUT_MS = 5_000;
 
 /**
- * `git ls-remote --tags origin` against the marketplace clone's configured
- * remote — lists refs only, fetches no objects, writes no local refs.
- * Returns `undefined` (never throws) when the directory is not a git
- * checkout, has no `origin` remote, or the command fails/times out (e.g.
- * offline) — all "cannot determine availability", not "up to date".
+ * `git ls-remote --symref origin` against the marketplace clone's configured remote (lists refs only, fetches no
+ * objects, writes no local refs), read for the channel the clone follows:
+ *
+ * - **The remote's default branch** (stable): every stable release tag; the newest is the highest of them.
+ * - **Any other branch** (a channel such as `next`): the release tags on that branch's head. A channel branch is
+ *   reset to each build it publishes, so its head IS the newest build of the channel, whatever semver order says
+ *   about other tags (retired build schemes can sort above current builds).
+ * - **No branch** (a marketplace added at a tag ref, which Claude Code clones detached): the release tag the clone
+ *   is pinned to. A pinned marketplace never offers anything newer, so `claude plugin update` could not act on a
+ *   newer tag elsewhere. A detached clone at an untagged commit reads like the default branch.
+ *
+ * Returns `undefined` (never throws) when the directory is not a git checkout, has no `origin` remote, or the
+ * command fails/times out (e.g. offline): all "cannot determine availability", not "up to date". A channel head
+ * with no release tag returns `[]`, which reads the same way.
  */
 const realListRemoteTags: ListRemoteTagsFn = (marketplaceDir) => {
   let result: SpawnSyncReturns<string>;
+  let branch: string;
   try {
-    result = spawnSync("git", ["-C", marketplaceDir, "ls-remote", "--tags", "origin"], {
+    branch =
+      spawnSync("git", ["-C", marketplaceDir, "branch", "--show-current"], {
+        encoding: "utf8",
+        timeout: LS_REMOTE_TIMEOUT_MS,
+      }).stdout?.trim() ?? "";
+    result = spawnSync("git", ["-C", marketplaceDir, "ls-remote", "--symref", "origin"], {
       encoding: "utf8",
       timeout: LS_REMOTE_TIMEOUT_MS,
     });
@@ -269,16 +287,39 @@ const realListRemoteTags: ListRemoteTagsFn = (marketplaceDir) => {
     return undefined;
   }
   if (result.status !== 0 || !result.stdout) return undefined;
-  const tags = result.stdout
+  const refs = result.stdout
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => line.split("\t")[1])
-    .filter((ref): ref is string => typeof ref === "string" && ref.startsWith("refs/tags/"))
-    .map((ref) => ref.replace(/^refs\/tags\//, "").replace(/\^\{\}$/, ""))
-    .map((tag) => tag.replace(/^v/, ""))
-    .filter(isExactSemver);
-  return [...new Set(tags)];
+    .map((line) => line.split("\t"));
+  const defaultBranch = refs
+    .find(([value, name]) => name === "HEAD" && value?.startsWith("ref: refs/heads/"))?.[0]
+    ?.replace(/^ref: refs\/heads\//, "");
+  const tags = refs
+    .filter(([, name]) => typeof name === "string" && name.startsWith("refs/tags/"))
+    .map(([sha, name]) => ({
+      sha: sha as string,
+      version: (name as string)
+        .replace(/^refs\/tags\//, "")
+        .replace(/\^\{\}$/, "")
+        .replace(/^v/, ""),
+    }))
+    .filter((tag) => isExactSemver(tag.version));
+  const tagsAt = (sha: string | undefined) => [
+    ...new Set(tags.filter((tag) => tag.sha === sha).map((tag) => tag.version)),
+  ];
+  const onChannelBranch = branch !== "" && defaultBranch !== undefined && branch !== defaultBranch;
+  if (onChannelBranch) return tagsAt(refs.find(([, name]) => name === `refs/heads/${branch}`)?.[0]);
+  if (branch === "") {
+    const pinned = tagsAt(
+      spawnSync("git", ["-C", marketplaceDir, "rev-parse", "HEAD"], {
+        encoding: "utf8",
+        timeout: LS_REMOTE_TIMEOUT_MS,
+      }).stdout?.trim(),
+    );
+    if (pinned.length > 0) return pinned;
+  }
+  return [...new Set(tags.map((tag) => tag.version).filter((version) => !isPrerelease(version)))];
 };
 
 /** Options for {@link collectPluginStalenessAdvisories}. */
@@ -342,14 +383,14 @@ function buildAdvisory(
   let availableVersion: string | undefined;
   try {
     const tags = probe && fs.existsSync(marketplaceDir) ? listRemoteTags(marketplaceDir) : undefined;
-    availableVersion = tags && tags.length > 0 ? maxSatisfying(tags, "*") : undefined;
+    availableVersion = tags && tags.length > 0 ? highestVersion(tags) : undefined;
   } catch {
     availableVersion = undefined;
   }
   const stale =
     availableVersion !== undefined &&
     plugin.version !== availableVersion &&
-    maxSatisfying([plugin.version, availableVersion], "*") === availableVersion;
+    highestVersion([plugin.version, availableVersion]) === availableVersion;
 
   // Point 3: does the plugin's own declared range admit the running CLI?
   const versionRange = readVersionRange(plugin.pluginDir);
