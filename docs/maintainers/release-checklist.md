@@ -36,8 +36,9 @@ The Release workflow, on the pushed commit:
    targets and migrator, and package acceptance;
 3. builds the package and standalone binaries;
 4. requires CI to pass on the same commit, waiting up to 25 minutes for the run
-   to finish (it does not run lint, the typecheck, the test suites or the
-   upgrade rehearsal again);
+   to finish: the newest push or manual run counts, a pull request's does not
+   (it does not run lint, the typecheck, the test suites or the upgrade
+   rehearsal again);
 5. publishes to npm (`latest` for a stable version, `next` for a prerelease)
    and creates the GitHub release.
 

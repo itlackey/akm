@@ -118,9 +118,10 @@ describe("release workflow", () => {
     const steps = workflow.jobs.release.steps;
     const gate = steps.find((step) => step.name === "Require green CI on this commit");
 
-    // Runs the step's script with a fake `gh` that prints one snapshot of `gh run list` per call (the last one
-    // repeats) and a fake `sleep` that counts its calls and returns at once.
-    function runGate(snapshots: string[]): { status: number | null; stderr: string; sleeps: number } {
+    // Runs the step's script with a fake `gh` that records its arguments and prints one snapshot of `gh run list`
+    // per call (the last one repeats), and a fake `sleep` that counts its calls and returns at once. A snapshot
+    // line is the step's jq projection of one run, newest first: "<event> <status> <conclusion>".
+    function runGate(snapshots: string[]): { status: number | null; stderr: string; sleeps: number; args: string } {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-release-gate-"));
       try {
         snapshots.forEach((snapshot, index) => {
@@ -130,6 +131,7 @@ describe("release workflow", () => {
           path.join(dir, "gh"),
           [
             "#!/bin/sh",
+            `echo "$*" > "${dir}/args"`,
             `n=$(( $(cat "${dir}/calls" 2>/dev/null || echo 0) + 1 ))`,
             `echo "$n" > "${dir}/calls"`,
             `[ "$n" -le ${snapshots.length} ] || n=${snapshots.length}`,
@@ -144,45 +146,69 @@ describe("release workflow", () => {
         });
         const sleepsFile = path.join(dir, "sleeps");
         const sleeps = fs.existsSync(sleepsFile) ? fs.readFileSync(sleepsFile, "utf8").trim().split("\n").length : 0;
-        return { status: result.status, stderr: result.stderr, sleeps };
+        const args = fs.readFileSync(path.join(dir, "args"), "utf8");
+        return { status: result.status, stderr: result.stderr, sleeps, args };
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     }
 
-    test("sits after the release check and before the publish", () => {
+    test("sits after the build and before the publish, and nothing before it publishes", () => {
       const names = steps.map((step) => step.name);
       const at = names.indexOf("Require green CI on this commit");
-      expect(at).toBeGreaterThan(names.indexOf("Release check"));
+      expect(at).toBeGreaterThan(names.indexOf("Build package and binaries"));
       expect(at).toBeLessThan(names.indexOf("Publish to npm"));
+      for (const step of steps.slice(0, at)) {
+        expect(step.run ?? "").not.toMatch(/npm publish|gh release|git tag|git push/);
+      }
     });
 
-    test("passes at once when CI already passed, even with another run still going", () => {
-      expect(runGate(["completed success\nin_progress "])).toMatchObject({ status: 0, sleeps: 0 });
+    test("asks for the CI workflow's runs on this commit", () => {
+      expect(runGate(["push completed success"]).args).toContain(
+        "run list --repo o/r --workflow ci.yml --commit abc123 --json event,status,conclusion",
+      );
+    });
+
+    test("passes at once when the newest CI run on the commit passed", () => {
+      expect(runGate(["push completed success\npush completed failure"])).toMatchObject({ status: 0, sleeps: 0 });
     });
 
     test("waits while CI has not started or is running, then passes", () => {
-      expect(runGate(["", "queued ", "in_progress ", "completed success"])).toMatchObject({ status: 0, sleeps: 3 });
-    });
-
-    test("keeps waiting past a failed run while another run for the commit is still going", () => {
-      expect(runGate(["completed failure\nin_progress ", "completed failure\ncompleted success"])).toMatchObject({
+      expect(runGate(["", "push queued ", "push in_progress ", "push completed success"])).toMatchObject({
         status: 0,
-        sleeps: 1,
+        sleeps: 3,
       });
     });
 
-    test("fails when CI failed or was cancelled", () => {
-      expect(runGate(["completed failure"])).toMatchObject({ status: 1, sleeps: 0 });
-      const cancelled = runGate(["in_progress ", "completed cancelled"]);
-      expect(cancelled).toMatchObject({ status: 1, sleeps: 1 });
-      expect(cancelled.stderr).toContain("CI did not pass on abc123");
+    test("waits on a newer run past an older failed one", () => {
+      expect(
+        runGate(["push in_progress \npush completed failure", "push completed success\npush completed failure"]),
+      ).toMatchObject({ status: 0, sleeps: 1 });
     });
 
-    test("fails after 25 minutes of 30-second polls when CI never finishes", () => {
-      const result = runGate(["in_progress "]);
+    test("does not count a pull_request run, which tests a merge and on a draft skips the upgrade rehearsal", () => {
+      expect(
+        runGate([
+          "pull_request completed success\npush in_progress ",
+          "pull_request completed success\npush completed failure",
+        ]),
+      ).toMatchObject({ status: 1, sleeps: 1 });
+      const prOnly = runGate(["pull_request completed success"]);
+      expect(prOnly).toMatchObject({ status: 1, sleeps: 50 });
+      expect(prOnly.stderr).toContain("no push or manual CI run yet");
+    });
+
+    test("fails when the newest CI run failed or was cancelled", () => {
+      expect(runGate(["push completed failure\npush completed success"])).toMatchObject({ status: 1, sleeps: 0 });
+      const cancelled = runGate(["push in_progress ", "push completed cancelled"]);
+      expect(cancelled).toMatchObject({ status: 1, sleeps: 1 });
+      expect(cancelled.stderr).toContain("CI did not pass on abc123: completed cancelled");
+    });
+
+    test("fails after 25 minutes of 30-second polls, naming the commit and the last status", () => {
+      const result = runGate(["workflow_dispatch in_progress "]);
       expect(result).toMatchObject({ status: 1, sleeps: 50 });
-      expect(result.stderr).toContain("within 25 minutes");
+      expect(result.stderr).toContain("CI has not passed on abc123 within 25 minutes; last status: in_progress");
       expect(gate?.run).toContain("sleep 30");
     });
   });

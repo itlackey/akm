@@ -117,27 +117,29 @@ jobs:
       # Lint, typecheck, the unit and integration suites and the upgrade
       # rehearsal run in CI on this exact commit; wait for that run rather than
       # running them again here, so Release can be dispatched right after the
-      # release commit is pushed. It passes at once when CI already did, and
-      # fails when CI failed or was cancelled, or has not passed in 25 minutes
-      # (50 polls, 30 seconds apart).
+      # release commit is pushed. The newest push or manual CI run on the commit
+      # decides: a pull_request run tests a merge with its base branch, and on a
+      # draft skips the upgrade rehearsal. It passes at once when that run
+      # already passed, and fails when it failed or was cancelled, or has not
+      # passed in 25 minutes (50 polls, 30 seconds apart).
       - name: Require green CI on this commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           for _ in $(seq 50); do
             runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" \
-              --json status,conclusion --jq '.[] | .status + " " + .conclusion')"
-            if grep -qx 'completed success' <<<"$runs"; then
-              exit 0
-            fi
-            if [ -n "$runs" ] && ! grep -qv '^completed ' <<<"$runs"; then
-              echo "CI did not pass on $GITHUB_SHA:" >&2
-              echo "$runs" >&2
-              exit 1
-            fi
+              --json event,status,conclusion --jq '.[] | .event + " " + .status + " " + .conclusion')"
+            run="$(awk 'NF && $1 != "pull_request" { print $2 " " $3; exit }' <<<"$runs")"
+            case "$run" in
+              "completed success") exit 0 ;;
+              "completed "*)
+                echo "CI did not pass on $GITHUB_SHA: $run" >&2
+                exit 1
+                ;;
+            esac
             sleep 30
           done
-          echo "CI has not passed on $GITHUB_SHA within 25 minutes" >&2
+          echo "CI has not passed on $GITHUB_SHA within 25 minutes; last status: ${run:-no push or manual CI run yet}" >&2
           exit 1
 
       - name: Publish to npm
