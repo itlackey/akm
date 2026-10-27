@@ -29,6 +29,7 @@ import {
   type SandboxedDir,
   withIsolatedAkmStorage,
   withMockedFetch,
+  withProcessArch,
 } from "./_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -135,15 +136,19 @@ describe.skipIf(!hasLocalEmbeddings())("the local embedder's runtime, where akm 
   });
 });
 
-describe.skipIf(hasLocalEmbeddings())("the local embedder's runtime, everywhere else", () => {
+describe("the local embedder's runtime, everywhere else", () => {
   test("nothing is fetched, and the reason names the platform and the two choices", async () => {
     const { requests, serve } = registry(onnxTarball());
 
-    await expect(withMockedFetch(() => loadOnnxRuntime(), serve)).rejects.toThrow(noLocalEmbeddingsReason());
+    // An arch no listed platform has stands for every machine outside the list.
+    await withProcessArch("ia32", async () => {
+      expect(hasLocalEmbeddings()).toBe(false);
+      await expect(withMockedFetch(() => loadOnnxRuntime(), serve)).rejects.toThrow(noLocalEmbeddingsReason());
+      expect(noLocalEmbeddingsReason()).toMatch(
+        /^Local embeddings are not available on \S+-ia32; choose a remote endpoint or keyword search\.$/,
+      );
+    });
 
     expect(requests).toEqual([]);
-    expect(noLocalEmbeddingsReason()).toMatch(
-      /^Local embeddings are not available on \S+; choose a remote endpoint or keyword search\.$/,
-    );
   });
 });
