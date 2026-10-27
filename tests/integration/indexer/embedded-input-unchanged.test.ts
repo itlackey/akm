@@ -196,6 +196,7 @@ describe("re-embedding follows the embedded input, not the whole search text", (
       expect(hasStoredEmbedding(db, id)).toBe(false);
 
       // A larger cap embeds the character that was past the cut.
+      upsertEntry(db, filePath, document(withCharChanged(embeddedContentChars)), provenance, undefined, capTokens);
       store();
       upsertEntry(db, filePath, document(original), provenance, undefined, capTokens + 1);
       expect(hasStoredEmbedding(db, id)).toBe(false);
