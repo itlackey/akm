@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The architecture and CLI reference pages now say that feedback reorders search hits
+  (#1251).** They said a hit's `score` was its fused score and that nothing else changed the
+  order. They now say that after fusion the score is multiplied by
+  `1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))` over the user's recorded feedback for
+  the asset, the list is re-sorted (equal scores by fully qualified ref), and
+  one-hit-per-file and identical-content deduplication then drop entries without reordering
+  it. They also say filters drop ineligible entries from each candidate list before its 100
+  candidates are taken, not from the fused list afterwards. The storage, indexing, registry
+  and improve-guide pages no longer say that search ranking reads the utility score: improve
+  and `akm metrics` read it, search does not.
+
 ## [0.10.261016] - 2026-10-27
 
 ### Added

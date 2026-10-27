@@ -937,8 +937,8 @@ it is documented here because it is the multi-tenant/multi-agent contract
 that `akm search --filter` and `akm show --filter` read back:
 `--filter user=<id>` / `--filter agent=<id>` / `--filter run=<id>` /
 `--filter channel=<name>` (repeatable) narrow results/resolution to assets
-whose frontmatter scope matches, without changing ranking. A memory with
-only scope flags and no tags is valid — the tag-required check is
+whose frontmatter scope matches; search applies them before ranking. A memory
+with only scope flags and no tags is valid — the tag-required check is
 independent of scope. `--scope` was removed in 0.9.0 with no alias; use
 `--filter`.
 
