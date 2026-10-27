@@ -47,6 +47,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm task` commands run from such a process used to repeat a bare
   `fopen: Permission denied`. A refusal without no-new-privileges is reported as
   before.
+- `akm health`'s `opencode-plugin-version` advisory reads the OpenCode 1 plugin
+  cache of the spec the global OpenCode config names (#1265). It read only
+  `packages/akm-opencode`, but OpenCode 1 caches each spec in its own folder, so
+  a host with `"plugin": ["akm-opencode@next"]` (cached in
+  `packages/akm-opencode@next`) showed no row at all. It now reads the one folder
+  of the spec under `plugin`: a bare name is `akm-opencode@latest`, as
+  `akm upgrade` reads it, and `akm-opencode@next` is its own folder. A version
+  pin (`akm-opencode@<version>`) is reported as pinned, with no staleness
+  verdict. With no entry, or no folder for it, the check reads
+  `packages/akm-opencode` as before; other cached specs are not scanned.
 
 ### Security
 
