@@ -905,7 +905,8 @@ const TOKEN_LIKE_MIN_LENGTH = 20;
  *   every other quoted literal is dropped;
  * - the value of an assignment (`KEY=value`, `key: value`) is dropped unless
  *   it is a dotted code reference (`process.env.CI`); the name stays;
- * - long token-like strings with digits (keys, hashes) are dropped;
+ * - long token-like strings with digits (keys, hashes) are dropped, base64
+ *   included: its `/`, `+` and `=` do not cut it into short kept pieces;
  * - camelCase, snake_case, dotted and dashed names also add their parts.
  *
  * Numbers, punctuation and operators never reach the result.
@@ -917,6 +918,10 @@ export function fencedCodeIdentifiers(line: string): string {
     )
     .replace(/([A-Za-z_][A-Za-z0-9_.-]*\s*[:=]\s*)(\S+)/g, (_match, name: string, value: string) =>
       /^[!(]*[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)+[()]*[,;]?$/.test(value) ? `${name} ${value}` : name,
+    )
+    // Base64 is one token: its `/`, `+` and `=` would otherwise cut a key body into short pieces that are kept.
+    .replace(/(?<![\w.-])[A-Za-z0-9+/=]{20,}(?![\w.-])/g, (run) =>
+      /[a-z]/.test(run) && /[A-Z]/.test(run) && /\d/.test(run) ? " " : run,
     );
   const words: string[] = [];
   for (let token of cleaned.match(/--?[A-Za-z][A-Za-z0-9-]*|[A-Za-z_][A-Za-z0-9_.-]*/g) ?? []) {

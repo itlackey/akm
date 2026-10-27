@@ -214,6 +214,18 @@ The spectral quokka calibration nonce rotates every Thursday.
       dropped: ["ghp_", "1234567890"],
     },
     {
+      name: "a key body is dropped whole, not cut at its / and + into short pieces",
+      line: "FAKEkey0material+NOTreal/1234abcdEFGH+fakeFAKEfake0000/notAkey99",
+      kept: [],
+      dropped: ["FAKEkey0material", "NOTreal", "fakeFAKEfake0000", "notAkey99"],
+    },
+    {
+      name: "a base64 secret passed as an argument is dropped",
+      line: "aws configure set aws_secret_access_key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      kept: ["aws_secret_access_key"],
+      dropped: ["wJalrXUtnFEMI", "K7MDENG", "EXAMPLEKEY"],
+    },
+    {
       name: "flags, calls and dotted references are names",
       line: "if (process.env.CI) throw new ProviderInitError(code); akm index --full",
       kept: ["process.env.CI", "ProviderInitError", "Provider", "--full"],
