@@ -43,10 +43,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   one place whatever the keyword margin, and that with embeddings it breaks
   only near-ties, where they said feedback does not override relevance. The
   `AKM_REGISTRY_URL` rows say it replaces the configured registries in every
-  registry search. The migration guide lists the full refs `akm env` and
-  `akm secret` now require as a breaking change and no longer lists
-  `GET /api/config` as one (`akm ui` is new in 0.10). The fixture READMEs and
-  the 0.10.0 release notes match the code.
+  registry search. The migration guide and the 0.10.0 release notes name the
+  full refs `akm env` and `akm secret` now require, the removed
+  `akm search --assets`, the end of the index's bundle refresh, the retired
+  `secret://` and `${secret:NAME}`, the `--belief current` default and the
+  Codex and Aider flags akm no longer passes, and no longer list
+  `GET /api/config` as a breaking change (`akm ui` is new in 0.10). The fixture
+  READMEs match the code.
 - **`akm bundle rename` keeps the bundle's recorded feedback** (#1250). It rewrote
   proposals, task history and workflow refs but left `usage_events` under the old
   prefix, so after a rename no feedback counted in search ranking for any asset
