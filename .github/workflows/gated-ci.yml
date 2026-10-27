@@ -262,10 +262,10 @@ jobs:
       # host binary and index a small stash. On macOS (Apple silicon) setup gets the
       # ONNX Runtime and the index embeds natively; Windows has no local embeddings,
       # so the test asserts keyword search, the platform reported, and health warning.
-      # The model cache is the Semantic Search job's, per runner OS. Linux runs the
-      # same test in the Semantic Search job.
+      # The model cache is the Semantic Search job's, per runner OS; only macOS loads
+      # the model. Linux runs the same test in the Semantic Search job.
       - name: Restore HuggingFace model cache
-        if: matrix.runtime_platform != 'linux'
+        if: matrix.runtime_platform == 'darwin'
         id: hf-cache
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
         with:
@@ -290,7 +290,7 @@ jobs:
       - name: Save HuggingFace model cache from trusted schedule
         if: >-
           success() &&
-          matrix.runtime_platform != 'linux' &&
+          matrix.runtime_platform == 'darwin' &&
           steps.hf-cache.outputs.cache-hit != 'true' &&
           github.event_name == 'schedule' &&
           github.ref_name == github.event.repository.default_branch
