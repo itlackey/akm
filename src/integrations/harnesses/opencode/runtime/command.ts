@@ -119,7 +119,12 @@ export function runtimeConfig(
   };
 }
 
-/** The variables {@link runtimeEnv} sets, which the commands the agent runs must not see as set. */
+/**
+ * The variables {@link runtimeEnv} sets that the commands the agent runs must not see as set: the runtime's roots (a
+ * command would read and write akm's directories instead of the user's) and akm's OpenCode settings (an `opencode` a
+ * command runs would load akm's provider and its key file). `AKM_OPENCODE_CLI`, between akm and its plugin, is
+ * harmless to a command and is left.
+ */
 const RUNTIME_VARIABLES = [
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
@@ -131,7 +136,6 @@ const RUNTIME_VARIABLES = [
   "OPENCODE_DISABLE_PROJECT_CONFIG",
   "OPENCODE_DISABLE_CLAUDE_CODE",
   "OPENCODE_CONFIG_CONTENT",
-  "AKM_OPENCODE_CLI",
 ] as const;
 
 /** What a run sets in the process's environment, over the one akm and the caller give every child. */

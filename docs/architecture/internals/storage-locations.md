@@ -605,7 +605,9 @@ five directories it is started with as its `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
 `data/opencode/opencode.db`), `cache/`, `state/` and `tmp/` (the binary's own native
 pieces, which it unpacks at start). akm creates them on the first run of the
 runtime. Beside them, `prepare.lock` is held while the first run of an OpenCode
-version prepares its database, and `prepared-<version>` marks that it did.
+version prepares its database, `prepared-<version>` marks that it did, and
+`keys/` (0700) holds the connection key of each running run, one 0600 file named
+for its session, removed when the run ends.
 
 `data/opencode/opencode.db` is an OpenCode database (the OpenCode 2 layout) that
 keeps the sessions of akm's own agent runtime. It is separate from the user's own

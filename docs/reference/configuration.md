@@ -292,12 +292,15 @@ default connection. The npm package and the standalone binary do the same.
 - Its sessions are in `<akm data dir>/opencode-runtime/data/opencode/opencode.db`,
   and all of its files under `<akm data dir>/opencode-runtime/`. Nothing is
   written under `~/.local/share/opencode`.
+- The connection's key is in no process's environment: akm writes it for the
+  run to a file under `<akm data dir>/opencode-runtime/keys/` (readable by you
+  alone), names that file in the runtime's config, and removes it when the run
+  ends.
 - The commands the agent runs get the environment akm runs in, with the
   directories this akm resolved and the run's variables set over it, less your
   `OPENCODE_*` variables. What akm sets for the OpenCode process itself (its
-  directories, and the config that holds the connection's key) is not in it:
-  akm's plugin puts those variables back to what akm runs in, or removes them,
-  for each command.
+  directories and its OpenCode settings) is not in it: akm's plugin puts those
+  variables back to what akm runs in, or removes them, for each command.
 - A run reports its session id and the tokens its turn used, read from that
   session once the process has ended; a workflow's `budget.max_tokens` counts
   them. A failed run is a non-zero exit with OpenCode's own message

@@ -668,8 +668,11 @@ Agent programs are reachable by two execution paths, both behind
   otherwise), the
   connection's request fields are laid over each model request, with OpenCode's
   own output cap taken off, and the variables akm set for the process (its
-  directories, and the config that holds the connection's key) are put back to
-  akm's own, or removed, in the environment of the commands the agent runs.
+  directories and its OpenCode settings) are put back to akm's own, or removed,
+  in the environment of the commands the agent runs.
+- The connection's key is in no environment: the inline config references it as
+  `{file:<data>/opencode-runtime/keys/<session>}`, a 0600 file written for the
+  run and removed after it.
 - Agent work runs OpenCode's default agent with its normal tools. Model work never
   runs here: on a connection it is a direct request to its endpoint.
 - Every session is stored in akm's own OpenCode database

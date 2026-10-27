@@ -158,8 +158,12 @@ describe("the environment", () => {
     expect(shellEnv.TMPDIR).toBe("/tmp");
     expect(shellEnv.XDG_CACHE_HOME).toBeNull();
     expect(shellEnv.OPENCODE_CONFIG_CONTENT).toBeNull();
-    // Every variable runtimeEnv sets is covered, so the key in the config never reaches a command.
-    expect(Object.keys(shellEnv).sort()).toEqual(Object.keys(env).sort());
+    // Every variable runtimeEnv sets is covered but akm's own one for its plugin, which a command may see.
+    expect(Object.keys(shellEnv).sort()).toEqual(
+      Object.keys(env)
+        .filter((name) => name !== "AKM_OPENCODE_CLI")
+        .sort(),
+    );
   });
 
   test("the config goes in OPENCODE_CONFIG_CONTENT, and the argv that runs akm, for the plugin, in AKM_OPENCODE_CLI", () => {
