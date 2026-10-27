@@ -244,3 +244,21 @@ export function purgeOldEvents(db: Database, retentionDays = 90): number {
   const changes = (result as { changes?: number | bigint }).changes ?? 0;
   return typeof changes === "bigint" ? Number(changes) : changes;
 }
+
+/**
+ * Rewrite every `events.ref` naming `oldBundleId` to `newBundleId` (`akm bundle
+ * rename`). Improve reads an asset's feedback events by this ref, and
+ * `insertEventOnce` finds a journal event by it under the proposal or workflow
+ * ref the rename also rewrites, so an event left under the old prefix stops
+ * counting for the renamed bundle. A legacy unqualified ref is not matched by
+ * the `<old>//` prefix and is left alone; refs inside `metadata_json` are
+ * history and stay as written. Returns the number of rows rewritten.
+ */
+export function renameEventRefs(db: Database, oldBundleId: string, newBundleId: string): number {
+  const prefix = `${oldBundleId}//`;
+  return Number(
+    db
+      .prepare(`UPDATE events SET ref = ? || substr(ref, length(?) + 1) WHERE substr(ref, 1, length(?)) = ?`)
+      .run(newBundleId, oldBundleId, prefix, prefix).changes,
+  );
+}

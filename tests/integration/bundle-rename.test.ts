@@ -14,6 +14,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { buildSnapshotManifest } from "../../src/commands/improve/preparation";
 import type { Proposal } from "../../src/commands/proposal/proposal-types";
 import { akmSearch } from "../../src/commands/read/search";
 import { akmShowUnified as akmShow } from "../../src/commands/read/show";
@@ -30,6 +31,12 @@ import {
 } from "../../src/indexer/usage/usage-events";
 import { readLockfile, upsertLockEntry } from "../../src/integrations/lockfile";
 import type { Database } from "../../src/storage/database";
+import { insertEventStrict, renameEventRefs } from "../../src/storage/repositories/events-repository";
+import {
+  getImproveLedgerRow,
+  recordImproveLedger,
+  renameImproveLedgerRefs,
+} from "../../src/storage/repositories/improve-ledger-repository";
 import { closeDatabase } from "../../src/storage/repositories/index-connection";
 import {
   getAssetOutcome,
@@ -403,7 +410,7 @@ describe("akm bundle rename — applied", () => {
     expect((await names())[0]).toBe(favourite);
   });
 
-  test("rewrites the usage events, salience and outcome rows of the renamed bundle only (#1250)", async () => {
+  test("rewrites the usage events, events, ledger, salience and outcome rows of the renamed bundle only (#1250)", async () => {
     await seedBundleWithOneEntry();
     const stateDb = openStateDatabase();
     try {
@@ -414,6 +421,15 @@ describe("akm bundle rename — applied", () => {
         ["knowledge/hello", "positive"],
       ] as const) {
         insertUsageEventStrict(stateDb, { event_type: "feedback", entry_ref, signal, source: "user" });
+        insertEventStrict(stateDb, { eventType: "feedback", ts: "2026-10-01T00:00:00.000Z", ref: entry_ref });
+      }
+      for (const [ref, at] of [
+        ["original//knowledge/hello", "2026-10-02T00:00:00.000Z"],
+        ["original2//knowledge/hello", "2026-10-03T00:00:00.000Z"],
+        // Left by a removed bundle that was also called "renamed": the renamed bundle's row replaces it.
+        ["renamed//knowledge/hello", "2026-01-01T00:00:00.000Z"],
+      ] as const) {
+        recordImproveLedger(stateDb, { stashDir: storage.stashDir, ref, source: "reflect", outcome: "unchanged", at });
       }
       for (const [ref, rankScore] of [
         ["original//knowledge/hello", 0.9],
@@ -451,9 +467,62 @@ describe("akm bundle rename — applied", () => {
       expect(getAssetOutcome(readDb, "original//knowledge/hello")).toBeUndefined();
       expect(getAssetOutcome(readDb, "renamed//knowledge/hello")?.outcome_score).toBe(0.7);
       expect(getAssetOutcome(readDb, "original2//knowledge/hello")?.outcome_score).toBe(0.6);
+
+      expect(
+        (
+          readDb.prepare("SELECT ref FROM events WHERE event_type = 'feedback' ORDER BY id").all() as Array<{
+            ref: string;
+          }>
+        ).map((row) => row.ref),
+      ).toEqual([
+        "renamed//knowledge/hello",
+        "renamed//knowledge/hello",
+        "original2//knowledge/hello",
+        "knowledge/hello",
+      ]);
+      const ledgerAt = (ref: string) => getImproveLedgerRow(readDb, storage.stashDir, ref, "reflect")?.lastAttemptAt;
+      expect(ledgerAt("original//knowledge/hello")).toBeUndefined();
+      expect(ledgerAt("renamed//knowledge/hello")).toBe("2026-10-02T00:00:00.000Z");
+      expect(ledgerAt("original2//knowledge/hello")).toBe("2026-10-03T00:00:00.000Z");
     } finally {
       closeDatabase(readDb);
     }
+  });
+
+  test("improve still reads the bundle's feedback and its own attempts after the rename (#1250)", async () => {
+    await seedBundleWithOneEntry();
+    const { code, stderr } = await runCliCapture([
+      "feedback",
+      "knowledge/hello",
+      "--negative",
+      "--reason",
+      "the greeting is wrong",
+      "--format=json",
+    ]);
+    expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+    const stateDb = openStateDatabase();
+    try {
+      recordImproveLedger(stateDb, {
+        stashDir: storage.stashDir,
+        ref: "original//knowledge/hello",
+        source: "reflect",
+        outcome: "unchanged",
+        at: "2026-10-01T00:00:00.000Z",
+      });
+    } finally {
+      closeDatabase(stateDb);
+    }
+
+    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+
+    const manifest = buildSnapshotManifest({
+      postCleanupRefs: [{ ref: "knowledge/hello", itemRef: "renamed//knowledge/hello", reason: "scope-type" }],
+      validationFailureRefs: new Set(),
+      stashDir: storage.stashDir,
+    });
+    expect(manifest.feedback.get("knowledge/hello")).toEqual({ hasSignal: true, positive: 0, negative: 1 });
+    expect(manifest.latestNegativeTs.has("knowledge/hello")).toBe(true);
+    expect(manifest.lastReflectAttemptAt.get("knowledge/hello")).toBe("2026-10-01T00:00:00.000Z");
   });
 
   test("a feedback event stays attached to its entry across the rename and the next index (#1250)", async () => {
@@ -479,27 +548,43 @@ describe("akm bundle rename — applied", () => {
     }
   });
 
-  test("a bundle id's `_` and astral characters match literally in the usage, salience and outcome rewrites (#1250)", () => {
+  test("a bundle id's `_`, `%` and astral characters match literally in the usage, events, ledger, salience and outcome rewrites (#1250)", () => {
     const stateDb = openStateDatabase();
     try {
-      for (const bundle of ["my_💼", "myx💼"]) {
+      for (const bundle of ["my_%💼", "myxy💼"]) {
         insertUsageEventStrict(stateDb, {
           event_type: "feedback",
           entry_ref: `${bundle}//knowledge/x`,
           signal: "positive",
           source: "user",
         });
+        insertEventStrict(stateDb, {
+          eventType: "feedback",
+          ts: "2026-10-01T00:00:00.000Z",
+          ref: `${bundle}//knowledge/x`,
+        });
+        recordImproveLedger(stateDb, {
+          stashDir: storage.stashDir,
+          ref: `${bundle}//knowledge/x`,
+          source: "reflect",
+          outcome: "unchanged",
+          at: "2026-10-01T00:00:00.000Z",
+        });
         seedSalience(stateDb, `${bundle}//knowledge/x`, 0.5);
         seedOutcome(stateDb, `${bundle}//knowledge/x`, 0.5);
       }
 
-      expect(renameUsageEventRefs(stateDb, "my_💼", "team")).toBe(1);
-      expect(renameAssetSalienceRefs(stateDb, "my_💼", "team")).toBe(1);
-      expect(renameAssetOutcomeRefs(stateDb, "my_💼", "team")).toBe(1);
+      expect(renameUsageEventRefs(stateDb, "my_%💼", "team")).toBe(1);
+      expect(renameEventRefs(stateDb, "my_%💼", "team")).toBe(1);
+      expect(renameImproveLedgerRefs(stateDb, "my_%💼", "team")).toBe(1);
+      expect(renameAssetSalienceRefs(stateDb, "my_%💼", "team")).toBe(1);
+      expect(renameAssetOutcomeRefs(stateDb, "my_%💼", "team")).toBe(1);
 
       const refs = (sql: string) => (stateDb.prepare(sql).all() as Array<{ ref: string }>).map((row) => row.ref).sort();
-      const expected = ["myx💼//knowledge/x", "team//knowledge/x"];
+      const expected = ["myxy💼//knowledge/x", "team//knowledge/x"];
       expect(refs("SELECT entry_ref AS ref FROM usage_events")).toEqual(expected);
+      expect(refs("SELECT ref FROM events WHERE event_type = 'feedback'")).toEqual(expected);
+      expect(refs("SELECT ref FROM improve_ledger")).toEqual(expected);
       expect(refs("SELECT asset_ref AS ref FROM asset_salience")).toEqual(expected);
       expect(refs("SELECT asset_ref AS ref FROM asset_outcome")).toEqual(expected);
     } finally {
@@ -535,6 +620,18 @@ describe("akm bundle rename — applied", () => {
           signal: "positive",
           source: "user",
         });
+        insertEventStrict(stateDb, {
+          eventType: "feedback",
+          ts: "2026-10-01T00:00:00.000Z",
+          ref: `${bundle}//knowledge/x`,
+        });
+        recordImproveLedger(stateDb, {
+          stashDir: storage.stashDir,
+          ref: `${bundle}//knowledge/x`,
+          source: "reflect",
+          outcome: "unchanged",
+          at: "2026-10-01T00:00:00.000Z",
+        });
         seedSalience(stateDb, `${bundle}//knowledge/x`, 0.5);
         seedOutcome(stateDb, `${bundle}//knowledge/x`, 0.5);
       }
@@ -561,6 +658,11 @@ describe("akm bundle rename — applied", () => {
       expect(refs("SELECT entry_ref AS ref FROM usage_events")).toEqual(["Team//knowledge/x", "other//knowledge/x"]);
       expect(refs("SELECT asset_ref AS ref FROM asset_salience")).toEqual(["Team//knowledge/x", "other//knowledge/x"]);
       expect(refs("SELECT asset_ref AS ref FROM asset_outcome")).toEqual(["Team//knowledge/x", "other//knowledge/x"]);
+      expect(refs("SELECT ref FROM events WHERE event_type = 'feedback'")).toEqual([
+        "Team//knowledge/x",
+        "other//knowledge/x",
+      ]);
+      expect(refs("SELECT ref FROM improve_ledger")).toEqual(["Team//knowledge/x", "other//knowledge/x"]);
     } finally {
       closeDatabase(readDb);
     }

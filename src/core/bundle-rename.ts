@@ -8,7 +8,8 @@
  * tool minted (`entries.item_ref`/`bundle_id`, `proposals.ref`, a pending
  * proposal's `proposedTarget.source`, a workflow task_history row's
  * `target_ref`, a `workflow_runs.workflow_ref`, a `usage_events.entry_ref`, an
- * `asset_salience`/`asset_outcome` `asset_ref`, `scheduler.enabled[].ref`) carries it, and a hand-edited
+ * `events.ref`, an `asset_salience`/`asset_outcome` `asset_ref`, an
+ * `improve_ledger.ref`, `scheduler.enabled[].ref`) carries it, and a hand-edited
  * `bundles` key strands all of it (see `src/indexer/bundle-identity-guard.ts`
  * §11.5). This module is the rekey transaction that guard's docstring points
  * to.
@@ -28,6 +29,8 @@ import fs from "node:fs";
 import type { TasksSyncResult } from "../commands/tasks/tasks";
 import { renameUsageEventRefs } from "../indexer/usage/usage-events";
 import { readLockfile, renameLockEntry } from "../integrations/lockfile";
+import { renameEventRefs } from "../storage/repositories/events-repository";
+import { renameImproveLedgerRefs } from "../storage/repositories/improve-ledger-repository";
 import {
   closeDatabase,
   openIndexDatabase,
@@ -343,13 +346,16 @@ export async function renameBundle(
   // State: proposals.ref, a pending proposal's proposedTarget.source,
   // workflow task_history.target_ref, workflow_runs.workflow_ref, and the
   // learned history keyed by item ref: usage_events.entry_ref (search ranking
-  // counts feedback by it) and asset_salience/asset_outcome.asset_ref.
+  // counts feedback by it), events.ref and improve_ledger.ref (improve reads
+  // feedback and its own attempts by them), and asset_salience/asset_outcome.asset_ref.
   if (fs.existsSync(getStateDbPath())) {
     withStateDb((db) => {
       renameProposalsBundleRef(db, oldId, newId);
       renameTaskHistoryTargetRefs(db, oldId, newId);
       renameWorkflowRunRefs(db, oldId, newId);
       renameUsageEventRefs(db, oldId, newId);
+      renameEventRefs(db, oldId, newId);
+      renameImproveLedgerRefs(db, oldId, newId);
       renameAssetSalienceRefs(db, oldId, newId);
       renameAssetOutcomeRefs(db, oldId, newId);
     });
