@@ -23,7 +23,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { getCacheDir } from "../../src/core/paths";
 import { makeSandboxDir, type SandboxedDir, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 const SEMANTIC_TESTS = process.env.AKM_SEMANTIC_TESTS === "1";
@@ -59,9 +58,19 @@ describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () =
         );
       }
       writeSandboxConfig({ semanticSearchMode: "auto" });
+      // The sandbox isolates this process through XDG_*; on Windows the binary would resolve its directories from
+      // %APPDATA% and %LOCALAPPDATA% ahead of them and never see the config above (the gated run reported
+      // `disabled`). The AKM_*_DIR overrides win on every platform, so the binary gets the sandbox's directories
+      // explicitly, and the library-cache assertion below reads the same cache directory.
+      const akmDirs = {
+        AKM_CONFIG_DIR: path.join(process.env.XDG_CONFIG_HOME as string, "akm"),
+        AKM_DATA_DIR: path.join(process.env.XDG_DATA_HOME as string, "akm"),
+        AKM_CACHE_DIR: path.join(process.env.XDG_CACHE_HOME as string, "akm"),
+        AKM_STATE_DIR: path.join(process.env.XDG_STATE_HOME as string, "akm"),
+      };
 
       const run = spawnSync(binary, ["index", "--full", "--format", "json"], {
-        env: { ...process.env, HF_HOME },
+        env: { ...process.env, ...akmDirs, HF_HOME },
         encoding: "utf8",
         timeout: 600_000,
       });
@@ -80,9 +89,9 @@ describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () =
       expect(verification.embeddingCount).toBe(verification.entryCount);
       expect(verification.embeddingRuntime).toBe("onnxruntime-node");
       // The binary copied its embedded library into the cache: one version/platform directory holding one file.
-      const [libraryDir, ...otherDirs] = fs.readdirSync(path.join(getCacheDir(), "onnxruntime"));
+      const [libraryDir, ...otherDirs] = fs.readdirSync(path.join(akmDirs.AKM_CACHE_DIR, "onnxruntime"));
       expect(otherDirs).toEqual([]);
-      expect(fs.readdirSync(path.join(getCacheDir(), "onnxruntime", libraryDir as string))).toHaveLength(1);
+      expect(fs.readdirSync(path.join(akmDirs.AKM_CACHE_DIR, "onnxruntime", libraryDir as string))).toHaveLength(1);
     } finally {
       storage.cleanup();
     }
