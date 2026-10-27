@@ -34,6 +34,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Two processes fetching the OpenCode binary akm's own runtime runs (or the local
+  embedder's ONNX Runtime files) into an empty cache at once no longer rename
+  their copies over each other (#1266). Each downloaded the package and renamed
+  its file into place, which unlinks a binary the other process is already
+  running (it then fails to start it again). One fetch now runs per cache
+  directory at a time, under a `fetch.lock` file in it (a dead holder's lock is
+  reclaimed); a process that finds the files in place once it holds the lock
+  downloads nothing, and a rename never replaces a file that is already whole.
 - `akm health`'s `plugin-version` advisory no longer reports a Claude Code
   plugin on the `next` channel as stale against the 0.9 stable release. It read
   the newest version with a semver rule that skips every prerelease. It now reads
