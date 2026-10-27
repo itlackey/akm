@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261016] - 2026-10-27
+
 ### Added
 
 - `akm show` returns a Markdown document's outline as `toc` (#1259): one
