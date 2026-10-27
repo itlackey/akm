@@ -15,9 +15,10 @@ AKM creates a proposal -> human or policy reviews the diff -> accept / reject / 
 ## akm feedback
 
 `akm feedback` records a positive or negative signal for any indexed asset.
-The signal updates the asset's utility score immediately, so highly-rated
+The signal changes the asset's search ranking immediately, so highly-rated
 assets rank higher and assets flagged wrong or stale surface less often right
-away. See
+away, and it updates the asset's utility score, which improve and `akm metrics`
+read. See
 [Architecture: The Improvement Loop](../architecture/improvement.md#utility-scoring)
 for how that score is computed.
 

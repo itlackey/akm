@@ -291,7 +291,7 @@ a managed source -- it only extracts the single requested asset.
 
 `akm search` and `akm show` query a single local FTS5 index that covers
 every configured source's directory. There is no fixed lookup order —
-results are ranked by relevance and utility, and precedence is expressed
+results are ranked by relevance and user feedback, and precedence is expressed
 through ranking rather than a per-source fan-out (see
 [concepts.md](../guides/concepts.md#3-akm-builds-a-local-index-and-uses-progressive-disclosure)).
 

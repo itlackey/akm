@@ -387,7 +387,7 @@ this is a purpose summary:
 | `entries_fts` (virtual, FTS5) | multi-column full-text index |
 | `entry_fragments` | safe Markdown projection retained per parent entry for fragment resolution |
 | `embeddings` | stored embedding vectors, each tagged with its model; vector search scans them |
-| `utility_scores` | recomputed utility boost state (global) |
+| `utility_scores` | recomputed utility scores (global) |
 | `index_meta` | schema/version/runtime metadata |
 | `index_dir_state` | incremental-indexing cache (per-directory hash + mtime) |
 | `llm_enrichment_cache` | cached memory-inference results |
@@ -487,7 +487,7 @@ Utility scores are rebuilt from `usage_events`.
 - old events are purged on a rolling window
 - event history is preserved through schema resets/full rebuilds
 - decay is based on elapsed time, not on how often indexing runs
-- utility is a secondary boost, not the primary ranking signal
+- improve and `akm metrics` read utility; search ranking does not
 
 ## Semantic Search Integration
 
