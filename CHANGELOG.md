@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- Zod moves from 3.25.76 to 4.6.7 (`zod` `^4.6.6`), closing GHSA-mrhx-c7xc-m3w5 /
+  CVE-2023-54404 (high): Zod before 4.6.6 can exhaust memory validating a large array,
+  and no Zod 3 release has the fix. akm validates its config files with Zod. Visible
+  changes: an integer above 2^53 - 1 in a config file is now rejected; validation
+  messages are Zod 4's (an unknown enum value reads `Invalid option: expected one of ...`);
+  `schemas/akm-config.json` is generated with `z.toJSONSchema` (the `zod-to-json-schema`
+  dev dependency is gone): `additionalProperties: true` is written `{}` (the same), integers
+  state the new `maximum: 9007199254740991`, and every map states its `propertyNames`.
+
 ## [0.10.261015] - 2026-10-27
 
 ### Changed
