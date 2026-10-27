@@ -31,9 +31,9 @@ import { info } from "../../core/warn";
  * akm relies on: `initOrtOnce(logLevel, Tensor)`; `new InferenceSession()`; `loadModel(path, options)`;
  * `inputMetadata` and `outputMetadata` (`{ name }[]`); `run(feeds, fetches)`, which reads a tensor as
  * `{ type, data, dims, location }` and makes each result with `new Tensor(type, data, dims)`. To move it: change this
- * version (and the `akm-onnxruntime-<version>` cache keys in `.github/workflows/gated-ci.yml`), check that contract in
- * the new release's `lib/binding.ts` and `lib/backend.ts`, check the library names in {@link LIBRARIES}, and run the
- * reference-vector test in `tests/integration/semantic-search-e2e.test.ts`, the gate for any bump.
+ * version, check that contract in the new release's `lib/binding.ts` and `lib/backend.ts`, check the library names in
+ * {@link LIBRARIES}, and run the reference-vector test in `tests/integration/semantic-search-e2e.test.ts`, the gate for
+ * any bump.
  */
 export const ONNXRUNTIME_VERSION = "1.24.3";
 

@@ -247,7 +247,8 @@ embedder's vectors with the Transformers.js reference in
 shared across runs the same way as the model: `tests/_helpers/onnx-runtime-cache.ts`
 copies the repo-local `.ci-cache/akm/onnxruntime/` into each sandbox's akm cache
 and keeps a folder a run fetched there, and gated CI caches that directory under
-a key carrying the ONNX Runtime version. Package acceptance separately verifies
+a key from `src/llm/embedders/onnx-runtime.ts`, which pins the ONNX Runtime
+version. Package acceptance separately verifies
 the ordinary npm package surface.
 
 `tests/integration/standalone-semantic.test.ts` (the same `AKM_SEMANTIC_TESTS=1`
