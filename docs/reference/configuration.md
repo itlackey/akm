@@ -669,12 +669,12 @@ bundled.
 
 ## Indexing
 
-AKM-native Markdown contributes a normalized body projection to the
-lowest-weight `content` search field. The projection is capped at 1,000,000
-characters, removes frontmatter, comments, and link destinations, and is never
-produced for secret, env, session, or session-checkpoint assets. From fenced
-code it keeps only the identifiers: names, CLI flags, keys, paths and dotted
-references, after the prose. Quoted strings (other than keys and absolute
+AKM-native Markdown contributes a normalized body projection to the `content`
+search field, which BM25 weights like the other four. The projection is capped
+at 1,000,000 characters, removes frontmatter, comments, and link destinations,
+and is never produced for secret, env, session, or session-checkpoint assets.
+From fenced code it keeps only the identifiers: names, CLI flags, keys, paths
+and dotted references, after the prose. Quoted strings (other than keys and absolute
 paths), assignment values, URLs and long token-like strings (base64 included)
 are dropped, so a fence's literal values are not indexed. Two kinds of value
 stay, as they do in prose: a bare short word (`-p hunter2`) and the words after
@@ -1107,7 +1107,7 @@ akm config diff fleet//config/shared.json
 | `AKM_STATE_DIR` | Override the state directory — the scheduler lock and, per bundle, `akm improve`'s whole-run lock (or set `XDG_STATE_HOME`) |
 | `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror; replaces `registry.npmjs.org` for npm bundle resolution |
-| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` for `akm search --from registry` (prefix an entry with `<provider>::` to choose a provider) |
+| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm info` and the `egress-endpoints` health advisory still show the configured list (prefix an entry with `<provider>::` to choose a provider) |
 | `AKM_VERBOSE` | Truthy value enables the same diagnostics as `--verbose` |
 | `AKM_DEBUG` | `1` prints a stack trace on unexpected internal errors |
 

@@ -207,10 +207,14 @@ akm proposal accept abc12345           # write it to the bundle
 ### akm proposal drain
 
 `akm proposal drain` works through the pending backlog in one pass: it rejects
-empty diffs, accepts proposals whose quality judge passed on their exact content
-when you pass `--promote` (add `--yes` outside a terminal), and leaves the rest
-for you to review. Without `--promote` it stages and writes nothing to your
-assets.
+empty diffs, accepts proposals whose quality judge passed on their exact content,
+and leaves the rest for you to review. A bare `akm proposal drain` follows the
+apply mode of your improve strategy (`improve.strategy`, `default` unless set).
+`default`'s is promote, so it accepts those proposals after asking for
+confirmation (add `--yes` outside a terminal). A strategy whose
+apply mode is `queue` stages and writes nothing to your assets instead.
+Whether a bare drain should promote is open
+([#1274](https://github.com/itlackey/akm/issues/1274)).
 
 ```sh
 akm proposal drain --dry-run                    # List what would be accepted, rejected or deferred

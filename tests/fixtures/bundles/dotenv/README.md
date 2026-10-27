@@ -5,7 +5,7 @@ never indexed); `secrets/*` → `type=secret` (FILE NAME only). Redaction is a
 hard contract keyed on the adapter/component, never the open `type`.
 
 - **Adapter:** `src/core/adapter/adapters/dotenv-adapter.ts`
-- **Goldens:** `tests/fixtures/format-family-goldens/dotenv/{recognition,placement,lint,renderer}.json`
+- **Goldens:** `tests/fixtures/format-family-goldens/dotenv/{recognition,lint,renderer}.json`
   — **`renderer.json` is the field-omission redaction oracle.**
 - **Real-world source:** https://www.dotenv.org/docs/security/env
 

@@ -9,7 +9,7 @@ Agents should not parse refs or construct them by hand. The intended flow is:
 search -> pick a hit -> pass its ref to show
 ```
 
-This document is the normative ref grammar for 0.9.
+This document is the normative ref grammar.
 
 ## Item Refs
 

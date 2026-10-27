@@ -17,7 +17,7 @@ an extra indexed concept in a fixture meant to stay behavior-frozen.
   (unlike several sibling format families under
   `tests/fixtures/format-family-goldens/`, whose goldens were authored ahead
   of their adapters).
-- **Goldens:** `tests/fixtures/format-family-goldens/okf/{recognition,placement,lint,renderer}.json`
+- **Goldens:** `tests/fixtures/format-family-goldens/okf/{recognition,lint,renderer}.json`
 - **Spec:** `docs/architecture/specs/okf-support.md`.
 - **Real-world source:** https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
 

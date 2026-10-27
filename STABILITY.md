@@ -532,7 +532,7 @@ on them.
 | --- | --- |
 | `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` | Filesystem layout overrides |
 | `AKM_VERBOSE`, `AKM_DEBUG` | Diagnostics |
-| `AKM_REGISTRY_URL` | Comma-separated registry URL override; replaces the configured registries |
+| `AKM_REGISTRY_URL` | Comma-separated registry URL override; replaces the configured registries in every registry search akm performs (`akm registry list` and `akm info` still show the configured list) |
 | `AKM_NPM_REGISTRY` | npm mirror base URL; replaces `registry.npmjs.org` for package lookups |
 | `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode (network filesystems) |
 | `AKM_INSTALL_DIR` | Install-script prefix |

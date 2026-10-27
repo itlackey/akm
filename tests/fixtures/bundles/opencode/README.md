@@ -5,7 +5,7 @@ that derives the open `type` from directory + frontmatter; `opencode.json` is
 runtime config and is never indexed.
 
 - **Adapter:** `src/core/adapter/adapters/opencode-adapter.ts`
-- **Goldens:** `tests/fixtures/format-family-goldens/opencode/{recognition,placement,lint,renderer}.json`
+- **Goldens:** `tests/fixtures/format-family-goldens/opencode/{recognition,lint,renderer}.json`
 - **Real-world source:** https://opencode.ai/docs/commands/ ,
   https://opencode.ai/docs/agents/ , https://opencode.ai/docs/skills/ ,
   https://opencode.ai/docs/rules/

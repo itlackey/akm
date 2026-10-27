@@ -12,7 +12,7 @@
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/llm-wiki/` + goldens
- * `tests/fixtures/format-family-goldens/llm-wiki/{recognition,placement,renderer,lint}.json`.
+ * `tests/fixtures/format-family-goldens/llm-wiki/{recognition,renderer,lint}.json`.
  * The adapter is built to MATCH those goldens (driven by
  * `tests/core/adapter/llm-wiki-adapter.test.ts`).
  *

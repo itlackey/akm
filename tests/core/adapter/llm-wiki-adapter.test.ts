@@ -7,7 +7,7 @@
  *
  * Drives the adapter over the authored SPECIFICATION fixture
  * `tests/fixtures/bundles/llm-wiki/` and asserts the four authored goldens
- * (`tests/fixtures/format-family-goldens/llm-wiki/{recognition,placement,renderer,lint}.json`).
+ * (`tests/fixtures/format-family-goldens/llm-wiki/{recognition,renderer,lint}.json`).
  * The goldens are the oracle — the adapter is built to match them, not vice
  * versa. Each golden entry carries descriptive annotations (`derivation`,
  * `reason`, `citedBy`, `note`) that are NOT `IndexDocument` fields; the

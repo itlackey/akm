@@ -642,7 +642,7 @@ describe("okf adapter — validate is LENIENT (§5)", () => {
 // OKF was the only BUILTIN_ADAPTERS entry without a
 // tests/fixtures/format-family-goldens/<family>/ directory (scripts/lint-
 // goldens-presence.ts triage). Mirrors the shape the other nine families use
-// (recognition/placement/renderer/lint.json), driven off the SAME frozen
+// (recognition/renderer/lint.json), driven off the SAME frozen
 // tests/fixtures/bundles/okf-sample/ fixture the tests above already use —
 // unlike those nine (authored ahead of their adapters as spec-authored
 // targets), this golden captures the OKF adapter's REAL, already-shipped

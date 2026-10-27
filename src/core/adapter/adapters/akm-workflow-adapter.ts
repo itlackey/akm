@@ -16,7 +16,7 @@
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/akm-workflow/` + goldens
- * `tests/fixtures/format-family-goldens/akm-workflow/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/akm-workflow/{recognition,lint,renderer}.json`.
  */
 
 import fs from "node:fs";

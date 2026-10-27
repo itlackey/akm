@@ -134,9 +134,11 @@ For script assets, akm resolves execution hints in this order:
 
 ## Storage
 
-- `env` and `secret` assets hold values that akm does not print: `list` shows
-  key names or secret names, and values reach a process only through `akm env
-  run` and `akm secret run`. See [Env and secrets](env-and-secrets.md).
+- `env` and `secret` assets hold values that akm never prints: `list` shows
+  key names or secret names. Values reach a process through `akm env run` and
+  `akm secret run`, a workflow unit's `env:` bindings and `${ref}` tokens, or a
+  0600 file written by `akm env export --out`. See
+  [Env and secrets](env-and-secrets.md).
 - All asset content is plain files inside the bundle directory. The search
   index (`index.db`) is a derived cache rebuilt by `akm index`.
 - `akm lint` only operates on writable sources, and `akm improve` on one of

@@ -26,7 +26,7 @@ import type { IndexDocument } from "../passes/metadata";
  *  - tags: tags + aliases joined
  *  - hints: searchHints + examples + usage + intent fields
  *  - content: bounded native/adapter body projection + TOC headings + parameters
- *    (lowest-weight catch-all)
+ *    (the catch-all; BM25 weighs all five fields equally)
  */
 export function buildSearchFields(entry: IndexDocument): {
   name: string;

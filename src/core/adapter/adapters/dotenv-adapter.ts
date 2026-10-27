@@ -26,7 +26,7 @@
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/dotenv/` + goldens
- * `tests/fixtures/format-family-goldens/dotenv/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/dotenv/{recognition,lint,renderer}.json`.
  */
 
 import fs from "node:fs";

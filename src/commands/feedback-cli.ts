@@ -519,10 +519,11 @@ export const feedbackCommand = defineJsonCommand({
       "next search; no reindex is needed. Each recorded positive raises the asset's\n" +
       "score and each negative lowers it, the same way for every asset: the more\n" +
       "positives, the higher it ranks (5 outrank 2), and each further vote counts\n" +
-      "for a little less. The effect is small, so it reorders close matches and\n" +
-      "does not override relevance. Only feedback recorded as the user counts, not\n" +
-      "feedback from improve, task or audit runs. Feedback also moves the utility\n" +
-      "score that improve and `akm metrics` read.",
+      "for a little less. The effect is small: in keyword-only search one vote\n" +
+      "moves a hit one place, and with embeddings it breaks only near-ties. Only\n" +
+      "feedback recorded as the user counts, not feedback from improve, task or\n" +
+      "audit runs. Feedback also moves the utility score that improve and\n" +
+      "`akm metrics` read.",
   },
   args: {
     // Optional in citty so run() is invoked even when omitted; we re-validate

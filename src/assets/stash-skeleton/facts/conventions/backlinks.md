@@ -72,8 +72,8 @@ xrefs:
 ## Self-situating headers and canonical naming
 
 Put the one-line orientation in `description:` and the trigger conditions in
-`when_to_use:` — those remain the higher-weight indexed fields. Bounded body
-prose is indexed in the lowest-weight `content` field, so
+`when_to_use:`; both are indexed, and search weighs every indexed field
+equally. Bounded body prose is indexed in the `content` field.
 `description:`/`when_to_use:` remain the primary orientation channel. Then
 open the body with a plain title plus a one-line
 orientation naming what it is, its scope/domain, and its key entities in

@@ -20,7 +20,7 @@
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/generic-files/` + goldens
- * `tests/fixtures/format-family-goldens/generic-files/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/generic-files/{recognition,lint,renderer}.json`.
  */
 
 import path from "node:path";

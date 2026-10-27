@@ -5,7 +5,7 @@ the open `type` from directory + frontmatter and emits IndexDocuments; runtime
 config (`settings.json`, `.mcp.json`) is never indexed.
 
 - **Adapter:** `src/core/adapter/adapters/claude-adapter.ts`
-- **Goldens:** `tests/fixtures/format-family-goldens/claude/{recognition,placement,lint,renderer}.json`
+- **Goldens:** `tests/fixtures/format-family-goldens/claude/{recognition,lint,renderer}.json`
 - **Real-world source:** https://code.claude.com/docs/en/claude-directory ,
   https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview
 

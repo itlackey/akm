@@ -39,7 +39,7 @@
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/agent-skills/` + goldens
- * `tests/fixtures/format-family-goldens/agent-skills/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/agent-skills/{recognition,lint,renderer}.json`.
  */
 
 import fs from "node:fs";

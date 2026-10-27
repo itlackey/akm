@@ -6,7 +6,7 @@ enforces the Agent Skills contract STRICTLY.
 
 - **Adapter:** `src/core/adapter/adapters/agent-skills-adapter.ts`. The SKILL.md
   codec is shared with `claude`/`opencode` as functions.
-- **Goldens:** `tests/fixtures/format-family-goldens/agent-skills/{recognition,placement,lint,renderer}.json`
+- **Goldens:** `tests/fixtures/format-family-goldens/agent-skills/{recognition,lint,renderer}.json`
 - **Real-world source:** https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview
   , the vendored `skills-ref` validator (0.1.0), https://github.com/anthropics/skills
 

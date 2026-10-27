@@ -2037,10 +2037,14 @@ with 2, and each further vote counts for a little less. A hit's fused score is
 multiplied by `1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))`
 (`FEEDBACK_WEIGHT` in `src/indexer/search/ranking.ts`). A negative that carried an
 exact fix stops counting once the fix is accepted, and counts again if
-`akm proposal revert` undoes it. The effect is small: it
-reorders close matches and does not override relevance. Only feedback recorded
-as the user counts, not feedback from improve, task or audit runs; the output's
-`rankingUpdate.applied` says which it was (`true`, or `false` with a `reason`).
+`akm proposal revert` undoes it. The effect is small, and how far a vote moves
+a hit depends on the search. In keyword-only search every fused score is exactly
+`1/(60 + rank)`, so neighbouring hits in the first 20 sit 1.3 to 1.6 percent
+apart and one vote (about 2 percent) moves a hit one place whatever the keyword
+margin between them. When embeddings contribute too, the two channels' ranks spread the scores
+and a vote breaks only near-ties. Only feedback recorded as the user counts, not
+feedback from improve, task or audit runs; the output's `rankingUpdate.applied`
+says which it was (`true`, or `false` with a `reason`).
 Feedback also updates the utility score that improve and `akm metrics` read.
 
 ```sh
@@ -3583,8 +3587,13 @@ person (reason `judgment-not-promotion`). Judged over every kind, the tier
 accepted unsafe retirements, applied exact fixes unreviewed and changed notes
 nobody had touched: 6 to 14 harmed items a night on two models (#1132). A reflect revision that changes the body, and
 every distill lesson or knowledge promotion, is deferred for review even when
-its judge passes it. Default mode stages decisions (queue mode); pass
-`--promote` to actually accept.
+its judge passes it. A bare `akm proposal drain` follows the apply mode of the
+triage block of your improve strategy (`improve.strategy`, `default` unless
+set). `default`'s is promote, so it accepts (and asks for confirmation first).
+A strategy whose apply mode is `queue` stages decisions instead and writes
+nothing to assets; `--promote` always accepts. Whether a
+bare drain should promote is an open question
+([#1274](https://github.com/itlackey/akm/issues/1274)).
 
 ```sh
 akm proposal drain --dry-run                        # Preview without writing
@@ -3596,7 +3605,7 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 | Flag | Description |
 | --- | --- |
 | `--strategy` | Read the triage block (apply mode, ceilings, judgment) from this improve strategy instead |
-| `--promote` | Promote (accept) judge-passed proposals. Default is queue mode — stage only, no writes to assets. |
+| `--promote` | Promote (accept) judge-passed proposals. Without it, the strategy's apply mode decides, and the default strategy's is promote (#1274). |
 | `--dry-run` | List what would be accepted/rejected/deferred, without writing |
 | `--max-accepts` | Hard per-run accept ceiling; accepts beyond this are reported as `skippedByCap` |
 | `--older-than` | Only consider proposals created (or last reopened) more than this many days ago |
