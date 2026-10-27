@@ -3,9 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The OpenCode binary akm's own runtime runs (`runtime/binary.ts`, `runtime/tar.ts`):
+ * The OpenCode binary akm's own runtime runs (`runtime/binary.ts`, with the npm
+ * package fetch and tar reader it uses, `core/npm-package.ts`, `core/tar.ts`):
  * which package a machine gets, the integrity check before anything is extracted,
- * the extraction of the one member, and the first-use fetch into akm's cache. The
+ * the extraction of the members asked for, and the first-use fetch into akm's cache. The
  * registry is a mocked fetch serving a package tarball made with `tar`; the real
  * fetch is exercised by tests/integration/opencode-runtime-sessions.test.ts.
  */
@@ -15,6 +16,8 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { verifyIntegrity } from "../src/core/npm-package";
+import { extractTarGzMembers } from "../src/core/tar";
 import {
   detectHost,
   ensureRuntimeBinary,
@@ -22,9 +25,7 @@ import {
   OPENCODE_RUNTIME_VERSION,
   opencodePackage,
   runtimeBinaryPath,
-  verifyIntegrity,
 } from "../src/integrations/harnesses/opencode/runtime/binary";
-import { extractTarGzMember } from "../src/integrations/harnesses/opencode/runtime/tar";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -133,7 +134,12 @@ describe("the integrity check", () => {
   });
 });
 
-describe("extracting the one member of a package tarball", () => {
+/** Extract one member, as the OpenCode fetch does, and return its size. */
+async function extractOne(archive: string, member: string, destination: string): Promise<number | undefined> {
+  return (await extractTarGzMembers(archive, new Map([[member, destination]]))).get(member);
+}
+
+describe("extracting members of a package tarball", () => {
   test.each([
     ["a few bytes", 20],
     ["exactly one block", 512],
@@ -143,16 +149,49 @@ describe("extracting the one member of a package tarball", () => {
     const content = randomBytes(size);
     const out = path.join(scratch.dir, "out");
 
-    const written = await extractTarGzMember(packageTarball(content), "package/bin/opencode", out);
+    const written = await extractOne(packageTarball(content), "package/bin/opencode", out);
 
     expect(written).toBe(size);
     expect(fs.readFileSync(out).equals(content)).toBe(true);
     if (process.platform !== "win32") expect(fs.statSync(out).mode & 0o111).not.toBe(0);
   });
 
+  test("several members come out of one pass, each to its own destination", async () => {
+    const root = path.join(scratch.dir, "several");
+    fs.mkdirSync(path.join(root, "package", "bin"), { recursive: true });
+    const library = randomBytes(700_001);
+    const binding = randomBytes(3_000);
+    fs.writeFileSync(path.join(root, "package", "bin", "library"), library);
+    fs.writeFileSync(path.join(root, "package", "bin", "skipped"), randomBytes(5_000));
+    fs.writeFileSync(path.join(root, "package", "bin", "binding"), binding);
+    const archive = path.join(scratch.dir, "several.tgz");
+    spawnSync("tar", [
+      "-czf",
+      archive,
+      "-C",
+      root,
+      "package/bin/library",
+      "package/bin/skipped",
+      "package/bin/binding",
+    ]);
+
+    const sizes = await extractTarGzMembers(
+      archive,
+      new Map([
+        ["package/bin/binding", path.join(scratch.dir, "binding")],
+        ["package/bin/library", path.join(scratch.dir, "library")],
+      ]),
+    );
+
+    expect(Object.fromEntries(sizes)).toEqual({ "package/bin/library": 700_001, "package/bin/binding": 3_000 });
+    expect(fs.readFileSync(path.join(scratch.dir, "library")).equals(library)).toBe(true);
+    expect(fs.readFileSync(path.join(scratch.dir, "binding")).equals(binding)).toBe(true);
+    expect(fs.existsSync(path.join(scratch.dir, "skipped"))).toBe(false);
+  });
+
   test("a member the archive does not hold is reported by name", async () => {
     await expect(
-      extractTarGzMember(packageTarball(Buffer.from("x")), "package/bin/opencode.exe", path.join(scratch.dir, "out")),
+      extractOne(packageTarball(Buffer.from("x")), "package/bin/opencode.exe", path.join(scratch.dir, "out")),
     ).rejects.toThrow(/has no package\/bin\/opencode\.exe/);
   });
 
@@ -161,7 +200,7 @@ describe("extracting the one member of a package tarball", () => {
     const cut = path.join(scratch.dir, "cut.tgz");
     fs.writeFileSync(cut, fs.readFileSync(archive).subarray(0, 1_000_000));
 
-    await expect(extractTarGzMember(cut, "package/bin/opencode", path.join(scratch.dir, "out"))).rejects.toThrow();
+    await expect(extractOne(cut, "package/bin/opencode", path.join(scratch.dir, "out"))).rejects.toThrow();
   });
 
   test.skipIf(process.platform !== "linux")(
@@ -182,7 +221,7 @@ describe("extracting the one member of a package tarball", () => {
           }
         });
 
-      await extractTarGzMember(archive, "package/bin/opencode", path.join(scratch.dir, "out"));
+      await extractOne(archive, "package/bin/opencode", path.join(scratch.dir, "out"));
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(openOnArchive()).toEqual([]);

@@ -3,10 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * One member of a gzip-compressed tar archive, streamed to a file. This is all
- * akm needs of tar: the OpenCode binary is a single regular file of about 240 MB
- * inside its package tarball, so it is never held in memory and no tar library
- * is a dependency.
+ * Named members of a gzip-compressed tar archive, streamed to files. This is all
+ * akm needs of tar: a few regular files out of an npm package tarball (the
+ * OpenCode binary, about 240 MB; onnxruntime-node's binding and library), so
+ * nothing is held in memory and no tar library is a dependency.
  */
 
 import fs from "node:fs";
@@ -64,33 +64,47 @@ const field = (header: Buffer, start: number, end: number): string => {
 };
 
 /**
- * Write the regular file `member` of the `.tgz` at `archive` to `destination` (mode 0755) and return its size. Entries
- * are matched by the header's name field alone, which holds up to 100 bytes; a longer name, which tar keeps in the
- * ustar prefix field or a PAX `path` record, is not read, so such a member is never found. The one member akm reads,
- * `package/bin/opencode`, is short. Extended headers are skipped like any other entry that is not the member.
+ * Write each regular file of the `.tgz` at `archive` that `members` names (archive path → destination, mode 0755) and
+ * return each one's size, in one pass that stops once the last is written. Entries are matched by the header's name
+ * field alone, which holds up to 100 bytes; a longer name, which tar keeps in the ustar prefix field or a PAX `path`
+ * record, is not read, so such a member is never found. The members akm reads (`package/bin/opencode`,
+ * `package/bin/napi-v6/<platform>/<arch>/<file>`) are short. Extended headers are skipped like any other entry that is
+ * not a member.
  */
-export async function extractTarGzMember(archive: string, member: string, destination: string): Promise<number> {
+export async function extractTarGzMembers(
+  archive: string,
+  members: ReadonlyMap<string, string>,
+): Promise<Map<string, number>> {
   const gunzip = zlib.createGunzip();
   pipeline(fs.createReadStream(archive), gunzip, () => {});
   const reader = new ByteReader(gunzip);
   try {
-    return await extractFrom(reader, archive, member, destination);
+    return await extractFrom(reader, archive, members);
   } finally {
     // The rest of the archive is not read: close it now rather than when the stream is collected.
     gunzip.destroy();
   }
 }
 
-async function extractFrom(reader: ByteReader, archive: string, member: string, destination: string): Promise<number> {
+async function extractFrom(
+  reader: ByteReader,
+  archive: string,
+  members: ReadonlyMap<string, string>,
+): Promise<Map<string, number>> {
+  const sizes = new Map<string, number>();
   for (;;) {
     const header = await reader.exact(BLOCK_BYTES);
-    if (header.every((byte) => byte === 0)) throw new Error(`${archive} has no ${member}`);
+    if (header.every((byte) => byte === 0)) {
+      const missing = [...members.keys()].filter((member) => !sizes.has(member));
+      throw new Error(`${archive} has no ${missing.join(", ")}`);
+    }
     const name = field(header, 0, 100).replace(/^\.\//, "");
     const typeflag = String.fromCharCode(header[156] ?? 0);
     const size = Number.parseInt(field(header, 124, 136).trim() || "0", 8);
     if (!Number.isSafeInteger(size)) throw new Error(`${archive} is not a tar archive this reader understands`);
     const padding = (BLOCK_BYTES - (size % BLOCK_BYTES)) % BLOCK_BYTES;
-    if (name !== member || (typeflag !== "0" && typeflag !== "\0")) {
+    const destination = members.get(name);
+    if (destination === undefined || sizes.has(name) || (typeflag !== "0" && typeflag !== "\0")) {
       await reader.skip(size + padding);
       continue;
     }
@@ -98,13 +112,15 @@ async function extractFrom(reader: ByteReader, archive: string, member: string, 
     try {
       for (let left = size; left > 0; ) {
         const part = await reader.read(left);
-        if (!part) throw new Error(`${archive} ends inside ${member}`);
+        if (!part) throw new Error(`${archive} ends inside ${name}`);
         await out.writeFile(part);
         left -= part.length;
       }
     } finally {
       await out.close();
     }
-    return size;
+    sizes.set(name, size);
+    if (sizes.size === members.size) return sizes;
+    await reader.skip(padding);
   }
 }

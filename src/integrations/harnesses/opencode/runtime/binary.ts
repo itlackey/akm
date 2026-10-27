@@ -17,14 +17,12 @@
  */
 
 import { type SpawnSyncReturns, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fetchWithRetry, isRecord, toErrorMessage } from "../../../../core/common";
+import { toErrorMessage } from "../../../../core/common";
+import { fetchNpmPackageFiles, NPM_REGISTRY } from "../../../../core/npm-package";
 import { getCacheDir } from "../../../../core/paths";
 import { info } from "../../../../core/warn";
-import { writeResponseToFileCapped } from "../../../../runtime";
-import { extractTarGzMember } from "./tar";
 
 /**
  * The OpenCode release akm's own runtime runs. It is pinned because the runtime depends on things no OpenCode release
@@ -34,8 +32,6 @@ import { extractTarGzMember } from "./tar";
  * binary (it fetches it) and read `docs/reference/configuration.md` ("Without a harness") for what the version changes.
  */
 export const OPENCODE_RUNTIME_VERSION = "2.1.4";
-
-const REGISTRY = "https://registry.npmjs.org";
 
 /** The platform packages of `@opencode/cli` at {@link OPENCODE_RUNTIME_VERSION}. */
 const PACKAGES: ReadonlySet<string> = new Set([
@@ -138,86 +134,22 @@ export function runtimeBinaryPath(platform: NodeJS.Platform = process.platform):
   );
 }
 
-/** The `sha512-<base64>` integrity npm records for a tarball. */
-function sha512Integrity(file: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = createHash("sha512");
-    fs.createReadStream(file)
-      .on("data", (chunk) => hash.update(chunk))
-      .on("error", reject)
-      .on("end", () => resolve(`sha512-${hash.digest("base64")}`));
-  });
-}
-
-/** Throws unless the tarball at `file` has the integrity the registry lists for it. */
-export async function verifyIntegrity(file: string, expected: string): Promise<void> {
-  const listed = expected.split(/\s+/).filter((integrity) => integrity.startsWith("sha512-"));
-  if (listed.length === 0) throw new Error(`the registry lists no sha512 integrity for it (${expected || "none"})`);
-  const actual = await sha512Integrity(file);
-  if (!listed.includes(actual))
-    throw new Error(`its sha512 integrity is ${actual}, not the ${listed.join(" or ")} the registry lists`);
-}
-
-async function registryDocument(url: string): Promise<{ tarball: string; integrity: string }> {
-  const response = await fetchWithRetry(url, { headers: { accept: "application/json" } }, { timeout: 30_000 });
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => undefined);
-    throw new Error(`the registry answered HTTP ${response.status}`);
-  }
-  const dist = ((await response.json()) as { dist?: unknown }).dist;
-  if (!isRecord(dist) || typeof dist.tarball !== "string" || typeof dist.integrity !== "string") {
-    throw new Error("the registry document has no dist.tarball and dist.integrity");
-  }
-  return { tarball: dist.tarball, integrity: dist.integrity };
-}
-
-/**
- * Fetch the binary of the package `name` into `binary`: the registry document of that one package, its tarball, the
- * integrity check before anything is extracted, then the executable by temp file and rename. Two akm processes fetching
- * at once both finish: a rename that loses to the other leaves the file the other made.
- */
-async function fetchBinary(name: string, binary: string): Promise<void> {
-  const directory = path.dirname(binary);
-  fs.mkdirSync(directory, { recursive: true });
-  const download = path.join(directory, `.download-${process.pid}.tgz`);
-  const partial = path.join(directory, `.opencode-${process.pid}.tmp`);
-  try {
-    const { tarball, integrity } = await registryDocument(`${REGISTRY}/${name}/${OPENCODE_RUNTIME_VERSION}`);
-    info(
-      `Fetching OpenCode ${OPENCODE_RUNTIME_VERSION} for akm's own agent runtime (about 114 MB, once) into ${directory}.`,
-    );
-    const response = await fetchWithRetry(tarball, undefined, { timeout: 60_000 });
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error(`${tarball} answered HTTP ${response.status}`);
-    }
-    // No overall deadline for a 114 MB file on a slow link: only 60 s without bytes fails it.
-    await writeResponseToFileCapped(download, response, { stallTimeoutMs: 60_000 });
-    await verifyIntegrity(download, integrity);
-    const size = await extractTarGzMember(download, `package/bin/${path.basename(binary)}`, partial);
-    fs.chmodSync(partial, 0o755);
-    try {
-      fs.renameSync(partial, binary);
-    } catch (error) {
-      // Where an open executable cannot be replaced, the other process's file stands.
-      if (!fs.existsSync(binary) || fs.statSync(binary).size !== size) throw error;
-    }
-  } finally {
-    fs.rmSync(download, { force: true });
-    fs.rmSync(partial, { force: true });
-  }
-}
-
 /** Fetch the binary for this machine, naming the package, its URL and the cache path when it cannot. */
 async function fetchForThisMachine(binary: string): Promise<string> {
   let name = "an @opencode/cli platform package";
   try {
     name = opencodePackage(detectHost());
-    await fetchBinary(name, binary);
+    info(
+      `Fetching OpenCode ${OPENCODE_RUNTIME_VERSION} for akm's own agent runtime (about 114 MB, once) into ${path.dirname(binary)}.`,
+    );
+    const file = path.basename(binary);
+    await fetchNpmPackageFiles(name, OPENCODE_RUNTIME_VERSION, path.dirname(binary), [
+      { member: `package/bin/${file}`, file },
+    ]);
     return binary;
   } catch (error) {
     throw new Error(
-      `Could not fetch OpenCode ${OPENCODE_RUNTIME_VERSION}, which akm's own agent runtime runs: package ${name} from ${REGISTRY}/${name}/${OPENCODE_RUNTIME_VERSION} into ${path.dirname(binary)}: ${toErrorMessage(error)}. ` +
+      `Could not fetch OpenCode ${OPENCODE_RUNTIME_VERSION}, which akm's own agent runtime runs: package ${name} from ${NPM_REGISTRY}/${name}/${OPENCODE_RUNTIME_VERSION} into ${path.dirname(binary)}: ${toErrorMessage(error)}. ` +
         "Without network access for this step, enable the opencode harness with an installed OpenCode 2 instead (see docs/reference/configuration.md).",
     );
   }
