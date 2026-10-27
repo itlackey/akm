@@ -71,6 +71,8 @@ interface ModelRequest {
 interface FakeModel {
   readonly url: string;
   readonly requests: ModelRequest[];
+  /** How many requests the client gave up on (closed the connection before an answer). */
+  readonly abandoned: () => number;
 }
 
 const cleanups: Array<() => void> = [];
@@ -112,6 +114,7 @@ function sandbox(): Box {
 /** An OpenAI-compatible endpoint on loopback. It answers `PROBE_OK`, asks for `callTool` first, or never answers. */
 function fakeModel(behaviour: { callTool?: string; stall?: boolean } = {}): FakeModel {
   const requests: ModelRequest[] = [];
+  let abandoned = 0;
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -131,6 +134,9 @@ function fakeModel(behaviour: { callTool?: string; stall?: boolean } = {}): Fake
         toolResults,
       });
       if (behaviour.stall) {
+        req.signal.addEventListener("abort", () => {
+          abandoned += 1;
+        });
         return new Response(new ReadableStream({ start() {} }), sse);
       }
       const calling = behaviour.callTool !== undefined && toolResults.length === 0;
@@ -160,7 +166,7 @@ function fakeModel(behaviour: { callTool?: string; stall?: boolean } = {}): Fake
     },
   });
   cleanups.push(() => server.stop(true));
-  return { url: `http://127.0.0.1:${server.port}/v1`, requests };
+  return { url: `http://127.0.0.1:${server.port}/v1`, requests, abandoned: () => abandoned };
 }
 
 const sse = { headers: { "content-type": "text/event-stream" } };
@@ -585,12 +591,10 @@ function registerSuite(bin: string): void {
       });
     }, 60_000);
 
-    // Recorded on OpenCode 2.1.2 and 2.1.4: the stop reaches the CLI. The CLI is interrupted and exits 130, but the
-    // turn belongs to the service, which stays up. Whether the service's model request stays open depends on the
-    // provider (with the package named, as here, 2.1.4 abandons it; with the same package loaded by file URL it did
-    // not), so that is not asserted. A run that must end when it is stopped is a standalone run, which is what akm's
-    // own model work is.
-    test("a stop ends the opencode command, not the service's turn", async () => {
+    // Recorded on OpenCode 2.1.4: the stop reaches the CLI, which is interrupted and exits 130, and the service, which
+    // stays up, ends the turn too: its model request is abandoned and the session is marked interrupted. (2.1.2, with
+    // the provider package loaded by file URL, kept the service's request open.)
+    test("a stop ends the opencode command and the service's turn, and leaves the service up", async () => {
       await leavingNoService(async () => {
         const box = sandbox();
         const model = fakeModel({ stall: true });
@@ -608,6 +612,7 @@ function registerSuite(bin: string): void {
         expect(result.exitCode).toBe(130);
         expect(opencodeProcesses()).toEqual([]);
         expect(serviceProcesses()).toEqual(services);
+        expect(model.abandoned()).toBe(1);
       });
     }, 60_000);
   });

@@ -323,7 +323,8 @@ tool call, releases OpenCode's claim on the session and leaves no process
 behind. Agent work is the plain invocation, which OpenCode 2 runs through a
 background service on one port for every `HOME`: those cases end the service
 they start, skip when something else holds the port, and record that a stop ends
-the `opencode` command and not the service's turn. A provider defined only in the
+the `opencode` command and the service's turn (2.1.4) and leaves the service up.
+A provider defined only in the
 user's `OPENCODE_CONFIG_CONTENT` works for agent work and model work alike. Run
 it when changing the OpenCode builder or the subprocess kill ladder, and against
 a new OpenCode 2 release.
