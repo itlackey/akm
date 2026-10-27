@@ -77,7 +77,15 @@ export function semanticSearchCheck(state: SemanticSearchState): HealthCheckResu
   const asOf = builtAt ? ` at the last index (${builtAt})` : " at the last index";
   switch (record.status) {
     case "unavailable":
-      return result("fail", `Semantic search was unavailable on this machine${asOf}: ${record.reason}`, evidence);
+      // No native library for this platform is not something to fix: keyword search is the healthy state there.
+      return record.unavailable === "platform"
+        ? result(
+            "warn",
+            `Semantic search is unavailable on this platform: ${record.reason} ` +
+              'Set semanticSearchMode to "off", or embedding.endpoint to a remote embedding service.',
+            evidence,
+          )
+        : result("fail", `Semantic search was unavailable on this machine${asOf}: ${record.reason}`, evidence);
     case "blocked":
       return result("fail", `Semantic search was blocked${asOf}: ${record.reason}`, evidence);
     case "ready-js":

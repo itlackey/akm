@@ -32,8 +32,20 @@ export const LOCAL_EMBEDDING_RUNTIME = "onnxruntime-node";
 /** The loaded model: one L2-normalised vector per text, in order. */
 type LocalPipeline = (texts: string[]) => Promise<Float32Array[]>;
 
-/** The embedding runtime is not usable on this machine (no native library, a failed load). */
-export class LocalRuntimeUnavailableError extends Error {}
+/**
+ * The embedding runtime is not usable on this machine. `platform`: onnxruntime-node
+ * has no native library for it, so keyword search is all there is. `load`: it has
+ * one, which did not load (a missing package or addon, a `noexec` temp or cache
+ * directory).
+ */
+export class LocalRuntimeUnavailableError extends Error {
+  constructor(
+    message: string,
+    readonly kind: "platform" | "load",
+  ) {
+    super(message);
+  }
+}
 
 // ── Test seam ────────────────────────────────────────────────────────────────
 // Swap-and-restore override for the model loader (model files, runtime, tokenizer).
@@ -80,18 +92,37 @@ async function importOnnxRuntime(): Promise<typeof import("onnxruntime-node")> {
   }
 }
 
+/**
+ * Whether onnxruntime-node has a native library for this machine. A standalone
+ * binary knows from its build (`none`). The package has one for glibc Linux
+ * x64/arm64, Apple-silicon macOS and Windows x64/arm64, and none for musl Linux
+ * or Intel macOS.
+ */
+function hasNativeLibrary(): boolean {
+  if (typeof AKM_STANDALONE_NATIVE_MODULE !== "undefined") return AKM_STANDALONE_NATIVE_MODULE !== "./native/none";
+  if (process.platform === "linux") {
+    const header = (process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined)?.header;
+    if (!header?.glibcVersionRuntime) return false;
+  }
+  return ["linux-x64", "linux-arm64", "darwin-arm64", "win32-x64", "win32-arm64"].includes(
+    `${process.platform}-${process.arch}`,
+  );
+}
+
 async function loadOnnxRuntime(): Promise<typeof import("onnxruntime-node")> {
   try {
     return await importOnnxRuntime();
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
+    const kind = hasNativeLibrary() ? "load" : "platform";
     // Only the package itself missing calls for a reinstall; a platform it ships no addon for (Intel macOS) fails on
     // `../bin/napi-v6/<platform>/<arch>/onnxruntime_binding.node` and is reported below.
-    if (/Cannot find (?:module|package) ['"]onnxruntime-node['"]/.test(msg)) {
-      throw new LocalRuntimeUnavailableError("Semantic search requires onnxruntime-node. Reinstall akm-cli.");
+    if (kind === "load" && /Cannot find (?:module|package) ['"]onnxruntime-node['"]/.test(msg)) {
+      throw new LocalRuntimeUnavailableError("Semantic search requires onnxruntime-node. Reinstall akm-cli.", kind);
     }
     throw new LocalRuntimeUnavailableError(
       `Failed to load the embedding runtime (onnxruntime-node): ${msg}. Semantic search with the local model is unavailable; keyword search still works.`,
+      kind,
     );
   }
 }

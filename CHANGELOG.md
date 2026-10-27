@@ -260,8 +260,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `blocked` or `unavailable` on this machine, the reason) beside its other
   index facts, and the check reads that record with the index's current entry
   and vector counts: `pass` when every entry has a vector on the native runtime,
-  `warn` when vectors lag or another runtime embedded, `fail` when blocked or
-  unavailable. It loads no model and sends no request, and search does not read
+  `warn` when vectors lag, another runtime embedded, or the platform has no
+  native ONNX Runtime library (Alpine/musl, Intel macOS), `fail` when blocked
+  or unavailable for a cause that can be fixed (the library did not load). It
+  loads no model and sends no request, and search does not read
   the record. The health report's Semantic Search line shows the check (`OK`,
   `OFF`, `BLOCKED`, `UNAVAILABLE` or `UNKNOWN`); it used to say `OK` always.
 
