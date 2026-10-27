@@ -684,9 +684,8 @@ candidates are taken. The fused score is then multiplied by
 feedback for the asset (see [`akm feedback`](#feedback)), and hits are ordered
 by that score, equal scores by fully qualified ref (`<bundle>//<conceptId>`,
 even where the output shows the short form). A hit's `score` is the adjusted
-score. If
-`state.db` cannot be read, the search ranks without feedback and adds a
-warning. The query is embedded with the model's query template (see
+score. If `state.db` exists but cannot be read, the search ranks without
+feedback and adds a warning. The query is embedded with the model's query template (see
 `embedding.queryTemplate` in [`configuration.md`](configuration.md)); when the
 embedding takes longer than `embedding.queryTimeoutMs` (default 3000) or fails,
 the search is served by keyword ranking alone with `fts-fallback` and a
