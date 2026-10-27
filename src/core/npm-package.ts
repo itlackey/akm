@@ -14,8 +14,10 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { writeResponseToFileCapped } from "../runtime";
+import { sleep, writeResponseToFileCapped } from "../runtime";
 import { fetchWithRetry, isRecord } from "./common";
+import { releaseLock } from "./file-lock";
+import { formatLockHolderPid, tryAcquireRunLock } from "./run-lock";
 import { extractTarGzMembers } from "./tar";
 
 export const NPM_REGISTRY = "https://registry.npmjs.org";
@@ -53,11 +55,12 @@ async function registryDocument(url: string): Promise<{ tarball: string; integri
   return { tarball: dist.tarball, integrity: dist.integrity };
 }
 
+/** How long a fetch waits for another process's fetch into the same directory: a large tarball on a slow link takes minutes. */
+const FETCH_LOCK_TIMEOUT_MS = 600_000;
+
 /**
- * Keep members of `name@version`'s tarball in `directory`, each as `file`: the registry document of that one version,
- * its tarball, the check against the sha512 integrity the registry lists before anything is extracted, then each
- * member by temp file and rename (mode 0755), in the order given. Two akm processes fetching at once both finish: a
- * rename that loses to the other leaves the file the other made.
+ * Keep members of `name@version`'s tarball in `directory`, each as `file`. One fetch runs per directory at a time: the
+ * processes fetching there, this one included, wait on a lock file in it, and a dead holder's lock is reclaimed.
  */
 export async function fetchNpmPackageFiles(
   name: string,
@@ -66,6 +69,48 @@ export async function fetchNpmPackageFiles(
   files: ReadonlyArray<{ member: string; file: string }>,
 ): Promise<void> {
   fs.mkdirSync(directory, { recursive: true });
+  const lock = path.join(directory, "fetch.lock");
+  const deadline = Date.now() + FETCH_LOCK_TIMEOUT_MS;
+  for (;;) {
+    const attempt = tryAcquireRunLock(lock, { label: "fetch" });
+    if (attempt.state === "acquired") {
+      try {
+        return await fetchHoldingLock(name, version, directory, files);
+      } finally {
+        releaseLock(attempt.ownership);
+      }
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `another akm process (pid ${formatLockHolderPid(attempt.holder)}) is still fetching into ${directory} (lock ${lock})`,
+      );
+    }
+    await sleep(100);
+  }
+}
+
+/** Whether `file` is in place whole: files only ever arrive by rename, so an executable regular file is complete. */
+function isExecutableFile(file: string): boolean {
+  try {
+    fs.accessSync(file, fs.constants.X_OK);
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The registry document of that one version, its tarball, the check against the sha512 integrity the registry lists
+ * before anything is extracted, then each member by temp file and rename (mode 0755), in the order given. A fetch that
+ * finds every file in place downloads nothing, and a file in place at the size the tarball holds is never renamed over.
+ */
+async function fetchHoldingLock(
+  name: string,
+  version: string,
+  directory: string,
+  files: ReadonlyArray<{ member: string; file: string }>,
+): Promise<void> {
+  if (files.every(({ file }) => isExecutableFile(path.join(directory, file)))) return;
   const download = path.join(directory, `.download-${process.pid}.tgz`);
   const partial = (file: string): string => path.join(directory, `.${file}-${process.pid}.tmp`);
   try {
@@ -84,13 +129,11 @@ export async function fetchNpmPackageFiles(
     );
     for (const { member, file } of files) {
       const target = path.join(directory, file);
+      // A whole file in place (an akm without this lock may have made it) stands: a rename would unlink a binary that
+      // may be running on Linux and fails on Windows.
+      if (isExecutableFile(target) && fs.statSync(target).size === sizes.get(member)) continue;
       fs.chmodSync(partial(file), 0o755);
-      try {
-        fs.renameSync(partial(file), target);
-      } catch (error) {
-        // Where a file in use cannot be replaced, the other process's file stands.
-        if (!fs.existsSync(target) || fs.statSync(target).size !== sizes.get(member)) throw error;
-      }
+      fs.renameSync(partial(file), target);
     }
   } finally {
     fs.rmSync(download, { force: true });
