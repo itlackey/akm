@@ -26,6 +26,7 @@
  */
 
 import type { Database } from "../database";
+import { escapeLikePattern } from "../like-pattern";
 
 /**
  * Raw SQLite row shape for the `asset_outcome` table.
@@ -210,4 +211,21 @@ export function countAssetOutcomeMissing(db: Database): number {
     n: number;
   };
   return row.n;
+}
+
+/**
+ * Rewrite every `asset_outcome.asset_ref` naming `oldBundleId` to
+ * `newBundleId` (`akm bundle rename`). Same prefix match and orphan-replacing
+ * collision policy as `renameAssetSalienceRefs`. Returns the number of rows
+ * rewritten.
+ */
+export function renameAssetOutcomeRefs(db: Database, oldBundleId: string, newBundleId: string): number {
+  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  return Number(
+    db
+      .prepare(
+        `UPDATE OR REPLACE asset_outcome SET asset_ref = ? || substr(asset_ref, length(?) + 1) WHERE asset_ref LIKE ? ESCAPE '\\'`,
+      )
+      .run(newBundleId, oldBundleId, `${prefix}%`).changes,
+  );
 }
