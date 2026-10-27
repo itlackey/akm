@@ -884,6 +884,53 @@ function isMarkdownFenceClosing(line: string, fence: MarkdownFence): boolean {
   return /^[\t ]*$/.test(line.slice(cursor));
 }
 
+/**
+ * Version of what {@link projectMarkdownContent} indexes. It is part of every
+ * directory's index fingerprint, so bumping it makes the next `akm index`
+ * re-project every directory once instead of keeping the old text for
+ * unchanged files. 2: identifiers from fenced code (akm#1260).
+ */
+export const CONTENT_PROJECTION_VERSION = 2;
+
+/** At or above this length a token with a digit reads as a key or hash, not a name. */
+const TOKEN_LIKE_MIN_LENGTH = 20;
+
+/**
+ * The searchable identifiers of one line of fenced code, without its literal
+ * values (akm#1260). Fenced code holds the names agents look for (functions,
+ * classes, CLI flags, config keys, environment variable names, paths) and
+ * also example secrets, so it keeps names and drops values:
+ *
+ * - a quoted string survives only as a key (`"name":`) or an absolute path;
+ *   every other quoted literal is dropped;
+ * - the value of an assignment (`KEY=value`, `key: value`) is dropped unless
+ *   it is a dotted code reference (`process.env.CI`); the name stays;
+ * - long token-like strings with digits (keys, hashes) are dropped;
+ * - camelCase, snake_case, dotted and dashed names also add their parts.
+ *
+ * Numbers, punctuation and operators never reach the result.
+ */
+export function fencedCodeIdentifiers(line: string): string {
+  const cleaned = line
+    .replace(/(["'`])((?:\\.|(?!\1).)*)\1(\s*:)?/g, (_match, _quote, body: string, colon?: string) =>
+      colon || /^\/[\w./-]+$/.test(body) ? ` ${body} ` : " ",
+    )
+    .replace(/([A-Za-z_][A-Za-z0-9_.-]*\s*[:=]\s*)(\S+)/g, (_match, name: string, value: string) =>
+      /^[!(]*[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)+[()]*[,;]?$/.test(value) ? `${name} ${value}` : name,
+    );
+  const words: string[] = [];
+  for (let token of cleaned.match(/--?[A-Za-z][A-Za-z0-9-]*|[A-Za-z_][A-Za-z0-9_.-]*/g) ?? []) {
+    token = token.replace(/[.-]+$/, "");
+    const bare = token.replace(/^-+/, "");
+    if (bare.length < 2) continue;
+    if (bare.length >= TOKEN_LIKE_MIN_LENGTH && /\d/.test(bare)) continue;
+    words.push(token);
+    const parts = bare.split(/[_.-]|(?<=[a-z0-9])(?=[A-Z])/).filter((part) => part.length > 1);
+    if (parts.length > 1) words.push(...parts);
+  }
+  return words.join(" ");
+}
+
 function stripMarkdownHtmlComments(line: string, state: { inComment: boolean }): string {
   let cursor = 0;
   let visible = "";
@@ -1057,35 +1104,50 @@ function stripMarkdownLinkDestinations(text: string, nesting = 0): string {
 
 /**
  * Derive the one low-weight search projection for an AKM-native Markdown body.
- * Frontmatter is removed by the caller. This projection drops comments,
- * fenced code, raw link targets, and structural punctuation while retaining
- * prose, headings, link labels, and inline identifiers. It never receives
- * secret/env/session bytes; that policy is enforced at the adapter metadata
- * boundary below.
+ * Frontmatter is removed by the caller. This projection drops comments, raw
+ * link targets, and structural punctuation while retaining prose, headings,
+ * link labels, and inline identifiers. From fenced code it keeps only the
+ * identifiers ({@link fencedCodeIdentifiers}): names, flags, keys and paths,
+ * never literal values (akm#1260). It never receives secret/env/session bytes;
+ * that policy is enforced at the adapter metadata boundary below.
+ *
+ * Changing what this returns changes the indexed text of every Markdown entry,
+ * so bump {@link CONTENT_PROJECTION_VERSION} with it: the indexer re-projects
+ * every directory once on the next `akm index`.
  */
 export function projectMarkdownContent(body: string, truncationInfo?: { truncated: boolean }): string | undefined {
   const lines = body.split(/\r?\n/);
   const innerBlock = findInnerFrontmatterBlock(lines);
   const start = innerBlock && isFrontmatterShaped(lines, innerBlock) ? innerBlock.close + 1 : 0;
   const projected: string[] = [];
-  forEachVisibleMarkdownLine(lines, start, (_index, visible) => {
-    let trimmed = visible.trim();
-    if (!trimmed || /^(-{3,}|\*{3,}|_{3,}|=+)$/.test(trimmed)) return;
-    if (/^\s*\[[^\]]+\]:\s*\S+/.test(trimmed)) return;
-    if (/^<[^>]+>$/.test(trimmed)) return;
+  const fenced: string[] = [];
+  forEachVisibleMarkdownLine(
+    lines,
+    start,
+    (_index, visible) => {
+      let trimmed = visible.trim();
+      if (!trimmed || /^(-{3,}|\*{3,}|_{3,}|=+)$/.test(trimmed)) return;
+      if (/^\s*\[[^\]]+\]:\s*\S+/.test(trimmed)) return;
+      if (/^<[^>]+>$/.test(trimmed)) return;
 
-    // Preserve human-facing labels and inline identifiers, never destinations.
-    trimmed = stripMarkdownLinkDestinations(trimmed);
-    trimmed = trimmed.replace(/`{1,2}([^`]+)`{1,2}/g, "$1");
-    trimmed = trimmed.replace(/^#{1,6}\s+/, "");
-    trimmed = trimmed.replace(/^(?:>|[-+*]|\d+[.)])\s+/, "");
-    trimmed = trimmed.replace(/<[^>]+>/g, " ");
-    trimmed = trimmed.replace(/[|]+/g, " ");
-    trimmed = trimmed.replace(/\s+/g, " ").trim();
-    if (trimmed) projected.push(trimmed);
-  });
+      // Preserve human-facing labels and inline identifiers, never destinations.
+      trimmed = stripMarkdownLinkDestinations(trimmed);
+      trimmed = trimmed.replace(/`{1,2}([^`]+)`{1,2}/g, "$1");
+      trimmed = trimmed.replace(/^#{1,6}\s+/, "");
+      trimmed = trimmed.replace(/^(?:>|[-+*]|\d+[.)])\s+/, "");
+      trimmed = trimmed.replace(/<[^>]+>/g, " ");
+      trimmed = trimmed.replace(/[|]+/g, " ");
+      trimmed = trimmed.replace(/\s+/g, " ").trim();
+      if (trimmed) projected.push(trimmed);
+    },
+    (_index, fencedLine) => {
+      const identifiers = fencedCodeIdentifiers(fencedLine);
+      if (identifiers) fenced.push(identifiers);
+    },
+  );
 
-  const text = projected.join(" ").replace(/\s+/g, " ").trim();
+  // Fenced identifiers follow the prose, so a head-truncated embedding input keeps the prose first.
+  const text = [...projected, ...fenced].join(" ").replace(/\s+/g, " ").trim();
   if (!text) return undefined;
   if (truncationInfo) truncationInfo.truncated = text.length > MARKDOWN_CONTENT_MAX_CHARS;
   return truncateUnicodeSafe(text, MARKDOWN_CONTENT_MAX_CHARS);
@@ -1094,11 +1156,14 @@ export function projectMarkdownContent(body: string, truncationInfo?: { truncate
 /**
  * Visit each line from `start` that lies outside fenced code, with HTML
  * comments removed (`visible`); fence lines themselves are never visited.
+ * `visitFenced`, when given, receives each raw line inside a fence (not the
+ * opening or closing fence line), from the same fence state.
  */
 function forEachVisibleMarkdownLine(
   lines: string[],
   start: number,
   visit: (index: number, visible: string) => void,
+  visitFenced?: (index: number, rawLine: string) => void,
 ): void {
   let fence: MarkdownFence | undefined;
   const htmlComment = { inComment: false };
@@ -1106,6 +1171,7 @@ function forEachVisibleMarkdownLine(
     const rawLine = lines[index]!;
     if (fence) {
       if (isMarkdownFenceClosing(rawLine, fence)) fence = undefined;
+      else visitFenced?.(index, rawLine);
       continue;
     }
     // A leading fence owns the whole line, including any info string that
