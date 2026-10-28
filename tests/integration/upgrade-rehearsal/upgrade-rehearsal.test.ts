@@ -212,7 +212,8 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     const rows = (JSON.parse(info.stdout) as { connectionsAndHarnesses?: { type?: string; name?: string }[] })
       .connectionsAndHarnesses;
     const named = (rows ?? []).filter((row) => row.name).map((row) => `${row.type} ${row.name}`);
-    expect(named).toEqual(["connection default", "harness claude"]);
+    // The `opencode-sdk` engine `defaults.engine` named is the user's own OpenCode: the harness called `default`.
+    expect(named).toEqual(["connection default", "harness claude", "harness default"]);
   });
 
   test("3. candidate migrate apply succeeds, removes experimental.workflowEngine, and status then reports current", async () => {
@@ -239,7 +240,13 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     expect(config.engines).toBeUndefined();
     expect(config.defaults).toBeUndefined();
     expect(Object.keys((config.connections ?? {}) as object)).toEqual(["default"]);
-    expect(Object.keys((config.harnesses ?? {}) as object)).toEqual(["claude"]);
+    const harnesses = (config.harnesses ?? {}) as Record<
+      string,
+      { platform?: string; models?: Record<string, unknown> }
+    >;
+    expect(Object.keys(harnesses)).toEqual(["claude", "default"]);
+    expect(harnesses.default?.platform).toBe("opencode");
+    expect(harnesses.default?.models?.balanced).toBe("openai/gpt-rehearsal");
 
     // The key left `apiKeyFile` for credentials.json. Compared, never printed.
     const credentials = JSON.parse(
