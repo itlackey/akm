@@ -136,6 +136,14 @@ function withFields(base, over) {
 const REPEATED_TURNS = 3;
 
 /**
+ * A tool result as the check compares it. OpenCode saves an output too long to send whole to a file of its own for each
+ * call and names that file in the result (`[showing … of …; full output saved to <file>]`), so the name is left out:
+ * the same long output is the same result.
+ */
+const comparable = (content) =>
+  JSON.stringify(content).replace(/full output saved to [^\]]*\]/g, "full output saved to <file>]");
+
+/**
  * The names of the tools the model keeps calling, when each of the last REPEATED_TURNS turns of a chat request made the
  * same calls (the same name and arguments, ids ignored, parallel calls as a set) and was answered with the same
  * results, else undefined. A model that does this has settled on one answer to what it is told and does not leave it;
@@ -150,7 +158,7 @@ function repeatedToolCalls(messages) {
   for (let i = messages.length - 1; i >= 0 && turns.length < REPEATED_TURNS; i--) {
     const message = messages[i];
     if (message?.role === "tool") {
-      results.set(message.tool_call_id, JSON.stringify(message.content));
+      results.set(message.tool_call_id, comparable(message.content));
       continue;
     }
     if (message?.role !== "assistant" || !Array.isArray(message.tool_calls) || message.tool_calls.length === 0) {

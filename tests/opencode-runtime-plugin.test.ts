@@ -391,6 +391,21 @@ describe("the repeated-call guard", () => {
     await send(conversation([SAME, read], [SAME], [SAME, read]));
   });
 
+  test("an output too long to send whole is the same result, though OpenCode saves it to a file of its own each time", async () => {
+    // OpenCode 2.2.0's notice on a shell output over its limit (core/src/shell.ts), with the file the call's own.
+    const long = (file: string, total = 5000): Call => [
+      "shell",
+      { command: "seq 1 5000" },
+      `4999\n5000\n\n[showing lines 3001-${total} of ${total}; full output saved to /data/opencode/shell/p/${file}.out]`,
+    ];
+
+    await expect(send(conversation([long("sh_a")], [long("sh_b")], [long("sh_c")]))).rejects.toThrow(
+      message("`shell`"),
+    );
+    // A long output that changes is still no repeat.
+    await send(conversation([long("sh_a")], [long("sh_b")], [long("sh_c", 5001)]));
+  });
+
   test("a call that was never answered is no repeat", async () => {
     const messages = conversation([SAME], [SAME], [SAME]);
 

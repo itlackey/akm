@@ -15,6 +15,7 @@
  *   repeat    call `shell` with `echo same` on every request, never answering in text (a model stuck on one call)
  *   poll      call `shell` with a command whose output differs on every call, on every request
  *   twice     call `shell` with `echo same` twice, then answer in text
+ *   long      call `shell` with `seq 1 5000` on every request: the same output each time, too long to send whole
  *   subagent  call `subagent`, whose prompt asks the child for MODE:env, then reply with its result
  *   write     call `write`, then reply with the tool result
  *   akm       call `akm_search`, then reply with the tool result
@@ -165,6 +166,8 @@ export function startFakeModel(): FakeModelServer {
         reply = { tool: { name: "shell", args: { command: "echo same", description: "same" } } };
       else if (mode === "poll")
         reply = { tool: { name: "shell", args: { command: POLL_COMMAND, description: "poll" } } };
+      else if (mode === "long")
+        reply = { tool: { name: "shell", args: { command: "seq 1 5000", description: "long" } } };
       else if (mode === "twice")
         reply =
           assistants < 2

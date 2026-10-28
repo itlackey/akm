@@ -131,6 +131,18 @@ describe.skipIf(unavailable !== undefined)("a run on akm's runtime that repeats 
     expect(result.usage).toEqual({ inputTokens: 33, outputTokens: 21, reasoningTokens: 0 });
   }, 90_000);
 
+  test("fails after the third when the output is too long to send whole, which OpenCode saves to a file of its own each time", async () => {
+    const result = await run("long", 60_000);
+
+    expect(result.reason).toBe("non_zero_exit");
+    expect(result.stderr).toContain(STOPPED);
+    expect(model.requests.map((request) => request.mode)).toEqual(["long", "long", "long"]);
+    // What the model was given names the call's own file, so no two results are alike as text.
+    const results = model.requests.flatMap((request) => (request.toolResult === undefined ? [] : [request.toolResult]));
+    expect(results.every((text) => text.includes("full output saved to"))).toBe(true);
+    expect(new Set(results).size).toBe(results.length);
+  }, 90_000);
+
   test("is what the plugin's check does: without the check the same run goes on until its deadline", async () => {
     // The first run makes and prepares the runtime directory, as every run does.
     expect((await run("answer", 60_000)).ok).toBe(true);
