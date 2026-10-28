@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   has no check of its own for this. The runtime moves from OpenCode 2.1.4 to
   2.2.0 with it: the next agent run fetches the binary again, into
   `<akm cache dir>/opencode/2.2.0/`.
+- Agent work on akm's own runtime runs in the directory it is given: the one
+  `akm agent --cwd` names, and the bundle root for a workflow's agent units.
+  It ran in the directory akm was started from, because OpenCode takes its
+  directory from `PWD`, which akm now sets for the run.
 
 ## [0.10.261017] - 2026-10-27
 

@@ -138,6 +138,14 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     expect(result.stdout).not.toContain("sk-never-in-a-command");
   });
 
+  test("agent work runs in the directory it is given, not the one akm was started from", async () => {
+    // akm's own PWD names where akm was started; OpenCode reads PWD before its working directory.
+    const result = await run("pwd", { env: { PWD: storage.root } });
+
+    expect(result.ok, `${result.stdout}\n${result.stderr}`).toBe(true);
+    expect(result.stdout.trim()).toBe(`PWD:${fs.realpathSync(work)}`);
+  });
+
   test("the cap a connection writes is the cap the request carries", async () => {
     const result = await run("answer", { connection: connection({ request: { max_tokens: 777 } }) });
 

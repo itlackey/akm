@@ -16,6 +16,7 @@
  *   poll      call `shell` with a command whose output differs on every call, on every request
  *   twice     call `shell` with `echo same` twice, then answer in text
  *   long      call `shell` with `seq 1 5000` on every request: the same output each time, too long to send whole
+ *   pwd       call `shell` to print its working directory, then reply with the tool result
  *   subagent  call `subagent`, whose prompt asks the child for MODE:env, then reply with its result
  *   write     call `write`, then reply with the tool result
  *   akm       call `akm_search`, then reply with the tool result
@@ -168,6 +169,10 @@ export function startFakeModel(): FakeModelServer {
         reply = { tool: { name: "shell", args: { command: POLL_COMMAND, description: "poll" } } };
       else if (mode === "long")
         reply = { tool: { name: "shell", args: { command: "seq 1 5000", description: "long" } } };
+      else if (mode === "pwd")
+        reply = afterTool
+          ? { content: `PWD:${result}` }
+          : { tool: { name: "shell", args: { command: "pwd -P", description: "where" } } };
       else if (mode === "twice")
         reply =
           assistants < 2
