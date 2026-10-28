@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm agent --cwd` names, and the bundle root for a workflow's agent units.
   It ran in the directory akm was started from, because OpenCode takes its
   directory from `PWD`, which akm now sets for the run.
+- OpenCode model work leaves out OpenCode's built-in browser plugin. From
+  OpenCode 2.2.0 its rules kept the `skill` tool listed for the read-only
+  `akm-model-work` agent (a call to it was refused).
 
 ## [0.10.261017] - 2026-10-27
 

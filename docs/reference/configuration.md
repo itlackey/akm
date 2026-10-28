@@ -106,7 +106,7 @@ akm reads these keys of a connection:
 | `apiKeyFile` | Retired. `akm migrate apply` leaves an engine's key file here, as written, when it cannot read the file yet; akm ignores it (never reads it or sends it) and a later `akm migrate apply` moves the key it names into `credentials.json`. |
 | `models` | Alias to model. See [Aliases](#aliases). |
 | `contextLength` | The model's context window in tokens. `akm improve` sizes its prompts from it (consolidate's chunks, reflect's asset content); unset, it assumes 4096. |
-| `timeoutMs` | How long one call may take, in milliseconds; `null` runs unbounded. Unset, a model call stops after 600 000 (ten minutes) and agent work runs until it finishes. The ceiling is 2 147 483 647. |
+| `timeoutMs` | How long one call may take, in milliseconds; `null` runs unbounded. Unset, a model call stops after 600 000 (ten minutes) and agent work runs until it finishes; akm's own runtime also ends a run that keeps repeating one tool call and result ([Without a harness](#without-a-harness)). The ceiling is 2 147 483 647. |
 | `concurrency` | How many requests a workflow `map` step may have in flight on this connection, clamped to 1–64. Unset, 1 on a loopback endpoint (a local model server runs one inference at a time) and 4 on a remote one. akm never sends it. |
 
 Every other key, on the connection or in a model entry, is a request field in
@@ -310,8 +310,10 @@ default connection. The npm package and the standalone binary do the same.
   and been given the same result three turns in a row: it fails (`non_zero_exit`)
   with a message that names the tool. OpenCode has no check of its own for this,
   and with `timeoutMs` unset such a run would never end. A call whose result
-  changes, a poll for a job say, is not a repeat. Only akm's own runtime does
-  this; a harness is your program, with whatever limits it has.
+  changes is not a repeat, but a poll that gets the same answer three times in a
+  row is. An output too long to send whole is compared by its text, not by the
+  file OpenCode saves it to. Only akm's own runtime does this; a harness is your
+  program, with whatever limits it has.
 - Runs that start together, in one akm process or several, wait while the first
   run of this OpenCode version prepares its database alone.
 

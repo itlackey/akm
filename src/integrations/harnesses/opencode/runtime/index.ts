@@ -82,10 +82,11 @@ function installPlugin(directory: string): string {
 /**
  * OpenCode makes and migrates its database when a process starts, and two processes doing that to one database break
  * each other (one fails with "Standalone server exited before reporting readiness"; on 2.1.4 two runs started together
- * on a fresh directory lose one of them every time). So the first start of this OpenCode version is a preparing run of
- * its own, under a lock file in the runtime directory that every run, of this akm process or another, waits on, and it
- * leaves a marker naming the version; a run that finds the marker and the database starts at once. A dead holder's
- * lock is reclaimed. The run itself reports anything the preparation does not.
+ * on a fresh directory lose one of them every time; on 2.2.0, 4 of 24 starts in groups of eight failed). So the first
+ * start of this OpenCode version is a preparing run of its own, under a lock file in the runtime directory that every
+ * run, of this akm process or another, waits on, and it leaves a marker naming the version; a run that finds the marker
+ * and the database starts at once. A dead holder's lock is reclaimed. The run itself reports anything the preparation
+ * does not.
  */
 async function prepareDatabase(directory: string, command: ReadyCommand, opts: RunAgentOptions): Promise<void> {
   const marker = path.join(directory, `prepared-${OPENCODE_RUNTIME_VERSION}`);
