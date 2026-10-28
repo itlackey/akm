@@ -85,14 +85,27 @@ export function improveStrategyDefault(out: Dict, defaults: Dict, improve: unkno
   (out.improve as Dict).strategy ??= defaults.improveStrategy;
 }
 
-/** `workflow.judgeEngine`: a gate's judge is the default connection or harness now. */
-export function dropJudgeEngine(out: Dict, conversion: Conversion): void {
+/**
+ * `workflow.judgeEngine`: a gate's judge is model work and runs where model work does, on the default connection
+ * (else the default harness). The setting is dropped, and the note says whether that moves the judge.
+ */
+export function dropJudgeEngine(
+  out: Dict,
+  conversion: Conversion,
+  target: (engine: string) => EngineTarget | undefined,
+  defaultConnection: string | undefined,
+): void {
   const workflow = out.workflow;
   if (!isRecord(workflow) || !("judgeEngine" in workflow)) return;
+  const engine = str(workflow.judgeEngine);
   delete workflow.judgeEngine;
   conversion.changed = true;
+  const became = engine === undefined ? undefined : target(engine);
+  const stays = became !== undefined && "connection" in became && became.connection === defaultConnection;
   conversion.notes.push(
-    "workflow.judgeEngine: a gate's judge is the default connection or harness now; it is dropped.",
+    stays
+      ? `workflow.judgeEngine: "${engine}" is the default connection, where a gate's judge runs now; the setting is dropped.`
+      : `workflow.judgeEngine${engine === undefined ? "" : ` "${engine}"`}: dropped. A gate's judge runs on the default connection, else the default harness, so a judge that ran on another engine has moved; to keep it, make that engine the default.`,
   );
 }
 

@@ -247,7 +247,64 @@ describe("engines.<n> kind agent → harnesses.<n>", () => {
     expect(config.harnesses).toEqual({ claude: {} });
   });
 
-  test("an opencode-sdk engine is removed: akm's own runtime has no entry in config", () => {
+  test("an opencode-sdk engine with no llmEngine ran the user's own OpenCode: it becomes an opencode harness, keeping its model and every field a harness takes", () => {
+    const { config, notes, targets } = convert({
+      engines: {
+        sdk: {
+          kind: "agent",
+          platform: "opencode-sdk",
+          bin: "/opt/opencode/bin/opencode",
+          workspace: "/work",
+          agent: "akm-workflow",
+          timeoutMs: 120000,
+          model: "openai/gpt-5.6-terra",
+        },
+      },
+    });
+    expect(config.harnesses).toEqual({
+      sdk: {
+        platform: "opencode",
+        bin: "/opt/opencode/bin/opencode",
+        workspace: "/work",
+        agent: "akm-workflow",
+        timeoutMs: 120000,
+        models: { fast: "openai/gpt-5.6-terra", balanced: "openai/gpt-5.6-terra", reasoning: "openai/gpt-5.6-terra" },
+      },
+    });
+    expect(targets).toEqual({ sdk: { harness: "sdk" } });
+    expect(notes.filter((note) => note.includes("engines.sdk"))).toEqual([]);
+  });
+
+  test("an opencode-sdk engine named opencode needs no platform key once it is an opencode harness", () => {
+    const { config } = convert({ engines: { opencode: { kind: "agent", platform: "opencode-sdk" } } });
+    expect(config.harnesses).toEqual({ opencode: {} });
+  });
+
+  test("a platform: opencode engine stays an opencode harness, keeping bin, args, agent and its model", () => {
+    const { config } = convert({
+      engines: {
+        oc: {
+          kind: "agent",
+          platform: "opencode",
+          bin: "opencode2",
+          args: ["--standalone"],
+          agent: "build",
+          model: "x/y",
+        },
+      },
+    });
+    expect(config.harnesses).toEqual({
+      oc: {
+        platform: "opencode",
+        bin: "opencode2",
+        args: ["--standalone"],
+        agent: "build",
+        models: { fast: "x/y", balanced: "x/y", reasoning: "x/y" },
+      },
+    });
+  });
+
+  test("an opencode-sdk engine over an llmEngine is akm's own runtime over that connection: it has no entry in config", () => {
     const { config, notes } = convert({
       engines: {
         sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "lab", model: "anthropic/x" },
@@ -257,32 +314,106 @@ describe("engines.<n> kind agent → harnesses.<n>", () => {
     expect(config).not.toHaveProperty("harnesses");
     expect(notes.some((note) => note.includes("engines.sdk") && note.includes("opencode-sdk"))).toBe(true);
   });
+
+  test("the note for that runtime names what it drops, and only what the engine set", () => {
+    const { notes } = convert({
+      engines: {
+        full: {
+          kind: "agent",
+          platform: "opencode-sdk",
+          llmEngine: "lab",
+          model: "m",
+          bin: "/b",
+          agent: "a",
+          workspace: "/w",
+          timeoutMs: 5,
+        },
+        bare: { kind: "agent", platform: "opencode-sdk", llmEngine: "lab" },
+        lab: llm(),
+      },
+    });
+    expect(notes.find((note) => note.startsWith("engines.full:"))).toContain(
+      "its model, timeoutMs, workspace, bin, agent are dropped",
+    );
+    expect(notes.find((note) => note.startsWith("engines.bare:"))).not.toContain("dropped");
+  });
 });
 
-describe("agent work that moves from akm's runtime to a harness", () => {
-  test("a note says so when defaults.engine named the runtime and one harness is configured", () => {
-    const engines = {
-      sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "lab" },
-      lab: llm(),
-      claude: { kind: "agent", platform: "claude" },
-    };
-    const named = convert({ engines, defaults: { engine: "sdk", llmEngine: "lab" } });
+describe("agent work that moves", () => {
+  const runtimeEngines = {
+    sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "lab" },
+    lab: llm(),
+    claude: { kind: "agent", platform: "claude" },
+  };
+
+  test("a note says so when defaults.engine named akm's runtime and one harness is configured", () => {
+    const named = convert({ engines: runtimeEngines, defaults: { engine: "sdk", llmEngine: "lab" } });
     expect(named.notes.some((note) => note.includes("engines.sdk") && note.includes('harness "claude"'))).toBe(true);
-    // The same when nothing named a default engine: agent work then ran on the runtime too.
-    const unset = convert({ engines, defaults: { llmEngine: "lab" } });
-    expect(unset.notes.some((note) => note.includes("akm's own runtime") && note.includes('harness "claude"'))).toBe(
-      true,
-    );
   });
 
-  test("no note when the harness was already the default agent, or there is no harness", () => {
+  test("with no defaults.engine, agent work ran on the user's OpenCode: the note says it now runs on the harness", () => {
+    const unset = convert({ engines: runtimeEngines, defaults: { llmEngine: "lab" } });
+    expect(
+      unset.notes.some(
+        (note) =>
+          note.includes("Without defaults.engine") && note.includes("OpenCode") && note.includes('harness "claude"'),
+      ),
+    ).toBe(true);
+  });
+
+  test("with no defaults.engine and no harness, the note says it now runs on akm's runtime and how to keep OpenCode", () => {
+    const { config, notes } = convert({ engines: { lab: llm() }, defaults: { llmEngine: "lab" } });
+    expect(config).not.toHaveProperty("harnesses");
+    const note = notes.find((text) => text.includes("Without defaults.engine"));
+    expect(note).toContain("akm's own runtime");
+    expect(note).toContain("akm setup --harness opencode");
+  });
+
+  test("no note when the harness was already the default agent, or the config holds no engine", () => {
     const harnessDefault = convert({
       engines: { lab: llm(), claude: { kind: "agent", platform: "claude" } },
       defaults: { engine: "claude", llmEngine: "lab" },
     });
-    expect(harnessDefault.notes.filter((note) => note.includes("akm's own runtime"))).toEqual([]);
-    const none = convert({ engines: { lab: llm() }, defaults: { llmEngine: "lab" } });
-    expect(none.notes.filter((note) => note.includes("akm's own runtime"))).toEqual([]);
+    expect(harnessDefault.notes.filter((note) => note.includes("agent work"))).toEqual([]);
+    const noEngines = convert({ defaults: { improveStrategy: "consolidate" } });
+    expect(noEngines.notes).toEqual([]);
+  });
+
+  test("no note when the default agent engine is an opencode-sdk engine that is now the harness", () => {
+    const { notes } = convert({
+      engines: { lab: llm(), oc: { kind: "agent", platform: "opencode-sdk", model: "openai/gpt-5" } },
+      defaults: { engine: "oc", llmEngine: "lab" },
+    });
+    expect(notes.filter((note) => note.includes("agent work"))).toEqual([]);
+  });
+});
+
+describe("model work that ran on an agent engine", () => {
+  const agents = { a: { kind: "agent", platform: "claude" }, b: { kind: "agent", platform: "codex" } };
+
+  test("defaults.llmEngine naming an agent engine other than the default harness is noted: model work no longer runs there", () => {
+    const { notes } = convert({ engines: agents, defaults: { engine: "a", llmEngine: "b" } });
+    const note = notes.find((text) => text.startsWith('defaults.llmEngine "b"')) ?? "";
+    expect(note).toContain("improve.harness");
+    expect(note).toContain('harness "b"');
+  });
+
+  test("no note when that engine is the default harness and no connection takes model work first", () => {
+    const same = convert({ engines: agents, defaults: { engine: "b", llmEngine: "b" } });
+    expect(same.notes.filter((text) => text.startsWith("defaults.llmEngine"))).toEqual([]);
+    const withConnection = convert({
+      engines: { ...agents, lab: llm() },
+      defaults: { engine: "b", llmEngine: "b" },
+    });
+    expect(withConnection.notes.some((text) => text.startsWith('defaults.llmEngine "b"'))).toBe(true);
+  });
+
+  test("defaults.llmEngine naming an opencode-sdk engine over a connection makes that connection the default", () => {
+    const { config } = convert({
+      engines: { rt: { kind: "agent", platform: "opencode-sdk", llmEngine: "lab" }, lab: llm(), other: llm() },
+      defaults: { llmEngine: "rt" },
+    });
+    expect(Object.keys(config.connections as Dict).sort()).toEqual(["default", "other"]);
   });
 });
 
@@ -410,6 +541,48 @@ describe("the defaults become the entries named default", () => {
     expect(config.harnesses).toEqual({ default: { platform: "claude" }, opencode: {} });
   });
 
+  test("defaults.engine naming one of several opencode-sdk engines makes that harness default, every reference to it follows", () => {
+    const { config, targets } = convert({
+      engines: {
+        opencode: { kind: "agent", platform: "opencode-sdk", model: "openai/gpt-5.6-terra" },
+        "opencode-workflow": {
+          kind: "agent",
+          platform: "opencode-sdk",
+          model: "openai/gpt-5.6-terra",
+          agent: "akm-workflow",
+        },
+        "opencode-lab": { kind: "agent", platform: "opencode-sdk", model: "lab/chat/qwen" },
+        lab: llm(),
+      },
+      defaults: { engine: "opencode", llmEngine: "lab" },
+      improve: {
+        strategies: {
+          nightly: { processes: { reflect: { engine: "opencode" }, distill: { engine: "opencode-lab" } } },
+        },
+      },
+    });
+    expect(Object.keys(config.harnesses as Dict)).toEqual(["default", "opencode-workflow", "opencode-lab"]);
+    expect((config.harnesses as Dict).default).toMatchObject({ platform: "opencode" });
+    expect(targets.opencode).toEqual({ harness: "default" });
+    expect(targets["opencode-lab"]).toEqual({ harness: "opencode-lab" });
+    expect((config.improve as Dict).processes).toEqual({
+      reflect: { harness: "default" },
+      distill: { harness: "opencode-lab" },
+    });
+    expect(Object.keys(config.connections as Dict)).toEqual(["default"]);
+  });
+
+  test("an engine called opencode-sdk is the default agent engine when defaults.engine names none, as the 0.9 fallback made it", () => {
+    const { config } = convert({
+      engines: {
+        "opencode-sdk": { kind: "agent", platform: "opencode-sdk", model: "openai/gpt-5" },
+        claude: { kind: "agent", platform: "claude" },
+      },
+    });
+    expect(Object.keys(config.harnesses as Dict).sort()).toEqual(["claude", "default"]);
+    expect((config.harnesses as Dict).default).toMatchObject({ platform: "opencode" });
+  });
+
   test("with one harness there is nothing to rename", () => {
     const { config } = convert({
       engines: { claude: { kind: "agent", platform: "claude" } },
@@ -477,6 +650,43 @@ describe("models.json folds into the models of what it named", () => {
       },
     );
     expect(modelsOf(config, "connections", "lab")).toMatchObject({ fast: "lab-model", balanced: "sdk-balanced" });
+  });
+
+  describe("on the harnesses the OpenCode engines became", () => {
+    const columns = overlay({
+      fast: { "opencode-sdk": "krang/fast", opencode: "cli/fast" },
+      balanced: { "opencode-sdk": "krang/balanced", opencode: "cli/balanced" },
+    });
+
+    test("the opencode-sdk column reaches an opencode-sdk engine's harness and the opencode column does not", () => {
+      const { config } = convert(
+        { engines: { sdk: { kind: "agent", platform: "opencode-sdk" } } },
+        { modelsOverlay: columns },
+      );
+      expect(modelsOf(config, "harnesses", "sdk")).toEqual({ fast: "krang/fast", balanced: "krang/balanced" });
+    });
+
+    test("the opencode column reaches a platform: opencode engine's harness and the opencode-sdk column does not", () => {
+      const { config } = convert(
+        { engines: { cli: { kind: "agent", platform: "opencode" } } },
+        { modelsOverlay: columns },
+      );
+      expect(modelsOf(config, "harnesses", "cli")).toEqual({ fast: "cli/fast", balanced: "cli/balanced" });
+    });
+
+    test("an engine's own model stands over a column: the harness still runs it when a request names none", () => {
+      const { config, notes } = convert(
+        { engines: { sdk: { kind: "agent", platform: "opencode-sdk", model: "openai/gpt-5.6-terra" } } },
+        { modelsOverlay: columns },
+      );
+      expect(modelsOf(config, "harnesses", "sdk")).toEqual({
+        fast: "openai/gpt-5.6-terra",
+        balanced: "openai/gpt-5.6-terra",
+        reasoning: "openai/gpt-5.6-terra",
+      });
+      // One note for the column, not one per alias.
+      expect(notes.filter((note) => note.includes('harness "sdk" has a model of its own'))).toHaveLength(1);
+    });
   });
 
   test("a wildcard fills every connection with no column of its own for the alias, ahead of the engine's own model", () => {
@@ -567,6 +777,23 @@ describe("models.json folds into the models of what it named", () => {
     expect(text).toContain("engine indirection");
     expect(text).toContain("fast.nowhere");
     expect(text).toContain("inference settings are not carried over");
+  });
+});
+
+describe("workflow.judgeEngine", () => {
+  const engines = { lab: llm(), cloud: llm({ endpoint: "https://api.openai.com/v1/chat/completions" }) };
+
+  test("naming the default connection is dropped with a note that the judge runs there still", () => {
+    const { config, notes } = convert({ engines, defaults: { llmEngine: "lab" }, workflow: { judgeEngine: "lab" } });
+    expect(config.workflow).toEqual({});
+    expect(notes.join("\n")).toContain('workflow.judgeEngine: "lab" is the default connection');
+  });
+
+  test("naming any other engine is dropped with a note that the judge has moved", () => {
+    const { notes } = convert({ engines, defaults: { llmEngine: "lab" }, workflow: { judgeEngine: "cloud" } });
+    const note = notes.find((text) => text.includes("workflow.judgeEngine")) ?? "";
+    expect(note).toContain('"cloud"');
+    expect(note).toContain("has moved");
   });
 });
 
@@ -691,9 +918,18 @@ describe("what a strategy no longer decides, and per-process names", () => {
     expect(notes.join("\n")).toContain("improve.strategies.nightly.processes.triage.connection");
   });
 
-  test("a per-process engine that was the runtime with no connection behind it is dropped with a note", () => {
+  test("a per-process engine that was an opencode-sdk engine with no llmEngine becomes the harness it is now", () => {
     const { config, notes } = convert({
       engines: { lab: llm(), sdk: { kind: "agent", platform: "opencode-sdk" } },
+      improve: { strategies: { nightly: { processes: { reflect: { engine: "sdk", model: "fast" } } } } },
+    });
+    expect((config.improve as Dict).processes).toEqual({ reflect: { harness: "sdk", model: "fast" } });
+    expect(notes.filter((note) => note.includes("reflect.engine"))).toEqual([]);
+  });
+
+  test("a per-process engine that was a runtime over a connection that is gone is dropped with a note", () => {
+    const { config, notes } = convert({
+      engines: { sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "gone" } },
       improve: { strategies: { nightly: { processes: { reflect: { engine: "sdk", model: "fast" } } } } },
     });
     expect((config.improve as Dict).processes).toEqual({ reflect: { model: "fast" } });

@@ -66,9 +66,13 @@ export interface ModelsFold {
   /** What an `extends` base defines. */
   readonly inherited: Entries;
   readonly ownModels: OwnModels;
-  /** The names the connections the engines became have now: those a removed runtime pointed at, and the one an engine maps to. */
+  /**
+   * The names the connections and harnesses the engines became have now: the connections a removed runtime pointed at,
+   * the one an engine maps to, and the harnesses that were `opencode-sdk` engines.
+   */
   readonly renamed: {
     readonly runtime: readonly string[];
+    readonly sdkHarness: readonly string[];
     readonly connection: (engine: string) => string | undefined;
   };
 }
@@ -76,6 +80,7 @@ export interface ModelsFold {
 /**
  * `models.json`: an alias is set by, nearest first, the config's own `models`, models.json's column for that
  * connection or harness, models.json's `*` column (and the flat shorthand, which is that), the engine's own model.
+ * The exception is a harness engine's own model: it ran when a request named none, so it stands over every column.
  */
 export function foldModelsOverlay(modelsOverlay: unknown, fold: ModelsFold): void {
   const { conversion, merged, written, inherited, ownModels, renamed } = fold;
@@ -91,6 +96,10 @@ export function foldModelsOverlay(modelsOverlay: unknown, fold: ModelsFold): voi
     hasModel(own[name], alias) || hasModel(base[name], alias);
   const platformOf = (name: string): string =>
     String(((mergedHarnesses[name] ?? inheritedHarnesses[name]) as Dict | undefined)?.platform ?? name);
+  /** The column of models.json that named a harness: an `opencode-sdk` engine's was `opencode-sdk`, not its platform's. */
+  const columnOf = (name: string): string => (renamed.sdkHarness.includes(name) ? "opencode-sdk" : platformOf(name));
+  /** Harnesses whose engine had a `model` of its own, which names every alias and so stands over the column (noted once each). */
+  const notedOwn = new Set<string>();
   let folded = false;
   for (const { alias, column, profile } of overlayRows(modelsOverlay)) {
     const p: Dict = typeof profile === "string" ? { model: profile } : isRecord(profile) ? profile : {};
@@ -112,7 +121,7 @@ export function foldModelsOverlay(modelsOverlay: unknown, fold: ModelsFold): voi
               ? [column]
               : [];
     const harnessNamed = [...new Set([...Object.keys(mergedHarnesses), ...Object.keys(inheritedHarnesses)])].filter(
-      (name) => platformOf(name) === column,
+      (name) => columnOf(name) === column,
     );
     if (candidates.length === 0 && harnessNamed.length === 0) {
       notes.push(`${where}: names no configured connection or harness, so it is not carried over.`);
@@ -124,7 +133,16 @@ export function foldModelsOverlay(modelsOverlay: unknown, fold: ModelsFold): voi
         !configNames(writtenConnections, inheritedConnections, name, alias) &&
         !(column === "*" && hasModel(mergedConnections[name], alias)),
     );
-    const harnessNames = harnessNamed.filter((name) => !configNames(writtenHarnesses, inheritedHarnesses, name, alias));
+    const unnamed = harnessNamed.filter((name) => !configNames(writtenHarnesses, inheritedHarnesses, name, alias));
+    // The model a harness engine named is what ran when a request named none, and a harness runs its first model then,
+    // so it stands over the column, which would put the column's models first.
+    const harnessNames = unnamed.filter((name) => !ownModels.harnesses.has(name));
+    for (const name of unnamed.filter((n) => ownModels.harnesses.has(n) && !notedOwn.has(`${column}:${n}`))) {
+      notedOwn.add(`${column}:${name}`);
+      notes.push(
+        `models.json (${column === "*" ? "all" : column}): harness "${name}" has a model of its own, which names every alias, so the column is not carried over.`,
+      );
+    }
     if (connectionNames.length === 0 && harnessNames.length === 0) {
       // Only the config's own choice is worth a note; an explicit column that came first is the overlay's own.
       const keptByConfig =
