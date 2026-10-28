@@ -128,6 +128,8 @@ interface Converted {
  * keys, the models, the references.
  */
 interface Naming {
+  /** The engine 0.9 ran agent work and a gate's judge on when nothing named one: `defaults.engine`, else the fallback. */
+  readonly defaultEngine: string | undefined;
   readonly defaultConnection: string | undefined;
   readonly defaultHarness: string | undefined;
   readonly connectionName: (name: string) => string;
@@ -397,7 +399,7 @@ function nameDefaults(defaults: Dict, converted: Converted, conversion: Conversi
     connection: connectionName(engine),
     field,
   }));
-  return { defaultConnection, defaultHarness, connectionName, harnessName, ...named, keys, target };
+  return { defaultEngine, defaultConnection, defaultHarness, connectionName, harnessName, ...named, keys, target };
 }
 
 /** What the file writes under `connections` / `harnesses` itself, read with the converted entries: the written entry wins field by field. */
@@ -417,6 +419,32 @@ function ownModelsOf(converted: Converted, naming: Naming): OwnModels {
     ownModels[kind].set(kind === "connections" ? naming.connectionName(engine) : naming.harnessName(engine), model);
   }
   return ownModels;
+}
+
+/**
+ * Where a gate's judge and akm's other model work run now when nothing names a place: the default connection, else
+ * the default harness. With no `defaults.llmEngine`, 0.9 ran none of that work unless a setting named an engine, so a
+ * default harness that would now take it is set not to (`modelWork: false`); a setting that names it still runs there.
+ */
+function modelWorkTarget(
+  defaults: Dict,
+  naming: Naming,
+  merged: Entries,
+  inherited: ConvertEnginesOptions["inherited"],
+  conversion: Conversion,
+): EngineTarget | undefined {
+  const connection = defaultName({ ...inherited?.connections, ...merged.connections });
+  if (connection !== undefined) return { connection };
+  const harness = defaultName({ ...inherited?.harnesses, ...merged.harnesses });
+  const entry = harness === undefined ? undefined : merged.harnesses[harness];
+  if (harness === undefined || !isRecord(entry)) return undefined;
+  if (str(defaults.llmEngine) !== undefined || !(harness in naming.harnesses) || entry.modelWork !== undefined)
+    return entry.modelWork === false ? undefined : { harness };
+  entry.modelWork = false;
+  conversion.notes.push(
+    `harnesses.${harness}: modelWork is false. Without defaults.llmEngine, 0.9 ran none of akm's own model work (improve, index passes, extraction, quality gates) unless a setting named an engine, and with no connection that work would now run on this harness. A workflow gate's judge, which 0.9 ran on defaults.engine, is model work now and needs a connection (\`akm setup --endpoint URL\`); to let the harness take akm's model calls instead, remove modelWork.`,
+  );
+  return undefined;
 }
 
 // ── the whole conversion ─────────────────────────────────────────────────────
@@ -457,7 +485,8 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
   const improve = out.improve;
   if (isRecord(improve)) moveStrategyExecution(improve, conversion, retarget);
   improveStrategyDefault(out, defaults, improve);
-  dropJudgeEngine(out, conversion, naming.target, defaultName(merged.connections));
+  const judge = modelWorkTarget(defaults, naming, merged, options.inherited, conversion);
+  dropJudgeEngine(out, conversion, naming.target, naming.defaultEngine, judge);
   convertIndexEngines(out, conversion, retarget);
 
   // Assemble, keeping the file's key order.

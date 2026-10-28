@@ -19,6 +19,7 @@ import { runMigration } from "../../scripts/akm-migrate/run-migrate";
 import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
 import { getConfigDir, getConfigPath } from "../../src/core/paths";
 import { resolveTarget, retiredEngineSelection } from "../../src/integrations/agent/resolution";
+import { resolveIndexPassExecution } from "../../src/llm/index-passes";
 import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 type Dict = Record<string, unknown>;
@@ -266,6 +267,41 @@ describe("an opencode-sdk engine that ran over an llmEngine", () => {
     expect(config.harnesses ?? {}).toEqual({});
     expect(Object.keys(config.connections ?? {})).toEqual(["default"]);
     expect(resolveTarget({ config, layers: [] })).toMatchObject({ kind: "connection", name: "default" });
+  });
+});
+
+describe("a config with only an agent engine and no defaults.llmEngine", () => {
+  test("model work stays off, as in 0.9: the harness runs agent work, and model work only where a setting names it", async () => {
+    writeSandboxConfig({
+      engines: { opencode: { kind: "agent", platform: "opencode-sdk", model: "openai/gpt-x" } },
+      defaults: { engine: "opencode" },
+    });
+    const inMemory = JSON.parse(JSON.stringify(loadUserConfig())) as Dict;
+    resetConfigCache();
+
+    const plan = await runMigration({ apply: true });
+    expect(writtenConfig().harnesses).toEqual({
+      opencode: {
+        models: { fast: "openai/gpt-x", balanced: "openai/gpt-x", reasoning: "openai/gpt-x" },
+        modelWork: false,
+      },
+    });
+    expect((plan.configFile?.notes ?? []).join("\n")).toContain("harnesses.opencode: modelWork is false");
+    resetConfigCache();
+    const config = loadUserConfig();
+    expect(JSON.parse(JSON.stringify(config))).toEqual(inMemory);
+
+    expect(resolveTarget({ config, layers: [] })).toMatchObject({
+      kind: "harness",
+      name: "opencode",
+      model: "openai/gpt-x",
+    });
+    expect(() => resolveTarget({ config, modelWork: true, layers: [] })).toThrow(/modelWork: false/);
+    expect(resolveIndexPassExecution("memory", config).runner).toBeUndefined();
+    expect(resolveTarget({ config, modelWork: true, layers: [{ harness: "opencode" }] })).toMatchObject({
+      kind: "harness",
+      name: "opencode",
+    });
   });
 });
 

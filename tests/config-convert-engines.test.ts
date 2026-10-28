@@ -238,13 +238,14 @@ describe("engines.<n> kind agent → harnesses.<n>", () => {
         agent: "reviewer",
         timeoutMs: 60000,
         models: { fast: "claude-sonnet-4-6", balanced: "claude-sonnet-4-6", reasoning: "claude-sonnet-4-6" },
+        modelWork: false,
       },
     });
   });
 
   test("an engine named for its platform needs no platform key", () => {
     const { config } = convert({ engines: { claude: { kind: "agent", platform: "claude" } } });
-    expect(config.harnesses).toEqual({ claude: {} });
+    expect(config.harnesses).toEqual({ claude: { modelWork: false } });
   });
 
   test("an opencode-sdk engine with no llmEngine ran the user's own OpenCode: it becomes an opencode harness, keeping its model and every field a harness takes", () => {
@@ -269,6 +270,7 @@ describe("engines.<n> kind agent → harnesses.<n>", () => {
         agent: "akm-workflow",
         timeoutMs: 120000,
         models: { fast: "openai/gpt-5.6-terra", balanced: "openai/gpt-5.6-terra", reasoning: "openai/gpt-5.6-terra" },
+        modelWork: false,
       },
     });
     expect(targets).toEqual({ sdk: { harness: "sdk" } });
@@ -277,7 +279,7 @@ describe("engines.<n> kind agent → harnesses.<n>", () => {
 
   test("an opencode-sdk engine named opencode needs no platform key once it is an opencode harness", () => {
     const { config } = convert({ engines: { opencode: { kind: "agent", platform: "opencode-sdk" } } });
-    expect(config.harnesses).toEqual({ opencode: {} });
+    expect(config.harnesses).toEqual({ opencode: { modelWork: false } });
   });
 
   test("a platform: opencode engine stays an opencode harness, keeping bin, args, agent and its model", () => {
@@ -300,6 +302,7 @@ describe("engines.<n> kind agent → harnesses.<n>", () => {
         args: ["--standalone"],
         agent: "build",
         models: { fast: "x/y", balanced: "x/y", reasoning: "x/y" },
+        modelWork: false,
       },
     });
   });
@@ -418,6 +421,23 @@ describe("model work that ran on an agent engine", () => {
     expect(withConnection.notes.some((text) => text.startsWith('defaults.llmEngine "b"'))).toBe(true);
   });
 
+  test("with no defaults.llmEngine and no connection, 0.9 ran no model work: the default harness is set not to take it", () => {
+    const { config, notes } = convert({ engines: agents, defaults: { engine: "a" } });
+    expect((config.harnesses as Dict).default).toEqual({ platform: "claude", modelWork: false });
+    expect((config.harnesses as Dict).b).toEqual({ platform: "codex" });
+    const note = notes.find((text) => text.startsWith("harnesses.default: modelWork is false")) ?? "";
+    expect(note).toContain("Without defaults.llmEngine");
+    expect(note).toContain("akm setup --endpoint URL");
+  });
+
+  test("model work is left where 0.10 sends it when defaults.llmEngine named the harness, or a connection takes it", () => {
+    const named = convert({ engines: agents, defaults: { engine: "a", llmEngine: "a" } });
+    expect((named.config.harnesses as Dict).default).not.toHaveProperty("modelWork");
+    const connection = convert({ engines: { ...agents, lab: llm() }, defaults: { engine: "a" } });
+    expect((connection.config.harnesses as Dict).default).not.toHaveProperty("modelWork");
+    expect(named.notes.concat(connection.notes).some((text) => text.includes("modelWork is false"))).toBe(false);
+  });
+
   test("defaults.llmEngine naming an opencode-sdk engine over a connection makes that connection the default", () => {
     const { config } = convert({
       engines: { rt: { kind: "agent", platform: "opencode-sdk", llmEngine: "lab" }, lab: llm(), other: llm() },
@@ -520,7 +540,7 @@ describe("the defaults become the entries named default", () => {
       defaults: { engine: "claude" },
     });
     expect(config.harnesses).toEqual({
-      default: { platform: "claude" },
+      default: { platform: "claude", modelWork: false },
       "legacy-default-2": { platform: "gemini" },
       "legacy-default": { platform: "pi" },
     });
@@ -548,7 +568,7 @@ describe("the defaults become the entries named default", () => {
       engines: { claude: { kind: "agent", platform: "claude" }, opencode: { kind: "agent", platform: "opencode" } },
       defaults: { engine: "claude" },
     });
-    expect(config.harnesses).toEqual({ default: { platform: "claude" }, opencode: {} });
+    expect(config.harnesses).toEqual({ default: { platform: "claude", modelWork: false }, opencode: {} });
   });
 
   test("defaults.engine naming one of several opencode-sdk engines makes that harness default, every reference to it follows", () => {
@@ -598,7 +618,7 @@ describe("the defaults become the entries named default", () => {
       engines: { claude: { kind: "agent", platform: "claude" } },
       defaults: { engine: "claude" },
     });
-    expect(config.harnesses).toEqual({ claude: {} });
+    expect(config.harnesses).toEqual({ claude: { modelWork: false } });
   });
 
   test("defaults.improveStrategy becomes improve.strategy, without overwriting one already set", () => {
@@ -804,6 +824,29 @@ describe("workflow.judgeEngine", () => {
     const note = notes.find((text) => text.includes("workflow.judgeEngine")) ?? "";
     expect(note).toContain('"cloud"');
     expect(note).toContain("has moved");
+  });
+
+  test("naming the harness that takes model work when no connection does keeps the judge there", () => {
+    const { notes } = convert({
+      engines: { claude: { kind: "agent", platform: "claude" } },
+      defaults: { engine: "claude", llmEngine: "claude" },
+      workflow: { judgeEngine: "claude" },
+    });
+    expect(notes).toContain(
+      'workflow.judgeEngine: "claude" is the default harness, where a gate\'s judge runs now; the setting is dropped.',
+    );
+  });
+
+  test("with none set, a judge that ran on a harness defaults.engine named and now runs on the default connection is noted", () => {
+    const moved = convert({
+      engines: { lab: llm(), claude: { kind: "agent", platform: "claude" } },
+      defaults: { engine: "claude", llmEngine: "lab" },
+    });
+    expect(moved.notes).toContain(
+      'workflow: with no workflow.judgeEngine, a gate\'s judge ran on the default engine "claude"; it is model work now and runs on the default connection, "default".',
+    );
+    const stays = convert({ engines, defaults: { engine: "lab", llmEngine: "lab" } });
+    expect(stays.notes.filter((text) => text.startsWith("workflow"))).toEqual([]);
   });
 });
 
