@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A run on akm's own runtime that makes the same tool call and gets the same
+  result three turns in a row now fails with a message that names the tool,
+  instead of running to its deadline or, with no `timeoutMs`, for ever. OpenCode
+  has no check of its own for this. The runtime moves from OpenCode 2.1.4 to
+  2.2.0 with it: the next agent run fetches the binary again, into
+  `<akm cache dir>/opencode/2.2.0/`.
+
 ## [0.10.261017] - 2026-10-27
 
 ### Changed

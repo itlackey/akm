@@ -161,7 +161,7 @@ export function listV2Sessions(db: Database, sinceMs: number): OpenCodeSessionMe
 
 /**
  * The tokens one session's turns used: OpenCode records them on each assistant message and keeps their sums on the
- * session row (equal, measured on 2.1.4). Undefined when the session is not in the file.
+ * session row (equal, measured on 2.1.4 and 2.2.0). Undefined when the session is not in the file.
  */
 export function v2SessionTokens(
   db: Database,

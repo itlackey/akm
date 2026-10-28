@@ -12,6 +12,9 @@
  *   env       call `shell` to print $AKM_PROBE, $AKM_AMBIENT, $HOME and $AKM_CONFIG_DIR, then reply with the tool result
  *   runtime   call `shell` to print the variables akm's own runtime sets for the OpenCode process, then reply with the tool result
  *   hang      accept the request and never answer it
+ *   repeat    call `shell` with `echo same` on every request, never answering in text (a model stuck on one call)
+ *   poll      call `shell` with a command whose output differs on every call, on every request
+ *   twice     call `shell` with `echo same` twice, then answer in text
  *   subagent  call `subagent`, whose prompt asks the child for MODE:env, then reply with its result
  *   write     call `write`, then reply with the tool result
  *   akm       call `akm_search`, then reply with the tool result
@@ -65,6 +68,9 @@ const RUNTIME_PROBE = `echo "${Object.entries({
 })
   .map(([label, name]) => `${label}=$(printenv ${name} || echo unset)`)
   .join(" ")}"`;
+
+/** A shell command whose output differs on every call: it counts its own runs in a file in akm's data directory, which its environment names. */
+const POLL_COMMAND = 'echo x >> "$AKM_DATA_DIR/poll.log"; wc -l < "$AKM_DATA_DIR/poll.log" | tr -d " "';
 
 export function startFakeModel(): FakeModelServer {
   const requests: FakeModelRequest[] = [];
@@ -155,6 +161,15 @@ export function startFakeModel(): FakeModelServer {
           : { tool: { name: "write", args: { filePath: "x.md", content: "hi" } } };
       else if (mode === "akm")
         reply = afterTool ? { content: `AKM:${result}` } : { tool: { name: "akm_search", args: { query: "demo" } } };
+      else if (mode === "repeat")
+        reply = { tool: { name: "shell", args: { command: "echo same", description: "same" } } };
+      else if (mode === "poll")
+        reply = { tool: { name: "shell", args: { command: POLL_COMMAND, description: "poll" } } };
+      else if (mode === "twice")
+        reply =
+          assistants < 2
+            ? { tool: { name: "shell", args: { command: "echo same", description: "same" } } }
+            : { content: "TWICE-DONE" };
       else if (mode === "length")
         reply = assistants === 0 ? { content: "PART-ONE ", finish: "length" } : { content: "PART-TWO" };
       else if (mode === "cutoff") reply = { content: `CUT-${assistants} `, finish: "length" };

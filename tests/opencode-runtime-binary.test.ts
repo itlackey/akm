@@ -237,10 +237,15 @@ describe("the first-use fetch", () => {
     const requests: string[] = [];
     const serve = (url: string): Response => {
       requests.push(url);
-      if (/\/@opencode\/cli-[^/]+\/2\.1\.4$/.test(url)) {
-        return Response.json({ dist: { tarball: url.replace(/\/2\.1\.4$/, "/-/package-2.1.4.tgz"), integrity } });
+      if (url.endsWith(`/${OPENCODE_RUNTIME_VERSION}`) && /\/@opencode\/cli-[^/]+\//.test(url)) {
+        return Response.json({
+          dist: {
+            tarball: `${url.slice(0, -OPENCODE_RUNTIME_VERSION.length - 1)}/-/package-${OPENCODE_RUNTIME_VERSION}.tgz`,
+            integrity,
+          },
+        });
       }
-      if (url.endsWith("/-/package-2.1.4.tgz")) return new Response(fs.readFileSync(archive));
+      if (url.endsWith(`/-/package-${OPENCODE_RUNTIME_VERSION}.tgz`)) return new Response(fs.readFileSync(archive));
       return new Response("not found", { status: 404 });
     };
     return { requests, serve };
@@ -286,7 +291,7 @@ describe("the first-use fetch", () => {
     const binary = runtimeBinaryPath();
     // A process without the fetch lock (an older akm) finishes while this one downloads.
     const otherFinishes = (url: string): Response => {
-      if (url.endsWith("/-/package-2.1.4.tgz")) {
+      if (url.endsWith(`/-/package-${OPENCODE_RUNTIME_VERSION}.tgz`)) {
         fs.mkdirSync(path.dirname(binary), { recursive: true });
         fs.writeFileSync(binary, BINARY, { mode: 0o755 });
       }
@@ -334,8 +339,9 @@ describe("the first-use fetch", () => {
     }
 
     expect(message).toMatch(
-      /package @opencode\/cli-[a-z0-9-]+ from https:\/\/registry\.npmjs\.org\/@opencode\/cli-[a-z0-9-]+\/2\.1\.4/,
+      /package @opencode\/cli-[a-z0-9-]+ from https:\/\/registry\.npmjs\.org\/@opencode\/cli-[a-z0-9-]+\//,
     );
+    expect(message).toContain(`/${OPENCODE_RUNTIME_VERSION} into `);
     expect(message).toContain(path.dirname(runtimeBinaryPath()));
     expect(message).toContain("HTTP 404");
     expect(message).toContain("enable the opencode harness with an installed OpenCode 2");

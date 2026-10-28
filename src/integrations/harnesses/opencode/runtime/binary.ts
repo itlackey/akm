@@ -28,10 +28,12 @@ import { info } from "../../../../core/warn";
  * The OpenCode release akm's own runtime runs. It is pinned because the runtime depends on things no OpenCode release
  * promises: the inline config's shape, the `--standalone` flag, the plugin API, the text `run` prints, and the
  * `opencode.db` tables that `../session-log-v2.ts` reads. To move it, change this version and `PACKAGES` if the release
- * adds or drops a platform package, then run `tests/integration/opencode-runtime-sessions.test.ts` against the new
- * binary (it fetches it) and read `docs/reference/configuration.md` ("Without a harness") for what the version changes.
+ * adds or drops a platform package, then run `tests/integration/opencode-runtime-sessions.test.ts` and
+ * `tests/integration/opencode-runtime-loop-guard.test.ts` against the new binary (they fetch it; the plugin ends a
+ * looping run by throwing from a hook, which OpenCode might one day handle differently) and read
+ * `docs/reference/configuration.md` ("Without a harness") for what the version changes.
  */
-export const OPENCODE_RUNTIME_VERSION = "2.1.4";
+export const OPENCODE_RUNTIME_VERSION = "2.2.0";
 
 /** The platform packages of `@opencode/cli` at {@link OPENCODE_RUNTIME_VERSION}. */
 const PACKAGES: ReadonlySet<string> = new Set([

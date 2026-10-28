@@ -75,6 +75,15 @@ interface FakeModel {
   readonly abandoned: () => number;
 }
 
+/**
+ * The tools a request offered, sorted, leaving out `skill`. OpenCode 2.2.0's built-in browser plugin appends a deny for
+ * the `browser` skill after every agent's rules, and a rule on one skill keeps the skill tool listed for an agent that
+ * denies every tool (2.1.4 dropped it from the list). The tool is listed, not usable: the test of its own below holds
+ * the call to account.
+ */
+const offered = (request: ModelRequest | undefined): string[] =>
+  (request?.tools ?? []).filter((name) => name !== "skill").sort();
+
 const cleanups: Array<() => void> = [];
 
 afterEach(() => {
@@ -111,8 +120,8 @@ function sandbox(): Box {
   };
 }
 
-/** An OpenAI-compatible endpoint on loopback. It answers `PROBE_OK`, asks for `callTool` first, or never answers. */
-function fakeModel(behaviour: { callTool?: string; stall?: boolean } = {}): FakeModel {
+/** An OpenAI-compatible endpoint on loopback. It answers `PROBE_OK`, asks for `callTool` (with `callArguments`) first, or never answers. */
+function fakeModel(behaviour: { callTool?: string; callArguments?: string; stall?: boolean } = {}): FakeModel {
   const requests: ModelRequest[] = [];
   let abandoned = 0;
   const server = Bun.serve({
@@ -148,7 +157,7 @@ function fakeModel(behaviour: { callTool?: string; stall?: boolean } = {}): Fake
                 index: 0,
                 id: "call_compat",
                 type: "function",
-                function: { name: behaviour.callTool, arguments: "{}" },
+                function: { name: behaviour.callTool, arguments: behaviour.callArguments ?? "{}" },
               },
             ],
           }
@@ -361,7 +370,7 @@ function registerSuite(bin: string): void {
 
       expect(result.ok).toBe(true);
       expect(result.stdout).toContain("PROBE_OK");
-      expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
+      expect(offered(model.requests[0])).toEqual(["glob", "grep", "read"]);
       expect(model.requests[1]?.toolResults.join("\n")).toContain("No tool named");
       expect(fs.existsSync(marker)).toBe(false);
     }, 60_000);
@@ -396,7 +405,7 @@ function registerSuite(bin: string): void {
         const result = await runOpencode(box, { prompt: "probe", modelWork: true }, { parentEnv });
 
         expect(result.ok).toBe(true);
-        expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
+        expect(offered(model.requests[0])).toEqual(["glob", "grep", "read"]);
         expect(model.requests[1]?.toolResults.join("\n")).toContain("No tool named");
         expect(fs.existsSync(marker)).toBe(false);
       }
@@ -422,15 +431,36 @@ function registerSuite(bin: string): void {
       const result = await runOpencode(box, { prompt: "probe", modelWork: true });
 
       expect(result.ok).toBe(true);
-      expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual([
-        "akm_curate",
-        "akm_search",
-        "akm_show",
-        "glob",
-        "grep",
-        "read",
-      ]);
+      expect(offered(model.requests[0])).toEqual(["akm_curate", "akm_search", "akm_show", "glob", "grep", "read"]);
     }, 60_000);
+  });
+
+  describe("model work cannot load a skill", () => {
+    const SENTINEL = "SKILL-BODY-SENTINEL";
+
+    /** What the model got back for its call of the `skill` tool (the last request carries it), on an authored standalone run or on model work. */
+    async function skillResult(modelWork: boolean): Promise<string> {
+      const box = sandbox();
+      const model = fakeModel({ callTool: "skill", callArguments: JSON.stringify({ id: "probe" }) });
+      const skill = path.join(box.env.HOME ?? "", ".agents", "skills", "probe");
+      fs.mkdirSync(skill, { recursive: true });
+      fs.writeFileSync(path.join(skill, "SKILL.md"), `---\nname: probe\ndescription: probe skill\n---\n${SENTINEL}\n`);
+      writeConfig(box, providerConfig(model, { model: "fixture/fake-model" }));
+
+      const result = await runOpencode(
+        box,
+        { prompt: "probe", ...(modelWork ? { modelWork: true } : {}) },
+        { args: ["run", "--standalone"] },
+      );
+
+      expect(result.ok).toBe(true);
+      return model.requests.at(-1)?.toolResults.join("\n") ?? "";
+    }
+
+    test("a skill's text reaches the model on an unrestricted run and never on model work, whether or not the skill tool is listed", async () => {
+      expect(await skillResult(false), "the control: the skill loads when nothing is denied").toContain(SENTINEL);
+      expect(await skillResult(true)).not.toContain(SENTINEL);
+    }, 120_000);
   });
 
   describe("a stop releases OpenCode's claim on the session (model work, which runs standalone)", () => {
@@ -495,7 +525,7 @@ function registerSuite(bin: string): void {
       expect(result.ok).toBe(true);
       expect(result.stdout).toContain("PROBE_OK");
       expect(model.requests.map((request) => request.model)).toEqual(["second"]);
-      expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
+      expect(offered(model.requests[0])).toEqual(["glob", "grep", "read"]);
     }, 60_000);
 
     /**
@@ -520,7 +550,7 @@ function registerSuite(bin: string): void {
       expect(result.ok).toBe(true);
       expect(result.stdout).toContain("PROBE_OK");
       expect(model.requests.slice(before).map((request) => request.model)).toEqual(["second"]);
-      expect([...(model.requests[before]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
+      expect(offered(model.requests[before])).toEqual(["glob", "grep", "read"]);
     }
 
     test("content written as JSONC, which OpenCode accepts, keeps its provider and its model", async () => {
@@ -591,7 +621,7 @@ function registerSuite(bin: string): void {
       });
     }, 60_000);
 
-    // Recorded on OpenCode 2.1.4: the stop reaches the CLI, which is interrupted and exits 130, and the service, which
+    // Recorded on OpenCode 2.1.4 and 2.2.0: the stop reaches the CLI, which is interrupted and exits 130, and the service, which
     // stays up, ends the turn too: its model request is abandoned and the session is marked interrupted. (2.1.2, with
     // the provider package loaded by file URL, kept the service's request open.)
     test("a stop ends the opencode command and the service's turn, and leaves the service up", async () => {

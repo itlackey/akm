@@ -686,9 +686,11 @@ Agent programs are reachable by two execution paths, both behind
   a JSON array: the executable alone when compiled, the runtime and the script
   otherwise), the
   connection's request fields are laid over each model request, with OpenCode's
-  own output cap taken off, and the variables akm set for the process (its
+  own output cap taken off, the variables akm set for the process (its
   directories and its OpenCode settings) are put back to akm's own, or removed,
-  in the environment of the commands the agent runs.
+  in the environment of the commands the agent runs, and a run whose model has
+  made the same tool call and been given the same result three turns in a row
+  fails before the next model request goes out (OpenCode has no such check).
 - The connection's key is in no environment: the inline config references it as
   `{file:<data>/opencode-runtime/keys/<session>}`, a 0600 file written for the
   run and removed after it.

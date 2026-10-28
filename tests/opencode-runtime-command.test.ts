@@ -30,7 +30,7 @@ const connection = (extra: Partial<ChatCompletionConfig> = {}): ChatCompletionCo
 });
 
 const where: RuntimeLocations = {
-  binary: "/akm/cache/opencode/2.1.4/opencode",
+  binary: "/akm/cache/opencode/2.2.0/opencode",
   directory: "/akm/data/opencode-runtime",
   pluginDirectory: PLUGIN,
   akm: ["/usr/local/bin/node", "/usr/local/lib/node_modules/akm-cli/dist/akm"],

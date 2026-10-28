@@ -297,3 +297,103 @@ describe("the request hook", () => {
     }
   });
 });
+
+describe("the repeated-call guard", () => {
+  type Call = readonly [name: string, input: unknown, result: string];
+  const SAME: Call = ["shell", { command: "echo same" }, "same\n"];
+  const message = (tools: string) =>
+    `akm stopped this run: the model called ${tools} with the same input three times in a row and got the same result each time.`;
+
+  /** The messages of a chat request after `turns`: each is the assistant's calls and the tool messages that answer them. */
+  function conversation(...turns: Call[][]): unknown[] {
+    return [
+      { role: "system", content: "rules" },
+      { role: "user", content: "do the task" },
+      ...turns.flatMap((calls, turn) => [
+        {
+          role: "assistant",
+          content: null,
+          // Every call has an id of its own, as every model request's has.
+          tool_calls: calls.map(([name, input], index) => ({
+            id: `call_${turn}_${index}`,
+            type: "function",
+            function: { name, arguments: JSON.stringify(input) },
+          })),
+        },
+        ...calls.map(([, , result], index) => ({
+          role: "tool",
+          tool_call_id: `call_${turn}_${index}`,
+          content: result,
+        })),
+      ]),
+    ];
+  }
+
+  /** What the request hook does with a request carrying `messages`: it resolves, or it fails with the guard's message. */
+  async function send(messages: unknown[]) {
+    const { request: hook } = await load({ requestFields: {} });
+    const event = {
+      request: new Request("http://llm.example/v1/chat/completions", {
+        method: "POST",
+        body: JSON.stringify({ model: "m", messages }),
+      }),
+    };
+    await hook(event);
+    return event;
+  }
+
+  test("fails the run when the last three turns made the same call and got the same result", async () => {
+    await expect(send(conversation([SAME], [SAME], [SAME]))).rejects.toThrow(message("`shell`"));
+    // Still three, however much came before.
+    await expect(send(conversation([["read", {}, "x"]], [SAME], [SAME], [SAME]))).rejects.toThrow(message("`shell`"));
+  });
+
+  test("lets two repeats through, and forwards the request as it does any other", async () => {
+    const event = await send(conversation([SAME], [SAME]));
+
+    expect(((await event.request.json()) as { messages: unknown[] }).messages).toHaveLength(6);
+  });
+
+  test("lets a call through whose result changes, which is how a poll looks", async () => {
+    const poll = (result: string): Call => ["shell", { command: "date +%s%N" }, result];
+
+    await send(conversation([poll("1\n")], [poll("2\n")], [poll("3\n")]));
+    // Two of the three alike is not enough.
+    await send(conversation([poll("1\n")], [poll("2\n")], [poll("2\n")]));
+  });
+
+  test("lets a call through whose input changes", async () => {
+    await send(conversation([SAME], [SAME], [["shell", { command: "echo same " }, "same\n"]]));
+  });
+
+  test("counts only turns in a row: another call between the repeats starts the count again", async () => {
+    const other: Call = ["read", { filePath: "a" }, "text"];
+
+    await send(conversation([SAME], [SAME], [other], [SAME], [SAME]));
+    await send(conversation([SAME], [other], [SAME]));
+  });
+
+  test("counts only turns of calls: a reply in words or a message from the user ends the run of turns", async () => {
+    const reply = { role: "assistant", content: "let me think" };
+    const user = { role: "user", content: "go on" };
+
+    await send([...conversation([SAME], [SAME]), reply, ...conversation([SAME]).slice(2)]);
+    await send([...conversation([SAME], [SAME], [SAME]), user]);
+  });
+
+  test("compares parallel calls as a set, in whatever order the model lists them", async () => {
+    const read: Call = ["read", { filePath: "a" }, "text"];
+
+    await expect(send(conversation([SAME, read], [read, SAME], [SAME, read]))).rejects.toThrow(
+      message("`shell`, `read`"),
+    );
+    // One call of the set alone is a different turn.
+    await send(conversation([SAME, read], [SAME], [SAME, read]));
+  });
+
+  test("a call that was never answered is no repeat", async () => {
+    const messages = conversation([SAME], [SAME], [SAME]);
+
+    await send(messages.slice(0, -1));
+  });
+});
