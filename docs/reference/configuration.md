@@ -304,7 +304,8 @@ default connection. The npm package and the standalone binary do the same.
 - A run reports its session id and the tokens its turn used, read from that
   session once the process has ended; a workflow's `budget.max_tokens` counts
   them. A failed run is a non-zero exit with OpenCode's own message
-  (`non_zero_exit`), as for a harness.
+  (`non_zero_exit`), as for a harness; when the session recorded why its turn
+  failed, the run's error carries that too, so a workflow's unit shows it.
 - A run stops when its model has made the same tool call, with the same input,
   and been given the same result three turns in a row: it fails (`non_zero_exit`)
   with a message that names the tool. OpenCode has no check of its own for this,

@@ -123,6 +123,8 @@ describe.skipIf(unavailable !== undefined)("a run on akm's runtime that repeats 
     expect(result.ok).toBe(false);
     expect(result.durationMs).toBeLessThan(30_000);
     expect(result.stderr).toContain(STOPPED);
+    // The error says why too: a workflow keeps the error, not stderr.
+    expect(result.error).toBe(`akm's runtime on connection "lab" exited with code 1: ${STOPPED}`);
     // Three requests went out, three calls ran; the fourth request, the one that would have made it a fourth, did not.
     expect(model.requests.map((request) => request.mode)).toEqual(["repeat", "repeat", "repeat"]);
     expect(executedCalls(sessionOf(result))).toBe(3);

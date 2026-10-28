@@ -39,7 +39,7 @@ import {
 } from "../../../agent/spawn";
 import type { LowerTarget } from "../../harness";
 import { akmOpencodeDatabasePath, akmRuntimeDir } from "../roots";
-import { v2SessionTokens } from "../session-log-v2";
+import { v2SessionFailure, v2SessionTokens } from "../session-log-v2";
 import { ensureRuntimeBinary, OPENCODE_RUNTIME_VERSION, runtimeBinaryPath } from "./binary";
 import { type RuntimeLocations, runtimeArgv, runtimeConfig, runtimeEnv, runtimePrepareArgv } from "./command";
 
@@ -118,19 +118,21 @@ async function prepareDatabase(directory: string, command: ReadyCommand, opts: R
 }
 
 /**
- * The run's session as OpenCode recorded it, read once the process has ended: its id and the tokens its turn used,
- * which a workflow's `budget.max_tokens` and the unit journal count. Nothing when the run made no session. Accounting
- * is best-effort: a database that cannot be read leaves the run's result as it is.
+ * The run's session as OpenCode recorded it, read once the process has ended: its id, the tokens its turn used, which a
+ * workflow's `budget.max_tokens` and the unit journal count, and the message its turn failed with, if it did. Nothing
+ * when the run made no session. Best-effort: a database that cannot be read leaves the run's result as it is.
  */
-function sessionRecord(sessionId: string): Pick<AgentRunResult, "sessionId" | "usage"> {
+function sessionRecord(sessionId: string): Pick<AgentRunResult, "sessionId" | "usage"> & { readonly failure?: string } {
   try {
     const db = openDatabase(akmOpencodeDatabasePath(), { readonly: true, create: false });
     try {
       const tokens = v2SessionTokens(db, sessionId);
       if (!tokens) return {};
+      const failure = v2SessionFailure(db, sessionId);
       return {
         sessionId,
         usage: { inputTokens: tokens.input, outputTokens: tokens.output, reasoningTokens: tokens.reasoning },
+        ...(failure ? { failure } : {}),
       };
     } finally {
       db.close();
@@ -184,7 +186,13 @@ export const opencodeRuntime: AgentRuntime = {
           opts,
           "captured",
         );
-        return { ...result, ...sessionRecord(session) };
+        const { failure, ...record } = sessionRecord(session);
+        return {
+          ...result,
+          ...record,
+          // OpenCode prints why the turn failed on stderr, which a workflow does not keep; the error carries it.
+          ...(result.reason === "non_zero_exit" && failure ? { error: `${result.error}: ${failure}` } : {}),
+        };
       } finally {
         fs.rmSync(keyFile, { force: true });
       }

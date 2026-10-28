@@ -175,6 +175,19 @@ export function v2SessionTokens(
   return row ? { input: row.tokens_input, output: row.tokens_output, reasoning: row.tokens_reasoning } : undefined;
 }
 
+/**
+ * The message a session's turn failed with, as OpenCode recorded it on the session's `idle` message (an error a plugin
+ * hook threw, a provider's refusal). Undefined when the session is not in the file or its turn did not fail.
+ */
+export function v2SessionFailure(db: Database, sessionId: string): string | undefined {
+  const row = db
+    .prepare<{ message: unknown }>(
+      "SELECT json_extract(data, '$.error.message') AS message FROM session_message WHERE session_id = ? AND type = 'idle' AND json_extract(data, '$.outcome') = 'failed' ORDER BY seq DESC LIMIT 1",
+    )
+    .get(sessionId);
+  return typeof row?.message === "string" && row.message.trim() !== "" ? row.message : undefined;
+}
+
 /** One session's events, from its messages in order. Throws when the session is not in the file. */
 export function readV2Session(db: Database, harness: string, sessionId: string, filePath: string): OpenCodeSessionRead {
   const row = db
