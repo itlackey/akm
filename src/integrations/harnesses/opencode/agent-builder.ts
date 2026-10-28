@@ -75,8 +75,17 @@ const MODEL_WORK_AGENT_DEFINITION = {
 const CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
 
 /**
+ * OpenCode's built-in browser plugin, removed from model work (a `-` entry in `plugins` removes a plugin, OpenCode 2.0.0
+ * and later). From 2.2.0 it appends a deny of its own skill after every agent's rules, and a rule on one skill keeps
+ * the `skill` tool listed for an agent that denies every tool; without the plugin, the `*` deny removes the tool again.
+ * Model work denies the browser anyway.
+ */
+const WITHOUT_BROWSER_PLUGIN = "-opencode.browser";
+
+/**
  * The inline config model work runs with: the user's own `OPENCODE_CONFIG_CONTENT` as it is, with akm's agent set on
- * `agents.akm-model-work`, the one key akm's definition wins. OpenCode 2 reads that native `agents` map over the
+ * `agents.akm-model-work`, the one key akm's definition wins, and {@link WITHOUT_BROWSER_PLUGIN} after the user's
+ * `plugins`. OpenCode 2 reads that native `agents` map over the
  * legacy `agent` one, so a same-named entry the user keeps in `agent` is left out rather than left to conflict. The
  * child's value is built from the parent's, so a provider, model or key the user keeps only there stays. It is read as
  * OpenCode reads it, as JSONC (comments and trailing commas), and written back as JSON; content that reads only once
@@ -95,6 +104,7 @@ function modelWorkConfig(): string {
   }
   const config: Record<string, unknown> = {
     ...user,
+    plugins: [...(Array.isArray(user?.plugins) ? user.plugins : []), WITHOUT_BROWSER_PLUGIN],
     agents: { ...asRecord(user?.agents), [MODEL_WORK_AGENT]: MODEL_WORK_AGENT_DEFINITION },
   };
   const legacy = asRecord(user?.agent);

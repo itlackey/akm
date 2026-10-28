@@ -75,15 +75,6 @@ interface FakeModel {
   readonly abandoned: () => number;
 }
 
-/**
- * The tools a request offered, sorted, leaving out `skill`. OpenCode 2.2.0's built-in browser plugin appends a deny for
- * the `browser` skill after every agent's rules, and a rule on one skill keeps the skill tool listed for an agent that
- * denies every tool (2.1.4 dropped it from the list). The tool is listed, not usable: the test of its own below holds
- * the call to account.
- */
-const offered = (request: ModelRequest | undefined): string[] =>
-  (request?.tools ?? []).filter((name) => name !== "skill").sort();
-
 const cleanups: Array<() => void> = [];
 
 afterEach(() => {
@@ -370,7 +361,7 @@ function registerSuite(bin: string): void {
 
       expect(result.ok).toBe(true);
       expect(result.stdout).toContain("PROBE_OK");
-      expect(offered(model.requests[0])).toEqual(["glob", "grep", "read"]);
+      expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
       expect(model.requests[1]?.toolResults.join("\n")).toContain("No tool named");
       expect(fs.existsSync(marker)).toBe(false);
     }, 60_000);
@@ -405,7 +396,7 @@ function registerSuite(bin: string): void {
         const result = await runOpencode(box, { prompt: "probe", modelWork: true }, { parentEnv });
 
         expect(result.ok).toBe(true);
-        expect(offered(model.requests[0])).toEqual(["glob", "grep", "read"]);
+        expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
         expect(model.requests[1]?.toolResults.join("\n")).toContain("No tool named");
         expect(fs.existsSync(marker)).toBe(false);
       }
@@ -431,7 +422,14 @@ function registerSuite(bin: string): void {
       const result = await runOpencode(box, { prompt: "probe", modelWork: true });
 
       expect(result.ok).toBe(true);
-      expect(offered(model.requests[0])).toEqual(["akm_curate", "akm_search", "akm_show", "glob", "grep", "read"]);
+      expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual([
+        "akm_curate",
+        "akm_search",
+        "akm_show",
+        "glob",
+        "grep",
+        "read",
+      ]);
     }, 60_000);
   });
 
@@ -525,7 +523,7 @@ function registerSuite(bin: string): void {
       expect(result.ok).toBe(true);
       expect(result.stdout).toContain("PROBE_OK");
       expect(model.requests.map((request) => request.model)).toEqual(["second"]);
-      expect(offered(model.requests[0])).toEqual(["glob", "grep", "read"]);
+      expect([...(model.requests[0]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
     }, 60_000);
 
     /**
@@ -550,7 +548,7 @@ function registerSuite(bin: string): void {
       expect(result.ok).toBe(true);
       expect(result.stdout).toContain("PROBE_OK");
       expect(model.requests.slice(before).map((request) => request.model)).toEqual(["second"]);
-      expect(offered(model.requests[before])).toEqual(["glob", "grep", "read"]);
+      expect([...(model.requests[before]?.tools ?? [])].sort()).toEqual(["glob", "grep", "read"]);
     }
 
     test("content written as JSONC, which OpenCode accepts, keeps its provider and its model", async () => {

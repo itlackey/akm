@@ -327,6 +327,8 @@ describe("opencode by major", () => {
       const content = JSON.parse(built.env?.OPENCODE_CONFIG_CONTENT ?? "");
       const allow = (action: string) => ({ action, resource: "*", effect: "allow" });
       expect(content).toEqual({
+        // OpenCode's browser plugin is removed: from 2.2.0 its own rules would keep the `skill` tool listed.
+        plugins: ["-opencode.browser"],
         agents: {
           "akm-model-work": {
             mode: "primary",
@@ -362,6 +364,8 @@ describe("opencode by major", () => {
     type Inline = typeof INLINE & {
       agent?: Record<string, unknown>;
       agents: Record<string, unknown>;
+      plugin?: unknown[];
+      plugins: unknown[];
     };
     const inlineConfig = (content: string | undefined, env: Record<string, string | undefined> = {}): Promise<Inline> =>
       withOpencodeOnPath(2, async () =>
@@ -396,10 +400,18 @@ describe("opencode by major", () => {
         const merged = await inlineConfig(JSON.stringify(user));
         expect(merged.model).toBe("mine/fast");
         expect(merged.provider).toEqual(INLINE.provider);
+        expect(merged.plugins).toEqual(["-opencode.browser"]);
         // OpenCode 2 reads the native map over the legacy one: akm's agent is there, and nowhere else.
         expect(merged.agents).toEqual({ planner: { mode: "subagent" }, "akm-model-work": own });
         expect(merged.agent).toEqual({ reviewer: { mode: "subagent" } });
       }
+    });
+
+    test("the user's plugins stay, in either key, with OpenCode's browser plugin removed after them", async () => {
+      const plugins = ["mine-plugin", { package: "/opt/plugin", options: { a: 1 } }];
+      const merged = await inlineConfig(JSON.stringify({ ...INLINE, plugin: ["legacy-plugin"], plugins }));
+      expect(merged.plugin).toEqual(["legacy-plugin"]);
+      expect(merged.plugins).toEqual([...plugins, "-opencode.browser"]);
     });
 
     test("content written as JSONC, as OpenCode reads it, keeps all of it and is passed on as JSON", async () => {
