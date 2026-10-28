@@ -304,6 +304,16 @@ describe("engines.<n> kind agent → harnesses.<n>", () => {
     });
   });
 
+  test("an opencode-sdk engine's args are dropped with a note: 0.9 did not pass them, and the harness would pass them in place of run", () => {
+    const { config, notes } = convert({
+      engines: { sdk: { kind: "agent", platform: "opencode-sdk", args: ["--print-logs"], model: "x/y" } },
+    });
+    expect((config.harnesses as Dict).sdk).not.toHaveProperty("args");
+    expect(notes.filter((note) => note.startsWith("engines.sdk:"))).toEqual([
+      "engines.sdk: args is dropped. 0.9 did not pass it to OpenCode, and the opencode harness would pass it in place of `run`.",
+    ]);
+  });
+
   test("an opencode-sdk engine over an llmEngine is akm's own runtime over that connection: it has no entry in config", () => {
     const { config, notes } = convert({
       engines: {

@@ -164,12 +164,18 @@ function runtimeEngine(
  * `engines.<name>` with `kind: "agent"`: `harnesses.<name>`. An `opencode-sdk` engine with no `llmEngine` ran the
  * user's own OpenCode (provider, model and login from its configuration), which the `opencode` harness runs now.
  */
-function agentEngineToHarness(name: string, engine: Dict, converted: Converted): void {
+function agentEngineToHarness(name: string, engine: Dict, converted: Converted, conversion: Conversion): void {
   const sdk = engine.platform === "opencode-sdk";
   const harness: Dict = { platform: sdk ? "opencode" : engine.platform };
   if (sdk) converted.sdkHarnesses.add(name);
+  // 0.9 started `opencode serve` without an engine's `args`; the harness would pass them in place of `run`.
   for (const key of ["bin", "args", "workspace", "agent", "timeoutMs"])
-    if (engine[key] !== undefined) harness[key] = engine[key];
+    if (engine[key] !== undefined && !(sdk && key === "args")) harness[key] = engine[key];
+  if (sdk && engine.args !== undefined) {
+    conversion.notes.push(
+      `engines.${name}: args is dropped. 0.9 did not pass it to OpenCode, and the opencode harness would pass it in place of \`run\`.`,
+    );
+  }
   const model = str(engine.model);
   if (model !== undefined) converted.ownModelOf.push({ kind: "harnesses", engine: name, model });
   converted.harnesses[name] = harness;
@@ -271,7 +277,7 @@ function convertEngines(
     if (engine.kind !== "agent") llmEngineToConnection(name, engine, defaults, env, converted, conversion);
     else if (engine.platform === "opencode-sdk" && llmEngine !== undefined)
       runtimeEngine(name, engine, llmEngine, converted, conversion);
-    else agentEngineToHarness(name, engine, converted);
+    else agentEngineToHarness(name, engine, converted, conversion);
   }
   return converted;
 }
