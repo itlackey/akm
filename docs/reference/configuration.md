@@ -106,7 +106,7 @@ akm reads these keys of a connection:
 | `apiKeyFile` | Retired. `akm migrate apply` leaves an engine's key file here, as written, when it cannot read the file yet; akm ignores it (never reads it or sends it) and a later `akm migrate apply` moves the key it names into `credentials.json`. |
 | `models` | Alias to model. See [Aliases](#aliases). |
 | `contextLength` | The model's context window in tokens. `akm improve` sizes its prompts from it (consolidate's chunks, reflect's asset content); unset, it assumes 4096. |
-| `timeoutMs` | How long one call may take, in milliseconds; `null` runs unbounded. Unset, a model call stops after 600 000 (ten minutes) and agent work runs until it finishes; akm's own runtime also ends a run that keeps repeating one tool call and result, but not one that keeps making different calls ([Without a harness](#without-a-harness)). The ceiling is 2 147 483 647. |
+| `timeoutMs` | How long one call may take, in milliseconds; `null` runs unbounded. Unset, a model call stops after 600 000 (ten minutes) and agent work runs until it finishes; akm's own runtime also tells a model that keeps repeating one tool call and result, and ends the run if it goes on, but does not stop one that keeps making different calls ([Without a harness](#without-a-harness)). The ceiling is 2 147 483 647. |
 | `concurrency` | How many requests a workflow `map` step may have in flight on this connection, clamped to 1–64. Unset, 1 on a loopback endpoint (a local model server runs one inference at a time) and 4 on a remote one. akm never sends it. |
 
 Every other key, on the connection or in a model entry, is a request field in
@@ -306,14 +306,29 @@ default connection. The npm package and the standalone binary do the same.
   them. A failed run is a non-zero exit with OpenCode's own message
   (`non_zero_exit`), as for a harness; when the session recorded why its turn
   failed, the run's error carries that too, so a workflow's unit shows it.
-- A run stops when its model has made the same tool call, with the same input,
-  and been given the same result three turns in a row: it fails (`non_zero_exit`)
-  with a message that names the tool. OpenCode has no check of its own for this,
-  and with `timeoutMs` unset such a run would never end. A call whose result
-  changes is not a repeat, but a poll that gets the same answer three times in a
-  row is. An output too long to send whole is compared by its text, not by the
-  file OpenCode saves it to. Only akm's own runtime does this; a harness is your
-  program, with whatever limits it has.
+- A model that repeats itself is told, then stopped. When it has made the same
+  tool call, with the same input, and been given the same result three turns in
+  a row, akm adds a message from the user to its next request: it names the
+  tool, says the result will not change, asks the model to use the result it
+  has or take a different approach, and says that calling it again stops the
+  run. **That one request overrides a lower temperature the connection sets**:
+  a `temperature` below 0.7 (0, say) is sent as 0.7, because a model sampled
+  greedily (temperature 0) gave the same call again to every wording in every
+  try, so at 0 the message alone does nothing, and at 0.7 it left the repeat in
+  about half of them. A connection that sets no `temperature` sends none on that
+  request either (the endpoint's default applies, and OpenAI's reasoning models
+  refuse any other), and one of 0.7 or more is kept. Every other request keeps
+  the connection's settings. If the model makes the same call again, or, after
+  other calls, makes it three turns in a row again, the run fails
+  (`non_zero_exit`) with a message that names the tool. One that changes course
+  is not stopped. Each session of a run (a subagent's too) is told for itself.
+  OpenCode has no check of its own for this, and with `timeoutMs` unset such a
+  run would never end. A call whose result changes is not a repeat, but a poll
+  that gets the same answer three times in a row is. An output too long to send
+  whole is compared by its text, not by the file OpenCode saves it to. The
+  message is added to the request on its way to the model, so OpenCode's stored
+  session does not show it; the stop is recorded as any failure is. Only akm's
+  own runtime does this; a harness is your program, with whatever limits it has.
 - A run that keeps making different calls is not stopped by that. Its timeout
   bounds it: the connection's `timeoutMs`, one the run is given (`akm agent
   --timeout-ms`, `akm workflow run --timeout`, a workflow unit's `timeout`) or,
