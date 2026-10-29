@@ -112,8 +112,10 @@ function implicitKeyVariables(name: string, defaults: Dict): string[] {
 interface Converted {
   readonly connections: Dict;
   readonly harnesses: Dict;
-  /** The removed opencode-sdk engines, each with its `llmEngine`. */
-  readonly runtimes: Map<string, string | undefined>;
+  /** The removed opencode-sdk engines that ran over an `llmEngine`, each with it: akm's own runtime has no entry of its own. */
+  readonly runtimes: Map<string, string>;
+  /** The harnesses that were opencode-sdk engines without an `llmEngine`: `models.json` keyed their aliases by `opencode-sdk`. */
+  readonly sdkHarnesses: Set<string>;
   /** The engines whose key a connection cannot carry. */
   readonly keyHolders: Array<{ engine: string; field: EngineKey["field"] }>;
   /** An engine's own model: what an alias nothing else names falls back to. */
@@ -126,6 +128,8 @@ interface Converted {
  * keys, the models, the references.
  */
 interface Naming {
+  /** The engine 0.9 ran agent work and a gate's judge on when nothing named one: `defaults.engine`, else the fallback. */
+  readonly defaultEngine: string | undefined;
   readonly defaultConnection: string | undefined;
   readonly defaultHarness: string | undefined;
   readonly connectionName: (name: string) => string;
@@ -139,19 +143,41 @@ interface Naming {
 
 // ── engines → connections / harnesses ────────────────────────────────────────
 
-/** `engines.<name>` with `kind: "agent"` and `platform: "opencode-sdk"`: akm's own runtime has no entry of its own. */
-function runtimeEngine(name: string, engine: Dict, converted: Converted, conversion: Conversion): void {
-  converted.runtimes.set(name, str(engine.llmEngine));
+/**
+ * `engines.<name>` with `kind: "agent"` and `platform: "opencode-sdk"` over an `llmEngine`: OpenCode ran over
+ * akm's own connection, which is what akm's own runtime is now, so it has no entry of its own.
+ */
+function runtimeEngine(
+  name: string,
+  engine: Dict,
+  llmEngine: string,
+  converted: Converted,
+  conversion: Conversion,
+): void {
+  converted.runtimes.set(name, llmEngine);
+  const dropped = ["model", "timeoutMs", "workspace", "bin", "agent"].filter((key) => engine[key] !== undefined);
+  const gone = dropped.length === 0 ? "" : `; its ${dropped.join(", ")} ${dropped.length === 1 ? "is" : "are"} dropped`;
   conversion.notes.push(
-    `engines.${name}: opencode-sdk is akm's own runtime now, with no entry of its own; its model, timeout and workspace are dropped.`,
+    `engines.${name}: opencode-sdk over llmEngine "${llmEngine}" is akm's own runtime over connection "${llmEngine}" now, with no entry of its own${gone}.`,
   );
 }
 
-/** `engines.<name>` with `kind: "agent"`, any other platform: `harnesses.<name>`. */
-function agentEngineToHarness(name: string, engine: Dict, converted: Converted): void {
-  const harness: Dict = { platform: engine.platform };
+/**
+ * `engines.<name>` with `kind: "agent"`: `harnesses.<name>`. An `opencode-sdk` engine with no `llmEngine` ran the
+ * user's own OpenCode (provider, model and login from its configuration), which the `opencode` harness runs now.
+ */
+function agentEngineToHarness(name: string, engine: Dict, converted: Converted, conversion: Conversion): void {
+  const sdk = engine.platform === "opencode-sdk";
+  const harness: Dict = { platform: sdk ? "opencode" : engine.platform };
+  if (sdk) converted.sdkHarnesses.add(name);
+  // 0.9 started `opencode serve` without an engine's `args`; the harness would pass them in place of `run`.
   for (const key of ["bin", "args", "workspace", "agent", "timeoutMs"])
-    if (engine[key] !== undefined) harness[key] = engine[key];
+    if (engine[key] !== undefined && !(sdk && key === "args")) harness[key] = engine[key];
+  if (sdk && engine.args !== undefined) {
+    conversion.notes.push(
+      `engines.${name}: args is dropped. 0.9 did not pass it to OpenCode, and the opencode harness would pass it in place of \`run\`.`,
+    );
+  }
   const model = str(engine.model);
   if (model !== undefined) converted.ownModelOf.push({ kind: "harnesses", engine: name, model });
   converted.harnesses[name] = harness;
@@ -238,6 +264,7 @@ function convertEngines(
     connections: {},
     harnesses: {},
     runtimes: new Map(),
+    sdkHarnesses: new Set(),
     keyHolders: [],
     ownModelOf: [],
   };
@@ -248,9 +275,11 @@ function convertEngines(
     );
     if (unknown.length > 0)
       conversion.notes.push(`engines.${name}: dropped ${unknown.join(", ")}, which akm does not read.`);
+    const llmEngine = str(engine.llmEngine);
     if (engine.kind !== "agent") llmEngineToConnection(name, engine, defaults, env, converted, conversion);
-    else if (engine.platform === "opencode-sdk") runtimeEngine(name, engine, converted, conversion);
-    else agentEngineToHarness(name, engine, converted);
+    else if (engine.platform === "opencode-sdk" && llmEngine !== undefined)
+      runtimeEngine(name, engine, llmEngine, converted, conversion);
+    else agentEngineToHarness(name, engine, converted, conversion);
   }
   return converted;
 }
@@ -280,12 +309,46 @@ function renameMap(
   return (name) => moved.get(name) ?? name;
 }
 
+/** The entry the loader reads as the default: the one called `default`, else the only one. */
+const defaultName = (entries: Dict): string | undefined =>
+  "default" in entries ? "default" : Object.keys(entries).length === 1 ? Object.keys(entries)[0] : undefined;
+
+/**
+ * The engine 0.9 ran agent work on when `defaults.engine` named none and OpenCode was installed: the one called
+ * `opencode-sdk`, else a bare OpenCode of the user's own.
+ */
+const IMPLICIT_AGENT_ENGINE = "opencode-sdk";
+
+/**
+ * Where agent work ran when `defaults.engine` named no harness, if that is not where it runs now. A runtime was akm's
+ * own; with no `defaults.engine` it was the user's OpenCode, whenever it was installed.
+ */
+function agentWorkMoved(
+  defaultEngine: string | undefined,
+  runtimes: ReadonlyMap<string, string>,
+  harness: string | undefined,
+): string | undefined {
+  if (defaultEngine !== undefined) {
+    return runtimes.has(defaultEngine) && harness !== undefined
+      ? `Agent work ran on akm's own runtime (engines.${defaultEngine}); with the harness "${harness}" configured it now runs there. Remove that harness to keep agent work on akm's runtime.`
+      : undefined;
+  }
+  const ran =
+    "Without defaults.engine, agent work ran on your own OpenCode (the implicit fallback), when it was installed";
+  return harness !== undefined
+    ? `${ran}; with the harness "${harness}" configured it now runs there.`
+    : `${ran}; it now runs on akm's own runtime. To keep it on your OpenCode, enable the harness: \`akm setup --harness opencode\`.`;
+}
+
 /** `defaults.llmEngine`, else `defaults.engine`: that connection is `default`; `defaults.engine` naming one of several harnesses: that harness is. */
 function nameDefaults(defaults: Dict, converted: Converted, conversion: Conversion, written: Entries): Naming {
-  const { connections, harnesses, runtimes, keyHolders } = converted;
-  const defaultEngine = str(defaults.engine);
+  const { connections, harnesses, runtimes, sdkHarnesses, keyHolders } = converted;
+  const implicit = sdkHarnesses.has(IMPLICIT_AGENT_ENGINE) || runtimes.has(IMPLICIT_AGENT_ENGINE);
+  const defaultEngine = str(defaults.engine) ?? (implicit ? IMPLICIT_AGENT_ENGINE : undefined);
+  const modelWorkEngine = str(defaults.llmEngine);
   const runtimeLlm = defaultEngine === undefined ? undefined : runtimes.get(defaultEngine);
-  const defaultConnection = [str(defaults.llmEngine), defaultEngine, runtimeLlm].find(
+  const modelWorkRuntimeLlm = modelWorkEngine === undefined ? undefined : runtimes.get(modelWorkEngine);
+  const defaultConnection = [modelWorkEngine, modelWorkRuntimeLlm, defaultEngine, runtimeLlm].find(
     (n) => n !== undefined && n in connections,
   );
   const defaultHarness =
@@ -300,16 +363,19 @@ function nameDefaults(defaults: Dict, converted: Converted, conversion: Conversi
     connections: renamed(connections, connectionName),
     harnesses: renamed(harnesses, harnessName),
   };
-  const defaultHarnessName =
-    "default" in named.harnesses
-      ? "default"
-      : Object.keys(named.harnesses).length === 1
-        ? Object.keys(named.harnesses)[0]
-        : undefined;
-  if (defaultHarnessName !== undefined && (defaultEngine === undefined || runtimes.has(defaultEngine))) {
-    conversion.notes.push(
-      `Agent work ran on akm's own runtime${defaultEngine === undefined ? "" : ` (engines.${defaultEngine})`}; with the harness "${defaultHarnessName}" configured it now runs there. Remove that harness to keep agent work on akm's runtime.`,
-    );
+  const defaultHarnessName = defaultName(named.harnesses);
+  const hasEngines = Object.keys(connections).length + Object.keys(harnesses).length + runtimes.size > 0;
+  const moved = hasEngines ? agentWorkMoved(defaultEngine, runtimes, defaultHarnessName) : undefined;
+  if (moved !== undefined) conversion.notes.push(moved);
+  // `defaults.llmEngine` could name an agent engine, which then ran akm's model work; model work runs on the default
+  // connection, else the default harness, whichever engine that was.
+  if (modelWorkEngine !== undefined && modelWorkEngine in harnesses) {
+    const now = harnessName(modelWorkEngine);
+    if (defaultName({ ...named.connections, ...written.connections }) !== undefined || defaultHarnessName !== now) {
+      conversion.notes.push(
+        `defaults.llmEngine "${modelWorkEngine}" named an agent engine, which ran akm's model work. Model work now runs on the default connection, else the default harness; to keep it on the harness "${now}", set improve.harness to it.`,
+      );
+    }
   }
   for (const [kind, rename] of [
     ["connections", connectionName],
@@ -322,10 +388,8 @@ function nameDefaults(defaults: Dict, converted: Converted, conversion: Conversi
     );
   }
   const target = (engine: string): EngineTarget | undefined => {
-    if (runtimes.has(engine)) {
-      const runtime = runtimes.get(engine);
-      return runtime !== undefined && runtime in connections ? { connection: connectionName(runtime) } : undefined;
-    }
+    const runtime = runtimes.get(engine);
+    if (runtime !== undefined) return runtime in connections ? { connection: connectionName(runtime) } : undefined;
     if (engine in harnesses) return { harness: harnessName(engine) };
     if (engine in connections) return { connection: connectionName(engine) };
     return { connection: engine };
@@ -335,7 +399,7 @@ function nameDefaults(defaults: Dict, converted: Converted, conversion: Conversi
     connection: connectionName(engine),
     field,
   }));
-  return { defaultConnection, defaultHarness, connectionName, harnessName, ...named, keys, target };
+  return { defaultEngine, defaultConnection, defaultHarness, connectionName, harnessName, ...named, keys, target };
 }
 
 /** What the file writes under `connections` / `harnesses` itself, read with the converted entries: the written entry wins field by field. */
@@ -355,6 +419,32 @@ function ownModelsOf(converted: Converted, naming: Naming): OwnModels {
     ownModels[kind].set(kind === "connections" ? naming.connectionName(engine) : naming.harnessName(engine), model);
   }
   return ownModels;
+}
+
+/**
+ * Where a gate's judge and akm's other model work run now when nothing names a place: the default connection, else
+ * the default harness. With no `defaults.llmEngine`, 0.9 ran none of that work unless a setting named an engine, so a
+ * default harness that would now take it is set not to (`modelWork: false`); a setting that names it still runs there.
+ */
+function modelWorkTarget(
+  defaults: Dict,
+  naming: Naming,
+  merged: Entries,
+  inherited: ConvertEnginesOptions["inherited"],
+  conversion: Conversion,
+): EngineTarget | undefined {
+  const connection = defaultName({ ...inherited?.connections, ...merged.connections });
+  if (connection !== undefined) return { connection };
+  const harness = defaultName({ ...inherited?.harnesses, ...merged.harnesses });
+  const entry = harness === undefined ? undefined : merged.harnesses[harness];
+  if (harness === undefined || !isRecord(entry)) return undefined;
+  if (str(defaults.llmEngine) !== undefined || !(harness in naming.harnesses) || entry.modelWork !== undefined)
+    return entry.modelWork === false ? undefined : { harness };
+  entry.modelWork = false;
+  conversion.notes.push(
+    `harnesses.${harness}: modelWork is false. Without defaults.llmEngine, 0.9 ran none of akm's own model work (improve, index passes, extraction, quality gates) unless a setting named an engine, and with no connection that work would now run on this harness. A workflow gate's judge, which 0.9 ran on defaults.engine, is model work now and needs a connection (\`akm setup --endpoint URL\`); to let the harness take akm's model calls instead, remove modelWork.`,
+  );
+  return undefined;
 }
 
 // ── the whole conversion ─────────────────────────────────────────────────────
@@ -383,8 +473,9 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
     inherited: { connections: options.inherited?.connections ?? {}, harnesses: options.inherited?.harnesses ?? {} },
     renamed: {
       runtime: [...converted.runtimes.values()]
-        .filter((name): name is string => name !== undefined && name in converted.connections)
+        .filter((name) => name in converted.connections)
         .map((name) => naming.connectionName(name)),
+      sdkHarness: [...converted.sdkHarnesses].map((name) => naming.harnessName(name)),
       connection: (engine) => (engine in converted.connections ? naming.connectionName(engine) : undefined),
     },
   });
@@ -394,7 +485,8 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
   const improve = out.improve;
   if (isRecord(improve)) moveStrategyExecution(improve, conversion, retarget);
   improveStrategyDefault(out, defaults, improve);
-  dropJudgeEngine(out, conversion);
+  const judge = modelWorkTarget(defaults, naming, merged, options.inherited, conversion);
+  dropJudgeEngine(out, conversion, naming.target, naming.defaultEngine, judge);
   convertIndexEngines(out, conversion, retarget);
 
   // Assemble, keeping the file's key order.

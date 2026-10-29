@@ -8,8 +8,8 @@
  * git bundle (with an in-bundle symlink at the bundle root), a website
  * bundle, an npm bundle, a scheduled/enabled task pair plus one that stays
  * ungranted, a synced native (fake) crontab, and the 0.9 `engines` form (an llm
- * engine with an `apiKeyFile`, an agent engine, a `models.json`, and a command
- * and a task that name an engine).
+ * engine with an `apiKeyFile`, an agent engine, an `opencode-sdk` engine that is
+ * `defaults.engine`, a `models.json`, and a command and a task that name an engine).
  */
 
 import { spawnSync } from "node:child_process";
@@ -265,9 +265,11 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
 
   // ── 7b. The 0.9 `engines` form, written by the previous release itself ───
   // (Before the git bundle's symlink for the same reason as the sync above: `task add` reconciles too.)
-  // An llm engine with an `apiKeyFile`, an agent engine, the default llm engine, a
-  // `models.json`, a command and a task source that name an engine: what the
-  // candidate converts (config, key, models file, assets) in `migrate apply`.
+  // An llm engine with an `apiKeyFile`, an agent engine, the default llm engine, an
+  // `opencode-sdk` engine with a model of its own as the default agent engine (the
+  // user's own OpenCode, which must stay a harness), a `models.json`, a command and
+  // a task source that name an engine: what the candidate converts (config, key,
+  // models file, assets) in `migrate apply`.
   // Nothing calls the endpoint: the home builds no embedding and runs no model call.
   const keyFile = path.join(root, "lab.key");
   const key = "upgrade-rehearsal-not-a-real-key";
@@ -275,6 +277,7 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
   const engines = {
     lab: { kind: "llm", endpoint: "http://127.0.0.1:9/v1/chat/completions", model: "qwen3-8b", apiKeyFile: keyFile },
     claude: { kind: "agent", platform: "claude" },
+    opencode: { kind: "agent", platform: "opencode-sdk", model: "openai/gpt-rehearsal" },
   };
   for (const [name, engine] of Object.entries(engines)) {
     await runStep(
@@ -285,6 +288,7 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
     );
   }
   await runStep("config set defaults.llmEngine", oldLauncher, ["config", "set", "defaults.llmEngine", "lab"], env);
+  await runStep("config set defaults.engine", oldLauncher, ["config", "set", "defaults.engine", "opencode"], env);
   await runStep("models copy-defaults", oldLauncher, ["models", "copy-defaults"], env);
   const commandFile = path.join(stashDir, "commands", "rehearsal-review.md");
   fs.mkdirSync(path.dirname(commandFile), { recursive: true });
