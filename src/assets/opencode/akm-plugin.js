@@ -18,6 +18,10 @@
 //     transport sends them. OpenCode sizes every request's output cap from the model's limit and sends it as
 //     `max_tokens` or `max_completion_tokens`; that is its own accounting, not a cap anyone asked for, so it is
 //     dropped, and the connection's fields carry a cap only when the connection writes one.
+//   - The end of a run that has stopped getting anywhere: when the model has made the same tool calls three turns in a
+//     row and been given the same results each time, the run fails with a message that says so, before the next model
+//     request is sent. OpenCode has no such check of its own (its `doom_loop` setting is read and ignored), and a run
+//     that never ends has nothing else to stop it when the connection sets no `timeoutMs`.
 
 import { execFile } from "node:child_process";
 
@@ -128,6 +132,56 @@ function withFields(base, over) {
   return merged;
 }
 
+/** How many turns in a row may make the same tool calls and get the same results before the run is stopped (the message says "three"). */
+const REPEATED_TURNS = 3;
+
+/**
+ * A tool result as the check compares it. OpenCode saves an output too long to send whole to a file of its own for each
+ * call and names that file in the result (`[showing … of …; full output saved to <file>]`), so the name is left out:
+ * the same long output is the same result.
+ */
+const comparable = (content) =>
+  JSON.stringify(content).replace(/full output saved to [^\]]*\]/g, "full output saved to <file>]");
+
+/**
+ * The names of the tools the model keeps calling, when each of the last REPEATED_TURNS turns of a chat request made the
+ * same calls (the same name and arguments, ids ignored, parallel calls as a set) and was answered with the same
+ * results, else undefined. A model that does this has settled on one answer to what it is told and does not leave it;
+ * a call whose result changes (a poll) is not repeated.
+ */
+function repeatedToolCalls(messages) {
+  if (!Array.isArray(messages)) return undefined;
+  const turns = [];
+  let names = [];
+  let results = new Map();
+  // From the newest message back: the tool results, then the assistant message that made the calls they answer.
+  for (let i = messages.length - 1; i >= 0 && turns.length < REPEATED_TURNS; i--) {
+    const message = messages[i];
+    if (message?.role === "tool") {
+      results.set(message.tool_call_id, comparable(message.content));
+      continue;
+    }
+    if (message?.role !== "assistant" || !Array.isArray(message.tool_calls) || message.tool_calls.length === 0) {
+      return undefined;
+    }
+    const calls = message.tool_calls.map((call) => [
+      call?.function?.name,
+      call?.function?.arguments,
+      results.get(call?.id),
+    ]);
+    if (calls.some(([name, , result]) => name === undefined || result === undefined)) return undefined;
+    if (turns.length === 0) names = [...new Set(calls.map(([name]) => name))];
+    turns.push(
+      calls
+        .map((call) => JSON.stringify(call))
+        .sort()
+        .join("\n"),
+    );
+    results = new Map();
+  }
+  return turns.length === REPEATED_TURNS && turns.every((turn) => turn === turns[0]) ? names : undefined;
+}
+
 export default {
   id: "akm",
   setup: async (ctx) => {
@@ -171,6 +225,17 @@ export default {
         return;
       }
       if (!isObject(body)) return;
+      // Measured on OpenCode 2.2.0: an error thrown from this hook fails the run's turn before the request is sent, and
+      // `opencode run` exits 1 with the error's message (an unknown error in the session, which akm reports as a
+      // non-zero exit). Answering the request with a 4xx instead also ends the run, but only after the request has gone
+      // to the model.
+      const repeated = repeatedToolCalls(body.messages);
+      if (repeated) {
+        const tools = repeated.map((name) => `\`${name}\``).join(", ");
+        throw new Error(
+          `akm stopped this run: the model called ${tools} with the same input three times in a row and got the same result each time.`,
+        );
+      }
       const { max_tokens: _own, max_completion_tokens: _ownCompletion, ...kept } = body;
       const headers = new Headers(request.headers);
       headers.delete("content-length");

@@ -39,7 +39,7 @@ import {
 } from "../../../agent/spawn";
 import type { LowerTarget } from "../../harness";
 import { akmOpencodeDatabasePath, akmRuntimeDir } from "../roots";
-import { v2SessionTokens } from "../session-log-v2";
+import { v2SessionFailure, v2SessionTokens } from "../session-log-v2";
 import { ensureRuntimeBinary, OPENCODE_RUNTIME_VERSION, runtimeBinaryPath } from "./binary";
 import { type RuntimeLocations, runtimeArgv, runtimeConfig, runtimeEnv, runtimePrepareArgv } from "./command";
 
@@ -82,10 +82,11 @@ function installPlugin(directory: string): string {
 /**
  * OpenCode makes and migrates its database when a process starts, and two processes doing that to one database break
  * each other (one fails with "Standalone server exited before reporting readiness"; on 2.1.4 two runs started together
- * on a fresh directory lose one of them every time). So the first start of this OpenCode version is a preparing run of
- * its own, under a lock file in the runtime directory that every run, of this akm process or another, waits on, and it
- * leaves a marker naming the version; a run that finds the marker and the database starts at once. A dead holder's
- * lock is reclaimed. The run itself reports anything the preparation does not.
+ * on a fresh directory lose one of them every time; on 2.2.0, 4 of 24 starts in groups of eight failed). So the first
+ * start of this OpenCode version is a preparing run of its own, under a lock file in the runtime directory that every
+ * run, of this akm process or another, waits on, and it leaves a marker naming the version; a run that finds the marker
+ * and the database starts at once. A dead holder's lock is reclaimed. The run itself reports anything the preparation
+ * does not.
  */
 async function prepareDatabase(directory: string, command: ReadyCommand, opts: RunAgentOptions): Promise<void> {
   const marker = path.join(directory, `prepared-${OPENCODE_RUNTIME_VERSION}`);
@@ -118,19 +119,21 @@ async function prepareDatabase(directory: string, command: ReadyCommand, opts: R
 }
 
 /**
- * The run's session as OpenCode recorded it, read once the process has ended: its id and the tokens its turn used,
- * which a workflow's `budget.max_tokens` and the unit journal count. Nothing when the run made no session. Accounting
- * is best-effort: a database that cannot be read leaves the run's result as it is.
+ * The run's session as OpenCode recorded it, read once the process has ended: its id, the tokens its turn used, which a
+ * workflow's `budget.max_tokens` and the unit journal count, and the message its turn failed with, if it did. Nothing
+ * when the run made no session. Best-effort: a database that cannot be read leaves the run's result as it is.
  */
-function sessionRecord(sessionId: string): Pick<AgentRunResult, "sessionId" | "usage"> {
+function sessionRecord(sessionId: string): Pick<AgentRunResult, "sessionId" | "usage"> & { readonly failure?: string } {
   try {
     const db = openDatabase(akmOpencodeDatabasePath(), { readonly: true, create: false });
     try {
       const tokens = v2SessionTokens(db, sessionId);
       if (!tokens) return {};
+      const failure = v2SessionFailure(db, sessionId);
       return {
         sessionId,
         usage: { inputTokens: tokens.input, outputTokens: tokens.output, reasoningTokens: tokens.reasoning },
+        ...(failure ? { failure } : {}),
       };
     } finally {
       db.close();
@@ -172,7 +175,9 @@ export const opencodeRuntime: AgentRuntime = {
       const session = `ses_akm${randomUUID().replaceAll("-", "")}`;
       const keyFile = path.join(directory, "keys", session);
       const config = runtimeConfig(connection, where.pluginDirectory, keyFile, ambient);
-      const env = { ...ambient, ...runtimeEnv(config, where) };
+      // OpenCode takes its directory from PWD before its own working directory, and the PWD akm inherits names the
+      // directory akm was started in, so a run given a directory names it there too.
+      const env = { ...ambient, ...runtimeEnv(config, where), ...(opts.cwd ? { PWD: path.resolve(opts.cwd) } : {}) };
       try {
         if (connection.apiKey) writeKeyFile(keyFile, connection.apiKey);
         await prepareDatabase(directory, { argv: runtimePrepareArgv(binary), env }, opts);
@@ -182,7 +187,13 @@ export const opencodeRuntime: AgentRuntime = {
           opts,
           "captured",
         );
-        return { ...result, ...sessionRecord(session) };
+        const { failure, ...record } = sessionRecord(session);
+        return {
+          ...result,
+          ...record,
+          // OpenCode prints why the turn failed on stderr, which a workflow does not keep; the error carries it.
+          ...(result.reason === "non_zero_exit" && failure ? { error: `${result.error}: ${failure}` } : {}),
+        };
       } finally {
         fs.rmSync(keyFile, { force: true });
       }

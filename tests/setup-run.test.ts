@@ -9,6 +9,7 @@ import { _setAkmIndexForTests } from "../src/indexer/indexer";
 import { _setAgentDetectForTests } from "../src/integrations/agent";
 import { resolveTarget } from "../src/integrations/agent/resolution";
 import { agentRuntime } from "../src/integrations/agent/runtime";
+import { OPENCODE_RUNTIME_VERSION } from "../src/integrations/harnesses/opencode/runtime/binary";
 import { _setEmbedderForTests } from "../src/llm/embedder";
 import { _setDetectForTests } from "../src/setup/detect";
 import { _setLoadSetupStashesForTests, type SetupBundleEntry } from "../src/setup/registry-stash-loader";
@@ -528,7 +529,7 @@ describe("runSetupWizard", () => {
       await withEndpoint("https://api.example.test/v1", ["small"], () => runSetupWizard());
 
       expect(promptState.trace.at(-1)).toBe(
-        `[confirm] Agent work runs on akm's own runtime. Fetch OpenCode 2.1.4 (about 114 MB, once) for it now, rather than on the first agent run? -> ${answer}`,
+        `[confirm] Agent work runs on akm's own runtime. Fetch OpenCode ${OPENCODE_RUNTIME_VERSION} (about 114 MB, once) for it now, rather than on the first agent run? -> ${answer}`,
       );
       expect(fetched).toBe(answer ? 1 : 0);
     }

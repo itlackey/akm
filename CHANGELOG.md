@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A run on akm's own runtime that makes the same tool call and gets the same
+  result three turns in a row now fails with a message that names the tool,
+  instead of running to its deadline or, with no `timeoutMs`, for ever. OpenCode
+  has no check of its own for this. The runtime moves from OpenCode 2.1.4 to
+  2.2.0 with it: the next agent run fetches the binary again, into
+  `<akm cache dir>/opencode/2.2.0/`.
+- Agent work on akm's own runtime runs in the directory it is given: the one
+  `akm agent --cwd` names, and the bundle root for a workflow's agent units.
+  It ran in the directory akm was started from, because OpenCode takes its
+  directory from `PWD`, which akm now sets for the run.
+- OpenCode model work leaves out OpenCode's built-in browser plugin. From
+  OpenCode 2.2.0 its rules kept the `skill` tool listed for the read-only
+  `akm-model-work` agent (a call to it was refused).
 - `akm migrate apply` keeps agent engines. 0.10.261014 to 0.10.261017 dropped
   every `opencode-sdk` engine, so agent work moved from the user's own OpenCode
   and model to akm's own runtime, and `harness:` selectors naming them failed.

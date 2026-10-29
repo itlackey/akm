@@ -106,7 +106,7 @@ akm reads these keys of a connection:
 | `apiKeyFile` | Retired. `akm migrate apply` leaves an engine's key file here, as written, when it cannot read the file yet; akm ignores it (never reads it or sends it) and a later `akm migrate apply` moves the key it names into `credentials.json`. |
 | `models` | Alias to model. See [Aliases](#aliases). |
 | `contextLength` | The model's context window in tokens. `akm improve` sizes its prompts from it (consolidate's chunks, reflect's asset content); unset, it assumes 4096. |
-| `timeoutMs` | How long one call may take, in milliseconds; `null` runs unbounded. Unset, a model call stops after 600 000 (ten minutes) and agent work runs until it finishes. The ceiling is 2 147 483 647. |
+| `timeoutMs` | How long one call may take, in milliseconds; `null` runs unbounded. Unset, a model call stops after 600 000 (ten minutes) and agent work runs until it finishes; akm's own runtime also ends a run that keeps repeating one tool call and result ([Without a harness](#without-a-harness)). The ceiling is 2 147 483 647. |
 | `concurrency` | How many requests a workflow `map` step may have in flight on this connection, clamped to 1–64. Unset, 1 on a loopback endpoint (a local model server runs one inference at a time) and 4 on a remote one. akm never sends it. |
 
 Every other key, on the connection or in a model entry, is a request field in
@@ -231,7 +231,7 @@ What asks for a harness decides how akm runs it.
 
 - Claude Code runs with `--restricted`, so none of your settings files can widen the tools; with `Read` and `Bash` only for `akm search`, `akm show` and `akm curate`; with no MCP servers; and with no transcript saved.
 - Codex runs with `--sandbox read-only`.
-- OpenCode 2 runs as the `akm-model-work` agent, which akm passes inline with the run, merged into your `OPENCODE_CONFIG_CONTENT` and keeping the rest of it; akm reads that variable as OpenCode does, as JSONC (comments and trailing commas), with its `{env:NAME}` references replaced as OpenCode replaces them when the content reads only that way (a reference written outside a string, such as a number), and leaves it out, with one warning, when it is not valid JSONC holding an object. akm writes it in OpenCode 2's native `agents` map, which OpenCode reads over the legacy `agent` map, so an entry of that name in your config, in either map, inline or in a file, does not change it (a same-named entry in your inline `agent` map is left out). Its tools are limited to reading and searching: every tool is denied except `read`, `glob` and `grep`, and `akm_search`, `akm_show` and `akm_curate` when you have the akm OpenCode plugin installed. A tool that a plugin of yours adds is denied too. The limit is on tools: your plugins' own setup and hooks still run in the session. The run is `--standalone`, one process that ends with it, with no background service left behind, and `--title akm`, which names the session and spares the second model request that would generate a title.
+- OpenCode 2 runs as the `akm-model-work` agent, which akm passes inline with the run, merged into your `OPENCODE_CONFIG_CONTENT` and keeping the rest of it; akm reads that variable as OpenCode does, as JSONC (comments and trailing commas), with its `{env:NAME}` references replaced as OpenCode replaces them when the content reads only that way (a reference written outside a string, such as a number), and leaves it out, with one warning, when it is not valid JSONC holding an object. akm writes it in OpenCode 2's native `agents` map, which OpenCode reads over the legacy `agent` map, so an entry of that name in your config, in either map, inline or in a file, does not change it (a same-named entry in your inline `agent` map is left out). Its tools are limited to reading and searching: every tool is denied except `read`, `glob` and `grep`, and `akm_search`, `akm_show` and `akm_curate` when you have the akm OpenCode plugin installed. A tool that a plugin of yours adds is denied too. OpenCode's built-in browser plugin is left out of the run (`-opencode.browser` after your `plugins`): model work denies the browser anyway, and from OpenCode 2.2.0 the plugin's own rules would keep the `skill` tool listed. The limit is on tools: your plugins' own setup and hooks still run in the session. The run is `--standalone`, one process that ends with it, with no background service left behind, and `--title akm`, which names the session and spares the second model request that would generate a title.
 - On Claude Code, Codex and OpenCode, `args` do not apply to model work, except a `--model` they name.
 - OpenCode 1 and every other platform cannot be restricted: the run is unrestricted, in the scratch directory, and akm reports that. The other platforms get the agent-work command line, `args` included.
 - OpenCode model work sets `OPENCODE_DISABLE_FREE_MODELS=1`, which OpenCode 2.1.2 and later honor: a call with no usable provider fails instead of sending the prompt to OpenCode's hosted free model, and so does a call whose model (named, or your OpenCode's default) is one of its free ones. Agent work does not set it: your OpenCode's models are as you would get running it by hand.
@@ -240,7 +240,7 @@ Where model work is restricted, its tools cannot change the library, so what it 
 
 **History.** A harness run leaves a session in the program's own history, and `akm proposal extract` and improve read that history like any other. The exceptions are the model-work sessions akm marked: Claude Code keeps no transcript of them, and OpenCode 2 records them under the `akm-model-work` agent, which the reader skips. Codex and OpenCode 1 cannot be marked, so their model-work sessions are read like any other. akm's own runtime (below) keeps its sessions in `<akm data dir>/opencode-runtime/data/opencode/opencode.db`, read the same way.
 
-**Stopping.** When akm stops a run (a timeout, an abort or a signal to akm) it sends the program's process group SIGINT, as Ctrl-C would. If anything in the group still runs after 5 seconds, or as soon as the program itself has exited and left members behind, it sends SIGTERM, and 5 seconds after that SIGKILL if anything still runs. Workflow `exec` units and task commands are stopped the same way. Windows has no process groups, and a signal sent to a process there ends it at once. A program that records how a run ended acts on the SIGINT: OpenCode 2 marks its session interrupted and releases it, and only a run that had to be terminated or killed stays suspended in your OpenCode history, where your own OpenCode's background service may resume it when it next starts (up to ten attempts, OpenCode's own policy). Through OpenCode 2's background service (measured on 2.1.4) the interrupt ends the `opencode` command and the service's turn alike: the service abandons the turn's model request and marks the session interrupted, and keeps running itself.
+**Stopping.** When akm stops a run (a timeout, an abort or a signal to akm) it sends the program's process group SIGINT, as Ctrl-C would. If anything in the group still runs after 5 seconds, or as soon as the program itself has exited and left members behind, it sends SIGTERM, and 5 seconds after that SIGKILL if anything still runs. Workflow `exec` units and task commands are stopped the same way. Windows has no process groups, and a signal sent to a process there ends it at once. A program that records how a run ended acts on the SIGINT: OpenCode 2 marks its session interrupted and releases it, and only a run that had to be terminated or killed stays suspended in your OpenCode history, where your own OpenCode's background service may resume it when it next starts (up to ten attempts, OpenCode's own policy). Through OpenCode 2's background service (measured on 2.1.4 and 2.2.0) the interrupt ends the `opencode` command and the service's turn alike: the service abandons the turn's model request and marks the session interrupted, and keeps running itself.
 
 **OpenCode.** The `opencode` platform runs your installed OpenCode, either major version, as `opencode run`; the reply is its standard output. Agent work is that command with the prompt on stdin, your `args` as written, `--model` when akm names a model and `--agent` when the asset names an agent. Your OpenCode owns its configuration, logins, token refresh and sessions: akm reads, copies and embeds nothing of yours.
 - OpenCode 2 runs agent work through its own background service, which stays up after the command. Add `--standalone` to the harness's `args` for a run that is one process.
@@ -254,13 +254,13 @@ alike.
 ### Without a harness
 
 Agent work runs on akm's own runtime when no harness is configured: a pinned
-OpenCode 2 binary (2.1.4) that akm runs as a process for each run, driven by the
+OpenCode 2 binary (2.2.0) that akm runs as a process for each run, driven by the
 default connection. The npm package and the standalone binary do the same.
 
 - **The first run fetches OpenCode.** akm downloads the binary for your platform
   from the npm registry, one package of about 114 MB (240 MB on disk), checks it
   against the registry's integrity hash, and keeps it in
-  `<akm cache dir>/opencode/2.1.4/`; later runs, and later versions of akm that
+  `<akm cache dir>/opencode/2.2.0/`; later runs, and later versions of akm that
   pin the same OpenCode, fetch nothing. Nothing else is downloaded: the binary
   carries the package it reaches the endpoint with. If the fetch fails the run
   fails as not started, naming the package, its URL and the cache path. With no
@@ -304,7 +304,16 @@ default connection. The npm package and the standalone binary do the same.
 - A run reports its session id and the tokens its turn used, read from that
   session once the process has ended; a workflow's `budget.max_tokens` counts
   them. A failed run is a non-zero exit with OpenCode's own message
-  (`non_zero_exit`), as for a harness.
+  (`non_zero_exit`), as for a harness; when the session recorded why its turn
+  failed, the run's error carries that too, so a workflow's unit shows it.
+- A run stops when its model has made the same tool call, with the same input,
+  and been given the same result three turns in a row: it fails (`non_zero_exit`)
+  with a message that names the tool. OpenCode has no check of its own for this,
+  and with `timeoutMs` unset such a run would never end. A call whose result
+  changes is not a repeat, but a poll that gets the same answer three times in a
+  row is. An output too long to send whole is compared by its text, not by the
+  file OpenCode saves it to. Only akm's own runtime does this; a harness is your
+  program, with whatever limits it has.
 - Runs that start together, in one akm process or several, wait while the first
   run of this OpenCode version prepares its database alone.
 
@@ -736,7 +745,7 @@ index and a warning from `akm health`.
 - `models/Xenova/bge-small-en-v1.5/` holding `tokenizer.json`,
   `tokenizer_config.json`, `config.json` and `onnx/model.onnx`, or set `HF_HOME`
   to a directory that holds them and `HF_HUB_OFFLINE=1`.
-- `opencode/2.1.4/opencode` (`opencode.exe` on Windows) for akm's own agent
+- `opencode/2.2.0/opencode` (`opencode.exe` on Windows) for akm's own agent
   runtime.
 The default is `"off"` so a bare or headless install (`akm bundle create`, `--yes`,
 `--config`) never silently downloads the local embedding model on first
