@@ -216,12 +216,14 @@ export async function runBuiltCommand(
   // and the optional stdin payload. This keeps the agent-specific surface:
   // the failure taxonomy.
   const start = Date.now();
+  // A program started after `cd <dir>` has PWD equal to <dir>, and OpenCode takes its directory from PWD before its
+  // own working directory: the PWD akm inherits names where akm was started, so a run given a directory names it. One
+  // path is both, so they agree even where the kernel would resolve a `..` after a symbolic link elsewhere.
+  const cwd = options.cwd ? path.resolve(options.cwd) : undefined;
   const result = await runManagedSubprocess([...argv], {
     capture: stdioMode === "captured",
-    // A program started after `cd <dir>` has PWD equal to <dir>, and OpenCode takes its directory from PWD before its
-    // own working directory: the PWD akm inherits names where akm was started, so a run given a directory names it.
-    env: { ...env, ...(options.cwd ? { PWD: path.resolve(options.cwd) } : {}) },
-    ...(options.cwd ? { cwd: options.cwd } : {}),
+    env: { ...env, ...(cwd ? { PWD: cwd } : {}) },
+    ...(cwd ? { cwd } : {}),
     ...(stdin !== undefined ? { stdin } : {}),
     timeoutMs,
     ...(options.signal ? { signal: options.signal } : {}),

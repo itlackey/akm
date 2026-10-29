@@ -283,4 +283,20 @@ describe("runAgent — cwd authority", () => {
       work.cleanup();
     }
   });
+
+  test("PWD and the working directory are one directory when the path has `..` after a symbolic link", async () => {
+    const work = makeSandboxDir("akm-agent-spawn-dotdot");
+    try {
+      fs.mkdirSync(path.join(work.dir, "real", "inner"), { recursive: true });
+      fs.mkdirSync(path.join(work.dir, "a"));
+      fs.symlinkSync(path.join(work.dir, "real", "inner"), path.join(work.dir, "a", "link"));
+      // The kernel resolves `a/link/..` to `real`; a shell's `cd` and PWD to `a`.
+      const result = await runAgent(profileFor("probe"), { dispatch: { prompt: "go" }, cwd: `${work.dir}/a/link/..` });
+      const seen = probed(result.stdout);
+      expect(seen.env.PWD).toBe(path.join(work.dir, "a"));
+      expect(fs.realpathSync(seen.cwd)).toBe(fs.realpathSync(path.join(work.dir, "a")));
+    } finally {
+      work.cleanup();
+    }
+  });
 });
