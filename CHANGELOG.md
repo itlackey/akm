@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261018] - 2026-10-29
+
 ### Fixed
 
 - A run on akm's own runtime whose model makes the same tool call and gets the
