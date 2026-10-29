@@ -229,7 +229,8 @@ export default {
     }
 
     const fields = ctx.options?.requestFields;
-    // The repeats the model has been told about, by what they repeat: where they began and how many turns there were.
+    // The repeats the model has been told about, by session and what they repeat: where they began and how many turns
+    // there were. One process runs a run's every session (a subagent's too), and each session's model is told for itself.
     const told = new Map();
     await ctx.session.hook("http.request", async (event) => {
       const request = event.request;
@@ -245,7 +246,8 @@ export default {
       const stuck = repeatedToolCalls(body.messages);
       let recovery = false;
       if (stuck) {
-        const was = told.get(stuck.signature);
+        const key = `${event.sessionID}\n${stuck.signature}`;
+        const was = told.get(key);
         // The model has been told about these calls and made them again, or has come back to them since.
         if (was && (was.since !== stuck.since || stuck.turns > was.turns)) {
           // Measured on OpenCode 2.2.0: an error thrown from this hook fails the run's turn before the request is sent,
@@ -257,7 +259,7 @@ export default {
           );
         }
         // A request that is sent again unchanged (a retry) is told again, the same way.
-        told.set(stuck.signature, { since: stuck.since, turns: stuck.turns });
+        told.set(key, { since: stuck.since, turns: stuck.turns });
         // OpenCode keeps no trace of this message: it does not store what a request's body is changed to.
         kept.messages = [
           ...kept.messages,

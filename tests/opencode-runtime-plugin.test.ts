@@ -25,7 +25,7 @@ interface ToolDefinition {
   options: { codemode: boolean };
   execute(input: unknown): Promise<{ content: string }>;
 }
-type RequestHook = (event: { request: Request }) => Promise<void>;
+type RequestHook = (event: { request: Request; sessionID?: string }) => Promise<void>;
 interface Plugin {
   id: string;
   setup(context: unknown): Promise<void>;
@@ -334,14 +334,15 @@ describe("the repeated-call guard", () => {
   const repeats = (count: number, call: Call = SAME): Call[][] => Array.from({ length: count }, () => [call]);
 
   /**
-   * One run's plugin, as a function from the messages of a request to what the request is forwarded with, or a
-   * rejection with the guard's message. The plugin keeps what it has told the model, so a test that sends several
-   * requests sends them to one. The connection's temperature is 0.
+   * One run's plugin, as a function from the messages of a request (in session `ses_a` unless another is named) to what
+   * the request is forwarded with, or a rejection with the guard's message. The plugin keeps what it has told the
+   * model, so a test that sends several requests sends them to one. The connection's temperature is 0.
    */
   async function run() {
     const { request: hook } = await load({ requestFields: { temperature: 0 } });
-    return async (messages: Chat[]): Promise<{ messages: Chat[]; temperature: number }> => {
+    return async (messages: Chat[], sessionID = "ses_a"): Promise<{ messages: Chat[]; temperature: number }> => {
       const event = {
+        sessionID,
         request: new Request("http://llm.example/v1/chat/completions", {
           method: "POST",
           body: JSON.stringify({ model: "m", messages }),
@@ -443,6 +444,19 @@ describe("the repeated-call guard", () => {
     expect(told(await send(second), second)).toContain("`shell`");
     // The first one again, after a different call in between: the model has had its warning.
     await expect(send(conversation(...repeats(3), [other], ...repeats(3)))).rejects.toThrow(stopped("`shell`", 3));
+  });
+
+  test("tells each session for itself: a session told about a call does not make the same call in another a second trip", async () => {
+    const send = await run();
+    // A subagent's session and its parent's run in one process; the ids of their calls differ.
+    const child = conversation(...repeats(3));
+    const parent = conversation(...repeats(3)).map((message) =>
+      JSON.parse(JSON.stringify(message).replaceAll('"call_', '"parent_')),
+    );
+    expect(told(await send(child, "ses_child"), child)).toBeDefined();
+
+    expect(told(await send(parent, "ses_parent"), parent)).toContain("3 times in a row");
+    await expect(send(conversation(...repeats(4)), "ses_child")).rejects.toThrow(stopped("`shell`", 4));
   });
 
   test("lets a call through whose result changes, which is how a poll looks", async () => {

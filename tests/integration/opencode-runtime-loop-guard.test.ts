@@ -196,6 +196,22 @@ describe.skipIf(unavailable !== undefined)("a run on akm's runtime that repeats 
     expect(executedCalls(sessionOf(result))).toBe(7);
   }, 90_000);
 
+  test("is told in each session of the run: a subagent told about a call does not make the same call in its parent a second trip", async () => {
+    const result = await run("twin", 60_000);
+
+    expect(result.ok, `${result.stderr}${result.error}`).toBe(true);
+    expect(result.stdout).toContain("TWIN-DONE");
+    expect(result.stderr).not.toContain("akm stopped this run");
+    // The parent's call of the child; the child's three calls, then its message; the parent's three, then its own.
+    expect(model.requests.map((request) => request.mode)).toEqual([
+      "twin",
+      ...Array(4).fill("recover"),
+      ...Array(4).fill("twin"),
+    ]);
+    expect(model.requests.map((request) => toldIn(request).length)).toEqual([0, 0, 0, 0, 1, 0, 0, 0, 1]);
+    expect(temperatures()).toEqual([0, 0, 0, 0, 0.7, 0, 0, 0, 0.7]);
+  }, 90_000);
+
   test("is told, and then fails, when the output is too long to send whole, which OpenCode saves to a file of its own each time", async () => {
     const result = await run("long", 60_000);
 

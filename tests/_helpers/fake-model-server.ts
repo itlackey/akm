@@ -19,6 +19,8 @@
  *             repeats itself), then answer "RECOVERED" in text
  *   relapse   call `shell` with `echo same` until such a message follows the prompt, then once with `echo other`, then
  *             `echo same` again for ever
+ *   twin      call `subagent`, whose prompt asks the child for MODE:recover, then act as `recover` itself (the same stuck
+ *             call and result in two sessions of one process)
  *   long      call `shell` with `seq 1 5000` on every request: the same output each time, too long to send whole
  *   pwd       call `shell` to print its working directory, then reply with the tool result
  *   subagent  call `subagent`, whose prompt asks the child for MODE:env, then reply with its result
@@ -194,6 +196,17 @@ export function startFakeModel(): FakeModelServer {
         reply =
           users.length > 1 && !messages.some((m) => m.role === "tool" && text(m.content).trim() === "other")
             ? { tool: { name: "shell", args: { command: "echo other", description: "other" } } }
+            : { tool: { name: "shell", args: { command: "echo same", description: "same" } } };
+      else if (mode === "twin")
+        reply = !messages.some((m) => m.role === "tool")
+          ? {
+              tool: {
+                name: "subagent",
+                args: { agent: "general", description: "the same in a child", prompt: "MODE:recover from the child" },
+              },
+            }
+          : users.length > 1
+            ? { content: "TWIN-DONE" }
             : { tool: { name: "shell", args: { command: "echo same", description: "same" } } };
       else if (mode === "length")
         reply = assistants === 0 ? { content: "PART-ONE ", finish: "length" } : { content: "PART-TWO" };
