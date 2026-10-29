@@ -16,6 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { IS_WINDOWS, parseJsonc } from "../../core/common";
+import { UsageError } from "../../core/errors";
 import { moveToTrash } from "../../core/trash";
 import {
   OPENCODE_V1,
@@ -25,6 +26,7 @@ import {
 } from "../../integrations/harnesses/opencode/plugin-layout";
 import { opencodeCacheDir, opencodeConfigDir } from "../../integrations/harnesses/opencode/roots";
 import { detectOpencodeMajor, OPENCODE_BIN, resolveOpencodeBin } from "../../integrations/harnesses/opencode/version";
+import { isExactSemver, isPrerelease } from "../../registry/semver";
 import { semverOrder } from "../../runtime";
 import type {
   PluginUpgradeEntry,
@@ -33,6 +35,14 @@ import type {
   UpgradeLockstep,
   UpgradeResponse,
 } from "../../sources/types";
+import {
+  ChannelWriteError,
+  claudeChannelEdits,
+  codexChannelEdit,
+  codexMarketplace,
+  editChannelJson,
+  writeChannelEdits,
+} from "./plugin-channels";
 
 const MARKETPLACE = "akm-plugins";
 const PLUGIN_ID = `akm@${MARKETPLACE}`;
@@ -84,6 +94,18 @@ function failed(harness: PluginUpgradeEntry["harness"], message: string): Plugin
   return { harness, outcome: "failed", message };
 }
 
+function channelWriteFailure(
+  harness: PluginUpgradeEntry["harness"],
+  error: unknown,
+  before: NonNullable<PluginUpgradeEntry["channel"]>,
+): PluginUpgradeEntry {
+  return {
+    ...failed(harness, String(error)),
+    channel: error instanceof ChannelWriteError && error.writtenFiles.length ? "unknown" : before,
+    ...(error instanceof ChannelWriteError ? { backups: error.backups } : {}),
+  };
+}
+
 /** An entry for a refresh that ran: `updated` when the installed version moved, else `current`. */
 function refreshed(harness: PluginUpgradeEntry["harness"], from: string | undefined, to: string | undefined) {
   const moved = from !== undefined && to !== undefined && from !== to;
@@ -103,45 +125,111 @@ function unknownRefresh(harness: PluginUpgradeEntry["harness"], from: string | u
 
 // ── Claude Code ─────────────────────────────────────────────────────────────
 
-type Detected = { entry: PluginUpgradeEntry } | { version: string | undefined; ref: string | undefined };
+interface ClaudeInstallation {
+  version?: string;
+  scope?: string;
+  projectPath?: string;
+}
+type Detected =
+  | { entry: PluginUpgradeEntry }
+  | { version: string | undefined; ref: string | undefined; installations: ClaudeInstallation[] };
 
-function claudePluginVersion(): { version: string | undefined } | { error: CommandFailure } {
+function claudePlugins(): { installations: ClaudeInstallation[] } | { error: CommandFailure } {
   const listed = runCommand("claude", ["plugin", "list", "--json"], READ_TIMEOUT_MS);
   if (!listed.ok) return { error: listed };
   const plugins = parseJson(listed.stdout);
-  const plugin = Array.isArray(plugins) ? plugins.find((p) => p?.id === PLUGIN_ID) : undefined;
-  return { version: plugin ? String(plugin.version ?? "") : undefined };
+  const installations = Array.isArray(plugins)
+    ? plugins
+        .filter((p) => p?.id === PLUGIN_ID)
+        .map((p) => ({
+          version: typeof p.version === "string" ? p.version : undefined,
+          scope: typeof p.scope === "string" ? p.scope : undefined,
+          projectPath: typeof p.projectPath === "string" ? p.projectPath : undefined,
+        }))
+    : [];
+  return { installations };
 }
 
-function detectClaudeCode(): Detected {
+function detectClaudeCode(strict = false): Detected {
   const marketplaces = runCommand("claude", ["plugin", "marketplace", "list", "--json"], READ_TIMEOUT_MS);
   if (!marketplaces.ok) {
-    return { entry: skipped("claude-code", marketplaces.missing ? "claude is not on PATH" : marketplaces.error) };
+    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    const pluginsRoot =
+      process.env.AKM_CLAUDE_PLUGINS_DIR ?? process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
+    const configured = fs.existsSync(path.join(pluginsRoot, "known_marketplaces.json"));
+    return {
+      entry:
+        strict && (!marketplaces.missing || configured)
+          ? { ...failed("claude-code", marketplaces.error), channel: "unknown" }
+          : skipped("claude-code", marketplaces.missing ? "claude is not on PATH" : marketplaces.error),
+    };
   }
   const list = parseJson(marketplaces.stdout);
   const marketplace = Array.isArray(list) ? list.find((m) => m?.name === MARKETPLACE) : undefined;
   if (!marketplace) return { entry: skipped("claude-code", `the ${MARKETPLACE} marketplace is not configured`) };
-  const plugin = claudePluginVersion();
-  if ("error" in plugin) return { entry: skipped("claude-code", plugin.error.error) };
-  if (plugin.version === undefined) return { entry: skipped("claude-code", "the akm plugin is not installed") };
-  return { version: plugin.version, ref: typeof marketplace.ref === "string" ? marketplace.ref : undefined };
+  const plugin = claudePlugins();
+  if ("error" in plugin)
+    return {
+      entry: strict
+        ? { ...failed("claude-code", plugin.error.error), channel: "unknown" }
+        : skipped("claude-code", plugin.error.error),
+    };
+  if (!plugin.installations.length) return { entry: skipped("claude-code", "the akm plugin is not installed") };
+  return {
+    version: plugin.installations[0]?.version,
+    installations: plugin.installations,
+    ref: typeof marketplace.ref === "string" ? marketplace.ref : undefined,
+  };
 }
 
-function upgradeClaudeCode(dryRun: boolean, next: boolean): PluginUpgradeEntry {
-  const detected = detectClaudeCode();
+function upgradeClaudeCode(dryRun: boolean, next: boolean, channel?: UpgradeChannel): PluginUpgradeEntry {
+  const detected = detectClaudeCode(channel !== undefined);
   if ("entry" in detected) return detected.entry;
-  const entry = refreshClaudeCode(dryRun, detected.version);
-  return next ? withChannelNote(entry, detected.ref, "re-add the marketplace as `itlackey/akm-plugins@next`") : entry;
+  const before = refChannel(detected.ref);
+  let backups: string[] = [];
+  if (channel && !dryRun) {
+    try {
+      const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+      const pluginsRoot =
+        process.env.AKM_CLAUDE_PLUGINS_DIR ??
+        process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ??
+        path.join(configDir, "plugins");
+      backups = writeChannelEdits(
+        claudeChannelEdits(
+          configDir,
+          pluginsRoot,
+          channel,
+          detected.installations.flatMap((p) => (p.projectPath ? [p.projectPath] : [])),
+        ),
+      );
+    } catch (error) {
+      return channelWriteFailure("claude-code", error, before);
+    }
+  }
+  const entry = refreshClaudeCode(dryRun, detected.version, channel ? detected.installations : undefined);
+  const noted = next && !channel ? withChannelNote(entry, detected.ref) : entry;
+  return channelResult(noted, before, channel, dryRun, backups);
 }
 
-function refreshClaudeCode(dryRun: boolean, from: string | undefined): PluginUpgradeEntry {
+function refreshClaudeCode(
+  dryRun: boolean,
+  from: string | undefined,
+  installations?: ClaudeInstallation[],
+): PluginUpgradeEntry {
   if (dryRun) return unknownRefresh("claude-code", from);
   const marketplace = runCommand("claude", ["plugin", "marketplace", "update", MARKETPLACE], REFRESH_TIMEOUT_MS);
   if (!marketplace.ok) return failed("claude-code", marketplace.error);
-  const update = runCommand("claude", ["plugin", "update", PLUGIN_ID], REFRESH_TIMEOUT_MS);
-  if (!update.ok) return failed("claude-code", update.error);
-  const after = claudePluginVersion();
-  return refreshed("claude-code", from, "version" in after ? after.version : undefined);
+  for (const installation of installations ?? [{}]) {
+    const update = runCommand(
+      "claude",
+      ["plugin", "update", PLUGIN_ID, ...(installation.scope ? ["--scope", installation.scope] : [])],
+      REFRESH_TIMEOUT_MS,
+      { cwd: installation.projectPath },
+    );
+    if (!update.ok) return failed("claude-code", update.error);
+  }
+  const after = claudePlugins();
+  return refreshed("claude-code", from, "installations" in after ? after.installations[0]?.version : undefined);
 }
 
 // ── Codex ───────────────────────────────────────────────────────────────────
@@ -154,32 +242,45 @@ function codexPluginVersion(): { version: string | undefined } | { error: Comman
   return { version: plugin ? String(plugin.version ?? "") : undefined };
 }
 
-/** The ref `[marketplaces.akm-plugins]` follows in Codex's config.toml; undefined when it names none (the default branch). */
+function codexConfigFile(): string {
+  return path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "config.toml");
+}
+
 function codexMarketplaceRef(): string | undefined {
   try {
-    const home = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-    const config = fs.readFileSync(path.join(home, "config.toml"), "utf8");
-    const section = config.split(/^\[/m).find((part) => part.startsWith(`marketplaces.${MARKETPLACE}]`));
-    return section?.match(/^ref\s*=\s*"([^"]+)"/m)?.[1];
+    const ref = codexMarketplace(codexConfigFile())?.ref;
+    return typeof ref === "string" ? ref : undefined;
   } catch {
     return undefined;
   }
 }
 
-function upgradeCodex(dryRun: boolean, next: boolean): PluginUpgradeEntry {
+function upgradeCodex(dryRun: boolean, next: boolean, channel?: UpgradeChannel): PluginUpgradeEntry {
   const before = codexPluginVersion();
-  if ("error" in before) return skipped("codex", before.error.missing ? "codex is not on PATH" : before.error.error);
+  if ("error" in before)
+    return channel && (!before.error.missing || fs.existsSync(codexConfigFile()))
+      ? { ...failed("codex", before.error.error), channel: "unknown" }
+      : skipped("codex", before.error.missing ? "codex is not on PATH" : before.error.error);
   if (before.version === undefined) {
     return skipped("codex", `the akm plugin is not installed from the ${MARKETPLACE} marketplace`);
   }
+  const previous = refChannel(codexMarketplaceRef());
+  const backups: string[] = [];
+  if (channel && previous !== channel && !dryRun) {
+    try {
+      backups.push(...writeChannelEdits([codexChannelEdit(codexConfigFile(), channel)]));
+    } catch (error) {
+      return channelWriteFailure("codex", error, previous);
+    }
+  }
   const entry = refreshCodex(dryRun, before.version);
-  return next
-    ? withChannelNote(
-        entry,
-        codexMarketplaceRef(),
-        "run `codex plugin marketplace add itlackey/akm-plugins --ref next`",
-      )
-    : entry;
+  return channelResult(
+    next && !channel ? withChannelNote(entry, codexMarketplaceRef()) : entry,
+    previous,
+    channel,
+    dryRun,
+    backups,
+  );
 }
 
 function refreshCodex(dryRun: boolean, from: string | undefined): PluginUpgradeEntry {
@@ -218,7 +319,9 @@ const namesPackage = (spec: string, pkg: string) => spec === pkg || spec.startsW
  * written; project configs are not looked at (akm does not know which project
  * OpenCode runs in).
  */
-export function openCodeConfigSpec(flavor: OpenCodeFlavor): { spec: string; key: string } | undefined {
+export function openCodeConfigSpec(
+  flavor: OpenCodeFlavor,
+): { spec: string; key: string; file: string; jsonPath: (string | number)[] } | undefined {
   const configDir = opencodeConfigDir();
   const files = [
     flavor.globalConfigOnly ? undefined : process.env.OPENCODE_CONFIG?.trim(),
@@ -232,9 +335,10 @@ export function openCodeConfigSpec(flavor: OpenCodeFlavor): { spec: string; key:
       for (const key of flavor.configKeys) {
         const entries = config[key];
         if (!Array.isArray(entries)) continue;
-        for (const entry of entries) {
+        for (const [index, entry] of entries.entries()) {
           const spec = entrySpec(entry);
-          if (spec !== undefined && namesPackage(spec, flavor.pkg)) return { spec, key };
+          if (spec !== undefined && namesPackage(spec, flavor.pkg))
+            return { spec, key, file, jsonPath: [key, index, ...(Array.isArray(entry) ? [0] : [])] };
         }
       }
     } catch {
@@ -354,7 +458,8 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
   if (!cache || !latest) return skipped(harness, `no cached ${flavor.pkg}@${tag} plugin`);
   if ("error" in latest) return failed(harness, latest.error);
   if (target.notFollowingNext) return skipped(harness, notFollowingNext(flavor));
-  if (cache.version === latest.version) return { harness, outcome: "current", from: cache.version, to: latest.version };
+  if (!target.switchChannel && cache.version === latest.version)
+    return { harness, outcome: "current", from: cache.version, to: latest.version };
   const base = { harness, from: cache.version, to: latest.version };
   // OpenCode 1's refresh replaces the cache the running OpenCode is using, so it waits for the exit.
   // OpenCode 2's `plugin update` installs beside the old build, which a running service keeps using until it restarts.
@@ -388,14 +493,27 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
         `not OpenCode ${flavor.major}, so it cannot refresh the ${flavor.pkg} cache; the cache is left alone`,
     );
   }
-  if (flavor.replacesCache) {
+  let backups: string[] = [];
+  if (target.switchChannel) {
+    const configured = openCodeConfigSpec(flavor);
+    if (!configured) return failed(harness, "the configured plugin entry disappeared before switching its channel");
+    try {
+      backups = writeChannelEdits([editChannelJson(configured.file, configured.jsonPath, target.spec)]);
+    } catch (error) {
+      return channelWriteFailure(harness, error, target.currentChannel ?? "unknown");
+    }
+  }
+  if (flavor.replacesCache && fs.existsSync(cache.dir)) {
     try {
       moveToTrash(cache.dir);
     } catch (error) {
-      return failed(
-        harness,
-        `could not move ${cache.dir} to the trash: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      return {
+        ...failed(
+          harness,
+          `could not move ${cache.dir} to the trash: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+        backups,
+      };
     }
   }
   const trashed = flavor.replacesCache ? " (the old cache is in the trash)" : "";
@@ -412,28 +530,53 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
     ) {
       refresh = runCommand(bin, flavor.refresh(target.spec), PREFETCH_TIMEOUT_MS, { cwd: workDir });
     }
-    if (!refresh.ok) return failed(harness, `${refresh.error}${trashed}`);
+    if (!refresh.ok) return { ...failed(harness, `${refresh.error}${trashed}`), backups };
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true });
   }
   const after = detectOpenCodeCache(tag, flavor);
-  if (!after) return failed(harness, `opencode did not re-create the plugin cache${trashed}`);
-  return { ...base, outcome: "updated", to: after.version ?? latest.version };
+  if (!after) return { ...failed(harness, `opencode did not re-create the plugin cache${trashed}`), backups };
+  return { ...base, outcome: "updated", to: after.version ?? latest.version, ...(backups.length ? { backups } : {}) };
 }
 
 // ── Orchestration ───────────────────────────────────────────────────────────
 
 /**
  * The note `--next` adds to a marketplace harness. The channel is the ref the marketplace follows (`next` is the
- * prerelease branch, the default branch is stable); akm only updates that ref and cannot switch it.
+ * prerelease branch, the default branch is stable); only an explicit --channel switches it.
  */
-function withChannelNote(entry: PluginUpgradeEntry, ref: string | undefined, howToSwitch: string): PluginUpgradeEntry {
+function refChannel(ref: string | undefined): UpgradeChannel | "pinned" {
+  return !ref || ref === "main" || ref === "master" ? "latest" : ref === "next" ? "next" : "pinned";
+}
+
+function channelResult(
+  entry: PluginUpgradeEntry,
+  before: NonNullable<PluginUpgradeEntry["channel"]>,
+  target: UpgradeChannel | undefined,
+  dryRun: boolean,
+  backups: string[] = [],
+): PluginUpgradeEntry {
+  const changed = target !== undefined && target !== before;
+  return {
+    ...entry,
+    channel: changed && !dryRun ? target : before,
+    ...(target ? { targetChannel: target } : {}),
+    ...(changed
+      ? {
+          previousChannel: before,
+          message: `${entry.message ? `${entry.message}; ` : ""}${dryRun ? "would configure" : "configured"} channel ${before} → ${target}`,
+        }
+      : {}),
+    ...(backups.length ? { backups } : {}),
+  };
+}
+
+function withChannelNote(entry: PluginUpgradeEntry, ref: string | undefined): PluginUpgradeEntry {
   if (entry.outcome === "skipped") return entry;
   const note =
     ref === "next"
       ? `--next: the ${MARKETPLACE} marketplace follows ref next, the prerelease channel`
-      : `--next: the ${MARKETPLACE} marketplace follows ${ref ? `ref ${ref}` : "the default branch (stable)"}, ` +
-        `not the prerelease channel; akm upgrade cannot switch it, ${howToSwitch} to follow prereleases`;
+      : `--next: the ${MARKETPLACE} marketplace follows ${ref ? `ref ${ref}` : "the default branch (stable)"}; use akm upgrade --channel next to switch all installed plugins`;
   return { ...entry, message: entry.message ? `${entry.message}; ${note}` : note };
 }
 
@@ -450,18 +593,39 @@ export interface OpenCodeTarget {
   notFollowingNext: boolean;
   /** Why this run leaves the plugin alone (the config names a spec it does not refresh, or does not name it), when it does. */
   skip?: string;
+  currentChannel?: NonNullable<PluginUpgradeEntry["channel"]>;
+  switchChannel?: UpgradeChannel;
 }
 
 export function upgradePlugins(opts: {
   dryRun: boolean;
   next: boolean;
   openCode: OpenCodeTarget[];
+  channel?: UpgradeChannel;
+  currentChannel?: UpgradeChannel;
 }): PluginUpgradeEntry[] {
   return [
-    upgradeClaudeCode(opts.dryRun, opts.next),
-    upgradeCodex(opts.dryRun, opts.next),
-    ...opts.openCode.map((target) => upgradeOpenCode(opts.dryRun, target)),
-  ];
+    upgradeClaudeCode(opts.dryRun, opts.next, opts.channel),
+    upgradeCodex(opts.dryRun, opts.next, opts.channel),
+    ...opts.openCode.map((target) => {
+      const entry = upgradeOpenCode(opts.dryRun, target);
+      if (target.currentChannel === undefined) return entry;
+      const changed =
+        entry.channel === undefined &&
+        target.switchChannel &&
+        ((entry.backups?.length ?? 0) > 0 || entry.outcome === "updated" || entry.outcome === "current");
+      return channelResult(
+        entry,
+        entry.channel ?? target.currentChannel ?? "unknown",
+        opts.dryRun || changed ? target.switchChannel : undefined,
+        opts.dryRun,
+        entry.backups,
+      );
+    }),
+  ].map((entry) => ({
+    ...entry,
+    ...(entry.channel && opts.currentChannel ? { channelMismatch: entry.channel !== opts.currentChannel } : {}),
+  }));
 }
 
 /**
@@ -535,7 +699,11 @@ function lockstepSource(targets: OpenCodeTarget[]): OpenCodeTarget | undefined {
 }
 
 export interface UpgradeRunDependencies {
-  checkForUpdate: (currentVersion: string, channel: UpgradeChannel) => Promise<UpgradeCheckResponse>;
+  checkForUpdate: (
+    currentVersion: string,
+    channel: UpgradeChannel,
+    exactChannel?: boolean,
+  ) => Promise<UpgradeCheckResponse>;
   performUpgrade: (
     check: UpgradeCheckResponse,
     opts: { force: boolean; skipPostUpgrade: boolean; targetVersion?: string },
@@ -558,10 +726,34 @@ function resolveOpenCodeTarget(
   next: boolean,
   flavor: OpenCodeFlavor,
   configured: { spec: string; key: string } | undefined,
+  channel?: UpgradeChannel,
 ): OpenCodeTarget {
   // OpenCode 1 with no config entry behaves like a bare one: it would resolve @latest. OpenCode 2's
   // re-fetch writes the config, so its plugin is only refreshed where the config already names it.
-  const spec = configured?.spec ?? flavor.pkg;
+  const currentSpec = configured?.spec ?? flavor.pkg;
+  const currentChannel =
+    currentSpec === flavor.pkg || currentSpec === `${flavor.pkg}@latest`
+      ? "latest"
+      : currentSpec === nextSpec(flavor)
+        ? "next"
+        : "pinned";
+  const spec = channel && configured ? (channel === "next" ? nextSpec(flavor) : flavor.pkg) : currentSpec;
+  if (channel && configured) {
+    const fromSpec = currentSpec === flavor.pkg ? `${flavor.pkg}@latest` : currentSpec;
+    const oldDir = path.join(opencodeCacheDir(), flavor.cacheFolder(fromSpec));
+    const oldModules = flavor.nodeModulesDir(oldDir);
+    const version = oldModules ? readPackageVersion(path.join(oldModules, flavor.pkg, "package.json")) : undefined;
+    return {
+      flavor,
+      spec,
+      tag: channel,
+      currentChannel,
+      notFollowingNext: false,
+      switchChannel: currentChannel !== channel ? channel : undefined,
+      cache: { dir: path.join(opencodeCacheDir(), flavor.cacheFolder(`${flavor.pkg}@${channel}`)), version },
+      latest: lookupOpenCodeLatest(channel, flavor),
+    };
+  }
   const leftAlone = (skip: string): OpenCodeTarget => ({
     flavor,
     cache: undefined,
@@ -569,6 +761,7 @@ function resolveOpenCodeTarget(
     tag: next ? "next" : "latest",
     spec,
     notFollowingNext: false,
+    currentChannel: configured ? currentChannel : undefined,
     skip,
   });
   if (flavor.globalConfigOnly) {
@@ -591,7 +784,15 @@ function resolveOpenCodeTarget(
   const tag: UpgradeChannel = followNext ? "next" : "latest";
   const cache = detectOpenCodeCache(tag, flavor);
   const latest = cache ? lookupOpenCodeLatest(tag, flavor) : undefined;
-  return { flavor, cache, latest, tag, spec, notFollowingNext: next && !followNext };
+  return {
+    flavor,
+    cache,
+    latest,
+    tag,
+    spec,
+    currentChannel: configured || cache ? currentChannel : undefined,
+    notFollowingNext: next && !followNext,
+  };
 }
 
 /**
@@ -599,47 +800,235 @@ function resolveOpenCodeTarget(
  * names `akm-opencode-v2` or OpenCode 2 has cached it, so a host with just OpenCode 1 sees the same
  * output as before.
  */
-function resolveOpenCodeTargets(next: boolean): OpenCodeTarget[] {
-  const targets = [resolveOpenCodeTarget(next, OPENCODE_V1, openCodeConfigSpec(OPENCODE_V1))];
+function resolveOpenCodeTargets(next: boolean, channel?: UpgradeChannel): OpenCodeTarget[] {
+  const targets = [resolveOpenCodeTarget(next, OPENCODE_V1, openCodeConfigSpec(OPENCODE_V1), channel)];
   const v2 = openCodeConfigSpec(OPENCODE_V2);
-  if (v2 || openCodeV2Cached()) targets.push(resolveOpenCodeTarget(next, OPENCODE_V2, v2));
+  if (v2 || openCodeV2Cached()) targets.push(resolveOpenCodeTarget(next, OPENCODE_V2, v2, channel));
   return targets;
+}
+
+/** Inspect the requested branch in a disposable clone before changing any installation. */
+function marketplaceTargetVersion(source: string, channel: UpgradeChannel, harness: "claude" | "codex"): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-channel-check-"));
+  const checkout = path.join(root, "marketplace");
+  try {
+    const cloned = runCommand(
+      "git",
+      [
+        "clone",
+        "--depth",
+        "1",
+        "--single-branch",
+        ...(channel === "next" ? ["--branch", "next"] : []),
+        "--",
+        source,
+        checkout,
+      ],
+      REFRESH_TIMEOUT_MS,
+    );
+    if (!cloned.ok) throw new UsageError(`Could not check the target plugin version: ${cloned.error}`);
+    const catalog = parseJson(
+      fs.readFileSync(
+        path.join(checkout, ...(harness === "codex" ? [".agents", "plugins"] : [".claude-plugin"]), "marketplace.json"),
+        "utf8",
+      ),
+    ) as
+      | { plugins?: Array<{ name?: string; source?: string | { source?: string; path?: string }; version?: string }> }
+      | undefined;
+    const plugin = catalog?.plugins?.find((p) => p.name === "akm");
+    const relative =
+      typeof plugin?.source === "string"
+        ? plugin.source
+        : plugin?.source?.source === "local"
+          ? plugin.source.path
+          : undefined;
+    const local = relative ? path.resolve(checkout, relative) : undefined;
+    const contained = local === checkout || local?.startsWith(`${checkout}${path.sep}`);
+    const version =
+      plugin?.version ??
+      (local && contained
+        ? readPackageVersion(path.join(local, harness === "codex" ? ".codex-plugin" : ".claude-plugin", "plugin.json"))
+        : undefined);
+    if (!version || !isExactSemver(version))
+      throw new UsageError(
+        "Could not determine the requested marketplace's akm plugin version; no channel was changed",
+      );
+    return version;
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function preflightMarketplaceChannels(channel: UpgradeChannel, allowDowngrade: boolean): void {
+  const versions = new Map<string, string>();
+  const verify = (harness: "claude" | "codex", source: string, installed: string | undefined) => {
+    if (allowDowngrade) return;
+    const key = `${harness}:${source}`;
+    let target = versions.get(key);
+    if (!target) {
+      target = marketplaceTargetVersion(source, channel, harness);
+      versions.set(key, target);
+    }
+    if (installed && semverOrder(target, installed) < 0)
+      throw new UsageError(
+        `Switching to ${channel} would downgrade ${harness} from ${installed} to ${target}; repeat with --allow-downgrade`,
+      );
+  };
+  const claude = detectClaudeCode(true);
+  if ("entry" in claude && claude.entry.outcome === "failed")
+    throw new UsageError(`Could not inventory Claude before switching channels: ${claude.entry.message}`);
+  if (!("entry" in claude)) {
+    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    const pluginsRoot =
+      process.env.AKM_CLAUDE_PLUGINS_DIR ?? process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
+    claudeChannelEdits(
+      configDir,
+      pluginsRoot,
+      channel,
+      claude.installations.flatMap((p) => (p.projectPath ? [p.projectPath] : [])),
+    );
+    const known = parseJson(fs.readFileSync(path.join(pluginsRoot, "known_marketplaces.json"), "utf8")) as Record<
+      string,
+      { source: { source: string; repo?: string; url?: string } }
+    >;
+    const source = known[MARKETPLACE]?.source;
+    const url = source?.source === "github" && source.repo ? `https://github.com/${source.repo}.git` : source?.url;
+    if (!url) throw new UsageError("Could not determine the Claude marketplace Git source; no channel was changed");
+    for (const installed of claude.installations) verify("claude", url, installed.version);
+  }
+  const codex = codexPluginVersion();
+  if ("error" in codex && (!codex.error.missing || fs.existsSync(codexConfigFile())))
+    throw new UsageError(`Could not inventory Codex before switching channels: ${codex.error.error}`);
+  if (!("error" in codex) && codex.version !== undefined) {
+    codexChannelEdit(codexConfigFile(), channel);
+    const source = codexMarketplace(codexConfigFile())?.source;
+    if (typeof source !== "string")
+      throw new UsageError("Could not determine the Codex marketplace Git source; no channel was changed");
+    verify("codex", source, codex.version);
+  }
 }
 
 /** `akm upgrade`: the CLI step (held to the OpenCode plugin's akm), then the plugins. */
 export async function runUpgrade(
-  args: { check: boolean; force: boolean; skipPostUpgrade: boolean; next?: boolean },
+  args: {
+    check: boolean;
+    force: boolean;
+    skipPostUpgrade: boolean;
+    next?: boolean;
+    channel?: string;
+    allowDowngrade?: boolean;
+  },
   currentVersion: string,
   deps: UpgradeRunDependencies,
 ): Promise<UpgradeRunResult> {
-  const next = args.next === true;
+  if (args.channel !== undefined && args.channel !== "latest" && args.channel !== "next")
+    throw new UsageError("--channel must be latest or next");
+  if (args.next && args.channel === "latest") throw new UsageError("--next conflicts with --channel latest");
+  if (args.allowDowngrade && !args.channel) throw new UsageError("--allow-downgrade requires --channel latest or next");
+  const switchChannel = args.channel as UpgradeChannel | undefined;
+  const next = switchChannel ? switchChannel === "next" : args.next === true;
   const channel: UpgradeChannel = next ? "next" : "latest";
-  const openCode = resolveOpenCodeTargets(next);
+  const currentChannel: UpgradeChannel = isPrerelease(currentVersion) ? "next" : "latest";
+  const openCode = resolveOpenCodeTargets(next, switchChannel);
   const held = lockstepSource(openCode);
   const check = {
     ...applyLockstep(
-      await deps.checkForUpdate(currentVersion, channel),
+      await deps.checkForUpdate(currentVersion, channel, switchChannel !== undefined),
       held?.latest,
       held?.tag ?? "latest",
       held?.flavor.pkg ?? OPENCODE_V1.pkg,
     ),
     channel,
+    currentChannel,
+    ...(switchChannel ? { targetChannel: switchChannel } : {}),
   };
-  if (args.check) {
-    return { mode: "check", result: { ...check, plugins: upgradePlugins({ dryRun: true, next, openCode }) } };
+  if (
+    switchChannel &&
+    held?.latest &&
+    !("error" in held.latest) &&
+    held.latest.akmCli &&
+    semverOrder(held.latest.akmCli, check.latestVersion) < 0
+  ) {
+    check.latestVersion = held.latest.akmCli;
+    check.updateAvailable = semverOrder(currentVersion, check.latestVersion) < 0;
   }
+  if (args.check) {
+    return {
+      mode: "check",
+      result: {
+        ...check,
+        plugins: upgradePlugins({ dryRun: true, next, openCode, channel: switchChannel, currentChannel }),
+      },
+    };
+  }
+  if (switchChannel && !args.allowDowngrade) {
+    if (semverOrder(check.latestVersion, currentVersion) < 0)
+      throw new UsageError(
+        `Switching to ${channel} would downgrade akm from ${currentVersion} to ${check.latestVersion}; repeat with --allow-downgrade`,
+      );
+    for (const target of openCode) {
+      if (
+        target.cache?.version &&
+        target.latest &&
+        !("error" in target.latest) &&
+        semverOrder(target.latest.version, target.cache.version) < 0
+      )
+        throw new UsageError(
+          `Switching to ${channel} would downgrade ${target.flavor.pkg} from ${target.cache.version} to ${target.latest.version}; repeat with --allow-downgrade`,
+        );
+    }
+  }
+  if (switchChannel) preflightMarketplaceChannels(switchChannel, args.allowDowngrade === true);
+  if (switchChannel && args.allowDowngrade && check.latestVersion !== currentVersion) check.updateAvailable = true;
   const upgraded = await deps.performUpgrade(check, {
     force: args.force,
     skipPostUpgrade: args.skipPostUpgrade,
     // A package manager install must name the version, or `@latest` goes past the pin
     // (or past the prerelease that `--next` chose).
-    ...(check.lockstep?.heldBack || (next && check.latestVersion) ? { targetVersion: check.latestVersion } : {}),
+    ...(switchChannel || check.lockstep?.heldBack || (next && check.latestVersion)
+      ? { targetVersion: check.latestVersion }
+      : {}),
   });
-  const plugins = upgradePlugins({ dryRun: false, next, openCode });
-  const result = { ...upgraded, channel, ...(check.lockstep ? { lockstep: check.lockstep } : {}), plugins };
+  if (
+    switchChannel &&
+    (upgraded.migration?.status === "blocked" ||
+      upgraded.migration?.status === "failed" ||
+      (check.latestVersion !== currentVersion && !upgraded.upgraded))
+  ) {
+    return {
+      mode: "upgrade",
+      result: { ...upgraded, channel, currentChannel, targetChannel: switchChannel, plugins: [] },
+      failed: true,
+    };
+  }
+  const plugins = upgradePlugins({
+    dryRun: false,
+    next,
+    openCode,
+    channel: switchChannel,
+    currentChannel: upgraded.upgraded ? (isPrerelease(upgraded.newVersion) ? "next" : "latest") : currentChannel,
+  });
+  const result = {
+    ...upgraded,
+    channel,
+    currentChannel,
+    ...(switchChannel ? { targetChannel: switchChannel } : {}),
+    ...(check.lockstep ? { lockstep: check.lockstep } : {}),
+    plugins,
+  };
   // The install may have succeeded, but an upgrade whose migration is
   // blocked or could not run is not done, and neither is one whose plugin
   // step failed.
   const migrationFailed = upgraded.migration?.status === "blocked" || upgraded.migration?.status === "failed";
-  return { mode: "upgrade", result, failed: migrationFailed || plugins.some((p) => p.outcome === "failed") };
+  const switchIncomplete =
+    switchChannel !== undefined &&
+    plugins.some(
+      (p) =>
+        p.channel !== undefined && (p.channel !== switchChannel || p.outcome === "deferred" || p.outcome === "skipped"),
+    );
+  return {
+    mode: "upgrade",
+    result,
+    failed: migrationFailed || switchIncomplete || plugins.some((p) => p.outcome === "failed"),
+  };
 }

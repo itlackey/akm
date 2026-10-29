@@ -688,10 +688,17 @@ function formatUpgradePluginLines(r: Record<string, unknown>): string[] {
   }
   const plugins = Array.isArray(r.plugins) ? (r.plugins as Array<Record<string, unknown>>) : [];
   for (const p of plugins) {
-    if (p.outcome === "current" || p.outcome === "skipped") continue;
+    if (
+      (p.outcome === "current" || p.outcome === "skipped") &&
+      (r.updateAvailable === undefined || !p.channel) &&
+      !p.channelMismatch &&
+      !p.targetChannel
+    )
+      continue;
     const versions = p.from && p.to && p.from !== p.to ? ` v${p.from} → v${p.to}` : "";
+    const channel = p.channel ? ` [channel ${p.channel}${p.channelMismatch ? "; differs from CLI" : ""}]` : "";
     const note = p.message ? ` (${p.message})` : "";
-    lines.push(`${HARNESS_LABELS[String(p.harness)] ?? p.harness} plugin ${p.outcome}${versions}${note}`);
+    lines.push(`${HARNESS_LABELS[String(p.harness)] ?? p.harness} plugin ${p.outcome}${versions}${channel}${note}`);
   }
   return lines;
 }
@@ -707,8 +714,11 @@ function formatUpgradeHead(r: Record<string, unknown>): string | null {
   if (r.upgraded === true) {
     return `akm upgraded: v${r.currentVersion} → v${r.newVersion}`;
   }
+  if (r.targetChannel && r.latestVersion && r.latestVersion !== r.currentVersion && r.updateAvailable === false) {
+    return `akm v${r.currentVersion} → v${r.latestVersion} requires --allow-downgrade (run 'akm upgrade --channel ${r.targetChannel} --allow-downgrade' to install)`;
+  }
   if (r.updateAvailable === true) {
-    return `akm v${r.currentVersion} → v${r.latestVersion} available (run 'akm upgrade${r.channel === "next" ? " --next" : ""}' to install)`;
+    return `akm v${r.currentVersion} → v${r.latestVersion} available (run 'akm upgrade${r.targetChannel ? ` --channel ${r.targetChannel}` : r.channel === "next" ? " --next" : ""}' to install)`;
   }
   if (r.updateAvailable === false && r.latestVersion) {
     return `akm v${r.currentVersion} is already the latest version`;

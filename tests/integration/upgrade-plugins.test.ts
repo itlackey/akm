@@ -712,15 +712,15 @@ esac`,
       writeCodexConfig();
       const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", fakeDeps("0.9.27-rc.1", "0.9.25")));
       expect(entry(run, "claude-code").message).toContain("follows the default branch (stable)");
-      expect(entry(run, "claude-code").message).toContain("itlackey/akm-plugins@next");
+      expect(entry(run, "claude-code").message).toContain("akm upgrade --channel next");
       expect(entry(run, "codex").message).toContain("follows the default branch (stable)");
-      expect(entry(run, "codex").message).toContain("--ref next");
+      expect(entry(run, "codex").message).toContain("akm upgrade --channel next");
     });
 
     test("another ref is named as it is", async () => {
       stubClaude({ from: "0.9.26", to: "0.9.27", ref: "v1" });
       const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", fakeDeps("0.9.27-rc.1", "0.9.25")));
-      expect(entry(run, "claude-code").message).toContain("follows ref v1, not the prerelease channel");
+      expect(entry(run, "claude-code").message).toContain("follows ref v1");
     });
 
     test("without --next those entries carry no note", async () => {
@@ -834,6 +834,25 @@ describe("formatUpgradePlain", () => {
       ],
     });
     expect(text).toBe("akm v0.9.28 is already the latest version");
+  });
+
+  test("an explicit channel check preserves the switch command and names downgrade consent", () => {
+    expect(
+      formatUpgradePlain({
+        currentVersion: "0.10.1",
+        latestVersion: "0.10.2-beta",
+        updateAvailable: true,
+        targetChannel: "next",
+      }),
+    ).toContain("akm upgrade --channel next");
+    expect(
+      formatUpgradePlain({
+        currentVersion: "0.10.3-beta",
+        latestVersion: "0.10.2",
+        updateAvailable: false,
+        targetChannel: "latest",
+      }),
+    ).toContain("akm upgrade --channel latest --allow-downgrade");
   });
 
   test("updated, deferred and failed plugins each get a line", () => {

@@ -885,9 +885,9 @@ function isMarkdownFenceClosing(line: string, fence: MarkdownFence): boolean {
  * Version of what {@link projectMarkdownContent} indexes. It is part of every
  * directory's index fingerprint, so bumping it makes the next `akm index`
  * re-project every directory once instead of keeping the old text for
- * unchanged files. 2: identifiers from fenced code (akm#1260).
+ * unchanged files. 3: count each fenced identifier once per document (akm#1284).
  */
-export const CONTENT_PROJECTION_VERSION = 2;
+export const CONTENT_PROJECTION_VERSION = 3;
 
 /** At or above this length a token with a digit reads as a key or hash, not a name. */
 const TOKEN_LIKE_MIN_LENGTH = 20;
@@ -1130,7 +1130,7 @@ export function projectMarkdownContent(body: string, truncationInfo?: { truncate
   const innerBlock = findInnerFrontmatterBlock(lines);
   const start = innerBlock && isFrontmatterShaped(lines, innerBlock) ? innerBlock.close + 1 : 0;
   const projected: string[] = [];
-  const fenced: string[] = [];
+  const fenced = new Map<string, string>();
   forEachVisibleMarkdownLine(
     lines,
     start,
@@ -1152,12 +1152,14 @@ export function projectMarkdownContent(body: string, truncationInfo?: { truncate
     },
     (_index, fencedLine) => {
       const identifiers = fencedCodeIdentifiers(fencedLine);
-      if (identifiers) fenced.push(identifiers);
+      for (const identifier of identifiers.split(/\s+/)) {
+        if (identifier) fenced.set(identifier.toLowerCase(), identifier);
+      }
     },
   );
 
   // Fenced identifiers follow the prose, so a head-truncated embedding input keeps the prose first.
-  const text = [...projected, ...fenced].join(" ").replace(/\s+/g, " ").trim();
+  const text = [...projected, ...fenced.values()].join(" ").replace(/\s+/g, " ").trim();
   if (!text) return undefined;
   if (truncationInfo) truncationInfo.truncated = text.length > MARKDOWN_CONTENT_MAX_CHARS;
   return truncateUnicodeSafe(text, MARKDOWN_CONTENT_MAX_CHARS);

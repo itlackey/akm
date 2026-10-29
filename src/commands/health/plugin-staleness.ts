@@ -3,51 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `plugin-version` advisory for `akm health` (itlackey/akm#832).
- *
- * #828 was filed as a CLI bug — session extraction failing on 232/234 runs —
- * and took a full investigation to resolve. The actual cause: the harness
- * plugin (`akm@akm-plugins`, installed in Claude Code's plugin cache) was
- * three days stale relative to the fix, and its own `AKM_VERSION_RANGE` gate
- * had nothing to do with it — the plugin was simply running old code. Every
- * fact needed to reach that conclusion in one step was already on disk:
- *
- *   - installed plugin version: `~/.claude/plugins/cache/<marketplace>/akm/<version>/.claude-plugin/plugin.json`
- *   - the plugin's own akm-cli compatibility contract: `<pluginDir>/shared/akm-version.ts`'s `AKM_VERSION_RANGE`
- *   - the running CLI's version: `../../version.ts`'s `pkgVersion`
- *
- * Nothing correlated them, so a stale plugin was indistinguishable from a
- * broken CLI. This module closes that gap with three checks, one per
- * detected plugin:
- *
- *   1. report the installed version;
- *   2. compare it against the newest tag published to the plugin's git
- *      remote, and warn (naming the update command) when behind;
- *   3. the sharp one — check whether the *installed plugin's* declared
- *      `AKM_VERSION_RANGE` admits the *running* CLI version. When it does
- *      not, the plugin has silently disabled itself (both surfaces log
- *      `version_out_of_range` / `akm_version_mismatch` and degrade quietly)
- *      and there was previously no way to know that from the CLI side.
- *
- * Read-only: this never fetches, writes, or mutates the plugin cache or
- * marketplace clone. Check 2 is one of two deliberate exceptions to "`akm
- * health` makes no network call" (see `./health-advisories.md`; the other is
- * the `cli-version` advisory in `./version-drift.ts`, #950): a plugin's
- * local marketplace clone is not proof of what is newest upstream — the
- * incident above involved a clone that hadn't seen the fix's tag at all — so
- * the only way to ever detect drift is to ask the remote what tags exist.
- * That query is a `git ls-remote --symref` (lists refs; fetches nothing,
- * writes nothing) with a short timeout, and any failure (offline, no
- * remote, timeout) degrades to "installed version reported, no staleness
- * claim" rather than a false positive or a hang. Like `cli-version`, this
- * check is gated behind `--probe`/`--no-probe`: with probing off the remote is
- * not asked, the row reports `unknown` ("not probed") and only the local range
- * check (3) runs.
- *
- * Every collector here is best-effort and silent on missing/unreadable
- * input: no Claude plugin installed, no marketplace clone, an unreadable
- * manifest, or a malformed version range must never crash `akm health` and
- * must never produce a false "stale" or "inactive" warning.
+ * Report the installations Claude's native listing selects, not the versions
+ * left in its cache. The listing owns scope and merged enabled settings; it
+ * cannot prove what an already-running session has loaded. Ambiguous scoped
+ * installations and unavailable compatibility contracts are reported as unknown.
+ * Remote release checks remain optional under --no-probe.
  */
 
 import { type SpawnSyncReturns, spawnSync } from "node:child_process";
@@ -73,7 +33,11 @@ import type { HealthCheckResult } from "./types";
  * `AKM_CLAUDE_PROJECTS_DIR` in `../../integrations/harnesses/claude/session-log.ts`.
  */
 function claudePluginsDir(): string {
-  return process.env.AKM_CLAUDE_PLUGINS_DIR ?? path.join(os.homedir(), ".claude", "plugins");
+  return (
+    process.env.AKM_CLAUDE_PLUGINS_DIR ??
+    process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ??
+    path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"), "plugins")
+  );
 }
 
 /**
@@ -198,78 +162,103 @@ function buildOpencodeBundledAdvisory(
   };
 }
 
-/** One `akm` plugin found in the Claude Code plugin cache. */
+/** The native listing owns installation selection, scopes and merged enabled state. */
 interface DetectedPlugin {
   harness: "claude";
   marketplace: string;
   pluginName: string;
   version: string;
   pluginDir: string;
+  scope: string;
+  enabled: boolean | undefined;
+  projectPath?: string;
+  applicable: boolean;
+  selectionKnown: boolean;
 }
 
-/**
- * Scan `<pluginsRoot>/cache/<marketplace>/akm/<version>/` for every
- * `akm` plugin cache entry, picking the highest cached version per
- * marketplace when more than one is present. Returns `[]` (never throws)
- * when the cache directory is absent, empty, or unreadable — that is the
- * ordinary "no Claude plugin installed" case, not an error.
- */
-function detectInstalledPlugins(pluginsRoot: string): DetectedPlugin[] {
-  const cacheDir = path.join(pluginsRoot, "cache");
-  let marketplaces: string[];
-  try {
-    marketplaces = fs.readdirSync(cacheDir);
-  } catch {
+function detectInstalledPlugins(pluginsRoot: string): DetectedPlugin[] | undefined {
+  if (
+    !fs.existsSync(path.join(pluginsRoot, "installed_plugins.json")) &&
+    !fs.existsSync(path.join(pluginsRoot, "cache"))
+  )
     return [];
-  }
-
-  const detected: DetectedPlugin[] = [];
-  for (const marketplace of marketplaces) {
-    const pluginDir = path.join(cacheDir, marketplace, "akm");
-    let versions: string[];
-    try {
-      versions = fs.readdirSync(pluginDir).filter(isExactSemver);
-    } catch {
-      continue;
-    }
-    if (versions.length === 0) continue;
-    const latest = highestVersion(versions);
-    if (!latest) continue;
-    const versionDir = path.join(pluginDir, latest);
-    const manifestPath = path.join(versionDir, ".claude-plugin", "plugin.json");
-    try {
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
-      if (typeof manifest.version !== "string") continue;
-      detected.push({
-        harness: "claude",
-        marketplace,
-        pluginName: "akm",
-        version: manifest.version,
-        pluginDir: versionDir,
-      });
-    } catch {
-      // Unreadable/malformed manifest — skip this entry rather than crash.
-    }
-  }
-  return detected;
-}
-
-/**
- * Extract `AKM_VERSION_RANGE` from the installed plugin's vendored
- * `shared/akm-version.ts`. Returns `undefined` when the file is missing,
- * unreadable, or does not contain the expected declaration — callers must
- * treat that as "compatibility unknown", never as a mismatch.
- */
-function readVersionRange(pluginDir: string): string | undefined {
-  const versionFilePath = path.join(pluginDir, "shared", "akm-version.ts");
-  let text: string;
   try {
-    text = fs.readFileSync(versionFilePath, "utf8");
+    const listed = spawnSync("claude", ["plugin", "list", "--json"], {
+      encoding: "utf8",
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        ...(process.env.AKM_CLAUDE_PLUGINS_DIR
+          ? { CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR ?? path.dirname(pluginsRoot) }
+          : {}),
+        CLAUDE_CODE_PLUGIN_CACHE_DIR: pluginsRoot,
+      },
+    });
+    if (listed.status !== 0) return undefined;
+    const rows: unknown = JSON.parse(listed.stdout);
+    if (!Array.isArray(rows)) return undefined;
+    const detected = rows.flatMap((row) => {
+      if (typeof row?.id !== "string" || !row.id.startsWith("akm@")) return [];
+      const applicable =
+        typeof row.projectPath !== "string" ||
+        path.resolve(process.cwd()) === path.resolve(row.projectPath) ||
+        path.resolve(process.cwd()).startsWith(`${path.resolve(row.projectPath)}${path.sep}`);
+      return [
+        {
+          harness: "claude" as const,
+          marketplace: row.id.slice(4),
+          pluginName: "akm",
+          version:
+            typeof row.folderVersion === "string"
+              ? row.folderVersion
+              : typeof row.version === "string"
+                ? row.version
+                : "unknown",
+          pluginDir:
+            typeof row.readFromFolder === "string"
+              ? row.readFromFolder
+              : typeof row.installPath === "string"
+                ? row.installPath
+                : "",
+          applicable,
+          selectionKnown: false,
+          scope: typeof row.scope === "string" ? row.scope : "unknown",
+          enabled: typeof row.enabled === "boolean" ? row.enabled : undefined,
+          ...(typeof row.projectPath === "string" ? { projectPath: row.projectPath } : {}),
+        },
+      ];
+    });
+    for (const plugin of detected) {
+      const applicable = detected.filter((p) => p.marketplace === plugin.marketplace && p.applicable);
+      plugin.selectionKnown =
+        plugin.applicable &&
+        isExactSemver(plugin.version) &&
+        plugin.scope !== "unknown" &&
+        plugin.pluginDir !== "" &&
+        new Set(applicable.map((p) => `${p.version}:${p.pluginDir}`)).size === 1;
+    }
+    return detected;
   } catch {
     return undefined;
   }
-  const match = text.match(/export\s+const\s+AKM_VERSION_RANGE\s*=\s*["']([^"']+)["']/);
-  return match?.[1];
+}
+
+/** Read the contract, never execute plugin source. A minimum admits later prereleases too. */
+function readCompatibility(pluginDir: string, cliVersion: string): { versionRange?: string; admitted?: boolean } {
+  let text: string;
+  try {
+    text = fs.readFileSync(path.join(pluginDir, "shared", "akm-version.ts"), "utf8");
+  } catch {
+    return {};
+  }
+  const minimum = text.match(/export\s+const\s+AKM_MIN_VERSION\s*=\s*["']([^"']+)["']/)?.[1];
+  if (minimum !== undefined) {
+    if (!isExactSemver(minimum) || !isExactSemver(cliVersion)) return {};
+    return { versionRange: `>=${minimum}`, admitted: highestVersion([minimum, cliVersion]) === cliVersion };
+  }
+  const range = text.match(/export\s+const\s+AKM_VERSION_RANGE\s*=\s*["']([^"']+)["']/)?.[1];
+  if (!range || !isSemverRange(range) || !isExactSemver(cliVersion)) return {};
+  return { versionRange: range, admitted: satisfiesRange(cliVersion, range) };
 }
 
 /**
@@ -381,9 +370,21 @@ export function collectPluginStalenessAdvisories(options: PluginStalenessOptions
 
   const probe = options.probe ?? true;
 
-  const results = plugins.map((plugin) =>
+  const results = (plugins ?? []).map((plugin) =>
     buildAdvisory(plugin, options.cliVersion, pluginsRoot, listRemoteTags, probe),
   );
+
+  if (plugins === undefined && fs.existsSync(pluginsRoot)) {
+    results.push({
+      name: "plugin-version",
+      kind: "deterministic",
+      status: "unknown",
+      confidence: "high",
+      message:
+        "Claude plugin installation and enabled state could not be resolved with `claude plugin list --json`; cached versions do not establish the selected installation.",
+      evidence: { harness: "claude", installedVersion: null, enabled: null, admitted: null },
+    });
+  }
 
   const opencodeCacheRoot = options.opencodeCacheRoot ?? defaultOpencodeCacheRoot();
   for (const plugin of OPENCODE_PLUGIN_LOCATIONS) {
@@ -408,7 +409,10 @@ function buildAdvisory(
   const marketplaceDir = path.join(pluginsRoot, "marketplaces", plugin.marketplace);
   let availableVersion: string | undefined;
   try {
-    const tags = probe && fs.existsSync(marketplaceDir) ? listRemoteTags(marketplaceDir) : undefined;
+    const tags =
+      probe && plugin.selectionKnown && plugin.enabled !== false && fs.existsSync(marketplaceDir)
+        ? listRemoteTags(marketplaceDir)
+        : undefined;
     availableVersion = tags && tags.length > 0 ? highestVersion(tags) : undefined;
   } catch {
     availableVersion = undefined;
@@ -419,19 +423,24 @@ function buildAdvisory(
     highestVersion([plugin.version, availableVersion]) === availableVersion;
 
   // Point 3: does the plugin's own declared range admit the running CLI?
-  const versionRange = readVersionRange(plugin.pluginDir);
-  const rangeKnown = versionRange !== undefined && isSemverRange(versionRange);
-  const admitted = rangeKnown ? satisfiesRange(cliVersion, versionRange as string) : undefined;
+  const { versionRange, admitted } = readCompatibility(plugin.pluginDir, cliVersion);
 
-  const messageParts = [`${pluginRef}: installed ${plugin.version}`];
+  const messageParts = [
+    `${pluginRef}: installed ${plugin.version} (${plugin.scope}${plugin.projectPath ? `: ${plugin.projectPath}` : ""})`,
+  ];
+  if (!plugin.applicable) messageParts.push("installed for another project; not selected in this directory");
+  else if (!plugin.selectionKnown) messageParts.push("effective selection unknown across native installations");
+  if (plugin.enabled === false) messageParts.push("disabled in Claude settings");
+  else if (plugin.enabled === undefined) messageParts.push("enabled state unknown");
+  if (admitted === undefined) messageParts.push("CLI compatibility unknown");
   if (!probe) messageParts.push("newest tag was not probed");
   if (availableVersion !== undefined) {
     messageParts.push(stale ? `available ${availableVersion} (STALE)` : `available ${availableVersion} (up to date)`);
   }
   if (stale) messageParts.push(`-> claude plugin update ${pluginRef}`);
-  if (rangeKnown && admitted === false) {
+  if (plugin.selectionKnown && plugin.enabled === true && admitted === false) {
     messageParts.push(
-      `installed plugin requires akm-cli ${versionRange}; running ${cliVersion} -> NOT ADMITTED (plugin is inactive)`,
+      `installed plugin requires akm-cli ${versionRange}; running ${cliVersion} -> NOT ADMITTED by the plugin compatibility contract`,
     );
   }
 
@@ -440,7 +449,16 @@ function buildAdvisory(
     kind: "deterministic",
     // Not probed => staleness is unknown, not "up to date"; only the local
     // range check can still warn.
-    status: stale || admitted === false ? "warn" : probe ? "pass" : "unknown",
+    status:
+      plugin.enabled === false || !plugin.applicable
+        ? "pass"
+        : !plugin.selectionKnown || plugin.enabled === undefined
+          ? "unknown"
+          : stale || admitted === false
+            ? "warn"
+            : probe && availableVersion !== undefined && admitted !== undefined && plugin.enabled === true
+              ? "pass"
+              : "unknown",
     confidence: "high",
     message: messageParts.join(" — "),
     evidence: {
@@ -448,6 +466,12 @@ function buildAdvisory(
       marketplace: plugin.marketplace,
       plugin: plugin.pluginName,
       installedVersion: plugin.version,
+      scope: plugin.scope,
+      applicable: plugin.applicable,
+      selectionKnown: plugin.selectionKnown,
+      projectPath: plugin.projectPath ?? null,
+      enabled: plugin.enabled ?? null,
+      installPath: plugin.pluginDir,
       availableVersion: availableVersion ?? null,
       ...(probe ? {} : { probed: false }),
       stale,

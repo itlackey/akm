@@ -152,6 +152,16 @@ describe("whole-document BM25 over any query word", () => {
 });
 
 describe("native Markdown content projection (#819)", () => {
+  test("repeating fenced examples adds no term-frequency boost, while prose repetitions and distinct identifiers survive", () => {
+    const prose = "Provider retries retries.\n";
+    const fence = "```ts\nQuokkaInitFailure(code)\n```\n";
+    expect(projectMarkdownContent(prose + fence.repeat(50))).toBe(projectMarkdownContent(prose + fence));
+    expect(projectMarkdownContent(prose + fence + "```ts\nRareRecoveryHandler(code)\n```")).toContain(
+      "RareRecoveryHandler",
+    );
+    expect(projectMarkdownContent(prose + fence)).toContain("retries retries");
+  });
+
   test("keeps prose and inline identifiers but drops markup, URLs, comments, and fenced literal values", () => {
     const projection = projectMarkdownContent(`
 # Rotation guide
@@ -257,7 +267,7 @@ The spectral quokka calibration nonce rotates every Thursday.
     },
   ])("fenced code keeps names and drops literal values: $name", ({ line, kept, dropped }) => {
     const projection = projectMarkdownContent(["Prose before.", "```sh", line, "```"].join("\n")) ?? "";
-    for (const text of kept) expect(projection).toContain(text);
+    for (const text of kept) expect(projection.toLowerCase()).toContain(text.toLowerCase());
     for (const text of dropped) expect(projection).not.toContain(text);
   });
 

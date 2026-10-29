@@ -119,9 +119,11 @@
     "citty": "^0.2.2",
     "dotenv": "^17.4.2",
     "fast-xml-parser": "^5.10.1",
+    "jsonc-parser": "^3.3.1",
     "marked": "^18.1.1",
     "node-html-parser": "^9.0.1",
     "semver": "^7.6.0",
+    "smol-toml": "^1.9.1",
     "turndown": "^7.2.4",
     "yaml": "^2.8.4",
     "zod": "^4.6.6"
